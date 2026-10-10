@@ -20,7 +20,7 @@ import { resource, transaction, type Store } from "./store.js";
 export const METRICS_ID = "home_metrics";
 // Bumped when compiling or normalising changes: stored specs are then
 // recompiled and re-run by code, without asking the AI again.
-export const METRICS_VERSION = 3;
+export const METRICS_VERSION = 4;
 type Column = {
   name: string;
   type: string;
@@ -50,12 +50,14 @@ type Stored = {
   version?: number;
 };
 
-const temporal = (t: string) => /^(DATE|TIMESTAMP)/i.test(t);
+const temporal = (t: string) => !nested(t) && /^(DATE|TIMESTAMP)/i.test(t);
 const numericType = (t: string) =>
+  !nested(t) &&
   /^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT|FLOAT|REAL|DOUBLE|DECIMAL|NUMERIC)/i.test(
     t,
   );
-const nested = (t: string) => /STRUCT|MAP\(|\[\]|UNION\(|^LIST|^JSON/i.test(t);
+const nested = (t: string) =>
+  /STRUCT|MAP\(|\[\d*\]|UNION\(|^LIST|^JSON/i.test(t);
 const categorical = (c: Column) =>
   !c.sensitive &&
   !c.primaryKey &&
