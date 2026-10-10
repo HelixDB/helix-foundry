@@ -12,7 +12,7 @@ packages/*/dist
 *.log
 .DS_Store
 
-# Local backups contain the encryption key (scripts/backup.sh)
+# Backups hold workspace data; scripts/backup.sh refuses folders in the repository
 backups/
 *.bak
 .claude/launch.json

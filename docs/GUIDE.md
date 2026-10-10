@@ -34,7 +34,7 @@ Helix Foundry is an AI-assisted data workspace that runs on your own computer, b
 - **Ontology:** real ontology objects and native relationships in HelixDB, with audited edit overlays that survive rematerialisation.
 - **Security:** workspace-scoped, optionally read-only, revocable API tokens, encrypted connector and model credentials, loopback host checks, and origin checks for browser changes.
 - **Jobs:** persistent jobs with leases and crash recovery, scheduled source refreshes, background repair drafts, query isolation and budget controls.
-- **Developer access:** OpenAPI at `/api/docs` and `/api/openapi.json`, a TypeScript SDK, definition import and export, and backup and restore scripts.
+- **Developer access:** OpenAPI at `/api/docs` and `/api/openapi.json`, a TypeScript SDK, definition import and export, and backup, restore and upgrade scripts.
 
 ## Finding your way around
 
@@ -178,6 +178,7 @@ pnpm dev
 
 Open **http://localhost:5173**. The Vite dev server proxies `/api` to the API on 3001, and the executor listens on 3002. Use 5173 rather than 3001 during development: the API may also serve an old build on 3001, and saves from it fail the origin check.
 
+- The development HelixDB uses the image pinned in `compose.yaml`; `pnpm test` fails if the copy above, or those in the README and AGENTS.md, differ from it. A newer image upgrades the `helix-foundry-dev` volume one way (v0.0.10 and later upgrade the index storage, and older images then refuse it), so copy the volume before you change the tag.
 - `./scripts/setup.sh` without flags writes `.env` with development URLs (`APP_ORIGIN=http://localhost:5173`, HelixDB on 6996, executor on 3002, Ollama on 11434) and two generated keys. It never overwrites an existing `.env`.
 - `pnpm doctor` checks HelixDB, the executor, the model endpoint and the local keys, using the development URLs in `.env`. It is for development only; for a Docker install, use the in-container check in the [agent runbook](../AGENTS.md#6-verify).
 - Startup applies the metadata schema idempotently; `pnpm migrate` applies it explicitly.
@@ -207,10 +208,13 @@ BENCH_HTTP=1 pnpm benchmark  # 1M rows, 25 concurrent executor clients
 ## Backups and upgrades
 
 ```sh
+./scripts/upgrade.sh                                                  # backs up first, then pulls and rebuilds
 ./scripts/backup.sh ~/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)   # stops writers, snapshots volumes, restarts
 ./scripts/restore.sh ~/helix-foundry-backups/TIMESTAMP --replace
 ```
 
-Backups contain the encryption key, so keep them private and outside the repository. Restore explicitly replaces the selected installation's data and `.env`. Before an upgrade, back up, keep the old commit, lockfile and image, rebuild, and run smoke checks (diagnostics, sample ingestion, a saved query and proposal validation) before using the installation again. Never remove volumes during an ordinary upgrade.
+Backups leave out `ENCRYPTION_KEY` and `INTERNAL_KEY`. They record a fingerprint of the key, the app commit and the HelixDB image, so keep a separate copy of `.env`, for example in a password manager. `backup.sh --include-key` adds `.env` encrypted with a passphrase. Backups made by an older `backup.sh` hold both keys in plain text in `config.env`, often in the repository's `backups/` folder; `backup.sh` and `upgrade.sh` warn about them, so delete them once you have a new backup and a separate copy of `.env`. Keep backups private and outside the repository; `backup.sh` refuses a folder inside it. Restore replaces the selected installation's data. It keeps `.env` when the key matches, takes your copy with `--env-file`, and refuses a backup made with another key or in a newer HelixDB storage format. It checks the archives before it stops anything, and replaces `.env` only once the data is restored, keeping the old one as `.env.pre-restore-TIME`; delete that file once the restore is confirmed.
+
+Upgrade with `upgrade.sh`, which refuses to continue unless a fresh backup succeeds. If the rebuild fails, run it again: it finishes the upgrade. To go back, run the two commands it printed: `git reset --keep` with the old commit, then the copy of `restore.sh` saved in the backup (`bash BACKUP/restore.sh BACKUP --replace`), which also reads the backup in a checkout of a release from before `upgrade.sh`. HelixDB upgrades its storage one way (v0.0.10 and later upgrade the index storage, and v0.0.9 and earlier then refuse the database), so when a release changes the HelixDB image, `upgrade.sh` warns and asks first. Keep the backup and the old commit, and run smoke checks (diagnostics, sample ingestion, a saved query and proposal validation) before using the installation again. Never remove volumes during an ordinary upgrade.
 
 See [operations](OPERATIONS.md) for the full procedure and deployment limits, and [validation notes](VALIDATION.md) for tested coverage and current limits.
