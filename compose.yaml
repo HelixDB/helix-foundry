@@ -56,6 +56,7 @@ services:
       EXECUTOR_HOST: 0.0.0.0
       EXECUTOR_PORT: 3002
       DUCKDB_MEMORY: 512MB
+      DUCKDB_TEMP_LIMIT: 2GB
     mem_limit: 2g
     pids_limit: 128
     cap_drop: [ALL]

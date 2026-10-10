@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execute } from "../services/executor/src/engine.js";
@@ -65,6 +65,19 @@ describe("isolated dataset execution", () => {
           dir,
         ),
       ).rejects.toThrow();
+  });
+  it("removes its spill directory after success and failure", async () => {
+    await execute(
+      { mode: "ingest", scope: "a", version: "spill", file: "input.jsonl" },
+      dir,
+    );
+    await expect(
+      execute(
+        { mode: "query", scope: "a", version: "bad", inputs: [], sql: "DROP" },
+        dir,
+      ),
+    ).rejects.toThrow();
+    expect(await readdir(join(dir, "tmp"))).toEqual([]);
   });
   it("rejects storage traversal", async () => {
     await expect(

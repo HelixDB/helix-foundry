@@ -1,6 +1,6 @@
 import { DuckDBInstance } from "@duckdb/node-api";
-import { createHash } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import type { DatasetProfile } from "../../../packages/shared/src/index.js";
 export const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
@@ -32,12 +32,23 @@ export async function execute(
     throw new Error("Invalid storage identity");
   const out = resolve(root, "datasets", job.scope, `${job.version}.parquet`);
   await mkdir(dirname(out), { recursive: true });
+  // DuckDB spills to "./.tmp" by default, which is not writable in the image.
+  // Give each job its own capped directory on the data volume. The server
+  // passes one in and removes it even when it has to kill the job.
+  const spill =
+    process.env.DUCKDB_TEMP_DIR || resolve(root, "tmp", randomUUID());
+  await mkdir(spill, { recursive: true });
   const db = await DuckDBInstance.create(":memory:", {
     memory_limit: process.env.DUCKDB_MEMORY || "512MB",
     threads: "2",
+    temp_directory: spill,
+    max_temp_directory_size: process.env.DUCKDB_TEMP_LIMIT || "2GB",
     allow_unsigned_extensions: "false",
     autoinstall_known_extensions: "false",
     autoload_known_extensions: "false",
+  }).catch(async (error) => {
+    await rm(spill, { recursive: true, force: true });
+    throw error;
   });
   const c = await db.connect();
   try {
@@ -190,5 +201,6 @@ export async function execute(
   } finally {
     c.closeSync();
     db.closeSync();
+    await rm(spill, { recursive: true, force: true });
   }
 }
