@@ -432,9 +432,10 @@ it("reports a refresh across the fingerprint upgrade only when the data changed"
     (await store.list(refreshes, "finding")).filter(
       (f) => f.data.datasetId === "ledger" && f.data.kind === "refresh",
     ).length;
-  // The active version's profile as an older executor stored it.
-  const downgrade = async () => {
-    const fingerprint = await untaggedFingerprint("ledger");
+  // The active version's profile as an older executor stored it: by default
+  // before #18, or as given.
+  const downgrade = async (fingerprint?: string) => {
+    fingerprint ??= await untaggedFingerprint("ledger");
     await transaction(store, refreshes, async (tx) => {
       const d = (await tx.get("ledger"))!;
       tx.update(d, { ...d.data, profile: { ...d.data.profile, fingerprint } });
@@ -452,17 +453,27 @@ it("reports a refresh across the fingerprint upgrade only when the data changed"
   expect(upgraded.data.profile.fingerprint).toBe(
     first.data.profile.fingerprint,
   );
+  // Unchanged data under tagged fingerprints.
+  await refresh(pair);
+  expect(await refreshed()).toBe(0);
+  // #18 stored the same digest as v2 without the tag.
+  await downgrade(first.data.profile.fingerprint.slice(3));
+  await refresh(pair);
+  expect(await refreshed()).toBe(0);
   // Tagged fingerprints see a changed duplicate pair.
-  await refresh([
+  const changed = await refresh([
     { id: "b", amount: 1 },
     { id: "b", amount: 1 },
   ]);
   expect(await refreshed()).toBe(1);
-  // Untagged ones still report changed data.
+  // Untagged ones of either kind still report changed data.
+  await downgrade(changed.data.profile.fingerprint.slice(3));
+  await refresh(pair);
+  expect(await refreshed()).toBe(2);
   await downgrade();
   await refresh([
     { id: "b", amount: 2 },
     { id: "c", amount: 1 },
   ]);
-  expect(await refreshed()).toBe(2);
+  expect(await refreshed()).toBe(3);
 });
