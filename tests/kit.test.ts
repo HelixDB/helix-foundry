@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
@@ -16,11 +16,13 @@ import {
   toStatus,
 } from "../apps/web/src/kit/index.js";
 import {
+  AnswerChart,
   AnswerStats,
   AnswerTable,
   answerColumns,
   chartPlan,
   sortAnswer,
+  type ChartPlan,
 } from "../apps/web/src/areas/analyst/answer-view.js";
 import { exactText } from "../apps/web/src/areas/workspace/metrics.js";
 import {
@@ -36,6 +38,25 @@ import {
   describeActivity,
 } from "../packages/shared/src/index.js";
 
+// Server rendering cannot hover or focus a chart. While `charts.focused` is
+// set, state that starts empty (null or false) starts set (0 or true), so a
+// chart renders as if its first point had focus: with its tooltip and its
+// live-region text.
+const charts = vi.hoisted(() => ({ focused: false }));
+vi.mock("react", async (importOriginal) => {
+  const react = await importOriginal<typeof import("react")>();
+  const start = (v: unknown) =>
+    !charts.focused ? v : v === null ? 0 : v === false ? true : v;
+  return { ...react, useState: (v: unknown) => react.useState(start(v)) };
+});
+const focusedChart = (plan: ChartPlan) => {
+  charts.focused = true;
+  try {
+    return renderToStaticMarkup(h(AnswerChart, { plan }));
+  } finally {
+    charts.focused = false;
+  }
+};
 const render = (node: any, url = "/") =>
   renderToStaticMarkup(h(MemoryRouter, { initialEntries: [url] }, node));
 
@@ -164,7 +185,7 @@ describe("workspace UI kit", () => {
     expect(stats).toContain("9,007,199,254,740,993");
     expect(stats).not.toContain("9,007,199,254,740,992");
   });
-  it("gives answer chart values beyond 2^53 exactly in tooltips", () => {
+  it("gives answer chart values beyond 2^53 exactly in tooltips and to screen readers", () => {
     const breakdown = chartPlan([
       { region: "EU", total: "9007199254740993" },
       { region: "US", total: "12" },
@@ -176,6 +197,13 @@ describe("workspace UI kit", () => {
       "12",
       "12.3",
     ]);
+    // The charts show and announce that text, not the nearest Number.
+    const bars = focusedChart(breakdown);
+    expect(bars).toContain(
+      '<span class="wk-chart-tip"><strong>9,007,199,254,740,993</strong>',
+    );
+    expect(bars).toContain('aria-live="polite">EU: 9,007,199,254,740,993<');
+    expect(bars).not.toContain("9,007,199,254,740,992");
     const trend = chartPlan([
       { month: "2026-02", total: 1.25 },
       { month: "2026-01", total: "-9007199254740995" },
@@ -185,6 +213,10 @@ describe("workspace UI kit", () => {
       ["2026-01", "-9,007,199,254,740,995"],
       ["2026-02", "1.25"],
     ]);
+    const line = focusedChart(trend);
+    expect(line).toContain("<strong>-9,007,199,254,740,995</strong>");
+    expect(line).toMatch(/aria-live="polite">[^<]+: -9,007,199,254,740,995</);
+    expect(line).not.toMatch(/9,007,199,254,740,99[46]/);
   });
   it("renders ARIA tabs synced to the URL and a titled page header", () => {
     const html = render(
