@@ -33,10 +33,11 @@ services:
       SUPABASE_CLIENT_SECRET: ${SUPABASE_CLIENT_SECRET:-}
       PLANETSCALE_CLIENT_ID: ${PLANETSCALE_CLIENT_ID:-}
       PLANETSCALE_CLIENT_SECRET: ${PLANETSCALE_CLIENT_SECRET:-}
-    # Memory budgets (docs/OPERATIONS.md#memory). When Docker runs out of
-    # memory, a higher oom_score_adj is stopped first: the model, then a
-    # request, then the worker, and HelixDB last.
-    mem_limit: ${APP_MEMORY_LIMIT:-2g}
+    # When Docker runs out of memory, a higher oom_score_adj is stopped first:
+    # the model, then a request, then the worker, and HelixDB last
+    # (docs/OPERATIONS.md#memory). No mem_limit: Node sizes its heap from it,
+    # and a 2g limit caps the heap near 1.1 GB, which the graph read exceeds
+    # on large workspaces.
     oom_score_adj: 300
     ports:
       - "127.0.0.1:${PUBLIC_PORT:-3001}:3001"
@@ -54,7 +55,6 @@ services:
   worker:
     <<: *app
     command: ["node", "--import", "tsx", "apps/api/src/worker.ts"]
-    mem_limit: ${WORKER_MEMORY_LIMIT:-2g}
     oom_score_adj: 200
   executor:
     <<: *app

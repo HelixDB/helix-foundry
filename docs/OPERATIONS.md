@@ -36,15 +36,17 @@ The supported runtime is Node.js 24. There are no accounts: each installation se
 
 ## Memory
 
-HelixDB, the bundled model, the app, the worker and the executor share Docker's memory. Compose gives each service a budget, so that when memory runs out the model or a single request fails with an error and HelixDB keeps running.
+HelixDB, the bundled model, the app, the worker and the executor share Docker's memory. Compose gives each service a budget and a place in the order the kernel stops them, so that when memory runs out the model or a single request fails with an error and HelixDB keeps running.
 
-| Service    | Budget in `compose.yaml` | Override in `.env`         | Measured (1.25 M-item workspace) | Stopped first when Docker runs out |
-| ---------- | ------------------------ | -------------------------- | -------------------------------- | ---------------------------------- |
-| `ollama`   | 6 GB limit               | `OLLAMA_MEMORY_LIMIT`      | 3.3 GB with `qwen3:4b` loaded    | 1st (`oom_score_adj: 500`)         |
-| `app`      | 2 GB limit               | `APP_MEMORY_LIMIT`         | 0.15–0.26 GB                     | 2nd (`300`, with the executor)     |
-| `executor` | 2 GB limit               | —                          | about 70 MB idle                 | 2nd (`300`)                        |
-| `worker`   | 2 GB limit               | `WORKER_MEMORY_LIMIT`      | about 0.55 GB                    | 3rd (`200`)                        |
-| `helix`    | 2 GB reserved, no limit  | `HELIX_MEMORY_RESERVATION` | 1.8–2.0 GB                       | Last (`0`)                         |
+| Service    | Budget in `compose.yaml` | Override in `.env`         | Measured (1.25 M-item workspace)                                         | Stopped first when Docker runs out |
+| ---------- | ------------------------ | -------------------------- | ------------------------------------------------------------------------ | ---------------------------------- |
+| `ollama`   | 6 GB limit               | `OLLAMA_MEMORY_LIMIT`      | 3.3 GB with `qwen3:4b` loaded                                            | 1st (`oom_score_adj: 500`)         |
+| `app`      | No limit                 | —                          | 0.15–0.26 GB; 3.2 GB loading the graph of a 0.5 M-record workspace (#47) | 2nd (`300`, with the executor)     |
+| `executor` | 2 GB limit               | —                          | about 70 MB idle                                                         | 2nd (`300`)                        |
+| `worker`   | No limit                 | —                          | about 0.55 GB                                                            | 3rd (`200`)                        |
+| `helix`    | 2 GB reserved, no limit  | `HELIX_MEMORY_RESERVATION` | 1.8–2.0 GB                                                               | Last (`0`)                         |
+
+- The app and worker have no memory limit on purpose. Node sizes its heap from the container limit, so a 2 GB limit caps the heap near 1.1 GB, and opening the graph explorer on a large workspace then crashes the app ("JavaScript heap out of memory"). Their `oom_score_adj` still puts them ahead of HelixDB when memory runs out.
 
 - `qwen3:4b` needs about 3.3 GB with an 8K context, and more for the 16K and 32K contexts used for long prompts. A prompt that does not fit in `OLLAMA_MEMORY_LIMIT` fails with an error; raise the limit on a machine with room to spare.
 - The model is unloaded 30 seconds after each answer instead of Ollama's default five minutes, so its memory comes back between questions. The next question reloads it in a few seconds. Set `MODEL_KEEP_ALIVE` (an Ollama duration such as `5m`, or `-1` to keep it loaded) to change this.

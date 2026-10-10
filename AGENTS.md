@@ -109,7 +109,7 @@ df -h .
 ```
 
 - The first run downloads several GB: the built app image (about 0.9 GB), HelixDB (about 160 MB), Ollama, and the `qwen3:4b` model (roughly 2.5 GB). If disk space is tight, tell the user before you continue.
-- Local AI was developed and benchmarked on a 16 GB machine, and the executor alone may use up to 2 GB. Peak memory has not yet been certified for 16 GB or 8 GB installations. Compose gives each service a memory budget, and the bundled model uses about 3.3 GB while loaded (see [docs/OPERATIONS.md](docs/OPERATIONS.md#memory)). Use the `MemTotal` figure:
+- Local AI was developed and benchmarked on a 16 GB machine, and the executor alone may use up to 2 GB. Peak memory has not yet been certified for 16 GB or 8 GB installations. Compose gives the services memory budgets and a kill order, and the bundled model uses about 3.3 GB while loaded (see [docs/OPERATIONS.md](docs/OPERATIONS.md#memory)). Use the `MemTotal` figure:
   - Below 8000000000 bytes: warn the user that local AI and a large workspace do not fit together in Docker: questions may fail and the database may restart. Offer path B or C below. Setup in the browser shows the same warning when Local is chosen.
   - From 8000000000 to 16000000000 bytes: continue, and mention in your report that local AI has not been certified at this memory size.
   - Above 16000000000 bytes: continue.
