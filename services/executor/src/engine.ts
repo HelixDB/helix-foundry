@@ -5,7 +5,7 @@ import {
 } from "@duckdb/node-api";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { resolve, dirname } from "node:path";
 import type { DatasetProfile } from "../../../packages/shared/src/index.js";
@@ -209,7 +209,11 @@ export async function execute(
           }
         }, createWriteStream(partial));
         await mkdir(dirname(file), { recursive: true });
-        await rename(partial, file);
+        // Scratch may be mounted from another file system. A copy is complete
+        // before the worker learns of the file, which is all it relies on.
+        await rename(partial, file).catch((e) =>
+          e.code === "EXDEV" ? copyFile(partial, file) : Promise.reject(e),
+        );
         return { version: job.version!, count };
       }
       await c.run(

@@ -13,6 +13,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   rm,
   chmod,
   stat,
@@ -23,6 +24,10 @@ import { join } from "node:path";
 import { bytes, execute } from "../services/executor/src/engine.js";
 import { runJob, sweepScratch } from "../services/executor/src/jobs.js";
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
+vi.mock("node:fs/promises", async (original) => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, rename: vi.fn(fs.rename) };
+});
 let dir: string;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "foundry-engine-"));
@@ -191,6 +196,34 @@ describe("isolated dataset execution", () => {
     expect(await readdir(join(dir, "datasets", "a"))).not.toContain(
       "result.parquet",
     );
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+  });
+  it("copies a materialized result when scratch is on another file system", async () => {
+    vi.mocked(rename)
+      .mockClear()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("EXDEV: cross-device link not permitted"), {
+          code: "EXDEV",
+        }),
+      );
+    expect(
+      await execute(
+        {
+          mode: "materialize",
+          scope: "a",
+          version: "copied",
+          inputs: [],
+          sql: "SELECT i AS id FROM range(3000) t(i)",
+        },
+        dir,
+      ),
+    ).toEqual({ version: "copied", count: 3000 });
+    const lines = (await readFile(resultFile(dir, "a", "copied"), "utf8"))
+      .trimEnd()
+      .split("\n");
+    expect(lines).toHaveLength(3000);
+    expect(JSON.parse(lines[2999])).toEqual({ id: "2999" });
+    expect(rename).toHaveBeenCalledOnce();
     expect(await readdir(scratchRoot(dir))).toEqual([]);
   });
   it("reads sizes as DuckDB settings do", () => {
