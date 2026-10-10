@@ -14,6 +14,13 @@ export async function runPipelineJob(
     persist: true,
   });
   await transaction(store, scope, async (tx) => {
+    // A later publication reuses output dataset ids but creates new pipeline records.
+    // Check inside the transaction so its optimistic retry also sees publication.
+    if (
+      p.data.generation &&
+      (await tx.get("workspace"))?.data.activeGeneration !== p.data.generation
+    )
+      throw new Error("Pipeline generation is no longer active");
     const ds = await tx.get(p.data.outputDatasetId);
     if (ds) {
       tx.put(
