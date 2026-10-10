@@ -30,6 +30,12 @@ export async function execute(
 ) {
   if (!safePart(job.scope) || (job.version && !safePart(job.version)))
     throw new Error("Invalid storage identity");
+  for (const [name, value] of [
+    ["limit", job.limit],
+    ["offset", job.offset],
+  ] as const)
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
+      throw new Error(`Invalid pagination ${name}`);
   const out = resolve(root, "datasets", job.scope, `${job.version}.parquet`);
   await mkdir(dirname(out), { recursive: true });
   const db = await DuckDBInstance.create(":memory:", {
@@ -139,7 +145,7 @@ export async function execute(
     ).getRowObjectsJson();
     const sample = (
       await c.runAndReadAll(
-        `SELECT * FROM result LIMIT ${Math.min(job.limit || 50, 1000)} OFFSET ${Math.max(job.offset || 0, 0)}`,
+        `SELECT * FROM result LIMIT ${Math.min(job.limit ?? 50, 1000)} OFFSET ${Math.max(job.offset || 0, 0)}`,
       )
     ).getRowObjectsJson();
     const columns = [];
