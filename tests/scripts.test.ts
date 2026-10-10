@@ -13,6 +13,8 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,6 +50,14 @@ const field = (dir: string, name: string) =>
   readFileSync(join(dir, "manifest.txt"), "utf8").match(
     new RegExp(`^${name}=(.*)$`, "m"),
   )?.[1];
+const VERSION = "version --format {{.Server.Version}}";
+const RESTORE_CALLS = [
+  VERSION,
+  "compose stop app worker executor helix",
+  "run --rm -i -v helix-foundry_helix-data:/data alpine:3.22 sh -c find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar xzf - -C /data",
+  "run --rm -i -v helix-foundry_foundry-data:/data alpine:3.22 sh -c find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar xzf - -C /data",
+  "compose up -d --build helix executor app worker",
+];
 
 const bases: string[] = [];
 afterEach(() => {
@@ -99,9 +109,15 @@ function fixture() {
     root,
     home,
     restored,
-    run: (script: string, args: string[] = [], extra = {}, cwd = base) =>
-      spawnSync("bash", [join(root, "scripts", script), ...args], {
-        cwd,
+    // flags: ["-x"] traces the script, as someone debugging it would.
+    run: (
+      script: string,
+      args: string[] = [],
+      extra = {},
+      flags: string[] = [],
+    ) =>
+      spawnSync("bash", [...flags, join(root, "scripts", script), ...args], {
+        cwd: base,
         env: { ...env, ...extra },
         encoding: "utf8",
         input: "",
@@ -114,6 +130,17 @@ function fixture() {
     calls: () => readFileSync(log, "utf8").split("\n").filter(Boolean),
     clearCalls: () => writeFileSync(log, ""),
     env: () => readFileSync(join(root, ".env"), "utf8"),
+    // Pins another HelixDB image in this checkout's compose.yaml.
+    pin: (helix: string) => {
+      const compose = join(root, "compose.yaml");
+      writeFileSync(
+        compose,
+        readFileSync(compose, "utf8").replace(
+          /^( {4}image: )ghcr\.io\/helixdb\/helixdb:\S+$/m,
+          `$1${helix}`,
+        ),
+      );
+    },
   };
 }
 type Fixture = ReturnType<typeof fixture>;
@@ -178,9 +205,11 @@ describe("backup.sh", () => {
     for (const name of readdirSync(dir))
       expect(mode(join(dir, name))).toBe(0o600);
     expect(f.calls()).toEqual([
+      VERSION,
       "volume inspect helix-foundry_helix-data",
       "volume inspect helix-foundry_foundry-data",
       "compose ps -a -q helix",
+      "compose ps --services --status running",
       "compose stop app worker executor helix",
       "run --rm -v helix-foundry_helix-data:/data:ro alpine:3.22 tar czf - -C /data .",
       "run --rm -v helix-foundry_foundry-data:/data:ro alpine:3.22 tar czf - -C /data .",
@@ -205,23 +234,72 @@ describe("backup.sh", () => {
 
   it("refuses a folder inside the repository, or one in use", () => {
     const f = fixture();
-    let r = f.run("backup.sh", [join(f.root, "backups", "today")]);
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain("outside the repository");
-    expect(existsSync(join(f.root, "backups", "today"))).toBe(false);
+    symlinkSync(f.root, join(f.base, "link"));
+    const inside = [f.root, join(f.base, "link")];
+    // Another letter case names the same folder on a case-insensitive disk.
+    if (existsSync(join(f.base, "INSTALL")))
+      inside.push(join(f.base, "INSTALL"));
+    for (const path of inside) {
+      const r = f.run("backup.sh", [join(path, "backups", "today")]);
+      expect(r.status, path).toBe(1);
+      expect(r.stderr).toContain("outside the repository");
+    }
+    expect(existsSync(join(f.root, "backups"))).toBe(false);
     const used = join(f.base, "used");
     mkdirSync(used);
     writeFileSync(join(used, "notes.txt"), "");
-    r = f.run("backup.sh", [used]);
+    const r = f.run("backup.sh", [used]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("is not empty");
     expect(f.calls()).toEqual([]);
   });
 
+  it("says when Docker is not running", () => {
+    const f = fixture();
+    const r = f.run("backup.sh", [join(f.base, "backup")], { STUB_DOWN: "1" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(
+      "Docker is not available: Cannot connect to the Docker daemon",
+    );
+    expect(r.stderr).not.toContain("does not exist");
+    expect(existsSync(join(f.base, "backup"))).toBe(false);
+    expect(f.calls()).toEqual([VERSION]);
+  });
+
+  it("starts again only the services that were running", () => {
+    const f = fixture();
+    let r = f.run("backup.sh", [join(f.base, "stopped")], { STUB_RUNNING: "" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(f.base, "stopped", "manifest.txt"))).toBe(true);
+    expect(f.calls().some((c) => c.startsWith("compose start"))).toBe(false);
+    f.clearCalls();
+    r = f.run("backup.sh", [join(f.base, "partly")], {
+      STUB_RUNNING: "worker helix",
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.calls().at(-1)).toBe("compose start helix worker");
+  });
+
+  it("keeps a complete backup when the services do not start again", () => {
+    const f = fixture();
+    const dir = join(f.base, "backup");
+    const r = f.run("backup.sh", [dir], { STUB_FAIL: "compose start*" });
+    expect(r.status).toBe(3);
+    expect(r.stderr).toContain(
+      "the backup is complete, but docker compose start",
+    );
+    expect(readdirSync(dir).sort()).toEqual([
+      "foundry-data.tgz",
+      "helix-data.tgz",
+      "manifest.txt",
+      "settings.env",
+    ]);
+  });
+
   it("restarts the services when archiving fails", () => {
     const f = fixture();
     const r = f.run("backup.sh", [join(f.base, "backup")], {
-      STUB_FAIL_RUN: "1",
+      STUB_FAIL: "run *",
     });
     expect(r.status).not.toBe(0);
     expect(f.calls().at(-1)).toBe("compose start helix executor app worker");
@@ -248,6 +326,20 @@ describe("backup.sh", () => {
     expect(field(dir, "key_file")).toBe("env.enc");
     expect(field(dir, "key_iterations")).toBe("600000");
   });
+
+  it("prints no key or passphrase when traced with bash -x", () => {
+    const f = fixture();
+    const r = f.run(
+      "backup.sh",
+      ["--include-key", join(f.base, "backup")],
+      { BACKUP_PASSPHRASE: PASSPHRASE },
+      ["-x"],
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toMatch(/^\+ umask 077$/m);
+    for (const secret of [KEY, INTERNAL, SECRET, PASSPHRASE])
+      expect(r.stdout + r.stderr).not.toContain(secret);
+  });
 });
 
 describe("restore.sh", () => {
@@ -263,12 +355,7 @@ describe("restore.sh", () => {
       expect(readFileSync(join(f.restored, volume + ".tgz"))).toEqual(
         readFileSync(join(dir, volume + ".tgz")),
       );
-    expect(f.calls()).toEqual([
-      "compose stop app worker executor helix",
-      "run --rm -i -v helix-foundry_helix-data:/data alpine:3.22 sh -c find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar xzf - -C /data",
-      "run --rm -i -v helix-foundry_foundry-data:/data alpine:3.22 sh -c find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar xzf - -C /data",
-      "compose up -d --build helix executor app worker",
-    ]);
+    expect(f.calls()).toEqual(RESTORE_CALLS);
   });
 
   it("refuses another key unless --env-file names the kept .env", () => {
@@ -276,6 +363,7 @@ describe("restore.sh", () => {
     const dir = backup(f);
     const other = ENV.replace(KEY, "c3".repeat(32));
     writeFileSync(join(f.root, ".env"), other);
+    chmodSync(join(f.root, ".env"), 0o644);
     let r = f.run("restore.sh", [dir, "--replace"]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("Pass --env-file");
@@ -306,9 +394,54 @@ describe("restore.sh", () => {
     );
     expect(saved).toHaveLength(1);
     expect(readFileSync(join(f.root, saved[0]), "utf8")).toBe(other);
-    expect(f.calls()).toContain(
-      "compose up -d --build helix executor app worker",
+    expect(mode(join(f.root, saved[0]))).toBe(0o600);
+    expect(r.stdout).toContain("delete it once the restore is confirmed");
+    expect(f.calls()).toEqual(RESTORE_CALLS);
+  });
+
+  it("changes .env only after the data is restored", () => {
+    const f = fixture();
+    const dir = backup(f);
+    const other = ENV.replace(KEY, "c3".repeat(32));
+    writeFileSync(join(f.root, ".env"), other);
+    writeFileSync(join(f.base, "kept.env"), ENV);
+    const args = [dir, "--replace", "--env-file", join(f.base, "kept.env")];
+    let r = f.run("restore.sh", args, { STUB_DOWN: "1" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Docker is not available");
+    expect(r.stderr).toContain("Nothing was changed.");
+    expect(f.calls()).toEqual([VERSION]);
+    f.clearCalls();
+    r = f.run("restore.sh", args, { STUB_FAIL: "compose stop*" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("The restore did not finish");
+    r = f.run("restore.sh", args, { STUB_FAIL: "run *foundry-data*" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("The restore did not finish");
+    expect(f.env()).toBe(other);
+    expect(readdirSync(f.root).filter((n) => n.startsWith(".env"))).toEqual([
+      ".env",
+    ]);
+    expect(f.calls().some((c) => c.includes("up -d"))).toBe(false);
+    r = f.run("restore.sh", args, {
+      STUB_FAIL: "compose up -d --build *",
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(
+      "The data is restored, but the services did not start",
     );
+    expect(f.env()).toBe(ENV);
+  });
+
+  it("refuses a damaged archive before it stops anything", () => {
+    const f = fixture();
+    const dir = backup(f);
+    truncateSync(join(dir, "foundry-data.tgz"), 20);
+    const r = f.run("restore.sh", [dir, "--replace"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("foundry-data.tgz in");
+    expect(r.stderr).toContain("Nothing was changed.");
+    expect(f.calls()).toEqual([]);
   });
 
   it("reads relative paths from the folder it runs in", () => {
@@ -330,12 +463,13 @@ describe("restore.sh", () => {
 
   it("restores with another key only when told to", () => {
     const f = fixture();
-    const dir = backup(f);
+    // Even a backup with env.enc, when its passphrase is lost.
+    const dir = backup(f, ["--include-key"], { BACKUP_PASSPHRASE: PASSPHRASE });
     const other = ENV.replace(KEY, "c3".repeat(32));
     writeFileSync(join(f.root, ".env"), other);
     const r = f.run("restore.sh", [dir, "--replace", "--accept-key-mismatch"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr).toContain("Re-enter them");
+    expect(r.stderr).toContain("re-enter them after the restore");
     expect(f.env()).toBe(other);
   });
 
@@ -343,9 +477,12 @@ describe("restore.sh", () => {
     const f = fixture();
     const dir = backup(f);
     rmSync(join(f.root, ".env"));
-    const r = f.run("restore.sh", [dir, "--replace"]);
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain("There is no .env here");
+    for (const args of [[], ["--accept-key-mismatch"]]) {
+      const r = f.run("restore.sh", [dir, "--replace", ...args]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("There is no .env here");
+      expect(r.stderr).toContain("run ./scripts/setup.sh");
+    }
     expect(f.calls()).toEqual([]);
   });
 
@@ -372,6 +509,33 @@ describe("restore.sh", () => {
     expect(r.stdout + r.stderr).not.toContain(KEY);
   });
 
+  it("prints no key or passphrase when traced with bash -x", () => {
+    const f = fixture();
+    const dir = backup(f, ["--include-key"], { BACKUP_PASSPHRASE: PASSPHRASE });
+    rmSync(join(f.root, ".env"));
+    let r = f.run(
+      "restore.sh",
+      [dir, "--replace"],
+      { BACKUP_PASSPHRASE: PASSPHRASE },
+      ["-x"],
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toMatch(/^\+ umask 077$/m);
+    let output = r.stdout + r.stderr;
+    writeFileSync(join(f.base, "kept.env"), ENV);
+    writeFileSync(join(f.root, ".env"), ENV.replace(KEY, "c3".repeat(32)));
+    r = f.run(
+      "restore.sh",
+      [dir, "--replace", "--env-file", join(f.base, "kept.env")],
+      {},
+      ["-x"],
+    );
+    expect(r.status, r.stderr).toBe(0);
+    output += r.stdout + r.stderr;
+    for (const secret of [KEY, "c3".repeat(32), INTERNAL, SECRET, PASSPHRASE])
+      expect(output).not.toContain(secret);
+  });
+
   it("restores an old backup that holds config.env, with a warning", () => {
     const f = fixture();
     const dir = backup(f);
@@ -382,26 +546,75 @@ describe("restore.sh", () => {
     rmSync(join(f.root, ".env"));
     const r = f.run("restore.sh", [dir, "--replace"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr).toContain("config.env holds your encryption key");
+    expect(r.stderr).toContain("config.env, which holds an encryption key");
     expect(r.stderr).toContain("does not record its HelixDB version");
     expect(f.env()).toBe(old);
     expect(mode(join(f.root, ".env"))).toBe(0o600);
   });
 
-  it("refuses data from a newer HelixDB, and upgrades older data", () => {
+  it("checks a config.env against the manifest", () => {
     const f = fixture();
-    let dir = backup(f, [], { STUB_HELIX_IMAGE: image("99.0.0") });
+    const dir = backup(f);
+    writeFileSync(join(dir, "config.env"), ENV.replace(KEY, "d4".repeat(32)));
+    const other = ENV.replace(KEY, "c3".repeat(32));
+    writeFileSync(join(f.root, ".env"), other);
     let r = f.run("restore.sh", [dir, "--replace"]);
     expect(r.status).toBe(1);
+    expect(r.stderr).toContain("config.env, which holds an encryption key");
     expect(r.stderr).toContain(
-      `HelixDB 99.0.0 made this backup, but this checkout runs HelixDB ${pinned[2]}`,
+      "The ENCRYPTION_KEY in config.env in the backup is not the key",
     );
-    expect(r.stderr).toContain("check out the Helix Foundry release");
+    expect(f.env()).toBe(other);
     expect(f.calls()).toEqual([]);
-    dir = backup(f, [], { STUB_HELIX_IMAGE: image("0.0.1") });
+    writeFileSync(join(dir, "config.env"), ENV);
     r = f.run("restore.sh", [dir, "--replace"]);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("upgrades the restored data one way");
+    expect(f.env()).toBe(ENV);
+  });
+
+  it("refuses data from a newer HelixDB storage format", () => {
+    const f = fixture();
+    f.pin(image("0.0.9"));
+    for (const version of ["0.0.10", "99.0.0"]) {
+      const dir = backup(f, [], { STUB_HELIX_IMAGE: image(version) });
+      const r = f.run("restore.sh", [dir, "--replace"]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(
+        `HelixDB ${version} made this backup, but this checkout runs HelixDB 0.0.9`,
+      );
+      expect(r.stderr).toContain("check out the Helix Foundry release");
+      expect(f.calls()).toEqual([]);
+    }
+  });
+
+  it("restores data HelixDB can open, and says when it upgrades one way", () => {
+    const f = fixture();
+    const restore = (running: string) => {
+      const r = f.run("restore.sh", [
+        backup(f, [], { STUB_HELIX_IMAGE: running }),
+        "--replace",
+      ]);
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout + r.stderr;
+    };
+    // The same version, recorded without its digest.
+    expect(restore(`ghcr.io/helixdb/helixdb:v${pinned[2]}`)).not.toContain(
+      "HelixDB",
+    );
+    f.pin(image("0.0.6"));
+    expect(restore(image("0.0.9"))).toContain(
+      "HelixDB 0.0.9 made this backup. This checkout runs HelixDB 0.0.6, which uses the same storage format.",
+    );
+    f.pin(image("0.0.10"));
+    expect(restore(image("0.0.11"))).toContain("uses the same storage format");
+    let output = restore(image("0.0.9"));
+    expect(output).toContain(
+      "HelixDB 0.0.9 made this backup. This checkout runs HelixDB 0.0.10, which upgrades the restored data's index storage one way",
+    );
+    f.pin(image("0.0.12"));
+    output = restore(image("0.0.10"));
+    expect(output).toContain("This checkout runs HelixDB 0.0.12.");
+    expect(output).not.toContain("one way");
   });
 
   it("refuses data with a newer metadata schema", () => {
@@ -453,7 +666,7 @@ describe("upgrade.sh", () => {
   it("stops before upgrading when the backup fails", () => {
     const f = fixture();
     const { from } = release(f);
-    const r = f.run("upgrade.sh", ["--yes"], { STUB_FAIL_RUN: "1" });
+    const r = f.run("upgrade.sh", ["--yes"], { STUB_FAIL: "run *" });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("the backup failed. Nothing was upgraded.");
     expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);

@@ -2,6 +2,7 @@
 # Backs up the HelixDB and data volumes. The backup holds no ENCRYPTION_KEY or
 # INTERNAL_KEY: keep a separate copy of .env. --include-key adds the whole .env,
 # encrypted with a passphrase (BACKUP_PASSPHRASE, or typed in the terminal).
+# Exit status 3 means the backup is complete, but the services did not start again.
 set -euo pipefail
 umask 077
 here=$PWD
@@ -17,10 +18,15 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-backup_dir=$(from_here "${backup_dir:-$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)}")
+[ -n "$backup_dir" ] || backup_dir=$(new_backup_dir)
+backup_dir=$(from_here "$backup_dir")
+outside='Choose a backup folder outside the repository, for example ~/helix-foundry-backups/NAME.'
 [ -f .env ] || die 'There is no .env here. Run this from the checkout that runs Helix Foundry.'
 fingerprint=$(key_fingerprint < .env)
 [ -n "$fingerprint" ] || die 'ENCRYPTION_KEY in .env is missing or shorter than 32 characters.'
+! inside_repo "$backup_dir" || die "$outside"
+[ ! -d "$backup_dir" ] || [ -z "$(ls -A "$backup_dir")" ] \
+  || die "$backup_dir is not empty. Use a new folder for each backup."
 if [ -n "$include_key" ]; then
   cat >&2 <<'NOTE'
 WARNING: --include-key stores your whole .env in the backup as env.enc, encrypted
@@ -31,34 +37,40 @@ NOTE
   read_passphrase new
   [ "${#passphrase}" -ge 12 ] || die 'Use a passphrase of at least 12 characters.'
 fi
+docker_ready
+project_name="${COMPOSE_PROJECT_NAME:-helix-foundry}"
+for volume in helix-data foundry-data; do
+  docker volume inspect "${project_name}_$volume" > /dev/null 2>&1 \
+    || die "Docker volume ${project_name}_$volume does not exist. Run this from the checkout that runs Helix Foundry, with the same COMPOSE_PROJECT_NAME."
+done
 mkdir -p "$backup_dir"
 backup_dir="$(cd "$backup_dir" && pwd -P)"
 if inside_repo "$backup_dir"; then
   rmdir "$backup_dir" 2> /dev/null || true
-  die 'Choose a backup folder outside the repository, for example ~/helix-foundry-backups/NAME.'
+  die "$outside"
 fi
 [ -z "$(ls -A "$backup_dir")" ] || die "$backup_dir is not empty. Use a new folder for each backup."
 chmod 700 "$backup_dir"
-project_name="${COMPOSE_PROJECT_NAME:-helix-foundry}"
-for volume in helix-data foundry-data; do
-  if ! docker volume inspect "${project_name}_$volume" > /dev/null 2>&1; then
-    rmdir "$backup_dir"
-    die "Docker volume ${project_name}_$volume does not exist. Run this from the checkout that runs Helix Foundry, with the same COMPOSE_PROJECT_NAME."
-  fi
+running_image=$(running_helix_image)
+
+# Start again only the services that were running, so a stopped stack stays stopped.
+running=" $(docker compose ps --services --status running 2> /dev/null | tr '\n' ' ') " \
+  || running=" helix executor app worker "
+restart=""
+for service in helix executor app worker; do
+  case $running in *" $service "*) restart="${restart:+$restart }$service" ;; esac
 done
-helix_container=$(docker compose ps -a -q helix 2> /dev/null | head -n 1 || true)
-running_image=""
-if [ -n "$helix_container" ]; then
-  running_image=$(docker inspect --format '{{.Config.Image}}' "$helix_container" 2> /dev/null || true)
-fi
+start_again() { [ -z "$restart" ] || docker compose start $restart; }
 docker compose stop app worker executor helix
-trap 'docker compose start helix executor app worker' EXIT
+trap start_again EXIT
 for volume in helix-data foundry-data; do
   docker run --rm -v "${project_name}_$volume:/data:ro" alpine:3.22 tar czf - -C /data . \
     > "$backup_dir/$volume.tgz.partial"
 done
 trap - EXIT
-docker compose start helix executor app worker
+restarted=1
+start_again || restarted=""
+
 for volume in helix-data foundry-data; do
   tar -tzf "$backup_dir/$volume.tgz.partial" > /dev/null \
     || die "$volume.tgz.partial in $backup_dir cannot be read back, so this backup is incomplete."
@@ -72,14 +84,17 @@ if [ -n "$include_key" ]; then
     || die "env.enc in $backup_dir does not decrypt to this .env, so this backup is incomplete."
   key_file=env.enc
 fi
+# The data comes from the commit the services were started from, which upgrade.sh
+# and restore.sh record; without a record, it is the checked-out commit.
+app_commit=$(recorded_commit || git rev-parse HEAD 2> /dev/null || echo unknown)
 # Written last: a backup without manifest.txt is incomplete.
 {
   echo '# Helix Foundry backup manifest. This file holds no keys; see scripts/restore.sh.'
   echo 'format=2'
   echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "app_commit=$(git rev-parse HEAD 2> /dev/null || echo unknown)"
-  echo "app_schema=$(schema_version)"
-  echo "helix_image=$(helix_image < compose.yaml)"
+  echo "app_commit=$app_commit"
+  echo "app_schema=$(file_at "$app_commit" apps/api/src/store.ts | schema_version)"
+  echo "helix_image=$(file_at "$app_commit" compose.yaml | helix_image)"
   echo "helix_image_running=$running_image"
   echo "compose_project=$project_name"
   echo "key_fingerprint=$fingerprint"
@@ -92,4 +107,8 @@ if [ -n "$include_key" ]; then
 else
   echo 'It does not include ENCRYPTION_KEY. Keep a separate copy of .env, for example in a'
   echo 'password manager: without it, restored connector and AI credentials cannot be decrypted.'
+fi
+if [ -z "$restarted" ]; then
+  echo "WARNING: the backup is complete, but docker compose start $restart failed, so those services are stopped. Fix the error above, then start them: docker compose up -d $restart" >&2
+  exit 3
 fi

@@ -1,5 +1,6 @@
 # Helpers for backup.sh, restore.sh and upgrade.sh, sourced from the repository
-# root. Nothing here prints ENCRYPTION_KEY or INTERNAL_KEY.
+# root. Nothing here prints ENCRYPTION_KEY or INTERNAL_KEY, and the functions that
+# handle a key or a passphrase turn off tracing (bash -x), which would print them.
 
 # The .env lines a backup keeps in settings.env. Keys and client secrets stay out.
 settings_pattern='^(PUBLIC_PORT|PUBLIC_ORIGIN|MODEL_ENDPOINT|COMPOSE_PROJECT_NAME|APP_ORIGIN|HELIX_URL|EXECUTOR_URL|OLLAMA_URL|DATA_DIR|PORT|EXECUTOR_PORT|NEON_CLIENT_ID|SUPABASE_CLIENT_ID|PLANETSCALE_CLIENT_ID)='
@@ -15,14 +16,14 @@ die() {
 # nothing if the key is missing or shorter than 32 characters. The app encrypts
 # credentials with sha256(ENCRYPTION_KEY), so the fingerprint hashes the key with a
 # prefix: it identifies the key without revealing anything that decrypts.
-key_fingerprint() {
-  local key
+key_fingerprint() (
+  { set +x; } 2> /dev/null
   key=$(sed -n 's/^ENCRYPTION_KEY=//p' | tail -n 1 | tr -d '\r')
   case $key in \"*\" | \'*\') key=${key:1:${#key}-2} ;; esac
   if [ "${#key}" -ge 32 ]; then
     printf 'helix-foundry-key-fingerprint:%s' "$key" | openssl dgst -sha256 | awk '{print $NF}'
   fi
-}
+)
 
 # Prints field $2 of the manifest file $1, or nothing.
 manifest_field() {
@@ -55,36 +56,100 @@ version_newer() {
   return 1
 }
 
-# Prints the metadata schema version of this checkout's application.
+# Prints the index storage version HelixDB $1 (X.Y.Z) uses, where the release notes
+# give it: v0.0.6 to v0.0.9 keep one data format, and v0.0.10 upgrades it one way
+# to the format v0.0.11 also uses. Prints nothing for other versions.
+helix_storage() {
+  case $1 in
+    0.0.[6-9]) echo 4 ;;
+    0.0.1[01]) echo 5 ;;
+  esac
+}
+
+# Prints the metadata schema version from apps/api/src/store.ts read on stdin.
 schema_version() {
-  if [ -f apps/api/src/store.ts ]; then
-    sed -n 's/^export const SCHEMA_VERSION = \([0-9][0-9]*\);.*/\1/p' apps/api/src/store.ts
+  sed -n 's/^export const SCHEMA_VERSION = \([0-9][0-9]*\);.*/\1/p'
+}
+
+# Prints file $2 as of commit $1, or this checkout's copy when $1 is checked out.
+file_at() {
+  if [ "$1" = unknown ] || [ "$1" = "$(git rev-parse HEAD 2> /dev/null)" ]; then
+    cat "$2" 2> /dev/null
+  else
+    git show "$1:$2" 2> /dev/null
   fi
+}
+
+# upgrade.sh and restore.sh record the commit the services run in the git
+# directory, so it is never committed. recorded_commit prints it, or fails when
+# there is no record; record_deployed records commit $1, or the checked-out one.
+deployed_file() { git rev-parse --git-path helix-foundry-deployed 2> /dev/null; }
+recorded_commit() {
+  local file
+  file=$(deployed_file) && [ -s "$file" ] || return 1
+  git rev-parse --verify --quiet "$(head -n 1 "$file")^{commit}"
+}
+record_deployed() {
+  local file
+  file=$(deployed_file) && git rev-parse "${1:-HEAD}" 2> /dev/null > "$file" || true
+}
+
+# Prints the image the HelixDB container was created from, or nothing.
+running_helix_image() {
+  local container
+  container=$(docker compose ps -a -q helix 2> /dev/null | head -n 1) || true
+  if [ -n "$container" ]; then
+    docker inspect --format '{{.Config.Image}}' "$container" 2> /dev/null || true
+  fi
+}
+
+# Stops with Docker's own error when Docker is not running or cannot be used.
+docker_ready() {
+  local error
+  error=$(docker version --format '{{.Server.Version}}' 2>&1 > /dev/null) \
+    || die "Docker is not available: ${error:-docker version failed}. Start Docker, then run this again.${1:+ $1}"
 }
 
 # Sets $passphrase from BACKUP_PASSPHRASE or a terminal prompt; "new" asks twice.
 read_passphrase() {
+  { local trace=$-; set +x; } 2> /dev/null
   passphrase=${BACKUP_PASSPHRASE:-}
-  [ -z "$passphrase" ] || return 0
-  [ -t 0 ] || die 'Set BACKUP_PASSPHRASE, or run this in a terminal to type the backup passphrase.'
-  IFS= read -rs -p 'Backup passphrase: ' passphrase
-  echo >&2
-  if [ "${1:-}" = new ]; then
-    local again
-    IFS= read -rs -p 'Type it again: ' again
+  if [ -z "$passphrase" ]; then
+    [ -t 0 ] || die 'Set BACKUP_PASSPHRASE, or run this in a terminal to type the backup passphrase.'
+    IFS= read -rs -p 'Backup passphrase: ' passphrase
     echo >&2
-    [ "$passphrase" = "$again" ] || die 'The passphrases do not match.'
+    if [ "${1:-}" = new ]; then
+      local again
+      IFS= read -rs -p 'Type it again: ' again
+      echo >&2
+      [ "$passphrase" = "$again" ] || die 'The passphrases do not match.'
+    fi
   fi
+  case $trace in *x*) set -x ;; esac
 }
 
 # The passphrase reaches openssl through its environment, never its arguments.
-encrypt_env() { # $1 = env file, $2 = output
+encrypt_env() ( # $1 = env file, $2 = output
+  { set +x; } 2> /dev/null
   HF_BACKUP_PASSPHRASE=$passphrase openssl enc -aes-256-cbc -salt -pbkdf2 -md sha256 \
     -iter "$key_iterations" -pass env:HF_BACKUP_PASSPHRASE -in "$1" -out "$2"
-}
-decrypt_env() { # $1 = env.enc, $2 = iterations; writes the .env to stdout
+)
+decrypt_env() ( # $1 = env.enc, $2 = iterations; writes the .env to stdout
+  { set +x; } 2> /dev/null
   HF_BACKUP_PASSPHRASE=$passphrase openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 \
     -iter "${2:-$key_iterations}" -pass env:HF_BACKUP_PASSPHRASE -in "$1"
+)
+
+# Prints a new folder for a backup in ~/helix-foundry-backups, named after the time.
+new_backup_dir() {
+  local base dir n=1
+  base="$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)"
+  dir=$base
+  while [ -e "$dir" ]; do
+    n=$((n + 1))
+    dir="$base-$n"
+  done
+  printf '%s\n' "$dir"
 }
 
 # Prints path $1 from the command line as an absolute path. The scripts run from
@@ -96,8 +161,16 @@ from_here() {
   esac
 }
 
-# Succeeds when the absolute path $1 is inside this repository.
+# Succeeds when the absolute path $1, which need not exist yet, is inside this
+# repository. It compares folders by device and inode (-ef), so another spelling
+# of the path, such as other letter case or a symbolic link, still matches.
 inside_repo() {
-  case "$1/" in "$(pwd -P)/"*) return 0 ;; esac
-  return 1
+  local dir=$1
+  while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+  dir=$(cd "$dir" && pwd -P) || return 0
+  while true; do
+    if [ "$dir" -ef . ]; then return 0; fi
+    if [ "$dir" = / ]; then return 1; fi
+    dir=$(dirname "$dir")
+  done
 }
