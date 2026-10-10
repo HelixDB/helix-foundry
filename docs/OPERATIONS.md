@@ -4,7 +4,7 @@
 
 `./scripts/setup.sh --compose` starts the local-model profile and downloads the tested Qwen3 4B model. The app is available on `http://localhost:3001`. On Apple Silicon, native Ollama can use Metal: run the data services without `--profile local` and set `MODEL_ENDPOINT=http://host.docker.internal:11434` in `.env`.
 
-Keep `.env`, data volumes, and backups private. The application encrypts connector/provider credentials using `ENCRYPTION_KEY`; losing that key makes those credentials unrecoverable. Do not rotate it by simply replacing the environment value. Helix Foundry has no sign-in, so do not admit other devices. The API refuses a non-loopback `HOST` unless `ALLOW_NETWORK_ACCESS=true`, which Compose sets because it publishes the app on `127.0.0.1` only. Do not expose it to a network through a reverse proxy, tunnel, or port forward. Internal HelixDB, Ollama, and executor ports are not published by Compose.
+Keep `.env`, data volumes, and backups private. The application encrypts connector/provider credentials using `ENCRYPTION_KEY`; losing that key makes those credentials unrecoverable, and backups do not include it. Do not rotate it by simply replacing the environment value. Helix Foundry has no sign-in, so do not admit other devices. The API refuses a non-loopback `HOST` unless `ALLOW_NETWORK_ACCESS=true`, which Compose sets because it publishes the app on `127.0.0.1` only. Do not expose it to a network through a reverse proxy, tunnel, or port forward. Internal HelixDB, Ollama, and executor ports are not published by Compose.
 
 ## Diagnostics and schema migration
 
@@ -12,7 +12,7 @@ Keep `.env`, data volumes, and backups private. The application encrypts connect
 
 Jobs claim leases and periodically renew them. A worker restart reclaims expired leases. AI stages save definitions and usage after each completed stage; a failed/canceled run can be resumed through Activity or the API. Input changes invalidate cached stages. Failed connector/pipeline jobs retry three times with bounded backoff. A stopped worker does not stop published dashboard queries.
 
-## Backup, restore, and upgrades
+## Change capture
 
 Database synchronization prefers native CDC. PostgreSQL needs logical WAL, a replication-capable login, a primary key/usable replica identity, table publication permission, and available replication slots. Foundry creates a publication and slot scoped to each selected table. MySQL needs row-format binary logging, SELECT access, and replication client/slave privileges. Read-only logins still import through the scheduled fallback. Foundry never changes server-wide database configuration or writes business records back to sources.
 
@@ -20,11 +20,17 @@ The capture service runs independently of inference, saves its dirty counter and
 
 Monitor source-side WAL/binlog disk retention. Configure PostgreSQL's `max_slot_wal_keep_size` and a suitable MySQL binlog expiration policy for the installation; the application does not alter either server setting. Stop capture before manually removing Foundry-owned slots/publications. Keep their names from the source's sync metadata when decommissioning a source or changing its endpoint. Do not drop other applications' replication resources.
 
-1. Run `./scripts/backup.sh PATH`. It stops writers and HelixDB, archives the data volumes, saves the encryption configuration, then restarts services.
-2. Copy the backup to private off-host storage.
-3. For a replacement installation, use `./scripts/restore.sh PATH --replace`. This replaces that installation's data volumes and `.env`.
-4. Set `COMPOSE_PROJECT_NAME` when using a nondefault project name; use the same name throughout backup and restore.
-5. Before upgrades, retain the old application commit, lockfile, image, and backup. Rebuild and run diagnostics, sample ingestion, a saved query, and proposal validation before using the installation again. Revert the application plus matching data backup if an upgrade fails.
+## Backup, restore, and upgrades
+
+Backups do not contain `ENCRYPTION_KEY` or `INTERNAL_KEY`. Keep a separate copy of `.env`, for example in a password manager; without it, a restored installation cannot decrypt its connector and AI credentials.
+
+1. Run `./scripts/backup.sh PATH` with a new folder outside the repository (the default is `~/helix-foundry-backups/TIME`). It stops writers and HelixDB, archives the data volumes, restarts the services and checks that the archives read back. It writes `settings.env` with the non-secret `.env` lines and `manifest.txt` with the app commit, the HelixDB image, the metadata schema version and a fingerprint of `ENCRYPTION_KEY`. The fingerprint is a SHA-256 of the key with a fixed prefix, so it identifies the key without revealing it. Every file is readable only by you.
+2. To keep the keys with the backup, run `./scripts/backup.sh --include-key PATH`. It stores the whole `.env` as `env.enc`, encrypted with AES-256-CBC and a key derived from your passphrase with PBKDF2-SHA256 (600,000 iterations). Type the passphrase when asked, or set `BACKUP_PASSPHRASE`; never put it on the command line. Anyone with the backup and the passphrase can decrypt every stored credential.
+3. Copy the backup to private off-host storage.
+4. To restore, run `./scripts/restore.sh PATH --replace`. It checks the backup before it stops anything. It keeps `.env` if its key matches the backup's fingerprint. Otherwise it uses `--env-file FILE` (your copy of `.env`), then `env.enc`, then the `config.env` of a backup made before this format, which holds the key in plain text; restore warns about it. It saves the `.env` it replaces as `.env.pre-restore-TIME`. It refuses a key that does not match, unless you pass `--accept-key-mismatch` to restore the data without its credentials, which you then enter again. It also refuses a backup written by a newer HelixDB or with a newer metadata schema than the checkout, and names the commit to check out. Then it replaces both data volumes and rebuilds and starts the services.
+5. Set `COMPOSE_PROJECT_NAME` when using a nondefault project name; use the same name throughout backup and restore.
+6. Upgrade with `./scripts/upgrade.sh`. The backup is its first step and cannot be skipped: it fetches the upstream branch, takes a fresh backup (`--backup-dir DIR` chooses the folder, `--include-key` passes through), checks it, and stops without changing anything if the backup fails. It records the previous commit and HelixDB image in the backup's `manifest.txt` and `upgrade.txt`, fast-forwards, and rebuilds and restarts with `docker compose up -d --build`. Afterwards, run diagnostics, sample ingestion, a saved query, and proposal validation before using the installation again.
+7. HelixDB upgrades are one way. The first time HelixDB v0.0.10 or later opens a database, it upgrades the index storage, and v0.0.9 and earlier then refuse it with `unsupported_index_storage_version`. When a release changes the pinned HelixDB image in `compose.yaml`, `upgrade.sh` prints a warning and waits for `yes` (or `--yes`) before the backup and the new image; it refuses a release that moves HelixDB back to an older version. To revert a failed upgrade, check out the previous commit and restore the backup taken before it.
 
 Model weights are reproducible and excluded from application backups. Parquet versions and staged artifacts are immutable; unsuccessful previews can consume disk. There is no automatic artifact garbage collector in this MVP. Remove unreferenced files only during offline maintenance, after checking proposal/run previews and version records.
 

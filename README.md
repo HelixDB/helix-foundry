@@ -108,7 +108,7 @@ Helix Foundry is developed and validated on macOS with Apple Silicon, and CI run
 - **Versioned data:** immutable Parquet snapshots with profiles, schema-drift review and history, queried by isolated DuckDB processes.
 - **Home and Analyst:** key metrics, and answers to your questions backed by executed SQL with snapshot citations.
 - **Your choice of AI:** local `qwen3:4b` through Ollama by default, or Claude or OpenAI. AI-proposed changes are tested and wait for your review.
-- **Developer access:** OpenAPI at `/api/docs`, a TypeScript SDK, scoped API tokens, and backup and restore scripts.
+- **Developer access:** OpenAPI at `/api/docs`, a TypeScript SDK, scoped API tokens, and backup, restore and upgrade scripts.
 
 The full feature list, connector details and architecture are in the [guide](docs/GUIDE.md).
 
@@ -125,15 +125,9 @@ docker compose --profile local up -d                # start again
 
 The stack starts again with Docker unless you stopped it.
 
-**Upgrade.** Back up first, then pull and rebuild:
+**Upgrade.** Run `./scripts/upgrade.sh`. It backs up to `~/helix-foundry-backups/` first and stops if the backup fails, then pulls and rebuilds. If the new release changes HelixDB, it asks first: a newer HelixDB upgrades your data one way, so only that backup can take you back.
 
-```sh
-./scripts/backup.sh ~/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)
-git pull
-docker compose --profile local up -d --build
-```
-
-**Back up and restore.** `./scripts/backup.sh PATH` briefly stops the services, archives the HelixDB and data volumes, and copies `.env` as `config.env`. Keep backups private and outside the repository, because `config.env` holds your encryption key. `./scripts/restore.sh PATH --replace` replaces the current data and `.env` with a backup.
+**Back up and restore.** `./scripts/backup.sh PATH` briefly stops the services and archives the HelixDB and data volumes to a folder outside the repository. Backups leave out your encryption key, so keep a separate copy of `.env`, for example in a password manager. `--include-key` adds `.env`, encrypted with a passphrase. `./scripts/restore.sh PATH --replace` replaces the current data. It refuses a backup made with another key unless you pass your copy with `--env-file`.
 
 Never run `docker compose down -v` unless you mean to delete everything. It removes all workspaces, imported data and stored credentials. See [operations](docs/OPERATIONS.md) for upgrades, change capture and limits.
 
@@ -158,7 +152,7 @@ Helix Foundry is built for one person on their own computer. There are no accoun
 
 - The app is published on `127.0.0.1` only. Never expose it with a reverse proxy, tunnel or port forward, and never publish the internal HelixDB, executor or Ollama ports.
 - The API rejects requests whose `Host` is not this computer, and browser changes from any other origin, with `403`.
-- Connector and AI credentials are encrypted with `ENCRYPTION_KEY` from `.env`. Keep `.env` and backups private and out of git. If you lose the key, stored credentials cannot be recovered. Do not try to rotate it by replacing the value.
+- Connector and AI credentials are encrypted with `ENCRYPTION_KEY` from `.env`. Keep `.env` and backups private and out of git, and keep a copy of `.env` apart from your backups, which do not include the key. If you lose the key, stored credentials cannot be recovered. Do not try to rotate it by replacing the value.
 - Generated SQL runs in a separate DuckDB executor on an internal network with no internet access, no connector credentials, no Linux capabilities, and memory and process limits.
 - Scripts and the SDK use workspace-scoped API tokens from **Settings → Developer tools**. Tokens are read-only unless you grant write access.
 

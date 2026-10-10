@@ -16,7 +16,7 @@ curl -fsS http://localhost:<PORT>/api/health
 
 - Run every command from the repository root.
 - Ask the user before anything destructive or disruptive: removing containers, volumes, images or files, restoring a backup, stopping or killing a process you did not start, or installing software.
-- Never print, `cat`, paste into chat or commit `.env` or a backup's `config.env`. They hold the encryption key. Do not open `.env` with an editor or file-reading tool either, because that puts the keys in your transcript. Use the `grep` and `sed` commands in this runbook, which change or show only the non-secret `PUBLIC_PORT`, `PUBLIC_ORIGIN` and `MODEL_ENDPOINT` lines.
+- Never print, `cat`, paste into chat or commit `.env`, a backup's `env.enc` or an older backup's `config.env`. They hold the encryption key. Do not ask for, type or store a backup passphrase either: the user types it in their own terminal. Do not open `.env` with an editor or file-reading tool either, because that puts the keys in your transcript. Use the `grep` and `sed` commands in this runbook, which change or show only the non-secret `PUBLIC_PORT`, `PUBLIC_ORIGIN` and `MODEL_ENDPOINT` lines.
 - Never delete, regenerate or overwrite an existing `.env`. Losing `ENCRYPTION_KEY` makes stored credentials unrecoverable.
 - If a port is busy, choose another port. Do not stop whatever is using it.
 - Do not ask for, type or store the user's Claude or OpenAI keys or database passwords. The user enters them in the browser.
@@ -61,13 +61,13 @@ docker ps --filter label=com.docker.compose.project=helix-foundry \
 
 The Compose project name is always `helix-foundry`, whichever folder it runs from, so every checkout on this computer shares the same containers and volumes.
 
-| What you found                                                                                       | What it means and what to do                                                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `.env`, no `helix-foundry_` volumes, no project                                                   | Fresh install. Continue.                                                                                                                                                                                                                                             |
-| `.env` exists                                                                                        | Existing install. Keep `.env` and its settings, and continue. `setup.sh` will leave it alone.                                                                                                                                                                        |
-| No `.env`, but `helix-foundry_helix-data` or `helix-foundry_foundry-data` exists                     | Stop and ask the user. That data was written with a key from an earlier `.env`. Ask whether they have that file or a backup `config.env`. A new key leaves the workspaces in place but makes their stored credentials unreadable. (`helix-foundry_model-data` alone holds only model weights and is safe to reuse.) |
-| A `helix-foundry` project is listed whose CONFIG FILES path is not this folder's `compose.yaml`      | Stop and ask the user which checkout to use. Starting from this folder would take over and recreate the running containers, and use their volumes with this folder's `.env`.                                                                                        |
-| `app running:` is printed and the project is this folder                                             | Helix Foundry is already running here. Keep its port (the number before `->`), skip the port check, and continue at step 5 unless the user asked you to upgrade.                                                                                                    |
+| What you found                                                                                  | What it means and what to do                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `.env`, no `helix-foundry_` volumes, no project                                              | Fresh install. Continue.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `.env` exists                                                                                   | Existing install. Keep `.env` and its settings, and continue. `setup.sh` will leave it alone.                                                                                                                                                                                                                                                                                                                 |
+| No `.env`, but `helix-foundry_helix-data` or `helix-foundry_foundry-data` exists                | Stop and ask the user. That data was written with a key from an earlier `.env`. Ask whether they kept a copy of that `.env` (for example in a password manager), or have a backup with `env.enc` or an older one with `config.env`. A new key leaves the workspaces in place but makes their stored credentials unreadable. (`helix-foundry_model-data` alone holds only model weights and is safe to reuse.) |
+| A `helix-foundry` project is listed whose CONFIG FILES path is not this folder's `compose.yaml` | Stop and ask the user which checkout to use. Starting from this folder would take over and recreate the running containers, and use their volumes with this folder's `.env`.                                                                                                                                                                                                                                  |
+| `app running:` is printed and the project is this folder                                        | Helix Foundry is already running here. Keep its port (the number before `->`), skip the port check, and continue at step 5. To upgrade, use `scripts/upgrade.sh` ([operations](#operations)).                                                                                                                                                                                                                 |
 
 If `.env` exists, check that its keys are set without printing them:
 
@@ -116,11 +116,11 @@ df -h .
 
 ### Choose a model path
 
-| Path                    | When to use it                                                                                                         | Start command                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **A. Ollama in Docker** | The default, on any OS.                                                                                                | `docker compose --profile local up -d --build`                  |
-| **B. Native Ollama**    | macOS with Docker Desktop, when Ollama is already running. Faster on Apple Silicon, because Docker cannot use Metal.   | `docker compose up -d --build`, with `MODEL_ENDPOINT` in `.env` |
-| **C. Hosted AI only**   | The user says they will use Claude or OpenAI and wants to skip the model download.                                     | `docker compose up -d --build`, with no `MODEL_ENDPOINT`        |
+| Path                    | When to use it                                                                                                       | Start command                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| **A. Ollama in Docker** | The default, on any OS.                                                                                              | `docker compose --profile local up -d --build`                  |
+| **B. Native Ollama**    | macOS with Docker Desktop, when Ollama is already running. Faster on Apple Silicon, because Docker cannot use Metal. | `docker compose up -d --build`, with `MODEL_ENDPOINT` in `.env` |
+| **C. Hosted AI only**   | The user says they will use Claude or OpenAI and wants to skip the model download.                                   | `docker compose up -d --build`, with no `MODEL_ENDPOINT`        |
 
 Decide like this, and say which path you used in your report:
 
@@ -257,8 +257,9 @@ Next, in your browser:
 Home then opens with your key metrics.
 
 The local model is still downloading in the background (or: is ready).
-Your encryption key is in .env. Back up with ./scripts/backup.sh <folder outside
-the repo>, and keep .env and backups private.
+Your encryption key is in .env, and backups leave it out, so keep a copy of .env
+somewhere safe, such as a password manager. Back up with ./scripts/backup.sh
+<folder outside the repo>, and upgrade with ./scripts/upgrade.sh.
 ```
 
 Mention anything unusual: a port other than 3001, native Ollama, low memory, or warnings you saw in the logs.
@@ -310,23 +311,26 @@ The loop waits up to five minutes and prints `complete` once the workspace is pu
 
 ## Troubleshooting
 
-| Symptom                                                                                  | Cause                                                                                            | Fix                                                                                                                                                                                                                          |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `required variable ENCRYPTION_KEY (or INTERNAL_KEY) is missing a value: Run scripts/setup.sh first` | No `.env`, or `.env` was copied from `.env.example` with blank keys. Compose may name either key. | With no `.env`, run `./scripts/setup.sh`. With blank keys and no `helix-foundry_` volumes, ask the user, rename the file to `.env.bak`, run `./scripts/setup.sh`, then copy any `PUBLIC_*` or `MODEL_ENDPOINT` lines across. |
-| `Bind for 127.0.0.1:3001 failed: port is already allocated`, or `address already in use` | Another program uses the port.                                                                   | Set `PUBLIC_PORT` and `PUBLIC_ORIGIN` to a free port (step 3), then run the start command again.                                                                                                                             |
-| Pages load, but every save fails with `403 Origin is not allowed`                        | `PUBLIC_PORT` changed without `PUBLIC_ORIGIN`, or the app was opened on a different port.        | Set both to the same port, run the start command again, and open exactly the `PUBLIC_ORIGIN` URL.                                                                                                                            |
-| `403 Host is not allowed`                                                                | The app was opened by LAN IP or another hostname.                                                | Use `localhost` or `127.0.0.1`. Do not try to allow other hosts.                                                                                                                                                             |
-| Health check never passes; `app` keeps restarting                                        | HelixDB was not ready at first boot, or the keys are missing or too short.                       | Wait a minute and check `docker compose logs --tail 100 app helix`. "Run ./scripts/setup.sh to generate ENCRYPTION_KEY and INTERNAL_KEY" means the keys are the problem: see the first row.                                  |
-| Setup says "Local AI is unavailable. Start Ollama and retry."                            | Started without `--profile local` and without `MODEL_ENDPOINT`, or native Ollama is not running. | Path A: `docker compose --profile local up -d`. Path B: start Ollama and check `MODEL_ENDPOINT`. Or choose Claude or OpenAI.                                                                                                 |
-| `model-init` keeps running or restarting                                                 | The model download is slow or was interrupted.                                                   | Wait, and check `docker compose --profile local logs --tail 50 model-init`. It retries on failure.                                                                                                                                  |
-| "Default model digest does not match the tested release"                                 | The registry's `qwen3:4b` no longer matches the pinned digest in `docs/models.json`.             | Tell the user. They can choose Claude or OpenAI instead.                                                                                                                                                                     |
-| Code changes or `git pull` have no effect                                                | Compose reused the old `helix-foundry:local` image.                                              | Start with `--build`.                                                                                                                                                                                                        |
-| Editing `APP_ORIGIN`, `HELIX_URL` or `OLLAMA_URL` in `.env` has no effect                | Those lines are only for `pnpm dev`.                                                             | Use `PUBLIC_PORT`, `PUBLIC_ORIGIN` and `MODEL_ENDPOINT` for the Docker install.                                                                                                                                              |
-| Values in `.env` seem to be ignored                                                      | The same variable is exported in the shell, which overrides `.env`.                              | Run `env` and look for `PUBLIC_PORT`, `PUBLIC_ORIGIN` or `MODEL_ENDPOINT`; unset any you find.                                                                                                                                      |
-| On Linux, the app cannot reach `http://host.docker.internal:11434`                       | `host.docker.internal` is a Docker Desktop name, and `compose.yaml` adds no mapping for it.      | Use path A on Linux.                                                                                                                                                                                                         |
-| `pnpm doctor` reports failures against a running Docker install                          | It checks the development URLs, and Compose publishes no internal ports.                         | Use `/api/health` and the in-container doctor from step 6.                                                                                                                                                                   |
-| Startup fails with "Database schema is newer than this application"                      | The code is older than the data, for example after a downgrade.                                  | Ask the user. Check out the newer release again, or restore the backup that matches this release.                                                                                                                            |
-| `ollama` or `model-init` keeps running after stopping, or a network is left behind       | The stack was started with `--profile local` but stopped without it.                             | Pass the same `--profile local` to `stop`, `down`, `logs` and `ps`.                                                                                                                                                          |
+| Symptom                                                                                             | Cause                                                                                                   | Fix                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `required variable ENCRYPTION_KEY (or INTERNAL_KEY) is missing a value: Run scripts/setup.sh first` | No `.env`, or `.env` was copied from `.env.example` with blank keys. Compose may name either key.       | With no `.env`, run `./scripts/setup.sh`. With blank keys and no `helix-foundry_` volumes, ask the user, rename the file to `.env.bak`, run `./scripts/setup.sh`, then copy any `PUBLIC_*` or `MODEL_ENDPOINT` lines across.                        |
+| `Bind for 127.0.0.1:3001 failed: port is already allocated`, or `address already in use`            | Another program uses the port.                                                                          | Set `PUBLIC_PORT` and `PUBLIC_ORIGIN` to a free port (step 3), then run the start command again.                                                                                                                                                    |
+| Pages load, but every save fails with `403 Origin is not allowed`                                   | `PUBLIC_PORT` changed without `PUBLIC_ORIGIN`, or the app was opened on a different port.               | Set both to the same port, run the start command again, and open exactly the `PUBLIC_ORIGIN` URL.                                                                                                                                                   |
+| `403 Host is not allowed`                                                                           | The app was opened by LAN IP or another hostname.                                                       | Use `localhost` or `127.0.0.1`. Do not try to allow other hosts.                                                                                                                                                                                    |
+| Health check never passes; `app` keeps restarting                                                   | HelixDB was not ready at first boot, or the keys are missing or too short.                              | Wait a minute and check `docker compose logs --tail 100 app helix`. "Run ./scripts/setup.sh to generate ENCRYPTION_KEY and INTERNAL_KEY" means the keys are the problem: see the first row.                                                         |
+| Setup says "Local AI is unavailable. Start Ollama and retry."                                       | Started without `--profile local` and without `MODEL_ENDPOINT`, or native Ollama is not running.        | Path A: `docker compose --profile local up -d`. Path B: start Ollama and check `MODEL_ENDPOINT`. Or choose Claude or OpenAI.                                                                                                                        |
+| `model-init` keeps running or restarting                                                            | The model download is slow or was interrupted.                                                          | Wait, and check `docker compose --profile local logs --tail 50 model-init`. It retries on failure.                                                                                                                                                  |
+| "Default model digest does not match the tested release"                                            | The registry's `qwen3:4b` no longer matches the pinned digest in `docs/models.json`.                    | Tell the user. They can choose Claude or OpenAI instead.                                                                                                                                                                                            |
+| Code changes or `git pull` have no effect                                                           | Compose reused the old `helix-foundry:local` image.                                                     | Start with `--build`.                                                                                                                                                                                                                               |
+| Editing `APP_ORIGIN`, `HELIX_URL` or `OLLAMA_URL` in `.env` has no effect                           | Those lines are only for `pnpm dev`.                                                                    | Use `PUBLIC_PORT`, `PUBLIC_ORIGIN` and `MODEL_ENDPOINT` for the Docker install.                                                                                                                                                                     |
+| Values in `.env` seem to be ignored                                                                 | The same variable is exported in the shell, which overrides `.env`.                                     | Run `env` and look for `PUBLIC_PORT`, `PUBLIC_ORIGIN` or `MODEL_ENDPOINT`; unset any you find.                                                                                                                                                      |
+| On Linux, the app cannot reach `http://host.docker.internal:11434`                                  | `host.docker.internal` is a Docker Desktop name, and `compose.yaml` adds no mapping for it.             | Use path A on Linux.                                                                                                                                                                                                                                |
+| `pnpm doctor` reports failures against a running Docker install                                     | It checks the development URLs, and Compose publishes no internal ports.                                | Use `/api/health` and the in-container doctor from step 6.                                                                                                                                                                                          |
+| Startup fails with "Database schema is newer than this application"                                 | The code is older than the data, for example after a downgrade.                                         | Ask the user. Check out the newer release again, or restore the backup that matches this release.                                                                                                                                                   |
+| `helix` logs `unsupported_index_storage_version`; `app` keeps restarting                            | HelixDB v0.0.10 or later opened this data, and an older HelixDB image runs now. The upgrade is one way. | Do not remove volumes. Ask the user. Check out the release that ran before, or a newer one, and start with `--build`; or restore the backup taken before the upgrade, from the commit in its `manifest.txt`.                                        |
+| `restore.sh`: "The ENCRYPTION_KEY in .env is not the key this backup was made with"                 | The backup came from an installation with another key, and backups do not hold the key.                 | Ask the user for the copy of `.env` they kept for it; they pass it with `--env-file FILE`. Do not read it. If that key is lost, `--accept-key-mismatch` restores the data and the user re-enters every stored credential: only with their approval. |
+| `restore.sh`: "HelixDB X made this backup, but this checkout runs HelixDB Y"                        | A newer HelixDB wrote the backup, and an older one may refuse it.                                       | Check out the commit it names (`app_commit` in the backup's `manifest.txt`), or a release with the same or a newer HelixDB, and restore again.                                                                                                      |
+| `ollama` or `model-init` keeps running after stopping, or a network is left behind                  | The stack was started with `--profile local` but stopped without it.                                    | Pass the same `--profile local` to `stop`, `down`, `logs` and `ps`.                                                                                                                                                                                 |
 
 ## Operations
 
@@ -344,31 +348,31 @@ Do not run `logs -f` from an agent tool. It follows the logs and never returns.
 
 Every long-running service uses `restart: unless-stopped`, so the stack comes back after a reboot or Docker restart unless it was stopped.
 
-**Back up.** Keep backups outside the repository. `backups/` is not in `.gitignore` or `.dockerignore`, so a backup inside the repository could be committed or copied into the image.
+**Back up.** Keep backups outside the repository; `backup.sh` refuses a folder inside it, and `backups/` and `*.bak` are also in `.gitignore` and `.dockerignore`.
 
 ```sh
 ./scripts/backup.sh "$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)"
 ```
 
-It briefly stops `app`, `worker`, `executor` and `helix`, archives the `helix-data` and `foundry-data` volumes with the `alpine:3.22` image, copies `.env` to `config.env`, and starts the services again. Model weights are not included; they can be downloaded again.
+It briefly stops `app`, `worker`, `executor` and `helix`, archives the `helix-data` and `foundry-data` volumes with the `alpine:3.22` image, starts the services again and checks that both archives read back. It writes `settings.env` (the non-secret `.env` lines) and `manifest.txt` (the app commit, the HelixDB image, the schema version and a fingerprint of `ENCRYPTION_KEY`), and every file is private to the user. It does not copy the keys. Tell the user to keep a separate copy of `.env`, for example in a password manager: without it, a restore elsewhere cannot decrypt stored credentials. If the user wants the key in the backup, they run `./scripts/backup.sh --include-key PATH` in their own terminal, which stores `.env` as `env.enc`, encrypted with a passphrase they type (or set in `BACKUP_PASSPHRASE`). Model weights are not included; they can be downloaded again.
 
-**Upgrade.** Tell the user first, because the backup stops the app briefly.
+**Upgrade.** Tell the user first, because the backup stops the app briefly. Backing up is the script's first step, and it cannot be skipped:
 
 ```sh
-./scripts/backup.sh "$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)"
-git pull
-docker compose --profile local up -d --build
+./scripts/upgrade.sh
 ```
 
-Then repeat steps 5 and 6. Never remove volumes during an upgrade. Keep the old commit and backup so you can return to them. Startup refuses a schema newer than the app, so going back needs the matching backup.
+It needs a checkout of a branch with an upstream and no uncommitted changes. It fetches, takes a fresh backup in `~/helix-foundry-backups/` (`--backup-dir DIR` chooses another folder outside the repository) and checks it. If the backup fails, it stops and changes nothing. It records the previous commit and HelixDB image in the backup (`manifest.txt` and `upgrade.txt`), fast-forwards, and runs `docker compose up -d --build`, with `--profile local` when the stack has an `ollama` container and no `MODEL_ENDPOINT`. The build can take more than 10 minutes, so run it in the background and check its exit code. Then repeat steps 5 and 6.
 
-**Restore.** Only with the user's explicit approval. It wipes both data volumes and overwrites `.env`:
+If the release changes the HelixDB image, `upgrade.sh` prints a one-way warning and asks for `yes` before the backup. Without a terminal it stops and changes nothing; pass `--yes` only after the user agrees. HelixDB v0.0.10 and later upgrade the index storage the first time they open the data, and v0.0.9 and earlier then refuse the database, so only the backup can take the installation back. It refuses a release that moves HelixDB to an older version. Never remove volumes during an upgrade. To go back, check out the previous commit it printed and restore that backup.
+
+**Restore.** Only with the user's explicit approval. It wipes both data volumes:
 
 ```sh
 ./scripts/restore.sh PATH --replace
 ```
 
-The backup must contain `helix-data.tgz`, `foundry-data.tgz` and `config.env`. If the stack uses a non-default `COMPOSE_PROJECT_NAME`, set the same name for both backup and restore.
+It checks the backup before it stops anything. The backup must contain `helix-data.tgz`, `foundry-data.tgz` and `manifest.txt`, or `config.env` if an older `backup.sh` made it. `restore.sh` keeps `.env` when its `ENCRYPTION_KEY` matches the backup's fingerprint. Otherwise it takes the user's copy of `.env` from `--env-file FILE`, the backup's `env.enc` (the user runs that restore in their own terminal and types the passphrase) or an older backup's `config.env` (with a warning that the key is inside), saves the `.env` it replaces as `.env.pre-restore-TIME`, and refuses a key that does not match. It also refuses a backup made by a newer HelixDB or with a newer metadata schema than this checkout, and names the commit to check out. It then rebuilds and starts the services. If the stack uses a non-default `COMPOSE_PROJECT_NAME`, set the same name for both backup and restore.
 
 **Remove completely.** Only when the user asks, and after offering a backup. This deletes every workspace, all imported data, stored credentials and the downloaded model:
 
@@ -382,7 +386,8 @@ Then the user can delete `.env` and the repository.
 
 - Expose the app beyond this computer. Do not use a reverse proxy, tunnel or port forward, change the `127.0.0.1:` binding in `compose.yaml`, or set `PUBLIC_ORIGIN` to a public hostname (for example, to get an OAuth callback). There is no sign-in.
 - Publish the HelixDB, executor or Ollama ports.
-- Print, paste, log or commit `.env`, `config.env` or a backup.
+- Print, paste, log or commit `.env`, `env.enc`, `config.env`, a backup passphrase or a backup.
+- Upgrade with `git pull` and a rebuild by hand, which skips the backup. Use `scripts/upgrade.sh`, and pass it `--yes` only when the user has accepted a HelixDB upgrade.
 - Delete or regenerate `.env` on an existing install, or "rotate" `ENCRYPTION_KEY` by replacing its value.
 - Run `docker compose down -v`, `docker volume rm helix-foundry_*` or `restore.sh --replace` without the user's explicit approval. Never remove volumes during an upgrade.
 - Store backups inside the repository.
@@ -454,15 +459,15 @@ pnpm build
 
 **Layout.**
 
-| Path                | Contents                                                     |
-| ------------------- | ------------------------------------------------------------ |
-| `apps/api`          | Fastify API, worker, connectors and guided setup             |
-| `apps/web`          | React web app (Vite)                                         |
-| `services/executor` | DuckDB query executor                                        |
-| `packages/shared`   | Shared types and schemas                                     |
-| `packages/sdk`      | TypeScript SDK                                               |
-| `scripts`           | `setup`, `backup`, `restore`, `doctor`, `migrate`, benchmark |
-| `tests`             | Vitest suites, and Playwright specs in `tests/browser`       |
-| `docs`              | Guides and references                                        |
+| Path                | Contents                                                                |
+| ------------------- | ----------------------------------------------------------------------- |
+| `apps/api`          | Fastify API, worker, connectors and guided setup                        |
+| `apps/web`          | React web app (Vite)                                                    |
+| `services/executor` | DuckDB query executor                                                   |
+| `packages/shared`   | Shared types and schemas                                                |
+| `packages/sdk`      | TypeScript SDK                                                          |
+| `scripts`           | `setup`, `backup`, `restore`, `upgrade`, `doctor`, `migrate`, benchmark |
+| `tests`             | Vitest suites, and Playwright specs in `tests/browser`                  |
+| `docs`              | Guides and references                                                   |
 
 More detail: [docs/GUIDE.md](docs/GUIDE.md), [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/API.md](docs/API.md) and [docs/onboarding.md](docs/onboarding.md).
