@@ -93,7 +93,16 @@ export async function ingestFile(
             : [];
         })
       : [];
-    if (oldProfile && oldProfile.fingerprint !== r.profile.fingerprint)
+    // An untagged fingerprint is compared in its own format, so upgrading
+    // alone does not report a refresh. It is either the legacy XOR-only
+    // digest or, from the release that first counted duplicate rows, the v2
+    // digest without its tag.
+    if (
+      oldProfile &&
+      oldProfile.fingerprint !== r.profile.fingerprint &&
+      "v2:" + oldProfile.fingerprint !== r.profile.fingerprint &&
+      oldProfile.fingerprint !== r.legacyFingerprint
+    )
       tx.put(
         resource(
           scope,

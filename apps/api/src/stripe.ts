@@ -122,10 +122,13 @@ export function normalizeStripe(object: StripeObject, row: any) {
       (Object.hasOwn(references, field) ||
         (field === "source" && object.name === "balance_transactions")) &&
       (value === null || (value && typeof value !== "boolean"))
-    )
-      out[references[field] || "source_id"] =
-        typeof value === "object" ? ((value as any)?.id ?? null) : value;
-    else if (timestamps.has(field) && typeof value === "number")
+    ) {
+      const column = references[field] || "source_id",
+        id = typeof value === "object" ? ((value as any)?.id ?? null) : value;
+      // An absent reference never clears a known id, such as the parent
+      // invoice that rows() adds to each line item.
+      if (id !== null || out[column] == null) out[column] = id;
+    } else if (timestamps.has(field) && typeof value === "number")
       out[field] = new Date(value * 1000).toISOString();
     else out[field] = value;
   }

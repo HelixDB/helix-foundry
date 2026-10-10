@@ -1,6 +1,11 @@
 import { it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
-import { HelixStore, transaction, resource } from "../apps/api/src/store.js";
+import {
+  HelixStore,
+  MemoryStore,
+  transaction,
+  resource,
+} from "../apps/api/src/store.js";
 it.skipIf(process.env.TEST_HELIX !== "1")(
   "persists atomic scoped changes and graph relationships in real HelixDB",
   async () => {
@@ -40,3 +45,15 @@ it.skipIf(process.env.TEST_HELIX !== "1")(
     });
   },
 );
+it("returns each in-memory neighbor once, as HelixDB does", async () => {
+  const store = new MemoryStore();
+  await transaction(store, "test", async (tx) => {
+    for (const [i, from, to] of [
+      [1, "a", "b"],
+      [2, "a", "b"],
+      [3, "b", "a"],
+    ] as const)
+      tx.put(resource("test", "relation", "link", { from, to }, String(i)));
+  });
+  expect(await store.neighbors("test", "a")).toEqual(["b"]);
+});

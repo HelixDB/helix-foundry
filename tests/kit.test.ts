@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
@@ -8,11 +8,23 @@ import {
   StatusBadge,
   Tabs,
   columnKind,
+  compareValues,
   connectorKey,
+  formatNumber,
   formatValue,
   inferKind,
   toStatus,
 } from "../apps/web/src/kit/index.js";
+import {
+  AnswerChart,
+  AnswerStats,
+  AnswerTable,
+  answerColumns,
+  chartPlan,
+  sortAnswer,
+  type ChartPlan,
+} from "../apps/web/src/areas/analyst/answer-view.js";
+import { exactText } from "../apps/web/src/areas/workspace/metrics.js";
 import {
   activeSection,
   childActive,
@@ -26,6 +38,25 @@ import {
   describeActivity,
 } from "../packages/shared/src/index.js";
 
+// Server rendering cannot hover or focus a chart. While `charts.focused` is
+// set, state that starts empty (null or false) starts set (0 or true), so a
+// chart renders as if its first point had focus: with its tooltip and its
+// live-region text.
+const charts = vi.hoisted(() => ({ focused: false }));
+vi.mock("react", async (importOriginal) => {
+  const react = await importOriginal<typeof import("react")>();
+  const start = (v: unknown) =>
+    !charts.focused ? v : v === null ? 0 : v === false ? true : v;
+  return { ...react, useState: (v: unknown) => react.useState(start(v)) };
+});
+const focusedChart = (plan: ChartPlan) => {
+  charts.focused = true;
+  try {
+    return renderToStaticMarkup(h(AnswerChart, { plan }));
+  } finally {
+    charts.focused = false;
+  }
+};
 const render = (node: any, url = "/") =>
   renderToStaticMarkup(h(MemoryRouter, { initialEntries: [url] }, node));
 
@@ -65,6 +96,127 @@ describe("workspace UI kit", () => {
     expect(toStatus("retrying")).toBe("failed");
     expect(connectorKey("PostgreSQL")).toBe("postgres");
     expect(connectorKey(undefined, "Stripe")).toBe("stripe");
+  });
+  it("keeps neighboring 64-bit integers distinct", () => {
+    expect(formatNumber(9007199254740993n)).toBe("9,007,199,254,740,993");
+    expect(formatNumber("9007199254740993")).toBe("9,007,199,254,740,993");
+    expect(formatValue("9007199254740993", "number")).toBe(
+      "9,007,199,254,740,993",
+    );
+    // A Number past 2^53 keeps its usual digits, not its binary expansion.
+    expect(formatNumber(1e25)).toBe("10,000,000,000,000,000,000,000,000");
+    for (const kind of ["integer", "number"] as const) {
+      expect(
+        compareValues("9007199254740992", "9007199254740993", kind),
+      ).toBeLessThan(0);
+      expect(
+        compareValues(9007199254740993n, 9007199254740992n, kind),
+      ).toBeGreaterThan(0);
+      expect(compareValues("12.5", "9007199254740993", kind)).toBeLessThan(0);
+    }
+  });
+  it("orders mixed integer representations transitively", () => {
+    const a = "9007199254740992",
+      b = 9007199254740992,
+      c = "9007199254740993";
+    expect(compareValues(a, b, "integer")).toBe(0);
+    expect(compareValues(b, c, "integer")).toBeLessThan(0);
+    expect(compareValues(a, c, "integer")).toBeLessThan(0);
+  });
+  it("orders integers and decimals beyond 2^53 transitively", () => {
+    // A Number would make the decimal equal to both of its neighbours.
+    expect(
+      compareValues(9007199254740992, "9007199254740992.5", "number"),
+    ).toBeLessThan(0);
+    expect(
+      compareValues("9007199254740993", "9007199254740992.5", "number"),
+    ).toBeGreaterThan(0);
+    expect(compareValues("12.50", 12.5, "number")).toBe(0);
+    expect(compareValues("1e21", 1e21, "number")).toBe(0);
+    const sorted = [
+      "-1.5",
+      0.25,
+      2n,
+      "12.5",
+      9007199254740992,
+      "9007199254740992.5",
+      "9007199254740993",
+      "1e17",
+      "1e300",
+    ];
+    // Every starting order sorts the same way.
+    for (let i = 0; i < sorted.length; i++) {
+      const start = [...sorted.slice(i), ...sorted.slice(0, i)].reverse();
+      expect(start.sort((x, y) => compareValues(x, y, "number"))).toEqual(
+        sorted,
+      );
+    }
+  });
+  it("shows and sorts answer integers beyond 2^53 exactly", () => {
+    // DuckDB sends sums and counts of BIGINT columns as text.
+    const rows = [
+      { region: "EU", total: "9007199254740993" },
+      { region: "NA", total: null },
+      { region: "US", total: "9007199254740992" },
+      { region: "APAC", total: "12.5" },
+    ];
+    const columns = answerColumns(rows),
+      totals = (dir: "asc" | "desc") =>
+        sortAnswer(rows, columns, { key: "total", dir }).map((r) => r.total);
+    expect(columns[1]).toMatchObject({ kind: "number", numeric: true });
+    expect(totals("asc")).toEqual([
+      "12.5",
+      "9007199254740992",
+      "9007199254740993",
+      null,
+    ]);
+    expect(totals("desc")).toEqual([
+      "9007199254740993",
+      "9007199254740992",
+      "12.5",
+      null,
+    ]);
+    expect(render(h(AnswerTable, { rows, label: "Totals" }))).toContain(
+      "9,007,199,254,740,993",
+    );
+    const stats = render(
+      h(AnswerStats, { row: { total: "9007199254740993", id: "42" } }),
+    );
+    expect(stats).toContain("9,007,199,254,740,993");
+    expect(stats).not.toContain("9,007,199,254,740,992");
+  });
+  it("gives answer chart values beyond 2^53 exactly in tooltips and to screen readers", () => {
+    const breakdown = chartPlan([
+      { region: "EU", total: "9007199254740993" },
+      { region: "US", total: "12" },
+      { region: "NA", total: "12.25" },
+    ])!;
+    expect(breakdown.kind).toBe("breakdown");
+    expect(breakdown.points.map((p) => exactText(p, "number"))).toEqual([
+      "9,007,199,254,740,993",
+      "12",
+      "12.3",
+    ]);
+    // The charts show and announce that text, not the nearest Number.
+    const bars = focusedChart(breakdown);
+    expect(bars).toContain(
+      '<span class="wk-chart-tip"><strong>9,007,199,254,740,993</strong>',
+    );
+    expect(bars).toContain('aria-live="polite">EU: 9,007,199,254,740,993<');
+    expect(bars).not.toContain("9,007,199,254,740,992");
+    const trend = chartPlan([
+      { month: "2026-02", total: 1.25 },
+      { month: "2026-01", total: "-9007199254740995" },
+    ])!;
+    expect(trend).toMatchObject({ kind: "trend", grain: "month" });
+    expect(trend.points.map((p) => [p.label, exactText(p, "number")])).toEqual([
+      ["2026-01", "-9,007,199,254,740,995"],
+      ["2026-02", "1.25"],
+    ]);
+    const line = focusedChart(trend);
+    expect(line).toContain("<strong>-9,007,199,254,740,995</strong>");
+    expect(line).toMatch(/aria-live="polite">[^<]+: -9,007,199,254,740,995</);
+    expect(line).not.toMatch(/9,007,199,254,740,99[46]/);
   });
   it("renders ARIA tabs synced to the URL and a titled page header", () => {
     const html = render(

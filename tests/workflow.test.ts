@@ -1,11 +1,13 @@
 import { beforeAll, afterAll, it, expect, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
+import { DuckDBInstance } from "@duckdb/node-api";
 import { execute as localExecute } from "../services/executor/src/engine.js";
 vi.mock("../apps/api/src/executor.js", () => ({
   execute: (job: any) => localExecute(job),
 }));
+import { createApp } from "../apps/api/src/app.js";
 import { MemoryStore, resource, transaction } from "../apps/api/src/store.js";
 import { ingestRows, queryDatasets } from "../apps/api/src/datasets.js";
 import {
@@ -19,7 +21,9 @@ import { Provider } from "../apps/api/src/providers.js";
 import { BundleSchema, datasetTable } from "../packages/shared/src/index.js";
 import { config } from "../apps/api/src/config.js";
 const store = new MemoryStore(),
-  scope = "golden-" + randomUUID();
+  scope = "golden-" + randomUUID(),
+  // Datasets refreshed on their own, away from the golden workspace.
+  refreshes = "refresh-" + randomUUID();
 let customers: any, orders: any;
 beforeAll(async () => {
   await transaction(store, scope, async (tx) =>
@@ -63,10 +67,11 @@ beforeAll(async () => {
 afterAll(async () => {
   vi.restoreAllMocks();
   for (const dir of ["incoming", "datasets"])
-    await rm(resolve(config.dataDir, dir, scope), {
-      recursive: true,
-      force: true,
-    });
+    for (const s of [scope, refreshes])
+      await rm(resolve(config.dataDir, dir, s), {
+        recursive: true,
+        force: true,
+      });
 });
 const bundle = () =>
   BundleSchema.parse({
@@ -379,5 +384,132 @@ it("retains malformed model output as a failed draft and never publishes it", as
     );
   } finally {
     mock.mockRestore();
+  }
+});
+
+it("returns the same dataset metadata that is committed", async () => {
+  const ingest = () =>
+    ingestRows(store, refreshes, "Orders", [{ id: "a" }], undefined, "orders");
+  const first = await ingest();
+  expect(first).toEqual(await store.get(refreshes, "orders"));
+  const second = await ingest();
+  expect(second.revision).toBe(first.revision + 1);
+  expect(second).toEqual(await store.get(refreshes, "orders"));
+});
+
+// The fingerprint executors stored before duplicate rows were counted: the
+// same hash with only the XOR of row hashes, so duplicate pairs cancel out.
+async function untaggedFingerprint(datasetId: string) {
+  const d = (await store.get(refreshes, datasetId))!,
+    file = resolve(
+      config.dataDir,
+      "datasets",
+      refreshes,
+      d.data.activeVersion + ".parquet",
+    ),
+    db = await DuckDBInstance.create(":memory:"),
+    c = await db.connect();
+  try {
+    await c.run(
+      `CREATE TABLE result AS SELECT * FROM read_parquet('${file.replaceAll("'", "''")}')`,
+    );
+    const read = async (sql: string) =>
+      (await c.runAndReadAll(sql)).getRowObjectsJson();
+    const schema = await read("DESCRIBE result"),
+      rows = Number((await read("SELECT count(*) n FROM result"))[0].n),
+      fp = (await read("SELECT bit_xor(hash(result)) h FROM result"))[0];
+    return createHash("sha256")
+      .update(JSON.stringify([schema, rows, fp]))
+      .digest("hex");
+  } finally {
+    c.closeSync();
+    db.closeSync();
+  }
+}
+it("reports a refresh across the fingerprint upgrade only when the data changed", async () => {
+  const refresh = (rows: Record<string, unknown>[]) =>
+    ingestRows(store, refreshes, "Ledger", rows, undefined, "ledger");
+  const refreshed = async () =>
+    (await store.list(refreshes, "finding")).filter(
+      (f) => f.data.datasetId === "ledger" && f.data.kind === "refresh",
+    ).length;
+  // The active version's profile as an older executor stored it: by default
+  // the XOR-only digest, or as given.
+  const downgrade = async (fingerprint?: string) => {
+    fingerprint ??= await untaggedFingerprint("ledger");
+    await transaction(store, refreshes, async (tx) => {
+      const d = (await tx.get("ledger"))!;
+      tx.update(d, { ...d.data, profile: { ...d.data.profile, fingerprint } });
+    });
+  };
+  const pair = [
+    { id: "a", amount: 1 },
+    { id: "a", amount: 1 },
+  ];
+  const first = await refresh(pair);
+  expect(first.data.profile.fingerprint).toMatch(/^v2:[0-9a-f]{64}$/);
+  await downgrade();
+  const upgraded = await refresh(pair);
+  expect(await refreshed()).toBe(0);
+  expect(upgraded.data.profile.fingerprint).toBe(
+    first.data.profile.fingerprint,
+  );
+  // Unchanged data under tagged fingerprints.
+  await refresh(pair);
+  expect(await refreshed()).toBe(0);
+  // The release that first counted duplicate rows stored the v2 digest
+  // without its tag.
+  await downgrade(first.data.profile.fingerprint.slice(3));
+  await refresh(pair);
+  expect(await refreshed()).toBe(0);
+  // Tagged fingerprints see a changed duplicate pair.
+  const changed = await refresh([
+    { id: "b", amount: 1 },
+    { id: "b", amount: 1 },
+  ]);
+  expect(await refreshed()).toBe(1);
+  // Untagged ones of either kind still report changed data.
+  await downgrade(changed.data.profile.fingerprint.slice(3));
+  await refresh(pair);
+  expect(await refreshed()).toBe(2);
+  await downgrade();
+  await refresh([
+    { id: "b", amount: 2 },
+    { id: "c", amount: 1 },
+  ]);
+  expect(await refreshed()).toBe(3);
+});
+it("keeps the upgrade fingerprint out of query and preview responses", async () => {
+  const s = new MemoryStore(),
+    app = await createApp(s);
+  let w = "";
+  try {
+    await app.ready();
+    w = (await app.inject({ method: "GET", url: "/api/v1/me" })).json()
+      .workspaces[0].id;
+    const ds = await ingestRows(s, w, "Items", [{ id: "a" }]);
+    for (const [url, payload] of [
+      [
+        `/api/v1/workspaces/${w}/query`,
+        { inputs: [ds.id], sql: `SELECT * FROM "${datasetTable(ds.id)}"` },
+      ],
+      [`/api/v1/workspaces/${w}/datasets/${ds.id}/preview`, {}],
+    ] as const) {
+      const r = await app.inject({ method: "POST", url, payload });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json()).toMatchObject({
+        rows: [{ id: "a" }],
+        profile: { fingerprint: expect.stringMatching(/^v2:/) },
+      });
+      expect(r.json()).not.toHaveProperty("legacyFingerprint");
+    }
+  } finally {
+    await app.close();
+    for (const dir of ["incoming", "datasets"])
+      if (w)
+        await rm(resolve(config.dataDir, dir, w), {
+          recursive: true,
+          force: true,
+        });
   }
 });

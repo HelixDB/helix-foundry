@@ -17,7 +17,9 @@ import { useWorkspace } from "../../ui";
 import { Button, Panel, Skeleton, StatCard, cx } from "../../kit";
 import { paths } from "../../paths";
 
-type Point = { label: string; value: number };
+// `text` is the exact value, in the metric's format, when `value` cannot hold
+// it (an integer beyond 2^53 from an answer).
+type Point = { label: string; value: number; text?: string };
 type Format = HomeMetric["format"];
 
 const usdWhole = new Intl.NumberFormat("en-US", {
@@ -63,6 +65,9 @@ function formatMetric(
   if (format === "percent") return plain.format(v) + "%";
   return big ? compact.format(v) : plain.format(v);
 }
+// A point's value in full, as tooltips and screen readers give it.
+const exactText = (p: Point, format: Format) =>
+  p.text ?? formatMetric(p.value, format, true);
 // Shorter still, for axis ticks.
 const formatTick = (v: number, format: Format) =>
   format === "currency"
@@ -351,13 +356,13 @@ function TrendChart({ m, points }: { m: HomeMetric; points: Point[] }) {
                 : "translateX(10px)",
           }}
         >
-          <strong>{formatMetric(a.value, m.format, true)}</strong>
+          <strong>{exactText(a, m.format)}</strong>
           <span>{pointLabel(a.label, m.grain, true)}</span>
         </div>
       )}
       <span className="hf-sr-only" aria-live="polite">
         {focused && a
-          ? `${pointLabel(a.label, m.grain, true)}: ${formatMetric(a.value, m.format, true)}`
+          ? `${pointLabel(a.label, m.grain, true)}: ${exactText(a, m.format)}`
           : ""}
       </span>
     </div>
@@ -414,7 +419,7 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
                   carries the full name when the label is cut short. */}
               {active === i && (
                 <span className="wk-chart-tip">
-                  <strong>{formatMetric(p.value, m.format, true)}</strong>
+                  <strong>{exactText(p, m.format)}</strong>
                   <span>{p.label}</span>
                 </span>
               )}
@@ -423,9 +428,7 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
         })}
       </div>
       <span className="hf-sr-only" aria-live="polite">
-        {focused && a
-          ? `${a.label}: ${formatMetric(a.value, m.format, true)}`
-          : ""}
+        {focused && a ? `${a.label}: ${exactText(a, m.format)}` : ""}
       </span>
     </div>
   );
@@ -668,4 +671,4 @@ export function KeyMetrics() {
 
 // The Analyst's chat answers draw their charts with these (styles in
 // home.css, series colour from --wk-series).
-export { TrendChart, BreakdownChart };
+export { TrendChart, BreakdownChart, exactText, type Point };

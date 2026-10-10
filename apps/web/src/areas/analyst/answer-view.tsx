@@ -17,10 +17,9 @@ import {
   type GridSort,
 } from "../../kit";
 import { fieldName } from "../../ui";
-import { BreakdownChart, TrendChart } from "../workspace/metrics";
+import { BreakdownChart, TrendChart, type Point } from "../workspace/metrics";
 
 type Row = Record<string, unknown>;
-type Point = { label: string; value: number };
 
 const numberText = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
 // A number, including numbers sent as text (big integers, decimals).
@@ -84,12 +83,22 @@ function valueText(key: string, v: unknown): string | null {
   if (!present(v)) return null;
   const day = calendarText(v);
   if (day) return day;
-  const n = toNumber(v);
-  if (n !== null)
+  // Numbers are formatted as sent, so an integer beyond 2^53 keeps every digit.
+  if (toNumber(v) !== null)
     return isIdLike(key) || /^(year|yr|fiscal_year)$/i.test(key)
       ? String(v)
-      : formatNumber(n);
+      : formatNumber(v as number | bigint | string);
   return formatValue(v, inferKind([v]));
+}
+
+// Charts draw a Number; an integer beyond 2^53 also keeps its exact text for
+// the tooltip and screen readers.
+function point(label: string, v: unknown): Point {
+  const value = toNumber(v)!,
+    text = String(v).trim();
+  return Number.isSafeInteger(value) || !/^-?\d+$/.test(text)
+    ? { label, value }
+    : { label, value, text: formatNumber(text) };
 }
 
 export type ChartPlan = {
@@ -130,17 +139,14 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
   if (time) {
     // Daily, weekly or monthly buckets, oldest first.
     const days = measured
-      .map((r) => ({
-        day: String(r[label]).slice(0, 10),
-        value: toNumber(r[value])!,
-      }))
-      .sort((a, b) => a.day.localeCompare(b.day));
+      .map((r) => point(String(r[label]).slice(0, 10), r[value]))
+      .sort((a, b) => a.label.localeCompare(b.label));
     const monthly = days.every(
-      (d) => d.day.length === 7 || d.day.endsWith("-01"),
+      (d) => d.label.length === 7 || d.label.endsWith("-01"),
     );
     const gaps = days
       .slice(1)
-      .map((d, i) => (Date.parse(d.day) - Date.parse(days[i].day)) / DAY);
+      .map((d, i) => (Date.parse(d.label) - Date.parse(days[i].label)) / DAY);
     const grain: HomeMetric["grain"] = monthly
       ? "month"
       : gaps.length && gaps.every((g) => g === 7)
@@ -152,8 +158,8 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
       label,
       value,
       points: days.map((d) => ({
-        label: monthly ? d.day.slice(0, 7) : d.day,
-        value: d.value,
+        ...d,
+        label: monthly ? d.label.slice(0, 7) : d.label,
       })),
     };
   }
@@ -162,10 +168,7 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
     kind: "breakdown",
     label,
     value,
-    points: measured.map((r) => ({
-      label: String(r[label]),
-      value: toNumber(r[value])!,
-    })),
+    points: measured.map((r) => point(String(r[label]), r[value])),
   };
 }
 
@@ -216,65 +219,77 @@ export function AnswerStats({ row }: { row: Row }) {
 const PREVIEW = 8,
   HEAD = 36,
   ROW = 34;
-// The first rows, with the rest one click away. Sorting applies to every row,
-// not just the ones shown. Measures sit on the right.
+// Table columns typed from the first rows. Measures sit on the right.
+export function answerColumns(rows: Row[]) {
+  const sample = rows.slice(0, 50);
+  const blank = <span className="hf-null">null</span>;
+  return Object.keys(rows[0] || {}).map((key) => {
+    const values = sample.map((r) => r[key]);
+    const days =
+      values.some(present) &&
+      values.every((v) => !present(v) || calendarText(v) !== null);
+    // Numbers sent as text still sort and align as numbers; years stay
+    // as written ("2026", not "2,026").
+    const year = isYearLike(sample, key),
+      numeric =
+        !days &&
+        !year &&
+        !isIdLike(key) &&
+        values.some((v) => typeof v === "string") &&
+        isNumeric(sample, key);
+    const kind: ColumnKind = days
+      ? "date"
+      : numeric
+        ? "number"
+        : year
+          ? "string"
+          : inferKind(values);
+    return {
+      key,
+      label: columnLabel(key),
+      type: kind,
+      kind,
+      numeric,
+      align: year ? ("right" as const) : undefined,
+      render: days
+        ? (r: Row) =>
+            present(r[key]) ? (calendarText(r[key]) ?? String(r[key])) : blank
+        : year
+          ? (r: Row) => (present(r[key]) ? String(r[key]) : blank)
+          : undefined,
+    };
+  });
+}
+// Every row in order, not just the ones shown; blanks stay last either way.
+export function sortAnswer(
+  rows: Row[],
+  columns: ReturnType<typeof answerColumns>,
+  sort: GridSort,
+) {
+  const col = sort && columns.find((c) => c.key === sort.key);
+  if (!sort || !col) return rows;
+  // Numbers compare as sent, so integers beyond 2^53 keep their order; text
+  // that isn't a number sorts as a blank.
+  const value = (r: Row) =>
+    col.numeric && toNumber(r[col.key]) === null ? null : r[col.key];
+  const dir = sort.dir === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const va = value(a),
+      vb = value(b);
+    return !present(va) || !present(vb)
+      ? compareValues(va, vb, col.kind)
+      : compareValues(va, vb, col.kind) * dir;
+  });
+}
+// The first rows, with the rest one click away.
 export function AnswerTable({ rows, label }: { rows: Row[]; label: string }) {
   const [all, setAll] = useState(false),
     [sort, setSort] = useState<GridSort>(null);
-  const columns = useMemo(() => {
-    const sample = rows.slice(0, 50);
-    const blank = <span className="hf-null">null</span>;
-    return Object.keys(rows[0] || {}).map((key) => {
-      const values = sample.map((r) => r[key]);
-      const days =
-        values.some(present) &&
-        values.every((v) => !present(v) || calendarText(v) !== null);
-      // Numbers sent as text still sort and align as numbers; years stay
-      // as written ("2026", not "2,026").
-      const year = isYearLike(sample, key),
-        numeric =
-          !days &&
-          !year &&
-          !isIdLike(key) &&
-          values.some((v) => typeof v === "string") &&
-          isNumeric(sample, key);
-      const kind: ColumnKind = days
-        ? "date"
-        : numeric
-          ? "number"
-          : year
-            ? "string"
-            : inferKind(values);
-      return {
-        key,
-        label: columnLabel(key),
-        type: kind,
-        kind,
-        numeric,
-        align: year ? ("right" as const) : undefined,
-        render: days
-          ? (r: Row) =>
-              present(r[key]) ? (calendarText(r[key]) ?? String(r[key])) : blank
-          : year
-            ? (r: Row) => (present(r[key]) ? String(r[key]) : blank)
-            : undefined,
-      };
-    });
-  }, [rows]);
-  const sorted = useMemo(() => {
-    const col = sort && columns.find((c) => c.key === sort.key);
-    if (!sort || !col) return rows;
-    const value = (r: Row) => (col.numeric ? toNumber(r[col.key]) : r[col.key]);
-    const dir = sort.dir === "desc" ? -1 : 1;
-    // Blanks stay last either way.
-    return [...rows].sort((a, b) => {
-      const va = value(a),
-        vb = value(b);
-      return !present(va) || !present(vb)
-        ? compareValues(va, vb, col.kind)
-        : compareValues(va, vb, col.kind) * dir;
-    });
-  }, [rows, sort, columns]);
+  const columns = useMemo(() => answerColumns(rows), [rows]);
+  const sorted = useMemo(
+    () => sortAnswer(rows, columns, sort),
+    [rows, sort, columns],
+  );
   const more = rows.length > PREVIEW;
   const shown = all || !more ? sorted : sorted.slice(0, PREVIEW);
   return (

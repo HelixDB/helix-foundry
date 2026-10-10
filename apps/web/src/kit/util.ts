@@ -47,17 +47,15 @@ const compact = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
+// The exact value of an integer. DuckDB sends BIGINT and HUGEINT values as
+// text, which can be beyond 2^53, where a Number drops digits.
+const bigInteger = (v: bigint | string) =>
+  typeof v === "bigint" ? v : /^[+-]?\d+$/.test(v) ? BigInt(v) : undefined;
 export const formatNumber = (n: number | bigint | string | null | undefined) =>
   n === null || n === undefined || n === ""
     ? "—"
     : Number.isInteger(Number(n))
-      ? integer.format(
-          typeof n === "bigint"
-            ? n
-            : typeof n === "string" && /^[+-]?\d+$/.test(n)
-              ? BigInt(n)
-              : Number(n),
-        )
+      ? integer.format(typeof n === "number" ? n : (bigInteger(n) ?? Number(n)))
       : decimal.format(Number(n));
 export const formatCompact = (n: number) =>
   Math.abs(n) < 10000 ? integer.format(n) : compact.format(n);
@@ -110,7 +108,7 @@ export function formatValue(value: unknown, kind: ColumnKind): string | null {
       return typeof value === "number" ||
         typeof value === "bigint" ||
         (typeof value === "string" && value.trim() !== "" && !isNaN(+value))
-        ? formatNumber(value as number)
+        ? formatNumber(value)
         : String(value);
     case "boolean":
       return String(value);
@@ -124,22 +122,42 @@ export function formatValue(value: unknown, kind: ColumnKind): string | null {
       return typeof value === "object" ? JSON.stringify(value) : String(value);
   }
 }
+// A number as an exact decimal, digits / 10^scale, so text with more digits
+// than a Number holds (BIGINT, HUGEINT, DECIMAL) compares exactly. A Number
+// is read as its shortest text, which keeps its order among Numbers.
+function exactDecimal(v: unknown): [bigint, number] | undefined {
+  if (typeof v === "bigint") return [v, 0];
+  const m =
+    typeof v === "string" || (typeof v === "number" && Number.isFinite(v))
+      ? /^([+-]?)(\d*)(?:\.(\d*))?(?:e([+-]?\d{1,3}))?$/i.exec(String(v).trim())
+      : null;
+  if (!m || !(m[2] || m[3])) return undefined;
+  const fraction = m[3] ?? "",
+    scale = fraction.length - Number(m[4] ?? 0),
+    digits = BigInt(m[1] + (m[2] || "0") + fraction);
+  return scale < 0 ? [digits * 10n ** BigInt(-scale), 0] : [digits, scale];
+}
 export function compareValues(a: unknown, b: unknown, kind: ColumnKind) {
   const na = a === null || a === undefined,
     nb = b === null || b === undefined;
   if (na || nb) return na === nb ? 0 : na ? 1 : -1;
-  if (kind === "integer") {
-    const exact = (v: unknown) =>
-      typeof v === "bigint" ||
-      (typeof v === "number" && Number.isFinite(v) && Number.isInteger(v)) ||
-      (typeof v === "string" && /^[+-]?\d+$/.test(v));
-    if (exact(a) && exact(b)) {
-      const x = BigInt(a as string | number | bigint),
-        y = BigInt(b as string | number | bigint);
-      return x < y ? -1 : x > y ? 1 : 0;
-    }
+  if (kind === "integer" || kind === "number") {
+    // Rounding to a Number keeps order, so only a tie between values sent
+    // as text needs their exact digits. Every pair then compares exactly,
+    // and a column mixing integers and decimals beyond 2^53 sorts
+    // consistently.
+    const x = Number(a),
+      y = Number(b);
+    if (x !== y || (typeof a === "number" && typeof b === "number"))
+      return x - y;
+    const p = exactDecimal(a),
+      q = exactDecimal(b);
+    if (!p || !q) return 0;
+    const scale = Math.max(p[1], q[1]),
+      s = p[0] * 10n ** BigInt(scale - p[1]),
+      t = q[0] * 10n ** BigInt(scale - q[1]);
+    return s < t ? -1 : s > t ? 1 : 0;
   }
-  if (kind === "integer" || kind === "number") return Number(a) - Number(b);
   if (kind === "date" || kind === "timestamp")
     return Date.parse(String(a)) - Date.parse(String(b));
   if (kind === "boolean") return Number(a) - Number(b);

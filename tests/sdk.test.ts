@@ -1,5 +1,5 @@
 import { it, expect, vi, afterEach } from "vitest";
-import { FoundryClient, FoundryError } from "../packages/sdk/src/index.js";
+import { FoundryClient } from "../packages/sdk/src/index.js";
 const client = () =>
   new FoundryClient({
     baseUrl: "https://foundry.invalid",
@@ -7,7 +7,7 @@ const client = () =>
     token: "fixture",
   });
 afterEach(() => vi.unstubAllGlobals());
-it("omits unset options while preserving zero and empty search", async () => {
+it("omits unset list options while preserving zero and empty search", async () => {
   const f = vi.fn().mockResolvedValue(new Response("{}"));
   vi.stubGlobal("fetch", f);
   await client().list("dataset", { offset: 0, limit: undefined, search: "" });
