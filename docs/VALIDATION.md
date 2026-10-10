@@ -1,6 +1,8 @@
 # Implementation and validation
 
-This is an executable single-server MVP. Validation results below are from the local development machine on 23–24 September 2026; they are not a production SLA.
+This is an executable single-server MVP. The validation results below come from the local development machine and are not a production SLA. Most were recorded on 23–24 September 2026. The publication read benchmark (in [Benchmark](#benchmark)) and the tests of the rewritten backup, restore and upgrade scripts are from 10 October 2026, and both give that date.
+
+The rewritten `scripts/backup.sh`, `restore.sh` and `upgrade.sh` have so far run only against a stub `docker` in tests. Until they are run against a real Compose installation, that is their only coverage; see [backup, restore and upgrade scripts](#backup-restore-and-upgrade-scripts-10-october-2026).
 
 ## Verified paths
 
@@ -12,7 +14,7 @@ This is an executable single-server MVP. Validation results below are from the l
 - REST offset pagination and cross-origin credential protection; S3-compatible listing and streaming with a local protocol fixture.
 - Native Ollama, Claude Messages tool-output, and OpenAI Responses JSON-schema adapters have protocol tests. Provider errors do not trigger fallback.
 - Chromium: login, empty and connected states, all six Add data options including MySQL/TLS, tested business-model review, publication, saved dashboard selection and deep links, related-record navigation, previewed edits and history, unchanged snapshot results, and viewer controls. Desktop and 390px mobile layouts were visually inspected; modal Escape/focus restoration and mobile navigation are covered.
-- Docker image builds and the four data-platform services start. A Compose installation ingested and queried sample data. Backup/restore of its Helix and Parquet volumes retained one workspace, three datasets, and 340 rows. That run used the earlier `backup.sh` and `restore.sh`, which copied `.env` into the backup; the current scripts are covered in the next section.
+- Docker image builds and the four data-platform services start. A Compose installation ingested and queried sample data. Backup/restore of its Helix and Parquet volumes retained one workspace, three datasets, and 340 rows. That run, in September 2026, used the earlier `backup.sh` and `restore.sh`, which copied `.env` into the backup. The rewritten scripts have not run against a real installation; their stub tests are described [below](#backup-restore-and-upgrade-scripts-10-october-2026).
 
 ## Connect, understand, and act redesign
 
@@ -58,9 +60,9 @@ Browser acceptance now starts a separate installation on ports 3101/3102/5174 wi
 
 ## Backup, restore and upgrade scripts (10 October 2026)
 
-The current `scripts/backup.sh`, `restore.sh` and `upgrade.sh` leave the keys out of backups, and `upgrade.sh` backs up before every upgrade. They have not yet run against a real Docker or Compose installation.
+The rewritten `scripts/backup.sh`, `restore.sh` and `upgrade.sh` leave the keys out of backups, and `upgrade.sh` backs up before every upgrade. They have not yet run against a real Docker or Compose installation: until they do, the stub tests below are their only coverage.
 
-What was validated: `tests/scripts.test.ts` runs the scripts against a stub `docker` (`tests/fixtures/fake-docker.sh`) in throwaway git checkouts with a bare upstream. It checks the Docker calls each script makes and their order, that no key, client secret or passphrase reaches a backup, the output or another command (also under `bash -x`), file modes, failure paths that must change nothing or must start the services again, finishing an unfinished upgrade, the HelixDB image checks, that the `foundry-data` archive leaves out the executor's `scratch` and `results` (archiving local folders with this machine's `tar` in place of the image's BusyBox `tar`), and going back with the commands `upgrade.sh` prints, also to a release from before `upgrade.sh` (with that release's scripts in `tests/fixtures/release-before-upgrade`). These tests ran on macOS with bash 3.2 and BSD tools, under OpenSSL 3 and LibreSSL 3.3. CI runs them on `ubuntu-latest`. The HelixDB storage facts the scripts encode come from the HelixDB release notes.
+What was validated: `tests/scripts.test.ts` runs the scripts against a stub `docker` (`tests/fixtures/fake-docker.sh`) in throwaway git checkouts with a bare upstream. It checks the Docker calls each script makes and their order, that no key, client secret or passphrase reaches a backup, the output or another command (also under `bash -x`), file modes, failure paths that must change nothing, must start the services again or must remove what a failed backup wrote, an unset `HOME`, finishing an unfinished upgrade, the HelixDB image checks, that the `foundry-data` archive leaves out the executor's `scratch` and `results` (archiving local folders with this machine's `tar` in place of the image's BusyBox `tar`), and going back with the commands `upgrade.sh` prints, also to a release from before `upgrade.sh` (with that release's scripts in `tests/fixtures/release-before-upgrade`). These tests ran on macOS with bash 3.2 and BSD tools, under OpenSSL 3 and LibreSSL 3.3. CI runs them on `ubuntu-latest`. The HelixDB storage facts the scripts encode come from the HelixDB release notes.
 
 Not yet validated:
 
