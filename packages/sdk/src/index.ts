@@ -113,7 +113,14 @@ export class FoundryClient {
     id: string,
     source: {
       name: string;
-      kind: "mysql" | "postgres" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+      kind:
+        | "mysql"
+        | "postgres"
+        | "rest"
+        | "s3"
+        | "stripe"
+        | "workos"
+        | "posthog";
       config: Record<string, unknown>;
       schedule?: string | null;
     },
@@ -180,7 +187,14 @@ export class FoundryClient {
   }
   createSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
     schedule?: string;
   }) {
@@ -274,7 +288,14 @@ export class FoundryClient {
   }
   testSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
   }) {
     return this.request("/sources/test", source);
@@ -336,10 +357,18 @@ export class FoundryClient {
         if (done) break;
         pending += value;
         let idx;
-        while ((idx = pending.indexOf("\n\n")) >= 0) {
+        while (true) {
+          const boundary = /\r?\n\r?\n/.exec(pending);
+          if (!boundary) break;
+          idx = boundary.index;
           const event = pending.slice(0, idx);
-          pending = pending.slice(idx + 2);
-          if (event.startsWith("data: ")) yield JSON.parse(event.slice(6));
+          pending = pending.slice(idx + boundary[0].length);
+          const data = event
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).replace(/^ /, ""))
+            .join("\n");
+          if (data) yield JSON.parse(data);
         }
       }
     } finally {
