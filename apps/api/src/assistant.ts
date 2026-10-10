@@ -22,6 +22,7 @@ import {
 } from "../../../packages/shared/src/index.js";
 import { transaction, resource, now, type Store } from "./store.js";
 import { digest, assert, unseal, seal, AppError, redact } from "./security.js";
+import { queryInputs } from "./query-inputs.js";
 import { Provider } from "./providers.js";
 import { execute } from "./executor.js";
 import { resultBatches } from "./results.js";
@@ -860,37 +861,11 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         "Answer the question with one read-only SQL query. Refer to each dataset by its table value exactly. Return a short title and list unresolved business assumptions. Do not calculate results yourself. List every dataset the query reads in inputs. Stripe amounts (amount_* columns) are in cents: divide by 100.0 for currency. When joining tables with several rows per key (users and invoices of one account), aggregate each in its own subquery first so rows aren't multiplied.",
       );
       const map = await datasetsMap(store, scope);
-      // The sandbox loads only the query's inputs. Models sometimes join a
-      // table they didn't list, so every dataset table the SQL names is an
-      // input too.
-      const inputsOf = (p: z.infer<typeof analysis>) => {
-        const named = new Set(
-          (p.sql.match(/\bd_[a-z0-9_]+\b/gi) || []).map((t) => t.toLowerCase()),
-        );
-        // Every word of the SQL, to find tables named by their readable name.
-        const words = new Set(
-          (p.sql.match(/[a-z_][a-z0-9_]*/gi) || []).map((t) => t.toLowerCase()),
-        );
-        const listed = p.inputs.map((ref) => {
-          if (map.has(ref)) return ref;
-          const matches = [...map.values()].filter(
-            (d) =>
-              d.name.toLowerCase() === ref.toLowerCase() ||
-              datasetTable(d.id) === ref,
-          );
-          return matches.length === 1 ? matches[0].id : ref;
-        });
-        return [
-          ...new Set([
-            ...listed.filter((ref) => map.has(ref)),
-            ...[...map.keys()].filter(
-              (d) =>
-                named.has(datasetTable(d).toLowerCase()) ||
-                words.has(readable.get(d)?.toLowerCase() ?? "\0"),
-            ),
-          ]),
-        ];
-      };
+      // The sandbox loads only the query's inputs, and the citations are the
+      // inputs. Models sometimes join a table they didn't list, and list
+      // tables they never read, so the inputs are what the SQL reads.
+      const inputsOf = (p: z.infer<typeof analysis>) =>
+        queryInputs(p.sql, p.inputs, map);
       const query = async (p: z.infer<typeof analysis>) => {
         p.inputs = inputsOf(p);
         assert(p.inputs.length, "The query doesn't use any of your datasets.");
