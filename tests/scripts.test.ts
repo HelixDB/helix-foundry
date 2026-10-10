@@ -33,6 +33,7 @@ const ENV = [
   `INTERNAL_KEY=${INTERNAL}`,
   "PUBLIC_PORT=3105",
   "PUBLIC_ORIGIN=http://localhost:3105",
+  "EXECUTOR_JOB_TIMEOUT=1800",
   "NEON_CLIENT_ID=neon-id",
   `NEON_CLIENT_SECRET=${SECRET}`,
   "",
@@ -217,7 +218,7 @@ describe("backup.sh", () => {
     expect(field(dir, "app_schema")).toBe(String(SCHEMA_VERSION));
     expect(field(dir, "app_commit")).toBe("unknown");
     expect(readFileSync(join(dir, "settings.env"), "utf8")).toBe(
-      "PUBLIC_PORT=3105\nPUBLIC_ORIGIN=http://localhost:3105\nNEON_CLIENT_ID=neon-id\n",
+      "PUBLIC_PORT=3105\nPUBLIC_ORIGIN=http://localhost:3105\nEXECUTOR_JOB_TIMEOUT=1800\nNEON_CLIENT_ID=neon-id\n",
     );
     expect(mode(dir)).toBe(0o700);
     for (const name of readdirSync(dir))
