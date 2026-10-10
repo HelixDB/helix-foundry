@@ -77,12 +77,16 @@ else
     echo 'Nothing records which commit the services run, so upgrade.sh cannot name the commit to go back to.'
   fi
 fi
-# How to go back to where the upgrade started, with the backup in $1.
+# How to go back to where the upgrade started, with the backup in $1. It restores
+# with the copy of restore.sh in the backup, because the old release's own
+# restore.sh may predate this backup format (an older one needs config.env).
 rollback() {
+  local restore="bash \"$1/restore.sh\" \"$1\" --replace"
+  if [ -d "$1" ] && [ ! -f "$1/restore.sh" ]; then restore="scripts/restore.sh \"$1\" --replace"; fi
   if [ "$from_commit" = unknown ]; then
-    echo "find the commit that ran before in git reflog (after a git pull, ORIG_HEAD is usually that commit), run git reset --keep COMMIT, then scripts/restore.sh \"$1\" --replace"
+    echo "find the commit that ran before in git reflog (after a git pull, ORIG_HEAD is usually that commit), run git reset --keep COMMIT, then $restore"
   else
-    echo "git reset --keep $from_commit, then scripts/restore.sh \"$1\" --replace"
+    echo "git reset --keep $from_commit, then $restore"
   fi
 }
 from_version=$(helix_version "$from_image")
@@ -140,7 +144,7 @@ run_backup || status=$?
 # Status 3: the backup is complete, and the rebuild below starts the services.
 [ "$status" = 0 ] || [ "$status" = 3 ] || stop 'the backup failed'
 backup_dir="$(cd "$backup_dir" && pwd -P)"
-for file in helix-data.tgz foundry-data.tgz manifest.txt; do
+for file in helix-data.tgz foundry-data.tgz restore.sh backup-lib.sh manifest.txt; do
   [ -s "$backup_dir/$file" ] || stop "the backup has no $file"
 done
 [ "$(manifest_field "$backup_dir/manifest.txt" key_fingerprint)" = "$fingerprint" ] \

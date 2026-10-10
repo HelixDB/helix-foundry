@@ -125,7 +125,7 @@ docker compose --profile local up -d                # start again
 
 The stack starts again with Docker unless you stopped it.
 
-**Upgrade.** Run `./scripts/upgrade.sh`. It backs up to `~/helix-foundry-backups/` first and stops if the backup fails, then pulls and rebuilds; if the rebuild fails, run it again. If the new release changes HelixDB, it asks first: a newer HelixDB upgrades your data one way, so only that backup can take you back. A checkout from before `scripts/upgrade.sh` records the running commit and pulls once first; see [operations](docs/OPERATIONS.md#backup-restore-and-upgrades).
+**Upgrade.** Run `./scripts/upgrade.sh`. It backs up to `~/helix-foundry-backups/` first and stops if the backup fails, then pulls and rebuilds; if the rebuild fails, run it again. If the new release changes HelixDB, it asks first: a newer HelixDB upgrades your data one way, so only that backup can take you back. To go back, run the two commands it prints at the end. A checkout from before `scripts/upgrade.sh` records the running commit and pulls once first; see [operations](docs/OPERATIONS.md#backup-restore-and-upgrades).
 
 **Back up and restore.** `./scripts/backup.sh PATH` briefly stops the services and archives the HelixDB and data volumes to a folder outside the repository. Backups leave out your encryption key, so keep a separate copy of `.env`, for example in a password manager. `--include-key` adds `.env`, encrypted with a passphrase. `./scripts/restore.sh PATH --replace` replaces the current data. It refuses a backup made with another key unless you pass your copy with `--env-file`, and keeps the `.env` it replaces as `.env.pre-restore-TIME`.
 

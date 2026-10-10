@@ -194,11 +194,17 @@ describe("backup.sh", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("Keep a separate copy of .env");
     expect(readdirSync(dir).sort()).toEqual([
+      "backup-lib.sh",
       "foundry-data.tgz",
       "helix-data.tgz",
       "manifest.txt",
+      "restore.sh",
       "settings.env",
     ]);
+    for (const script of ["restore.sh", "backup-lib.sh"])
+      expect(readFileSync(join(dir, script), "utf8")).toBe(
+        readFileSync(join(repo, "scripts", script), "utf8"),
+      );
     const all = contents(dir);
     expect(all).toContain("placeholder helix-data");
     // sha256(ENCRYPTION_KEY) is the key the app encrypts credentials with.
@@ -301,9 +307,11 @@ describe("backup.sh", () => {
       "the backup is complete, but docker compose start",
     );
     expect(readdirSync(dir).sort()).toEqual([
+      "backup-lib.sh",
       "foundry-data.tgz",
       "helix-data.tgz",
       "manifest.txt",
+      "restore.sh",
       "settings.env",
     ]);
   });
@@ -424,6 +432,31 @@ describe("restore.sh", () => {
         readFileSync(join(dir, volume + ".tgz")),
       );
     expect(f.calls()).toEqual(RESTORE_CALLS);
+  });
+
+  it("restores with the copy a backup holds, into the checkout it runs in", () => {
+    const f = fixture();
+    const dir = backup(f);
+    f.git(f.root, "init", "-q", "-b", "main");
+    const saved = (cwd: string) =>
+      f.shell('cd "$1" && bash "$2/restore.sh" "$2" --replace', [cwd, dir]);
+    // Outside a checkout it has nothing to restore into.
+    let r = saved(f.base);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Run this from the Helix Foundry checkout");
+    expect(f.calls()).toEqual([]);
+    // From a folder inside the checkout, it restores the checkout.
+    r = saved(join(f.root, "apps/api"));
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.calls()).toEqual(RESTORE_CALLS);
+    expect(f.env()).toBe(ENV);
+    // Without backup-lib.sh next to it, it stops.
+    rmSync(join(dir, "backup-lib.sh"));
+    f.clearCalls();
+    r = saved(f.root);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("backup-lib.sh is missing");
+    expect(f.calls()).toEqual([]);
   });
 
   it("refuses another key unless --env-file names the kept .env", () => {
@@ -795,8 +828,34 @@ describe("restore.sh", () => {
 });
 
 describe("upgrade.sh", () => {
-  // A checkout of release 1 whose upstream has release 2, by default with HelixDB 99.0.0.
-  function release(f: Fixture, newImage = image("99.0.0")) {
+  // The scripts of this release, which release 2 brings when release 1 is older.
+  const current = [
+    "scripts/backup.sh",
+    "scripts/backup-lib.sh",
+    "scripts/restore.sh",
+    "scripts/upgrade.sh",
+    "apps/api/src/store.ts",
+  ];
+  // A checkout of release 1 whose upstream has release 2, by default with HelixDB
+  // 99.0.0. With beforeUpgrade, release 1 is a release from before upgrade.sh, whose
+  // restore.sh needs the config.env that backups no longer hold.
+  function release(
+    f: Fixture,
+    newImage = image("99.0.0"),
+    { beforeUpgrade = false } = {},
+  ) {
+    if (beforeUpgrade) {
+      const old = join(repo, "tests/fixtures/release-before-upgrade");
+      for (const script of ["backup.sh", "restore.sh"])
+        copyFileSync(join(old, script), join(f.root, "scripts", script));
+      for (const script of ["backup-lib.sh", "upgrade.sh"])
+        rmSync(join(f.root, "scripts", script));
+      const store = join(f.root, "apps/api/src/store.ts");
+      writeFileSync(
+        store,
+        readFileSync(store, "utf8").replace(/^.*SCHEMA_VERSION = .*\n/m, ""),
+      );
+    }
     f.git(f.root, "init", "-q", "-b", "main");
     f.git(f.root, "add", "-A");
     f.git(f.root, "commit", "-q", "-m", "Release 1");
@@ -813,8 +872,11 @@ describe("upgrade.sh", () => {
       readFileSync(compose, "utf8").replace(pinned[1], newImage),
     );
     writeFileSync(join(other, "RELEASE"), "2\n");
-    f.git(other, "add", "RELEASE");
-    f.git(other, "commit", "-q", "-am", "Release 2");
+    if (beforeUpgrade)
+      for (const file of current)
+        copyFileSync(join(repo, file), join(other, file));
+    f.git(other, "add", "-A");
+    f.git(other, "commit", "-q", "-m", "Release 2");
     f.git(other, "push", "-q");
     return {
       from: f.git(f.root, "rev-parse", "HEAD"),
@@ -869,7 +931,7 @@ describe("upgrade.sh", () => {
     ).toBeLessThan(calls.indexOf("compose --profile local up -d --build"));
     expect(calls.at(-1)).toBe("compose --profile local up -d --build");
     expect(r.stdout).toContain(
-      `git reset --keep ${from}, then scripts/restore.sh`,
+      `git reset --keep ${from}, then bash "${realpathSync(dir)}/restore.sh"`,
     );
     f.clearCalls();
     const again = f.run("upgrade.sh", [], {
@@ -925,7 +987,7 @@ describe("upgrade.sh", () => {
     );
     // Going back uses the backup from before the first attempt.
     expect(r.stdout).toContain(
-      `To go back: git reset --keep ${from}, then scripts/restore.sh "${first}" --replace`,
+      `To go back: git reset --keep ${from}, then bash "${first}/restore.sh" "${first}" --replace`,
     );
     expect(r.stdout).toContain(`This run also backed up to ${dir}.`);
     expect(existsSync(f.gitFile("helix-foundry-upgrade"))).toBe(false);
@@ -957,7 +1019,7 @@ describe("upgrade.sh", () => {
       .sort()
       .map((d) => realpathSync(join(backups(f), d)));
     expect(r.stdout).toContain(
-      `To go back: git reset --keep ${from}, then scripts/restore.sh "${first}" --replace`,
+      `To go back: git reset --keep ${from}, then bash "${first}/restore.sh" "${first}" --replace`,
     );
     expect(r.stdout).toContain(`so only ${first} can go back`);
     expect(field(second, "helix_image_running")).toBe(image("99.0.0"));
@@ -1128,6 +1190,54 @@ describe("upgrade.sh", () => {
     expect(field(dir, "app_commit")).toBe(from);
     expect(field(dir, "helix_image")).toBe(pinned[1]);
     expect(r.stdout).toContain(`To go back: git reset --keep ${from}`);
+  });
+
+  it("goes back to a release from before upgrade.sh as it says", () => {
+    const f = fixture();
+    const { from, to } = release(f, image("99.0.0"), { beforeUpgrade: true });
+    const old = { STUB_HELIX_IMAGE: pinned[1] };
+    // As the docs say for a checkout that has no upgrade.sh yet.
+    writeFileSync(f.gitFile("helix-foundry-deployed"), from + "\n");
+    f.git(f.root, "pull", "-q", "--ff-only");
+    let r = f.run("upgrade.sh", ["--yes"], old);
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
+    const [name] = readdirSync(backups(f));
+    const dir = realpathSync(join(backups(f), name));
+    expect(existsSync(join(dir, "config.env"))).toBe(false);
+    const back = r.stdout.match(/^To go back: (.*), then (.*)$/m);
+    expect(back?.slice(1)).toEqual([
+      `git reset --keep ${from}`,
+      `bash "${dir}/restore.sh" "${dir}" --replace`,
+    ]);
+    const before = f.env();
+    // Run what upgrade.sh printed, in the checkout.
+    const step = (command: string) =>
+      f.shell('cd "$1" && eval "$2"', [f.root, command], old);
+    r = step(back![1]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);
+    expect(existsSync(join(f.root, "scripts/upgrade.sh"))).toBe(false);
+    // The old release's own restore.sh cannot read the backup.
+    f.clearCalls();
+    r = f.run("restore.sh", [dir, "--replace"], old);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("Missing config.env");
+    expect(f.calls()).toEqual([]);
+    r = step(back![2]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`Restored ${dir}.`);
+    expect(f.calls()).toEqual(RESTORE_CALLS);
+    for (const volume of ["helix-data", "foundry-data"])
+      expect(readFileSync(join(f.restored, `${volume}.tgz`))).toEqual(
+        readFileSync(join(dir, `${volume}.tgz`)),
+      );
+    expect(f.env()).toBe(before);
+    expect(readFileSync(f.gitFile("helix-foundry-deployed"), "utf8")).toBe(
+      from + "\n",
+    );
+    expect(existsSync(f.gitFile("helix-foundry-upgrade"))).toBe(false);
+    expect(f.git(f.root, "status", "--porcelain")).toBe("");
   });
 });
 

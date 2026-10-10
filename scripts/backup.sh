@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Backs up the HelixDB and data volumes. The backup holds no ENCRYPTION_KEY or
 # INTERNAL_KEY: keep a separate copy of .env. --include-key adds the whole .env,
-# encrypted with a passphrase (BACKUP_PASSPHRASE, or typed in the terminal).
+# encrypted with a passphrase (BACKUP_PASSPHRASE, or typed in the terminal). It also
+# holds a copy of restore.sh and backup-lib.sh, which can restore it from a checkout
+# of an older release.
 # Exit status 3 means the backup is complete, but the services did not start again.
 set -euo pipefail
 umask 077
@@ -86,6 +88,12 @@ for volume in helix-data foundry-data; do
     || die "$volume.tgz.partial in $backup_dir cannot be read back, so this backup is incomplete."
   mv "$backup_dir/$volume.tgz.partial" "$backup_dir/$volume.tgz"
 done
+# A copy of the restore tooling, which reads this format even in a checkout of an
+# older release: going back after an upgrade checks out the old release first.
+for file in restore.sh backup-lib.sh; do
+  cp "scripts/$file" "$backup_dir/$file"
+  chmod 600 "$backup_dir/$file"
+done
 grep -E "$settings_pattern" .env > "$backup_dir/settings.env" || true
 key_file=none
 if [ -n "$include_key" ]; then
@@ -100,7 +108,8 @@ fi
 app_commit=$(deployed_commit)
 # Written last: a backup without manifest.txt is incomplete.
 {
-  echo '# Helix Foundry backup manifest. This file holds no keys; see scripts/restore.sh.'
+  echo '# Helix Foundry backup manifest. This file holds no keys. Restore with'
+  echo '# scripts/restore.sh, or from a checkout of an older release with restore.sh here.'
   echo 'format=2'
   echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "app_commit=$app_commit"

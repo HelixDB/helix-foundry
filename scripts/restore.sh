@@ -3,11 +3,26 @@
 # .env and refuses a backup made with another ENCRYPTION_KEY, unless --env-file
 # names the .env kept for that backup or the backup holds one in env.enc. It checks
 # everything before it stops anything, and replaces .env only once the data is in.
+#
+# backup.sh saves a copy of this script and backup-lib.sh in each backup. A checkout
+# of an older release, whose own restore.sh cannot read this backup format, restores
+# it with that copy: run it from the checkout, which is the installation it restores.
 set -euo pipefail
 umask 077
 here=$PWD
-cd "$(dirname "$0")/.."
-. scripts/backup-lib.sh
+tools=$(cd "$(dirname "$0")" && pwd -P)
+if [ "$(basename "$tools")" = scripts ] && [ -f "$tools/../compose.yaml" ]; then
+  cd "$tools/.."
+else
+  cd "$(git rev-parse --show-toplevel 2> /dev/null || pwd)"
+fi
+[ -f "$tools/backup-lib.sh" ] || {
+  echo "backup-lib.sh is missing from $tools. Nothing was changed." >&2
+  exit 1
+}
+. "$tools/backup-lib.sh"
+[ -f compose.yaml ] && [ -n "$(helix_image < compose.yaml)" ] \
+  || die "Run this from the Helix Foundry checkout that runs the installation to restore. Nothing was changed."
 take_passphrase
 usage='Usage: scripts/restore.sh BACKUP_DIR --replace [--env-file FILE] [--accept-key-mismatch] [--accept-helix-mismatch]'
 backup_dir="" replace="" env_file="" accept_mismatch="" accept_helix=""
@@ -36,6 +51,12 @@ case $commit in
   "" | unknown) back="check out the Helix Foundry release that made the backup" ;;
   *) back="check out the commit that made the backup (git reset --keep $commit)" ;;
 esac
+# The copy of restore.sh a backup holds also runs in a checkout of an older release.
+if [ -f "$backup_dir/restore.sh" ] && [ -f "$backup_dir/backup-lib.sh" ]; then
+  again="run bash \"$backup_dir/restore.sh\" \"$backup_dir\" --replace"
+else
+  again="restore again"
+fi
 unchanged='Nothing was changed.'
 
 # Which ENCRYPTION_KEY the backup was made with. An older backup whose config.env
@@ -79,15 +100,15 @@ newer="upgrade to a release that runs ${backup_version:+HelixDB }${backup_versio
 if [ -n "$commit" ] && [ "$commit" = "$head" ]; then
   older="This backup's commit is checked out, but a newer HelixDB had already opened the data, as during an upgrade that did not finish, so checking out that commit does not help. Restore the backup taken before the upgrade, which upgrade.sh names, or $newer."
 else
-  older="To restore it, $back, or $newer."
+  older="To restore it, $back and $again, or $newer."
 fi
 refuse() { # $1 = why
   [ -n "$accept_helix" ] || die "$1 HelixDB upgrades its storage one way, so an older HelixDB may refuse the data. $older If you know this HelixDB opens it, run again with --accept-helix-mismatch. $unchanged"
-  echo "WARNING: $1 Restoring anyway, as asked. If HelixDB refuses the data (unsupported_index_storage_version in its logs), $back and restore again." >&2
+  echo "WARNING: $1 Restoring anyway, as asked. If HelixDB refuses the data (unsupported_index_storage_version in its logs), $back and $again." >&2
 }
 if [ -z "$backup_image" ]; then
   echo 'WARNING: the backup does not record its HelixDB version. If HelixDB then refuses the data' >&2
-  echo "(unsupported_index_storage_version in its logs), $back and restore again." >&2
+  echo "(unsupported_index_storage_version in its logs), $back and $again." >&2
 elif same_image "$backup_image" "$current_image"; then
   :
 elif [ -z "$backup_version" ] || [ -z "$current_version" ]; then
@@ -107,9 +128,10 @@ elif version_newer "$current_version" "$backup_version"; then
   fi
 fi
 backup_schema=$(manifest_field "$manifest" app_schema)
-current_schema=$(schema_version < apps/api/src/store.ts)
+current_schema=""
+[ ! -f apps/api/src/store.ts ] || current_schema=$(schema_version < apps/api/src/store.ts)
 if [ -n "$backup_schema" ] && [ -n "$current_schema" ] && [ "$backup_schema" -gt "$current_schema" ]; then
-  die "The backup has metadata schema $backup_schema, newer than this checkout's $current_schema. To restore it, $back. $unchanged"
+  die "The backup has metadata schema $backup_schema, newer than this checkout's $current_schema. To restore it, $back and $again. $unchanged"
 fi
 
 # The .env to run with: --env-file, the current .env, env.enc, or an old config.env.
