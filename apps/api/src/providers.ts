@@ -194,7 +194,8 @@ function boundedLists(schema: any): any {
   const o = Object.fromEntries(
     Object.entries(schema).map(([k, v]) => [k, boundedLists(v)]),
   ) as any;
-  if (o.type === "array" && o.maxItems === undefined) o.maxItems = 12;
+  if (o.type === "array" && o.maxItems === undefined)
+    o.maxItems = Math.max(12, typeof o.minItems === "number" ? o.minItems : 0);
   return o;
 }
 function strictSchema(schema: any): any {
