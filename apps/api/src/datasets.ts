@@ -93,7 +93,13 @@ export async function ingestFile(
             : [];
         })
       : [];
-    if (oldProfile && oldProfile.fingerprint !== r.profile.fingerprint)
+    // A fingerprint stored before they were tagged is compared in its own
+    // format, so upgrading alone does not report a refresh.
+    if (
+      oldProfile &&
+      oldProfile.fingerprint !== r.profile.fingerprint &&
+      oldProfile.fingerprint !== r.legacyFingerprint
+    )
       tx.put(
         resource(
           scope,

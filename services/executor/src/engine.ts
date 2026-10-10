@@ -186,16 +186,24 @@ export async function execute(
         )
       ).getRowObjectsJson()[0].duplicate_rows,
     );
+    const digest = (v: unknown) =>
+      createHash("sha256").update(JSON.stringify(v)).digest("hex");
     const profile: DatasetProfile = {
       rows,
       duplicateRows,
       columns,
       sample,
-      fingerprint: createHash("sha256")
-        .update(JSON.stringify([schema, rows, fp]))
-        .digest("hex"),
+      // Tagged since it counts duplicate rows; untagged ones are older.
+      fingerprint: "v2:" + digest([schema, rows, fp]),
     };
-    return { profile, version: job.version, rows: sample };
+    return {
+      profile,
+      version: job.version,
+      rows: sample,
+      // The untagged fingerprint of the same data, so a stored one can be
+      // compared like for like after an upgrade.
+      legacyFingerprint: digest([schema, rows, { h: fp.h }]),
+    };
   } finally {
     c?.closeSync();
     db?.closeSync();
