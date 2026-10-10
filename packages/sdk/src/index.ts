@@ -36,6 +36,24 @@ export class FoundryError extends Error {
     super(message);
   }
 }
+async function readResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    if (response.ok)
+      throw new FoundryError(response.status, "Invalid JSON response");
+  }
+  if (!response.ok)
+    throw new FoundryError(
+      response.status,
+      typeof data?.error === "string"
+        ? data.error
+        : response.statusText || "Request failed",
+    );
+  return data as T;
+}
 export class FoundryClient {
   hostingProviders() {
     return this.request("/hosting");
@@ -90,9 +108,7 @@ export class FoundryClient {
       headers: this.headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const data = (await r.json()) as any;
-    if (!r.ok) throw new FoundryError(r.status, data.error);
-    return data;
+    return readResponse<T>(r);
   }
   onboarding() {
     return this.request<OnboardingState>("/onboarding");
@@ -113,7 +129,14 @@ export class FoundryClient {
     id: string,
     source: {
       name: string;
-      kind: "mysql" | "postgres" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+      kind:
+        | "mysql"
+        | "postgres"
+        | "rest"
+        | "s3"
+        | "stripe"
+        | "workos"
+        | "posthog";
       config: Record<string, unknown>;
       schedule?: string | null;
     },
@@ -135,9 +158,7 @@ export class FoundryClient {
       },
       body,
     });
-    const result = await response.json();
-    if (!response.ok) throw new FoundryError(response.status, result.error);
-    return result as Resource;
+    return readResponse<Resource>(response);
   }
   recommendOutcomes() {
     return this.request<Resource>("/onboarding/recommendations", {});
@@ -180,7 +201,14 @@ export class FoundryClient {
   }
   createSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
     schedule?: string;
   }) {
@@ -274,7 +302,14 @@ export class FoundryClient {
   }
   testSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
   }) {
     return this.request("/sources/test", source);
