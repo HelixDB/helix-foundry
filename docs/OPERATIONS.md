@@ -30,6 +30,6 @@ Model weights are reproducible and excluded from application backups. Parquet ve
 
 ## Deployment limits
 
-Two DuckDB jobs execute concurrently with a 512 MB per-process memory setting and a 120-second timeout. The executor container has a 2 GB memory cap and an internal-only network. One worker performs one inference job at a time. Use one worker replica in this single-server release.
+Two DuckDB jobs execute concurrently with a 512 MB per-process memory setting (`DUCKDB_MEMORY`) and a 120-second timeout. A job that needs more memory spills to `DATA_DIR/scratch`, up to `DUCKDB_SPILL_LIMIT` (2 GB by default) per job, so keep twice that free on the data volume. Each job's scratch directory is removed when the job ends, including when it is killed for its time or output limit, and the executor empties `scratch` when it starts, which clears spill files left by a container stop or an out-of-memory kill. In Compose, change both settings in the executor's `environment` in `compose.yaml`. The executor container has a 2 GB memory cap and an internal-only network. One worker performs one inference job at a time. Use one worker replica in this single-server release.
 
 The supported runtime is Node.js 24. There are no accounts: each installation serves one person on their own computer, who owns every workspace. API tokens are workspace scoped, optionally read-only, and revocable. See `VALIDATION.md` for benchmark scope and unverified deployment combinations.

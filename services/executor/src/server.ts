@@ -1,8 +1,9 @@
 import "dotenv/config";
 import Fastify from "fastify";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
+import { runJob, sweepScratch } from "./jobs.js";
+const root = resolve(process.env.DATA_DIR || ".data");
 const app = Fastify({ bodyLimit: 1024 * 1024, logger: true });
 let active = 0;
 const waiters: (() => void)[] = [];
@@ -23,58 +24,23 @@ app.post("/execute", async (req, reply) => {
   }
   active++;
   try {
-    return await new Promise((resolve) => {
-      const child = spawn(
-        process.execPath,
-        [
-          "--import",
-          "tsx",
-          fileURLToPath(new URL("./runner.ts", import.meta.url)),
-        ],
-        {
-          env: {
-            PATH: process.env.PATH,
-            DATA_DIR: process.env.DATA_DIR || ".data",
-            DUCKDB_MEMORY: process.env.DUCKDB_MEMORY || "512MB",
-          },
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-      let out = "",
-        err = "";
-      const timer = setTimeout(() => child.kill("SIGKILL"), 120000);
-      child.stdout.on("data", (x) => {
-        out += x;
-        if (out.length > 10_000_000) child.kill("SIGKILL");
+    const r = await runJob(JSON.stringify(req.body), root);
+    if (r.failed) return reply.code(500).send({ error: r.failed });
+    if (r.code !== 0)
+      return reply.code(422).send({
+        error: r.err.slice(0, 1500) || "Query exceeded execution limits",
       });
-      child.stderr.on("data", (x) => (err += x));
-      child.on("error", (e) => {
-        clearTimeout(timer);
-        resolve(reply.code(500).send({ error: e.message }));
-      });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        if (code !== 0)
-          return resolve(
-            reply
-              .code(422)
-              .send({
-                error: err.slice(0, 1500) || "Query exceeded execution limits",
-              }),
-          );
-        try {
-          resolve(JSON.parse(out));
-        } catch {
-          resolve(reply.code(500).send({ error: "Invalid executor response" }));
-        }
-      });
-      child.stdin.end(JSON.stringify(req.body));
-    });
+    try {
+      return JSON.parse(r.out);
+    } catch {
+      return reply.code(500).send({ error: "Invalid executor response" });
+    }
   } finally {
     active--;
     waiters.shift()?.();
   }
 });
+await sweepScratch(root);
 await app.listen({
   port: Number(process.env.EXECUTOR_PORT || 3002),
   host: process.env.EXECUTOR_HOST || "127.0.0.1",

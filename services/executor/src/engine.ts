@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import type { DatasetProfile } from "../../../packages/shared/src/index.js";
+import { scratchRoot } from "./paths.js";
 export const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 const lit = (v: string) => "'" + v.replaceAll("'", "''") + "'";
 const safePart = (s: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(s);
@@ -24,25 +25,28 @@ export type Execution = {
   offset?: number;
   limit?: number;
 };
+// The executor passes a scratch directory it removes however the job ends;
+// without one, the job makes its own and removes it when it finishes.
 export async function execute(
   job: Execution,
   root = resolve(process.env.DATA_DIR || ".data"),
+  scratch?: string,
 ) {
   if (!safePart(job.scope) || (job.version && !safePart(job.version)))
     throw new Error("Invalid storage identity");
   const out = resolve(root, "datasets", job.scope, `${job.version}.parquet`);
   await mkdir(dirname(out), { recursive: true });
-  const scratchRoot = resolve(root, "scratch");
-  await mkdir(scratchRoot, { recursive: true });
-  const scratch = await mkdtemp(resolve(scratchRoot, "executor-"));
+  if (!scratch) await mkdir(scratchRoot(root), { recursive: true });
+  const temp =
+    scratch || (await mkdtemp(resolve(scratchRoot(root), "executor-")));
   let db: DuckDBInstance | undefined;
   let c: DuckDBConnection | undefined;
   try {
     db = await DuckDBInstance.create(":memory:", {
       memory_limit: process.env.DUCKDB_MEMORY || "512MB",
       threads: "2",
-      temp_directory: scratch,
-      max_temp_directory_size: "2GB",
+      temp_directory: temp,
+      max_temp_directory_size: process.env.DUCKDB_SPILL_LIMIT || "2GB",
       allow_unsigned_extensions: "false",
       autoinstall_known_extensions: "false",
       autoload_known_extensions: "false",
@@ -199,6 +203,6 @@ export async function execute(
   } finally {
     c?.closeSync();
     db?.closeSync();
-    await rm(scratch, { recursive: true, force: true });
+    if (!scratch) await rm(temp, { recursive: true, force: true });
   }
 }
