@@ -5,7 +5,11 @@ import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { discover, importSource } from "../apps/api/src/connectors.js";
-import { stripeApi } from "../apps/api/src/stripe.js";
+import {
+  normalizeStripe,
+  stripeApi,
+  stripeObjects,
+} from "../apps/api/src/stripe.js";
 import { sourceSyncDefaults } from "../apps/api/src/source-sync.js";
 import { config } from "../apps/api/src/config.js";
 
@@ -20,6 +24,8 @@ const lines = (invoice: string, n: number) =>
     id: `il_${invoice}_${i}`,
     object: "line_item",
     amount: 100 * (i + 1),
+    // Line items can name their invoice, or leave it null.
+    invoice: null,
     price: { id: "price_1", object: "price", product: "prod_1" },
   }));
 const invoices = [
@@ -175,6 +181,44 @@ it("flattens references and fetches truncated child lists", async () => {
     "il_in_2_2",
   ]);
   expect(rows[4]).toMatchObject({ invoice_id: "in_2", price_id: "price_1" });
+  expect(rows.map((r) => r.invoice_id)).toEqual([
+    "in_1",
+    "in_1",
+    "in_2",
+    "in_2",
+    "in_2",
+  ]);
+});
+
+it("keeps relationship columns canonical when references are absent", () => {
+  const object = (name: string) => stripeObjects.find((o) => o.name === name)!;
+  const invoices = object("invoices");
+  expect(
+    normalizeStripe(invoices, {
+      id: "in_1",
+      subscription: null,
+      customer: null,
+    }),
+  ).toEqual({ invoice_id: "in_1", subscription_id: null, customer_id: null });
+  expect(normalizeStripe(invoices, { subscription: "sub_1" })).toEqual({
+    subscription_id: "sub_1",
+  });
+  // An absent reference never clears an id that is already known, such as
+  // the parent invoice added to each line item.
+  expect(
+    normalizeStripe(object("invoice_line_items"), {
+      invoice_id: "in_1",
+      id: "il_1",
+      invoice: null,
+      subscription: { object: "subscription" },
+      price: "price_1",
+    }),
+  ).toEqual({
+    invoice_id: "in_1",
+    line_item_id: "il_1",
+    subscription_id: null,
+    price_id: "price_1",
+  });
 });
 
 it("returns a schema for empty objects and refreshes hourly", async () => {
