@@ -41,7 +41,7 @@ git fetch --quiet || die "Could not fetch $upstream. $unchanged"
 to_commit=$(git rev-parse '@{u}')
 to_image=$(git show "$to_commit:compose.yaml" | helix_image)
 if [ "$to_commit" = "$head" ]; then
-  if [ "$from_commit" = "$head" ] && [ "$from_image" = "$to_image" ]; then
+  if [ "$from_commit" = "$head" ] && same_image "$from_image" "$to_image"; then
     echo "Already up to date at $head."
     exit 0
   fi
@@ -57,7 +57,7 @@ to_version=$(helix_version "$to_image")
 if [ -n "$from_version" ] && [ -n "$to_version" ] && version_newer "$from_version" "$to_version"; then
   die "$to_commit moves HelixDB back from $from_version to $to_version. An older HelixDB may refuse data a newer one opened, so upgrade.sh does not start it. Stay on the release that runs now, and ask the Helix Foundry maintainers which release to use. $unchanged"
 fi
-if [ "$to_image" != "$from_image" ]; then
+if ! same_image "$from_image" "$to_image"; then
   cat >&2 <<WARNING
 WARNING: this upgrade changes the HelixDB image
   from $from_image

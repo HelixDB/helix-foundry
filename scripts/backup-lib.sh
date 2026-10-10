@@ -64,6 +64,26 @@ helix_version() {
   printf '%s\n' "$1" | sed -n 's/^[^@]*:v\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
 }
 
+# Prints the digest (sha256:...) an image reference names, or nothing.
+image_digest() {
+  case $1 in *@sha256:*) printf 'sha256:%s\n' "${1##*@sha256:}" ;; esac
+}
+
+# Succeeds when images $1 and $2 are the same HelixDB release. Docker can record the
+# image of a container without the tag or the digest compose.yaml gives, so this
+# compares the digests when both have one, and the versions otherwise.
+same_image() {
+  local a b
+  [ "$1" != "$2" ] || return 0
+  a=$(image_digest "$1") b=$(image_digest "$2")
+  if [ -n "$a" ] && [ -n "$b" ]; then
+    [ "$a" = "$b" ]
+    return
+  fi
+  a=$(helix_version "$1") b=$(helix_version "$2")
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+
 # Succeeds when version $1 is newer than version $2 (both X.Y.Z).
 version_newer() {
   local a=$1 b=$2 x y

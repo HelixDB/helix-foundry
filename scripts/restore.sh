@@ -9,13 +9,14 @@ here=$PWD
 cd "$(dirname "$0")/.."
 . scripts/backup-lib.sh
 take_passphrase
-usage='Usage: scripts/restore.sh BACKUP_DIR --replace [--env-file FILE] [--accept-key-mismatch]'
-backup_dir="" replace="" env_file="" accept_mismatch=""
+usage='Usage: scripts/restore.sh BACKUP_DIR --replace [--env-file FILE] [--accept-key-mismatch] [--accept-helix-mismatch]'
+backup_dir="" replace="" env_file="" accept_mismatch="" accept_helix=""
 while [ $# -gt 0 ]; do
   case $1 in
     --replace) replace=1 ;;
     --env-file) [ $# -ge 2 ] || die "$usage"; env_file=$2; shift ;;
     --accept-key-mismatch) accept_mismatch=1 ;;
+    --accept-helix-mismatch) accept_helix=1 ;;
     -*) die "$usage" ;;
     *) [ -z "$backup_dir" ] || die "$usage"; backup_dir=$1 ;;
   esac
@@ -59,23 +60,38 @@ if [ -f "$backup_dir/config.env" ]; then
 fi
 
 # HelixDB upgrades its storage one way, so newer data may not open in an older image.
+# Docker can record the container's image without its tag; then the image the
+# backup's commit pins gives the version, when it is the same image.
 current_image=$(helix_image < compose.yaml)
+pinned_image=$(manifest_field "$manifest" helix_image)
 backup_image=$(manifest_field "$manifest" helix_image_running)
-[ -n "$backup_image" ] || backup_image=$(manifest_field "$manifest" helix_image)
+if [ -z "$backup_image" ] \
+  || { [ -z "$(helix_version "$backup_image")" ] && [ -n "$pinned_image" ] && same_image "$backup_image" "$pinned_image"; }; then
+  backup_image=$pinned_image
+fi
 backup_version=$(helix_version "$backup_image")
 current_version=$(helix_version "$current_image")
 made="HelixDB $backup_version made this backup"
+newer="upgrade to a release that runs ${backup_version:+HelixDB }${backup_version:-$backup_image} or newer"
+older="To restore it, $back, or $newer."
+refuse() { # $1 = why
+  [ -n "$accept_helix" ] || die "$1 HelixDB upgrades its storage one way, so an older HelixDB may refuse the data. $older If you know this HelixDB opens it, run again with --accept-helix-mismatch. $unchanged"
+  echo "WARNING: $1 Restoring anyway, as asked. If HelixDB refuses the data (unsupported_index_storage_version in its logs), $back and restore again." >&2
+}
 if [ -z "$backup_image" ]; then
   echo 'WARNING: the backup does not record its HelixDB version. If HelixDB then refuses the data' >&2
   echo "(unsupported_index_storage_version in its logs), $back and restore again." >&2
+elif same_image "$backup_image" "$current_image"; then
+  :
 elif [ -z "$backup_version" ] || [ -z "$current_version" ]; then
-  [ "$backup_image" = "$current_image" ] \
-    || echo "WARNING: $backup_image made this backup, but this checkout runs $current_image." >&2
+  refuse "$backup_image made this backup, and this checkout runs $current_image. restore.sh cannot tell which HelixDB version is newer."
 elif version_newer "$backup_version" "$current_version"; then
   storage=$(helix_storage "$backup_version")
-  [ -n "$storage" ] && [ "$storage" = "$(helix_storage "$current_version")" ] \
-    || die "$made, but this checkout runs HelixDB $current_version. HelixDB upgrades its storage one way, so an older HelixDB may refuse the data. To restore it, $back, or upgrade to a release with HelixDB $backup_version or newer. $unchanged"
-  echo "$made. This checkout runs HelixDB $current_version, which uses the same storage format."
+  if [ -n "$storage" ] && [ "$storage" = "$(helix_storage "$current_version")" ]; then
+    echo "$made. This checkout runs HelixDB $current_version, which uses the same storage format."
+  else
+    refuse "$made, but this checkout runs HelixDB $current_version."
+  fi
 elif version_newer "$current_version" "$backup_version"; then
   if version_newer "$current_version" 0.0.9 && ! version_newer "$backup_version" 0.0.9; then
     echo "$made. This checkout runs HelixDB $current_version, which upgrades the restored data's index storage one way when it starts. The backup itself does not change."

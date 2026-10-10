@@ -43,8 +43,9 @@ const fingerprint = (key: string) =>
 const pinned = readFileSync(join(repo, "compose.yaml"), "utf8").match(
   /^ {4}image: (ghcr\.io\/helixdb\/helixdb:v(\d+\.\d+\.\d+)\S*)$/m,
 )!;
+// Each version gets its own digest, as in a registry.
 const image = (version: string) =>
-  `ghcr.io/helixdb/helixdb:v${version}@sha256:${"0".repeat(64)}`;
+  `ghcr.io/helixdb/helixdb:v${version}@sha256:${sha256(version)}`;
 const mode = (path: string) => statSync(path).mode & 0o777;
 const field = (dir: string, name: string) =>
   readFileSync(join(dir, "manifest.txt"), "utf8").match(
@@ -735,6 +736,43 @@ describe("restore.sh", () => {
     expect(output).not.toContain("one way");
   });
 
+  it("reads the HelixDB version from the pin when Docker records only a digest", () => {
+    const f = fixture();
+    f.pin(image("0.0.10"));
+    const digestOnly = (version: string) =>
+      `ghcr.io/helixdb/helixdb@sha256:${sha256(version)}`;
+    const dir = backup(f, [], { STUB_HELIX_IMAGE: digestOnly("0.0.10") });
+    let r = f.run("restore.sh", [dir, "--replace"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout + r.stderr).not.toContain("HelixDB");
+    f.pin(image("0.0.9"));
+    r = f.run("restore.sh", [dir, "--replace"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(
+      "HelixDB 0.0.10 made this backup, but this checkout runs HelixDB 0.0.9.",
+    );
+  });
+
+  it("refuses HelixDB images it cannot compare, unless told to", () => {
+    const f = fixture();
+    const unknown = `ghcr.io/helixdb/helixdb@sha256:${sha256("unknown")}`;
+    const dir = backup(f, [], { STUB_HELIX_IMAGE: unknown });
+    let r = f.run("restore.sh", [dir, "--replace"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("cannot tell which HelixDB version is newer");
+    expect(r.stderr).toContain("--accept-helix-mismatch");
+    expect(f.calls()).toEqual([]);
+    r = f.run("restore.sh", [dir, "--replace", "--accept-helix-mismatch"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("Restoring anyway, as asked.");
+    // It also restores data from a newer HelixDB when told to.
+    f.pin(image("0.0.9"));
+    const newer = backup(f, [], { STUB_HELIX_IMAGE: image("0.0.12") });
+    r = f.run("restore.sh", [newer, "--replace", "--accept-helix-mismatch"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("unsupported_index_storage_version");
+  });
+
   it("refuses data with a newer metadata schema", () => {
     const f = fixture();
     const dir = backup(f);
@@ -916,6 +954,19 @@ describe("upgrade.sh", () => {
     expect(t.stderr).toMatch(/^\+ take_passphrase$/m);
     for (const secret of [KEY, INTERNAL, SECRET, PASSPHRASE])
       expect(t.stdout + t.stderr).not.toContain(secret);
+  });
+
+  it("matches the HelixDB container without its tag or digest", () => {
+    const f = fixture();
+    const { to } = release(f);
+    expect(f.run("upgrade.sh", ["--yes"]).status).toBe(0);
+    for (const running of [
+      "ghcr.io/helixdb/helixdb:v99.0.0",
+      `ghcr.io/helixdb/helixdb@sha256:${sha256("99.0.0")}`,
+    ]) {
+      const r = f.run("upgrade.sh", [], { STUB_HELIX_IMAGE: running });
+      expect(r.stdout, running).toContain(`Already up to date at ${to}.`);
+    }
   });
 
   it("finishes the upgrade again after going back to the old release", () => {
