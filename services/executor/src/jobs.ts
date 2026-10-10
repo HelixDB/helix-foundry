@@ -82,6 +82,7 @@ async function run(
           DATA_DIR: root,
           DUCKDB_MEMORY: process.env.DUCKDB_MEMORY || "512MB",
           DUCKDB_SPILL_LIMIT: process.env.DUCKDB_SPILL_LIMIT || "2GB",
+          EXECUTOR_RESULT_LIMIT: process.env.EXECUTOR_RESULT_LIMIT || "2GB",
           EXECUTOR_SCRATCH: scratch,
         },
         stdio: ["pipe", "pipe", "pipe"],

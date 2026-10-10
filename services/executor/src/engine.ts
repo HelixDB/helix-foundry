@@ -37,6 +37,28 @@ export type Executed = {
   rows: Record<string, Json>[];
 };
 export type Materialized = { version: string; count: number };
+const units: Record<string, number> = {
+  b: 1,
+  k: 1e3,
+  kb: 1e3,
+  m: 1e6,
+  mb: 1e6,
+  g: 1e9,
+  gb: 1e9,
+  t: 1e12,
+  tb: 1e12,
+  kib: 2 ** 10,
+  mib: 2 ** 20,
+  gib: 2 ** 30,
+  tib: 2 ** 40,
+};
+// A size written as DuckDB's settings take it: 2GB is 10^9 bytes, 2GiB 2^30.
+// NaN when it is not one.
+export function bytes(size: string) {
+  const [, n, unit = "b"] =
+    /^\s*(\d+(?:\.\d+)?)\s*([a-z]+)?\s*$/i.exec(size) || [];
+  return Number(n) * (units[unit.toLowerCase()] ?? NaN);
+}
 // The executor passes a scratch directory it removes however the job ends;
 // without one, the job makes its own and removes it when it finishes.
 export async function execute(
@@ -159,16 +181,31 @@ export async function execute(
       if (job.mode === "materialize") {
         // One pass and no profile. Rows convert exactly as a query's rows do.
         // The file is written in scratch and moved into place once complete.
+        // Its size is capped, since no other limit applies to it: a join
+        // that multiplies rows writes gigabytes long before the time limit.
+        const limit = process.env.EXECUTOR_RESULT_LIMIT || "2GB",
+          max = bytes(limit);
+        if (!(max >= 0))
+          throw new Error("Invalid EXECUTOR_RESULT_LIMIT: " + limit);
         const result = await c.stream(
           `SELECT * FROM (${sql}) AS foundry_result`,
         );
         const partial = resolve(temp, "result.jsonl"),
           file = resultFile(root, job.scope, job.version!);
-        let count = 0;
+        let count = 0,
+          size = 0;
         await pipeline(async function* () {
           for await (const rows of result.yieldRowObjectJson()) {
+            const lines = rows
+              .map((row) => JSON.stringify(row) + "\n")
+              .join("");
+            size += Buffer.byteLength(lines);
+            if (size > max)
+              throw new Error(
+                `Result exceeds EXECUTOR_RESULT_LIMIT (${limit})`,
+              );
             count += rows.length;
-            yield rows.map((row) => JSON.stringify(row) + "\n").join("");
+            yield lines;
           }
         }, createWriteStream(partial));
         await mkdir(dirname(file), { recursive: true });

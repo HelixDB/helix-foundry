@@ -20,7 +20,7 @@ import {
 import { DuckDBInstance } from "@duckdb/node-api";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execute } from "../services/executor/src/engine.js";
+import { bytes, execute } from "../services/executor/src/engine.js";
 import { runJob, sweepScratch } from "../services/executor/src/jobs.js";
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
 let dir: string;
@@ -192,6 +192,41 @@ describe("isolated dataset execution", () => {
       "result.parquet",
     );
     expect(await readdir(scratchRoot(dir))).toEqual([]);
+  });
+  it("reads sizes as DuckDB settings do", () => {
+    expect(bytes("2GB")).toBe(2e9);
+    expect(bytes("512MiB")).toBe(512 * 2 ** 20);
+    expect(bytes(" 1.5 gb ")).toBe(1.5e9);
+    expect(bytes("4096")).toBe(4096);
+    for (const size of ["", "2 gigs", "-1GB", "GB"])
+      expect(bytes(size)).toBeNaN();
+  });
+  it("stops a materialized result at EXECUTOR_RESULT_LIMIT", async () => {
+    // Shaped like a relationship whose key matches many rows on both sides:
+    // 100,000 pairs from 1,000 rows each.
+    const join = JSON.stringify({
+      mode: "materialize",
+      scope: "a",
+      version: "exploding",
+      inputs: [],
+      sql: "SELECT a.i AS from_key, b.i AS to_key FROM range(1000) a(i) JOIN range(1000) b(i) ON a.i % 10 = b.i % 10",
+    });
+    vi.stubEnv("EXECUTOR_RESULT_LIMIT", "100KB");
+    const r = await runJob(join, dir);
+    expect(r.code).toBe(1);
+    expect(r.err).toBe("Result exceeds EXECUTOR_RESULT_LIMIT (100KB)");
+    await expect(stat(resultFile(dir, "a", "exploding"))).rejects.toThrow();
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+    vi.stubEnv("EXECUTOR_RESULT_LIMIT", "2 gigs");
+    await expect(
+      execute({ ...JSON.parse(join), version: "invalid" }, dir),
+    ).rejects.toThrow("Invalid EXECUTOR_RESULT_LIMIT: 2 gigs");
+    vi.stubEnv("EXECUTOR_RESULT_LIMIT", "10MB");
+    expect(JSON.parse((await runJob(join, dir)).out)).toEqual({
+      version: "exploding",
+      count: 100000,
+    });
+    await rm(resultFile(dir, "a", "exploding"));
   });
   it("profiles a snapshot larger than memory using writable, isolated scratch storage", async () => {
     vi.stubEnv("DUCKDB_MEMORY", "128MB");

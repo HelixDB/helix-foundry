@@ -58,6 +58,8 @@ services:
       DUCKDB_MEMORY: 512MB
       # Disk each job may fill with spill files under /data/scratch.
       DUCKDB_SPILL_LIMIT: 2GB
+      # Disk a publication query may fill with result rows, as JSON lines.
+      EXECUTOR_RESULT_LIMIT: 2GB
     mem_limit: 2g
     pids_limit: 128
     cap_drop: [ALL]

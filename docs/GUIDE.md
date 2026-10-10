@@ -146,7 +146,7 @@ Data lives in three Docker volumes:
 
 **HelixDB.** Queries use the HelixDB TypeScript SDK 3.2 and `/v2/query`. A scope revision is compared and advanced inside each write batch, so stale metadata writes fail as a unit. Dataset artifacts and staged ontology generations stay invisible until the publication pointer changes. Source imports remain separate from manual object overlays.
 
-**Executor isolation.** The executor loads approved input snapshots, disables external access and extension installation, locks its configuration, and wraps generated SQL as a single SELECT. It has no connector or API credentials. Two DuckDB jobs run at a time, each with a 512 MB memory setting, up to 2 GB of disk for spilling beyond it, and a 120-second timeout (see [operations](OPERATIONS.md#deployment-limits)). In Compose the executor container is limited to 2 GB of memory and 128 processes, drops all Linux capabilities and cannot gain new privileges. Never expose its endpoint.
+**Executor isolation.** The executor loads approved input snapshots, disables external access and extension installation, locks its configuration, and wraps generated SQL as a single SELECT. It has no connector or API credentials. Two DuckDB jobs run at a time, each with a 512 MB memory setting, up to 2 GB of disk for spilling beyond it, up to 2 GB of result rows for a publication, and a 120-second timeout (see [operations](OPERATIONS.md#deployment-limits)). In Compose the executor container is limited to 2 GB of memory and 128 processes, drops all Linux capabilities and cannot gain new privileges. Never expose its endpoint.
 
 ## Security
 
