@@ -15,7 +15,7 @@ export type ColumnKind =
 export function columnKind(type?: string): ColumnKind {
   const t = (type || "").toUpperCase();
   if (!t) return "string";
-  if (/STRUCT|MAP|LIST|JSON|\[\]|UNION/.test(t)) return "json";
+  if (/STRUCT|MAP|LIST|JSON|\[\d*\]|UNION/.test(t)) return "json";
   if (/^(TINY|SMALL|BIG|HUGE|U)?INT|INTEGER|UBIGINT|USMALLINT/.test(t))
     return "integer";
   if (/DOUBLE|FLOAT|DECIMAL|NUMERIC|REAL/.test(t)) return "number";
