@@ -78,6 +78,8 @@ export async function metricsDatasets(store: Store, scope: string) {
         (!d.data.generation || d.data.generation === generation) &&
         !d.data.retiredSample &&
         !excluded.has(d.id) &&
+        !excluded.has(d.data.sourceId) &&
+        !excluded.has(d.data.importJobId) &&
         d.data.activeVersion &&
         d.data.profile?.columns?.length,
     )
