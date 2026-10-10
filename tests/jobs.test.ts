@@ -124,7 +124,8 @@ it("recovers an interrupted import lease without creating another operation", as
   }
 });
 // Two scheduled sources that are due: one feeds a running setup build whose
-// lease outlived a worker restart, the other does not.
+// lease outlived a worker restart, the other does not. A chat question that
+// routing has not resolved yet is running too.
 async function buildingWorkspace(store: MemoryStore, scope: string) {
   await transaction(store, "global", async (tx) =>
     tx.put(resource("global", "workspaceRef", scope, {}, scope)),
@@ -169,6 +170,19 @@ async function buildingWorkspace(store: MemoryStore, scope: string) {
         "build",
       ),
     );
+    tx.put(
+      resource(
+        scope,
+        "run",
+        "How many customers?",
+        {
+          intent: "auto",
+          status: "running",
+          leaseUntil: Date.now() + 86400000,
+        },
+        "question",
+      ),
+    );
   });
 }
 const synced = async (store: MemoryStore, scope: string, source: string) =>
@@ -202,7 +216,8 @@ it("defers background syncs of a running build's inputs, and only those, until i
     await until(() => synced(store, scope, "other"));
     expect(imports.count).toBe(before + 1);
     expect((await store.get(scope, "queued"))?.data.status).toBe("queued");
-    expect((await store.get(scope, "input"))?.data.nextRun).toBe(0);
+    // Its next refresh joins the queued one.
+    expect((await store.get(scope, "input"))?.data.nextRun).toBeGreaterThan(0);
     await transaction(store, scope, async (tx) => {
       const run = (await tx.get("build"))!;
       tx.update(run, { ...run.data, status: "succeeded" });
@@ -220,17 +235,26 @@ it("defers background syncs of a running build's inputs, and only those, until i
     await stop();
   }
 });
-it("stops deferring a build's input after 15 minutes", async () => {
+it("stops deferring a build's input 15 minutes after its sync was queued, across worker restarts", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const store = new MemoryStore(),
     scope = "bounded-deferral";
   await buildingWorkspace(store, scope);
-  const stop = startWorker(store);
+  let stop = startWorker(store);
   try {
     await until(() => synced(store, scope, "other"));
-    expect(await synced(store, scope, "input")).toBe(false);
+    const waiting = (await store.list(scope, "job")).filter(
+      (j) => j.data.sourceId === "input",
+    );
+    expect(waiting.map((j) => j.data.status)).toEqual(["queued"]);
+    // As when the build keeps crashing the worker.
+    await stop();
     vi.setSystemTime(Date.now() + 15 * 60000);
+    stop = startWorker(store);
     await until(() => synced(store, scope, "input"));
+    expect((await store.get(scope, waiting[0].id))?.data.status).toBe(
+      "succeeded",
+    );
     expect((await store.get(scope, "build"))?.data.status).toBe("running");
   } finally {
     await stop();
