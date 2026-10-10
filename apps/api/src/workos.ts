@@ -98,13 +98,14 @@ export function normalizeWorkos(
   if (object.link)
     return { [object.parent!.column]: parentId, [object.link]: row.id };
   const out: Record<string, unknown> = {};
-  if (object.parent) out[object.parent.column] = parentId;
   for (const [field, value] of Object.entries(row)) {
     if (field === "object") continue;
     // `groups` on directory users is deprecated; use directory_group_members.
     if (object.name === "directory_users" && field === "groups") continue;
     out[field === "id" ? object.key : field] = value;
   }
+  if (object.parent && parentId !== undefined)
+    out[object.parent.column] = parentId;
   return out;
 }
 
