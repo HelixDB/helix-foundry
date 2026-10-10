@@ -128,6 +128,8 @@ else
   echo 'It does not include ENCRYPTION_KEY. Keep a separate copy of .env, for example in a'
   echo 'password manager: without it, restored connector and AI credentials cannot be decrypted.'
 fi
+# upgrade.sh warns once it has finished, after the output of the rebuild.
+[ -n "${HF_UPGRADE_BACKUP:-}" ] || warn_old_backups
 if [ -z "$restarted" ]; then
   echo "WARNING: the backup is complete, but docker compose start $restart failed, so those services are stopped. Fix the error above, then start them: docker compose up -d $restart" >&2
   exit 3

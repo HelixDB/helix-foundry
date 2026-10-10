@@ -76,6 +76,7 @@ else
   if [ -n "$running" ] && ! same_image "$running" "$from_image"; then from_image=$running; fi
   if [ "$from_commit" = "$head" ] && [ "$to_commit" = "$head" ] && same_image "$from_image" "$to_image"; then
     echo "Already up to date at $head."
+    warn_old_backups
     exit 0
   fi
   if [ "$to_commit" = "$head" ]; then
@@ -153,7 +154,7 @@ stop() {
 run_backup() (
   { set +x; } 2> /dev/null
   if [ -n "$include_key" ] && [ -n "$passphrase" ]; then export BACKUP_PASSPHRASE=$passphrase; fi
-  "$BASH" scripts/backup.sh $include_key "$backup_dir"
+  HF_UPGRADE_BACKUP=1 "$BASH" scripts/backup.sh $include_key "$backup_dir"
 )
 echo "Backing up to $backup_dir before upgrading."
 status=0
@@ -206,3 +207,4 @@ Wait until this returns {"ok":true,...}, which can take a few minutes:
   curl -fsS http://localhost:${port:-3001}/api/health
 To go back: $back
 DONE
+warn_old_backups

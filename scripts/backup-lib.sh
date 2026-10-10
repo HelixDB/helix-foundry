@@ -233,6 +233,26 @@ decrypt_env() ( # $1 = env.enc, $2 = iterations; writes the .env to stdout
     -iter "${2:-$key_iterations}" -pass env:HF_BACKUP_PASSPHRASE -in "$1"
 )
 
+# Warns about backups an older backup.sh made, by default in the repository's
+# backups/ folder: their config.env holds ENCRYPTION_KEY and INTERNAL_KEY in plain
+# text. It lists the folders and never reads the files.
+warn_old_backups() {
+  local found count
+  found=$(
+    { find "$(pwd -P)/backups" "$HOME/helix-foundry-backups" -mindepth 2 -maxdepth 2 \
+      -type f -name config.env 2> /dev/null || true; } | sed 's|/config.env$||' | sort
+  )
+  [ -n "$found" ] || return 0
+  count=$(printf '%s\n' "$found" | wc -l | tr -d ' ')
+  {
+    echo 'WARNING: these backups, made by an older backup.sh, hold the keys in plain text in config.env:'
+    printf '%s\n' "$found" | head -n 5 | sed 's/^/  /'
+    [ "$count" -le 5 ] || echo "  and $((count - 5)) more"
+    echo 'Anyone with a copy can decrypt the stored credentials. Once you have a new backup and'
+    echo 'a separate copy of .env, delete those backups, or at least their config.env.'
+  } >&2
+}
+
 # Prints a new folder for a backup in ~/helix-foundry-backups, named after the time.
 new_backup_dir() {
   local base dir n=1

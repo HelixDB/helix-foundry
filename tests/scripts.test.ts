@@ -235,6 +235,42 @@ describe("backup.sh", () => {
     ]);
   });
 
+  it("warns about older backups that hold the keys in plain text", () => {
+    const f = fixture();
+    let r = f.run("backup.sh", [join(f.base, "first")]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain("WARNING");
+    // Where an older backup.sh wrote by default, and where the old docs said to.
+    const old = [
+      join(f.root, "backups", "20260101-000000"),
+      join(f.home, "helix-foundry-backups", "20260102-000000"),
+    ];
+    for (const dir of old) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "config.env"), ENV, { mode: 0o600 });
+    }
+    r = f.run("backup.sh", [join(f.base, "second")]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("made by an older backup.sh, hold the keys");
+    for (const dir of old)
+      expect(r.stderr).toMatch(
+        new RegExp(`^  /.*${dir.slice(f.base.length)}$`, "m"),
+      );
+    expect(r.stderr).toContain(
+      "delete those backups, or at least their config.env",
+    );
+    for (const secret of [KEY, INTERNAL, SECRET])
+      expect(r.stdout + r.stderr).not.toContain(secret);
+    // Seven in all: it lists five.
+    for (let n = 3; n <= 7; n++) {
+      const dir = join(f.root, "backups", `2026010${n}-000000`);
+      mkdirSync(dir);
+      writeFileSync(join(dir, "config.env"), "");
+    }
+    r = f.run("backup.sh", [join(f.base, "third")]);
+    expect(r.stderr).toContain("  and 2 more\n");
+  });
+
   it("records the image of the running HelixDB container", () => {
     const f = fixture();
     const dir = backup(f, [], { STUB_HELIX_IMAGE: image("0.0.5") });
@@ -1303,6 +1339,25 @@ describe("upgrade.sh", () => {
     expect(field(dir, "app_commit")).toBe(from);
     expect(field(dir, "helix_image")).toBe(pinned[1]);
     expect(r.stdout).toContain(`To go back: git reset --keep ${from}`);
+  });
+
+  it("warns once, at the end, about older backups with the keys in plain text", () => {
+    const f = fixture();
+    const { to } = release(f);
+    const old = join(f.root, "backups", "20260101-000000");
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, "config.env"), ENV, { mode: 0o600 });
+    let r = f.run("upgrade.sh", ["--yes"]);
+    expect(r.status, r.stderr).toBe(0);
+    const warning = "made by an older backup.sh, hold the keys";
+    expect(r.stderr.split(warning)).toHaveLength(2);
+    expect(r.stderr.trimEnd().endsWith("at least their config.env.")).toBe(
+      true,
+    );
+    r = f.run("upgrade.sh", [], { STUB_HELIX_IMAGE: image("99.0.0") });
+    expect(r.stdout).toContain(`Already up to date at ${to}.`);
+    expect(r.stderr).toContain(warning);
+    expect(r.stderr).toContain("/install/backups/20260101-000000\n");
   });
 
   it("goes back to a release from before upgrade.sh as it says", () => {

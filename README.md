@@ -152,7 +152,7 @@ Helix Foundry is built for one person on their own computer. There are no accoun
 
 - The app is published on `127.0.0.1` only. Never expose it with a reverse proxy, tunnel or port forward, and never publish the internal HelixDB, executor or Ollama ports.
 - The API rejects requests whose `Host` is not this computer, and browser changes from any other origin, with `403`.
-- Connector and AI credentials are encrypted with `ENCRYPTION_KEY` from `.env`. Keep `.env`, `.env.pre-restore-*` files and backups private and out of git, and keep a copy of `.env` apart from your backups, which do not include the key. If you lose the key, stored credentials cannot be recovered. Do not try to rotate it by replacing the value.
+- Connector and AI credentials are encrypted with `ENCRYPTION_KEY` from `.env`. Keep `.env`, `.env.pre-restore-*` files and backups private and out of git, and keep a copy of `.env` apart from your backups, which do not include the key. Backups made by an older `backup.sh` do: their `config.env` holds both keys in plain text, often in the repository's `backups/` folder. Once you have a new backup and a separate copy of `.env`, delete those backups, or at least their `config.env`; `backup.sh` and `upgrade.sh` warn while any remain in `backups/` or `~/helix-foundry-backups/`. If you lose the key, stored credentials cannot be recovered. Do not try to rotate it by replacing the value.
 - Generated SQL runs in a separate DuckDB executor on an internal network with no internet access, no connector credentials, no Linux capabilities, and memory and process limits.
 - Scripts and the SDK use workspace-scoped API tokens from **Settings → Developer tools**. Tokens are read-only unless you grant write access.
 
