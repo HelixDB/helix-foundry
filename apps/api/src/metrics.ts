@@ -20,7 +20,7 @@ import { resource, transaction, type Store } from "./store.js";
 export const METRICS_ID = "home_metrics";
 // Bumped when compiling or normalising changes: stored specs are then
 // recompiled and re-run by code, without asking the AI again.
-export const METRICS_VERSION = 3;
+export const METRICS_VERSION = 4;
 type Column = {
   name: string;
   type: string;
@@ -275,7 +275,7 @@ export function compileMetric(
   if (spec.filter && (!filterCol || nested(filterCol.type)))
     return { error: `${spec.filter.column} can't be filtered` };
   const where = filterCol
-    ? `lower(CAST(${q(filterCol.name)} AS VARCHAR)) = lower(${lit(spec.filter!.value)})`
+    ? `CAST(${q(filterCol.name)} AS VARCHAR) = ${lit(spec.filter!.value)}`
     : "";
   const time = col(spec.timeColumn);
   if (spec.timeColumn && (!time || !temporal(time.type)))
@@ -437,9 +437,9 @@ export function normalizeSpec(
     const f = byName(cols, out.filter.column);
     if (!f || nested(f.type) || f.sensitive) return undefined;
     const values = observed(d, f.name),
-      match = values.find(
-        (v) => v.toLowerCase() === out.filter!.value.toLowerCase(),
-      );
+      match =
+        values.find((v) => v === out.filter!.value) ??
+        values.find((v) => v.toLowerCase() === out.filter!.value.toLowerCase());
     if (values.length && !match && (f.distinct ?? 99) <= 12) return undefined;
     out.filter = { column: f.name, value: match ?? out.filter.value };
   }
