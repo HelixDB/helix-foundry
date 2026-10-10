@@ -127,6 +127,11 @@ export class Provider implements ModelProvider {
       value = data.content.find(
         (x: any) => x.type === "tool_use" && x.name === "submit",
       )?.input;
+      assert(
+        value !== undefined,
+        "Model did not return the requested structured tool result",
+        502,
+      );
       tokens =
         (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
     } else {
