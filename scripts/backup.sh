@@ -95,8 +95,9 @@ if [ -n "$include_key" ]; then
   key_file=env.enc
 fi
 # The data comes from the commit the services were started from, which upgrade.sh
-# and restore.sh record; without a record, it is the checked-out commit.
-app_commit=$(recorded_commit || git rev-parse HEAD 2> /dev/null || echo unknown)
+# and restore.sh record; without a record, it is the checked-out commit. It is
+# "unknown" during an upgrade of a checkout that was pulled without a record.
+app_commit=$(deployed_commit)
 # Written last: a backup without manifest.txt is incomplete.
 {
   echo '# Helix Foundry backup manifest. This file holds no keys; see scripts/restore.sh.'

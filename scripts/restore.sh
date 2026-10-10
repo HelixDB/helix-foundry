@@ -31,6 +31,7 @@ backup_dir="$(cd "$backup_dir" && pwd -P)"
 for file in helix-data.tgz foundry-data.tgz; do [ -s "$backup_dir/$file" ] || die "Missing $file"; done
 manifest="$backup_dir/manifest.txt"
 commit=$(manifest_field "$manifest" app_commit)
+head=$(git rev-parse HEAD 2> /dev/null) || head=""
 case $commit in
   "" | unknown) back="check out the Helix Foundry release that made the backup" ;;
   *) back="check out the commit that made the backup (git reset --keep $commit)" ;;
@@ -73,7 +74,13 @@ backup_version=$(helix_version "$backup_image")
 current_version=$(helix_version "$current_image")
 made="HelixDB $backup_version made this backup"
 newer="upgrade to a release that runs ${backup_version:+HelixDB }${backup_version:-$backup_image} or newer"
-older="To restore it, $back, or $newer."
+# A backup of the checked-out commit holds data from a newer HelixDB when it was
+# taken during an upgrade from that commit that did not finish.
+if [ -n "$commit" ] && [ "$commit" = "$head" ]; then
+  older="This backup's commit is checked out, but a newer HelixDB had already opened the data, as during an upgrade that did not finish, so checking out that commit does not help. Restore the backup taken before the upgrade, which upgrade.sh names, or $newer."
+else
+  older="To restore it, $back, or $newer."
+fi
 refuse() { # $1 = why
   [ -n "$accept_helix" ] || die "$1 HelixDB upgrades its storage one way, so an older HelixDB may refuse the data. $older If you know this HelixDB opens it, run again with --accept-helix-mismatch. $unchanged"
   echo "WARNING: $1 Restoring anyway, as asked. If HelixDB refuses the data (unsupported_index_storage_version in its logs), $back and restore again." >&2
@@ -199,5 +206,7 @@ failed='The data is restored, but the services did not start. Fix the error, the
 # --build, so the restored data runs with this checkout's code.
 docker compose up -d --build helix executor app worker
 failed=""
+# The services now run this checkout, and any unfinished upgrade is over.
 record_deployed
+clear_pending
 echo "Restored $backup_dir."

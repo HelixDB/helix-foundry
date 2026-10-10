@@ -114,18 +114,21 @@ schema_version() {
   sed -n 's/^export const SCHEMA_VERSION = \([0-9][0-9]*\);.*/\1/p'
 }
 
-# Prints file $2 as of commit $1, or this checkout's copy when $1 is checked out.
+# Prints file $2 as of commit $1: this checkout's copy when $1 is checked out or
+# there is no git, and nothing when git cannot show it or $1 is "unknown".
 file_at() {
-  if [ "$1" = unknown ] || [ "$1" = "$(git rev-parse HEAD 2> /dev/null)" ]; then
-    cat "$2" 2> /dev/null
-  else
-    git show "$1:$2" 2> /dev/null
+  local head
+  head=$(git rev-parse HEAD 2> /dev/null) || head=""
+  if [ -z "$head" ] || [ "$1" = "$head" ]; then
+    cat "$2" 2> /dev/null || true
+  elif [ "$1" != unknown ]; then
+    git show "$1:$2" 2> /dev/null || true
   fi
 }
 
 # upgrade.sh and restore.sh record the commit the services run in the git
 # directory, so it is never committed. recorded_commit prints it, or fails when
-# there is no record; record_deployed records commit $1, or the checked-out one.
+# there is no record; record_deployed records the checked-out commit.
 deployed_file() { git rev-parse --git-path helix-foundry-deployed 2> /dev/null; }
 recorded_commit() {
   local file
@@ -134,7 +137,33 @@ recorded_commit() {
 }
 record_deployed() {
   local file
-  file=$(deployed_file) && git rev-parse "${1:-HEAD}" 2> /dev/null > "$file" || true
+  file=$(deployed_file) && git rev-parse HEAD 2> /dev/null > "$file" || true
+}
+
+# While an upgrade has not finished, upgrade.sh keeps in the git directory where it
+# started (from_commit, "unknown" when no record said, and from_helix_image) and the
+# backup taken before it (backup). restore.sh clears it.
+pending_file() { git rev-parse --git-path helix-foundry-upgrade 2> /dev/null; }
+pending_field() {
+  local file
+  file=$(pending_file) || return 0
+  manifest_field "$file" "$1"
+}
+clear_pending() {
+  local file
+  file=$(pending_file) && rm -f "$file" || true
+}
+
+# Prints the commit the services were started from: where an unfinished upgrade
+# started, else the commit upgrade.sh or restore.sh last started, else the checkout.
+deployed_commit() {
+  local commit
+  commit=$(pending_field from_commit)
+  if [ -n "$commit" ]; then
+    printf '%s\n' "$commit"
+  else
+    recorded_commit || git rev-parse HEAD 2> /dev/null || echo unknown
+  fi
 }
 
 # Prints the image the HelixDB container was created from, or nothing.

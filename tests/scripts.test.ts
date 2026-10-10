@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -137,6 +138,8 @@ function fixture() {
       return r.stdout.trim();
     },
     calls: () => readFileSync(log, "utf8").split("\n").filter(Boolean),
+    // The commit restore.sh and upgrade.sh record as running, and an unfinished upgrade.
+    gitFile: (name: string) => join(root, ".git", name),
     clearCalls: () => writeFileSync(log, ""),
     env: () => readFileSync(join(root, ".env"), "utf8"),
     // Pins another HelixDB image in this checkout's compose.yaml.
@@ -792,7 +795,7 @@ describe("restore.sh", () => {
 });
 
 describe("upgrade.sh", () => {
-  // A checkout of release 1 whose upstream has release 2 with HelixDB 99.0.0.
+  // A checkout of release 1 whose upstream has release 2, by default with HelixDB 99.0.0.
   function release(f: Fixture, newImage = image("99.0.0")) {
     f.git(f.root, "init", "-q", "-b", "main");
     f.git(f.root, "add", "-A");
@@ -809,6 +812,8 @@ describe("upgrade.sh", () => {
       compose,
       readFileSync(compose, "utf8").replace(pinned[1], newImage),
     );
+    writeFileSync(join(other, "RELEASE"), "2\n");
+    f.git(other, "add", "RELEASE");
     f.git(other, "commit", "-q", "-am", "Release 2");
     f.git(other, "push", "-q");
     return {
@@ -899,26 +904,74 @@ describe("upgrade.sh", () => {
     expect(r.stderr).toContain("The rebuild failed");
     expect(r.stderr).toContain(`git reset --keep ${from}`);
     expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
+    expect(existsSync(f.gitFile("helix-foundry-upgrade"))).toBe(true);
+    expect(existsSync(f.gitFile("helix-foundry-deployed"))).toBe(false);
     // The checkout is at the new release, but HelixDB has not started it yet.
     f.clearCalls();
     r = f.run("upgrade.sh", [], old);
     expect(r.status).toBe(1);
-    expect(r.stdout).toContain("the services may not run it yet");
+    expect(r.stdout).toContain(`The upgrade from ${from} did not finish`);
     expect(r.stderr).toContain("Run again with --yes");
     r = f.run("upgrade.sh", ["--yes"], old);
     expect(r.status, r.stderr).toBe(0);
     expect(f.calls().at(-1)).toBe("compose up -d --build");
     const dirs = readdirSync(backups(f)).sort();
     expect(dirs).toHaveLength(2);
-    const dir = join(backups(f), dirs[1]);
+    const [first, dir] = dirs.map((d) => realpathSync(join(backups(f), d)));
     expect(field(dir, "app_commit")).toBe(from);
     expect(field(dir, "helix_image")).toBe(pinned[1]);
     expect(readFileSync(join(dir, "upgrade.txt"), "utf8")).toContain(
       `from_commit=${from}\n`,
     );
+    // Going back uses the backup from before the first attempt.
+    expect(r.stdout).toContain(
+      `To go back: git reset --keep ${from}, then scripts/restore.sh "${first}" --replace`,
+    );
+    expect(r.stdout).toContain(`This run also backed up to ${dir}.`);
+    expect(existsSync(f.gitFile("helix-foundry-upgrade"))).toBe(false);
+    expect(readFileSync(f.gitFile("helix-foundry-deployed"), "utf8")).toBe(
+      to + "\n",
+    );
     expect(
       f.run("upgrade.sh", [], { STUB_HELIX_IMAGE: image("99.0.0") }).stdout,
     ).toContain("Already up to date");
+  });
+
+  it("names the first backup after HelixDB opened the data in a failed attempt", () => {
+    const f = fixture();
+    const { from } = release(f);
+    let r = f.run("upgrade.sh", ["--yes"], {
+      STUB_HELIX_IMAGE: pinned[1],
+      STUB_FAIL: "compose up -d --build",
+    });
+    expect(r.status).toBe(1);
+    // Compose recreated HelixDB on the new image before the rebuild failed.
+    const opened = { STUB_HELIX_IMAGE: image("99.0.0") };
+    r = f.run("upgrade.sh", [], opened);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("this upgrade changes the HelixDB image");
+    expect(r.stderr).toContain("may have opened the data already");
+    r = f.run("upgrade.sh", ["--yes"], opened);
+    expect(r.status, r.stderr).toBe(0);
+    const [first, second] = readdirSync(backups(f))
+      .sort()
+      .map((d) => realpathSync(join(backups(f), d)));
+    expect(r.stdout).toContain(
+      `To go back: git reset --keep ${from}, then scripts/restore.sh "${first}" --replace`,
+    );
+    expect(r.stdout).toContain(`so only ${first} can go back`);
+    expect(field(second, "helix_image_running")).toBe(image("99.0.0"));
+    // The second backup holds data the old HelixDB refuses, and says why.
+    f.git(f.root, "reset", "-q", "--keep", from);
+    r = f.run("restore.sh", [second, "--replace"], opened);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Restore the backup taken before the upgrade");
+    expect(r.stderr).not.toContain("git reset --keep");
+    r = f.run("restore.sh", [first, "--replace"], opened);
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(f.gitFile("helix-foundry-deployed"), "utf8")).toBe(
+      from + "\n",
+    );
   });
 
   it("keeps BACKUP_PASSPHRASE from docker and git", () => {
@@ -1005,7 +1058,7 @@ describe("upgrade.sh", () => {
   it("rebuilds a checkout that was pulled by hand", () => {
     const f = fixture();
     const { to } = release(f);
-    f.git(f.root, "merge", "-q", "--ff-only", "origin/main");
+    f.git(f.root, "pull", "-q", "--ff-only");
     const old = { STUB_HELIX_IMAGE: pinned[1] };
     let r = f.run("upgrade.sh", [], old);
     expect(r.status).toBe(1);
@@ -1014,6 +1067,67 @@ describe("upgrade.sh", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain(`Upgraded to ${to}.`);
     expect(f.calls().at(-1)).toBe("compose up -d --build");
+    // Nothing recorded the commit that ran, so the backup does not guess it.
+    const [name] = readdirSync(backups(f));
+    const dir = join(backups(f), name);
+    expect(field(dir, "app_commit")).toBe("unknown");
+    expect(field(dir, "helix_image")).toBe("");
+    expect(field(dir, "helix_image_running")).toBe(pinned[1]);
+    expect(r.stdout).toContain("git reflog");
+  });
+
+  it("retries the rebuild of a checkout pulled by hand until it succeeds", () => {
+    const f = fixture();
+    const { to } = release(f, pinned[1]);
+    f.git(f.root, "pull", "-q", "--ff-only");
+    // The same HelixDB image, so upgrade.sh does not ask.
+    const old = { STUB_HELIX_IMAGE: pinned[1] };
+    let r = f.run("upgrade.sh", [], {
+      ...old,
+      STUB_FAIL: "compose up -d --build",
+    });
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("the services may not run it yet");
+    expect(r.stderr).toContain("The rebuild failed");
+    expect(r.stderr).toContain("git reflog");
+    expect(r.stderr).not.toContain(`git reset --keep ${to}`);
+    expect(existsSync(f.gitFile("helix-foundry-deployed"))).toBe(false);
+    f.clearCalls();
+    r = f.run("upgrade.sh", [], old);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("An earlier upgrade did not finish");
+    expect(f.calls().at(-1)).toBe("compose up -d --build");
+    expect(f.run("upgrade.sh", [], old).stdout).toContain(
+      `Already up to date at ${to}.`,
+    );
+  });
+
+  it("finds a fresh clone up to date", () => {
+    const f = fixture();
+    const { to } = release(f);
+    const cloned = join(f.base, "cloned");
+    f.git(f.base, "clone", "-q", join(f.base, "remote.git"), cloned);
+    copyFileSync(join(f.root, ".env"), join(cloned, ".env"));
+    const r = f.shell('bash "$1"', [join(cloned, "scripts", "upgrade.sh")], {
+      STUB_HELIX_IMAGE: image("99.0.0"),
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`Already up to date at ${to}.`);
+  });
+
+  it("names the commit recorded before a pull by hand", () => {
+    const f = fixture();
+    const { from } = release(f);
+    // As the docs say, for a checkout from before upgrade.sh.
+    writeFileSync(f.gitFile("helix-foundry-deployed"), from + "\n");
+    f.git(f.root, "pull", "-q", "--ff-only");
+    const r = f.run("upgrade.sh", ["--yes"], { STUB_HELIX_IMAGE: pinned[1] });
+    expect(r.status, r.stderr).toBe(0);
+    const [name] = readdirSync(backups(f));
+    const dir = join(backups(f), name);
+    expect(field(dir, "app_commit")).toBe(from);
+    expect(field(dir, "helix_image")).toBe(pinned[1]);
+    expect(r.stdout).toContain(`To go back: git reset --keep ${from}`);
   });
 });
 
