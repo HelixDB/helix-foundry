@@ -104,7 +104,7 @@ Stripe, WorkOS and PostHog appear beside the database hosts in **Add data**.
 
 Database imports automatically try PostgreSQL logical replication or MySQL row-binlog capture. Foundry creates its own PostgreSQL publication and slot when permitted, and never modifies server-wide settings. Native change capture coalesces committed changes into complete, bounded-memory snapshot imports, including updates, deletes and truncations. This release does not yet apply row deltas directly, so large or rapidly changing tables may lag during materialisation.
 
-If replication is unavailable, snapshots refresh every five minutes (or on an existing UTC schedule set through the API), with a visible reason and automatic retries. REST and S3 sources also use snapshot refreshes; uploads stay explicit. Schema changes are staged for review. Business record overrides and publication protections remain separate. Writing back to sources, per-row AI enrichment and distributed compute are not supported yet.
+If replication is unavailable, snapshots refresh every five minutes (or on an existing UTC schedule set through the API), with a visible reason and automatic retries. REST and S3 sources also use snapshot refreshes; uploads stay explicit. Automatic refreshes of the sources a workspace build reads wait until the build finishes, for up to 15 minutes. Schema changes are staged for review. Business record overrides and publication protections remain separate. Writing back to sources, per-row AI enrichment and distributed compute are not supported yet.
 
 [Operations](OPERATIONS.md) lists the database permissions change capture needs and how to manage WAL and binlog retention.
 

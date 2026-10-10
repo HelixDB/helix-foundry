@@ -22,8 +22,36 @@ const jobHandlers: Record<
   sync: runSyncJob,
   pipeline: runPipelineJob,
 };
+// A workspace build publishes the active versions it validated, so refreshing
+// one of its inputs meanwhile fails it with "Inputs changed during
+// publication". Scheduled and CDC refreshes of those sources wait for the
+// build, for at most this long.
+const SYNC_DEFERRAL = 15 * 60000;
+// Sources whose datasets feed a queued or running workspace build.
+async function buildSources(store: Store, scope: string, runs: Resource[]) {
+  const builds = runs.filter(
+    (r) =>
+      ["queued", "running"].includes(r.data.status) &&
+      (r.data.task
+        ? r.data.task === "onboarding_build"
+        : (r.data.resolvedIntent || r.data.intent) !== "answer"),
+  );
+  if (!builds.length) return new Set<string>();
+  const datasets = await store.list(scope, "dataset");
+  // A build without a selection uses every dataset.
+  const inputs = new Set(
+    builds.flatMap((r) => r.data.datasetIds || datasets.map((d) => d.id)),
+  );
+  return new Set(
+    datasets
+      .filter((d) => inputs.has(d.id) && d.data.sourceId)
+      .map((d) => d.data.sourceId as string),
+  );
+}
 export function startWorker(store: Store) {
   const stopStreams = startChangeStreams(store);
+  // When each workspace's held sources were first held.
+  const deferred = new Map<string, Map<string, number>>();
   let busy = false,
     stopped = false;
   const tick = async () => {
@@ -33,8 +61,22 @@ export function startWorker(store: Store) {
       const workspaces = await store.list("global", "workspaceRef");
       for (const workspace of workspaces) {
         const scope = workspace.id;
+        const runs = await store.list(scope, "run"),
+          inputs = await buildSources(store, scope, runs),
+          since = new Map(
+            [...(deferred.get(scope) || [])].filter(([id]) => inputs.has(id)),
+          );
+        deferred.set(scope, since);
+        const held = (sourceId: string) => {
+          if (!inputs.has(sourceId)) return false;
+          if (!since.has(sourceId)) since.set(sourceId, Date.now());
+          return Date.now() - since.get(sourceId)! < SYNC_DEFERRAL;
+        };
         for (const source of await store.list(scope, "source"))
-          if (scheduledRefresh(source) || needsChangeRefresh(source)) {
+          if (
+            (scheduledRefresh(source) || needsChangeRefresh(source)) &&
+            !held(source.id)
+          ) {
             await transaction(store, scope, async (tx) => {
               const s = await tx.get(source.id);
               if (!s || (!scheduledRefresh(s) && !needsChangeRefresh(s)))
@@ -66,14 +108,19 @@ export function startWorker(store: Store) {
               });
             });
           }
-        const runs = await store.list(scope, "run"),
-          jobs = await store.list(scope, "job");
+        const jobs = await store.list(scope, "job");
         const candidate = [...runs, ...jobs]
           .filter(
             (r) =>
-              (r.data.status === "queued" &&
+              ((r.data.status === "queued" &&
                 (!r.data.retryAt || r.data.retryAt <= Date.now())) ||
-              (r.data.status === "running" && r.data.leaseUntil < Date.now()),
+                (r.data.status === "running" &&
+                  r.data.leaseUntil < Date.now())) &&
+              !(
+                r.data.type === "sync" &&
+                r.data.background &&
+                held(r.data.sourceId)
+              ),
           )
           .sort(
             (a, b) =>
