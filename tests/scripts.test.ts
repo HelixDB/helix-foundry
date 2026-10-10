@@ -302,6 +302,32 @@ describe("backup.sh", () => {
     expect(r.stderr).toContain("  and 2 more\n");
   });
 
+  it("finishes without HOME, and then needs a folder named", () => {
+    const f = fixture();
+    const old = join(f.root, "backups", "20260101-000000");
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, "config.env"), ENV, { mode: 0o600 });
+    for (const HOME of [undefined, ""]) {
+      const dir = join(
+        f.base,
+        `backup-${HOME === undefined ? "unset" : "empty"}`,
+      );
+      let r = f.run("backup.sh", [dir], { HOME });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).not.toContain("unbound variable");
+      expect(existsSync(join(dir, "manifest.txt"))).toBe(true);
+      // It still looks in the repository's backups/ folder.
+      expect(r.stderr).toContain("/install/backups/20260101-000000\n");
+      f.clearCalls();
+      r = f.run("backup.sh", [], { HOME });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(
+        "HOME is not set, so there is no default backup folder (~/helix-foundry-backups). Name a backup folder outside the repository.",
+      );
+      expect(f.calls()).toEqual([]);
+    }
+  });
+
   it("records the image of the running HelixDB container", () => {
     const f = fixture();
     const dir = backup(f, [], { STUB_HELIX_IMAGE: image("0.0.5") });
@@ -1432,6 +1458,28 @@ describe("upgrade.sh", () => {
     r = f.run("upgrade.sh", [], { STUB_HELIX_IMAGE: image("99.0.0") });
     expect(r.stdout).toContain(`Already up to date at ${to}.`);
     expect(r.stderr).toContain(warning);
+    expect(r.stderr).toContain("/install/backups/20260101-000000\n");
+  });
+
+  it("finishes without HOME, with --backup-dir", () => {
+    const f = fixture();
+    const { from, to } = release(f);
+    const old = join(f.root, "backups", "20260101-000000");
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, "config.env"), ENV, { mode: 0o600 });
+    let r = f.run("upgrade.sh", ["--yes"], { HOME: undefined });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("HOME is not set");
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);
+    expect(f.calls()).toEqual([]);
+    const dir = join(f.base, "backup");
+    r = f.run("upgrade.sh", ["--yes", "--backup-dir", dir], {
+      HOME: undefined,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain("unbound variable");
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
+    expect(field(dir, "app_commit")).toBe(from);
     expect(r.stderr).toContain("/install/backups/20260101-000000\n");
   });
 

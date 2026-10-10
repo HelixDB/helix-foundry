@@ -235,11 +235,15 @@ decrypt_env() ( # $1 = env.enc, $2 = iterations; writes the .env to stdout
 
 # Warns about backups an older backup.sh made, by default in the repository's
 # backups/ folder: their config.env holds ENCRYPTION_KEY and INTERNAL_KEY in plain
-# text. It lists the folders and never reads the files.
+# text. It lists the folders and never reads the files. It runs after the work is
+# done, so it looks in ~/helix-foundry-backups only when HOME is set: under set -u,
+# an unset HOME would end the script with an error.
 warn_old_backups() {
-  local found count
+  local found count dirs
+  dirs=("$(pwd -P)/backups")
+  [ -z "${HOME:-}" ] || dirs+=("$HOME/helix-foundry-backups")
   found=$(
-    { find "$(pwd -P)/backups" "$HOME/helix-foundry-backups" -mindepth 2 -maxdepth 2 \
+    { find "${dirs[@]}" -mindepth 2 -maxdepth 2 \
       -type f -name config.env 2> /dev/null || true; } | sed 's|/config.env$||' | sort
   )
   [ -n "$found" ] || return 0
@@ -256,6 +260,8 @@ warn_old_backups() {
 # Prints a new folder for a backup in ~/helix-foundry-backups, named after the time.
 new_backup_dir() {
   local base dir n=1
+  [ -n "${HOME:-}" ] \
+    || die 'HOME is not set, so there is no default backup folder (~/helix-foundry-backups). Name a backup folder outside the repository.'
   base="$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)"
   dir=$base
   while [ -e "$dir" ]; do
