@@ -446,9 +446,18 @@ export async function enqueue(
 // The chat a run belongs to. Runs from before chats had ids follow their
 // question's chain back to where it started.
 export function threadOf(run: Resource, runs?: Map<string, Resource>): string {
-  if (run.data.threadId) return run.data.threadId;
-  const previous = runs?.get(run.data.context?.resourceId);
-  return previous && !previous.data.task ? threadOf(previous, runs) : run.id;
+  const seen = new Map<string, number>();
+  const path: string[] = [];
+  while (true) {
+    if (run.data.threadId) return run.data.threadId;
+    const cycle = seen.get(run.id);
+    if (cycle !== undefined) return path.slice(cycle).sort()[0];
+    seen.set(run.id, path.length);
+    path.push(run.id);
+    const previous = runs?.get(run.data.context?.resourceId);
+    if (!previous || previous.data.task) return run.id;
+    run = previous;
+  }
 }
 async function event(
   store: Store,
