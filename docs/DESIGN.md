@@ -16,12 +16,13 @@ implementation is the source of truth; reuse its tokens and components.
 
 `main.tsx` imports these stylesheets in this order, so a later rule wins over
 an earlier one of the same specificity. Other stylesheets load with the
-components that import them: [`ontology-scene.css`](../apps/web/src/ontology-scene.css)
-(imported by `ontology-scene.tsx`) holds the setup illustration, its mint
-activity marks and the data feed; `suggested-ontology.css` holds the suggested
-ontology review; and each workspace area under `areas/` has its own
-stylesheet. Read the final rule and its scope before copying a value from an
-earlier stylesheet.
+components that import them:
+[`ontology-scene.css`](../apps/web/src/ontology-scene.css) (imported by
+`ontology-scene.tsx`) holds the setup illustration, its mint activity marks
+and the data feed; `suggested-ontology.css` holds the suggested ontology
+review; and each workspace area under `areas/` has its own stylesheet. Read
+the final rule and its scope before copying a value from an earlier
+stylesheet.
 
 ## Visual language
 
@@ -33,12 +34,17 @@ earlier stylesheet.
 The workspace tokens live in `apps/web/src/workspace.css`: `--hf-*` fonts,
 colors, type sizes, spacing, radii, shadows and motion. Workspace components
 live in `apps/web/src/kit`. Onboarding renders outside `.hf-app` and uses
-`minimal.css` for its light paper theme, 30px serif page headings, 14px body
-text, 12–13px supporting text, a 760px centered page and, at 600px and
-narrower, 22px side gutters. Its illustration and data feed live in
-`ontology-scene.css`. Setup styles use fixed light colors rather than `--hf-*`
-tokens and setup does not use the kit, so workspace dark mode does not reach
-onboarding. Preserve that theme when adding setup UI.
+`minimal.css` for its light paper theme, 14px body text, a 760px centered page
+and, at 600px and narrower, 22px side gutters. Each step's heading
+(`.setup-content > h1`) is 34px Georgia, and 29px at 600px and narrower; the
+suggested ontology's heading (`.so-head h1` in `suggested-ontology.css`) is
+also 34px, and 28px at 699px and narrower. Intro copy under a heading
+(`.setup-intro`, and the suggestion's summary) is 15px; most other supporting
+text is 12–13px. The suggested ontology's schema canvas is wider than the
+page: up to 1120px, or 1320px with four or more columns. The illustration and
+data feed live in `ontology-scene.css`. Setup styles use fixed light colors
+rather than `--hf-*` tokens and setup does not use the kit, so workspace dark
+mode does not reach onboarding. Preserve that theme when adding setup UI.
 
 ## Progress and feedback
 
@@ -58,9 +64,6 @@ confirmed. It shows only what the server reports:
   or “Waiting to start”, followed by a measured count when the job reports
   one, such as `12,345 records read` or `512 KB received`. There are no
   percentages, totals or time estimates.
-- A `<progress>` bar only when the operation reports how much of a known total
-  is done. Only the local model download reports a total, and the bar is
-  labelled for it.
 - When the operation fails or is stopped, an alert with the server's error, or
   “Progress has been saved. Retry when you're ready.”
 - Retry for a failed or stopped operation and Stop while one is queued or
@@ -68,6 +71,14 @@ confirmed. It shows only what the server reports:
   finishes publication atomically.
 - The block is a polite live region, so changes are announced without
   interrupting.
+
+Main shows no progress bar. `OperationProgress` can draw a `<progress>` when an
+operation reports a known total, but none of the operations it shows reports
+one. The local model download is the only job that does, and no screen shows
+it with `OperationProgress`: setup moves on while the model downloads in the
+background, and if the download fails, the later steps show a notice, with
+Retry AI connection and Change AI choice for an owner. Known totals appear as
+text instead, such as the sample count and the data feed's table count below.
 
 `useSetup` polls the onboarding state every second while sample data loads,
 the AI describes the suggested ontology or the workspace builds, and every 2.5
@@ -78,26 +89,39 @@ advancing for 12 seconds is resumed once.
 
 The Ontology step's data feed (`DataFeed` in `ontology-scene.tsx`) shows each
 source's tables arriving: “3 of 5 tables” while any is loading, then the
-records read. A polite status line reads the current step and the tables read
-so far. The steps advance on server events (the tables are read, the
-suggestion is ready), and each is held for a moment so it can be read; the
-suggestion appears only once the server has produced it.
+records read. A table name that does not fit is cut short with an ellipsis and
+carries its full name in a tooltip. A polite status line reads the current
+step and the tables read so far. The steps (`ontology-step.tsx`) mix server
+state with pacing. Reading waits for the server to read the tables, matching
+waits for the server's suggestion, and “AI is writing descriptions” waits for
+the AI run, for at most 20 seconds after the suggestion arrives. “Finding keys”
+and “Proposing entities” are timed on the client. Each step is held long
+enough to read, so the suggestion appears at least 3.5 seconds after the step
+opens, and never before the server has produced it. Returning to the step, or
+reloading it, shows an existing suggestion at once.
 
 Follow the same principles in new progress UI:
 
-- Drive stages, status and completion from server state. Show counts that
-  were measured; never invent a percentage or a time estimate.
+- Take status, completion and failure from server state. Cosmetic sub-steps
+  may be paced on the client so each can be read, but the result never
+  appears before the server reports it. Show counts that were measured; never
+  invent a percentage or a time estimate.
 - Name stages in plain words. Setup keeps the business outcome in view and
   infrastructure in disclosures.
 - Keep Stop and Retry available, except Stop once publication has begun.
 - Announce changes politely and never announce a ticking number: the
   Analyst's elapsed time while it works is hidden from screen readers.
 - Pair icons with text, so status never depends on an icon or color alone.
-- Use semantic lists for steps and native progress elements for known totals.
-- Respect `prefers-reduced-motion`: setup and the workspace cut animation
-  durations to 0.01ms, and the workspace also limits each animation to one
-  iteration.
-- Wrap long names rather than letting them overflow at narrow widths.
+- Mark up steps semantically. The data feed's steps are an ordered list; the
+  setup stepper (AI, Data, Ontology) is a `nav` that marks the current step
+  with `aria-current="step"`.
+- Respect `prefers-reduced-motion`. Setup cuts animation durations to 0.01ms
+  and drops transitions; the illustration, data feed and suggested ontology
+  stop animating; the workspace cuts animation and transition durations to
+  0.01ms and limits each animation to one iteration.
+- Never let a long name overflow at narrow widths. An operation's name wraps
+  (`overflow-wrap: anywhere`); where a name is cut short instead, as in the
+  data feed, its full text is in a tooltip.
 
 ## Workspace foundations
 
@@ -175,16 +199,18 @@ Charts do not share one palette yet:
   (`#548b72`, `#dfebe4` and `#679780`) that do not follow dark mode.
 - Ontology types take hues from fixed eight-color palettes for each theme in
   [`colors.ts`](../apps/web/src/areas/ontology/colors.ts), in alphabetical
-  order of type, so a type keeps its color; a ninth type and beyond are grey.
+  order of type, so a type keeps its color; a ninth type and beyond are gray.
 - `--hf-chart-2` to `--hf-chart-6` are defined but not used.
 
 Give new charts theme-aware colors from tokens rather than new hex values.
 Home and answer charts explain the data without color: each is a focusable
 image whose label summarizes the values, arrow keys step through the points
 and a polite live region reads each one, and bar values are printed beside
-the bars. Format values with the kit's `formatNumber`, `formatCompact`,
-`formatDate` and `formatRelative`; Home formats metric values, including
-currency, with `formatMetric` in `metrics.tsx`.
+the bars. Tooltips and the live region give each value in full, and an
+answer's integer beyond 2^53 keeps every digit. Format values with the kit's
+`formatNumber`, `formatCompact`, `formatDate` and `formatRelative`; Home
+formats metric values, including currency, with `formatMetric` in
+`metrics.tsx`.
 
 ## Responsive and accessible behavior
 
