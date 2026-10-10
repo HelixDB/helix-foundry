@@ -137,6 +137,25 @@ describe("isolated dataset execution", () => {
         ).rejects.toThrow();
     await expect(readdir(join(dir, "results"))).rejects.toThrow();
   });
+  it("loads JSON whose nested keys first appear after the inference sample", async () => {
+    await writeFile(
+      join(dir, "incoming", "a", "late-key.jsonl"),
+      Array.from({ length: 25_000 }, (_, i) =>
+        JSON.stringify({
+          id: i,
+          properties: i === 24_000 ? { plan: "pro", late: "x" } : { plan: "free" },
+        }),
+      ).join("\n"),
+    );
+    const r = await execute(
+      { mode: "ingest", scope: "a", version: "late", file: "late-key.jsonl" },
+      dir,
+    );
+    expect(r.profile.rows).toBe(25_000);
+    expect(
+      r.profile.columns.find((c) => c.name === "properties")?.type,
+    ).toContain("late");
+  });
   it("rejects storage traversal", async () => {
     await expect(
       execute(

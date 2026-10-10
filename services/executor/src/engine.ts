@@ -137,8 +137,24 @@ export async function execute(
         await c.run(
           `CREATE TABLE result (${job.schema.map((col) => quote(col.name) + " " + (typeMap[col.type.toLowerCase()] || "VARCHAR")).join(",")})`,
         );
-      } else
-        await c.run(`CREATE TABLE result AS SELECT * FROM ${fn}(${lit(file)})`);
+      } else {
+        const connection = c;
+        const load = (options = "") =>
+          connection.run(
+            `CREATE TABLE result AS SELECT * FROM ${fn}(${lit(file)}${options})`,
+          );
+        // JSON types are inferred from a sample, so a nested key that first
+        // appears later (common in event properties) fails the load. Retry
+        // with every row in the sample only when that happens.
+        await load().catch((error) => {
+          if (
+            fn !== "read_json_auto" ||
+            !/JSON transform error/.test(String(error?.message))
+          )
+            throw error;
+          return load(", sample_size = -1");
+        });
+      }
     } else {
       for (const input of job.inputs || []) {
         if (!safePart(input.table) || !safePart(input.version))
