@@ -36,15 +36,22 @@ case $commit in
 esac
 unchanged='Nothing was changed.'
 
-# Which ENCRYPTION_KEY the backup was made with.
-if [ -f "$manifest" ]; then
-  expected=$(manifest_field "$manifest" key_fingerprint)
-elif [ -f "$backup_dir/config.env" ]; then
-  expected=$(key_fingerprint < "$backup_dir/config.env")
+# Which ENCRYPTION_KEY the backup was made with. An older backup whose config.env
+# was removed does not say, so it needs --env-file or --accept-key-mismatch.
+if [ -f "$manifest" ] || [ -f "$backup_dir/config.env" ]; then
+  if [ -f "$manifest" ]; then
+    expected=$(manifest_field "$manifest" key_fingerprint)
+  else
+    expected=$(key_fingerprint < "$backup_dir/config.env")
+  fi
+  [ -n "$expected" ] || die "The backup does not record which ENCRYPTION_KEY it was made with. $unchanged"
 else
-  die "$backup_dir is not a Helix Foundry backup: it has no manifest.txt or config.env."
+  expected=""
+  unverified="$backup_dir has no manifest.txt or config.env, so restore.sh cannot check which ENCRYPTION_KEY it was made with."
+  [ -n "$env_file" ] || [ -n "$accept_mismatch" ] \
+    || die "$unverified If an older backup.sh made it and its config.env was removed, pass --env-file with the copy of .env you kept for it, or --accept-key-mismatch to keep the current .env. $unchanged"
+  echo "WARNING: $unverified If the key you use is another, re-enter the connector and AI credentials after the restore." >&2
 fi
-[ -n "$expected" ] || die "The backup does not record which ENCRYPTION_KEY it was made with. $unchanged"
 if [ -f "$backup_dir/config.env" ]; then
   echo 'WARNING: this backup has a config.env, which holds an encryption key in plain text.' >&2
   echo 'Anyone with a copy can decrypt the stored credentials. After restoring, make a new backup' >&2
@@ -92,26 +99,32 @@ cleanup() {
   [ "$status" = 0 ] || [ -z "$failed" ] || echo "$failed" >&2
 }
 trap cleanup EXIT
-candidate() { # $1 = env file to use if its key matches, $2 = its name in messages
-  if [ "$(key_fingerprint < "$1")" != "$expected" ]; then
+# Copies env file $1 into $tmp, reading it once, so it can come from a pipe, as with
+# --env-file <(...), and checks the copy's key; $2 names it in messages.
+candidate() {
+  tmp=$(mktemp .env.XXXXXX)
+  cat "$1" > "$tmp" 2> /dev/null || die "Could not read $2. $unchanged"
+  from=$2
+  if [ -n "$expected" ] && [ "$(key_fingerprint < "$tmp")" != "$expected" ]; then
     [ -n "$accept_mismatch" ] || die "$(mismatch "$2") $unchanged"
     echo "WARNING: $(mismatch "$2") Re-enter them after the restore." >&2
   fi
-  tmp=$(mktemp .env.XXXXXX)
-  cat "$1" > "$tmp"
-  from=$2
 }
 from=.env
 current=""
 [ ! -f .env ] || current=$(key_fingerprint < .env)
 if [ -n "$env_file" ]; then
-  [ -f "$env_file" ] || die "No such file: $env_file"
+  [ -r "$env_file" ] && [ ! -d "$env_file" ] || die "Cannot read $env_file. $unchanged"
   candidate "$env_file" "$env_file"
-elif [ -n "$current" ] && [ "$current" = "$expected" ]; then
+elif [ -n "$expected" ] && [ "$current" = "$expected" ]; then
   echo 'Keeping .env: its ENCRYPTION_KEY matches the backup.'
 elif [ -f .env ] && [ -n "$accept_mismatch" ]; then
-  echo "WARNING: $(mismatch .env) Keeping .env as asked: re-enter them after the restore." >&2
-elif [ -f "$backup_dir/env.enc" ]; then
+  if [ -n "$expected" ]; then
+    echo "WARNING: $(mismatch .env) Keeping .env as asked: re-enter them after the restore." >&2
+  else
+    echo 'Keeping .env, as asked.'
+  fi
+elif [ -n "$expected" ] && [ -f "$backup_dir/env.enc" ]; then
   echo 'Decrypting the .env stored in the backup (env.enc).'
   read_passphrase
   tmp=$(mktemp .env.XXXXXX)
@@ -164,6 +177,8 @@ if [ -n "$tmp" ]; then
   echo "Saved the previous .env, with its keys, as $saved. Keep it private, and delete it once the restore is confirmed."
   echo "Wrote .env from $from."
 fi
+# A kept .env may have been readable by others.
+chmod 600 .env
 failed='The data is restored, but the services did not start. Fix the error, then run: docker compose up -d --build helix executor app worker'
 # --build, so the restored data runs with this checkout's code.
 docker compose up -d --build helix executor app worker

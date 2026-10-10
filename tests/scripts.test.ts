@@ -122,6 +122,14 @@ function fixture() {
         encoding: "utf8",
         input: "",
       }),
+    // Runs a bash command line, for process substitution; $1... are args.
+    shell: (command: string, args: string[] = [], extra = {}) =>
+      spawnSync("bash", ["-c", command, "bash", ...args], {
+        cwd: base,
+        env: { ...env, ...extra },
+        encoding: "utf8",
+        input: "",
+      }),
     git: (cwd: string, ...args: string[]) => {
       const r = spawnSync("git", args, { cwd, env, encoding: "utf8" });
       if (r.status) throw new Error(r.stderr);
@@ -400,10 +408,13 @@ describe("restore.sh", () => {
     const f = fixture();
     const dir = backup(f);
     expect(f.run("restore.sh", [dir]).stderr).toContain("Pass --replace");
+    // A kept .env that others could read becomes private.
+    chmodSync(join(f.root, ".env"), 0o644);
     const r = f.run("restore.sh", [dir, "--replace"]);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("Keeping .env");
     expect(f.env()).toBe(ENV);
+    expect(mode(join(f.root, ".env"))).toBe(0o600);
     for (const volume of ["helix-data", "foundry-data"])
       expect(readFileSync(join(f.restored, volume + ".tgz"))).toEqual(
         readFileSync(join(dir, volume + ".tgz")),
@@ -450,6 +461,32 @@ describe("restore.sh", () => {
     expect(mode(join(f.root, saved[0]))).toBe(0o600);
     expect(r.stdout).toContain("delete it once the restore is confirmed");
     expect(f.calls()).toEqual(RESTORE_CALLS);
+  });
+
+  it("reads --env-file from a pipe, as from a password manager", () => {
+    const f = fixture();
+    const dir = backup(f);
+    writeFileSync(join(f.root, ".env"), ENV.replace(KEY, "c3".repeat(32)));
+    writeFileSync(join(f.base, "kept.env"), ENV);
+    const r = f.shell('bash "$1" "$2" --replace --env-file <(cat "$3")', [
+      join(f.root, "scripts", "restore.sh"),
+      dir,
+      join(f.base, "kept.env"),
+    ]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.env()).toBe(ENV);
+    expect(mode(join(f.root, ".env"))).toBe(0o600);
+    expect(
+      readdirSync(f.root).filter((n) => /^\.env\.[A-Za-z0-9]{6}$/.test(n)),
+    ).toEqual([]);
+    const missing = f.run("restore.sh", [
+      dir,
+      "--replace",
+      "--env-file",
+      join(f.base, "missing.env"),
+    ]);
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain("Cannot read");
   });
 
   it("changes .env only after the data is restored", () => {
@@ -604,6 +641,33 @@ describe("restore.sh", () => {
     expect(r.stderr).toContain("does not record its HelixDB version");
     expect(f.env()).toBe(old);
     expect(mode(join(f.root, ".env"))).toBe(0o600);
+  });
+
+  it("restores an old backup whose config.env was removed only when told which key", () => {
+    const f = fixture();
+    const dir = backup(f);
+    for (const name of ["manifest.txt", "settings.env"])
+      rmSync(join(dir, name));
+    let r = f.run("restore.sh", [dir, "--replace"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("pass --env-file with the copy of .env");
+    expect(f.calls()).toEqual([]);
+    writeFileSync(join(f.base, "kept.env"), ENV.replace("3105", "3205"));
+    r = f.run("restore.sh", [
+      dir,
+      "--replace",
+      "--env-file",
+      join(f.base, "kept.env"),
+    ]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("cannot check which ENCRYPTION_KEY");
+    expect(f.env()).toBe(ENV.replace("3105", "3205"));
+    const other = ENV.replace(KEY, "c3".repeat(32));
+    writeFileSync(join(f.root, ".env"), other);
+    r = f.run("restore.sh", [dir, "--replace", "--accept-key-mismatch"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Keeping .env, as asked.");
+    expect(f.env()).toBe(other);
   });
 
   it("checks a config.env against the manifest", () => {
