@@ -44,6 +44,7 @@ export async function ingestFile(
         409,
       );
     const old = datasetId ? await tx.get(datasetId) : undefined;
+    if (versionId && old && (await tx.get(version))) return old;
     const ds =
       old ||
       resource(scope, "dataset", name, { sourceId, versions: [] }, datasetId);
