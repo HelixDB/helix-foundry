@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  Client,
   readBatch,
   writeBatch,
   g,
@@ -10,6 +9,8 @@ import {
   EdgeRef,
   BatchCondition,
   IndexSpec,
+  HelixError,
+  parseJson,
 } from "@helix-db/helix-db";
 import type { Resource } from "../../../packages/shared/src/index.js";
 import { config } from "./config.js";
@@ -36,13 +37,64 @@ export function resource(
   };
 }
 export type Change = { put: Resource } | { delete: string };
+// Records within some links of one record, and the links between them.
+export type Neighborhood = {
+  nodes: Resource[];
+  edges: { from: string; to: string; name: string }[];
+  truncated: boolean;
+};
 export interface Store {
   init(): Promise<void>;
   list(scope: string, kind?: string): Promise<Resource[]>;
   get(scope: string, id: string): Promise<Resource | undefined>;
+  getMany(scope: string, ids: string[]): Promise<(Resource | undefined)[]>;
   commit(scope: string, version: number, changes: Change[]): Promise<boolean>;
   version(scope: string): Promise<number>;
   neighbors(scope: string, id: string): Promise<string[]>;
+  // A publication's records are written outside the workspace's revision
+  // guard: nothing reads a generation until a guarded transaction activates
+  // it. Objects return the handles that their relations use as endpoints.
+  // With `resume`, records an earlier attempt already wrote are skipped.
+  stageObjects(
+    scope: string,
+    objects: Resource[],
+    resume: boolean,
+  ): Promise<Map<string, string>>;
+  stageRelations(
+    scope: string,
+    relations: { relation: Resource; from: string; to: string }[],
+    resume: boolean,
+  ): Promise<number>;
+  // Bounded reads: they cost what they return, not what the workspace holds.
+  neighborhood(
+    scope: string,
+    ids: string[],
+    depth: number,
+    limit: number,
+  ): Promise<Neighborhood>;
+  linkCounts(scope: string, ids: string[]): Promise<Map<string, number>>;
+  relationsBetween(
+    scope: string,
+    from: string,
+    to: string,
+    name: string,
+  ): Promise<string[]>;
+  // Records whose ids start with `prefix`, in id order, a page at a time.
+  page(
+    scope: string,
+    prefix: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ items: Resource[]; total: number }>;
+  // Removes up to `limit` of a generation's links, then its records; returns
+  // how many it removed, 0 once none remain.
+  dropGeneration(
+    scope: string,
+    generation: string,
+    limit: number,
+  ): Promise<number>;
+  // Generations that have records, including ones never published.
+  generations(scope: string): Promise<string[]>;
 }
 const anchor = (key: string) =>
   g().nWithLabelWhere("FoundryRecord", SourcePredicate.eq("key", key));
@@ -50,47 +102,174 @@ const anchor = (key: string) =>
 export const SCHEMA_VERSION = 1;
 export const databaseOutOfMemory =
   "The database stopped because Docker ran out of memory, and is restarting. Retry in a minute. To prevent this, give Docker more memory, or use Claude or OpenAI instead of Local AI.";
+// A HelixDB request that failed for a reason worth saying in words: the
+// database stopped, refused or dropped the connection, or did not answer in
+// time. `transient` failures can be retried; a write may still have
+// committed before its connection failed.
+export class DatabaseError extends AppError {
+  constructor(
+    message: string,
+    public code: string,
+    public transient: boolean,
+    cause?: unknown,
+  ) {
+    super(503, message);
+    this.cause = cause;
+  }
+}
+// Time limits for one request. A write waits for durability, and a
+// publication batch writes 500 records.
+const READ_TIMEOUT = 120_000,
+  WRITE_TIMEOUT = 300_000;
+const dropped = new Set([
+  "ECONNRESET",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CLOSED",
+]);
+// Names the cause of a failed request. HelixDB is the largest process in
+// Docker, so when memory runs out the kernel often stops it: that is said
+// instead of a connection error.
+export function databaseError(
+  e: any,
+  op: "read" | "write",
+  ms: number,
+  memoryKilled: () => boolean,
+): unknown {
+  if (e instanceof DatabaseError) return e;
+  if (e?.name === "TimeoutError" || e?.name === "AbortError")
+    return new DatabaseError(
+      `HelixDB did not answer a ${op} within ${Math.round(ms / 1000)} seconds. It may be overloaded. Try again.`,
+      "timeout",
+      true,
+      e,
+    );
+  const status = e instanceof HelixError ? e.statusCode : undefined;
+  if (status && [502, 503, 504].includes(status))
+    return new DatabaseError(
+      `HelixDB is unavailable (HTTP ${status}). Try again in a minute.`,
+      "unavailable",
+      true,
+      e,
+    );
+  const network =
+    (e instanceof HelixError && e.kind === "Network") ||
+    e?.kind === "Network" ||
+    (e instanceof TypeError && /fetch failed/i.test(e.message));
+  if (!network) return e;
+  if (memoryKilled())
+    return new DatabaseError(databaseOutOfMemory, "oom", true, e);
+  const code = String(e?.cause?.code || e?.cause?.cause?.code || "");
+  if (code === "ECONNREFUSED")
+    return new DatabaseError(
+      "HelixDB is not accepting connections: it is stopped or still starting. Try again in a minute.",
+      code,
+      true,
+      e,
+    );
+  if (dropped.has(code))
+    return new DatabaseError(
+      `The connection to HelixDB was dropped during a ${op}. Try again.`,
+      code,
+      true,
+      e,
+    );
+  return new DatabaseError(
+    `Cannot reach HelixDB at ${config.helix}${code ? ` (${code})` : ""}.`,
+    code || "network",
+    true,
+    e,
+  );
+}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// HelixDB's 64-bit node and edge ids, as decimal strings.
+const idOf = (row: any) => String(row?.["$id"] ?? "");
+const nodeIds = (ids: string[]) => NodeRef.ids(ids.map((id) => BigInt(id)));
+const chunks = <T>(items: T[], size: number) =>
+  Array.from({ length: Math.ceil(items.length / size) }, (_, i) =>
+    items.slice(i * size, (i + 1) * size),
+  );
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export class HelixStore implements Store {
-  client = Client.server(config.helix);
   constructor(private memoryKilled = oomWatcher()) {}
   async read(q: any): Promise<any> {
-    return this.send(() => this.client.query(q.toQueryRequest()).send());
+    return this.send(q, "read");
   }
   async write(q: any): Promise<any> {
-    return this.send(() =>
-      this.client
-        .requestBuilder()
-        .shouldAwaitDurability(true)
-        .query(q.toQueryRequest())
-        .send(),
-    );
+    return this.send(q, "write");
   }
-  // HelixDB is the largest process in Docker, so when memory runs out the
-  // kernel often stops it. Say so instead of the client's "start a local
-  // instance with `helix start`".
-  async send<T>(request: () => Promise<T>): Promise<T> {
-    try {
-      return await request();
-    } catch (e: any) {
-      if (e?.kind === "Network" && this.memoryKilled())
-        throw Object.assign(new AppError(503, databaseOutOfMemory), {
-          cause: e,
+  // One request with a time limit and the cause of any failure kept. Reads
+  // are repeated while HelixDB restarts or drops the connection, for up to
+  // about half a minute; writes never are, since one may already have
+  // committed.
+  async send(q: any, op: "read" | "write"): Promise<any> {
+    const body = q.toQueryRequest().toJsonString(),
+      url = new URL("/v2/query", config.helix).toString();
+    for (let attempt = 1; ; attempt++) {
+      const started = Date.now();
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(op === "write" ? { "x-helix-await-durable": "true" } : {}),
+          },
+          body,
+          signal: AbortSignal.timeout(
+            op === "write" ? WRITE_TIMEOUT : READ_TIMEOUT,
+          ),
         });
-      throw e;
+        if (response.status === 204) return undefined;
+        const text = await response.text();
+        if (response.status !== 200)
+          throw HelixError.remote(
+            response.status,
+            text,
+            response.statusText || `HTTP ${response.status}`,
+          );
+        return parseJson(text);
+      } catch (e) {
+        const ms = Date.now() - started,
+          error = databaseError(e, op, ms, this.memoryKilled);
+        if (error instanceof DatabaseError)
+          console.error(
+            JSON.stringify({
+              level: "warn",
+              msg: "HelixDB request failed",
+              op,
+              code: error.code,
+              ms,
+              attempt,
+            }),
+          );
+        if (
+          op === "write" ||
+          !(error instanceof DatabaseError) ||
+          !error.transient ||
+          error.code === "timeout" ||
+          attempt >= 6
+        )
+          throw error;
+        await sleep(Math.min(15_000, 1000 * 2 ** (attempt - 1)));
+      }
     }
   }
   async init() {
-    for (const property of ["key", "scope", "scopeKind"])
+    // HelixDB builds a new index over existing data in the background.
+    // - keys in order find a generation's records by their key prefix;
+    // - links by generation and by relation find a generation's links and a
+    //   deleted relation's link without reading every link.
+    for (const index of [
+      IndexSpec.nodeUniqueEquality("FoundryRecord", "key"),
+      IndexSpec.nodeEquality("FoundryRecord", "scope"),
+      IndexSpec.nodeEquality("FoundryRecord", "scopeKind"),
+      IndexSpec.nodeRange("FoundryRecord", "key"),
+      IndexSpec.edgeEquality("FoundryRelationship", "generation"),
+      IndexSpec.edgeEquality("FoundryRelationship", "relationId"),
+    ])
       await this.write(
         writeBatch()
-          .varAs(
-            "index",
-            g().createIndexIfNotExists(
-              property === "key"
-                ? IndexSpec.nodeUniqueEquality("FoundryRecord", property)
-                : IndexSpec.nodeEquality("FoundryRecord", property),
-            ),
-          )
+          .varAs("index", g().createIndexIfNotExists(index))
           .returning(["index"]),
       );
     await transaction(this, "global", async (tx) => {
@@ -140,6 +319,21 @@ export class HelixStore implements Store {
     return r.records?.[0]?.doc
       ? (JSON.parse(r.records[0].doc) as Resource)
       : undefined;
+  }
+  async getMany(scope: string, ids: string[]) {
+    const found = new Map<string, Resource>();
+    for (const part of chunks([...new Set(ids)], 200)) {
+      let q = readBatch();
+      part.forEach((id, i) => {
+        q = q.varAs("r" + i, anchor(scope + ":" + id).valueMap(["doc"]));
+      });
+      const r = await this.read(q.returning(part.map((_, i) => "r" + i)));
+      part.forEach((id, i) => {
+        const doc = r["r" + i]?.[0]?.doc;
+        if (doc) found.set(id, JSON.parse(doc));
+      });
+    }
+    return ids.map((id) => found.get(id));
   }
   async version(scope: string) {
     const r = await this.read(
@@ -288,6 +482,314 @@ export class HelixStore implements Store {
     );
     return (r.neighbors || []).map((n: any) => JSON.parse(n.doc).id);
   }
+  private props(scope: string, r: Resource) {
+    return {
+      key: scope + ":" + r.id,
+      scope,
+      scopeKind: scope + ":" + r.kind,
+      doc: JSON.stringify(r),
+    };
+  }
+  // Node handles of the records that exist, by record id.
+  private async handles(scope: string, ids: string[]) {
+    const found = new Map<string, string>();
+    for (const part of chunks(ids, 500)) {
+      let q = readBatch();
+      part.forEach((id, i) => {
+        q = q.varAs("h" + i, anchor(scope + ":" + id).valueMap(["$id"]));
+      });
+      const r = await this.read(q.returning(part.map((_, i) => "h" + i)));
+      part.forEach((id, i) => {
+        const row = r["h" + i]?.[0];
+        if (row) found.set(id, idOf(row));
+      });
+    }
+    return found;
+  }
+  async stageObjects(scope: string, objects: Resource[], resume: boolean) {
+    const handles = resume
+      ? await this.handles(
+          scope,
+          objects.map((o) => o.id),
+        )
+      : new Map<string, string>();
+    const todo = objects.filter((o) => !handles.has(o.id));
+    if (!todo.length) return handles;
+    let q = writeBatch();
+    todo.forEach((o, i) => {
+      q = q.varAs("n" + i, g().addN("FoundryRecord", this.props(scope, o)));
+    });
+    const r = await this.write(q.returning(todo.map((_, i) => "n" + i)));
+    todo.forEach((o, i) => handles.set(o.id, idOf(r?.["n" + i]?.[0])));
+    return handles;
+  }
+  async stageRelations(
+    scope: string,
+    relations: { relation: Resource; from: string; to: string }[],
+    resume: boolean,
+  ) {
+    const present = resume
+      ? await this.handles(
+          scope,
+          relations.map((r) => r.relation.id),
+        )
+      : new Map<string, string>();
+    const todo = relations.filter((r) => !present.has(r.relation.id));
+    if (!todo.length) return 0;
+    let q = writeBatch();
+    todo.forEach(({ relation, from, to }, i) => {
+      q = q
+        .varAs("r" + i, g().addN("FoundryRecord", this.props(scope, relation)))
+        .varAs(
+          "e" + i,
+          g()
+            .n(NodeRef.id(BigInt(from)))
+            .addE("FoundryRelationship", NodeRef.id(BigInt(to)), {
+              scope,
+              generation: relation.data.generation,
+              name: relation.name,
+              relationId: relation.id,
+            }),
+        );
+    });
+    await this.write(q.returning(["r0"]));
+    return todo.length;
+  }
+  async neighborhood(
+    scope: string,
+    ids: string[],
+    depth: number,
+    limit: number,
+  ) {
+    let q = readBatch();
+    ids.forEach((id, i) => {
+      q = q.varAs("s" + i, anchor(scope + ":" + id).valueMap(["$id", "doc"]));
+    });
+    const start = await this.read(q.returning(ids.map((_, i) => "s" + i)));
+    const docs = new Map<string, Resource>();
+    for (let i = 0; i < ids.length && docs.size < limit; i++) {
+      const row = start["s" + i]?.[0];
+      if (row) docs.set(idOf(row), JSON.parse(row.doc));
+    }
+    if (!docs.size) return { nodes: [], edges: [], truncated: false };
+    const links = new Map<string, { from: string; to: string; name: string }>();
+    let frontier = [...docs.keys()],
+      truncated = false;
+    for (let d = 0; d < depth && frontier.length; d++) {
+      // Each level reads at most a few links per record it may still add.
+      const budget = Math.max(50, (limit - docs.size) * 2);
+      const r = await this.read(
+        readBatch()
+          .varAs(
+            "e",
+            g()
+              .n(nodeIds(frontier))
+              .bothE("FoundryRelationship")
+              .limit(budget)
+              .valueMap(["$id", "$from", "$to", "name"]),
+          )
+          .returning(["e"]),
+      );
+      const edges: any[] = r.e || [];
+      if (edges.length >= budget) truncated = true;
+      const next: string[] = [];
+      for (const e of edges) {
+        const from = String(e["$from"]),
+          to = String(e["$to"]);
+        links.set(idOf(e), { from, to, name: String(e.name) });
+        for (const n of [from, to])
+          if (!docs.has(n) && !next.includes(n)) {
+            if (docs.size + next.length < limit) next.push(n);
+            else truncated = true;
+          }
+      }
+      if (!next.length) break;
+      const n = await this.read(
+        readBatch()
+          .varAs("n", g().n(nodeIds(next)).valueMap(["$id", "doc"]))
+          .returning(["n"]),
+      );
+      for (const row of n.n || []) docs.set(idOf(row), JSON.parse(row.doc));
+      frontier = next;
+    }
+    return {
+      nodes: [...docs.values()],
+      edges: [...links.values()]
+        .filter((e) => docs.has(e.from) && docs.has(e.to))
+        .map((e) => ({
+          from: docs.get(e.from)!.id,
+          to: docs.get(e.to)!.id,
+          name: e.name,
+        })),
+      truncated,
+    };
+  }
+  async linkCounts(scope: string, ids: string[]) {
+    const counts = new Map<string, number>();
+    for (const part of chunks(ids, 200)) {
+      let q = readBatch();
+      part.forEach((id, i) => {
+        q = q.varAs(
+          "c" + i,
+          anchor(scope + ":" + id)
+            .bothE("FoundryRelationship")
+            .count(),
+        );
+      });
+      const r = await this.read(q.returning(part.map((_, i) => "c" + i)));
+      part.forEach((id, i) => {
+        let v = r["c" + i];
+        if (Array.isArray(v)) v = v[0];
+        if (v && typeof v === "object") v = Object.values(v)[0];
+        counts.set(id, Number(v) || 0);
+      });
+    }
+    return counts;
+  }
+  async relationsBetween(
+    scope: string,
+    from: string,
+    to: string,
+    name: string,
+  ) {
+    const r = await this.read(
+      readBatch()
+        .varAs("to", anchor(scope + ":" + to).valueMap(["$id"]))
+        .varAs(
+          "e",
+          anchor(scope + ":" + from)
+            .outE("FoundryRelationship")
+            .where(Predicate.eq("name", name))
+            .valueMap(["$to", "relationId"]),
+        )
+        .returning(["to", "e"]),
+    );
+    const target = idOf(r.to?.[0]);
+    return (r.e || [])
+      .filter((e: any) => target && String(e["$to"]) === target)
+      .map((e: any) => String(e.relationId));
+  }
+  async page(scope: string, prefix: string, offset: number, limit: number) {
+    const from = `${scope}:${prefix}`,
+      range = () =>
+        g().nWithLabelWhere(
+          "FoundryRecord",
+          SourcePredicate.between("key", from, from + "\uffff"),
+        );
+    const r = await this.read(
+      readBatch()
+        .varAs(
+          "items",
+          // A range index scan reads keys in order.
+          range()
+            .range(offset, offset + limit)
+            .valueMap(["doc"]),
+        )
+        .varAs("total", range().count())
+        .returning(["items", "total"]),
+    );
+    let total = r.total;
+    if (Array.isArray(total)) total = total[0];
+    if (total && typeof total === "object") total = Object.values(total)[0];
+    return {
+      items: (r.items || []).map((x: any) => JSON.parse(x.doc) as Resource),
+      total: Number(total) || 0,
+    };
+  }
+  async dropGeneration(scope: string, generation: string, limit: number) {
+    // Links first: the pinned server keeps a link whose record is dropped.
+    // Relations from before relation ids carried their generation are found
+    // through their links.
+    const e = await this.read(
+      readBatch()
+        .varAs(
+          "e",
+          g()
+            .eWithLabelWhere(
+              "FoundryRelationship",
+              SourcePredicate.eq("generation", generation),
+            )
+            .where(Predicate.eq("scope", scope))
+            .limit(limit)
+            .valueMap(["$id", "relationId"]),
+        )
+        .returning(["e"]),
+    );
+    const edges: any[] = e.e || [];
+    if (edges.length) {
+      let q = writeBatch().varAs(
+        "links",
+        g().dropEdgeById(EdgeRef.ids(edges.map((x) => BigInt(idOf(x))))),
+      );
+      [...new Set(edges.map((x) => String(x.relationId)))].forEach((id, i) => {
+        q = q.varAs("r" + i, anchor(scope + ":" + id).drop());
+      });
+      await this.write(q.returning(["links"]));
+      return edges.length;
+    }
+    // Then its records, which all have keys starting with the generation.
+    const prefix = `${scope}:${generation}_`;
+    const n = await this.read(
+      readBatch()
+        .varAs(
+          "n",
+          g()
+            .nWithLabelWhere(
+              "FoundryRecord",
+              SourcePredicate.between("key", prefix, prefix + "\uffff"),
+            )
+            .limit(limit)
+            .valueMap(["$id"]),
+        )
+        .returning(["n"]),
+    );
+    const nodes: string[] = (n.n || []).map(idOf);
+    if (!nodes.length) return 0;
+    await this.write(
+      writeBatch()
+        .varAs("records", g().n(nodeIds(nodes)).drop())
+        .returning(["records"]),
+    );
+    return nodes.length;
+  }
+  // Walks the workspace's keys in order, reading keys only, and skips each
+  // generation's records once its first one is found. Relations from before
+  // relation ids carried their generation are stepped through.
+  async generations(scope: string) {
+    const found = new Set<string>(),
+      staged = new RegExp(
+        `^${escapeRegExp(scope)}:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_`,
+      ),
+      end = scope + ":\uffff",
+      page = 1000;
+    let cursor = scope + ":";
+    for (;;) {
+      const r = await this.read(
+        readBatch()
+          .varAs(
+            "k",
+            g()
+              .nWithLabelWhere(
+                "FoundryRecord",
+                SourcePredicate.between("key", cursor, end),
+              )
+              .limit(page)
+              .valueMap(["key"]),
+          )
+          .returning(["k"]),
+      );
+      const keys: string[] = (r.k || []).map((x: any) => String(x.key)).sort();
+      for (const key of keys) {
+        const m = staged.exec(key);
+        if (m) found.add(m[1]);
+      }
+      if (keys.length < page) break;
+      const last = keys.at(-1)!,
+        m = staged.exec(last);
+      cursor = m ? `${scope}:${m[1]}_\uffff` : last + "\u0000";
+    }
+    return [...found];
+  }
 }
 export class MemoryStore implements Store {
   private rows = new Map<string, Resource>();
@@ -321,6 +823,127 @@ export class MemoryStore implements Store {
         (await this.list(s, "relation"))
           .filter((r) => r.data.from === id || r.data.to === id)
           .map((r) => (r.data.from === id ? r.data.to : r.data.from)),
+      ),
+    ];
+  }
+  async getMany(s: string, ids: string[]) {
+    return Promise.all(ids.map((id) => this.get(s, id)));
+  }
+  // Staged records skip the revision counter, as in HelixDB. A handle is the
+  // record's id.
+  async stageObjects(s: string, objects: Resource[], resume: boolean) {
+    const handles = new Map<string, string>();
+    for (const o of objects) {
+      if (!(resume && this.rows.has(s + ":" + o.id)))
+        this.rows.set(s + ":" + o.id, structuredClone(o));
+      handles.set(o.id, o.id);
+    }
+    return handles;
+  }
+  async stageRelations(
+    s: string,
+    relations: { relation: Resource; from: string; to: string }[],
+    resume: boolean,
+  ) {
+    let written = 0;
+    for (const { relation } of relations)
+      if (!(resume && this.rows.has(s + ":" + relation.id))) {
+        this.rows.set(s + ":" + relation.id, structuredClone(relation));
+        written++;
+      }
+    return written;
+  }
+  private links(s: string) {
+    return [...this.rows.values()].filter(
+      (r) => r.workspaceId === s && r.kind === "relation",
+    );
+  }
+  async neighborhood(s: string, ids: string[], depth: number, limit: number) {
+    const kept = new Map<string, Resource>();
+    for (const id of ids) {
+      const o = await this.get(s, id);
+      if (o && kept.size < limit) kept.set(id, o);
+    }
+    if (!kept.size) return { nodes: [], edges: [], truncated: false };
+    const relations = this.links(s);
+    let frontier = [...kept.keys()],
+      truncated = false;
+    for (let d = 0; d < depth && frontier.length; d++) {
+      const next: string[] = [];
+      for (const r of relations)
+        for (const [a, b] of [
+          [r.data.from, r.data.to],
+          [r.data.to, r.data.from],
+        ])
+          if (frontier.includes(a) && !kept.has(b)) {
+            const o = await this.get(s, b);
+            if (!o) continue;
+            if (kept.size < limit) {
+              kept.set(b, o);
+              next.push(b);
+            } else truncated = true;
+          }
+      frontier = next;
+    }
+    return {
+      nodes: [...kept.values()],
+      edges: relations
+        .filter((r) => kept.has(r.data.from) && kept.has(r.data.to))
+        .map((r) => ({ from: r.data.from, to: r.data.to, name: r.name })),
+      truncated,
+    };
+  }
+  async linkCounts(s: string, ids: string[]) {
+    const counts = new Map(ids.map((id) => [id, 0]));
+    for (const r of this.links(s))
+      for (const end of [r.data.from, r.data.to])
+        if (counts.has(end)) counts.set(end, counts.get(end)! + 1);
+    return counts;
+  }
+  async relationsBetween(s: string, from: string, to: string, name: string) {
+    return this.links(s)
+      .filter(
+        (r) => r.data.from === from && r.data.to === to && r.name === name,
+      )
+      .map((r) => r.id);
+  }
+  async page(s: string, prefix: string, offset: number, limit: number) {
+    const rows = [...this.rows.values()]
+      .filter((r) => r.workspaceId === s && r.id.startsWith(prefix))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return {
+      items: structuredClone(rows.slice(offset, offset + limit)),
+      total: rows.length,
+    };
+  }
+  async dropGeneration(s: string, generation: string, limit: number) {
+    const staged = [...this.rows.entries()]
+      .filter(
+        ([, r]) =>
+          r.workspaceId === s &&
+          ["object", "relation"].includes(r.kind) &&
+          r.data.generation === generation,
+      )
+      // Links first, as in HelixDB.
+      .sort(
+        ([, a], [, b]) =>
+          Number(b.kind === "relation") - Number(a.kind === "relation"),
+      )
+      .slice(0, limit);
+    for (const [key] of staged) this.rows.delete(key);
+    return staged.length;
+  }
+  async generations(s: string) {
+    return [
+      ...new Set(
+        [...this.rows.values()]
+          .filter(
+            (r) =>
+              r.workspaceId === s &&
+              ["object", "relation"].includes(r.kind) &&
+              r.data.generation,
+          )
+          .map((r) => r.data.generation as string),
       ),
     ];
   }

@@ -11,6 +11,7 @@ import { buildWorkspace, providerSettings, enqueue } from "./assistant.js";
 import { assert } from "./security.js";
 import { runSyncJob, runUploadJob } from "./data-jobs.js";
 import { runPipelineJob } from "./pipeline-jobs.js";
+import { queueCleanup, runCleanupJob } from "./cleanup.js";
 import { sweepResults } from "./results.js";
 // A job gets three attempts, whether it throws or its worker dies mid-run.
 const MAX_ATTEMPTS = 3;
@@ -23,6 +24,7 @@ const jobHandlers: Record<
   upload: runUploadJob,
   sync: runSyncJob,
   pipeline: runPipelineJob,
+  cleanup: runCleanupJob,
 };
 // Setup's build from a confirmed ontology publishes the active versions it
 // validated, so a sync of one of its inputs meanwhile fails it with "Inputs
@@ -57,6 +59,8 @@ async function buildSources(store: Store, scope: string, runs: Resource[]) {
 }
 export function startWorker(store: Store) {
   const stopStreams = startChangeStreams(store);
+  // Workspaces checked for records older releases left behind, once per start.
+  const swept = new Set<string>();
   let busy = false,
     stopped = false;
   const tick = async () => {
@@ -66,6 +70,14 @@ export function startWorker(store: Store) {
       const workspaces = await store.list("global", "workspaceRef");
       for (const workspace of workspaces) {
         const scope = workspace.id;
+        if (!swept.has(scope)) {
+          swept.add(scope);
+          if (
+            (await store.get(scope, "workspace"))?.data.activeGeneration &&
+            !(await store.get(scope, "cleanup_state"))?.data.swept
+          )
+            await queueCleanup(store, scope);
+        }
         for (const source of await store.list(scope, "source"))
           if (scheduledRefresh(source) || needsChangeRefresh(source)) {
             await transaction(store, scope, async (tx) => {
@@ -199,16 +211,31 @@ export function startWorker(store: Store) {
                 : undefined;
               if (!handler)
                 throw new Error("Unsupported job type: " + candidate.data.type);
-              await handler(store, scope, candidate);
+              const result: any = await handler(store, scope, candidate);
               await transaction(store, scope, async (tx) => {
                 const r = await tx.get(candidate.id);
                 if (r && r.data.status !== "canceled")
-                  tx.update(r, {
-                    ...r.data,
-                    status: "succeeded",
-                    error: null,
-                    progress: { message: "Complete snapshot ready" },
-                  });
+                  tx.update(
+                    r,
+                    // A long job that yields the worker runs again shortly,
+                    // with its attempts counted afresh.
+                    result?.again
+                      ? {
+                          ...r.data,
+                          status: "queued",
+                          attempts: 0,
+                          retryAt: Date.now() + (result.retryIn ?? 2000),
+                        }
+                      : {
+                          ...r.data,
+                          status: "succeeded",
+                          error: null,
+                          progress:
+                            r.data.type === "cleanup"
+                              ? r.data.progress
+                              : { message: "Complete snapshot ready" },
+                        },
+                  );
               });
             }
           } catch (e) {
