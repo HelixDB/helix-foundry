@@ -19,8 +19,10 @@ import {
   AnswerStats,
   AnswerTable,
   answerColumns,
+  chartPlan,
   sortAnswer,
 } from "../apps/web/src/areas/analyst/answer-view.js";
+import { exactText } from "../apps/web/src/areas/workspace/metrics.js";
 import {
   activeSection,
   childActive,
@@ -161,6 +163,28 @@ describe("workspace UI kit", () => {
     );
     expect(stats).toContain("9,007,199,254,740,993");
     expect(stats).not.toContain("9,007,199,254,740,992");
+  });
+  it("gives answer chart values beyond 2^53 exactly in tooltips", () => {
+    const breakdown = chartPlan([
+      { region: "EU", total: "9007199254740993" },
+      { region: "US", total: "12" },
+      { region: "NA", total: "12.25" },
+    ])!;
+    expect(breakdown.kind).toBe("breakdown");
+    expect(breakdown.points.map((p) => exactText(p, "number"))).toEqual([
+      "9,007,199,254,740,993",
+      "12",
+      "12.3",
+    ]);
+    const trend = chartPlan([
+      { month: "2026-02", total: 1.25 },
+      { month: "2026-01", total: "-9007199254740995" },
+    ])!;
+    expect(trend).toMatchObject({ kind: "trend", grain: "month" });
+    expect(trend.points.map((p) => [p.label, exactText(p, "number")])).toEqual([
+      ["2026-01", "-9,007,199,254,740,995"],
+      ["2026-02", "1.25"],
+    ]);
   });
   it("renders ARIA tabs synced to the URL and a titled page header", () => {
     const html = render(

@@ -17,10 +17,9 @@ import {
   type GridSort,
 } from "../../kit";
 import { fieldName } from "../../ui";
-import { BreakdownChart, TrendChart } from "../workspace/metrics";
+import { BreakdownChart, TrendChart, type Point } from "../workspace/metrics";
 
 type Row = Record<string, unknown>;
-type Point = { label: string; value: number };
 
 const numberText = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
 // A number, including numbers sent as text (big integers, decimals).
@@ -92,6 +91,16 @@ function valueText(key: string, v: unknown): string | null {
   return formatValue(v, inferKind([v]));
 }
 
+// Charts draw a Number; an integer beyond 2^53 also keeps its exact text for
+// the tooltip and screen readers.
+function point(label: string, v: unknown): Point {
+  const value = toNumber(v)!,
+    text = String(v).trim();
+  return Number.isSafeInteger(value) || !/^-?\d+$/.test(text)
+    ? { label, value }
+    : { label, value, text: formatNumber(text) };
+}
+
 export type ChartPlan = {
   kind: "trend" | "breakdown";
   points: Point[];
@@ -130,17 +139,14 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
   if (time) {
     // Daily, weekly or monthly buckets, oldest first.
     const days = measured
-      .map((r) => ({
-        day: String(r[label]).slice(0, 10),
-        value: toNumber(r[value])!,
-      }))
-      .sort((a, b) => a.day.localeCompare(b.day));
+      .map((r) => point(String(r[label]).slice(0, 10), r[value]))
+      .sort((a, b) => a.label.localeCompare(b.label));
     const monthly = days.every(
-      (d) => d.day.length === 7 || d.day.endsWith("-01"),
+      (d) => d.label.length === 7 || d.label.endsWith("-01"),
     );
     const gaps = days
       .slice(1)
-      .map((d, i) => (Date.parse(d.day) - Date.parse(days[i].day)) / DAY);
+      .map((d, i) => (Date.parse(d.label) - Date.parse(days[i].label)) / DAY);
     const grain: HomeMetric["grain"] = monthly
       ? "month"
       : gaps.length && gaps.every((g) => g === 7)
@@ -152,8 +158,8 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
       label,
       value,
       points: days.map((d) => ({
-        label: monthly ? d.day.slice(0, 7) : d.day,
-        value: d.value,
+        ...d,
+        label: monthly ? d.label.slice(0, 7) : d.label,
       })),
     };
   }
@@ -162,10 +168,7 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
     kind: "breakdown",
     label,
     value,
-    points: measured.map((r) => ({
-      label: String(r[label]),
-      value: toNumber(r[value])!,
-    })),
+    points: measured.map((r) => point(String(r[label]), r[value])),
   };
 }
 
