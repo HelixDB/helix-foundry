@@ -1,9 +1,11 @@
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { createServer } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { once } from "node:events";
 import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import pg from "pg";
 import { discover, importSource } from "../apps/api/src/connectors.js";
 import { config } from "../apps/api/src/config.js";
 it("discovers and imports paginated REST data without forwarding credentials across origins", async () => {
@@ -100,6 +102,63 @@ it("speaks S3-compatible list and streamed object protocols", async () => {
     ).toBe("id,name\n1,Ada\n");
   } finally {
     server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    await rm(resolve(config.dataDir, "incoming", scope), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+it("imports S3 keys whose extension is upper case", async () => {
+  const server = createServer((_, res) => res.end("id\n1\n"));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const scope = "s3-" + randomUUID();
+  try {
+    const result = await importSource(scope, "s3", {
+      endpoint: "http://127.0.0.1:" + (server.address() as any).port,
+      bucket: "fixture",
+      key: "DATA.CSV",
+      accessKeyId: "test-access",
+      secretAccessKey: "test-secret",
+    });
+    expect(result.file).toMatch(/\.csv$/);
+    expect(
+      await readFile(
+        resolve(config.dataDir, "incoming", scope, result.file),
+        "utf8",
+      ),
+    ).toBe("id\n1\n");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    await rm(resolve(config.dataDir, "incoming", scope), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+it("closes the Postgres pool when no snapshot connection can be acquired", async () => {
+  // Hangs up on every connection.
+  const server = createTcpServer((socket) => socket.destroy());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const end = vi.spyOn(pg.Pool.prototype, "end"),
+    scope = "postgres-" + randomUUID();
+  try {
+    await expect(
+      importSource(scope, "postgres", {
+        host: "127.0.0.1",
+        port: (server.address() as any).port,
+        user: "fixture",
+        password: "fixture",
+        database: "fixture",
+        table: "orders",
+      }),
+    ).rejects.toThrow();
+    expect(end).toHaveBeenCalledOnce();
+  } finally {
+    end.mockRestore();
     await new Promise<void>((r) => server.close(() => r()));
     await rm(resolve(config.dataDir, "incoming", scope), {
       recursive: true,

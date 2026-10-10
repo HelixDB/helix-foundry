@@ -17,6 +17,7 @@ import { queryDatasets } from "../apps/api/src/datasets.js";
 import {
   compileMetric,
   describeForMetrics,
+  metricsDatasets,
   METRICS_PROMPT,
 } from "../apps/api/src/metrics.js";
 import { sampleDatasets } from "../apps/api/src/sample-data.js";
@@ -276,6 +277,41 @@ describe("code-picked metrics", () => {
   });
 });
 
+it("leaves out data excluded from setup through its source or import", async () => {
+  const s = new MemoryStore(),
+    w = "excluded";
+  await transaction(s, w, async (tx) => {
+    tx.put(
+      resource(
+        w,
+        "workspace",
+        w,
+        { onboarding: { excludedIds: ["source", "job"] } },
+        "workspace",
+      ),
+    );
+    for (const [id, link] of [
+      ["one", { sourceId: "source" }],
+      ["two", { importJobId: "job" }],
+      ["kept", {}],
+    ] as const)
+      tx.put(
+        resource(
+          w,
+          "dataset",
+          id,
+          {
+            activeVersion: "v",
+            profile: { rows: 10, columns: [{ name: "id", type: "INTEGER" }] },
+            ...link,
+          },
+          id,
+        ),
+      );
+  });
+  expect((await metricsDatasets(s, w)).map((d) => d.id)).toEqual(["kept"]);
+});
+
 describe("compileMetric", () => {
   const id = "11111111-2222-3333-4444-555555555555",
     table = '"d_11111111222233334444555555555555"';
@@ -305,6 +341,8 @@ describe("compileMetric", () => {
             distinct: 3,
           },
           { name: "tags", type: "VARCHAR[]", distinct: 4 },
+          { name: "scores", type: "INTEGER[3]", distinct: 3 },
+          { name: "periods", type: "TIMESTAMP[2]", distinct: 2 },
           { name: 'odd "tier"', type: "VARCHAR", distinct: 4 },
         ],
         sample: [
@@ -378,6 +416,11 @@ describe("compileMetric", () => {
     expect(error({ filter: { column: "tags", value: "x" } })).toBeTruthy();
     expect(error({ kind: "breakdown", groupBy: "plan" })).toBeTruthy();
     expect(error({ kind: "breakdown", groupBy: "tags" })).toBeTruthy();
+    // So are fixed-size arrays of numbers or times.
+    expect(error({ measure: "sum", column: "scores" })).toMatch(/numeric/);
+    expect(error({ kind: "trend", timeColumn: "periods" })).toMatch(
+      /date or time/,
+    );
   });
 
   it("quotes identifiers, escapes values and scales cents", () => {
@@ -458,6 +501,8 @@ describe("compileMetric", () => {
     const names = columns.map((c) => c.split(" ")[0]);
     expect(names).not.toContain("plan");
     expect(names).not.toContain("tags");
+    expect(names).not.toContain("scores");
+    expect(names).not.toContain("periods");
     // Free text and sensitive values are never listed.
     const text = JSON.stringify(d);
     expect(text).not.toContain("Thanks");

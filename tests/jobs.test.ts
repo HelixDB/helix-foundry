@@ -123,3 +123,40 @@ it("recovers an interrupted import lease without creating another operation", as
     stop();
   }
 });
+it.each(["missing_handler", "toString"])(
+  "records an unsupported %s job as failed instead of succeeded",
+  async (type) => {
+    const store = new MemoryStore(),
+      scope = "unsupported";
+    await transaction(store, "global", async (tx) =>
+      tx.put(resource("global", "workspaceRef", "Unsupported", {}, scope)),
+    );
+    // On its last attempt, so the failure is final.
+    await transaction(store, scope, async (tx) =>
+      tx.put(
+        resource(
+          scope,
+          "job",
+          "Unknown",
+          { type, status: "queued", attempts: 2 },
+          "job",
+        ),
+      ),
+    );
+    const stop = startWorker(store);
+    try {
+      for (
+        let i = 0;
+        i < 50 && (await store.get(scope, "job"))?.data.status !== "failed";
+        i++
+      )
+        await new Promise((r) => setTimeout(r, 50));
+      const job = await store.get(scope, "job");
+      expect(job?.data.status).toBe("failed");
+      expect(job?.data.error).toBe("Unsupported job type: " + type);
+      expect(await store.get(scope, "failure_job")).toBeDefined();
+    } finally {
+      await stop();
+    }
+  },
+);
