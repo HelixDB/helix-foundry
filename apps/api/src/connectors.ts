@@ -304,9 +304,10 @@ export async function importSource(
       }
     } else if (kind === "postgres") {
       assert(c.table, "Select a table");
-      const pool = pgPool(c),
-        client = await pool.connect();
+      const pool = pgPool(c);
+      let client: pg.PoolClient | undefined;
       try {
+        client = await pool.connect();
         schema = (
           await client.query(
             "SELECT column_name name,data_type type FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2 ORDER BY ordinal_position",
@@ -327,7 +328,7 @@ export async function importSource(
         }
         await client.query("COMMIT");
       } finally {
-        client.release();
+        client?.release();
         await pool.end();
       }
     } else if (kind === "rest") {
