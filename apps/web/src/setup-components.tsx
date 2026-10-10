@@ -163,8 +163,16 @@ export function ProviderSetup({
         <div className="provider-options choice-options">
           {[
             ["local", "Local", "On your infrastructure."],
-            ["claude", "Claude", "Use your Anthropic API key."],
-            ["openai", "OpenAI", "Use your OpenAI API key."],
+            [
+              "claude",
+              "Claude",
+              "Use your Anthropic API key. Your schemas and data samples are sent to Anthropic.",
+            ],
+            [
+              "openai",
+              "OpenAI",
+              "Use your OpenAI API key. Your schemas, data samples and answers are sent to OpenAI.",
+            ],
           ].map(([value, title, description]) => (
             <ChoiceCard
               key={value}
