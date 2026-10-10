@@ -62,6 +62,10 @@ services:
     security_opt: ["no-new-privileges:true"]
     networks: [execution]
   helix:
+    # Moving this pin can be one way. The first time HelixDB v0.0.10 or later opens
+    # the data, it upgrades the index storage, and v0.0.9 and earlier then refuse
+    # the database. Installations upgrade with scripts/upgrade.sh, which backs up
+    # first and asks before it starts a new HelixDB image.
     image: ghcr.io/helixdb/helixdb:v0.0.6@sha256:94b29942658ebdca0a91bf15edffe921a46da3e26e1223ea333ccce58c6212dd
     restart: unless-stopped
     environment:

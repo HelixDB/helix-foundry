@@ -1,4 +1,4 @@
-// Runs scripts/backup.sh and restore.sh against a fake docker
+// Runs scripts/backup.sh, restore.sh and upgrade.sh against a fake docker
 // (tests/fixtures/fake-docker.sh) in a throwaway copy of the repository.
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -68,6 +68,7 @@ function fixture() {
     "scripts/backup.sh",
     "scripts/backup-lib.sh",
     "scripts/restore.sh",
+    "scripts/upgrade.sh",
     "compose.yaml",
     ".gitignore",
     "apps/api/src/store.ts",
@@ -135,12 +136,15 @@ const contents = (dir: string) =>
     })
     .join("\n");
 
-it.each(["backup.sh", "backup-lib.sh", "restore.sh"])("%s parses", (script) => {
-  const r = spawnSync("bash", ["-n", join(repo, "scripts", script)], {
-    encoding: "utf8",
-  });
-  expect(r.status, r.stderr).toBe(0);
-});
+it.each(["backup.sh", "backup-lib.sh", "restore.sh", "upgrade.sh"])(
+  "%s parses",
+  (script) => {
+    const r = spawnSync("bash", ["-n", join(repo, "scripts", script)], {
+      encoding: "utf8",
+    });
+    expect(r.status, r.stderr).toBe(0);
+  },
+);
 
 describe("backup.sh", () => {
   it("leaves the keys out and records a fingerprint and the HelixDB image", () => {
@@ -387,6 +391,93 @@ describe("restore.sh", () => {
     const r = f.run("restore.sh", [dir, "--replace"]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("metadata schema 99");
+    expect(f.calls()).toEqual([]);
+  });
+});
+
+describe("upgrade.sh", () => {
+  // A checkout of release 1 whose upstream has release 2 with HelixDB 99.0.0.
+  function release(f: Fixture, newImage = image("99.0.0")) {
+    f.git(f.root, "init", "-q", "-b", "main");
+    f.git(f.root, "add", "-A");
+    f.git(f.root, "commit", "-q", "-m", "Release 1");
+    const remote = join(f.base, "remote.git");
+    f.git(f.base, "clone", "-q", "--bare", f.root, remote);
+    f.git(f.root, "remote", "add", "origin", remote);
+    f.git(f.root, "fetch", "-q", "origin");
+    f.git(f.root, "branch", "-q", "-u", "origin/main");
+    const other = join(f.base, "other");
+    f.git(f.base, "clone", "-q", remote, other);
+    const compose = join(other, "compose.yaml");
+    writeFileSync(
+      compose,
+      readFileSync(compose, "utf8").replace(pinned[1], newImage),
+    );
+    f.git(other, "commit", "-q", "-am", "Release 2");
+    f.git(other, "push", "-q");
+    return {
+      from: f.git(f.root, "rev-parse", "HEAD"),
+      to: f.git(other, "rev-parse", "HEAD"),
+      composeMode: mode(compose),
+    };
+  }
+  const backups = (f: Fixture) => join(f.home, "helix-foundry-backups");
+
+  it("stops before upgrading when the backup fails", () => {
+    const f = fixture();
+    const { from } = release(f);
+    const r = f.run("upgrade.sh", ["--yes"], { STUB_FAIL_RUN: "1" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("the backup failed. Nothing was upgraded.");
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);
+    expect(f.calls()).toContain("compose start helix executor app worker");
+    expect(f.calls().some((c) => c.includes("up -d"))).toBe(false);
+  });
+
+  it("asks before a one-way HelixDB upgrade", () => {
+    const f = fixture();
+    const { from } = release(f);
+    const r = f.run("upgrade.sh");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("this upgrade changes the HelixDB image");
+    expect(r.stderr).toContain("Run again with --yes");
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);
+    expect(f.calls()).toEqual([]);
+    expect(existsSync(backups(f))).toBe(false);
+  });
+
+  it("backs up, records the old release, fast-forwards and rebuilds", () => {
+    const f = fixture();
+    const { from, to, composeMode } = release(f);
+    const r = f.run("upgrade.sh", ["--yes"], { STUB_OLLAMA: "1" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
+    // Checked-out files keep their usual modes; only backup files are private.
+    expect(mode(join(f.root, "compose.yaml"))).toBe(composeMode);
+    const [name] = readdirSync(backups(f));
+    const dir = join(backups(f), name);
+    expect(field(dir, "app_commit")).toBe(from);
+    expect(field(dir, "helix_image")).toBe(pinned[1]);
+    expect(readFileSync(join(dir, "upgrade.txt"), "utf8")).toBe(
+      `from_commit=${from}\nfrom_helix_image=${pinned[1]}\nto_commit=${to}\nto_helix_image=${image("99.0.0")}\n`,
+    );
+    expect(mode(join(dir, "upgrade.txt"))).toBe(0o600);
+    const calls = f.calls();
+    expect(
+      calls.indexOf("compose stop app worker executor helix"),
+    ).toBeLessThan(calls.indexOf("compose --profile local up -d --build"));
+    expect(calls.at(-1)).toBe("compose --profile local up -d --build");
+    expect(r.stdout).toContain(`git checkout ${from}`);
+    expect(f.run("upgrade.sh").stdout).toContain("Already up to date");
+  });
+
+  it("refuses to move HelixDB back to an older version", () => {
+    const f = fixture();
+    const { from } = release(f, image("0.0.1"));
+    const r = f.run("upgrade.sh", ["--yes"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("moves HelixDB back");
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);
     expect(f.calls()).toEqual([]);
   });
 });
