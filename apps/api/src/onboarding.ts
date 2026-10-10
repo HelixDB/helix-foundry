@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, open, rename, rm } from "node:fs/promises";
+import { platform } from "node:os";
 import { resolve, extname } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { CronExpressionParser } from "cron-parser";
@@ -301,11 +302,14 @@ export function registerOnboarding(
       // Content-addressed staging makes concurrent retries safe; metadata commits after the file is durable.
       const staged = fingerprint + ext;
       await rename(resolve(dir, temporary), resolve(dir, staged));
-      const directory = await open(dir, "r");
-      try {
-        await directory.sync();
-      } finally {
-        await directory.close();
+      // Windows cannot flush a read-only directory handle. File contents are synced above.
+      if (platform() !== "win32") {
+        const directory = await open(dir, "r");
+        try {
+          await directory.sync();
+        } finally {
+          await directory.close();
+        }
       }
       return publicResource(
         await transaction(store, a.scope, async (tx) => {
