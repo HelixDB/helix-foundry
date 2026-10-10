@@ -122,7 +122,12 @@ export function startWorker(store: Store) {
                   403,
                 );
               }
-              await jobHandlers[candidate.data.type]?.(store, scope, candidate);
+              const handler = Object.hasOwn(jobHandlers, candidate.data.type)
+                ? jobHandlers[candidate.data.type]
+                : undefined;
+              if (!handler)
+                throw new Error("Unsupported job type: " + candidate.data.type);
+              await handler(store, scope, candidate);
               await transaction(store, scope, async (tx) => {
                 const r = await tx.get(candidate.id);
                 if (r && r.data.status !== "canceled")
