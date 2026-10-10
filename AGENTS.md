@@ -16,7 +16,7 @@ curl -fsS http://localhost:<PORT>/api/health
 
 - Run every command from the repository root.
 - Ask the user before anything destructive or disruptive: removing containers, volumes, images or files, restoring a backup, stopping or killing a process you did not start, or installing software.
-- Never print, `cat`, paste into chat or commit `.env` or a backup's `config.env`. They hold the encryption key. Do not open `.env` with an editor or file-reading tool either, because that puts the keys in your transcript. Use the `grep` and `sed` commands in this runbook, which change or show only the non-secret `PUBLIC_PORT`, `PUBLIC_ORIGIN` and `MODEL_ENDPOINT` lines.
+- Never print, `cat`, paste into chat or commit `.env` or a backup's `config.env`. They hold the encryption key. Do not open `.env` with an editor or file-reading tool either, because that puts the keys in your transcript. Use the `grep` and `sed` commands in this runbook, which change or show only the non-secret `PUBLIC_PORT`, `PUBLIC_ORIGIN`, `MODEL_ENDPOINT` and executor limit lines.
 - Never delete, regenerate or overwrite an existing `.env`. Losing `ENCRYPTION_KEY` makes stored credentials unrecoverable.
 - If a port is busy, choose another port. Do not stop whatever is using it.
 - Do not ask for, type or store the user's Claude or OpenAI keys or database passwords. The user enters them in the browser.
@@ -109,6 +109,7 @@ df -h .
 ```
 
 - The first run downloads several GB: the built app image (about 0.9 GB), HelixDB (about 160 MB), Ollama, and the `qwen3:4b` model (roughly 2.5 GB). If disk space is tight, tell the user before you continue.
+- Imported data then takes disk in Docker's volumes, and importing a large file can briefly use several times its size: the executor spills to disk what does not fit in its memory, and by default nothing but DuckDB's own bound (90% of the free disk space, for each job) limits that. On Docker Desktop this space is Docker's virtual disk, set under Settings → Resources, not what `df` shows. If the user means to import files of several GB, say so in your report. Do not set `DUCKDB_SPILL_LIMIT` unless the user asks: a cap that is too small makes large imports fail (see [executor limits](#operations)).
 - Local AI was developed and benchmarked on a 16 GB machine, and the executor alone may use up to 2 GB. Peak memory has not yet been certified for 16 GB or 8 GB installations. Use the `MemTotal` figure:
   - Below 8000000000 bytes: warn the user that the model inside Docker may be slow or fail, and offer path B or C below.
   - From 8000000000 to 16000000000 bytes: continue, and mention in your report that local AI has not been certified at this memory size.
@@ -322,11 +323,14 @@ The loop waits up to five minutes and prints `complete` once the workspace is pu
 | "Default model digest does not match the tested release"                                 | The registry's `qwen3:4b` no longer matches the pinned digest in `docs/models.json`.             | Tell the user. They can choose Claude or OpenAI instead.                                                                                                                                                                     |
 | Code changes or `git pull` have no effect                                                | Compose reused the old `helix-foundry:local` image.                                              | Start with `--build`.                                                                                                                                                                                                        |
 | Editing `APP_ORIGIN`, `HELIX_URL` or `OLLAMA_URL` in `.env` has no effect                | Those lines are only for `pnpm dev`.                                                             | Use `PUBLIC_PORT`, `PUBLIC_ORIGIN` and `MODEL_ENDPOINT` for the Docker install.                                                                                                                                              |
-| Values in `.env` seem to be ignored                                                      | The same variable is exported in the shell, which overrides `.env`.                              | Run `env` and look for `PUBLIC_PORT`, `PUBLIC_ORIGIN` or `MODEL_ENDPOINT`; unset any you find.                                                                                                                                      |
+| Values in `.env` seem to be ignored                                                      | The same variable is exported in the shell, which overrides `.env`.                              | Run `env` and look for `PUBLIC_PORT`, `PUBLIC_ORIGIN`, `MODEL_ENDPOINT` or the executor limits; unset any you find.                                                                                                                 |
 | On Linux, the app cannot reach `http://host.docker.internal:11434`                       | `host.docker.internal` is a Docker Desktop name, and `compose.yaml` adds no mapping for it.      | Use path A on Linux.                                                                                                                                                                                                         |
 | `pnpm doctor` reports failures against a running Docker install                          | It checks the development URLs, and Compose publishes no internal ports.                         | Use `/api/health` and the in-container doctor from step 6.                                                                                                                                                                   |
 | Startup fails with "Database schema is newer than this application"                      | The code is older than the data, for example after a downgrade.                                  | Ask the user. Check out the newer release again, or restore the backup that matches this release.                                                                                                                            |
 | `ollama` or `model-init` keeps running after stopping, or a network is left behind       | The stack was started with `--profile local` but stopped without it.                             | Pass the same `--profile local` to `stop`, `down`, `logs` and `ps`.                                                                                                                                                          |
+| An import or build fails with "Out of Memory Error" naming `max_temp_directory_size`     | The job's spill files reached `DUCKDB_SPILL_LIMIT`, or, with none set, 90% of Docker's free disk space. | Tell the user. With a limit set, offer to raise or remove it ([executor limits](#operations)). Without one, Docker needs more free disk space. |
+| A build or import fails with "Stopped at the executor's time limit (…, EXECUTOR_JOB_TIMEOUT)" | A whole-table job took longer than its limit, 15 minutes by default.                         | Tell the user, and offer to raise `EXECUTOR_JOB_TIMEOUT` (seconds) ([executor limits](#operations)). |
+| A build fails with "Result exceeds EXECUTOR_RESULT_LIMIT"                                | A type or relationship has more than 2 GB of rows as JSON lines, often a relationship whose key matches many records on both sides. | Tell the user. Check the relationship in the suggestion, or offer to raise `EXECUTOR_RESULT_LIMIT` ([executor limits](#operations)). |
 
 ## Operations
 
@@ -343,6 +347,19 @@ docker compose --profile local restart                      # restart
 Do not run `logs -f` from an agent tool. It follows the logs and never returns.
 
 Every long-running service uses `restart: unless-stopped`, so the stack comes back after a reboot or Docker restart unless it was stopped.
+
+**Executor limits.** Only when the user asks, or agrees after a troubleshooting row. `DUCKDB_SPILL_LIMIT` caps each job's spill files (a size with a unit, such as `20GB`; unset by default), `EXECUTOR_RESULT_LIMIT` caps each publication result (`2GB` by default), and `EXECUTOR_QUERY_TIMEOUT` and `EXECUTOR_JOB_TIMEOUT` are the time limits in seconds for queries (120) and for imports, pipelines and publication (900). [docs/OPERATIONS.md](docs/OPERATIONS.md#deployment-limits) explains each. Set one in `.env`, replacing the name and value in the first line, then start the stack again so the executor, app and worker pick it up:
+
+```sh
+NAME=EXECUTOR_JOB_TIMEOUT VALUE=1800
+tmp=$(mktemp .env.XXXXXX) && sed -e "s|^$NAME=.*|$NAME=$VALUE|" .env > "$tmp" \
+  && cat "$tmp" > .env && rm -f "$tmp"
+grep -q "^$NAME=" .env || echo "$NAME=$VALUE" >> .env
+grep -E '^(DUCKDB_SPILL_LIMIT|EXECUTOR_RESULT_LIMIT|EXECUTOR_QUERY_TIMEOUT|EXECUTOR_JOB_TIMEOUT)=' .env
+docker compose --profile local up -d
+```
+
+An empty value (`VALUE=`) restores the default. On paths B and C, leave out `--profile local`.
 
 **Back up.** Keep backups outside the repository. `backups/` is not in `.gitignore` or `.dockerignore`, so a backup inside the repository could be committed or copied into the image.
 

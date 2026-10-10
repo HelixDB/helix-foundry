@@ -11,6 +11,7 @@ import { buildWorkspace, providerSettings, enqueue } from "./assistant.js";
 import { assert } from "./security.js";
 import { runSyncJob, runUploadJob } from "./data-jobs.js";
 import { runPipelineJob } from "./pipeline-jobs.js";
+import { sweepResults } from "./results.js";
 // Queue, leases and retries live here; each job type's work lives with its area.
 const jobHandlers: Record<
   string,
@@ -21,6 +22,37 @@ const jobHandlers: Record<
   sync: runSyncJob,
   pipeline: runPipelineJob,
 };
+// Setup's build from a confirmed ontology publishes the active versions it
+// validated, so a sync of one of its inputs meanwhile fails it with "Inputs
+// changed during publication". A scheduled or CDC sync of such a source stays
+// queued while the build is queued or running, for at most this long after it
+// was queued. The job's creation time bounds it, so a restarted worker keeps
+// the bound, even when a build keeps crashing the worker.
+const SYNC_DEFERRAL = 15 * 60000;
+// Sources whose datasets feed a queued or running build that publishes when it
+// ends. Other builds (chat requests, continuous repair, setup from a goal) end
+// with a proposal for review, which has to be revalidated once a refresh
+// changes its inputs, whenever that comes; holding syncs for them would only
+// delay the data.
+async function buildSources(store: Store, scope: string, runs: Resource[]) {
+  const builds = runs.filter(
+    (r) =>
+      ["queued", "running"].includes(r.data.status) &&
+      r.data.task === "onboarding_build" &&
+      r.data.ontology,
+  );
+  if (!builds.length) return new Set<string>();
+  const datasets = await store.list(scope, "dataset");
+  // A build without a selection uses every dataset.
+  const inputs = new Set(
+    builds.flatMap((r) => r.data.datasetIds || datasets.map((d) => d.id)),
+  );
+  return new Set(
+    datasets
+      .filter((d) => inputs.has(d.id) && d.data.sourceId)
+      .map((d) => d.data.sourceId as string),
+  );
+}
 export function startWorker(store: Store) {
   const stopStreams = startChangeStreams(store);
   let busy = false,
@@ -43,11 +75,13 @@ export function startWorker(store: Store) {
                   j.data.sourceId === s.id &&
                   ["queued", "running"].includes(j.data.status),
               );
+              const nextRun =
+                s.data.sync?.mode === "cdc" ? null : nextRefresh(s);
               if (pending) {
-                tx.update(s, {
-                  ...s.data,
-                  nextRun: s.data.sync?.mode === "cdc" ? null : nextRefresh(s),
-                });
+                // A CDC source stays due while its sync waits, for minutes
+                // during a build, so this would save it again every tick.
+                if (s.data.nextRun !== nextRun)
+                  tx.update(s, { ...s.data, nextRun });
                 return;
               }
               tx.put(
@@ -59,20 +93,25 @@ export function startWorker(store: Store) {
                   trigger: s.data.sync?.mode === "cdc" ? "cdc" : "schedule",
                 }),
               );
-              tx.update(s, {
-                ...s.data,
-                nextRun: s.data.sync?.mode === "cdc" ? null : nextRefresh(s),
-              });
+              tx.update(s, { ...s.data, nextRun });
             });
           }
         const runs = await store.list(scope, "run"),
-          jobs = await store.list(scope, "job");
+          jobs = await store.list(scope, "job"),
+          inputs = await buildSources(store, scope, runs);
+        const held = (j: Resource) =>
+          j.data.type === "sync" &&
+          j.data.background &&
+          inputs.has(j.data.sourceId) &&
+          Date.now() - Date.parse(j.createdAt) < SYNC_DEFERRAL;
         const candidate = [...runs, ...jobs]
           .filter(
             (r) =>
-              (r.data.status === "queued" &&
+              ((r.data.status === "queued" &&
                 (!r.data.retryAt || r.data.retryAt <= Date.now())) ||
-              (r.data.status === "running" && r.data.leaseUntil < Date.now()),
+                (r.data.status === "running" &&
+                  r.data.leaseUntil < Date.now())) &&
+              !held(r),
           )
           .sort(
             (a, b) =>
@@ -222,9 +261,14 @@ export function startWorker(store: Store) {
   const timer = setInterval(() => {
     if (!busy) running = tick();
   }, 2000);
+  // Result files left by publications that stopped mid-read.
+  const sweep = () => void sweepResults().catch(console.error);
+  sweep();
+  const sweeper = setInterval(sweep, 10 * 60000);
   return async () => {
     stopped = true;
     clearInterval(timer);
+    clearInterval(sweeper);
     await stopStreams();
     await running;
   };

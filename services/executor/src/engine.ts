@@ -1,13 +1,20 @@
-import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
+import {
+  DuckDBInstance,
+  type DuckDBConnection,
+  type Json,
+} from "@duckdb/node-api";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { copyFile, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import { resolve, dirname } from "node:path";
 import type { DatasetProfile } from "../../../packages/shared/src/index.js";
+import { resultFile, scratchRoot } from "./paths.js";
 export const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 const lit = (v: string) => "'" + v.replaceAll("'", "''") + "'";
 const safePart = (s: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(s);
 export type Execution = {
-  mode: "ingest" | "query" | "export";
+  mode: "ingest" | "query" | "export" | "materialize";
   scope: string;
   version?: string;
   file?: string;
@@ -24,30 +31,87 @@ export type Execution = {
   offset?: number;
   limit?: number;
 };
+export type Executed = {
+  profile: DatasetProfile;
+  version?: string;
+  rows: Record<string, Json>[];
+  // Ingest only: profile.fingerprint in the untagged format older executors
+  // stored.
+  legacyFingerprint?: string;
+};
+export type Materialized = { version: string; count: number };
+const units: Record<string, number> = {
+  b: 1,
+  k: 1e3,
+  kb: 1e3,
+  m: 1e6,
+  mb: 1e6,
+  g: 1e9,
+  gb: 1e9,
+  t: 1e12,
+  tb: 1e12,
+  kib: 2 ** 10,
+  mib: 2 ** 20,
+  gib: 2 ** 30,
+  tib: 2 ** 40,
+};
+// A size written as DuckDB's settings take it: 2GB is 10^9 bytes, 2GiB 2^30.
+// NaN when it is not one.
+export function bytes(size: string) {
+  const [, n, unit = "b"] =
+    /^\s*(\d+(?:\.\d+)?)\s*([a-z]+)?\s*$/i.exec(size) || [];
+  return Number(n) * (units[unit.toLowerCase()] ?? NaN);
+}
+// The executor passes a scratch directory it removes however the job ends;
+// without one, the job makes its own and removes it when it finishes.
+export async function execute(
+  job: Execution & { mode: "materialize" },
+  root?: string,
+  scratch?: string,
+): Promise<Materialized>;
+export async function execute(
+  job: Execution,
+  root?: string,
+  scratch?: string,
+): Promise<Executed>;
 export async function execute(
   job: Execution,
   root = resolve(process.env.DATA_DIR || ".data"),
-) {
-  if (!safePart(job.scope) || (job.version && !safePart(job.version)))
+  scratch?: string,
+): Promise<Executed | Materialized> {
+  if (
+    !safePart(job.scope) ||
+    (job.version && !safePart(job.version)) ||
+    (job.mode === "materialize" && !job.version)
+  )
     throw new Error("Invalid storage identity");
   const out = resolve(root, "datasets", job.scope, `${job.version}.parquet`);
   await mkdir(dirname(out), { recursive: true });
-  const scratchRoot = resolve(root, "scratch");
-  await mkdir(scratchRoot, { recursive: true });
-  const scratch = await mkdtemp(resolve(scratchRoot, "executor-"));
+  if (!scratch) await mkdir(scratchRoot(root), { recursive: true });
+  const temp =
+    scratch || (await mkdtemp(resolve(scratchRoot(root), "executor-")));
   let db: DuckDBInstance | undefined;
   let c: DuckDBConnection | undefined;
   try {
     db = await DuckDBInstance.create(":memory:", {
       memory_limit: process.env.DUCKDB_MEMORY || "512MB",
       threads: "2",
-      temp_directory: scratch,
-      max_temp_directory_size: "2GB",
+      temp_directory: temp,
       allow_unsigned_extensions: "false",
       autoinstall_known_extensions: "false",
       autoload_known_extensions: "false",
     });
     c = await db.connect();
+    // DuckDB reports max_temp_directory_size when it is given here but does
+    // not enforce it; once SET, it stops a job whose spill files would pass
+    // it. Unset, DuckDB's own limit applies: 90% of the disk's free space.
+    const spill = process.env.DUCKDB_SPILL_LIMIT?.trim();
+    if (spill)
+      await c
+        .run(`SET max_temp_directory_size = ${lit(spill)}`)
+        .catch((e: Error) => {
+          throw new Error(`Invalid DUCKDB_SPILL_LIMIT: ${spill}. ${e.message}`);
+        });
     if (job.mode === "ingest") {
       if (!job.file || !/^[-\w]+\.(csv|json|jsonl|parquet)$/.test(job.file))
         throw new Error("Invalid input file");
@@ -126,6 +190,44 @@ export async function execute(
       await c.run(`SET allowed_paths = [${lit(out)}]`);
       await c.run("SET enable_external_access = false");
       await c.run("SET lock_configuration = true");
+      if (job.mode === "materialize") {
+        // One pass and no profile. Rows convert exactly as a query's rows do.
+        // The file is written in scratch and moved into place once complete.
+        // Its size is capped, since no other limit applies to it: a join
+        // that multiplies rows writes gigabytes long before the time limit.
+        const limit = process.env.EXECUTOR_RESULT_LIMIT || "2GB",
+          max = bytes(limit);
+        if (!(max >= 0))
+          throw new Error("Invalid EXECUTOR_RESULT_LIMIT: " + limit);
+        const result = await c.stream(
+          `SELECT * FROM (${sql}) AS foundry_result`,
+        );
+        const partial = resolve(temp, "result.jsonl"),
+          file = resultFile(root, job.scope, job.version!);
+        let count = 0,
+          size = 0;
+        await pipeline(async function* () {
+          for await (const rows of result.yieldRowObjectJson()) {
+            const lines = rows
+              .map((row) => JSON.stringify(row) + "\n")
+              .join("");
+            size += Buffer.byteLength(lines);
+            if (size > max)
+              throw new Error(
+                `Result exceeds EXECUTOR_RESULT_LIMIT (${limit})`,
+              );
+            count += rows.length;
+            yield lines;
+          }
+        }, createWriteStream(partial));
+        await mkdir(dirname(file), { recursive: true });
+        // Scratch may be mounted from another file system. A copy is complete
+        // before the worker learns of the file, which is all it relies on.
+        await rename(partial, file).catch((e) =>
+          e.code === "EXDEV" ? copyFile(partial, file) : Promise.reject(e),
+        );
+        return { version: job.version!, count };
+      }
       await c.run(
         `CREATE TABLE result AS SELECT * FROM (${sql}) AS foundry_result`,
       );
@@ -209,6 +311,6 @@ export async function execute(
   } finally {
     c?.closeSync();
     db?.closeSync();
-    await rm(scratch, { recursive: true, force: true });
+    if (!scratch) await rm(temp, { recursive: true, force: true });
   }
 }

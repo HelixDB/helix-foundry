@@ -208,6 +208,10 @@ export function registerDataRoutes(
           j.data.sourceId === source.id &&
           ["queued", "running"].includes(j.data.status),
       );
+      // A scheduled or CDC sync can be waiting for a workspace build; asked
+      // for, it runs as soon as the worker is free, like a manual sync.
+      if (pending?.data.background && pending.data.status === "queued")
+        return tx.update(pending, { ...pending.data, background: false });
       if (pending) return pending;
       return tx.put(
         resource(a.scope, "job", "Sync " + source.name, {

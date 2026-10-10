@@ -94,7 +94,7 @@ This relies on Docker Desktop, which provides `host.docker.internal`. With anoth
 
 - **Docker** with the Compose v2 plugin (`docker compose`, not `docker-compose`). Checked with Compose 2.29.
 - **git, bash and openssl** for the setup scripts.
-- **Disk:** several GB for the first run: the app image (about 0.9 GB), HelixDB, Ollama and the `qwen3:4b` model.
+- **Disk:** several GB for the first run: the app image (about 0.9 GB), HelixDB, Ollama and the `qwen3:4b` model. Then room for your data: importing a large file can take several times its size while it runs. See [deployment limits](docs/OPERATIONS.md#deployment-limits).
 - **Memory:** local AI was developed and benchmarked on a 16 GB machine. Give Docker enough memory for the model, or choose Claude or OpenAI during setup.
 - **Node.js 24 and pnpm 10.7**, only for [local development](#local-development).
 

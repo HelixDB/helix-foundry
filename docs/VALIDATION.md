@@ -46,6 +46,8 @@ On an Apple Silicon M1 Pro development machine with 16 GB RAM:
 
 This benchmark excludes inference and measures the executor workload, not 25 browser sessions. The recorded 149 MB RSS is the benchmark client only and must not be represented as combined platform memory. Run `BENCH_HTTP=1 pnpm benchmark` with the executor available to reproduce it. Hardware, warm caches, storage, and query shape change results.
 
+The benchmark also times how publication reads a type with a million records. On the same machine, in process (10 October 2026), one materialize query read back as JSON lines took 2.1 s. The path it replaced ran 2,000 queries that each loaded and profiled the whole table, 196 ms each, about 6.5 minutes before HTTP and child-process start-up. Neither figure includes writing the records to HelixDB.
+
 ## Guided onboarding validation (24 September 2026)
 
 The resumable setup adds durable provider preparation and upload/import progress, explicit source selections, grounded outcome recommendations, inline revision and tested preview, and publication-bound completion. The suite passes 46 default tests, three isolated browser tests, four MySQL/PostgreSQL integration checks, and a real pinned-Qwen onboarding evaluation. TypeScript and the production build pass.

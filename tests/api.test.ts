@@ -306,6 +306,40 @@ describe("workspace boundaries and actions", () => {
       ).toBe(401);
     }
   });
+  it("runs a requested sync now when a scheduled one is waiting", async () => {
+    await transaction(store, scope, async (tx) => {
+      tx.put(resource(scope, "source", "Waiting", {}, "waiting"));
+      tx.put(
+        resource(
+          scope,
+          "job",
+          "Sync Waiting",
+          {
+            type: "sync",
+            sourceId: "waiting",
+            status: "queued",
+            background: true,
+            trigger: "schedule",
+          },
+          "waiting-sync",
+        ),
+      );
+    });
+    const r = await request(
+      "POST",
+      `/workspaces/${scope}/sources/waiting/sync`,
+    );
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({
+      id: "waiting-sync",
+      data: { status: "queued", background: false },
+    });
+    expect(
+      (await store.list(scope, "job")).filter(
+        (j) => j.data.sourceId === "waiting",
+      ),
+    ).toHaveLength(1);
+  });
   it("scopes API tokens and limits read-only tokens", async () => {
     const r = await request("POST", `/workspaces/${scope}/tokens`, {
       name: "CI",

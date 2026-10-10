@@ -11,7 +11,7 @@ const gate = vi.hoisted(() => ({
 vi.mock("../apps/api/src/executor.js", () => ({
   execute: async (job: any) => {
     if (job.mode === "ingest" && gate.wait) await gate.wait;
-    if (job.mode === "query") await gate.onQuery?.(job);
+    if (job.mode !== "ingest") await gate.onQuery?.(job);
     return localExecute(job);
   },
 }));
@@ -273,6 +273,11 @@ it("confirms a reviewed ontology, builds a pipeline-backed view from it and publ
   const relations = await store.list(scope, "relation");
   expect(relations.filter((r) => r.name === "requested by")).toHaveLength(114);
   expect(relations.filter((r) => r.name === "billed to")).toHaveLength(46);
+  // Setup's progress counted the records and relationships it read, apart.
+  expect(built.buildRun?.data.progress).toEqual({
+    records: types.reduce((n, t) => n + t.data.objectCount, 0),
+    relationships: relations.length,
+  });
   // Revisions keep building from the confirmed ontology. Asking for a new
   // goal is AI work, so it needs AI set up.
   await provider();
@@ -487,8 +492,8 @@ it("finishes publishing once started and refuses Stop meanwhile", async () => {
   ).json();
   let stop: any;
   gate.onQuery = async (job) => {
-    // Publication stages records 500 rows at a time.
-    if (!stop && job.limit === 500)
+    // Publication reads each type's records with one query.
+    if (!stop && job.mode === "materialize")
       stop = await request(
         "POST",
         `/assistant/runs/${state.buildRun.id}/cancel`,
