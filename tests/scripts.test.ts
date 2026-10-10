@@ -306,6 +306,21 @@ describe("backup.sh", () => {
     expect(existsSync(join(f.base, "backup", "manifest.txt"))).toBe(false);
   });
 
+  it("keeps BACKUP_PASSPHRASE from the commands it runs", () => {
+    const f = fixture();
+    for (const args of [[], ["--include-key"]]) {
+      const dir = join(f.base, "backup" + args.length);
+      const r = f.run("backup.sh", [...args, dir], {
+        BACKUP_PASSPHRASE: PASSPHRASE,
+      });
+      expect(r.status, r.stderr).toBe(0);
+    }
+    expect(f.calls()).toContain("compose start helix executor app worker");
+    expect(f.calls()).not.toContain(
+      "a backup passphrase is in the environment",
+    );
+  });
+
   it("encrypts .env with --include-key and a passphrase", () => {
     const f = fixture();
     let r = f.run("backup.sh", ["--include-key", join(f.base, "a")]);
@@ -507,6 +522,7 @@ describe("restore.sh", () => {
     expect(f.env()).toBe(ENV);
     expect(mode(join(f.root, ".env"))).toBe(0o600);
     expect(r.stdout + r.stderr).not.toContain(KEY);
+    expect(f.calls()).toEqual(RESTORE_CALLS);
   });
 
   it("prints no key or passphrase when traced with bash -x", () => {
@@ -763,6 +779,41 @@ describe("upgrade.sh", () => {
     expect(
       f.run("upgrade.sh", [], { STUB_HELIX_IMAGE: image("99.0.0") }).stdout,
     ).toContain("Already up to date");
+  });
+
+  it("keeps BACKUP_PASSPHRASE from docker and git", () => {
+    const f = fixture();
+    release(f);
+    const git = spawnSync("sh", ["-c", "command -v git"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    const wrapper = join(f.base, "bin", "git");
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\n[ -z "\${BACKUP_PASSPHRASE+x}" ] || echo 'git: a backup passphrase is in the environment' >> "$STUB_LOG"\nexec ${git} "$@"\n`,
+    );
+    chmodSync(wrapper, 0o755);
+    const r = f.run("upgrade.sh", ["--yes", "--include-key"], {
+      BACKUP_PASSPHRASE: PASSPHRASE,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const [name] = readdirSync(backups(f));
+    expect(existsSync(join(backups(f), name, "env.enc"))).toBe(true);
+    expect(f.calls().join("\n")).not.toContain("passphrase");
+    expect(f.calls()).toContain("compose up -d --build");
+    // Nor does tracing print it.
+    const traced = fixture();
+    release(traced);
+    const t = traced.run(
+      "upgrade.sh",
+      ["--yes", "--include-key"],
+      { BACKUP_PASSPHRASE: PASSPHRASE },
+      ["-x"],
+    );
+    expect(t.status, t.stderr).toBe(0);
+    expect(t.stderr).toMatch(/^\+ take_passphrase$/m);
+    for (const secret of [KEY, INTERNAL, SECRET, PASSPHRASE])
+      expect(t.stdout + t.stderr).not.toContain(secret);
   });
 
   it("finishes the upgrade again after going back to the old release", () => {

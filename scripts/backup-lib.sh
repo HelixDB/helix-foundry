@@ -110,10 +110,19 @@ docker_ready() {
     || die "Docker is not available: ${error:-docker version failed}. Start Docker, then run this again.${1:+ $1}"
 }
 
-# Sets $passphrase from BACKUP_PASSPHRASE or a terminal prompt; "new" asks twice.
-read_passphrase() {
+# Moves BACKUP_PASSPHRASE into $passphrase and out of the environment, so docker,
+# git and the other commands these scripts run do not inherit it.
+take_passphrase() {
   { local trace=$-; set +x; } 2> /dev/null
   passphrase=${BACKUP_PASSPHRASE:-}
+  unset BACKUP_PASSPHRASE
+  case $trace in *x*) set -x ;; esac
+}
+
+# Sets $passphrase, unless take_passphrase found one, from a terminal prompt; "new"
+# asks twice.
+read_passphrase() {
+  { local trace=$-; set +x; } 2> /dev/null
   if [ -z "$passphrase" ]; then
     [ -t 0 ] || die 'Set BACKUP_PASSPHRASE, or run this in a terminal to type the backup passphrase.'
     IFS= read -rs -p 'Backup passphrase: ' passphrase

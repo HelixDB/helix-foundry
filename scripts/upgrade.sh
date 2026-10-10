@@ -8,6 +8,7 @@ set -euo pipefail
 here=$PWD
 cd "$(dirname "$0")/.."
 . scripts/backup-lib.sh
+take_passphrase
 usage='Usage: scripts/upgrade.sh [--backup-dir DIR] [--include-key] [--yes]'
 backup_dir="" include_key="" yes=""
 while [ $# -gt 0 ]; do
@@ -74,9 +75,15 @@ WARNING
   fi
 fi
 
+# backup.sh gets BACKUP_PASSPHRASE back for --include-key, and nothing else does.
+run_backup() (
+  { set +x; } 2> /dev/null
+  if [ -n "$include_key" ] && [ -n "$passphrase" ]; then export BACKUP_PASSPHRASE=$passphrase; fi
+  "$BASH" scripts/backup.sh $include_key "$backup_dir"
+)
 echo "Backing up to $backup_dir before upgrading."
 status=0
-"$BASH" scripts/backup.sh $include_key "$backup_dir" || status=$?
+run_backup || status=$?
 # Status 3: the backup is complete, and the rebuild below starts the services.
 [ "$status" = 0 ] || [ "$status" = 3 ] || die 'Upgrade stopped: the backup failed. Nothing was upgraded.'
 backup_dir="$(cd "$backup_dir" && pwd -P)"

@@ -8,6 +8,7 @@ umask 077
 here=$PWD
 cd "$(dirname "$0")/.."
 . scripts/backup-lib.sh
+take_passphrase
 usage='Usage: scripts/restore.sh BACKUP_DIR --replace [--env-file FILE] [--accept-key-mismatch]'
 backup_dir="" replace="" env_file="" accept_mismatch=""
 while [ $# -gt 0 ]; do

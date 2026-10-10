@@ -8,6 +8,7 @@ umask 077
 here=$PWD
 cd "$(dirname "$0")/.."
 . scripts/backup-lib.sh
+take_passphrase
 usage='Usage: scripts/backup.sh [--include-key] [BACKUP_DIR]'
 include_key="" backup_dir=""
 while [ $# -gt 0 ]; do

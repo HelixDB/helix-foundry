@@ -4,8 +4,12 @@
 # restore sends in $STUB_RESTORED. STUB_HELIX_IMAGE is the image of the HelixDB
 # container, STUB_RUNNING lists the running services (default: all four),
 # STUB_OLLAMA makes an ollama container exist, STUB_FAIL is a pattern of calls that
-# fail, and STUB_DOWN fails every call as if the Docker daemon were stopped.
+# fail, and STUB_DOWN fails every call as if the Docker daemon were stopped. A
+# backup passphrase in its environment is logged too, so the tests catch the leak.
 printf '%s\n' "$*" >> "$STUB_LOG"
+if [ -n "${BACKUP_PASSPHRASE+x}${HF_BACKUP_PASSPHRASE+x}" ]; then
+  echo 'a backup passphrase is in the environment' >> "$STUB_LOG"
+fi
 if [ -n "${STUB_DOWN:-}" ]; then
   echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2
   exit 1
