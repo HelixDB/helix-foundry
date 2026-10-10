@@ -64,6 +64,8 @@ export function scheduledRefresh(source: Resource) {
     return false;
   return (
     !!(source.data.schedule || source.data.sync?.mode === "snapshot") &&
+    typeof source.data.nextRun === "number" &&
+    Number.isFinite(source.data.nextRun) &&
     source.data.nextRun <= Date.now()
   );
 }
