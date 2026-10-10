@@ -68,6 +68,8 @@ export function formatDate(value: unknown, withTime = true) {
   const d = day
     ? new Date(day[0], day[1] - 1, day[2])
     : new Date(value as string);
+  // The multi-argument Date constructor maps years 0–99 to 1900–1999.
+  if (day) d.setFullYear(day[0], day[1] - 1, day[2]);
   if (Number.isNaN(d.getTime())) return String(value);
   return withTime
     ? d.toLocaleString(undefined, {
