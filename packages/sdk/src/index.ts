@@ -113,7 +113,14 @@ export class FoundryClient {
     id: string,
     source: {
       name: string;
-      kind: "mysql" | "postgres" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+      kind:
+        | "mysql"
+        | "postgres"
+        | "rest"
+        | "s3"
+        | "stripe"
+        | "workos"
+        | "posthog";
       config: Record<string, unknown>;
       schedule?: string | null;
     },
@@ -166,7 +173,9 @@ export class FoundryClient {
         encodeURIComponent(kind) +
         "?" +
         new URLSearchParams(
-          Object.entries(options).map(([k, v]) => [k, String(v)]),
+          Object.entries(options)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)]),
         ),
     );
   }
@@ -180,7 +189,14 @@ export class FoundryClient {
   }
   createSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
     schedule?: string;
   }) {
@@ -274,7 +290,14 @@ export class FoundryClient {
   }
   testSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
   }) {
     return this.request("/sources/test", source);
