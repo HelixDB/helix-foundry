@@ -294,9 +294,13 @@ export class MemoryStore implements Store {
     return true;
   }
   async neighbors(s: string, id: string) {
-    return (await this.list(s, "relation"))
-      .filter((r) => r.data.from === id || r.data.to === id)
-      .map((r) => (r.data.from === id ? r.data.to : r.data.from));
+    return [
+      ...new Set(
+        (await this.list(s, "relation"))
+          .filter((r) => r.data.from === id || r.data.to === id)
+          .map((r) => (r.data.from === id ? r.data.to : r.data.from)),
+      ),
+    ];
   }
 }
 export class Tx {
