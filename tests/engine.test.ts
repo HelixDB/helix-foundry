@@ -12,6 +12,7 @@ import {
   writeFile,
   mkdir,
   readdir,
+  readFile,
   rm,
   chmod,
 } from "node:fs/promises";
@@ -20,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execute } from "../services/executor/src/engine.js";
 import { runJob, sweepScratch } from "../services/executor/src/jobs.js";
-import { scratchRoot } from "../services/executor/src/paths.js";
+import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
 let dir: string;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "foundry-engine-"));
@@ -86,18 +87,17 @@ describe("isolated dataset execution", () => {
     );
   });
   it("blocks external files, network reads, multiple statements, and undeclared tables", async () => {
-    for (const sql of [
-      "SELECT * FROM read_csv('/etc/passwd')",
-      "SELECT * FROM read_csv('https://example.com/data.csv')",
-      "SELECT 1; SELECT 2",
-      "SELECT * FROM secret_table",
-    ])
-      await expect(
-        execute(
-          { mode: "query", scope: "a", version: "bad", inputs: [], sql },
-          dir,
-        ),
-      ).rejects.toThrow();
+    for (const mode of ["query", "materialize"] as const)
+      for (const sql of [
+        "SELECT * FROM read_csv('/etc/passwd')",
+        "SELECT * FROM read_csv('https://example.com/data.csv')",
+        "SELECT 1; SELECT 2",
+        "SELECT * FROM secret_table",
+      ])
+        await expect(
+          execute({ mode, scope: "a", version: "bad", inputs: [], sql }, dir),
+        ).rejects.toThrow();
+    await expect(readdir(join(dir, "results"))).rejects.toThrow();
   });
   it("rejects storage traversal", async () => {
     await expect(
@@ -126,6 +126,52 @@ describe("isolated dataset execution", () => {
       b = '{"id":"b"}';
     expect(await fingerprint(a, a)).not.toBe(await fingerprint(b, b));
     expect(await fingerprint(a, b, a)).toBe(await fingerprint(a, a, b));
+  });
+  it("materializes every row once as JSON lines, converted like query rows", async () => {
+    await writeFile(
+      join(dir, "incoming", "a", "wide.jsonl"),
+      Array.from(
+        { length: 3000 },
+        (_, i) =>
+          `{"id":${9007199254740993n + BigInt(i)},"amount":${i / 4},"day":"2026-10-09","note":${i % 2 ? '"line\\nbreak"' : "null"}}`,
+      ).join("\n"),
+    );
+    await execute(
+      { mode: "ingest", scope: "a", version: "wide", file: "wide.jsonl" },
+      dir,
+    );
+    const job = {
+      scope: "a",
+      inputs: [{ table: "wide", version: "wide" }],
+      sql: "SELECT * FROM wide",
+    };
+    expect(
+      await execute({ ...job, mode: "materialize", version: "result" }, dir),
+    ).toEqual({ version: "result", count: 3000 });
+    const lines = (await readFile(resultFile(dir, "a", "result"), "utf8"))
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const pages = [];
+    for (let offset = 0; offset < 3000; offset += 1000)
+      pages.push(
+        ...(
+          await execute(
+            { ...job, mode: "query", version: "page", offset, limit: 1000 },
+            dir,
+          )
+        ).rows,
+      );
+    expect(lines).toEqual(JSON.parse(JSON.stringify(pages)));
+    // BIGINTs past 2^53 stay exact.
+    expect(lines.at(-1)).toMatchObject({
+      id: "9007199254743992",
+      note: "line\nbreak",
+    });
+    expect(await readdir(join(dir, "datasets", "a"))).not.toContain(
+      "result.parquet",
+    );
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
   });
   it("profiles a snapshot larger than memory using writable, isolated scratch storage", async () => {
     vi.stubEnv("DUCKDB_MEMORY", "128MB");

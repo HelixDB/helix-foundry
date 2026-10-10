@@ -1,14 +1,20 @@
-import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
+import {
+  DuckDBInstance,
+  type DuckDBConnection,
+  type Json,
+} from "@duckdb/node-api";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import { resolve, dirname } from "node:path";
 import type { DatasetProfile } from "../../../packages/shared/src/index.js";
-import { scratchRoot } from "./paths.js";
+import { resultFile, scratchRoot } from "./paths.js";
 export const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 const lit = (v: string) => "'" + v.replaceAll("'", "''") + "'";
 const safePart = (s: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(s);
 export type Execution = {
-  mode: "ingest" | "query" | "export";
+  mode: "ingest" | "query" | "export" | "materialize";
   scope: string;
   version?: string;
   file?: string;
@@ -25,14 +31,34 @@ export type Execution = {
   offset?: number;
   limit?: number;
 };
+export type Executed = {
+  profile: DatasetProfile;
+  version?: string;
+  rows: Record<string, Json>[];
+};
+export type Materialized = { version: string; count: number };
 // The executor passes a scratch directory it removes however the job ends;
 // without one, the job makes its own and removes it when it finishes.
+export async function execute(
+  job: Execution & { mode: "materialize" },
+  root?: string,
+  scratch?: string,
+): Promise<Materialized>;
+export async function execute(
+  job: Execution,
+  root?: string,
+  scratch?: string,
+): Promise<Executed>;
 export async function execute(
   job: Execution,
   root = resolve(process.env.DATA_DIR || ".data"),
   scratch?: string,
-) {
-  if (!safePart(job.scope) || (job.version && !safePart(job.version)))
+): Promise<Executed | Materialized> {
+  if (
+    !safePart(job.scope) ||
+    (job.version && !safePart(job.version)) ||
+    (job.mode === "materialize" && !job.version)
+  )
     throw new Error("Invalid storage identity");
   const out = resolve(root, "datasets", job.scope, `${job.version}.parquet`);
   await mkdir(dirname(out), { recursive: true });
@@ -130,6 +156,25 @@ export async function execute(
       await c.run(`SET allowed_paths = [${lit(out)}]`);
       await c.run("SET enable_external_access = false");
       await c.run("SET lock_configuration = true");
+      if (job.mode === "materialize") {
+        // One pass and no profile. Rows convert exactly as a query's rows do.
+        // The file is written in scratch and moved into place once complete.
+        const result = await c.stream(
+          `SELECT * FROM (${sql}) AS foundry_result`,
+        );
+        const partial = resolve(temp, "result.jsonl"),
+          file = resultFile(root, job.scope, job.version!);
+        let count = 0;
+        await pipeline(async function* () {
+          for await (const rows of result.yieldRowObjectJson()) {
+            count += rows.length;
+            yield rows.map((row) => JSON.stringify(row) + "\n").join("");
+          }
+        }, createWriteStream(partial));
+        await mkdir(dirname(file), { recursive: true });
+        await rename(partial, file);
+        return { version: job.version!, count };
+      }
       await c.run(
         `CREATE TABLE result AS SELECT * FROM (${sql}) AS foundry_result`,
       );

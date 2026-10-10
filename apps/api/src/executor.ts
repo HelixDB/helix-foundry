@@ -1,12 +1,19 @@
 import { config } from "./config.js";
-import type { Execution } from "../../../services/executor/src/engine.js";
+import type {
+  Execution,
+  Materialized,
+} from "../../../services/executor/src/engine.js";
 import type { DatasetProfile } from "../../../packages/shared/src/index.js";
 import { AppError } from "./security.js";
+export async function execute(
+  job: Execution & { mode: "materialize" },
+): Promise<Materialized>;
 export async function execute(job: Execution): Promise<{
   profile: DatasetProfile;
   version: string;
   rows: Record<string, any>[];
-}> {
+}>;
+export async function execute(job: Execution) {
   const r = await fetch(config.executor + "/execute", {
     method: "POST",
     headers: {
