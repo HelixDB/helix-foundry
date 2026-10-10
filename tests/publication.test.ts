@@ -217,7 +217,9 @@ it("leaves the previous generation active when a result is incomplete", async ()
     ...(await localExecute(job)),
     count: 3001,
   }));
-  await expect(publish()).rejects.toThrow("Read 3000 of 3001 result rows");
+  await expect(publish()).rejects.toThrow(
+    "Could not read Customer records. Read 3000 of 3001 result rows",
+  );
   // A complete result with fewer rows than the dataset's snapshot.
   publish = await draft();
   executor.mockImplementationOnce(async (job: any) => {
@@ -235,6 +237,51 @@ it("leaves the previous generation active when a result is incomplete", async ()
   );
   expect(await readdir(resolve(config.dataDir, "results", scope))).toEqual([]);
 });
+it("leaves the previous generation active when a relationship or staging fails", async () => {
+  const { scope, draft } = await workspace();
+  await (
+    await draft()
+  )();
+  const active = (await store.get(scope, "workspace"))!.data.activeGeneration;
+  // The relationship's result is over the executor's limit.
+  let publish = await draft();
+  executor.mockImplementation(async (job: any) => {
+    if (!job.sql.includes("from_key")) return localExecute(job);
+    vi.stubEnv("EXECUTOR_RESULT_LIMIT", "100KB");
+    try {
+      return await localExecute(job);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  try {
+    await expect(publish()).rejects.toThrow(
+      "Could not read the Placed by relationship. Result exceeds EXECUTOR_RESULT_LIMIT (100KB)",
+    );
+  } finally {
+    executor.mockImplementation((job: any) => localExecute(job));
+  }
+  // HelixDB fails while a type's records are being staged.
+  publish = await draft();
+  const commit = store.commit.bind(store);
+  let commits = 0;
+  const failing = vi
+    .spyOn(store, "commit")
+    .mockImplementation(async (...args) => {
+      if (++commits === 4) throw new Error("HelixDB is unavailable");
+      return commit(...args);
+    });
+  try {
+    await expect(publish()).rejects.toThrow("HelixDB is unavailable");
+  } finally {
+    failing.mockRestore();
+  }
+  expect(commits).toBe(4);
+  expect((await store.get(scope, "workspace"))!.data.activeGeneration).toBe(
+    active,
+  );
+  expect(await readdir(resolve(config.dataDir, "results", scope))).toEqual([]);
+});
 it("sweeps result files that a stopped publication left behind", async () => {
   const scope = "sweep-" + randomUUID();
   scopes.push(scope);
@@ -242,8 +289,11 @@ it("sweeps result files that a stopped publication left behind", async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(resolve(dir, "orphan.jsonl"), "{}\n");
   await writeFile(resolve(dir, "reading.jsonl"), "{}\n");
+  // Not a result file, and cannot be removed as one.
+  await mkdir(resolve(dir, "stray"));
   const old = new Date(Date.now() - 11 * 60000);
-  await utimes(resolve(dir, "orphan.jsonl"), old, old);
+  for (const name of ["orphan.jsonl", "stray"])
+    await utimes(resolve(dir, name), old, old);
   await sweepResults();
-  expect(await readdir(dir)).toEqual(["reading.jsonl"]);
+  expect((await readdir(dir)).sort()).toEqual(["reading.jsonl", "stray"]);
 });

@@ -1597,11 +1597,14 @@ export async function publishProposal(
       resource(scope, "objectType", type.name, { ...type, generation, typeId }),
     );
     let rows = 0;
-    for await (const batch of resultBatches({
-      scope,
-      inputs: inputsFor([type.datasetId], map),
-      sql: `SELECT * FROM "${datasetTable(type.datasetId)}"`,
-    })) {
+    for await (const batch of resultBatches(
+      {
+        scope,
+        inputs: inputsFor([type.datasetId], map),
+        sql: `SELECT * FROM "${datasetTable(type.datasetId)}"`,
+      },
+      `${type.name} records`,
+    )) {
       const staged = batch.map((row) => {
         const key = String(row[type.primaryKey]),
           logicalId = digest(typeId + ":" + key).slice(0, 32),
@@ -1653,11 +1656,14 @@ export async function publishProposal(
     const fromType = bundle.ontology.find((o) => o.name === rel.fromType)!,
       toType = bundle.ontology.find((o) => o.name === rel.toType)!;
     const sql = `SELECT a.${quote(fromType.primaryKey)} AS from_key,b.${quote(toType.primaryKey)} AS to_key FROM ${quote(datasetTable(fromType.datasetId))} a JOIN ${quote(datasetTable(toType.datasetId))} b ON a.${quote(rel.fromColumn)}=b.${quote(rel.toColumn)}`;
-    for await (const batch of resultBatches({
-      scope,
-      inputs: inputsFor([fromType.datasetId, toType.datasetId], map),
-      sql,
-    })) {
+    for await (const batch of resultBatches(
+      {
+        scope,
+        inputs: inputsFor([fromType.datasetId, toType.datasetId], map),
+        sql,
+      },
+      `the ${rel.name} relationship`,
+    )) {
       await transaction(store, scope, async (tx) => {
         for (const row of batch) {
           const from = identities.get(rel.fromType)!.get(String(row.from_key)),
