@@ -7,25 +7,37 @@ import { scratchRoot } from "./paths.js";
 const runner = fileURLToPath(new URL("./runner.ts", import.meta.url));
 // Resolved here, so the child does not depend on its working directory.
 const tsx = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+// What the executor makes in scratch: a directory per job, and one per run of
+// the engine in-process (tests and the benchmark). Nothing else there is
+// touched.
+const owned = /^(job|executor)-/;
 // Jobs that ended with the executor, as in an out-of-memory kill, leave their
-// spill files behind. No job runs yet, so all of them are stale. Only the
-// contents go: scratch itself may be a mount point. A failure is logged and
-// never stops the executor from starting.
-export async function sweepScratch(root: string) {
+// spill files behind. Listed before the executor listens, when none of its
+// jobs can be running, they are all stale; removing them once it listens
+// spares the jobs of another executor on the same data, whose port this one
+// then fails to take. Scratch itself stays: it may be a mount point. Failures
+// are logged and never stop the executor from starting.
+export async function staleScratch(root: string) {
   const dir = scratchRoot(root);
+  let names: string[] = [];
   try {
     await mkdir(dir, { recursive: true });
-    for (const name of await readdir(dir))
-      await rm(resolve(dir, name), { recursive: true, force: true }).catch(
-        (e) => console.error("Could not remove executor scratch:", e.message),
-      );
+    names = (await readdir(dir)).filter((name) => owned.test(name));
   } catch (e) {
     console.error(
       "Could not clear executor scratch:",
       e instanceof Error ? e.message : e,
     );
   }
+  return async () => {
+    for (const name of names)
+      await rm(resolve(dir, name), { recursive: true, force: true }).catch(
+        (e) => console.error("Could not remove executor scratch:", e.message),
+      );
+  };
 }
+export const sweepScratch = async (root: string) =>
+  (await staleScratch(root))();
 let stopping = false;
 const children = new Set<ChildProcess>(),
   jobs = new Set<Promise<unknown>>();
@@ -77,12 +89,13 @@ async function run(
         });
       const child = spawn(process.execPath, ["--import", tsx, runner], {
         cwd,
+        // Unset settings stay unset, so the engine's defaults apply.
         env: {
           PATH: process.env.PATH,
           DATA_DIR: root,
-          DUCKDB_MEMORY: process.env.DUCKDB_MEMORY || "512MB",
-          DUCKDB_SPILL_LIMIT: process.env.DUCKDB_SPILL_LIMIT || "2GB",
-          EXECUTOR_RESULT_LIMIT: process.env.EXECUTOR_RESULT_LIMIT || "2GB",
+          DUCKDB_MEMORY: process.env.DUCKDB_MEMORY || "",
+          DUCKDB_SPILL_LIMIT: process.env.DUCKDB_SPILL_LIMIT || "",
+          EXECUTOR_RESULT_LIMIT: process.env.EXECUTOR_RESULT_LIMIT || "",
           EXECUTOR_SCRATCH: scratch,
         },
         stdio: ["pipe", "pipe", "pipe"],
@@ -112,6 +125,9 @@ async function run(
       child.stdin.end(body);
     });
   } finally {
-    await rm(scratch, { recursive: true, force: true });
+    // Left for the next start's sweep if it cannot go; the job's answer stands.
+    await rm(scratch, { recursive: true, force: true }).catch((e) =>
+      console.error("Could not remove executor scratch:", e.message),
+    );
   }
 }

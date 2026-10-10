@@ -2,7 +2,7 @@ import "dotenv/config";
 import Fastify from "fastify";
 import { resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
-import { runJob, stopJobs, sweepScratch } from "./jobs.js";
+import { runJob, staleScratch, stopJobs } from "./jobs.js";
 const root = resolve(process.env.DATA_DIR || ".data");
 const app = Fastify({ bodyLimit: 1024 * 1024, logger: true });
 let active = 0;
@@ -45,8 +45,9 @@ app.post("/execute", async (req, reply) => {
 // taken meanwhile. Ending the jobs first removes them.
 for (const signal of ["SIGTERM", "SIGINT"] as const)
   process.once(signal, () => void stopJobs().then(() => process.exit(0)));
-await sweepScratch(root);
+const sweep = await staleScratch(root);
 await app.listen({
   port: Number(process.env.EXECUTOR_PORT || 3002),
   host: process.env.EXECUTOR_HOST || "127.0.0.1",
 });
+await sweep();

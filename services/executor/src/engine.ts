@@ -94,12 +94,21 @@ export async function execute(
       memory_limit: process.env.DUCKDB_MEMORY || "512MB",
       threads: "2",
       temp_directory: temp,
-      max_temp_directory_size: process.env.DUCKDB_SPILL_LIMIT || "2GB",
       allow_unsigned_extensions: "false",
       autoinstall_known_extensions: "false",
       autoload_known_extensions: "false",
     });
     c = await db.connect();
+    // DuckDB reports max_temp_directory_size when it is given here but does
+    // not enforce it; once SET, it stops a job whose spill files would pass
+    // it. Unset, DuckDB's own limit applies: 90% of the disk's free space.
+    const spill = process.env.DUCKDB_SPILL_LIMIT?.trim();
+    if (spill)
+      await c
+        .run(`SET max_temp_directory_size = ${lit(spill)}`)
+        .catch((e: Error) => {
+          throw new Error(`Invalid DUCKDB_SPILL_LIMIT: ${spill}. ${e.message}`);
+        });
     if (job.mode === "ingest") {
       if (!job.file || !/^[-\w]+\.(csv|json|jsonl|parquet)$/.test(job.file))
         throw new Error("Invalid input file");

@@ -22,7 +22,11 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytes, execute } from "../services/executor/src/engine.js";
-import { runJob, sweepScratch } from "../services/executor/src/jobs.js";
+import {
+  runJob,
+  staleScratch,
+  sweepScratch,
+} from "../services/executor/src/jobs.js";
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
@@ -263,6 +267,8 @@ describe("isolated dataset execution", () => {
   });
   it("profiles a snapshot larger than memory using writable, isolated scratch storage", async () => {
     vi.stubEnv("DUCKDB_MEMORY", "128MB");
+    // DuckDB's own limit: 90% of the free disk space.
+    vi.stubEnv("DUCKDB_SPILL_LIMIT", "");
     const result = await execute({ ...large, version: "large" }, dir);
     expect(result.profile.rows).toBe(1000000);
     expect(result.profile.duplicateRows).toBe(0);
@@ -270,6 +276,28 @@ describe("isolated dataset execution", () => {
       result.profile.columns.find((c) => c.name === "id")?.primaryKey,
     ).toBe(true);
     expect(await readdir(scratchRoot(dir))).toEqual([]);
+  });
+  it("stops a job whose spill files would pass DUCKDB_SPILL_LIMIT", async () => {
+    // The import above, which spills to succeed, through the executor.
+    vi.stubEnv("DUCKDB_MEMORY", "128MB");
+    vi.stubEnv("DUCKDB_SPILL_LIMIT", "1MB");
+    const r = await runJob(
+      JSON.stringify({ ...large, version: "capped" }),
+      dir,
+    );
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(
+      "This limit was set by the 'max_temp_directory_size' setting",
+    );
+    await expect(
+      stat(join(dir, "datasets", "a", "capped.parquet")),
+    ).rejects.toThrow();
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+    // DuckDB reads the size; one it cannot read fails the job.
+    vi.stubEnv("DUCKDB_SPILL_LIMIT", "1 gigs");
+    await expect(
+      execute({ ...large, version: "invalid" }, dir),
+    ).rejects.toThrow("Invalid DUCKDB_SPILL_LIMIT: 1 gigs. ");
   });
   it("spills from a read-only working directory, as in the container", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "foundry-readonly-"));
@@ -313,15 +341,38 @@ describe("isolated dataset execution", () => {
   });
   it("empties scratch left by jobs that ended with the executor, and keeps scratch itself", async () => {
     const before = await stat(scratchRoot(dir));
-    await mkdir(join(scratchRoot(dir), "executor-stale"), { recursive: true });
-    await writeFile(
-      join(scratchRoot(dir), "executor-stale", "duckdb_temp_storage.tmp"),
-      "x",
-    );
+    for (const stale of ["executor-stale", "job-stale"]) {
+      await mkdir(join(scratchRoot(dir), stale), { recursive: true });
+      await writeFile(
+        join(scratchRoot(dir), stale, "duckdb_temp_storage.tmp"),
+        "x",
+      );
+    }
+    // Not the executor's, as on a mounted file system.
+    await mkdir(join(scratchRoot(dir), "lost+found"));
     await sweepScratch(dir);
-    expect(await readdir(scratchRoot(dir))).toEqual([]);
+    expect(await readdir(scratchRoot(dir))).toEqual(["lost+found"]);
     // It may be a mount point, which cannot be removed.
     expect((await stat(scratchRoot(dir))).ino).toBe(before.ino);
+    await rm(join(scratchRoot(dir), "lost+found"), { recursive: true });
+  });
+  it("removes only scratch that was there before the executor listened", async () => {
+    await mkdir(join(scratchRoot(dir), "job-stale"));
+    const sweep = await staleScratch(dir);
+    // A job that starts once the executor listens.
+    const running = runJob(slow, dir, { timeout: 3000 });
+    let fresh: string[] = [];
+    for (let i = 0; i < 100 && !fresh.length; i++) {
+      fresh = (await readdir(scratchRoot(dir))).filter(
+        (n) => n !== "job-stale",
+      );
+      if (!fresh.length) await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(fresh).toHaveLength(1);
+    await sweep();
+    expect(await readdir(scratchRoot(dir))).toEqual(fresh);
+    expect((await running).code).toBeNull();
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
   });
   it("starts even when stale scratch cannot be removed", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});

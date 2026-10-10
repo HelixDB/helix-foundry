@@ -56,10 +56,14 @@ services:
       EXECUTOR_HOST: 0.0.0.0
       EXECUTOR_PORT: 3002
       DUCKDB_MEMORY: 512MB
-      # Disk each job may fill with spill files under /data/scratch.
-      DUCKDB_SPILL_LIMIT: 2GB
-      # Disk a publication query may fill with result rows, as JSON lines.
-      EXECUTOR_RESULT_LIMIT: 2GB
+      # Both can be set in .env; empty means the default. See "Deployment
+      # limits" in docs/OPERATIONS.md.
+      # Disk each job may fill with spill files under /data/scratch, such as
+      # 20GB. Unset, DuckDB stops a job at 90% of the free disk space.
+      DUCKDB_SPILL_LIMIT: ${DUCKDB_SPILL_LIMIT:-}
+      # Disk a publication query may fill with result rows, as JSON lines
+      # (2GB by default).
+      EXECUTOR_RESULT_LIMIT: ${EXECUTOR_RESULT_LIMIT:-}
     mem_limit: 2g
     pids_limit: 128
     cap_drop: [ALL]
