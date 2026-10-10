@@ -396,8 +396,8 @@ it("returns the same dataset metadata that is committed", async () => {
   expect(second).toEqual(await store.get(refreshes, "orders"));
 });
 
-// The fingerprint an executor stored before they were tagged: the same hash
-// with only the XOR of row hashes, so duplicate pairs cancel out.
+// The fingerprint executors stored before duplicate rows were counted: the
+// same hash with only the XOR of row hashes, so duplicate pairs cancel out.
 async function untaggedFingerprint(datasetId: string) {
   const d = (await store.get(refreshes, datasetId))!,
     file = resolve(
@@ -433,7 +433,7 @@ it("reports a refresh across the fingerprint upgrade only when the data changed"
       (f) => f.data.datasetId === "ledger" && f.data.kind === "refresh",
     ).length;
   // The active version's profile as an older executor stored it: by default
-  // before #18, or as given.
+  // the XOR-only digest, or as given.
   const downgrade = async (fingerprint?: string) => {
     fingerprint ??= await untaggedFingerprint("ledger");
     await transaction(store, refreshes, async (tx) => {
@@ -456,7 +456,8 @@ it("reports a refresh across the fingerprint upgrade only when the data changed"
   // Unchanged data under tagged fingerprints.
   await refresh(pair);
   expect(await refreshed()).toBe(0);
-  // #18 stored the same digest as v2 without the tag.
+  // The release that first counted duplicate rows stored the v2 digest
+  // without its tag.
   await downgrade(first.data.profile.fingerprint.slice(3));
   await refresh(pair);
   expect(await refreshed()).toBe(0);
