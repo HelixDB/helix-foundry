@@ -51,7 +51,13 @@ export const formatNumber = (n: number | bigint | string | null | undefined) =>
   n === null || n === undefined || n === ""
     ? "—"
     : Number.isInteger(Number(n))
-      ? integer.format(Number(n))
+      ? integer.format(
+          typeof n === "bigint"
+            ? n
+            : typeof n === "string" && /^[+-]?\d+$/.test(n)
+              ? BigInt(n)
+              : Number(n),
+        )
       : decimal.format(Number(n));
 export const formatCompact = (n: number) =>
   Math.abs(n) < 10000 ? integer.format(n) : compact.format(n);
@@ -122,6 +128,17 @@ export function compareValues(a: unknown, b: unknown, kind: ColumnKind) {
   const na = a === null || a === undefined,
     nb = b === null || b === undefined;
   if (na || nb) return na === nb ? 0 : na ? 1 : -1;
+  if (kind === "integer") {
+    const exact = (v: unknown) =>
+      typeof v === "bigint" ||
+      (typeof v === "number" && Number.isFinite(v) && Number.isInteger(v)) ||
+      (typeof v === "string" && /^[+-]?\d+$/.test(v));
+    if (exact(a) && exact(b)) {
+      const x = BigInt(a as string | number | bigint),
+        y = BigInt(b as string | number | bigint);
+      return x < y ? -1 : x > y ? 1 : 0;
+    }
+  }
   if (kind === "integer" || kind === "number") return Number(a) - Number(b);
   if (kind === "date" || kind === "timestamp")
     return Date.parse(String(a)) - Date.parse(String(b));
