@@ -303,7 +303,24 @@ describe("backup.sh", () => {
     });
     expect(r.status).not.toBe(0);
     expect(f.calls().at(-1)).toBe("compose start helix executor app worker");
-    expect(existsSync(join(f.base, "backup", "manifest.txt"))).toBe(false);
+    expect(existsSync(join(f.base, "backup"))).toBe(false);
+  });
+
+  it("restarts the services when stopping them fails partway", () => {
+    const f = fixture();
+    const r = f.run("backup.sh", [join(f.base, "backup")], {
+      STUB_FAIL: "compose stop*",
+    });
+    expect(r.status).toBe(1);
+    expect(f.calls().slice(-2)).toEqual([
+      "compose stop app worker executor helix",
+      "compose start helix executor app worker",
+    ]);
+    expect(existsSync(join(f.base, "backup"))).toBe(false);
+    // A folder the user made stays.
+    mkdirSync(join(f.base, "made"));
+    f.run("backup.sh", [join(f.base, "made")], { STUB_FAIL: "run *" });
+    expect(readdirSync(join(f.base, "made"))).toEqual([]);
   });
 
   it("reads export, spaces and inline comments in .env, as Compose does", () => {

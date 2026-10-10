@@ -44,10 +44,12 @@ for volume in helix-data foundry-data; do
   docker volume inspect "${project_name}_$volume" > /dev/null 2>&1 \
     || die "Docker volume ${project_name}_$volume does not exist. Run this from the checkout that runs Helix Foundry, with the same COMPOSE_PROJECT_NAME."
 done
+created=""
+[ -d "$backup_dir" ] || created=1
 mkdir -p "$backup_dir"
 backup_dir="$(cd "$backup_dir" && pwd -P)"
 if inside_repo "$backup_dir"; then
-  rmdir "$backup_dir" 2> /dev/null || true
+  [ -z "$created" ] || rmdir "$backup_dir" 2> /dev/null || true
   die "$outside"
 fi
 [ -z "$(ls -A "$backup_dir")" ] || die "$backup_dir is not empty. Use a new folder for each backup."
@@ -62,8 +64,15 @@ for service in helix executor app worker; do
   case $running in *" $service "*) restart="${restart:+$restart }$service" ;; esac
 done
 start_again() { [ -z "$restart" ] || docker compose start $restart; }
+# If a step fails, even stop itself partway, start the services again and remove
+# what this backup wrote.
+failed() {
+  start_again || true
+  rm -f "$backup_dir"/*.tgz.partial
+  [ -z "$created" ] || rmdir "$backup_dir" 2> /dev/null || true
+}
+trap failed EXIT
 docker compose stop app worker executor helix
-trap start_again EXIT
 for volume in helix-data foundry-data; do
   docker run --rm -v "${project_name}_$volume:/data:ro" alpine:3.22 tar czf - -C /data . \
     > "$backup_dir/$volume.tgz.partial"
