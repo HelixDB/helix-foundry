@@ -12,7 +12,7 @@ This is an executable single-server MVP. Validation results below are from the l
 - REST offset pagination and cross-origin credential protection; S3-compatible listing and streaming with a local protocol fixture.
 - Native Ollama, Claude Messages tool-output, and OpenAI Responses JSON-schema adapters have protocol tests. Provider errors do not trigger fallback.
 - Chromium: login, empty and connected states, all six Add data options including MySQL/TLS, tested business-model review, publication, saved dashboard selection and deep links, related-record navigation, previewed edits and history, unchanged snapshot results, and viewer controls. Desktop and 390px mobile layouts were visually inspected; modal Escape/focus restoration and mobile navigation are covered.
-- Docker image builds and the four data-platform services start. A Compose installation ingested and queried sample data. Backup/restore of its Helix and Parquet volumes retained one workspace, three datasets, and 340 rows.
+- Docker image builds and the four data-platform services start. A Compose installation ingested and queried sample data. Backup/restore of its Helix and Parquet volumes retained one workspace, three datasets, and 340 rows. That run used the earlier `backup.sh` and `restore.sh`, which copied `.env` into the backup; the current scripts are covered in the next section.
 
 ## Connect, understand, and act redesign
 
@@ -53,6 +53,21 @@ The resumable setup adds durable provider preparation and upload/import progress
 The local evaluation completed in 117 seconds with one recommendation call, five build/repair calls, 7,631 reported model tokens, ten passing validation checks, and one published dashboard. It used no hosted provider. Browser tests use a deterministic provider fixture plus real DuckDB; those are separate evidence from the real model run. Both desktop and 390px setup/review layouts were inspected. Existing publication, related-record edits, saved view selection and viewer screens still pass.
 
 Browser acceptance now starts a separate installation on ports 3101/3102/5174 with its own metadata store and data directory. It cannot bootstrap or seed the live installation. No demo account or live sample data was created during this change. See [onboarding](onboarding.md) for routes, idempotency, recovery and fixture commands.
+
+## Backup, restore and upgrade scripts (10 October 2026)
+
+The current `scripts/backup.sh`, `restore.sh` and `upgrade.sh` leave the keys out of backups, and `upgrade.sh` backs up before every upgrade. They have not yet run against a real Docker or Compose installation.
+
+What was validated: `tests/scripts.test.ts` runs the scripts against a stub `docker` (`tests/fixtures/fake-docker.sh`) in throwaway git checkouts with a bare upstream. It checks the Docker calls each script makes and their order, that no key, client secret or passphrase reaches a backup, the output or another command (also under `bash -x`), file modes, failure paths that must change nothing or must start the services again, finishing an unfinished upgrade, the HelixDB image checks, and going back with the commands `upgrade.sh` prints, also to a release from before `upgrade.sh` (with that release's scripts in `tests/fixtures/release-before-upgrade`). These tests ran on macOS with bash 3.2 and BSD tools, under OpenSSL 3 and LibreSSL 3.3. CI runs them on `ubuntu-latest`. The HelixDB storage facts the scripts encode come from the HelixDB release notes.
+
+Not yet validated:
+
+- What Docker records as the image of the HelixDB container under Compose v2 (`docker inspect --format '{{.Config.Image}}'`). The scripts compare it with the pin in `compose.yaml` by digest, then by version. If Docker recorded only an image ID, `restore.sh` would refuse new backups with "cannot tell which HelixDB version is newer", and `upgrade.sh` would never report "Already up to date".
+- Archiving and restoring real volumes with `alpine:3.22`, stopping and restarting real services, and the rebuild and restart in `upgrade.sh` and `restore.sh`.
+- A real upgrade across a HelixDB pin change, and going back from it.
+- `--env-file <(COMMAND)` with a real password manager, and the scripts on Linux outside CI.
+
+Before relying on them, run `backup.sh`, `restore.sh` and an `upgrade.sh` that finds the installation up to date once against a real Compose v2 installation, and check what `docker inspect --format '{{.Config.Image}}' $(docker compose ps -q helix)` prints.
 
 ## Remaining validation and MVP limits
 
