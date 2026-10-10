@@ -53,9 +53,9 @@ to_image=$(git show "$to_commit:compose.yaml" | helix_image)
 
 # Where the upgrade starts: an upgrade that did not finish, else the commit
 # upgrade.sh or restore.sh last started, else the checkout, which runs after an
-# install: when git has not moved it since the clone, or when it is behind the
-# upstream and pins the HelixDB image that runs. A checkout pulled by hand may not
-# run yet, so otherwise where the upgrade starts is unknown.
+# install, when it is behind the upstream or git has not moved it since the clone,
+# and the HelixDB container, if there is one, has the image the checkout pins. A
+# checkout pulled by hand may not run yet, so otherwise where it starts is unknown.
 if [ -n "$from_commit" ]; then
   from_image=$(pending_field from_helix_image)
   case $from_commit in
