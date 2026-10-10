@@ -21,6 +21,7 @@ import {
   providerSettings,
 } from "../assistant.js";
 import { testProvider } from "../providers.js";
+import { localAiMemory } from "../memory.js";
 import { homeMetrics, regenerateMetrics } from "../metrics.js";
 import {
   generationKinds,
@@ -369,7 +370,15 @@ export function registerWorkspaceRoutes(
   app.get("/api/v1/workspaces/:w/provider", async (req) => {
     const a = await access(req);
     const settings = await providerSettings(store, a.scope);
-    return { ...settings, apiKey: undefined, hasKey: !!settings.apiKey };
+    return {
+      ...settings,
+      apiKey: undefined,
+      hasKey: !!settings.apiKey,
+      // Lets setup warn before Local is chosen on a Docker without room for it.
+      localMemory: localAiMemory(
+        (settings.provider === "local" && settings.baseUrl) || config.ollama,
+      ),
+    };
   });
   app.put("/api/v1/workspaces/:w/provider", async (req) => {
     const a = await access(req, "owner"),

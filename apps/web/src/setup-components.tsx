@@ -111,6 +111,8 @@ export function OperationProgress({
     </div>
   );
 }
+// Docker Desktop shows its memory setting in decimal gigabytes.
+const gigabytes = (bytes: number) => (bytes / 1e9).toFixed(bytes % 1e9 ? 1 : 0);
 export function ProviderSetup({
   onContinue,
 }: {
@@ -201,6 +203,23 @@ export function ProviderSetup({
             />
           ))}
         </div>
+        {s.provider === "local" &&
+          q.data?.localMemory &&
+          !q.data.localMemory.sufficient && (
+            <div className="notice" role="status">
+              <div>
+                <strong>Local AI may not fit in Docker’s memory</strong>
+                <p>
+                  Docker has {gigabytes(q.data.localMemory.totalBytes)} GB;
+                  local AI next to your data needs at least{" "}
+                  {gigabytes(q.data.localMemory.minimumBytes)} GB. When memory
+                  runs out, questions fail or the database restarts. Choose
+                  Claude or OpenAI, give Docker more memory, or run Ollama on
+                  this computer instead of in Docker.
+                </p>
+              </div>
+            </div>
+          )}
         {s.provider !== "local" && (
           <label>
             API key

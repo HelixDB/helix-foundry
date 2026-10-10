@@ -109,8 +109,8 @@ df -h .
 ```
 
 - The first run downloads several GB: the built app image (about 0.9 GB), HelixDB (about 160 MB), Ollama, and the `qwen3:4b` model (roughly 2.5 GB). If disk space is tight, tell the user before you continue.
-- Local AI was developed and benchmarked on a 16 GB machine, and the executor alone may use up to 2 GB. Peak memory has not yet been certified for 16 GB or 8 GB installations. Use the `MemTotal` figure:
-  - Below 8000000000 bytes: warn the user that the model inside Docker may be slow or fail, and offer path B or C below.
+- Local AI was developed and benchmarked on a 16 GB machine, and the executor alone may use up to 2 GB. Peak memory has not yet been certified for 16 GB or 8 GB installations. Compose gives each service a memory budget, and the bundled model uses about 3.3 GB while loaded (see [docs/OPERATIONS.md](docs/OPERATIONS.md#memory)). Use the `MemTotal` figure:
+  - Below 8000000000 bytes: warn the user that local AI and a large workspace do not fit together in Docker: questions may fail and the database may restart. Offer path B or C below. Setup in the browser shows the same warning when Local is chosen.
   - From 8000000000 to 16000000000 bytes: continue, and mention in your report that local AI has not been certified at this memory size.
   - Above 16000000000 bytes: continue.
 
@@ -238,7 +238,7 @@ docker compose --profile local logs --tail 100 app helix
    docker compose exec app node --import tsx scripts/doctor.ts
    ```
 
-   Expect `✓ HelixDB available`, `✓ DuckDB executor available` and `✓ Local model available`. `✗ Local model` is expected on path C. On path B it means the container cannot reach native Ollama through `host.docker.internal`: tell the user, and offer to switch to path A by removing the `MODEL_ENDPOINT` line and running `docker compose --profile local up -d`. If the command itself cannot run, rely on checks 1 and 2.
+   Expect `✓ HelixDB available`, `✓ DuckDB executor available` and `✓ Local model available`. On path A it also prints `Docker memory`; a line starting with `!` means Docker has less than the 8 GB local AI needs, so tell the user. `✗ Local model` is expected on path C. On path B it means the container cannot reach native Ollama through `host.docker.internal`: tell the user, and offer to switch to path A by removing the `MODEL_ENDPOINT` line and running `docker compose --profile local up -d`. If the command itself cannot run, rely on checks 1 and 2.
 
 Do not run `pnpm doctor` on the host to check a Docker install. It reads the development URLs from `.env` and reports failures against a healthy stack.
 
@@ -326,6 +326,7 @@ The loop waits up to five minutes and prints `complete` once the workspace is pu
 | On Linux, the app cannot reach `http://host.docker.internal:11434`                       | `host.docker.internal` is a Docker Desktop name, and `compose.yaml` adds no mapping for it.      | Use path A on Linux.                                                                                                                                                                                                         |
 | `pnpm doctor` reports failures against a running Docker install                          | It checks the development URLs, and Compose publishes no internal ports.                         | Use `/api/health` and the in-container doctor from step 6.                                                                                                                                                                   |
 | Startup fails with "Database schema is newer than this application"                      | The code is older than the data, for example after a downgrade.                                  | Ask the user. Check out the newer release again, or restore the backup that matches this release.                                                                                                                            |
+| "The database stopped because Docker ran out of memory"                                  | Docker's memory filled up and the kernel stopped HelixDB. Docker restarts it.                    | Wait a minute and retry. Then give Docker more memory, or switch to Claude or OpenAI. See [docs/OPERATIONS.md](docs/OPERATIONS.md#memory). Do not raise the memory limits in `.env` above what Docker has.                    |
 | `ollama` or `model-init` keeps running after stopping, or a network is left behind       | The stack was started with `--profile local` but stopped without it.                             | Pass the same `--profile local` to `stop`, `down`, `logs` and `ps`.                                                                                                                                                          |
 
 ## Operations

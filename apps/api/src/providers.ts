@@ -39,6 +39,7 @@ export class Provider implements ModelProvider {
         model: s.model,
         stream: false,
         think: false,
+        keep_alive: config.modelKeepAlive,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },

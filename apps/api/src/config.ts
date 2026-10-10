@@ -14,6 +14,9 @@ export const config = {
   dataDir: resolve(process.env.DATA_DIR || ".data"),
   inlineWorker: process.env.INLINE_WORKER !== "false",
   ollama: process.env.OLLAMA_URL || "http://127.0.0.1:11434",
+  // Ollama keep_alive: free the model's memory soon after a question instead
+  // of after Ollama's default five minutes.
+  modelKeepAlive: process.env.MODEL_KEEP_ALIVE || "30s",
   // Requests per minute per IP; local acceptance runs raise it.
   rateLimit: Number(process.env.RATE_LIMIT_MAX) || 240,
 };

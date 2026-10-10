@@ -30,6 +30,23 @@ Model weights are reproducible and excluded from application backups. Parquet ve
 
 ## Deployment limits
 
-Two DuckDB jobs execute concurrently with a 512 MB per-process memory setting and a 120-second timeout. The executor container has a 2 GB memory cap and an internal-only network. One worker performs one inference job at a time. Use one worker replica in this single-server release.
+Two DuckDB jobs execute concurrently with a 512 MB per-process memory setting and a 120-second timeout. The executor container has a 2 GB memory cap and an internal-only network; see [Memory](#memory) for the other services. One worker performs one inference job at a time. Use one worker replica in this single-server release.
 
 The supported runtime is Node.js 24. There are no accounts: each installation serves one person on their own computer, who owns every workspace. API tokens are workspace scoped, optionally read-only, and revocable. See `VALIDATION.md` for benchmark scope and unverified deployment combinations.
+
+## Memory
+
+HelixDB, the bundled model, the app, the worker and the executor share Docker's memory. Compose gives each service a budget, so that when memory runs out the model or a single request fails with an error and HelixDB keeps running.
+
+| Service    | Budget in `compose.yaml` | Override in `.env`         | Measured (1.25 M-item workspace) | Stopped first when Docker runs out |
+| ---------- | ------------------------ | -------------------------- | -------------------------------- | ---------------------------------- |
+| `ollama`   | 6 GB limit               | `OLLAMA_MEMORY_LIMIT`      | 3.3 GB with `qwen3:4b` loaded    | 1st (`oom_score_adj: 500`)         |
+| `app`      | 2 GB limit               | `APP_MEMORY_LIMIT`         | 0.15–0.26 GB                     | 2nd (`300`, with the executor)     |
+| `executor` | 2 GB limit               | —                          | about 70 MB idle                 | 2nd (`300`)                        |
+| `worker`   | 2 GB limit               | `WORKER_MEMORY_LIMIT`      | about 0.55 GB                    | 3rd (`200`)                        |
+| `helix`    | 2 GB reserved, no limit  | `HELIX_MEMORY_RESERVATION` | 1.8–2.0 GB                       | Last (`0`)                         |
+
+- `qwen3:4b` needs about 3.3 GB with an 8K context, and more for the 16K and 32K contexts used for long prompts. A prompt that does not fit in `OLLAMA_MEMORY_LIMIT` fails with an error; raise the limit on a machine with room to spare.
+- The model is unloaded 30 seconds after each answer instead of Ollama's default five minutes, so its memory comes back between questions. The next question reloads it in a few seconds. Set `MODEL_KEEP_ALIVE` (an Ollama duration such as `5m`, or `-1` to keep it loaded) to change this.
+- Give Docker at least 8 GB when you use local AI. Setup warns before Local is chosen on less, and the in-container doctor reports the memory. With less, use Claude or OpenAI, or native Ollama on macOS (`MODEL_ENDPOINT`), which runs outside Docker's memory.
+- If the kernel still stops HelixDB, Docker restarts it, and the app says "The database stopped because Docker ran out of memory" instead of "Cannot reach Helix". The app learns this from the kernel's `oom_kill` counter in `/proc/vmstat`, so it needs no access to Docker itself.

@@ -12,6 +12,8 @@ x-app: &app
     HELIX_URL: http://helix:8080
     EXECUTOR_URL: http://executor:3002
     OLLAMA_URL: ${MODEL_ENDPOINT:-http://ollama:11434}
+    # How long the model stays in memory after a question (Ollama keep_alive).
+    MODEL_KEEP_ALIVE: ${MODEL_KEEP_ALIVE:-30s}
     INLINE_WORKER: "false"
     # Listens on the container network; the port is published on loopback only.
     ALLOW_NETWORK_ACCESS: "true"
@@ -31,6 +33,11 @@ services:
       SUPABASE_CLIENT_SECRET: ${SUPABASE_CLIENT_SECRET:-}
       PLANETSCALE_CLIENT_ID: ${PLANETSCALE_CLIENT_ID:-}
       PLANETSCALE_CLIENT_SECRET: ${PLANETSCALE_CLIENT_SECRET:-}
+    # Memory budgets (docs/OPERATIONS.md#memory). When Docker runs out of
+    # memory, a higher oom_score_adj is stopped first: the model, then a
+    # request, then the worker, and HelixDB last.
+    mem_limit: ${APP_MEMORY_LIMIT:-2g}
+    oom_score_adj: 300
     ports:
       - "127.0.0.1:${PUBLIC_PORT:-3001}:3001"
     healthcheck:
@@ -47,6 +54,8 @@ services:
   worker:
     <<: *app
     command: ["node", "--import", "tsx", "apps/api/src/worker.ts"]
+    mem_limit: ${WORKER_MEMORY_LIMIT:-2g}
+    oom_score_adj: 200
   executor:
     <<: *app
     command: ["node", "--import", "tsx", "services/executor/src/server.ts"]
@@ -57,6 +66,7 @@ services:
       EXECUTOR_PORT: 3002
       DUCKDB_MEMORY: 512MB
     mem_limit: 2g
+    oom_score_adj: 300
     pids_limit: 128
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -66,6 +76,9 @@ services:
     restart: unless-stopped
     environment:
       HELIX_DATA_DIR: /var/lib/helix
+    # No hard limit: the database is the one service that must not be killed.
+    # The reservation keeps its working set from being reclaimed for others.
+    mem_reservation: ${HELIX_MEMORY_RESERVATION:-2g}
     volumes:
       - helix-data:/var/lib/helix
   ollama:
@@ -76,6 +89,12 @@ services:
       OLLAMA_NUM_PARALLEL: 1
       OLLAMA_MAX_LOADED_MODELS: 1
       OLLAMA_NO_CLOUD: "1"
+      OLLAMA_KEEP_ALIVE: ${MODEL_KEEP_ALIVE:-30s}
+    # qwen3:4b uses about 3.3 GB with an 8K context and more with longer
+    # prompts. Above the limit the model fails with an error; HelixDB keeps
+    # running.
+    mem_limit: ${OLLAMA_MEMORY_LIMIT:-6g}
+    oom_score_adj: 500
     volumes:
       - model-data:/root/.ollama
   model-init:

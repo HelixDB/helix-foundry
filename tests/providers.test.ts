@@ -98,6 +98,7 @@ for (const provider of ["local", "claude", "openai"] as const)
       expect(requests[0].body.store).toBe(false);
       expect(requests[0].body.text.format.strict).toBe(true);
     }
+    if (provider === "local") expect(requests[0].body.keep_alive).toBe("30s");
     if (provider === "local")
       expect(requests[0].body.options).toEqual({
         temperature: 0,
