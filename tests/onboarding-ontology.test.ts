@@ -273,10 +273,10 @@ it("confirms a reviewed ontology, builds a pipeline-backed view from it and publ
   const relations = await store.list(scope, "relation");
   expect(relations.filter((r) => r.name === "requested by")).toHaveLength(114);
   expect(relations.filter((r) => r.name === "billed to")).toHaveLength(46);
-  // Setup's progress counted every record and relationship row it read.
+  // Setup's progress counted the records and relationships it read, apart.
   expect(built.buildRun?.data.progress).toEqual({
-    records:
-      types.reduce((n, t) => n + t.data.objectCount, 0) + relations.length,
+    records: types.reduce((n, t) => n + t.data.objectCount, 0),
+    relationships: relations.length,
   });
   // Revisions keep building from the confirmed ontology. Asking for a new
   // goal is AI work, so it needs AI set up.

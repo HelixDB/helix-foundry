@@ -313,14 +313,15 @@ export default function Onboarding() {
                 data: {
                   ...run.data,
                   stage: stage?.[0] || run.data.stage,
-                  // Publishing also counts the rows it has read.
+                  // Publishing also counts the records and relationships it
+                  // has read.
                   progress: stage?.[1]
                     ? {
                         message: stage[1],
-                        records:
-                          run.data.stage === "publishing"
-                            ? run.data.progress?.records
-                            : undefined,
+                        ...(run.data.stage === "publishing" && {
+                          records: run.data.progress?.records,
+                          relationships: run.data.progress?.relationships,
+                        }),
                       }
                     : undefined,
                 },

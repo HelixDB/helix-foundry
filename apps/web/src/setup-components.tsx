@@ -78,7 +78,7 @@ export function OperationProgress({
         <p className="muted">
           {p.message || d.events?.at(-1)?.message || "Waiting to start"}
           {p.records !== undefined
-            ? ` · ${number(p.records)} records read`
+            ? ` · ${number(p.records)} records${p.relationships ? ` and ${number(p.relationships)} relationships` : ""} read`
             : p.bytes !== undefined
               ? ` · ${number(Math.round(p.bytes / 1024))} KB received`
               : ""}

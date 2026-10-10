@@ -1438,7 +1438,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       // who confirmed the ontology, which completes onboarding.
       await event(store, scope, id, "publishing", "Publishing your workspace", {
         proposalId: proposal.id,
-        progress: { records: 0 },
+        progress: { records: 0, relationships: 0 },
       });
       await publishProposal(
         store,
@@ -1570,19 +1570,18 @@ export async function publishProposal(
       r,
     ]),
   );
-  // Setup's progress shows how many rows publication has read. Saving it is
-  // best effort and never fails the publication.
-  let read = 0,
-    reported = 0;
-  const progress = async (rows: number, force = false) => {
-    read += rows;
+  // Setup's progress shows how many records and relationships publication
+  // has read. Saving it is best effort and never fails the publication.
+  const read = { records: 0, relationships: 0 };
+  let reported = 0;
+  const progress = async (force = false) => {
     const runId = proposal.data.onboardingRunId;
     if (!runId || (!force && Date.now() - reported < 2000)) return;
     reported = Date.now();
     await transaction(store, scope, async (tx) => {
       const run = await tx.get(runId);
       if (run && ["queued", "running"].includes(run.data.status))
-        tx.update(run, { ...run.data, progress: { records: read } });
+        tx.update(run, { ...run.data, progress: { ...read } });
     }).catch(() => {});
   };
   // Each type and relationship is one executor query, read back in batches of
@@ -1630,7 +1629,8 @@ export async function publishProposal(
         staged.forEach((o) => tx.put(o));
       });
       rows += batch.length;
-      await progress(batch.length);
+      read.records += batch.length;
+      await progress();
     }
     assert(
       rows === dataset.data.profile.rows,
@@ -1684,10 +1684,11 @@ export async function publishProposal(
             );
         }
       });
-      await progress(batch.length);
+      read.relationships += batch.length;
+      await progress();
     }
   }
-  await progress(0, true);
+  await progress(true);
   for (const edit of relationEdits) {
     const from = generation + "_" + edit.data.fromLogicalId,
       to = generation + "_" + edit.data.toLogicalId;
