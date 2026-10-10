@@ -1,7 +1,11 @@
 // Categorical hues in a fixed order (the dataviz reference palette, validated
-// for both themes). Types take them alphabetically, so a type keeps its colour
-// in the graph and the table however either is filtered; a ninth type and
-// beyond share a neutral grey.
+// for both themes). Types take them in alphabetical order of the type names a
+// view passes in, and a ninth type and beyond share a neutral grey. Hiding a
+// type in the graph or choosing one in the table does not change that list, so
+// the colours stay put. The views pass different lists, though: the graph
+// passes the types of the records it has loaded, which differ between the full
+// graph and the graph focused on one record, and the table every type that has
+// records. So a type's colour can differ between those three views.
 const HUES = {
   light: [
     "#2a78d6",
