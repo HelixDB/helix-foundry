@@ -4,6 +4,7 @@
 # encrypted with a passphrase (BACKUP_PASSPHRASE, or typed in the terminal).
 set -euo pipefail
 umask 077
+here=$PWD
 cd "$(dirname "$0")/.."
 . scripts/backup-lib.sh
 usage='Usage: scripts/backup.sh [--include-key] [BACKUP_DIR]'
@@ -16,7 +17,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-backup_dir=${backup_dir:-$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)}
+backup_dir=$(from_here "${backup_dir:-$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)}")
 [ -f .env ] || die 'There is no .env here. Run this from the checkout that runs Helix Foundry.'
 fingerprint=$(key_fingerprint < .env)
 [ -n "$fingerprint" ] || die 'ENCRYPTION_KEY in .env is missing or shorter than 32 characters.'
@@ -73,7 +74,7 @@ if [ -n "$include_key" ]; then
 fi
 # Written last: a backup without manifest.txt is incomplete.
 {
-  echo '# Helix Foundry backup. It holds no keys; see scripts/restore.sh.'
+  echo '# Helix Foundry backup manifest. This file holds no keys; see scripts/restore.sh.'
   echo 'format=2'
   echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "app_commit=$(git rev-parse HEAD 2> /dev/null || echo unknown)"

@@ -4,6 +4,7 @@
 # names the .env kept for that backup or the backup holds one in env.enc.
 set -euo pipefail
 umask 077
+here=$PWD
 cd "$(dirname "$0")/.."
 . scripts/backup-lib.sh
 usage='Usage: scripts/restore.sh BACKUP_DIR --replace [--env-file FILE] [--accept-key-mismatch]'
@@ -19,7 +20,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$backup_dir" ] || die "$usage"
-backup_dir="$(cd "$backup_dir" && pwd -P)"
+backup_dir="$(cd "$(from_here "$backup_dir")" && pwd -P)"
+[ -z "$env_file" ] || env_file=$(from_here "$env_file")
 [ -n "$replace" ] || die 'Pass --replace to explicitly replace this installation with the backup.'
 for file in helix-data.tgz foundry-data.tgz; do [ -s "$backup_dir/$file" ] || die "Missing $file"; done
 manifest="$backup_dir/manifest.txt"

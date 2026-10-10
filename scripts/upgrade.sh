@@ -3,6 +3,7 @@
 # fast-forwards the checkout to its upstream branch, rebuilds and restarts. If the
 # HelixDB image changes, which can be one way, it asks first (or takes --yes).
 set -euo pipefail
+here=$PWD
 cd "$(dirname "$0")/.."
 . scripts/backup-lib.sh
 usage='Usage: scripts/upgrade.sh [--backup-dir DIR] [--include-key] [--yes]'
@@ -16,7 +17,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-backup_dir=${backup_dir:-$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)}
+backup_dir=$(from_here "${backup_dir:-$HOME/helix-foundry-backups/$(date +%Y%m%d-%H%M%S)}")
 unchanged='Nothing was changed.'
 [ -f .env ] || die 'There is no .env here. upgrade.sh upgrades an existing installation; see AGENTS.md to install.'
 fingerprint=$(key_fingerprint < .env)

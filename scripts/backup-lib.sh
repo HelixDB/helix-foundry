@@ -87,6 +87,15 @@ decrypt_env() { # $1 = env.enc, $2 = iterations; writes the .env to stdout
     -iter "${2:-$key_iterations}" -pass env:HF_BACKUP_PASSPHRASE -in "$1"
 }
 
+# Prints path $1 from the command line as an absolute path. The scripts run from
+# the repository root, so relative paths start from $here, where the user was.
+from_here() {
+  case $1 in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$here/$1" ;;
+  esac
+}
+
 # Succeeds when the absolute path $1 is inside this repository.
 inside_repo() {
   case "$1/" in "$(pwd -P)/"*) return 0 ;; esac

@@ -99,8 +99,9 @@ function fixture() {
     root,
     home,
     restored,
-    run: (script: string, args: string[] = [], extra = {}) =>
+    run: (script: string, args: string[] = [], extra = {}, cwd = base) =>
       spawnSync("bash", [join(root, "scripts", script), ...args], {
+        cwd,
         env: { ...env, ...extra },
         encoding: "utf8",
         input: "",
@@ -191,6 +192,15 @@ describe("backup.sh", () => {
     const f = fixture();
     const dir = backup(f, [], { STUB_HELIX_IMAGE: image("0.0.5") });
     expect(field(dir, "helix_image_running")).toBe(image("0.0.5"));
+  });
+
+  it("reads a quoted key and CRLF line endings, as Compose does", () => {
+    const f = fixture();
+    writeFileSync(
+      join(f.root, ".env"),
+      ENV.replace(`=${KEY}`, `="${KEY}"`).replaceAll("\n", "\r\n"),
+    );
+    expect(field(backup(f), "key_fingerprint")).toBe(fingerprint(KEY));
   });
 
   it("refuses a folder inside the repository, or one in use", () => {
@@ -299,6 +309,23 @@ describe("restore.sh", () => {
     expect(f.calls()).toContain(
       "compose up -d --build helix executor app worker",
     );
+  });
+
+  it("reads relative paths from the folder it runs in", () => {
+    const f = fixture();
+    let r = f.run("backup.sh", ["relative"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(f.base, "relative", "manifest.txt"))).toBe(true);
+    writeFileSync(join(f.base, "kept.env"), ENV);
+    writeFileSync(join(f.root, ".env"), ENV.replace(KEY, "c3".repeat(32)));
+    r = f.run("restore.sh", [
+      "relative",
+      "--replace",
+      "--env-file",
+      "kept.env",
+    ]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.env()).toBe(ENV);
   });
 
   it("restores with another key only when told to", () => {
