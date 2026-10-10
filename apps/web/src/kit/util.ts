@@ -47,17 +47,21 @@ const compact = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
+// The exact value of an integer. DuckDB sends BIGINT and HUGEINT values as
+// text, which can be beyond 2^53, where a Number drops digits.
+const bigInteger = (v: unknown) =>
+  typeof v === "bigint"
+    ? v
+    : Number.isInteger(v)
+      ? BigInt(v as number)
+      : typeof v === "string" && /^[+-]?\d+$/.test(v)
+        ? BigInt(v)
+        : undefined;
 export const formatNumber = (n: number | bigint | string | null | undefined) =>
   n === null || n === undefined || n === ""
     ? "—"
     : Number.isInteger(Number(n))
-      ? integer.format(
-          typeof n === "bigint"
-            ? n
-            : typeof n === "string" && /^[+-]?\d+$/.test(n)
-              ? BigInt(n)
-              : Number(n),
-        )
+      ? integer.format(typeof n === "number" ? n : (bigInteger(n) ?? Number(n)))
       : decimal.format(Number(n));
 export const formatCompact = (n: number) =>
   Math.abs(n) < 10000 ? integer.format(n) : compact.format(n);
@@ -110,7 +114,7 @@ export function formatValue(value: unknown, kind: ColumnKind): string | null {
       return typeof value === "number" ||
         typeof value === "bigint" ||
         (typeof value === "string" && value.trim() !== "" && !isNaN(+value))
-        ? formatNumber(value as number)
+        ? formatNumber(value)
         : String(value);
     case "boolean":
       return String(value);
@@ -128,18 +132,12 @@ export function compareValues(a: unknown, b: unknown, kind: ColumnKind) {
   const na = a === null || a === undefined,
     nb = b === null || b === undefined;
   if (na || nb) return na === nb ? 0 : na ? 1 : -1;
-  if (kind === "integer") {
-    const exact = (v: unknown) =>
-      typeof v === "bigint" ||
-      (typeof v === "number" && Number.isFinite(v) && Number.isInteger(v)) ||
-      (typeof v === "string" && /^[+-]?\d+$/.test(v));
-    if (exact(a) && exact(b)) {
-      const x = BigInt(a as string | number | bigint),
-        y = BigInt(b as string | number | bigint);
-      return x < y ? -1 : x > y ? 1 : 0;
-    }
+  if (kind === "integer" || kind === "number") {
+    const x = bigInteger(a),
+      y = bigInteger(b);
+    if (x === undefined || y === undefined) return Number(a) - Number(b);
+    return x < y ? -1 : x > y ? 1 : 0;
   }
-  if (kind === "integer" || kind === "number") return Number(a) - Number(b);
   if (kind === "date" || kind === "timestamp")
     return Date.parse(String(a)) - Date.parse(String(b));
   if (kind === "boolean") return Number(a) - Number(b);

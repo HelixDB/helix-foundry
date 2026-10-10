@@ -84,11 +84,11 @@ function valueText(key: string, v: unknown): string | null {
   if (!present(v)) return null;
   const day = calendarText(v);
   if (day) return day;
-  const n = toNumber(v);
-  if (n !== null)
+  // Numbers are formatted as sent, so an integer beyond 2^53 keeps every digit.
+  if (toNumber(v) !== null)
     return isIdLike(key) || /^(year|yr|fiscal_year)$/i.test(key)
       ? String(v)
-      : formatNumber(n);
+      : formatNumber(v as number | bigint | string);
   return formatValue(v, inferKind([v]));
 }
 
@@ -216,65 +216,77 @@ export function AnswerStats({ row }: { row: Row }) {
 const PREVIEW = 8,
   HEAD = 36,
   ROW = 34;
-// The first rows, with the rest one click away. Sorting applies to every row,
-// not just the ones shown. Measures sit on the right.
+// Table columns typed from the first rows. Measures sit on the right.
+export function answerColumns(rows: Row[]) {
+  const sample = rows.slice(0, 50);
+  const blank = <span className="hf-null">null</span>;
+  return Object.keys(rows[0] || {}).map((key) => {
+    const values = sample.map((r) => r[key]);
+    const days =
+      values.some(present) &&
+      values.every((v) => !present(v) || calendarText(v) !== null);
+    // Numbers sent as text still sort and align as numbers; years stay
+    // as written ("2026", not "2,026").
+    const year = isYearLike(sample, key),
+      numeric =
+        !days &&
+        !year &&
+        !isIdLike(key) &&
+        values.some((v) => typeof v === "string") &&
+        isNumeric(sample, key);
+    const kind: ColumnKind = days
+      ? "date"
+      : numeric
+        ? "number"
+        : year
+          ? "string"
+          : inferKind(values);
+    return {
+      key,
+      label: columnLabel(key),
+      type: kind,
+      kind,
+      numeric,
+      align: year ? ("right" as const) : undefined,
+      render: days
+        ? (r: Row) =>
+            present(r[key]) ? (calendarText(r[key]) ?? String(r[key])) : blank
+        : year
+          ? (r: Row) => (present(r[key]) ? String(r[key]) : blank)
+          : undefined,
+    };
+  });
+}
+// Every row in order, not just the ones shown; blanks stay last either way.
+export function sortAnswer(
+  rows: Row[],
+  columns: ReturnType<typeof answerColumns>,
+  sort: GridSort,
+) {
+  const col = sort && columns.find((c) => c.key === sort.key);
+  if (!sort || !col) return rows;
+  // Numbers compare as sent, so integers beyond 2^53 keep their order; text
+  // that isn't a number sorts as a blank.
+  const value = (r: Row) =>
+    col.numeric && toNumber(r[col.key]) === null ? null : r[col.key];
+  const dir = sort.dir === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const va = value(a),
+      vb = value(b);
+    return !present(va) || !present(vb)
+      ? compareValues(va, vb, col.kind)
+      : compareValues(va, vb, col.kind) * dir;
+  });
+}
+// The first rows, with the rest one click away.
 export function AnswerTable({ rows, label }: { rows: Row[]; label: string }) {
   const [all, setAll] = useState(false),
     [sort, setSort] = useState<GridSort>(null);
-  const columns = useMemo(() => {
-    const sample = rows.slice(0, 50);
-    const blank = <span className="hf-null">null</span>;
-    return Object.keys(rows[0] || {}).map((key) => {
-      const values = sample.map((r) => r[key]);
-      const days =
-        values.some(present) &&
-        values.every((v) => !present(v) || calendarText(v) !== null);
-      // Numbers sent as text still sort and align as numbers; years stay
-      // as written ("2026", not "2,026").
-      const year = isYearLike(sample, key),
-        numeric =
-          !days &&
-          !year &&
-          !isIdLike(key) &&
-          values.some((v) => typeof v === "string") &&
-          isNumeric(sample, key);
-      const kind: ColumnKind = days
-        ? "date"
-        : numeric
-          ? "number"
-          : year
-            ? "string"
-            : inferKind(values);
-      return {
-        key,
-        label: columnLabel(key),
-        type: kind,
-        kind,
-        numeric,
-        align: year ? ("right" as const) : undefined,
-        render: days
-          ? (r: Row) =>
-              present(r[key]) ? (calendarText(r[key]) ?? String(r[key])) : blank
-          : year
-            ? (r: Row) => (present(r[key]) ? String(r[key]) : blank)
-            : undefined,
-      };
-    });
-  }, [rows]);
-  const sorted = useMemo(() => {
-    const col = sort && columns.find((c) => c.key === sort.key);
-    if (!sort || !col) return rows;
-    const value = (r: Row) => (col.numeric ? toNumber(r[col.key]) : r[col.key]);
-    const dir = sort.dir === "desc" ? -1 : 1;
-    // Blanks stay last either way.
-    return [...rows].sort((a, b) => {
-      const va = value(a),
-        vb = value(b);
-      return !present(va) || !present(vb)
-        ? compareValues(va, vb, col.kind)
-        : compareValues(va, vb, col.kind) * dir;
-    });
-  }, [rows, sort, columns]);
+  const columns = useMemo(() => answerColumns(rows), [rows]);
+  const sorted = useMemo(
+    () => sortAnswer(rows, columns, sort),
+    [rows, sort, columns],
+  );
   const more = rows.length > PREVIEW;
   const shown = all || !more ? sorted : sorted.slice(0, PREVIEW);
   return (

@@ -8,11 +8,19 @@ import {
   StatusBadge,
   Tabs,
   columnKind,
+  compareValues,
   connectorKey,
+  formatNumber,
   formatValue,
   inferKind,
   toStatus,
 } from "../apps/web/src/kit/index.js";
+import {
+  AnswerStats,
+  AnswerTable,
+  answerColumns,
+  sortAnswer,
+} from "../apps/web/src/areas/analyst/answer-view.js";
 import {
   activeSection,
   childActive,
@@ -65,6 +73,65 @@ describe("workspace UI kit", () => {
     expect(toStatus("retrying")).toBe("failed");
     expect(connectorKey("PostgreSQL")).toBe("postgres");
     expect(connectorKey(undefined, "Stripe")).toBe("stripe");
+  });
+  it("keeps neighboring 64-bit integers distinct", () => {
+    expect(formatNumber(9007199254740993n)).toBe("9,007,199,254,740,993");
+    expect(formatNumber("9007199254740993")).toBe("9,007,199,254,740,993");
+    expect(formatValue("9007199254740993", "number")).toBe(
+      "9,007,199,254,740,993",
+    );
+    // A Number past 2^53 keeps its usual digits, not its binary expansion.
+    expect(formatNumber(1e25)).toBe("10,000,000,000,000,000,000,000,000");
+    for (const kind of ["integer", "number"] as const) {
+      expect(
+        compareValues("9007199254740992", "9007199254740993", kind),
+      ).toBeLessThan(0);
+      expect(
+        compareValues(9007199254740993n, 9007199254740992n, kind),
+      ).toBeGreaterThan(0);
+      expect(compareValues("12.5", "9007199254740993", kind)).toBeLessThan(0);
+    }
+  });
+  it("orders mixed integer representations transitively", () => {
+    const a = "9007199254740992",
+      b = 9007199254740992,
+      c = "9007199254740993";
+    expect(compareValues(a, b, "integer")).toBe(0);
+    expect(compareValues(b, c, "integer")).toBeLessThan(0);
+    expect(compareValues(a, c, "integer")).toBeLessThan(0);
+  });
+  it("shows and sorts answer integers beyond 2^53 exactly", () => {
+    // DuckDB sends sums and counts of BIGINT columns as text.
+    const rows = [
+      { region: "EU", total: "9007199254740993" },
+      { region: "NA", total: null },
+      { region: "US", total: "9007199254740992" },
+      { region: "APAC", total: "12.5" },
+    ];
+    const columns = answerColumns(rows),
+      totals = (dir: "asc" | "desc") =>
+        sortAnswer(rows, columns, { key: "total", dir }).map((r) => r.total);
+    expect(columns[1]).toMatchObject({ kind: "number", numeric: true });
+    expect(totals("asc")).toEqual([
+      "12.5",
+      "9007199254740992",
+      "9007199254740993",
+      null,
+    ]);
+    expect(totals("desc")).toEqual([
+      "9007199254740993",
+      "9007199254740992",
+      "12.5",
+      null,
+    ]);
+    expect(render(h(AnswerTable, { rows, label: "Totals" }))).toContain(
+      "9,007,199,254,740,993",
+    );
+    const stats = render(
+      h(AnswerStats, { row: { total: "9007199254740993", id: "42" } }),
+    );
+    expect(stats).toContain("9,007,199,254,740,993");
+    expect(stats).not.toContain("9,007,199,254,740,992");
   });
   it("renders ARIA tabs synced to the URL and a titled page header", () => {
     const html = render(
