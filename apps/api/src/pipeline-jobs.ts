@@ -2,6 +2,7 @@
 import type { Resource } from "../../../packages/shared/src/index.js";
 import { transaction, resource, type Store } from "./store.js";
 import { queryDatasets } from "./datasets.js";
+import { assert } from "./security.js";
 
 export async function runPipelineJob(
   store: Store,
@@ -14,6 +15,11 @@ export async function runPipelineJob(
     persist: true,
   });
   await transaction(store, scope, async (tx) => {
+    assert(
+      (await tx.get(job.id))?.data.status !== "canceled",
+      "Pipeline build canceled",
+      409,
+    );
     const ds = await tx.get(p.data.outputDatasetId);
     if (ds) {
       tx.put(
