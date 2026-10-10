@@ -132,7 +132,9 @@ export class Provider implements ModelProvider {
     } else {
       const text = data.output
         ?.flatMap((x: any) => x.content || [])
-        .find((x: any) => x.type === "output_text")?.text;
+        .filter((x: any) => x.type === "output_text")
+        .map((x: any) => x.text || "")
+        .join("");
       assert(text, "Model did not return a structured response");
       value = JSON.parse(text);
       tokens = data.usage?.total_tokens || 0;
