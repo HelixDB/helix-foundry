@@ -113,7 +113,14 @@ export class FoundryClient {
     id: string,
     source: {
       name: string;
-      kind: "mysql" | "postgres" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+      kind:
+        | "mysql"
+        | "postgres"
+        | "rest"
+        | "s3"
+        | "stripe"
+        | "workos"
+        | "posthog";
       config: Record<string, unknown>;
       schedule?: string | null;
     },
@@ -180,44 +187,73 @@ export class FoundryClient {
   }
   createSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
     schedule?: string;
   }) {
     return this.request<Resource>("/sources", source);
   }
   sync(sourceId: string) {
-    return this.request<Resource>("/sources/" + sourceId + "/sync", {});
+    return this.request<Resource>(
+      "/sources/" + encodeURIComponent(sourceId) + "/sync",
+      {},
+    );
   }
   build(goal: string, parentId?: string) {
     return this.request<Resource>("/assistant/runs", { goal, parentId });
   }
   cancel(runId: string) {
-    return this.request("/assistant/runs/" + runId + "/cancel", {});
+    return this.request(
+      "/assistant/runs/" + encodeURIComponent(runId) + "/cancel",
+      {},
+    );
   }
   validate(proposalId: string) {
-    return this.request<Resource>("/proposals/" + proposalId + "/validate", {});
+    return this.request<Resource>(
+      "/proposals/" + encodeURIComponent(proposalId) + "/validate",
+      {},
+    );
   }
   revise(proposalId: string, bundle: Bundle) {
-    return this.request<Resource>("/proposals/" + proposalId, bundle, "PUT");
+    return this.request<Resource>(
+      "/proposals/" + encodeURIComponent(proposalId),
+      bundle,
+      "PUT",
+    );
   }
   publish(proposalId: string, hash: string) {
-    return this.request<Resource>("/proposals/" + proposalId + "/publish", {
-      hash,
-    });
+    return this.request<Resource>(
+      "/proposals/" + encodeURIComponent(proposalId) + "/publish",
+      {
+        hash,
+      },
+    );
   }
   reject(proposalId: string) {
-    return this.request("/proposals/" + proposalId + "/reject", {});
+    return this.request(
+      "/proposals/" + encodeURIComponent(proposalId) + "/reject",
+      {},
+    );
   }
   query(inputs: string[], sql: string) {
     return this.request("/query", { inputs, sql });
   }
   runPipeline(id: string) {
-    return this.request<Resource>("/pipelines/" + id + "/run", {});
+    return this.request<Resource>(
+      "/pipelines/" + encodeURIComponent(id) + "/run",
+      {},
+    );
   }
   neighbors(objectId: string) {
     return this.request<{ ids: string[] }>(
-      "/objects/" + objectId + "/neighbors",
+      "/objects/" + encodeURIComponent(objectId) + "/neighbors",
     );
   }
   previewAction(objectId: string, values: Record<string, unknown>) {
@@ -264,17 +300,27 @@ export class FoundryClient {
     });
   }
   resume(runId: string) {
-    return this.request<Resource>("/assistant/runs/" + runId + "/resume", {});
+    return this.request<Resource>(
+      "/assistant/runs/" + encodeURIComponent(runId) + "/resume",
+      {},
+    );
   }
   saveAnalysis(runId: string) {
     return this.request<Resource>(
-      "/assistant/runs/" + runId + "/save-analysis",
+      "/assistant/runs/" + encodeURIComponent(runId) + "/save-analysis",
       {},
     );
   }
   testSource(source: {
     name: string;
-    kind: "postgres" | "mysql" | "rest" | "s3" | "stripe" | "workos" | "posthog";
+    kind:
+      | "postgres"
+      | "mysql"
+      | "rest"
+      | "s3"
+      | "stripe"
+      | "workos"
+      | "posthog";
     config: Record<string, unknown>;
   }) {
     return this.request("/sources/test", source);
@@ -288,7 +334,10 @@ export class FoundryClient {
     return this.request("/provider", settings, "PUT");
   }
   previewDataset(id: string, offset = 0, limit = 50) {
-    return this.request("/datasets/" + id + "/preview", { offset, limit });
+    return this.request("/datasets/" + encodeURIComponent(id) + "/preview", {
+      offset,
+      limit,
+    });
   }
   draftPipeline(definition: Bundle["pipelines"][number]) {
     return this.request<Resource>("/pipelines/draft", definition);
