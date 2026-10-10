@@ -22,22 +22,24 @@ const jobHandlers: Record<
   sync: runSyncJob,
   pipeline: runPipelineJob,
 };
-// A workspace build publishes the active versions it validated, so a sync of
-// one of its inputs meanwhile fails it with "Inputs changed during
-// publication". A scheduled or CDC sync of such a source stays queued while
-// the build is queued or running, for at most this long after it was queued.
-// The job's creation time bounds it, so a restarted worker keeps the bound,
-// even when a build keeps crashing the worker.
+// Setup's build from a confirmed ontology publishes the active versions it
+// validated, so a sync of one of its inputs meanwhile fails it with "Inputs
+// changed during publication". A scheduled or CDC sync of such a source stays
+// queued while the build is queued or running, for at most this long after it
+// was queued. The job's creation time bounds it, so a restarted worker keeps
+// the bound, even when a build keeps crashing the worker.
 const SYNC_DEFERRAL = 15 * 60000;
-// Sources whose datasets feed a queued or running workspace build. A chat
-// question counts once routing has made it a build.
+// Sources whose datasets feed a queued or running build that publishes when it
+// ends. Other builds (chat requests, continuous repair, setup from a goal) end
+// with a proposal for review, which has to be revalidated once a refresh
+// changes its inputs, whenever that comes; holding syncs for them would only
+// delay the data.
 async function buildSources(store: Store, scope: string, runs: Resource[]) {
   const builds = runs.filter(
     (r) =>
       ["queued", "running"].includes(r.data.status) &&
-      (r.data.task
-        ? r.data.task === "onboarding_build"
-        : (r.data.resolvedIntent || r.data.intent || "build") === "build"),
+      r.data.task === "onboarding_build" &&
+      r.data.ontology,
   );
   if (!builds.length) return new Set<string>();
   const datasets = await store.list(scope, "dataset");

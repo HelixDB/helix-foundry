@@ -124,8 +124,9 @@ it("recovers an interrupted import lease without creating another operation", as
   }
 });
 // Two scheduled sources that are due: one feeds a running setup build whose
-// lease outlived a worker restart, the other does not. A chat question that
-// routing has not resolved yet is running too.
+// lease outlived a worker restart, the other does not. Builds that end with a
+// proposal for review read both, and run too: a chat request, continuous
+// repair, and setup from a goal. So does a chat question.
 async function buildingWorkspace(store: MemoryStore, scope: string) {
   await transaction(store, "global", async (tx) =>
     tx.put(resource("global", "workspaceRef", scope, {}, scope)),
@@ -163,6 +164,7 @@ async function buildingWorkspace(store: MemoryStore, scope: string) {
         "Build",
         {
           task: "onboarding_build",
+          ontology: { entities: [], links: [] },
           status: "running",
           leaseUntil: Date.now() + 86400000,
           datasetIds: ["input_data"],
@@ -170,19 +172,28 @@ async function buildingWorkspace(store: MemoryStore, scope: string) {
         "build",
       ),
     );
-    tx.put(
-      resource(
-        scope,
-        "run",
-        "How many customers?",
+    for (const [id, data] of [
+      ["question", { intent: "auto" }],
+      ["chat-build", { intent: "auto", resolvedIntent: "build" }],
+      ["repair", { intent: "build", background: true }],
+      [
+        "goal-build",
         {
-          intent: "auto",
-          status: "running",
-          leaseUntil: Date.now() + 86400000,
+          task: "onboarding_build",
+          intent: "build",
+          datasetIds: ["input_data", "other_data"],
         },
-        "question",
-      ),
-    );
+      ],
+    ] as const)
+      tx.put(
+        resource(
+          scope,
+          "run",
+          id,
+          { ...data, status: "running", leaseUntil: Date.now() + 86400000 },
+          id,
+        ),
+      );
   });
 }
 const synced = async (store: MemoryStore, scope: string, source: string) =>
