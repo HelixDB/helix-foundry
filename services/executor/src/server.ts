@@ -2,7 +2,7 @@ import "dotenv/config";
 import Fastify from "fastify";
 import { resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
-import { runJob, sweepScratch } from "./jobs.js";
+import { runJob, stopJobs, sweepScratch } from "./jobs.js";
 const root = resolve(process.env.DATA_DIR || ".data");
 const app = Fastify({ bodyLimit: 1024 * 1024, logger: true });
 let active = 0;
@@ -40,6 +40,11 @@ app.post("/execute", async (req, reply) => {
     waiters.shift()?.();
   }
 });
+// Compose stops a container with SIGTERM and kills it 10 seconds later, which
+// would leave running jobs' spill files on the data volume, and in a backup
+// taken meanwhile. Ending the jobs first removes them.
+for (const signal of ["SIGTERM", "SIGINT"] as const)
+  process.once(signal, () => void stopJobs().then(() => process.exit(0)));
 await sweepScratch(root);
 await app.listen({
   port: Number(process.env.EXECUTOR_PORT || 3002),

@@ -15,6 +15,7 @@ import {
   readFile,
   rm,
   chmod,
+  stat,
 } from "node:fs/promises";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { tmpdir } from "node:os";
@@ -52,6 +53,25 @@ afterEach(() => {
 });
 afterAll(() => rm(dir, { recursive: true, force: true }));
 const large = { mode: "ingest", scope: "a", file: "large.parquet" } as const;
+// Runs until it is killed.
+const slow = JSON.stringify({
+  mode: "query",
+  scope: "a",
+  version: "slow",
+  inputs: [],
+  sql: "SELECT sum(i) FROM range(1000000000000) t(i)",
+});
+// Waits for the one running job's scratch directory, and puts a file in it
+// that stands in for spill files a killed job never gets to remove.
+async function spilling() {
+  let jobs: string[] = [];
+  for (let i = 0; i < 100 && !jobs.length; i++) {
+    jobs = await readdir(scratchRoot(dir));
+    if (!jobs.length) await new Promise((r) => setTimeout(r, 10));
+  }
+  expect(jobs).toHaveLength(1);
+  await writeFile(join(scratchRoot(dir), jobs[0], "spill.tmp"), "x");
+}
 describe("isolated dataset execution", () => {
   it("profiles an immutable snapshot and preserves nulls and key evidence", async () => {
     const r = await execute(
@@ -203,35 +223,52 @@ describe("isolated dataset execution", () => {
     }
   });
   it("removes the scratch directory of a job killed at its time limit", async () => {
-    const running = runJob(
-      JSON.stringify({
-        mode: "query",
-        scope: "a",
-        version: "slow",
-        inputs: [],
-        sql: "SELECT sum(i) FROM range(1000000000000) t(i)",
-      }),
-      dir,
-      { timeout: 2000 },
-    );
-    let jobs: string[] = [];
-    for (let i = 0; i < 100 && !jobs.length; i++) {
-      jobs = await readdir(scratchRoot(dir));
-      if (!jobs.length) await new Promise((r) => setTimeout(r, 10));
-    }
-    expect(jobs).toHaveLength(1);
-    // Stands in for spill files the killed job never got to remove.
-    await writeFile(join(scratchRoot(dir), jobs[0], "spill.tmp"), "x");
+    const running = runJob(slow, dir, { timeout: 2000 });
+    await spilling();
     const r = await running;
     expect(r.code).toBeNull();
     expect(await readdir(scratchRoot(dir))).toEqual([]);
   });
-  it("clears scratch left by jobs that ended with the executor", async () => {
+  it("ends running jobs and removes their scratch when the executor stops", async () => {
+    // A fresh copy of the job runner, since a stopped one refuses jobs.
+    vi.resetModules();
+    const jobs = await import("../services/executor/src/jobs.js");
+    const running = jobs.runJob(slow, dir);
+    await spilling();
+    await jobs.stopJobs();
+    expect((await running).code).toBeNull();
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+    expect(await jobs.runJob(slow, dir)).toMatchObject({
+      failed: "Executor is stopping",
+    });
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+  });
+  it("empties scratch left by jobs that ended with the executor, and keeps scratch itself", async () => {
+    const before = await stat(scratchRoot(dir));
     await mkdir(join(scratchRoot(dir), "executor-stale"), { recursive: true });
     await writeFile(
       join(scratchRoot(dir), "executor-stale", "duckdb_temp_storage.tmp"),
       "x",
     );
+    await sweepScratch(dir);
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+    // It may be a mount point, which cannot be removed.
+    expect((await stat(scratchRoot(dir))).ino).toBe(before.ino);
+  });
+  it("starts even when stale scratch cannot be removed", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await mkdir(join(scratchRoot(dir), "job-stale"));
+    await chmod(scratchRoot(dir), 0o555);
+    try {
+      await expect(sweepScratch(dir)).resolves.toBeUndefined();
+      expect(log).toHaveBeenCalledWith(
+        "Could not remove executor scratch:",
+        expect.stringContaining("EACCES"),
+      );
+    } finally {
+      await chmod(scratchRoot(dir), 0o755);
+      log.mockRestore();
+    }
     await sweepScratch(dir);
     expect(await readdir(scratchRoot(dir))).toEqual([]);
   });
