@@ -158,6 +158,7 @@ export async function validateBundle(
       bundle.ontology,
       bundle.dashboards,
       bundle.relationships,
+      bundle.actions,
     ].every(unique),
     detail: "Names must be unique within each asset type",
   });
