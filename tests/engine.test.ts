@@ -33,6 +33,8 @@ describe("isolated dataset execution", () => {
       nulls: 1,
       sensitive: true,
     });
+    // Only ingest compares against a fingerprint stored before the upgrade.
+    expect(r.legacyFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
   it("executes and persists a verified aggregate", async () => {
     const r = await execute(
@@ -52,6 +54,7 @@ describe("isolated dataset execution", () => {
         { region: "US", revenue: "23" },
       ]),
     );
+    expect(r).not.toHaveProperty("legacyFingerprint");
   });
   it("blocks external files, network reads, multiple statements, and undeclared tables", async () => {
     for (const sql of [

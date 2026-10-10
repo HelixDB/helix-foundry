@@ -200,9 +200,11 @@ export async function execute(
       profile,
       version: job.version,
       rows: sample,
-      // The untagged fingerprint of the same data, so a stored one can be
-      // compared like for like after an upgrade.
-      legacyFingerprint: digest([schema, rows, { h: fp.h }]),
+      // Ingest also gets the untagged fingerprint of the same data, so a
+      // stored one can be compared like for like after an upgrade.
+      ...(job.mode === "ingest"
+        ? { legacyFingerprint: digest([schema, rows, { h: fp.h }]) }
+        : {}),
     };
   } finally {
     c?.closeSync();

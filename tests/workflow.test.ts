@@ -7,6 +7,7 @@ import { execute as localExecute } from "../services/executor/src/engine.js";
 vi.mock("../apps/api/src/executor.js", () => ({
   execute: (job: any) => localExecute(job),
 }));
+import { createApp } from "../apps/api/src/app.js";
 import { MemoryStore, resource, transaction } from "../apps/api/src/store.js";
 import { ingestRows, queryDatasets } from "../apps/api/src/datasets.js";
 import {
@@ -477,4 +478,38 @@ it("reports a refresh across the fingerprint upgrade only when the data changed"
     { id: "c", amount: 1 },
   ]);
   expect(await refreshed()).toBe(3);
+});
+it("keeps the upgrade fingerprint out of query and preview responses", async () => {
+  const s = new MemoryStore(),
+    app = await createApp(s);
+  let w = "";
+  try {
+    await app.ready();
+    w = (await app.inject({ method: "GET", url: "/api/v1/me" })).json()
+      .workspaces[0].id;
+    const ds = await ingestRows(s, w, "Items", [{ id: "a" }]);
+    for (const [url, payload] of [
+      [
+        `/api/v1/workspaces/${w}/query`,
+        { inputs: [ds.id], sql: `SELECT * FROM "${datasetTable(ds.id)}"` },
+      ],
+      [`/api/v1/workspaces/${w}/datasets/${ds.id}/preview`, {}],
+    ] as const) {
+      const r = await app.inject({ method: "POST", url, payload });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json()).toMatchObject({
+        rows: [{ id: "a" }],
+        profile: { fingerprint: expect.stringMatching(/^v2:/) },
+      });
+      expect(r.json()).not.toHaveProperty("legacyFingerprint");
+    }
+  } finally {
+    await app.close();
+    for (const dir of ["incoming", "datasets"])
+      if (w)
+        await rm(resolve(config.dataDir, dir, w), {
+          recursive: true,
+          force: true,
+        });
+  }
 });

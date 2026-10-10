@@ -6,7 +6,8 @@ export async function execute(job: Execution): Promise<{
   profile: DatasetProfile;
   version: string;
   rows: Record<string, any>[];
-  // profile.fingerprint in the untagged format older executors stored.
+  // Ingest only: profile.fingerprint in the untagged format older executors
+  // stored.
   legacyFingerprint?: string;
 }> {
   const r = await fetch(config.executor + "/execute", {
