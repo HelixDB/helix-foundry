@@ -50,52 +50,53 @@ mode does not reach onboarding. Preserve that theme when adding setup UI.
 
 Long-running setup work is shown with `OperationProgress` in
 [`setup-components.tsx`](../apps/web/src/setup-components.tsx): imports in
-the connection dialog (on setup's Data step, and from Add data on the
+the connection dialog (on setup's Data step, and from "Add data" on the
 workspace's Data page), and the workspace build after the ontology is
 confirmed. It shows only what the server reports:
 
 - A status line with the operation's name, a spinner while it is queued or
-  running, a check once it succeeds, and its state: “Ready”, “Stopped” for a
+  running, a check once it succeeds, and its state: "Ready", "Stopped" for a
   canceled operation, or otherwise the server's stage or status. The build
-  turns its stages into plain words, such as “Building records” or
-  “Publishing”, with one line about what is happening (`buildStage` in
+  turns its stages into plain words, such as "Building records" or
+  "Publishing", with one line about what is happening (`buildStage` in
   `onboarding.tsx`).
 - While it works, one line of detail: the latest progress message or event,
-  or “Waiting to start”, followed by a measured count when the job reports
-  one, such as `12,345 records read` or `512 KB received`. There are no
+  or "Waiting to start", followed by a measured count when the job reports
+  one, such as "12,345 records read" or "512 KB received". There are no
   percentages, totals or time estimates.
 - When the operation fails or is stopped, an alert with the server's error, or
-  “Progress has been saved. Retry when you're ready.”
-- Retry for a failed or stopped operation and Stop while one is queued or
-  running. The build hides Stop once publishing starts, because the server
+  "Progress has been saved. Retry when you’re ready."
+- "Retry" for a failed or stopped operation and "Stop" while one is queued or
+  running. The build hides "Stop" once publishing starts, because the server
   finishes publication atomically.
 - The block is a polite live region, so changes are announced without
   interrupting.
 
-Main shows no progress bar. `OperationProgress` can draw a `<progress>` when an
-operation reports a known total, but none of the operations it shows reports
-one. The local model download is the only job that does, and no screen shows
-it with `OperationProgress`: setup moves on while the model downloads in the
-background, and if the download fails, the later steps show a notice, with
-Retry AI connection and Change AI choice for an owner. Known totals appear as
-text instead, such as the sample count and the data feed's table count below.
+No screen shows a progress bar. `OperationProgress` can draw a `<progress>`
+when an operation reports a known total, but none of the operations it shows
+reports one. The local model download is the only job that does, and no
+screen shows it with `OperationProgress`: setup moves on while the model
+downloads in the background, and if the download fails, the later steps show
+a notice, with "Retry AI connection" and "Change AI choice" for an owner.
+Known totals appear as text instead, such as the sample count and the data
+feed's table count below.
 
 `useSetup` polls the onboarding state every second while sample data loads,
 the AI describes the suggested ontology or the workspace builds, and every 2.5
 seconds otherwise. A failed poll leaves the last state on screen; setup shows
 the error only when no state has loaded yet. While samples load, the button
-counts known work: “Loading sample data… (3 of 11)”. A sample load that stops
+counts known work: "Loading sample data… (3 of 11)". A sample load that stops
 advancing for 12 seconds is resumed once.
 
 The Ontology step's data feed (`DataFeed` in `ontology-scene.tsx`) shows each
-source's tables arriving: “3 of 5 tables” while any is loading, then the
+source's tables arriving: "3 of 5 tables" while any is loading, then the
 records read. A table name that does not fit is cut short with an ellipsis and
 carries its full name in a tooltip. A polite status line reads the current
 step and the tables read so far. The steps (`ontology-step.tsx`) mix server
 state with pacing. Reading waits for the server to read the tables, matching
-waits for the server's suggestion, and “AI is writing descriptions” waits for
-the AI run, for at most 20 seconds after the suggestion arrives. “Finding keys”
-and “Proposing entities” are timed on the client. Each step is held long
+waits for the server's suggestion, and "AI is writing descriptions" waits for
+the AI run, for at most 20 seconds after the suggestion arrives. "Finding keys"
+and "Proposing entities" are timed on the client. Each step is held long
 enough to read, so the suggestion appears at least 3.5 seconds after the step
 opens, and never before the server has produced it. Returning to the step, or
 reloading it, shows an existing suggestion at once.
@@ -108,13 +109,14 @@ Follow the same principles in new progress UI:
   invent a percentage or a time estimate.
 - Name stages in plain words. Setup keeps the business outcome in view and
   infrastructure in disclosures.
-- Keep Stop and Retry available, except Stop once publication has begun.
+- Keep "Stop" and "Retry" available, except "Stop" once publication has
+  begun.
 - Announce changes politely and never announce a ticking number: the
   Analyst's elapsed time while it works is hidden from screen readers.
 - Pair icons with text, so status never depends on an icon or color alone.
 - Mark up steps semantically. The data feed's steps are an ordered list; the
-  setup stepper (AI, Data, Ontology) is a `nav` that marks the current step
-  with `aria-current="step"`.
+  setup stepper ("AI", "Data", "Ontology") is a `nav` that marks the current
+  step with `aria-current="step"`.
 - Respect `prefers-reduced-motion`. Setup cuts animation durations to 0.01ms
   and drops transitions; the illustration, data feed and suggested ontology
   stop animating; the workspace cuts animation and transition durations to
@@ -199,15 +201,24 @@ Charts do not share one palette yet:
   (`#548b72`, `#dfebe4` and `#679780`) that do not follow dark mode.
 - Ontology types take hues from fixed eight-color palettes for each theme in
   [`colors.ts`](../apps/web/src/areas/ontology/colors.ts), in alphabetical
-  order of type, so a type keeps its color; a ninth type and beyond are gray.
+  order of the types a view knows; a ninth type and beyond are gray. The
+  Explorer's graph orders the types of the records it has loaded, and its
+  table orders every type that has records. Hiding a type in the graph or
+  choosing one in the table leaves every color in place, but a type's color
+  can differ between the full graph, the graph focused on one record and the
+  table.
 - `--hf-chart-2` to `--hf-chart-6` are defined but not used.
 
 Give new charts theme-aware colors from tokens rather than new hex values.
 Home and answer charts explain the data without color: each is a focusable
 image whose label summarizes the values, arrow keys step through the points
 and a polite live region reads each one, and bar values are printed beside
-the bars. Tooltips and the live region give each value in full, and an
-answer's integer beyond 2^53 keeps every digit. Format values with the kit's
+the bars. Tooltips and the live region spell each value out ("$12,400" where
+the chart's label or a bar shows "$12.4K") but still round it as
+`formatMetric` does: numbers and percentages to at most two decimals below 10
+and one from 10, and currency to the cent, or to the dollar for a whole amount
+or one of $10,000 or more. An integer that an answer sends as digits keeps
+every digit there, even beyond 2^53. Format values with the kit's
 `formatNumber`, `formatCompact`, `formatDate` and `formatRelative`; Home
 formats metric values, including currency, with `formatMetric` in
 `metrics.tsx`.
