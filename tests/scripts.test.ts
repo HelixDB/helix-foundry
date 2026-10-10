@@ -812,3 +812,15 @@ describe("upgrade.sh", () => {
     expect(f.calls().at(-1)).toBe("compose up -d --build");
   });
 });
+
+describe("compose.yaml", () => {
+  it("pins the development HelixDB in the docs to the image Compose runs", () => {
+    for (const doc of ["README.md", "AGENTS.md", "docs/GUIDE.md"]) {
+      const images = readFileSync(join(repo, doc), "utf8").match(
+        /ghcr\.io\/helixdb\/helixdb:\S+/g,
+      );
+      expect(images, doc).not.toBeNull();
+      for (const found of images!) expect(found, doc).toBe(pinned[1]);
+    }
+  });
+});

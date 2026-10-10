@@ -178,7 +178,7 @@ pnpm dev
 
 Open **http://localhost:5173**. The Vite dev server proxies `/api` to the API on 3001, and the executor listens on 3002. Use 5173 rather than 3001 during development: the API may also serve an old build on 3001, and saves from it fail the origin check.
 
-- The development HelixDB uses the image pinned in `compose.yaml`. A newer image upgrades the `helix-foundry-dev` volume one way (v0.0.10 and later upgrade the index storage, and older images then refuse it), so copy the volume before you change the tag.
+- The development HelixDB uses the image pinned in `compose.yaml`; `pnpm test` fails if the copy above, or those in the README and AGENTS.md, differ from it. A newer image upgrades the `helix-foundry-dev` volume one way (v0.0.10 and later upgrade the index storage, and older images then refuse it), so copy the volume before you change the tag.
 - `./scripts/setup.sh` without flags writes `.env` with development URLs (`APP_ORIGIN=http://localhost:5173`, HelixDB on 6996, executor on 3002, Ollama on 11434) and two generated keys. It never overwrites an existing `.env`.
 - `pnpm doctor` checks HelixDB, the executor, the model endpoint and the local keys, using the development URLs in `.env`. It is for development only; for a Docker install, use the in-container check in the [agent runbook](../AGENTS.md#6-verify).
 - Startup applies the metadata schema idempotently; `pnpm migrate` applies it explicitly.
