@@ -62,8 +62,10 @@ confirmed. It shows only what the server reports:
   `onboarding.tsx`).
 - While it works, one line of detail: the latest progress message or event,
   or "Waiting to start", followed by a measured count when the job reports
-  one, such as "12,345 records read" or "512 KB received". There are no
-  percentages, totals or time estimates.
+  one. An import shows "12,345 records read", or "512 KB received" while it
+  downloads a file from S3. While the build is publishing, it shows "12,345
+  records and 678 relationships read" ("12,345 records read" until it has
+  read a relationship). There are no percentages, totals or time estimates.
 - When the operation fails or is stopped, an alert with the server's error, or
   "Progress has been saved. Retry when you’re ready."
 - "Retry" for a failed or stopped operation and "Stop" while one is queued or
