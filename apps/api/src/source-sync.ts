@@ -262,7 +262,8 @@ export async function checkpointSource(
       !s ||
       s.data.sync?.leaseOwner !== owner ||
       s.data.sync.mode !== "cdc" ||
-      s.data.sync.leaseUntil < Date.now()
+      !Number.isFinite(s.data.sync.leaseUntil) ||
+      s.data.sync.leaseUntil <= Date.now()
     )
       throw new Error("Change stream lease expired");
     tx.update(s, {
