@@ -17,6 +17,10 @@ export function compilePipeline(nodes: PipelineNode[]) {
     if (visiting.has(id)) throw new Error("Pipeline has a cycle");
     const n = map.get(id);
     if (!n) throw new Error("Unknown node " + id);
+    if (n.type === "source" && n.inputs.length !== 0)
+      throw new Error("A source cannot have inputs");
+    if (!["source", "sql", "join"].includes(n.type) && n.inputs.length !== 1)
+      throw new Error("A transform needs exactly one input");
     visiting.add(id);
     n.inputs.forEach(visit);
     const c = n.config as any,
