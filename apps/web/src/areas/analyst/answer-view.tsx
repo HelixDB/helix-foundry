@@ -35,6 +35,10 @@ const toNumber = (v: unknown): number | null =>
         ? Number(v)
         : null;
 const present = (v: unknown) => v !== null && v !== undefined;
+const isInteger = (v: unknown) =>
+  typeof v === "bigint" ||
+  (typeof v === "number" && Number.isInteger(v)) ||
+  (typeof v === "string" && /^-?\d+$/.test(v));
 const isNumeric = (rows: Row[], key: string) =>
   rows.some((r) => present(r[key])) &&
   rows.every((r) => !present(r[key]) || toNumber(r[key]) !== null);
@@ -88,7 +92,7 @@ function valueText(key: string, v: unknown): string | null {
   if (n !== null)
     return isIdLike(key) || /^(year|yr|fiscal_year)$/i.test(key)
       ? String(v)
-      : formatNumber(n);
+      : formatNumber(typeof v === "string" || typeof v === "bigint" ? v : n);
   return formatValue(v, inferKind([v]));
 }
 
@@ -127,6 +131,16 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
     (r) => present(r[label]) && toNumber(r[value]) !== null,
   );
   if (measured.length < 2) return null;
+  // Charts need Number values; keep the exact table when conversion is unsafe.
+  if (
+    measured.some((r) => {
+      const n = toNumber(r[value])!;
+      return (
+        !Number.isFinite(n) || (Number.isInteger(n) && !Number.isSafeInteger(n))
+      );
+    })
+  )
+    return null;
   if (time) {
     // Daily, weekly or monthly buckets, oldest first.
     const days = measured
@@ -241,7 +255,9 @@ export function AnswerTable({ rows, label }: { rows: Row[]; label: string }) {
       const kind: ColumnKind = days
         ? "date"
         : numeric
-          ? "number"
+          ? values.every((v) => !present(v) || isInteger(v))
+            ? "integer"
+            : "number"
           : year
             ? "string"
             : inferKind(values);
@@ -250,7 +266,6 @@ export function AnswerTable({ rows, label }: { rows: Row[]; label: string }) {
         label: columnLabel(key),
         type: kind,
         kind,
-        numeric,
         align: year ? ("right" as const) : undefined,
         render: days
           ? (r: Row) =>
@@ -264,12 +279,11 @@ export function AnswerTable({ rows, label }: { rows: Row[]; label: string }) {
   const sorted = useMemo(() => {
     const col = sort && columns.find((c) => c.key === sort.key);
     if (!sort || !col) return rows;
-    const value = (r: Row) => (col.numeric ? toNumber(r[col.key]) : r[col.key]);
     const dir = sort.dir === "desc" ? -1 : 1;
     // Blanks stay last either way.
     return [...rows].sort((a, b) => {
-      const va = value(a),
-        vb = value(b);
+      const va = a[col.key],
+        vb = b[col.key];
       return !present(va) || !present(vb)
         ? compareValues(va, vb, col.kind)
         : compareValues(va, vb, col.kind) * dir;
