@@ -28,7 +28,11 @@ export async function execute(
   job: Execution,
   root = resolve(process.env.DATA_DIR || ".data"),
 ) {
-  if (!safePart(job.scope) || (job.version && !safePart(job.version)))
+  if (
+    ((job.mode === "ingest" || job.persist) && !job.version) ||
+    !safePart(job.scope) ||
+    (job.version && !safePart(job.version))
+  )
     throw new Error("Invalid storage identity");
   const out = resolve(root, "datasets", job.scope, `${job.version}.parquet`);
   await mkdir(dirname(out), { recursive: true });
