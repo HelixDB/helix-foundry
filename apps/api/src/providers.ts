@@ -8,7 +8,7 @@ import type {
 import { config } from "./config.js";
 import { assert, AppError } from "./security.js";
 export class Provider implements ModelProvider {
-  private verified = false;
+  private verifiedSettings = "";
   constructor(public settings: ProviderSettings) {}
   async generate(
     system: string,
@@ -16,9 +16,14 @@ export class Provider implements ModelProvider {
     schema: Record<string, unknown>,
     signal?: AbortSignal,
   ) {
-    if (!this.verified) {
+    const verificationKey = JSON.stringify([
+      this.settings.provider,
+      this.settings.model,
+      this.settings.baseUrl || config.ollama,
+    ]);
+    if (this.verifiedSettings !== verificationKey) {
       await verifyPinnedModel(this.settings);
-      this.verified = true;
+      this.verifiedSettings = verificationKey;
     }
     const s = this.settings,
       user = JSON.stringify(context);
