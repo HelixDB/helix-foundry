@@ -121,11 +121,10 @@ export function normalizeStripe(object: StripeObject, row: any) {
     else if (
       (Object.hasOwn(references, field) ||
         (field === "source" && object.name === "balance_transactions")) &&
-      value &&
-      typeof value !== "boolean"
+      (value === null || (value && typeof value !== "boolean"))
     )
       out[references[field] || "source_id"] =
-        typeof value === "object" ? ((value as any).id ?? null) : value;
+        typeof value === "object" ? ((value as any)?.id ?? null) : value;
     else if (timestamps.has(field) && typeof value === "number")
       out[field] = new Date(value * 1000).toISOString();
     else out[field] = value;
