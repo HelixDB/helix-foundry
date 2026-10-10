@@ -91,7 +91,8 @@ export class Provider implements ModelProvider {
         },
       };
     }
-    const abort = signal || AbortSignal.timeout(s.timeoutSeconds * 1000);
+    const timeout = AbortSignal.timeout(s.timeoutSeconds * 1000);
+    const abort = signal ? AbortSignal.any([signal, timeout]) : timeout;
     if (s.provider === "local") {
       const r = await postLocal(url, JSON.stringify(body), abort);
       assert(
