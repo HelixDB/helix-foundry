@@ -3,7 +3,7 @@
 # handle a key or a passphrase turn off tracing (bash -x), which would print them.
 
 # The .env lines a backup keeps in settings.env. Keys and client secrets stay out.
-settings_pattern='^(PUBLIC_PORT|PUBLIC_ORIGIN|MODEL_ENDPOINT|COMPOSE_PROJECT_NAME|APP_ORIGIN|HELIX_URL|EXECUTOR_URL|OLLAMA_URL|DATA_DIR|PORT|EXECUTOR_PORT|NEON_CLIENT_ID|SUPABASE_CLIENT_ID|PLANETSCALE_CLIENT_ID)='
+settings_pattern='^[[:space:]]*(export[[:space:]]+)?(PUBLIC_PORT|PUBLIC_ORIGIN|MODEL_ENDPOINT|COMPOSE_PROJECT_NAME|APP_ORIGIN|HELIX_URL|EXECUTOR_URL|OLLAMA_URL|DATA_DIR|PORT|EXECUTOR_PORT|NEON_CLIENT_ID|SUPABASE_CLIENT_ID|PLANETSCALE_CLIENT_ID)[[:space:]]*='
 # PBKDF2 iterations for env.enc, the passphrase-encrypted .env (backup.sh --include-key).
 key_iterations=600000
 
@@ -12,17 +12,40 @@ die() {
   exit 1
 }
 
+# Prints the value of $1 in an env file read on stdin, as Compose reads it: the last
+# line wins, "export " and spaces around = are allowed, quotes are removed, and an
+# unquoted value ends before " #". Callers that read a key turn off tracing first.
+env_value() {
+  local line value
+  line=$(tr -d '\r' | sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$1[[:space:]]*=[[:space:]]*//p" | tail -n 1)
+  case $line in
+    \"*) value=${line#\"}; value=${value%%\"*} ;;
+    \'*) value=${line#\'}; value=${value%%\'*} ;;
+    *)
+      value=${line%%[[:space:]]#*}
+      value=${value%"${value##*[![:space:]]}"}
+      ;;
+  esac
+  printf '%s' "$value"
+}
+
 # Reads an env file on stdin and prints a fingerprint of its ENCRYPTION_KEY, or
 # nothing if the key is missing or shorter than 32 characters. The app encrypts
 # credentials with sha256(ENCRYPTION_KEY), so the fingerprint hashes the key with a
 # prefix: it identifies the key without revealing anything that decrypts.
 key_fingerprint() (
   { set +x; } 2> /dev/null
-  key=$(sed -n 's/^ENCRYPTION_KEY=//p' | tail -n 1 | tr -d '\r')
-  case $key in \"*\" | \'*\') key=${key:1:${#key}-2} ;; esac
+  key=$(env_value ENCRYPTION_KEY)
   if [ "${#key}" -ge 32 ]; then
     printf 'helix-foundry-key-fingerprint:%s' "$key" | openssl dgst -sha256 | awk '{print $NF}'
   fi
+)
+
+# Succeeds when key $1 in the env file read on stdin has at least 32 characters.
+key_set() (
+  { set +x; } 2> /dev/null
+  key=$(env_value "$1")
+  [ "${#key}" -ge 32 ]
 )
 
 # Prints field $2 of the manifest file $1, or nothing.

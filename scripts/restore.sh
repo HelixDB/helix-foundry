@@ -128,7 +128,7 @@ else
 fi
 [ -n "$(key_fingerprint < "${tmp:-.env}")" ] \
   || die "ENCRYPTION_KEY in $from is missing or shorter than 32 characters. $unchanged"
-grep -Eq '^INTERNAL_KEY=.{32,}' "${tmp:-.env}" || die "INTERNAL_KEY in $from is missing or too short. $unchanged"
+key_set INTERNAL_KEY < "${tmp:-.env}" || die "INTERNAL_KEY in $from is missing or too short. $unchanged"
 if [ -n "$tmp" ] && [ -f .env ] && cmp -s .env "$tmp"; then
   rm -f "$tmp"
   tmp=""

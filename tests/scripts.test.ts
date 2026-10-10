@@ -306,6 +306,27 @@ describe("backup.sh", () => {
     expect(existsSync(join(f.base, "backup", "manifest.txt"))).toBe(false);
   });
 
+  it("reads export, spaces and inline comments in .env, as Compose does", () => {
+    const f = fixture();
+    writeFileSync(
+      join(f.root, ".env"),
+      [
+        `export ENCRYPTION_KEY=${KEY} # the key  `,
+        `  INTERNAL_KEY = '${INTERNAL}'`,
+        "export PUBLIC_PORT=3105",
+        "",
+      ].join("\n"),
+    );
+    const dir = backup(f);
+    expect(field(dir, "key_fingerprint")).toBe(fingerprint(KEY));
+    expect(readFileSync(join(dir, "settings.env"), "utf8")).toBe(
+      "export PUBLIC_PORT=3105\n",
+    );
+    const r = f.run("restore.sh", [dir, "--replace"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Keeping .env");
+  });
+
   it("keeps BACKUP_PASSPHRASE from the commands it runs", () => {
     const f = fixture();
     for (const args of [[], ["--include-key"]]) {

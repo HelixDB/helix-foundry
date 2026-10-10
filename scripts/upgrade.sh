@@ -108,14 +108,15 @@ if [ "$to_commit" != "$head" ]; then
     || die "Upgrade stopped: git could not fast-forward to $to_commit. Nothing was upgraded."
 fi
 profile=""
-if ! grep -Eq '^MODEL_ENDPOINT=.' .env && [ -n "$(docker compose --profile local ps -a -q ollama 2> /dev/null || true)" ]; then
+if [ -z "$(env_value MODEL_ENDPOINT < .env)" ] \
+  && [ -n "$(docker compose --profile local ps -a -q ollama 2> /dev/null || true)" ]; then
   profile="--profile local"
 fi
 echo "Rebuilding and starting: docker compose ${profile:+$profile }up -d --build"
 docker compose $profile up -d --build \
   || die "The rebuild failed. $backup_dir holds the backup from before the upgrade. Fix the error and run scripts/upgrade.sh again, or go back: $back"
 record_deployed
-port=$(sed -n 's/^PUBLIC_PORT=//p' .env | tail -n 1)
+port=$(env_value PUBLIC_PORT < .env)
 cat <<DONE
 Upgraded to $to_commit. The backup from before the upgrade is in $backup_dir.
 Wait until this returns {"ok":true,...}, which can take a few minutes:
