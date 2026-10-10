@@ -168,7 +168,9 @@ export async function execute(
       });
     }
     const fp = (
-      await c.runAndReadAll("SELECT bit_xor(hash(result)) h FROM result")
+      await c.runAndReadAll(
+        "SELECT bit_xor(hash(result)) h, sum(hash(result)::HUGEINT) hash_sum FROM result",
+      )
     ).getRowObjectsJson()[0];
     const duplicateRows = Number(
       (
