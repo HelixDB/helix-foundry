@@ -100,6 +100,35 @@ describe("workspace UI kit", () => {
     expect(compareValues(b, c, "integer")).toBeLessThan(0);
     expect(compareValues(a, c, "integer")).toBeLessThan(0);
   });
+  it("orders integers and decimals beyond 2^53 transitively", () => {
+    // A Number would make the decimal equal to both of its neighbours.
+    expect(
+      compareValues(9007199254740992, "9007199254740992.5", "number"),
+    ).toBeLessThan(0);
+    expect(
+      compareValues("9007199254740993", "9007199254740992.5", "number"),
+    ).toBeGreaterThan(0);
+    expect(compareValues("12.50", 12.5, "number")).toBe(0);
+    expect(compareValues("1e21", 1e21, "number")).toBe(0);
+    const sorted = [
+      "-1.5",
+      0.25,
+      2n,
+      "12.5",
+      9007199254740992,
+      "9007199254740992.5",
+      "9007199254740993",
+      "1e17",
+      "1e300",
+    ];
+    // Every starting order sorts the same way.
+    for (let i = 0; i < sorted.length; i++) {
+      const start = [...sorted.slice(i), ...sorted.slice(0, i)].reverse();
+      expect(start.sort((x, y) => compareValues(x, y, "number"))).toEqual(
+        sorted,
+      );
+    }
+  });
   it("shows and sorts answer integers beyond 2^53 exactly", () => {
     // DuckDB sends sums and counts of BIGINT columns as text.
     const rows = [
