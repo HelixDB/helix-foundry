@@ -14,7 +14,7 @@ import type {
 } from "../../../../../packages/shared/src";
 import { api } from "../../api";
 import { useWorkspace } from "../../ui";
-import { Button, Panel, Skeleton, StatCard, cx } from "../../kit";
+import { Button, Panel, Skeleton, StatCard, calendarDate, cx } from "../../kit";
 import { paths } from "../../paths";
 
 // `text` is the exact value, in the metric's format, when `value` cannot hold
@@ -78,7 +78,7 @@ const formatTick = (v: number, format: Format) =>
 function parseLabel(label: string) {
   const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(label);
   return m
-    ? { date: new Date(+m[1], +m[2] - 1, m[3] ? +m[3] : 1), day: !!m[3] }
+    ? { date: calendarDate(+m[1], +m[2], m[3] ? +m[3] : 1), day: !!m[3] }
     : null;
 }
 // Axis text ("Jan 26", "Mar 3") or tooltip text ("January 2026", "Week of Mar 3, 2026").

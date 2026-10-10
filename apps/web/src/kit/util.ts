@@ -59,6 +59,13 @@ export const formatNumber = (n: number | bigint | string | null | undefined) =>
       : decimal.format(Number(n));
 export const formatCompact = (n: number) =>
   Math.abs(n) < 10000 ? integer.format(n) : compact.format(n);
+// A calendar day as local midnight. The multi-argument Date constructor maps
+// years 0–99 to 1900–1999, so the year is set again.
+export function calendarDate(year: number, month: number, day = 1) {
+  const d = new Date(year, month - 1, day);
+  d.setFullYear(year, month - 1, day);
+  return d;
+}
 export function formatDate(value: unknown, withTime = true) {
   // "2026-09-16" is a calendar day: read it as local midnight, not UTC.
   const day =
@@ -66,10 +73,8 @@ export function formatDate(value: unknown, withTime = true) {
       ? value.split("-").map(Number)
       : undefined;
   const d = day
-    ? new Date(day[0], day[1] - 1, day[2])
+    ? calendarDate(day[0], day[1], day[2])
     : new Date(value as string);
-  // The multi-argument Date constructor maps years 0–99 to 1900–1999.
-  if (day) d.setFullYear(day[0], day[1] - 1, day[2]);
   if (Number.isNaN(d.getTime())) return String(value);
   return withTime
     ? d.toLocaleString(undefined, {

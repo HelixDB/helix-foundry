@@ -7,6 +7,7 @@ import type { HomeMetric } from "../../../../../packages/shared/src";
 import {
   Button,
   DataGrid,
+  calendarDate,
   compareValues,
   formatNumber,
   formatValue,
@@ -70,7 +71,7 @@ const calendar = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/;
 function calendarText(v: unknown): string | null {
   const m = typeof v === "string" ? calendar.exec(v) : null;
   if (!m) return null;
-  const d = new Date(+m[1], +m[2] - 1, m[3] ? +m[3] : 1);
+  const d = calendarDate(+m[1], +m[2], m[3] ? +m[3] : 1);
   return d.toLocaleDateString(
     undefined,
     m[3]

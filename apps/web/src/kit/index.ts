@@ -58,6 +58,7 @@ export {
   formatNumber,
   formatCompact,
   formatDate,
+  calendarDate,
   formatRelative,
   formatValue,
   compareValues,
