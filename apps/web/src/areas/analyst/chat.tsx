@@ -32,6 +32,7 @@ import {
   MenuItem,
   Skeleton,
   SkeletonText,
+  cx,
   formatRelative,
   plural,
   useNow,
@@ -52,6 +53,7 @@ import {
 import { chatListKey, chatListQuery } from "./launcher";
 import { PromptInput } from "./prompt-input";
 import { Avatar, Reply, Working, useRunControl } from "./reply";
+import { VoiceOrb, useVoice, voiceHint } from "./voice";
 
 const anyWorking = (runs?: Resource[]) =>
   !!runs?.some((r) => isWorking(r.data.status));
@@ -279,6 +281,21 @@ function Conversation({ chat }: { chat: Chat }) {
   const [text, setText] = useState(() => readDraft(draftKey)),
     [pending, setPending] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  // Hands-free voice in this chat: the user's words show in the composer
+  // until GPT-Live hands them to the Analyst; typing pauses the microphone.
+  const voice = useVoice(),
+    voiceHere = voice.status !== "off" && voice.chatId === chat.id,
+    showHeard = voiceHere && !text && !voice.paused && !!voice.heard,
+    hint =
+      voiceHere && text && voice.heard && !voice.paused
+        ? // A typed draft is kept; what was heard shows here instead.
+          `Heard: ${voice.heard}`
+        : voiceHere || voice.error
+          ? voiceHint(voice)
+          : null;
+  useEffect(() => {
+    if (voiceHere && voice.paused && !text) voice.resumeListening();
+  }, [voiceHere, voice.paused, text]);
 
   // Follows the newest message unless the reader has scrolled up.
   const scroller = useRef<HTMLDivElement>(null),
@@ -337,6 +354,7 @@ function Conversation({ chat }: { chat: Chat }) {
       qc.setQueryData<Chat | null>(chatKey(id, chat.id), (c) =>
         c ? { ...c, runs: [...c.runs.filter((r) => r.id !== run.id), run] } : c,
       );
+      if (voiceHere) voice.noteTyped(goal);
       void qc.invalidateQueries({ queryKey: chatListKey(id) });
     } catch (e) {
       notify((e as Error).message, true);
@@ -399,6 +417,11 @@ function Conversation({ chat }: { chat: Chat }) {
               Jump to latest
             </button>
           )}
+          {voice.available || voiceHere ? (
+            <div className="an-voice">
+              <VoiceOrb chatId={chat.id} placement="chat" />
+            </div>
+          ) : null}
           <form
             className="an-composer"
             onSubmit={(e) => {
@@ -411,13 +434,18 @@ function Conversation({ chat }: { chat: Chat }) {
           >
             <PromptInput
               inputRef={input}
-              className="an-input"
+              className={cx("an-input", showHeard && "is-voice")}
               aria-label="Ask a follow-up"
               aria-describedby="an-composer-hint"
-              placeholder="Ask a follow-up…"
+              placeholder={
+                voiceHere && !voice.paused ? "Listening…" : "Ask a follow-up…"
+              }
               maxLength={4000}
-              value={text}
+              value={showHeard ? voice.heard : text}
               onValueChange={(v) => {
+                // Typing (or correcting what was heard) takes the composer
+                // back from voice until it is sent or cleared.
+                if (voiceHere && v) voice.pauseForTyping();
                 setText(v);
                 writeDraft(draftKey, v);
               }}
@@ -450,10 +478,19 @@ function Conversation({ chat }: { chat: Chat }) {
               </button>
             )}
           </form>
-          <p id="an-composer-hint" className="an-hint">
-            {latestWorking
-              ? "You can send a follow-up once this answer is ready."
-              : "Enter to send · Shift+Enter for a new line"}
+          <p
+            id="an-composer-hint"
+            className={cx(
+              "an-hint",
+              hint && !voice.error && "is-voice",
+              voice.error && "is-error",
+            )}
+            role={voice.error ? "alert" : undefined}
+          >
+            {hint ||
+              (latestWorking
+                ? "You can send a follow-up once this answer is ready."
+                : "Enter to send · Shift+Enter for a new line")}
           </p>
         </div>
       </div>

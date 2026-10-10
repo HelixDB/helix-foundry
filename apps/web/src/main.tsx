@@ -26,6 +26,7 @@ import { WorkspaceContext, Loading, type AskContext } from "./ui";
 import { Button, SkeletonText, readStorage, writeStorage } from "./kit";
 import { Shell } from "./shell/Shell";
 import { LiveActivityProvider } from "./shell/live";
+import { VoiceProvider } from "./areas/analyst/voice";
 import {
   ChromeBoundary,
   NotFound,
@@ -241,20 +242,23 @@ function App() {
     <WorkspaceContext.Provider value={context}>
       <div className="hf-app">
         <LiveActivityProvider workspaceId={selected.id}>
-          <Shell
-            workspaces={me.data.workspaces}
-            current={selected}
-            user={me.data.user}
-            onSwitch={setChosen}
-          >
-            <RouteErrorBoundary resetKey={location.pathname}>
-              <Suspense fallback={<RouteFallback />}>
-                <div key={selected.id} className="hf-route">
-                  <WorkspaceRoutes />
-                </div>
-              </Suspense>
-            </RouteErrorBoundary>
-          </Shell>
+          {/* Keyed by workspace: switching ends voice and its microphone. */}
+          <VoiceProvider key={selected.id} workspaceId={selected.id}>
+            <Shell
+              workspaces={me.data.workspaces}
+              current={selected}
+              user={me.data.user}
+              onSwitch={setChosen}
+            >
+              <RouteErrorBoundary resetKey={location.pathname}>
+                <Suspense fallback={<RouteFallback />}>
+                  <div key={selected.id} className="hf-route">
+                    <WorkspaceRoutes />
+                  </div>
+                </Suspense>
+              </RouteErrorBoundary>
+            </Shell>
+          </VoiceProvider>
           {askContext && (
             <ChromeBoundary
               name="Ask panel"

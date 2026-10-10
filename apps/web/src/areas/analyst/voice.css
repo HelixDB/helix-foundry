@@ -1,0 +1,123 @@
+/* Voice orb: a small secondary control beside the composers. The only blue on
+   the page; it glows for as long as a GPT-Live session is connected. */
+.hf-voice-orb {
+  display: grid;
+  flex: none;
+  place-items: center;
+  /* A comfortable touch target around a small mark. */
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--hf-radius-pill);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--hf-duration) var(--hf-ease);
+}
+.hf-voice-orb:hover {
+  background: var(--hf-info-soft);
+}
+.hf-voice-orb:focus-visible {
+  outline: 2px solid var(--hf-info);
+  outline-offset: 2px;
+}
+.hf-voice-orb-mark {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 26%,
+    color-mix(in srgb, white 85%, var(--hf-info)) 0%,
+    color-mix(in srgb, white 35%, var(--hf-info)) 28%,
+    var(--hf-info) 67%,
+    color-mix(in srgb, black 30%, var(--hf-info)) 100%
+  );
+  box-shadow: inset -2px -2px 4px color-mix(in srgb, black 16%, transparent);
+  opacity: 0.85;
+  transition:
+    opacity var(--hf-duration) var(--hf-ease),
+    box-shadow var(--hf-duration) var(--hf-ease);
+}
+.hf-voice-orb.is-chat .hf-voice-orb-mark {
+  width: 24px;
+  height: 24px;
+}
+.hf-voice-orb:hover .hf-voice-orb-mark {
+  opacity: 1;
+}
+/* Connecting: a quiet ring, never the live glow. */
+.hf-voice-orb.is-connecting .hf-voice-orb-mark {
+  opacity: 0.6;
+  outline: 2px dashed color-mix(in srgb, var(--hf-info) 55%, transparent);
+  outline-offset: 3px;
+  animation: hf-voice-turn 2.4s linear infinite;
+}
+/* Live: a steady glow through listening, lookups and speech. */
+.hf-voice-orb.is-live .hf-voice-orb-mark {
+  opacity: 1;
+  box-shadow:
+    0 0 8px 3px color-mix(in srgb, var(--hf-info) 45%, transparent),
+    0 0 20px 6px color-mix(in srgb, var(--hf-info) 22%, transparent);
+  animation: hf-voice-breathe 2.4s ease-in-out infinite;
+}
+@keyframes hf-voice-breathe {
+  50% {
+    transform: scale(1.06);
+  }
+}
+@keyframes hf-voice-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hf-voice-orb .hf-voice-orb-mark {
+    animation: none !important;
+  }
+}
+
+/* Home: the orb follows the Ask box, outside its border. */
+.wk-ask-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wk-ask-row > .wk-ask-box {
+  flex: 1;
+  min-width: 0;
+}
+.wk-voice-hint {
+  margin: 8px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+}
+.wk-voice-hint.is-error,
+.an-hint.is-error {
+  color: var(--hf-danger-text);
+}
+
+/* Chat: the orb sits centred above the composer, outside its border. */
+.an-voice {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 4px;
+}
+/* The user's words while they speak: shown in the composer, not yet sent. */
+.an-composer .an-input.is-voice,
+.wk-ask-box textarea.is-voice {
+  color: var(--hf-text-2);
+}
+.an-hint.is-voice {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Phones hide the keyboard hint, but voice status and errors still show. */
+@media (max-width: 800px) {
+  .an-chat .an-hint.is-voice,
+  .an-chat .an-hint.is-error {
+    display: block;
+  }
+}

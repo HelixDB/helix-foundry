@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import {
   BundleSchema,
   GoalSchema,
@@ -14,10 +15,24 @@ import {
   assistantResource,
   threadOf,
 } from "../assistant.js";
+import { createLiveBridge } from "../live.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
+const LiveSessionSchema = z.object({
+  // The browser's WebRTC offer.
+  sdp: z.string().min(1).max(100_000),
+  // The chat to continue; omitted on Home, where the first question starts one.
+  chatId: z.string().min(1).max(200).nullish(),
+});
+const LiveContextSchema = z.object({
+  chatId: z.string().min(1).max(200).optional(),
+  typed: z.string().min(1).max(4000).optional(),
+});
 export const analystSchemas: RequestSchemas = {
   "POST /api/v1/workspaces/:w/assistant/runs": GoalSchema,
+  "POST /api/v1/workspaces/:w/live/sessions": LiveSessionSchema,
+  "POST /api/v1/workspaces/:w/live/sessions/:sessionId/context":
+    LiveContextSchema,
 };
 
 // AIP Analyst: assistant runs and their controls.
@@ -197,6 +212,63 @@ export function registerAnalystRoutes(
           ],
         }),
       );
+    },
+  );
+
+  // Hands-free voice (GPT-Live): see ../live.ts.
+  const live = createLiveBridge(store);
+  app.addHook("onClose", async () => live.close());
+  app.get("/api/v1/workspaces/:w/live", async (req) => {
+    const a = await access(req);
+    return live.availability(a.scope);
+  });
+  app.post("/api/v1/workspaces/:w/live/sessions", async (req) => {
+    const a = await access(req),
+      b = LiveSessionSchema.parse(req.body);
+    return live.create({
+      scope: a.scope,
+      userId: a.user.id,
+      readOnly: a.role === "viewer" || !!a.session.data.readOnly,
+      sdp: b.sdp,
+      chatId: b.chatId,
+    });
+  });
+  app.get(
+    "/api/v1/workspaces/:w/live/sessions/:sessionId",
+    async (req: any) => {
+      const a = await access(req);
+      return live.state(req.params.sessionId, a.scope, a.user.id);
+    },
+  );
+  app.post(
+    "/api/v1/workspaces/:w/live/sessions/:sessionId/delegations/:delegationId",
+    async (req: any) => {
+      const a = await access(req);
+      return live.claim(
+        req.params.sessionId,
+        a.scope,
+        a.user.id,
+        String(req.params.delegationId).slice(0, 200),
+      );
+    },
+  );
+  app.post(
+    "/api/v1/workspaces/:w/live/sessions/:sessionId/context",
+    async (req: any) => {
+      const a = await access(req);
+      return live.context(
+        req.params.sessionId,
+        a.scope,
+        a.user.id,
+        LiveContextSchema.parse(req.body),
+      );
+    },
+  );
+  app.delete(
+    "/api/v1/workspaces/:w/live/sessions/:sessionId",
+    async (req: any) => {
+      const a = await access(req);
+      return live.end(req.params.sessionId, a.scope, a.user.id);
     },
   );
 }

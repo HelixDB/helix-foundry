@@ -63,12 +63,18 @@ Each area owns its section below; add new routes to your own section.
 
 ### Analyst
 
-| Method / path                            | Input / result                                                                                            |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| POST `/assistant/runs`                   | `{ goal, intent?: 'build' \| 'answer' \| 'auto', parentId?, context?: {page?,resourceId?} }`; durable run |
-| POST `/assistant/runs/:id/cancel`        | `{}`; cancel a run                                                                                        |
-| POST `/assistant/runs/:id/resume`        | `{}`; resume an interrupted run from saved stages                                                         |
-| POST `/assistant/runs/:id/save-analysis` | `{}`; create a dashboard proposal from an executed answer                                                 |
+| Method / path                                       | Input / result                                                                                            |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| POST `/assistant/runs`                              | `{ goal, intent?: 'build' \| 'answer' \| 'auto', parentId?, context?: {page?,resourceId?} }`; durable run |
+| POST `/assistant/runs/:id/cancel`                   | `{}`; cancel a run                                                                                        |
+| POST `/assistant/runs/:id/resume`                   | `{}`; resume an interrupted run from saved stages                                                         |
+| POST `/assistant/runs/:id/save-analysis`            | `{}`; create a dashboard proposal from an executed answer                                                 |
+| GET `/live`                                         | `{ available, reason? }`; hands-free voice needs the OpenAI provider with GPT-Live (`gpt-live-1`) access  |
+| POST `/live/sessions`                               | `{ sdp, chatId? }` → `{ sessionId, sdp, chatId }`; starts a GPT-Live WebRTC session for the browser       |
+| POST `/live/sessions/:id/delegations/:delegationId` | `{}` → `{ status, action, question, runId, chatId }`; the Analyst run answering a delegation              |
+| POST `/live/sessions/:id/context`                   | `{ chatId?, typed? }`; the chat a session moved into, or a question typed during voice                    |
+| GET `/live/sessions/:id`                            | Session state and per-delegation timings (ms): resolved, enqueued, finished, answerSent, answerDelivered  |
+| DELETE `/live/sessions/:id`                         | Releases the server side after the browser closes the session                                             |
 
 ### Setup: hosting providers
 

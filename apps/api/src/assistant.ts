@@ -379,6 +379,27 @@ export async function saveProposal(
     return p;
   });
 }
+// Model tokens used in the workspace today: runs, jobs and other AI calls
+// (such as voice) recorded as usage.
+export async function tokensToday(store: Store, scope: string) {
+  return [
+    ...(await store.list(scope, "run")),
+    ...(await store.list(scope, "job")),
+    ...(await store.list(scope, "usage")),
+  ]
+    .filter((r) => r.updatedAt.slice(0, 10) === now().slice(0, 10))
+    .reduce((n, r) => n + (r.data.tokens || 0), 0);
+}
+// Records tokens used outside a run, counted towards today's budget.
+export async function recordUsage(store: Store, scope: string, tokens: number) {
+  if (!tokens) return;
+  const id = "usage-" + now().slice(0, 10);
+  await transaction(store, scope, async (tx) => {
+    const r = await tx.get(id);
+    if (r) tx.update(r, { ...r.data, tokens: (r.data.tokens || 0) + tokens });
+    else tx.put(resource(scope, "usage", "AI usage", { tokens }, id));
+  });
+}
 export async function enqueue(
   store: Store,
   scope: string,
@@ -594,12 +615,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       Date.now() - start < settings.timeoutSeconds * 1000,
       "Run time budget exhausted",
     );
-    const today = [
-      ...(await store.list(scope, "run")),
-      ...(await store.list(scope, "job")),
-    ]
-      .filter((r) => r.updatedAt.slice(0, 10) === now().slice(0, 10))
-      .reduce((n, r) => n + (r.data.tokens || 0), 0);
+    const today = await tokensToday(store, scope);
     assert(
       today < settings.dailyTokens,
       "Workspace daily token budget exhausted",
@@ -805,6 +821,33 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       );
     }
     if (intent === "answer") {
+      // Tables by readable name (orders, order_items): models miscopy long
+      // hashed names, joining a lookalike or a table that doesn't exist. The
+      // executor serves each input under these names too.
+      const readable = new Map<string, string>();
+      {
+        const count = new Map<string, number>();
+        // Names over 100 characters have no alias and keep their table name.
+        const aliasOf = (d: any) => datasetAliases(d.name).at(-1) || "";
+        for (const d of context.datasets) {
+          const name = aliasOf(d).toLowerCase();
+          count.set(name, (count.get(name) || 0) + 1);
+        }
+        for (const d of context.datasets) {
+          const name = aliasOf(d);
+          if (
+            name &&
+            count.get(name.toLowerCase()) === 1 &&
+            /^[a-z_][a-z0-9_]*$/i.test(name) &&
+            name.toLowerCase() !== "result" &&
+            !/^d_/i.test(name)
+          )
+            readable.set(d.id, name);
+        }
+        context.datasets = context.datasets.map((d: any) =>
+          readable.has(d.id) ? { ...d, table: readable.get(d.id) } : d,
+        );
+      }
       const analysis = z.object({
         title: z.string(),
         sql: z.string(),
@@ -814,7 +857,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       let plan = await ask(
         "analysis",
         analysis,
-        "Answer the question with one read-only SQL query. Return a short title and list unresolved business assumptions. Do not calculate results yourself. List every dataset the query reads in inputs. Stripe amounts (amount_* columns) are in cents: divide by 100.0 for currency. When joining tables with several rows per key (users and invoices of one account), aggregate each in its own subquery first so rows aren't multiplied.",
+        "Answer the question with one read-only SQL query. Refer to each dataset by its table value exactly. Return a short title and list unresolved business assumptions. Do not calculate results yourself. List every dataset the query reads in inputs. Stripe amounts (amount_* columns) are in cents: divide by 100.0 for currency. When joining tables with several rows per key (users and invoices of one account), aggregate each in its own subquery first so rows aren't multiplied.",
       );
       const map = await datasetsMap(store, scope);
       // The sandbox loads only the query's inputs. Models sometimes join a
@@ -823,6 +866,10 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       const inputsOf = (p: z.infer<typeof analysis>) => {
         const named = new Set(
           (p.sql.match(/\bd_[a-z0-9_]+\b/gi) || []).map((t) => t.toLowerCase()),
+        );
+        // Every word of the SQL, to find tables named by their readable name.
+        const words = new Set(
+          (p.sql.match(/[a-z_][a-z0-9_]*/gi) || []).map((t) => t.toLowerCase()),
         );
         const listed = p.inputs.map((ref) => {
           if (map.has(ref)) return ref;
@@ -836,8 +883,10 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         return [
           ...new Set([
             ...listed.filter((ref) => map.has(ref)),
-            ...[...map.keys()].filter((d) =>
-              named.has(datasetTable(d).toLowerCase()),
+            ...[...map.keys()].filter(
+              (d) =>
+                named.has(datasetTable(d).toLowerCase()) ||
+                words.has(readable.get(d)?.toLowerCase() ?? "\0"),
             ),
           ]),
         ];

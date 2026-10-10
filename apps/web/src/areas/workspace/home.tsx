@@ -45,6 +45,7 @@ import {
 import { paths } from "../../paths";
 import { readRecents, sectionIcon } from "../../shell/recents";
 import { useAskAnalyst } from "../analyst/launcher";
+import { VoiceOrb, useVoice, voiceHint } from "../analyst/voice";
 import { KeyMetrics } from "./metrics";
 
 type Connection = HomeSummary["connections"][number];
@@ -82,6 +83,19 @@ function AskBox({ summary }: { summary?: HomeSummary }) {
   const input = useRef<HTMLTextAreaElement>(null),
     location = useLocation(),
     hintId = useId();
+  // Voice started here belongs to no chat until its first question opens one.
+  const voice = useVoice(),
+    voiceHere = voice.status !== "off" && !voice.chatId,
+    showHeard = voiceHere && !text && !voice.paused && !!voice.heard,
+    voiceText =
+      voiceHere && text && voice.heard && !voice.paused
+        ? `Heard: ${voice.heard}`
+        : voiceHere || voice.error
+          ? voiceHint(voice)
+          : null;
+  useEffect(() => {
+    if (voiceHere && voice.paused && !text) voice.resumeListening();
+  }, [voiceHere, voice.paused, text]);
   // "New chat" in the sidebar lands here with { ask: true }.
   useEffect(() => {
     if ((location.state as { ask?: boolean } | null)?.ask)
@@ -93,7 +107,7 @@ function AskBox({ summary }: { summary?: HomeSummary }) {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 140) + "px";
-  }, [text]);
+  }, [text, showHeard && voice.heard]);
   const suggestions = useMemo(() => {
     const types = summary?.ontology.types || [],
       link = summary?.ontology.links[0];
@@ -117,6 +131,8 @@ function AskBox({ summary }: { summary?: HomeSummary }) {
     setText(prompt);
     setPending(true);
     try {
+      // A typed question during voice: its chat becomes the voice chat.
+      if (voiceHere) voice.noteTyped(prompt.trim());
       // Success opens the chat; on failure the error is shown and the
       // question stays in the box.
       if (!(await ask({ prompt }))) input.current?.focus();
@@ -134,43 +150,63 @@ function AskBox({ summary }: { summary?: HomeSummary }) {
         void submit(text);
       }}
     >
-      <div className="wk-ask-box" onClick={() => input.current?.focus()}>
-        <Sparkles size={18} className="wk-ask-icon" aria-hidden />
-        <textarea
-          ref={input}
-          rows={1}
-          aria-label="Ask anything about your data"
-          aria-describedby={hintId}
-          placeholder={
-            small ? "Ask about your data…" : "Ask anything about your data…"
-          }
-          value={text}
-          readOnly={pending}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (
-              e.key === "Enter" &&
-              !e.shiftKey &&
-              !e.nativeEvent.isComposing
-            ) {
-              e.preventDefault();
-              void submit(text);
+      <div className="wk-ask-row">
+        <div className="wk-ask-box" onClick={() => input.current?.focus()}>
+          <Sparkles size={18} className="wk-ask-icon" aria-hidden />
+          <textarea
+            ref={input}
+            rows={1}
+            aria-label="Ask anything about your data"
+            aria-describedby={hintId}
+            className={cx(showHeard && "is-voice")}
+            placeholder={
+              voiceHere && !voice.paused
+                ? "Listening…"
+                : small
+                  ? "Ask about your data…"
+                  : "Ask anything about your data…"
             }
-          }}
-        />
-        <button
-          type="submit"
-          className={cx("wk-ask-send", pending && "is-pending")}
-          aria-label="Ask"
-          disabled={pending || text.trim().length < 5}
-        >
-          {pending ? (
-            <LoaderCircle size={17} className="hf-spin" aria-hidden />
-          ) : (
-            <ArrowUp size={17} aria-hidden />
-          )}
-        </button>
+            value={showHeard ? voice.heard : text}
+            readOnly={pending}
+            onChange={(e) => {
+              // Typing takes the box back from voice until sent or cleared.
+              if (voiceHere && e.target.value) voice.pauseForTyping();
+              setText(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
+                e.preventDefault();
+                void submit(text);
+              }
+            }}
+          />
+          <button
+            type="submit"
+            className={cx("wk-ask-send", pending && "is-pending")}
+            aria-label="Ask"
+            disabled={pending || text.trim().length < 5}
+          >
+            {pending ? (
+              <LoaderCircle size={17} className="hf-spin" aria-hidden />
+            ) : (
+              <ArrowUp size={17} aria-hidden />
+            )}
+          </button>
+        </div>
+        <VoiceOrb chatId={null} placement="home" />
       </div>
+      {voiceText && (
+        <p
+          className={cx("wk-voice-hint", voice.error && "is-error")}
+          role={voice.error ? "alert" : undefined}
+        >
+          {voiceText}
+        </p>
+      )}
       <span id={hintId} className="hf-sr-only">
         Press Enter to ask. Shift+Enter adds a new line.
       </span>
