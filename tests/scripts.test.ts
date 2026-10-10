@@ -459,6 +459,38 @@ describe("restore.sh", () => {
     expect(f.calls()).toEqual([]);
   });
 
+  it("reads COMPOSE_PROJECT_NAME from .env and the shell, as Compose does", () => {
+    const f = fixture();
+    writeFileSync(join(f.root, ".env"), ENV + "COMPOSE_PROJECT_NAME=other\n");
+    const dir = join(f.base, "backup");
+    let r = f.run("backup.sh", [dir]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(field(dir, "compose_project")).toBe("other");
+    expect(f.calls()).toContain("volume inspect other_helix-data");
+    expect(f.calls()).toContain(
+      "run --rm -v other_foundry-data:/data:ro alpine:3.22 tar czf - -C /data .",
+    );
+    expect(f.calls().join("\n")).not.toContain("helix-foundry_");
+    f.clearCalls();
+    r = f.run("restore.sh", [dir, "--replace"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.calls()).toEqual(
+      RESTORE_CALLS.map((call) => call.replace("helix-foundry_", "other_")),
+    );
+    // The shell's COMPOSE_PROJECT_NAME comes first.
+    const shell = backup(f, [], { COMPOSE_PROJECT_NAME: "mine" });
+    expect(field(shell, "compose_project")).toBe("mine");
+    // A .env for another project would restore one project and start another.
+    const elsewhere = join(f.base, "elsewhere.env");
+    writeFileSync(elsewhere, ENV + "COMPOSE_PROJECT_NAME=elsewhere\n");
+    r = f.run("restore.sh", [dir, "--replace", "--env-file", elsewhere]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("names Compose project elsewhere");
+    expect(r.stderr).toContain("runs as other");
+    expect(f.calls()).toEqual([]);
+    expect(f.env()).toBe(ENV + "COMPOSE_PROJECT_NAME=other\n");
+  });
+
   it("refuses another key unless --env-file names the kept .env", () => {
     const f = fixture();
     const dir = backup(f);

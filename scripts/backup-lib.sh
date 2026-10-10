@@ -53,6 +53,18 @@ manifest_field() {
   if [ -f "$1" ]; then sed -n "s/^$2=//p" "$1" | tail -n 1; fi
 }
 
+# Prints the Compose project name, which names the volumes, as Compose finds it:
+# COMPOSE_PROJECT_NAME from the shell, else from env file $1 (default .env), else
+# the top-level name in compose.yaml.
+compose_project() {
+  local name=${COMPOSE_PROJECT_NAME:-} file=${1:-.env}
+  if [ -z "$name" ] && [ -f "$file" ]; then name=$(env_value COMPOSE_PROJECT_NAME < "$file"); fi
+  if [ -z "$name" ] && [ -f compose.yaml ]; then
+    name=$(sed -n "s/^name:[[:space:]]*[\"']\{0,1\}\([A-Za-z0-9_-]*\).*/\1/p" compose.yaml | head -n 1)
+  fi
+  printf '%s\n' "${name:-helix-foundry}"
+}
+
 # Prints the image of the helix service in a compose file read on stdin.
 helix_image() {
   awk '/^  [A-Za-z0-9_-]+:/ { helix = ($1 == "helix:") }

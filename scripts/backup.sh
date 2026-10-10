@@ -41,10 +41,10 @@ NOTE
   [ "${#passphrase}" -ge 12 ] || die 'Use a passphrase of at least 12 characters.'
 fi
 docker_ready
-project_name="${COMPOSE_PROJECT_NAME:-helix-foundry}"
+project_name=$(compose_project)
 for volume in helix-data foundry-data; do
   docker volume inspect "${project_name}_$volume" > /dev/null 2>&1 \
-    || die "Docker volume ${project_name}_$volume does not exist. Run this from the checkout that runs Helix Foundry, with the same COMPOSE_PROJECT_NAME."
+    || die "Docker volume ${project_name}_$volume does not exist. Run this from the checkout that runs Helix Foundry, with the same COMPOSE_PROJECT_NAME in the shell or .env."
 done
 created=""
 [ -d "$backup_dir" ] || created=1

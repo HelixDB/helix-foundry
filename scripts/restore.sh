@@ -187,6 +187,12 @@ fi
 [ -n "$(key_fingerprint < "${tmp:-.env}")" ] \
   || die "ENCRYPTION_KEY in $from is missing or shorter than 32 characters. $unchanged"
 key_set INTERNAL_KEY < "${tmp:-.env}" || die "INTERNAL_KEY in $from is missing or too short. $unchanged"
+# Compose also reads COMPOSE_PROJECT_NAME from .env, and the project names the
+# volumes, so a new .env must keep the project whose volumes this replaces.
+project_name=$(compose_project "${tmp:-.env}")
+if [ -n "$tmp" ] && [ -f .env ] && [ "$(compose_project .env)" != "$project_name" ]; then
+  die "COMPOSE_PROJECT_NAME in $from names Compose project $project_name, but this installation runs as $(compose_project .env), so the restore would replace one project's volumes and start the other. Make the two .env files name the same project. $unchanged"
+fi
 if [ -n "$tmp" ] && [ -f .env ] && cmp -s .env "$tmp"; then
   rm -f "$tmp"
   tmp=""
@@ -207,7 +213,6 @@ fi
 
 failed='The restore did not finish: the services are stopped, and the data may be partly replaced. Fix the error, then run the same command again.'
 docker compose stop app worker executor helix
-project_name="${COMPOSE_PROJECT_NAME:-helix-foundry}"
 for volume in helix-data foundry-data; do
   docker run --rm -i -v "${project_name}_$volume:/data" alpine:3.22 \
     sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar xzf - -C /data' \
