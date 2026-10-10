@@ -11,6 +11,7 @@ import { buildWorkspace, providerSettings, enqueue } from "./assistant.js";
 import { assert } from "./security.js";
 import { runSyncJob, runUploadJob } from "./data-jobs.js";
 import { runPipelineJob } from "./pipeline-jobs.js";
+import { sweepResults } from "./results.js";
 // Queue, leases and retries live here; each job type's work lives with its area.
 const jobHandlers: Record<
   string,
@@ -222,9 +223,14 @@ export function startWorker(store: Store) {
   const timer = setInterval(() => {
     if (!busy) running = tick();
   }, 2000);
+  // Result files left by publications that stopped mid-read.
+  const sweep = () => void sweepResults().catch(console.error);
+  sweep();
+  const sweeper = setInterval(sweep, 10 * 60000);
   return async () => {
     stopped = true;
     clearInterval(timer);
+    clearInterval(sweeper);
     await stopStreams();
     await running;
   };

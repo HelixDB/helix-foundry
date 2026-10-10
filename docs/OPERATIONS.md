@@ -26,7 +26,7 @@ Monitor source-side WAL/binlog disk retention. Configure PostgreSQL's `max_slot_
 4. Set `COMPOSE_PROJECT_NAME` when using a nondefault project name; use the same name throughout backup and restore.
 5. Before upgrades, retain the old application commit, lockfile, image, and backup. Rebuild and run diagnostics, sample ingestion, a saved query, and proposal validation before using the installation again. Revert the application plus matching data backup if an upgrade fails.
 
-Model weights are reproducible and excluded from application backups. Parquet versions and staged artifacts are immutable; unsuccessful previews can consume disk. There is no automatic artifact garbage collector in this MVP. Remove unreferenced files only during offline maintenance, after checking proposal/run previews and version records.
+Model weights are reproducible and excluded from application backups. Parquet versions and staged artifacts are immutable; unsuccessful previews can consume disk. Publication has the executor write each object type's and relationship's rows to `DATA_DIR/results` as JSON lines, about the size of the table, and the reader deletes each file once it has read it; the worker removes files there older than ten minutes, which a stopped publication leaves behind, when it starts and every ten minutes. There is no automatic artifact garbage collector in this MVP. Remove unreferenced files only during offline maintenance, after checking proposal/run previews and version records.
 
 ## Deployment limits
 

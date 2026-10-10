@@ -122,7 +122,7 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 
 **Validation.** Model-generated definitions are schema-checked and executed against the data. A passing syntax and quality check does not prove business meaning, so proposals show their assumptions and unmatched relationships for review. Guided setup publishes only what passes validation, built from the ontology you confirmed. Model quality and latency depend on your hardware and the selected model. The default Qwen digest is recorded in [`models.json`](models.json), and installation verifies it before activation.
 
-**Publishing and rollback.** Publishing checks the exact proposal hash and input versions, then switches generations. Revalidating creates a new reviewable proposal. Rollback revalidates and rematerialises the previous definitions against current snapshots, while preserving manual actions and their audit history. Failed staging artifacts can be removed during offline maintenance, after checking that no publication references them.
+**Publishing and rollback.** Publishing checks the exact proposal hash and input versions, then switches generations. Each object type and relationship is one executor query, whose rows the worker reads back and stages in batches; a type whose record count differs from its snapshot stops the publication, and the previous generation stays active. Revalidating creates a new reviewable proposal. Rollback revalidates and rematerialises the previous definitions against current snapshots, while preserving manual actions and their audit history. Failed staging artifacts can be removed during offline maintenance, after checking that no publication references them.
 
 ## Architecture
 

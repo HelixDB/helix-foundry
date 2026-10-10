@@ -24,6 +24,7 @@ import { transaction, resource, now, type Store } from "./store.js";
 import { digest, assert, unseal, seal, AppError, redact } from "./security.js";
 import { Provider } from "./providers.js";
 import { execute } from "./executor.js";
+import { resultBatches } from "./results.js";
 import { config } from "./config.js";
 import { pipelineId } from "./datasets.js";
 import { ontologyBundle, overviewDashboard } from "./discovery.js";
@@ -1437,6 +1438,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       // who confirmed the ontology, which completes onboarding.
       await event(store, scope, id, "publishing", "Publishing your workspace", {
         proposalId: proposal.id,
+        progress: { records: 0 },
       });
       await publishProposal(
         store,
@@ -1568,6 +1570,23 @@ export async function publishProposal(
       r,
     ]),
   );
+  // Setup's progress shows how many rows publication has read. Saving it is
+  // best effort and never fails the publication.
+  let read = 0,
+    reported = 0;
+  const progress = async (rows: number, force = false) => {
+    read += rows;
+    const runId = proposal.data.onboardingRunId;
+    if (!runId || (!force && Date.now() - reported < 2000)) return;
+    reported = Date.now();
+    await transaction(store, scope, async (tx) => {
+      const run = await tx.get(runId);
+      if (run && ["queued", "running"].includes(run.data.status))
+        tx.update(run, { ...run.data, progress: { records: read } });
+    }).catch(() => {});
+  };
+  // Each type and relationship is one executor query, read back in batches of
+  // 500 staged records.
   for (const type of bundle.ontology) {
     const dataset = map.get(type.datasetId);
     assert(dataset, "Dataset unavailable");
@@ -1577,17 +1596,13 @@ export async function publishProposal(
     assets.push(
       resource(scope, "objectType", type.name, { ...type, generation, typeId }),
     );
-    for (let offset = 0; offset < dataset.data.profile.rows; offset += 500) {
-      const r = await execute({
-        mode: "query",
-        scope,
-        inputs: inputsFor([type.datasetId], map),
-        sql: `SELECT * FROM "${datasetTable(type.datasetId)}"`,
-        version: randomUUID(),
-        offset,
-        limit: 500,
-      });
-      const staged = r.rows.map((row) => {
+    let rows = 0;
+    for await (const batch of resultBatches({
+      scope,
+      inputs: inputsFor([type.datasetId], map),
+      sql: `SELECT * FROM "${datasetTable(type.datasetId)}"`,
+    })) {
+      const staged = batch.map((row) => {
         const key = String(row[type.primaryKey]),
           logicalId = digest(typeId + ":" + key).slice(0, 32),
           obj = resource(
@@ -1611,7 +1626,13 @@ export async function publishProposal(
       await transaction(store, scope, async (tx) => {
         staged.forEach((o) => tx.put(o));
       });
+      rows += batch.length;
+      await progress(batch.length);
     }
+    assert(
+      rows === dataset.data.profile.rows,
+      `Read ${rows} of ${dataset.data.profile.rows} ${type.name} records. The workspace was not published.`,
+    );
   }
   for (const o of manualObjects) {
     const lookup = identities.get(o.data.type);
@@ -1632,21 +1653,13 @@ export async function publishProposal(
     const fromType = bundle.ontology.find((o) => o.name === rel.fromType)!,
       toType = bundle.ontology.find((o) => o.name === rel.toType)!;
     const sql = `SELECT a.${quote(fromType.primaryKey)} AS from_key,b.${quote(toType.primaryKey)} AS to_key FROM ${quote(datasetTable(fromType.datasetId))} a JOIN ${quote(datasetTable(toType.datasetId))} b ON a.${quote(rel.fromColumn)}=b.${quote(rel.toColumn)}`;
-    let offset = 0,
-      total = Infinity;
-    while (offset < total) {
-      const r = await execute({
-        mode: "query",
-        scope,
-        inputs: inputsFor([fromType.datasetId, toType.datasetId], map),
-        sql,
-        version: randomUUID(),
-        offset,
-        limit: 500,
-      });
-      total = r.profile.rows;
+    for await (const batch of resultBatches({
+      scope,
+      inputs: inputsFor([fromType.datasetId, toType.datasetId], map),
+      sql,
+    })) {
       await transaction(store, scope, async (tx) => {
-        for (const row of r.rows) {
+        for (const row of batch) {
           const from = identities.get(rel.fromType)!.get(String(row.from_key)),
             to = identities.get(rel.toType)!.get(String(row.to_key));
           const edit =
@@ -1665,9 +1678,10 @@ export async function publishProposal(
             );
         }
       });
-      offset += 500;
+      await progress(batch.length);
     }
   }
+  await progress(0, true);
   for (const edit of relationEdits) {
     const from = generation + "_" + edit.data.fromLogicalId,
       to = generation + "_" + edit.data.toLogicalId;

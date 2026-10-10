@@ -313,7 +313,16 @@ export default function Onboarding() {
                 data: {
                   ...run.data,
                   stage: stage?.[0] || run.data.stage,
-                  progress: stage?.[1] ? { message: stage[1] } : undefined,
+                  // Publishing also counts the rows it has read.
+                  progress: stage?.[1]
+                    ? {
+                        message: stage[1],
+                        records:
+                          run.data.stage === "publishing"
+                            ? run.data.progress?.records
+                            : undefined,
+                      }
+                    : undefined,
                 },
               }}
               onRetry={() =>
