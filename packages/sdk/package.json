@@ -20,5 +20,5 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json"
   },
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

@@ -176,4 +176,4 @@ Helix Foundry is built for one person on their own computer. There are no accoun
 
 ## License
 
-Helix Foundry is released under the [MIT License](LICENSE).
+Helix Foundry is released under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.

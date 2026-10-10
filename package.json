@@ -1,7 +1,7 @@
 {
   "name": "helix-foundry",
   "private": true,
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.7.0",
   "engines": {
