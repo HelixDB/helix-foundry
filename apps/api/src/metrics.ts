@@ -88,10 +88,14 @@ const columnsOf = (d: Resource): Column[] => d.data.profile?.columns || [];
 export const schemaSignature = (datasets: Resource[]) =>
   digest(
     JSON.stringify(
-      datasets.map((d) => [
-        d.id,
-        columnsOf(d).map((c) => c.name + " " + c.type),
-      ]),
+      datasets
+        .map((d) => [
+          d.id,
+          columnsOf(d)
+            .map((c) => [c.name, c.type])
+            .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+        ])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
     ),
   );
 // A dataset's everyday name: "Users (PlanetScale + WorkOS)" -> "Users",
