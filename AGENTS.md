@@ -329,6 +329,7 @@ The loop waits up to five minutes and prints `complete` once the workspace is pu
 | Startup fails with "Database schema is newer than this application"                      | The code is older than the data, for example after a downgrade.                                  | Ask the user. Check out the newer release again, or restore the backup that matches this release.                                                                                                                            |
 | `ollama` or `model-init` keeps running after stopping, or a network is left behind       | The stack was started with `--profile local` but stopped without it.                             | Pass the same `--profile local` to `stop`, `down`, `logs` and `ps`.                                                                                                                                                          |
 | An import or build fails with "Out of Memory Error" naming `max_temp_directory_size`     | The job's spill files reached `DUCKDB_SPILL_LIMIT`, or, with none set, 90% of Docker's free disk space. | Tell the user. With a limit set, offer to raise or remove it ([executor limits](#operations)). Without one, Docker needs more free disk space. |
+| A build or import fails with "Stopped at the executor's time limit (…, EXECUTOR_JOB_TIMEOUT)" | A whole-table job took longer than its limit, 15 minutes by default.                         | Tell the user, and offer to raise `EXECUTOR_JOB_TIMEOUT` (seconds) ([executor limits](#operations)). |
 | A build fails with "Result exceeds EXECUTOR_RESULT_LIMIT"                                | A type or relationship has more than 2 GB of rows as JSON lines, often a relationship whose key matches many records on both sides. | Tell the user. Check the relationship in the suggestion, or offer to raise `EXECUTOR_RESULT_LIMIT` ([executor limits](#operations)). |
 
 ## Operations
@@ -347,14 +348,14 @@ Do not run `logs -f` from an agent tool. It follows the logs and never returns.
 
 Every long-running service uses `restart: unless-stopped`, so the stack comes back after a reboot or Docker restart unless it was stopped.
 
-**Executor limits.** Only when the user asks, or agrees after a troubleshooting row. `DUCKDB_SPILL_LIMIT` caps each job's spill files (a size with a unit, such as `20GB`; unset by default), and `EXECUTOR_RESULT_LIMIT` caps each publication result (`2GB` by default). [docs/OPERATIONS.md](docs/OPERATIONS.md#deployment-limits) explains each. Set one in `.env`, replacing the name and value in the first line, then start the stack again so the executor picks it up:
+**Executor limits.** Only when the user asks, or agrees after a troubleshooting row. `DUCKDB_SPILL_LIMIT` caps each job's spill files (a size with a unit, such as `20GB`; unset by default), `EXECUTOR_RESULT_LIMIT` caps each publication result (`2GB` by default), and `EXECUTOR_QUERY_TIMEOUT` and `EXECUTOR_JOB_TIMEOUT` are the time limits in seconds for queries (120) and for imports, pipelines and publication (900). [docs/OPERATIONS.md](docs/OPERATIONS.md#deployment-limits) explains each. Set one in `.env`, replacing the name and value in the first line, then start the stack again so the executor, app and worker pick it up:
 
 ```sh
-NAME=DUCKDB_SPILL_LIMIT VALUE=20GB
+NAME=EXECUTOR_JOB_TIMEOUT VALUE=1800
 tmp=$(mktemp .env.XXXXXX) && sed -e "s|^$NAME=.*|$NAME=$VALUE|" .env > "$tmp" \
   && cat "$tmp" > .env && rm -f "$tmp"
 grep -q "^$NAME=" .env || echo "$NAME=$VALUE" >> .env
-grep -E '^(DUCKDB_SPILL_LIMIT|EXECUTOR_RESULT_LIMIT)=' .env
+grep -E '^(DUCKDB_SPILL_LIMIT|EXECUTOR_RESULT_LIMIT|EXECUTOR_QUERY_TIMEOUT|EXECUTOR_JOB_TIMEOUT)=' .env
 docker compose --profile local up -d
 ```
 

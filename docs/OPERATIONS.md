@@ -30,7 +30,12 @@ Model weights are reproducible and excluded from application backups. Parquet ve
 
 ## Deployment limits
 
-Two DuckDB jobs execute concurrently with a 512 MB per-process memory setting (`DUCKDB_MEMORY`) and a 120-second timeout.
+Two DuckDB jobs execute at a time, and up to 50 more wait for a turn. Each has a 512 MB per-process memory setting (`DUCKDB_MEMORY`) and a time limit, counted from when the executor receives it, so it includes time spent waiting for a turn:
+
+- `EXECUTOR_QUERY_TIMEOUT` (120 seconds by default) for queries: dashboards, saved queries, questions, and a build's checks of its widgets and relationships.
+- `EXECUTOR_JOB_TIMEOUT` (900 seconds, 15 minutes, by default) for imports, pipelines and publication queries, which read or write whole tables.
+
+A job that runs out of time is stopped with "Stopped at the executor's time limit", which names the setting. One whose time runs out while it waits never runs, and fails with "The executor was busy with other jobs". The API reads the same settings and waits 15 seconds longer, so it always receives the executor's answer; Compose and `pnpm dev` give both the values in `.env`.
 
 A job that needs more memory spills to `DATA_DIR/scratch`. Foundry sets no limit on that by default. DuckDB then stops a job whose spill files would pass 90% of the free disk space, but that bound applies to each job on its own: two large jobs at once, or one alongside other writes to the data volume, can still fill the disk. Importing a large file loads the whole table and profiles every column, and can spill several times the file's Parquet size. `DUCKDB_SPILL_LIMIT` caps each job's spill files, as a size with a unit such as `20GB` or `20GiB`. A job that needs more fails with DuckDB's "Out of Memory Error", which names the `max_temp_directory_size` setting; raise or remove the limit to import it. Without a limit, the same error means the job's spill files reached 90% of the free disk space. With a limit set, keep twice that much free for spill files, since two jobs can spill at once.
 
@@ -40,6 +45,6 @@ Nothing limits the rest: the Parquet snapshots that imports and pipelines write 
 
 Each job's scratch directory is removed when the job ends, including when it is killed for its time or output limit or because the executor container is stopping. Once it is listening, the executor also removes the job directories that were in `scratch` when it started, which clears spill files left by an out-of-memory kill; an executor that cannot listen, because another one has the port, removes nothing. Nothing else in `scratch` is touched.
 
-In Compose, set `DUCKDB_SPILL_LIMIT` and `EXECUTOR_RESULT_LIMIT` in `.env` and run the start command again (`docker compose --profile local up -d`, or without `--profile local` when the stack runs without it) to apply them; an empty value means the default. `pnpm dev` reads them from `.env` too. The executor container has a 2 GB memory cap and an internal-only network. One worker performs one inference job at a time. Use one worker replica in this single-server release.
+In Compose, set `DUCKDB_SPILL_LIMIT`, `EXECUTOR_RESULT_LIMIT`, `EXECUTOR_QUERY_TIMEOUT` and `EXECUTOR_JOB_TIMEOUT` in `.env` and run the start command again (`docker compose --profile local up -d`, or without `--profile local` when the stack runs without it) to apply them; an empty value means the default. `pnpm dev` reads them from `.env` too. The executor container has a 2 GB memory cap and an internal-only network. One worker performs one inference job at a time. Use one worker replica in this single-server release.
 
 The supported runtime is Node.js 24. There are no accounts: each installation serves one person on their own computer, who owns every workspace. API tokens are workspace scoped, optionally read-only, and revocable. See `VALIDATION.md` for benchmark scope and unverified deployment combinations.

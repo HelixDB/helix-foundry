@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
 import type {
   ModelProvider,
   ProviderSettings,
 } from "../../../packages/shared/src/index.js";
 import { config } from "./config.js";
 import { assert, AppError } from "./security.js";
+import { postJson } from "./post.js";
 export class Provider implements ModelProvider {
   private verified = false;
   constructor(public settings: ProviderSettings) {}
@@ -93,7 +92,9 @@ export class Provider implements ModelProvider {
     }
     const abort = signal || AbortSignal.timeout(s.timeoutSeconds * 1000);
     if (s.provider === "local") {
-      const r = await postLocal(url, JSON.stringify(body), abort);
+      // Ollama sends no headers until it has read the whole prompt, which can
+      // take longer than fetch allows on CPU-only installs.
+      const r = await postJson(url, JSON.stringify(body), abort);
       assert(
         r.status >= 200 && r.status < 300,
         `local returned HTTP ${r.status}. Check the model, credentials, and provider quota.`,
@@ -139,33 +140,6 @@ export class Provider implements ModelProvider {
     }
     return { value: withoutNullOptionals(value), tokens };
   }
-}
-// Ollama sends no headers until it has read the whole prompt, which can take
-// longer than fetch's fixed five-minute header timeout on CPU-only installs.
-function postLocal(url: string, body: string, signal: AbortSignal) {
-  return new Promise<{ status: number; text: string }>((resolve, reject) => {
-    const target = new URL(url);
-    const req = (target.protocol === "https:" ? httpsRequest : httpRequest)(
-      target,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        signal,
-      },
-      (res) => {
-        let text = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => (text += chunk));
-        res.on("end", () => resolve({ status: res.statusCode || 0, text }));
-        res.on("error", (error) =>
-          reject(signal.aborted ? signal.reason : error),
-        );
-      },
-    );
-    // Surface the abort reason (a timeout or "Run canceled"), as fetch does.
-    req.on("error", (error) => reject(signal.aborted ? signal.reason : error));
-    req.end(body);
-  });
 }
 // Accepts a single response object or newline-delimited streamed parts.
 function ollamaResult(text: string) {

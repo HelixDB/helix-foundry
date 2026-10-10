@@ -16,6 +16,9 @@ x-app: &app
     # Listens on the container network; the port is published on loopback only.
     ALLOW_NETWORK_ACCESS: "true"
     DATA_DIR: /data
+    # The executor's time limits, which the API waits for. See the executor.
+    EXECUTOR_QUERY_TIMEOUT: ${EXECUTOR_QUERY_TIMEOUT:-}
+    EXECUTOR_JOB_TIMEOUT: ${EXECUTOR_JOB_TIMEOUT:-}
   networks: [default, execution]
   depends_on:
     helix:
@@ -56,7 +59,7 @@ services:
       EXECUTOR_HOST: 0.0.0.0
       EXECUTOR_PORT: 3002
       DUCKDB_MEMORY: 512MB
-      # Both can be set in .env; empty means the default. See "Deployment
+      # Each can be set in .env; empty means the default. See "Deployment
       # limits" in docs/OPERATIONS.md.
       # Disk each job may fill with spill files under /data/scratch, such as
       # 20GB. Unset, DuckDB stops a job at 90% of the free disk space.
@@ -64,6 +67,10 @@ services:
       # Disk a publication query may fill with result rows, as JSON lines
       # (2GB by default).
       EXECUTOR_RESULT_LIMIT: ${EXECUTOR_RESULT_LIMIT:-}
+      # Seconds a query (120 by default) and an import, pipeline or
+      # publication query (900 by default) may take, queue included.
+      EXECUTOR_QUERY_TIMEOUT: ${EXECUTOR_QUERY_TIMEOUT:-}
+      EXECUTOR_JOB_TIMEOUT: ${EXECUTOR_JOB_TIMEOUT:-}
     mem_limit: 2g
     pids_limit: 128
     cap_drop: [ALL]

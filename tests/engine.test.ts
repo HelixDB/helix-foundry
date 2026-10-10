@@ -25,8 +25,10 @@ import { bytes, execute } from "../services/executor/src/engine.js";
 import {
   runJob,
   staleScratch,
+  submit,
   sweepScratch,
 } from "../services/executor/src/jobs.js";
+import { duration, timeLimit } from "../services/executor/src/limits.js";
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
@@ -389,6 +391,89 @@ describe("isolated dataset execution", () => {
       log.mockRestore();
     }
     await sweepScratch(dir);
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+  });
+});
+describe("executor time limits", () => {
+  const query = JSON.parse(slow),
+    materialize = (version: string) => ({
+      mode: "materialize",
+      scope: "a",
+      version,
+      inputs: [],
+      sql: "SELECT i AS id FROM range(3) t(i)",
+    });
+  it("gives queries two minutes and whole-table jobs 15, unless set", () => {
+    expect(timeLimit({ mode: "query" })).toEqual({
+      ms: 120000,
+      setting: "EXECUTOR_QUERY_TIMEOUT",
+    });
+    // Imports, pipelines and publication read or write whole tables.
+    for (const job of [
+      { mode: "ingest" },
+      { mode: "query", persist: true },
+      { mode: "materialize" },
+    ] as const)
+      expect(timeLimit(job)).toEqual({
+        ms: 900000,
+        setting: "EXECUTOR_JOB_TIMEOUT",
+      });
+    vi.stubEnv("EXECUTOR_QUERY_TIMEOUT", "30");
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", " 3600 ");
+    expect(timeLimit({ mode: "query" }).ms).toBe(30000);
+    expect(timeLimit({ mode: "materialize" }).ms).toBe(3600000);
+    // Compose passes an unset setting as empty.
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "");
+    expect(timeLimit({ mode: "ingest" }).ms).toBe(900000);
+    for (const value of ["0", "-5", "15m", "86401"]) {
+      vi.stubEnv("EXECUTOR_JOB_TIMEOUT", value);
+      expect(() => timeLimit({ mode: "ingest" })).toThrow(
+        `Invalid EXECUTOR_JOB_TIMEOUT: ${value} (seconds, from 1 to 86400)`,
+      );
+    }
+    expect(duration(900000)).toBe("15 minutes");
+    expect(duration(60000)).toBe("1 minute");
+    expect(duration(90000)).toBe("90 seconds");
+  });
+  it("stops a job at its time limit and says which", async () => {
+    vi.stubEnv("EXECUTOR_QUERY_TIMEOUT", "1");
+    expect(await submit(query, dir)).toEqual({
+      status: 422,
+      body: {
+        error:
+          "Stopped at the executor's time limit (1 second, EXECUTOR_QUERY_TIMEOUT)",
+      },
+    });
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "soon");
+    expect(await submit(materialize("invalid"), dir)).toEqual({
+      status: 500,
+      body: {
+        error: "Invalid EXECUTOR_JOB_TIMEOUT: soon (seconds, from 1 to 86400)",
+      },
+    });
+  });
+  it("counts time queued behind other jobs, and never runs a job whose time ran out", async () => {
+    // Two jobs take both turns until their limit.
+    vi.stubEnv("EXECUTOR_QUERY_TIMEOUT", "2");
+    const busy = [submit(query, dir), submit(query, dir)];
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "1");
+    expect(await submit(materialize("expired"), dir)).toEqual({
+      status: 503,
+      body: {
+        error:
+          "The executor was busy with other jobs for this job's whole time limit (1 second, EXECUTOR_JOB_TIMEOUT). Try again later.",
+      },
+    });
+    await expect(stat(resultFile(dir, "a", "expired"))).rejects.toThrow();
+    // One with time to spare runs when a turn comes free.
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "30");
+    expect(await submit(materialize("waited"), dir)).toEqual({
+      status: 200,
+      body: { version: "waited", count: 3 },
+    });
+    await rm(resultFile(dir, "a", "waited"));
+    for (const r of await Promise.all(busy)) expect(r.status).toBe(422);
     expect(await readdir(scratchRoot(dir))).toEqual([]);
   });
 });

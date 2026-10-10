@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Execution } from "./engine.js";
+import { duration, timeLimit, type TimeLimit } from "./limits.js";
 import { scratchRoot } from "./paths.js";
 const runner = fileURLToPath(new URL("./runner.ts", import.meta.url));
 // Resolved here, so the child does not depend on its working directory.
@@ -48,6 +50,73 @@ export async function stopJobs() {
   for (const child of children) child.kill("SIGKILL");
   await Promise.allSettled(jobs);
 }
+// Two jobs run at a time and up to 50 more wait for a turn.
+let active = 0;
+const waiters: ((ok: boolean) => void)[] = [];
+// Resolves true when it is the caller's turn, or false after `wait` ms.
+function turn(wait: number) {
+  return new Promise<boolean>((resolve) => {
+    const waiter = (ok: boolean) => {
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => {
+      const i = waiters.indexOf(waiter);
+      if (i >= 0) waiters.splice(i, 1);
+      resolve(false);
+    }, wait);
+    waiters.push(waiter);
+  });
+}
+// Answers one request to /execute within the job's time limit, counted from
+// now: a job still waiting for its turn when its time is up never runs.
+export async function submit(
+  job: unknown,
+  root: string,
+): Promise<{ status: number; body: unknown }> {
+  let limit: TimeLimit;
+  try {
+    limit = timeLimit((job || {}) as Execution);
+  } catch (e) {
+    return { status: 500, body: { error: (e as Error).message } };
+  }
+  const deadline = Date.now() + limit.ms;
+  if (active >= 2) {
+    if (waiters.length >= 50)
+      return { status: 429, body: { error: "Executor queue is full" } };
+    if (!(await turn(limit.ms)))
+      return {
+        status: 503,
+        body: {
+          error: `The executor was busy with other jobs for this job's whole time limit (${duration(limit.ms)}, ${limit.setting}). Try again later.`,
+        },
+      };
+  }
+  active++;
+  try {
+    const r = await runJob(JSON.stringify(job), root, {
+      timeout: deadline - Date.now(),
+    });
+    if (r.failed) return { status: 500, body: { error: r.failed } };
+    if (r.code === 0)
+      try {
+        return { status: 200, body: JSON.parse(r.out) };
+      } catch {
+        return { status: 500, body: { error: "Invalid executor response" } };
+      }
+    return {
+      status: 422,
+      body: {
+        error: r.timedOut
+          ? `Stopped at the executor's time limit (${duration(limit.ms)}, ${limit.setting})`
+          : r.err.slice(0, 1500) || "Query exceeded execution limits",
+      },
+    };
+  } finally {
+    active--;
+    waiters.shift()?.(true);
+  }
+}
 // Runs one job in a disposable child process. The job's scratch directory
 // belongs to this process, which removes it once the child has exited, however
 // it ended: a kill for the time or output limit skips the child's cleanup.
@@ -66,7 +135,7 @@ async function run(
   body: string,
   root: string,
   {
-    timeout = 120000,
+    timeout = timeLimit(JSON.parse(body)).ms,
     maxOutput = 10_000_000,
     cwd,
   }: { timeout?: number; maxOutput?: number; cwd?: string },
@@ -79,6 +148,7 @@ async function run(
       out: string;
       err: string;
       failed?: string;
+      timedOut?: boolean;
     }>((done) => {
       if (stopping)
         return done({
@@ -102,8 +172,12 @@ async function run(
       });
       children.add(child);
       let out = "",
-        err = "";
-      const timer = setTimeout(() => child.kill("SIGKILL"), timeout);
+        err = "",
+        timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeout);
       child.stdout.on("data", (x) => {
         out += x;
         if (out.length > maxOutput) child.kill("SIGKILL");
@@ -120,7 +194,7 @@ async function run(
       child.on("close", (code) => {
         children.delete(child);
         clearTimeout(timer);
-        done({ code, out, err });
+        done({ code, out, err, timedOut });
       });
       child.stdin.end(body);
     });
