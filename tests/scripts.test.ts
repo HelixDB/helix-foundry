@@ -682,7 +682,7 @@ describe("upgrade.sh", () => {
     expect(r.stderr).toContain("this upgrade changes the HelixDB image");
     expect(r.stderr).toContain("Run again with --yes");
     expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);
-    expect(f.calls()).toEqual([]);
+    expect(f.calls()).toEqual(["compose ps -a -q helix"]);
     expect(existsSync(backups(f))).toBe(false);
   });
 
@@ -707,8 +707,18 @@ describe("upgrade.sh", () => {
       calls.indexOf("compose stop app worker executor helix"),
     ).toBeLessThan(calls.indexOf("compose --profile local up -d --build"));
     expect(calls.at(-1)).toBe("compose --profile local up -d --build");
-    expect(r.stdout).toContain(`git checkout ${from}`);
-    expect(f.run("upgrade.sh").stdout).toContain("Already up to date");
+    expect(r.stdout).toContain(
+      `git reset --keep ${from}, then scripts/restore.sh`,
+    );
+    f.clearCalls();
+    const again = f.run("upgrade.sh", [], {
+      STUB_HELIX_IMAGE: image("99.0.0"),
+    });
+    expect(again.stdout).toContain("Already up to date");
+    expect(f.calls()).toEqual([
+      "compose ps -a -q helix",
+      "inspect --format {{.Config.Image}} stub-helix",
+    ]);
   });
 
   it("refuses to move HelixDB back to an older version", () => {
@@ -718,6 +728,87 @@ describe("upgrade.sh", () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("moves HelixDB back");
     expect(f.git(f.root, "rev-parse", "HEAD")).toBe(from);
-    expect(f.calls()).toEqual([]);
+    expect(f.calls()).toEqual(["compose ps -a -q helix"]);
+  });
+
+  it("finishes an upgrade whose rebuild failed", () => {
+    const f = fixture();
+    const { from, to } = release(f);
+    const old = { STUB_HELIX_IMAGE: pinned[1] };
+    let r = f.run("upgrade.sh", ["--yes"], {
+      ...old,
+      STUB_FAIL: "compose up -d --build",
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("The rebuild failed");
+    expect(r.stderr).toContain(`git reset --keep ${from}`);
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
+    // The checkout is at the new release, but HelixDB has not started it yet.
+    f.clearCalls();
+    r = f.run("upgrade.sh", [], old);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("the services may not run it yet");
+    expect(r.stderr).toContain("Run again with --yes");
+    r = f.run("upgrade.sh", ["--yes"], old);
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.calls().at(-1)).toBe("compose up -d --build");
+    const dirs = readdirSync(backups(f)).sort();
+    expect(dirs).toHaveLength(2);
+    const dir = join(backups(f), dirs[1]);
+    expect(field(dir, "app_commit")).toBe(from);
+    expect(field(dir, "helix_image")).toBe(pinned[1]);
+    expect(readFileSync(join(dir, "upgrade.txt"), "utf8")).toContain(
+      `from_commit=${from}\n`,
+    );
+    expect(
+      f.run("upgrade.sh", [], { STUB_HELIX_IMAGE: image("99.0.0") }).stdout,
+    ).toContain("Already up to date");
+  });
+
+  it("finishes the upgrade again after going back to the old release", () => {
+    const f = fixture();
+    const { from, to } = release(f);
+    const old = { STUB_HELIX_IMAGE: pinned[1] };
+    let r = f.run("upgrade.sh", ["--yes"], old);
+    expect(r.status, r.stderr).toBe(0);
+    const [name] = readdirSync(backups(f));
+    // Go back with a detached checkout, then return to the branch.
+    f.git(f.root, "checkout", "-q", "--detach", from);
+    r = f.run("restore.sh", [join(backups(f), name), "--replace"], old);
+    expect(r.status, r.stderr).toBe(0);
+    f.git(f.root, "switch", "-q", "main");
+    f.clearCalls();
+    r = f.run("upgrade.sh", [], old);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("this upgrade changes the HelixDB image");
+    expect(f.calls()).toEqual([
+      "compose ps -a -q helix",
+      "inspect --format {{.Config.Image}} stub-helix",
+    ]);
+    r = f.run("upgrade.sh", ["--yes"], old);
+    expect(r.status, r.stderr).toBe(0);
+    expect(f.calls().at(-1)).toBe("compose up -d --build");
+    // Go back as upgrade.sh says, which keeps the branch behind its upstream.
+    f.git(f.root, "reset", "-q", "--keep", from);
+    r = f.run("restore.sh", [join(backups(f), name), "--replace"], old);
+    expect(r.status, r.stderr).toBe(0);
+    r = f.run("upgrade.sh", ["--yes"], old);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`Updating ${from} to ${to}.`);
+    expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
+  });
+
+  it("rebuilds a checkout that was pulled by hand", () => {
+    const f = fixture();
+    const { to } = release(f);
+    f.git(f.root, "merge", "-q", "--ff-only", "origin/main");
+    const old = { STUB_HELIX_IMAGE: pinned[1] };
+    let r = f.run("upgrade.sh", [], old);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("this upgrade changes the HelixDB image");
+    r = f.run("upgrade.sh", ["--yes"], old);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`Upgraded to ${to}.`);
+    expect(f.calls().at(-1)).toBe("compose up -d --build");
   });
 });
