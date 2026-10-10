@@ -138,11 +138,11 @@ In Docker Compose, the worker runs as its own service. In development (`pnpm dev
 
 Data lives in three Docker volumes:
 
-| Volume                       | Contents                                                                           |
-| ---------------------------- | ---------------------------------------------------------------------------------- |
-| `helix-foundry_helix-data`   | HelixDB metadata: workspaces, ontology, jobs, API tokens and encrypted credentials |
-| `helix-foundry_foundry-data` | Parquet snapshots, artifacts and staged uploads                                    |
-| `helix-foundry_model-data`   | Ollama model weights (not backed up; they can be downloaded again)                 |
+| Volume                       | Contents                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `helix-foundry_helix-data`   | HelixDB metadata: workspaces, ontology, jobs, API tokens and encrypted credentials                                                                      |
+| `helix-foundry_foundry-data` | Parquet snapshots, artifacts and staged uploads; also the executor's spill files (`scratch`) and publication files (`results`), which backups leave out |
+| `helix-foundry_model-data`   | Ollama model weights (not backed up; they can be downloaded again)                                                                                      |
 
 **HelixDB.** Queries use the HelixDB TypeScript SDK 3.2 and `/v2/query`. A scope revision is compared and advanced inside each write batch, so stale metadata writes fail as a unit. Dataset artifacts and staged ontology generations stay invisible until the publication pointer changes. Source imports remain separate from manual object overlays.
 
