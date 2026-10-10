@@ -71,7 +71,12 @@ export async function ingestFile(
       table: datasetTable(ds.id),
       lastSync: now(),
     };
-    tx.put({ ...ds, revision: ds.revision + 1, updatedAt: now(), data });
+    const updated = tx.put({
+      ...ds,
+      revision: ds.revision + 1,
+      updatedAt: now(),
+      data,
+    });
     const qualityIssues = oldProfile
       ? r.profile.columns.flatMap((c) => {
           const before = oldProfile.columns.find((x: any) => x.name === c.name);
@@ -109,7 +114,7 @@ export async function ingestFile(
           },
         ),
       );
-    return { ...ds, data };
+    return updated;
   });
 }
 export async function ingestRows(
