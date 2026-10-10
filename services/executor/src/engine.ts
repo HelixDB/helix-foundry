@@ -89,7 +89,9 @@ export async function execute(
       }
       const aliasCounts = new Map<string, number>();
       for (const input of job.inputs || [])
-        for (const alias of input.aliases || [])
+        for (const alias of new Set(
+          (input.aliases || []).map((name) => name.toLowerCase()),
+        ))
           aliasCounts.set(
             alias.toLowerCase(),
             (aliasCounts.get(alias.toLowerCase()) || 0) + 1,
