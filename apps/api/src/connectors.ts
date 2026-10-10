@@ -228,13 +228,13 @@ export async function importSource(
     ["csv", "json", "jsonl", "parquet"].includes(ext),
     "Choose CSV, JSON, JSONL or Parquet",
   );
+  await progress?.({ message: "Reading complete snapshot", records: 0 });
   const file = randomUUID() + "." + ext,
     path = resolve(config.dataDir, "incoming", scope, file),
     out = createWriteStream(path);
   let count = 0;
   let schema: { name: string; type: string }[] | undefined;
   let lastProgress = 0;
-  await progress?.({ message: "Reading complete snapshot", records: 0 });
   const write = async (row: any) => {
     if (Date.now() - lastProgress > 1000) {
       lastProgress = Date.now();
