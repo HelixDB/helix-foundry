@@ -11,6 +11,8 @@ import { buildWorkspace, providerSettings, enqueue } from "./assistant.js";
 import { assert } from "./security.js";
 import { runSyncJob, runUploadJob } from "./data-jobs.js";
 import { runPipelineJob } from "./pipeline-jobs.js";
+// A job gets three attempts, whether it throws or its worker dies mid-run.
+const MAX_ATTEMPTS = 3;
 // Queue, leases and retries live here; each job type's work lives with its area.
 const jobHandlers: Record<
   string,
@@ -89,6 +91,37 @@ export function startWorker(store: Store) {
               (r.data.status === "running" && r.data.leaseUntil > Date.now())
             )
               return false;
+            // An expired lease means the previous worker never finished. A
+            // job that kills its worker every time would otherwise be
+            // reclaimed forever; the retry cap applies here as it does to
+            // a job that throws.
+            if (
+              r.data.status === "running" &&
+              (r.data.attempts || 0) >= MAX_ATTEMPTS
+            ) {
+              const error = `Lease expired ${r.data.attempts} times without finishing`;
+              tx.update(r, { ...r.data, status: "failed", error });
+              if (r.kind === "job")
+                tx.put(
+                  resource(
+                    scope,
+                    "finding",
+                    "Failed " + r.name,
+                    {
+                      kind: "failure",
+                      jobId: r.id,
+                      dismissed: false,
+                      evidence: {
+                        error,
+                        pipelineId: r.data.pipelineId,
+                        sourceId: r.data.sourceId,
+                      },
+                    },
+                    "failure_" + r.id,
+                  ),
+                );
+              return false;
+            }
             tx.update(r, {
               ...r.data,
               status: "running",
@@ -146,7 +179,7 @@ export function startWorker(store: Store) {
                 tx.update(r, {
                   ...r.data,
                   status:
-                    r.kind === "job" && (r.data.attempts || 0) < 3
+                    r.kind === "job" && (r.data.attempts || 0) < MAX_ATTEMPTS
                       ? "queued"
                       : "failed",
                   error: e instanceof Error ? e.message : "Job failed",
@@ -154,7 +187,7 @@ export function startWorker(store: Store) {
                     Date.now() +
                     Math.min(60000, 1000 * 2 ** (r.data.attempts || 1)),
                 });
-                if (r.kind === "job" && (r.data.attempts || 0) >= 3)
+                if (r.kind === "job" && (r.data.attempts || 0) >= MAX_ATTEMPTS)
                   tx.put(
                     resource(
                       scope,
