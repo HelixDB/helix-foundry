@@ -9,7 +9,7 @@ if [ ! -f .env ]; then
 ENCRYPTION_KEY=$key
 INTERNAL_KEY=$internal
 APP_ORIGIN=http://localhost:5173
-HELIX_URL=http://127.0.0.1:6996
+HELIX_URL=http://127.0.0.1:6969
 EXECUTOR_URL=http://127.0.0.1:3002
 OLLAMA_URL=http://127.0.0.1:11434
 DATA_DIR=.data

@@ -1,7 +1,7 @@
 // Home metrics. The AI picks growth and analytics metrics once from the
-// datasets' schemas (columns, types and category values, never rows) as
-// specs; code compiles each spec to DuckDB SQL, keeps the ones that run, and
-// stores them. Home re-runs the stored queries, without the AI, whenever an
+// datasets' schemas (columns, types and the observed values of low-cardinality
+// non-sensitive text columns, never whole rows) as specs; code compiles each
+// spec to DuckDB SQL, keeps the ones that run, and stores them. Home re-runs the stored queries, without the AI, whenever an
 // input's data version changes. Until the AI has picked (or without AI),
 // metrics chosen by code from the schema stand in.
 import {
