@@ -105,7 +105,7 @@ export class Provider implements ModelProvider {
         "The local model ran out of room for its answer. Remove some datasets from setup or choose Claude or OpenAI.",
       );
       return {
-        value: withoutNullOptionals(JSON.parse(data.content)),
+        value: withoutNullOptionals(JSON.parse(data.content), schema),
         tokens: data.prompt_eval_count + data.eval_count,
       };
     }
@@ -137,7 +137,7 @@ export class Provider implements ModelProvider {
       value = JSON.parse(text);
       tokens = data.usage?.total_tokens || 0;
     }
-    return { value: withoutNullOptionals(value), tokens };
+    return { value: withoutNullOptionals(value, schema), tokens };
   }
 }
 // Ollama sends no headers until it has read the whole prompt, which can take
@@ -251,13 +251,33 @@ export async function testProvider(
   return { ok: true, tokens: result.tokens };
 }
 
-function withoutNullOptionals(value: any): any {
-  if (Array.isArray(value)) return value.map(withoutNullOptionals);
+function withoutNullOptionals(value: any, schema: any = {}): any {
+  const nullable = (definition: any): boolean =>
+    definition === true ||
+    definition?.type === "null" ||
+    (Array.isArray(definition?.type) && definition.type.includes("null")) ||
+    !!definition?.anyOf?.some(nullable) ||
+    !!definition?.oneOf?.some(nullable) ||
+    !!definition?.enum?.includes(null);
+  if (Array.isArray(value))
+    return value.map((item) => withoutNullOptionals(item, schema.items || {}));
   if (value && typeof value === "object")
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([, v]) => v !== null)
-        .map(([k, v]) => [k, withoutNullOptionals(v)]),
+        .filter(
+          ([k, v]) =>
+            v !== null ||
+            schema.required?.includes(k) ||
+            nullable(schema.properties?.[k]) ||
+            (!schema.properties?.[k] && nullable(schema.additionalProperties)),
+        )
+        .map(([k, v]) => [
+          k,
+          withoutNullOptionals(
+            v,
+            schema.properties?.[k] || schema.additionalProperties || {},
+          ),
+        ]),
     );
   return value;
 }
