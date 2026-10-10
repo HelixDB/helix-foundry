@@ -221,7 +221,9 @@ export async function importSource(
 }> {
   await mkdir(resolve(config.dataDir, "incoming", scope), { recursive: true });
   const ext =
-    kind === "s3" ? String(c.key).split(".").at(-1) || "json" : "jsonl";
+    kind === "s3"
+      ? String(c.key).split(".").at(-1)?.toLowerCase() || "json"
+      : "jsonl";
   assert(
     ["csv", "json", "jsonl", "parquet"].includes(ext),
     "Choose CSV, JSON, JSONL or Parquet",
