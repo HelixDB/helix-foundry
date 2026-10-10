@@ -26,11 +26,23 @@ unchanged='Nothing was changed.'
 [ -f .env ] || die 'There is no .env here. upgrade.sh upgrades an existing installation; see AGENTS.md to install.'
 fingerprint=$(key_fingerprint < .env)
 [ -n "$fingerprint" ] || die 'ENCRYPTION_KEY in .env is missing or shorter than 32 characters.'
+# An upgrade that did not finish, and the backup taken before it. Until it finishes,
+# a run that stops says so instead of saying that nothing changed.
+pending=$(pending_file)
+from_commit=$(pending_field from_commit)
+first_backup="" unfinished=""
+if [ -n "$from_commit" ]; then
+  first_backup=$(pending_field backup)
+  unfinished="The earlier upgrade has still not finished, so the checkout and HelixDB may already be partly upgraded.${first_backup:+ $first_backup holds the backup from before it.}"
+  unchanged="This run changed nothing. $unfinished"
+fi
 upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2> /dev/null) \
   || die 'This branch has no upstream to upgrade from. Switch to the release branch, for example: git switch main'
 [ -z "$(git status --porcelain --untracked-files=no)" ] \
   || die "This checkout has uncommitted changes. Commit or stash them first. $unchanged"
 head=$(git rev-parse HEAD)
+# Before anything reads the HelixDB container, which Docker must be running to show.
+docker_ready "$unchanged"
 running=$(running_helix_image)
 echo "Fetching $upstream."
 git fetch --quiet || die "Could not fetch $upstream. $unchanged"
@@ -44,12 +56,8 @@ to_image=$(git show "$to_commit:compose.yaml" | helix_image)
 # install: when git has not moved it since the clone, or when it is behind the
 # upstream and pins the HelixDB image that runs. A checkout pulled by hand may not
 # run yet, so otherwise where the upgrade starts is unknown.
-pending=$(pending_file)
-first_backup=""
-from_commit=$(pending_field from_commit)
 if [ -n "$from_commit" ]; then
   from_image=$(pending_field from_helix_image)
-  first_backup=$(pending_field backup)
   case $from_commit in
     unknown) echo 'An earlier upgrade did not finish, so upgrade.sh finishes it.' ;;
     *) echo "The upgrade from $from_commit did not finish, so upgrade.sh finishes it." ;;
@@ -89,11 +97,15 @@ rollback() {
     echo "git reset --keep $from_commit, then $restore"
   fi
 }
-from_version=$(helix_version "$from_image")
+# The data may already be as new as the HelixDB that runs: an upgrade that did not
+# finish can have started the newer image before it failed.
 to_version=$(helix_version "$to_image")
-if [ -n "$from_version" ] && [ -n "$to_version" ] && version_newer "$from_version" "$to_version"; then
-  die "$to_commit moves HelixDB back from $from_version to $to_version. An older HelixDB may refuse data a newer one opened, so upgrade.sh does not start it. Stay on the release that runs now, and ask the Helix Foundry maintainers which release to use. $unchanged"
-fi
+for opened in "$from_image" "$running"; do
+  version=$(helix_version "$opened")
+  if [ -n "$version" ] && [ -n "$to_version" ] && version_newer "$version" "$to_version"; then
+    die "$to_commit moves HelixDB back from $version to $to_version. An older HelixDB may refuse data a newer one opened, so upgrade.sh does not start it. Stay on the release that runs now, and ask the Helix Foundry maintainers which release to use. $unchanged"
+  fi
+done
 if [ -z "$from_image" ] || ! same_image "$from_image" "$to_image"; then
   cat >&2 <<WARNING
 WARNING: this upgrade changes the HelixDB image
@@ -128,9 +140,14 @@ if [ -z "$(pending_field from_commit)" ]; then
   write_pending
   new_pending=1
 fi
-stop() { # stops before anything was upgraded
-  [ -z "$new_pending" ] || rm -f "$pending"
-  die "Upgrade stopped: $*. Nothing was upgraded."
+# Stops before this run upgrades anything. A retry stops with the earlier upgrade
+# still unfinished, so it says so and keeps its record.
+stop() {
+  if [ -n "$new_pending" ]; then
+    rm -f "$pending"
+    die "Upgrade stopped: $*. Nothing was upgraded."
+  fi
+  die "Upgrade stopped: $*. $unfinished Fix the error, then run scripts/upgrade.sh again, which finishes the upgrade${first_backup:+, or go back: $(rollback "$first_backup")}."
 }
 # backup.sh gets BACKUP_PASSPHRASE back for --include-key, and nothing else does.
 run_backup() (
