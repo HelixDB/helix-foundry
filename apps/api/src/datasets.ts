@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { config } from "./config.js";
 import { execute } from "./executor.js";
@@ -36,7 +36,8 @@ export async function ingestFile(
     if (existing) return existing;
   }
   const r = await execute({ mode: "ingest", scope, version, file, schema });
-  return transaction(store, scope, async (tx) => {
+  let unchangedVersion: string | undefined;
+  const committed = await transaction(store, scope, async (tx) => {
     if (jobId)
       assert(
         (await tx.get(jobId))?.data.status !== "canceled",
@@ -52,6 +53,33 @@ export async function ingestFile(
       oldProfile &&
       JSON.stringify(oldProfile.columns.map((x: any) => [x.name, x.type])) !==
         JSON.stringify(r.profile.columns.map((x) => [x.name, x.type]));
+    // A refresh whose rows fingerprint the same as the active snapshot keeps
+    // that snapshot: no new version, no new file, no change to the setup
+    // signature. Otherwise every scheduled refresh of an unchanged table
+    // would grow storage with identical copies, mark pending reviews stale
+    // and abort publications that overlap the refresh.
+    if (
+      oldProfile &&
+      !drift &&
+      ds.data.activeVersion &&
+      !ds.data.pendingVersion &&
+      typeof oldProfile.fingerprint === "string" &&
+      oldProfile.fingerprint === r.profile.fingerprint
+    ) {
+      unchangedVersion = version;
+      return tx.put({
+        ...ds,
+        revision: ds.revision + 1,
+        updatedAt: now(),
+        data: {
+          ...ds.data,
+          ...(jobId ? { importJobId: jobId } : {}),
+          sourceId: sourceId || ds.data.sourceId,
+          table: datasetTable(ds.id),
+          lastSync: now(),
+        },
+      });
+    }
     const v = resource(
       scope,
       "version",
@@ -116,6 +144,12 @@ export async function ingestFile(
       );
     return updated;
   });
+  if (unchangedVersion)
+    await rm(
+      resolve(config.dataDir, "datasets", scope, unchangedVersion + ".parquet"),
+      { force: true },
+    );
+  return committed;
 }
 export async function ingestRows(
   store: Store,
