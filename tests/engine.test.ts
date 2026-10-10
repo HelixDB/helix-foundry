@@ -28,7 +28,11 @@ import {
   submit,
   sweepScratch,
 } from "../services/executor/src/jobs.js";
-import { duration, timeLimit } from "../services/executor/src/limits.js";
+import {
+  checkTimeLimits,
+  duration,
+  timeLimit,
+} from "../services/executor/src/limits.js";
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
@@ -428,15 +432,42 @@ describe("executor time limits", () => {
     // Compose passes an unset setting as empty.
     vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "");
     expect(timeLimit({ mode: "ingest" }).ms).toBe(900000);
-    for (const value of ["0", "-5", "15m", "86401"]) {
+    // Whole or decimal seconds.
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "1.5");
+    expect(timeLimit({ mode: "ingest" }).ms).toBe(1500);
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "86400");
+    expect(timeLimit({ mode: "ingest" }).ms).toBe(86400000);
+    for (const value of [
+      "0",
+      "0.5",
+      "-5",
+      "15m",
+      "2m",
+      "1e3",
+      "0x10",
+      "86401",
+      "100000",
+    ]) {
       vi.stubEnv("EXECUTOR_JOB_TIMEOUT", value);
       expect(() => timeLimit({ mode: "ingest" })).toThrow(
-        `Invalid EXECUTOR_JOB_TIMEOUT: ${value} (seconds, from 1 to 86400)`,
+        `Invalid EXECUTOR_JOB_TIMEOUT: ${value} (whole or decimal seconds, from 1 to 86400)`,
       );
     }
     expect(duration(900000)).toBe("15 minutes");
     expect(duration(60000)).toBe("1 minute");
     expect(duration(90000)).toBe("90 seconds");
+  });
+  it("checks both settings at startup, naming an invalid one", () => {
+    expect(() => checkTimeLimits()).not.toThrow();
+    vi.stubEnv("EXECUTOR_QUERY_TIMEOUT", "2m");
+    expect(() => checkTimeLimits()).toThrow(
+      "Invalid EXECUTOR_QUERY_TIMEOUT: 2m (whole or decimal seconds, from 1 to 86400)",
+    );
+    vi.stubEnv("EXECUTOR_QUERY_TIMEOUT", "");
+    vi.stubEnv("EXECUTOR_JOB_TIMEOUT", "100000");
+    expect(() => checkTimeLimits()).toThrow(
+      "Invalid EXECUTOR_JOB_TIMEOUT: 100000 (whole or decimal seconds, from 1 to 86400)",
+    );
   });
   it("stops a job at its time limit and says which", async () => {
     vi.stubEnv("EXECUTOR_QUERY_TIMEOUT", "1");
@@ -452,7 +483,8 @@ describe("executor time limits", () => {
     expect(await submit(materialize("invalid"), dir)).toEqual({
       status: 500,
       body: {
-        error: "Invalid EXECUTOR_JOB_TIMEOUT: soon (seconds, from 1 to 86400)",
+        error:
+          "Invalid EXECUTOR_JOB_TIMEOUT: soon (whole or decimal seconds, from 1 to 86400)",
       },
     });
   });

@@ -7,7 +7,8 @@ import type { Execution } from "./engine.js";
 // A query answers someone who is waiting (a dashboard, a question, a check
 // while building), so it keeps EXECUTOR_QUERY_TIMEOUT, two minutes by default.
 // Imports, pipelines and publication read or write whole tables, so they get
-// EXECUTOR_JOB_TIMEOUT, 15 minutes by default. Both are in seconds.
+// EXECUTOR_JOB_TIMEOUT, 15 minutes by default. Both are whole or decimal
+// seconds from 1 to 86400.
 const settings = {
   query: ["EXECUTOR_QUERY_TIMEOUT", 120],
   job: ["EXECUTOR_JOB_TIMEOUT", 15 * 60],
@@ -21,9 +22,20 @@ export function timeLimit(
   const value = process.env[setting]?.trim();
   const seconds = value ? Number(value) : fallback;
   // Timers fire at once past 2^31 - 1 ms, so a day is the most allowed.
-  if (!(seconds > 0 && seconds <= 86400))
-    throw new Error(`Invalid ${setting}: ${value} (seconds, from 1 to 86400)`);
+  if (
+    (value && !/^\d+(\.\d+)?$/.test(value)) ||
+    !(seconds >= 1 && seconds <= 86400)
+  )
+    throw new Error(
+      `Invalid ${setting}: ${value} (whole or decimal seconds, from 1 to 86400)`,
+    );
   return { ms: seconds * 1000, setting };
+}
+// Reads both settings, so the app, the worker and the executor can refuse to
+// start with an invalid one rather than fail every job that needs it.
+export function checkTimeLimits() {
+  timeLimit({ mode: "query" });
+  timeLimit({ mode: "ingest" });
 }
 // "15 minutes", "90 seconds".
 export function duration(ms: number) {

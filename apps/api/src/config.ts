@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { resolve } from "node:path";
+import { checkTimeLimits } from "../../../services/executor/src/limits.js";
 export const config = {
   port: Number(process.env.PORT || 3001),
   host: process.env.HOST || "127.0.0.1",
@@ -22,4 +23,11 @@ export function requireSecrets() {
     throw new Error(
       "Run ./scripts/setup.sh to generate ENCRYPTION_KEY and INTERNAL_KEY (32+ characters).",
     );
+}
+// Checked when the app and the worker start, so a mistake in .env stops them
+// with a message that names the setting, instead of /api/health passing while
+// every query fails.
+export function requireSettings() {
+  requireSecrets();
+  checkTimeLimits();
 }

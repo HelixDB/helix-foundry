@@ -1,7 +1,15 @@
-import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { config } from "../apps/api/src/config.js";
+import { config, requireSettings } from "../apps/api/src/config.js";
 import { execute } from "../apps/api/src/executor.js";
 // Stands in for the executor: each test sets how it answers.
 let answer: (
@@ -84,6 +92,24 @@ it("refuses an invalid time limit before calling the executor", async () => {
     throw new Error("Called the executor");
   };
   await expect(execute(query)).rejects.toThrow(
-    "Invalid EXECUTOR_QUERY_TIMEOUT: 2m (seconds, from 1 to 86400)",
+    "Invalid EXECUTOR_QUERY_TIMEOUT: 2m (whole or decimal seconds, from 1 to 86400)",
   );
+});
+it("refuses to start the app or the worker with an invalid time limit", () => {
+  const encryptionKey = config.encryptionKey;
+  config.encryptionKey = "e".repeat(64);
+  onTestFinished(() => {
+    config.encryptionKey = encryptionKey;
+  });
+  expect(() => requireSettings()).not.toThrow();
+  for (const [setting, value] of [
+    ["EXECUTOR_QUERY_TIMEOUT", "2m"],
+    ["EXECUTOR_JOB_TIMEOUT", "100000"],
+  ]) {
+    vi.stubEnv(setting, value);
+    expect(() => requireSettings()).toThrow(
+      `Invalid ${setting}: ${value} (whole or decimal seconds, from 1 to 86400)`,
+    );
+    vi.unstubAllEnvs();
+  }
 });

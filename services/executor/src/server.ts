@@ -3,6 +3,10 @@ import Fastify from "fastify";
 import { resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { staleScratch, stopJobs, submit } from "./jobs.js";
+import { checkTimeLimits } from "./limits.js";
+// An invalid EXECUTOR_QUERY_TIMEOUT or EXECUTOR_JOB_TIMEOUT stops the executor
+// here, with a message that names it, rather than failing every job later.
+checkTimeLimits();
 const root = resolve(process.env.DATA_DIR || ".data");
 const app = Fastify({ bodyLimit: 1024 * 1024, logger: true });
 app.get("/health", async () => ({ ok: true }));

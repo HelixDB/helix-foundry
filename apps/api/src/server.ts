@@ -1,8 +1,8 @@
-import { config, requireSecrets } from "./config.js";
+import { config, requireSettings } from "./config.js";
 import { store } from "./store.js";
 import { createApp } from "./app.js";
 import { startWorker } from "./jobs.js";
-requireSecrets();
+requireSettings();
 if (
   !["127.0.0.1", "localhost", "::1"].includes(config.host) &&
   !config.allowNetwork
