@@ -130,6 +130,11 @@ export class Provider implements ModelProvider {
       tokens =
         (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
     } else {
+      assert(
+        data.status !== "incomplete" && data.status !== "failed",
+        "Model did not complete its structured response",
+        502,
+      );
       const text = data.output
         ?.flatMap((x: any) => x.content || [])
         .find((x: any) => x.type === "output_text")?.text;
