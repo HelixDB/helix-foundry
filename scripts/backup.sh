@@ -55,6 +55,26 @@ if inside_repo "$backup_dir"; then
   die "$outside"
 fi
 [ -z "$(ls -A "$backup_dir")" ] || die "$backup_dir is not empty. Use a new folder for each backup."
+
+# Until the backup is complete, a step that fails, even stop itself partway, starts
+# again the services this script stopped, and removes everything this backup wrote,
+# and the folder if this script created it: the archives, even unfinished, hold full
+# copies of the workspace data. The folder was empty, so these are this run's files.
+stopped="" restarted=""
+failed() {
+  if [ -n "$stopped" ] && [ -z "$restarted" ]; then
+    start_again || true
+  elif [ "$restarted" = failed ]; then
+    echo "WARNING: docker compose start $restart failed, so those services are stopped. Fix the error above, then start them: docker compose up -d $restart" >&2
+  fi
+  local name
+  for name in helix-data.tgz.partial foundry-data.tgz.partial helix-data.tgz foundry-data.tgz \
+    restore.sh backup-lib.sh settings.env env.enc manifest.txt; do
+    rm -f "$backup_dir/$name"
+  done
+  [ -z "$created" ] || rmdir "$backup_dir" 2> /dev/null || true
+}
+trap failed EXIT
 chmod 700 "$backup_dir"
 running_image=$(running_helix_image)
 
@@ -66,14 +86,7 @@ for service in helix executor app worker; do
   case $running in *" $service "*) restart="${restart:+$restart }$service" ;; esac
 done
 start_again() { [ -z "$restart" ] || docker compose start $restart; }
-# If a step fails, even stop itself partway, start the services again and remove
-# what this backup wrote.
-failed() {
-  start_again || true
-  rm -f "$backup_dir"/*.tgz.partial
-  [ -z "$created" ] || rmdir "$backup_dir" 2> /dev/null || true
-}
-trap failed EXIT
+stopped=1
 docker compose stop app worker executor helix
 for volume in helix-data foundry-data; do
   # The executor's spill files (scratch) and the rows publication reads (results)
@@ -85,13 +98,12 @@ for volume in helix-data foundry-data; do
   docker run --rm -v "${project_name}_$volume:/data:ro" alpine:3.22 tar czf - $excludes -C /data . \
     > "$backup_dir/$volume.tgz.partial"
 done
-trap - EXIT
-restarted=1
-start_again || restarted=""
+restarted=yes
+start_again || restarted=failed
 
 for volume in helix-data foundry-data; do
   tar -tzf "$backup_dir/$volume.tgz.partial" > /dev/null \
-    || die "$volume.tgz.partial in $backup_dir cannot be read back, so this backup is incomplete."
+    || die "The $volume archive cannot be read back, so the backup failed and was removed."
   mv "$backup_dir/$volume.tgz.partial" "$backup_dir/$volume.tgz"
 done
 # A copy of the restore tooling, which reads this format even in a checkout of an
@@ -105,7 +117,7 @@ key_file=none
 if [ -n "$include_key" ]; then
   encrypt_env .env "$backup_dir/env.enc"
   [ "$(decrypt_env "$backup_dir/env.enc" | key_fingerprint)" = "$fingerprint" ] \
-    || die "env.enc in $backup_dir does not decrypt to this .env, so this backup is incomplete."
+    || die "env.enc does not decrypt to this .env, so the backup failed and was removed."
   key_file=env.enc
 fi
 # The data comes from the commit the services were started from, which upgrade.sh
@@ -127,6 +139,7 @@ app_commit=$(deployed_commit)
   echo "key_file=$key_file"
   [ "$key_file" = none ] || echo "key_iterations=$key_iterations"
 } > "$backup_dir/manifest.txt"
+trap - EXIT
 echo "Backup saved to $backup_dir."
 if [ -n "$include_key" ]; then
   echo 'It includes .env in env.enc, encrypted with your passphrase. Keep the backup private.'
@@ -136,7 +149,7 @@ else
 fi
 # upgrade.sh warns once it has finished, after the output of the rebuild.
 [ -n "${HF_UPGRADE_BACKUP:-}" ] || warn_old_backups
-if [ -z "$restarted" ]; then
+if [ "$restarted" = failed ]; then
   echo "WARNING: the backup is complete, but docker compose start $restart failed, so those services are stopped. Fix the error above, then start them: docker compose up -d $restart" >&2
   exit 3
 fi

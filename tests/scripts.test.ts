@@ -410,6 +410,50 @@ describe("backup.sh", () => {
     expect(readdirSync(join(f.base, "made"))).toEqual([]);
   });
 
+  it("removes what it wrote when a step fails after the services started again", () => {
+    const f = fixture();
+    const dir = join(f.base, "backup");
+    // The archives hold full copies of the workspace data.
+    let r = f.run("backup.sh", [dir], { STUB_DAMAGED: "1" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(
+      "The helix-data archive cannot be read back, so the backup failed and was removed.",
+    );
+    expect(f.calls().at(-1)).toBe("compose start helix executor app worker");
+    expect(existsSync(dir)).toBe(false);
+    // A later step, once both archives have read back.
+    f.clearCalls();
+    rmSync(join(f.root, "scripts", "restore.sh"));
+    r = f.run("backup.sh", [dir]);
+    expect(r.status).toBe(1);
+    expect(f.calls().at(-1)).toBe("compose start helix executor app worker");
+    expect(existsSync(dir)).toBe(false);
+    // A folder the user made stays, empty.
+    mkdirSync(dir);
+    r = f.run("backup.sh", [dir], { STUB_DAMAGED: "1" });
+    expect(r.status).toBe(1);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("says the services are stopped when the backup fails after they did not start again", () => {
+    const f = fixture();
+    const dir = join(f.base, "backup");
+    const r = f.run("backup.sh", [dir], {
+      STUB_DAMAGED: "1",
+      STUB_FAIL: "compose start*",
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("cannot be read back");
+    expect(r.stderr).toContain(
+      "docker compose start helix executor app worker failed, so those services are stopped. Fix the error above, then start them: docker compose up -d helix executor app worker",
+    );
+    // It tried once to start them.
+    expect(f.calls().filter((c) => c.startsWith("compose start"))).toEqual([
+      "compose start helix executor app worker",
+    ]);
+    expect(existsSync(dir)).toBe(false);
+  });
+
   it("reads export, spaces and inline comments in .env, as Compose does", () => {
     const f = fixture();
     writeFileSync(

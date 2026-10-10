@@ -4,7 +4,8 @@
 # restore sends in $STUB_RESTORED. STUB_HELIX_IMAGE is the image of the HelixDB
 # container, STUB_RUNNING lists the running services (default: all four),
 # STUB_OLLAMA makes an ollama container exist, STUB_FAIL is a pattern of calls that
-# fail, and STUB_DOWN fails every call as if the Docker daemon were stopped. With
+# fail, STUB_DOWN fails every call as if the Docker daemon were stopped, and
+# STUB_DAMAGED makes a volume backup succeed with an archive that cannot be read. With
 # STUB_VOLUMES, a volume backup archives the folder named after the volume in
 # STUB_VOLUMES (such as helix-foundry_foundry-data) with the script's own tar
 # options; this machine's tar stands in for the image's BusyBox tar. A backup
@@ -44,6 +45,10 @@ case " $* " in
   " run "*)
     case " $* " in
       *" tar czf - "*)
+        if [ -n "${STUB_DAMAGED:-}" ]; then
+          echo 'not a gzip archive'
+          exit 0
+        fi
         if [ -n "${STUB_VOLUMES:-}" ]; then
           args=() image=""
           for arg in "$@"; do
