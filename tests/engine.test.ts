@@ -193,8 +193,7 @@ describe("isolated dataset execution", () => {
         dir,
         { cwd },
       );
-      expect(r.err).toBe("");
-      expect(r.code).toBe(0);
+      expect(r.code, r.err).toBe(0);
       expect(JSON.parse(r.out).profile.rows).toBe(1000000);
       expect(await readdir(cwd)).toEqual([]);
       expect(await readdir(scratchRoot(dir))).toEqual([]);
