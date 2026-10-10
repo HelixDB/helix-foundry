@@ -2,6 +2,7 @@
 import type { Resource } from "../../../packages/shared/src/index.js";
 import { transaction, resource, type Store } from "./store.js";
 import { queryDatasets } from "./datasets.js";
+import { assert } from "./security.js";
 
 export async function runPipelineJob(
   store: Store,
@@ -14,6 +15,14 @@ export async function runPipelineJob(
     persist: true,
   });
   await transaction(store, scope, async (tx) => {
+    const current = await tx.get(p.id);
+    assert(
+      current?.kind === "pipeline" &&
+        current.revision === p.revision &&
+        current.data.outputDatasetId === p.data.outputDatasetId,
+      "Pipeline changed during build",
+      409,
+    );
     const ds = await tx.get(p.data.outputDatasetId);
     if (ds) {
       tx.put(
