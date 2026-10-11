@@ -16,6 +16,7 @@ import { api, number } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { typeHue } from "./colors";
+import type { Resource } from "../../../../../packages/shared/src";
 import {
   Button,
   ButtonLink,
@@ -70,6 +71,22 @@ export function ObjectGraph({
     y: number;
   } | null>(null);
   const [search, setSearch] = useState("");
+  const [term, setTerm] = useState("");
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [enterRequested, setEnterRequested] = useState(false);
+  useEffect(() => {
+    setMatchIndex(0);
+    const timer = setTimeout(() => setTerm(search.trim()), 200);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const results = useQuery({
+    queryKey: [id, "graph-record-search", term],
+    queryFn: () =>
+      api<{ items: Resource[]; total: number }>(
+        `/workspaces/${id}/resources/object?${new URLSearchParams({ search: term, limit: "8" })}`,
+      ),
+    enabled: !!term,
+  });
 
   const wrap = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
@@ -491,6 +508,7 @@ export function ObjectGraph({
   }, [ready]);
 
   const show = (n: GraphNode) => {
+    setHidden((h) => new Set([...h].filter((t) => t !== n.type)));
     setFocus(n);
     setSelected(n.id);
   };
@@ -501,15 +519,28 @@ export function ObjectGraph({
       setHidden((h) => new Set([...h].filter((t) => t !== n.type)));
     centre(nodeId);
   };
-  const matches = search.trim()
-    ? (data?.nodes || [])
-        .filter((n) =>
-          (n.label + " " + n.name)
-            .toLowerCase()
-            .includes(search.trim().toLowerCase()),
-        )
-        .slice(0, 8)
-    : [];
+  const searchReady = !!term && term === search.trim() && !results.isFetching;
+  const matches: GraphNode[] =
+    searchReady && !results.error
+      ? (results.data?.items || []).map((r) => ({
+          id: r.data.logicalId,
+          type: r.data.type,
+          name: r.name,
+          label: r.data.label,
+          degree: r.data.links,
+        }))
+      : [];
+  const choose = (n: GraphNode) => {
+    if (byId.has(n.id)) select(n.id);
+    else show(n);
+    setSearch("");
+    setEnterRequested(false);
+  };
+  useEffect(() => {
+    if (!enterRequested || !searchReady) return;
+    if (matches[0]) choose(matches[0]);
+    else setEnterRequested(false);
+  }, [enterRequested, searchReady, results.data, results.error]);
   const current = selected ? byId.get(selected) : undefined;
   const hovered = hover ? byId.get(hover.id) : undefined;
   // Linked records by type and link, e.g. "User · belongs to" on an account.
@@ -555,33 +586,64 @@ export function ObjectGraph({
         <div className="og-search">
           <SearchInput
             value={search}
-            onChange={setSearch}
+            onChange={(value) => {
+              setEnterRequested(false);
+              setSearch(value);
+            }}
             label="Find a record"
             placeholder="Find a record"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls={
+              matches.length ? "graph-matching-records" : undefined
+            }
+            aria-expanded={matches.length > 0}
+            aria-activedescendant={
+              matches.length
+                ? `graph-match-${Math.min(matchIndex, matches.length - 1)}`
+                : undefined
+            }
             onKeyDown={(e) => {
-              if (e.key === "Enter" && matches[0]) {
-                select(matches[0].id);
+              if (e.key === "Enter" && search.trim()) {
+                e.preventDefault();
+                if (matches[0])
+                  choose(matches[Math.min(matchIndex, matches.length - 1)]);
+                else if (!searchReady) setEnterRequested(true);
+              }
+              if (
+                (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+                matches.length
+              ) {
+                e.preventDefault();
+                setMatchIndex(
+                  (i) =>
+                    (i + (e.key === "ArrowDown" ? 1 : -1) + matches.length) %
+                    matches.length,
+                );
+              }
+              if (e.key === "Escape") {
+                setEnterRequested(false);
                 setSearch("");
               }
-              if (e.key === "Escape") setSearch("");
             }}
           />
           {matches.length > 0 && (
             <ul
+              id="graph-matching-records"
               className="og-matches"
               role="listbox"
               aria-label="Matching records"
             >
-              {matches.map((n) => (
+              {matches.map((n, i) => (
                 <li key={n.id}>
                   <button
                     type="button"
                     role="option"
-                    aria-selected={false}
-                    onClick={() => {
-                      select(n.id);
-                      setSearch("");
-                    }}
+                    id={`graph-match-${i}`}
+                    aria-selected={
+                      i === Math.min(matchIndex, matches.length - 1)
+                    }
+                    onClick={() => choose(n)}
                   >
                     <span
                       className="og-dot"
@@ -594,6 +656,20 @@ export function ObjectGraph({
                 </li>
               ))}
             </ul>
+          )}
+          {search.trim() && (
+            <p
+              className="og-search-status"
+              role={searchReady && results.error ? "alert" : "status"}
+            >
+              {!searchReady
+                ? "Searching all records…"
+                : results.error
+                  ? results.error.message
+                  : matches.length
+                    ? `${results.data!.total} matching records${results.data!.total > 8 ? " · showing the first 8" : ""}`
+                    : "No matching records"}
+            </p>
           )}
         </div>
         <ul className="og-legend" aria-label="Object types">
@@ -648,7 +724,8 @@ export function ObjectGraph({
           <>
             The {number(data!.nodes.length)} best-connected of{" "}
             {number(data!.total)} records. Double-click a record to see
-            everything around it.
+            everything around it. Search finds records across the whole
+            workspace.
           </>
         ) : (
           <>
