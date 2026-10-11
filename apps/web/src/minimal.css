@@ -1288,7 +1288,7 @@ td {
   margin-bottom: 22px;
 }
 .provider-options.choice-options {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .choice-card {
   display: grid;

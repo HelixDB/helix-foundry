@@ -20,7 +20,7 @@ import {
   publishProposal,
   providerSettings,
 } from "../assistant.js";
-import { testProvider } from "../providers.js";
+import { testProvider, canReuseProviderKey } from "../providers.js";
 import { localAiMemory } from "../memory.js";
 import { homeMetrics, regenerateMetrics } from "../metrics.js";
 import {
@@ -385,7 +385,7 @@ export function registerWorkspaceRoutes(
       s = ProviderSchema.parse(req.body);
     if (!s.apiKey) {
       const old = await providerSettings(store, a.scope);
-      if (old.provider === s.provider) s.apiKey = old.apiKey;
+      if (canReuseProviderKey(old, s)) s.apiKey = old.apiKey;
     }
     await testProvider(s);
     await transaction(store, a.scope, async (tx) =>

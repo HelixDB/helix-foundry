@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { canReuseProviderKey } from "./providers.js";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, open, rename, rm } from "node:fs/promises";
@@ -81,13 +82,18 @@ export function registerOnboarding(
       const existing = m.providerJobId && (await tx.get(m.providerJobId));
       const selected = { ...settings };
       if (!selected.apiKey) {
-        if (existing?.data.settings?.provider === selected.provider)
+        if (
+          existing?.data.settings &&
+          canReuseProviderKey(existing.data.settings, selected)
+        )
           selected.apiKey = unseal(existing.data.secret).apiKey;
-        else if (selected.provider === old.provider)
+        else if (canReuseProviderKey(old, selected))
           selected.apiKey = old.apiKey;
       }
       assert(
-        selected.provider === "local" || !!selected.apiKey?.trim(),
+        selected.provider === "local" ||
+          selected.provider === "custom" ||
+          !!selected.apiKey?.trim(),
         "Enter an API key for the selected provider.",
       );
       const fingerprint = digest(JSON.stringify(selected));
