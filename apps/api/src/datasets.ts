@@ -172,11 +172,17 @@ export async function ingestRows(
   const dir = resolve(config.dataDir, "incoming", scope);
   await mkdir(dir, { recursive: true });
   const file = randomUUID() + ".jsonl";
-  await writeFile(
-    resolve(dir, file),
-    rows.map((r) => JSON.stringify(r)).join("\n"),
-  );
-  return ingestFile(store, scope, name, file, sourceId, datasetId);
+  try {
+    await writeFile(
+      resolve(dir, file),
+      rows.map((r) => JSON.stringify(r)).join("\n"),
+    );
+    return await ingestFile(store, scope, name, file, sourceId, datasetId);
+  } finally {
+    // Rows ingestion regenerates this private input on every request; unlike
+    // an uploaded file, no retry operation depends on keeping it.
+    await rm(resolve(dir, file), { force: true }).catch(() => {});
+  }
 }
 export async function datasetInputs(
   store: Store,

@@ -6,8 +6,8 @@ import {
   GetObjectCommand,
 } from "@aws-sdk/client-s3";
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { pipeline } from "node:stream/promises";
+import { mkdir, rm } from "node:fs/promises";
+import { pipeline, finished } from "node:stream/promises";
 import { once } from "node:events";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -443,6 +443,8 @@ export async function importSource(
     return { file, records: count, schema: count === 0 ? schema : undefined };
   } catch (e) {
     out.destroy();
+    await finished(out).catch(() => {});
+    await rm(path, { force: true }).catch(() => {});
     throw e;
   }
 }
