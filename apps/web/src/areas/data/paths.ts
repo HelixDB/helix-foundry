@@ -3,6 +3,7 @@
 const enc = encodeURIComponent;
 export const dataPaths = {
   data: () => "/data",
+  queries: (id?: string) => "/data/queries" + (id ? "/" + enc(id) : ""),
   // Connections are cards on the Data page; ?add=1 opens the picker.
   connections: (add = false) => "/data" + (add ? "?add=1" : ""),
   connection: (sourceId: string) => "/data/connections/" + enc(sourceId),

@@ -26,7 +26,23 @@ import { testedConnection } from "../onboarding.js";
 import { resolveHostedConfig } from "../hosting.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
+const SavedQuerySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  inputs: z.array(z.string().min(1)).min(1).max(20),
+  sql: z.string().trim().min(1).max(20000),
+});
+const EditQuerySchema = SavedQuerySchema.extend({
+  revision: z.number().int().min(1),
+});
+const QueryPageSchema = z.object({
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(500).default(50),
+});
+
 export const dataSchemas: RequestSchemas = {
+  "POST /api/v1/workspaces/:w/queries": SavedQuerySchema,
+  "PUT /api/v1/workspaces/:w/queries/:id": EditQuerySchema,
+  "POST /api/v1/workspaces/:w/queries/:id/run": QueryPageSchema,
   "POST /api/v1/workspaces/:w/demo": DemoSchema,
   "POST /api/v1/workspaces/:w/sources": SourceSchema,
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
@@ -246,17 +262,66 @@ export function registerDataRoutes(
   });
   app.post("/api/v1/workspaces/:w/queries", async (req) => {
     const a = await access(req, "editor"),
-      b = z
-        .object({
-          name: z.string(),
-          inputs: z.array(z.string()).min(1),
-          sql: z.string(),
-        })
-        .parse(req.body);
+      b = SavedQuerySchema.parse(req.body);
     await queryDatasets(store, a.scope, b.inputs, b.sql);
     return transaction(store, a.scope, async (tx) =>
       tx.put(resource(a.scope, "query", b.name, b)),
     );
+  });
+  app.post("/api/v1/workspaces/:w/queries/:id/run", async (req: any) => {
+    const a = await access(req),
+      b = QueryPageSchema.parse(req.body || {}),
+      query = await store.get(a.scope, req.params.id);
+    assert(query?.kind === "query", "Saved query unavailable", 404);
+    const result = await queryDatasets(
+      store,
+      a.scope,
+      query.data.inputs,
+      query.data.sql,
+      b,
+    );
+    return {
+      ...result,
+      query: {
+        id: query.id,
+        name: query.name,
+        sql: query.data.sql,
+        revision: query.revision,
+      },
+    };
+  });
+  app.put("/api/v1/workspaces/:w/queries/:id", async (req: any) => {
+    const a = await access(req, "editor"),
+      b = EditQuerySchema.parse(req.body),
+      query = await store.get(a.scope, req.params.id);
+    assert(query?.kind === "query", "Saved query unavailable", 404);
+    assert(
+      query.revision === b.revision,
+      "Saved query changed. Reload before saving.",
+      409,
+    );
+    await queryDatasets(store, a.scope, b.inputs, b.sql);
+    return transaction(store, a.scope, async (tx) => {
+      const current = await tx.get(query.id);
+      assert(
+        current?.kind === "query" && current.revision === b.revision,
+        "Saved query changed. Reload before saving.",
+        409,
+      );
+      return tx.update(
+        { ...current, name: b.name },
+        { inputs: b.inputs, sql: b.sql },
+      );
+    });
+  });
+  app.delete("/api/v1/workspaces/:w/queries/:id", async (req: any) => {
+    const a = await access(req, "editor");
+    return transaction(store, a.scope, async (tx) => {
+      const query = await tx.get(req.params.id);
+      assert(query?.kind === "query", "Saved query unavailable", 404);
+      tx.delete(query.id);
+      return { ok: true };
+    });
   });
   app.post("/api/v1/workspaces/:w/findings/:id/dismiss", async (req: any) => {
     const a = await access(req, "editor");

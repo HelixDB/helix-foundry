@@ -139,6 +139,7 @@ export function DataOverview() {
       <PageHeader
         title="Data"
         subtitle="Where your data comes from, what it holds and how it stays up to date."
+        meta={<Link to={paths.queries()}>SQL queries</Link>}
         actions={
           role !== "viewer" && (
             <Button

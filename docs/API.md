@@ -117,3 +117,16 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+### Saved SQL queries
+
+Saved queries remain workspace-scoped and use current accepted input versions at execution. Existing `POST /queries` validates and saves `{ name, inputs, sql }`. Names are 1–120 characters, up to 20 inputs, and SQL up to 20000 characters.
+
+| Method and workspace path | Contract                                                                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET `/resources/query`    | Existing saved-query inventory.                                                                                                                 |
+| POST `/queries/:id/run`   | `{ offset?: integer>=0, limit?:1..500 }`, default 50; rows/profile/current snapshot citations and query identity. Read access.                  |
+| PUT `/queries/:id`        | `{ name, inputs, sql, revision }`; execute/validate read-only SQL then update only the matching revision. Editor access; 409 on stale revision. |
+| DELETE `/queries/:id`     | Delete saved definition. Editor access; 404 for unknown/cross-workspace IDs.                                                                    |
+
+The SDK exposes `savedQueries`, `saveQuery`, `runSavedQuery`, `updateQuery` and `deleteQuery`. Query execution never changes accepted input snapshots.

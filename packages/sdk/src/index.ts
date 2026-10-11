@@ -228,6 +228,34 @@ export class FoundryClient {
   query(inputs: string[], sql: string) {
     return this.request("/query", { inputs, sql });
   }
+  savedQueries() {
+    return this.request<{ items: Resource[] }>("/resources/query");
+  }
+  saveQuery(name: string, inputs: string[], sql: string) {
+    return this.request<Resource>("/queries", { name, inputs, sql });
+  }
+  runSavedQuery(id: string, offset = 0, limit = 50) {
+    return this.request("/queries/" + encodeURIComponent(id) + "/run", {
+      offset,
+      limit,
+    });
+  }
+  updateQuery(
+    id: string,
+    revision: number,
+    name: string,
+    inputs: string[],
+    sql: string,
+  ) {
+    return this.request<Resource>(
+      "/queries/" + encodeURIComponent(id),
+      { revision, name, inputs, sql },
+      "PUT",
+    );
+  }
+  deleteQuery(id: string) {
+    return this.request("/queries/" + encodeURIComponent(id), {}, "DELETE");
+  }
   runPipeline(id: string) {
     return this.request<Resource>("/pipelines/" + id + "/run", {});
   }
