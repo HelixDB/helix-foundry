@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Helix · Business-aware Home concept</title><style>:root {
+  --hf-font-sans:
+    Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --hf-font-display: Georgia, "Times New Roman", serif;
+  --hf-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --hf-text-xs: 11px;
+  --hf-text-sm: 12px;
+  --hf-text-base: 13px;
+  --hf-text-md: 14px;
+  --hf-text-lg: 16px;
+  --hf-text-xl: 20px;
+  --hf-text-2xl: 26px;
+  --hf-text-3xl: 34px;
+
+  --hf-space-05: 4px;
+  --hf-space-1: 8px;
+  --hf-space-15: 12px;
+  --hf-space-2: 16px;
+  --hf-space-3: 24px;
+  --hf-space-4: 32px;
+  --hf-space-5: 40px;
+  --hf-space-6: 48px;
+  --hf-space-8: 64px;
+
+  --hf-radius-sm: 6px;
+  --hf-radius: 8px;
+  --hf-radius-lg: 12px;
+  --hf-radius-xl: 16px;
+  --hf-radius-pill: 999px;
+
+  --hf-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --hf-duration: 160ms;
+  --hf-sidebar-width: 236px;
+  --hf-sidebar-collapsed: 60px;
+
+  /* Warm paper surfaces, olive ink and the onboarding mint. */
+  --hf-bg: #f8f7f3;
+  --hf-surface: #f8f7f3;
+  --hf-raised: #fdfcf9;
+  --hf-sunken: #f0efe9;
+  --hf-sidebar: #f1f0ea;
+  --hf-hover: #eceae2;
+  --hf-selected: #e5e7da;
+  --hf-overlay: rgba(41, 42, 38, 0.28);
+  --hf-border: #e4e2da;
+  --hf-border-strong: #d4d2c7;
+  --hf-text: #292a26;
+  --hf-text-2: #4f534a;
+  /* Secondary text; 4.5:1 or better on every surface, hover and selected. */
+  --hf-muted: #65675e;
+  /* Icons, borders and decoration only: too light for text. */
+  --hf-faint: #9b9d93;
+  --hf-ink: #343932;
+  --hf-ink-hover: #232721;
+  --hf-on-ink: #fbfaf6;
+  --hf-field: #fcfbf8;
+  /* 3:1 or better against every surface. */
+  --hf-focus: #2a8f69;
+
+  --hf-accent: #36b98a;
+  --hf-accent-strong: #2a9b72;
+  --hf-accent-soft: #e5f4ea;
+  --hf-accent-border: #c3e2cf;
+  --hf-accent-text: #2d6a4b;
+
+  --hf-success: #36b98a;
+  --hf-success-soft: #e5f4ea;
+  --hf-success-text: #2d6a4b;
+  --hf-warning: #c99a3e;
+  --hf-warning-soft: #f6efdd;
+  --hf-warning-text: #87662e;
+  --hf-danger: #b5503b;
+  --hf-danger-soft: #f7e9e4;
+  --hf-danger-text: #a44a36;
+  /* Text on solid danger fills (buttons, error toasts). */
+  --hf-on-danger: #ffffff;
+  --hf-info: #4f82b3;
+  --hf-info-soft: #e7eef6;
+  --hf-info-text: #36608a;
+
+  /* Categorical chart palette, in order. */
+  --hf-chart-1: #36b98a;
+  --hf-chart-2: #4f82b3;
+  --hf-chart-3: #c99a3e;
+  --hf-chart-4: #8a6fb0;
+  --hf-chart-5: #c85a43;
+  --hf-chart-6: #6f7a4f;
+
+  --hf-shadow-1: 0 1px 2px rgba(34, 35, 24, 0.05);
+  --hf-shadow-2:
+    0 1px 2px rgba(34, 35, 24, 0.04), 0 8px 24px rgba(34, 35, 24, 0.07);
+  --hf-shadow-3:
+    0 2px 6px rgba(34, 35, 24, 0.06), 0 24px 64px rgba(34, 35, 24, 0.16);
+}
+:root[data-theme="dark"] {
+  --hf-bg: #161713;
+  --hf-surface: #161713;
+  --hf-raised: #1e1f1a;
+  --hf-sunken: #121310;
+  --hf-sidebar: #1a1b17;
+  --hf-hover: #26281f;
+  --hf-selected: #2c3026;
+  --hf-overlay: rgba(0, 0, 0, 0.5);
+  --hf-border: #2e3029;
+  --hf-border-strong: #3d4036;
+  --hf-text: #ecebe4;
+  --hf-text-2: #c9c8be;
+  --hf-muted: #9c9d92;
+  --hf-faint: #6f7168;
+  --hf-ink: #e9e8df;
+  --hf-ink-hover: #ffffff;
+  --hf-on-ink: #1a1b16;
+  --hf-field: #1a1b17;
+  --hf-focus: #4fd0a0;
+  --hf-accent: #4fd0a0;
+  --hf-accent-strong: #6fdcb2;
+  --hf-accent-soft: #19362a;
+  --hf-accent-border: #28543f;
+  --hf-accent-text: #8fe3c4;
+  --hf-success: #4fd0a0;
+  --hf-success-soft: #19362a;
+  --hf-success-text: #8fe3c4;
+  --hf-warning: #e0b35a;
+  --hf-warning-soft: #3a2f18;
+  --hf-warning-text: #eac77f;
+  --hf-danger: #e47a62;
+  --hf-danger-soft: #3d201a;
+  --hf-danger-text: #f0a08d;
+  --hf-on-danger: #1a1b16;
+  --hf-info: #74a6d8;
+  --hf-info-soft: #1b2a3a;
+  --hf-info-text: #a3c6ea;
+  --hf-chart-1: #4fd0a0;
+  --hf-chart-2: #74a6d8;
+  --hf-chart-3: #e0b35a;
+  --hf-chart-4: #a98fd0;
+  --hf-chart-5: #e47a62;
+  --hf-chart-6: #a3ad7e;
+  --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --hf-shadow-3: 0 2px 6px rgba(0, 0, 0, 0.35), 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+*{box-sizing:border-box}body{margin:0;background:var(--hf-bg);color:var(--hf-text);font:13px/1.55 var(--hf-font-sans)}button,input,textarea{font:inherit}button,summary{cursor:pointer}button{color:inherit}button:focus-visible,summary:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid var(--hf-focus);outline-offset:3px}[hidden]{display:none!important}a{color:inherit;text-decoration:none}strong{font-weight:600}.demo{padding:10px 24px;border-bottom:1px solid var(--hf-border);display:flex;gap:12px;justify-content:space-between;align-items:center;background:var(--hf-raised);font-size:11px;color:var(--hf-muted)}.demo-controls{display:flex;gap:6px;flex-wrap:wrap}.btn{display:inline-flex;align-items:center;gap:6px;justify-content:center;min-height:28px;border:1px solid var(--hf-border);border-radius:6px;background:var(--hf-raised);padding:4px 10px;font-size:12px}.btn:hover{background:var(--hf-hover)}.btn:disabled{opacity:.55;cursor:default}.primary{background:var(--hf-ink);border-color:var(--hf-ink);color:var(--hf-on-ink)}.ghost{border-color:transparent;background:transparent}.shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:calc(100vh - 51px)}.sidebar{background:var(--hf-sidebar);border-right:1px solid var(--hf-border);padding:24px 16px;display:flex;flex-direction:column;gap:28px}.brand{font:20px var(--hf-font-display);padding:0 12px}.workspace{padding:10px 12px;border:1px solid var(--hf-border);border-radius:8px;font-size:12px}.workspace span{display:block;color:var(--hf-muted);font-size:11px}.nav{display:grid;gap:4px}.nav a{padding:8px 12px;border-radius:6px;color:var(--hf-text-2)}.nav a[aria-current]{background:var(--hf-selected);font-weight:600;color:var(--hf-text)}.nav a:hover{background:var(--hf-hover)}.nav small{padding:8px 12px 0;color:var(--hf-muted);font-size:11px}.sidebar-foot{margin-top:auto;padding:12px;color:var(--hf-muted);font-size:11px}.status-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--hf-success);margin-right:6px}main{min-width:0;max-width:1200px;width:100%;padding:32px;margin:0 auto}.page-head{display:flex;justify-content:space-between;align-items:start;gap:16px;margin-bottom:24px}.eyebrow{font-size:11px;color:var(--hf-muted);margin:0 0 5px}.page-head h1{font:26px/1.2 var(--hf-font-display);margin:0}.page-head p{margin:8px 0 0;color:var(--hf-muted);font-size:12px}.period{border:1px solid var(--hf-border);padding:6px 10px;border-radius:6px;white-space:nowrap;font-size:11px;color:var(--hf-text-2)}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metric{min-width:0;background:var(--hf-raised);border:1px solid var(--hf-border);border-radius:12px;padding:16px}.metric .label{color:var(--hf-muted);font-size:12px}.value{font-size:26px;line-height:1.4;font-weight:500;font-variant-numeric:tabular-nums;margin:6px 0}.delta{font-size:11px;color:var(--hf-muted)}.basis{font-size:11px;color:var(--hf-muted);margin:8px 0 24px}.business{border-top:1px solid var(--hf-border);border-bottom:1px solid var(--hf-border);padding:16px 0;margin:0 0 28px}.section-head{display:flex;gap:12px;justify-content:space-between;align-items:center;margin-bottom:12px}.section-head h2{margin:0;font-size:16px;font-weight:600}.tag{display:inline-block;font-size:11px;color:var(--hf-muted);border:1px solid var(--hf-border);border-radius:99px;padding:2px 8px;white-space:nowrap}.business p{margin:0 0 10px;color:var(--hf-text-2);max-width:860px}.business p strong{color:var(--hf-text)}.business-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--hf-muted)}.business summary{color:var(--hf-muted);font-size:12px;width:fit-content}.business-details{padding-top:12px}.business dl{display:grid;grid-template-columns:150px 1fr;gap:8px;margin:0;font-size:12px}.business dt{color:var(--hf-muted)}.business dd{margin:0}.model-edit{display:grid;gap:8px;padding:12px 0}.model-edit label{font-size:12px}.model-edit textarea{background:var(--hf-field);border:1px solid var(--hf-border);color:var(--hf-text);border-radius:8px;padding:10px;width:100%;min-height:80px}.watch-title{margin-bottom:4px}.support{color:var(--hf-muted);font-size:12px;margin:0 0 16px}.scan{border:1px solid var(--hf-border);border-radius:8px;padding:10px 12px;margin-bottom:16px;display:flex;gap:12px;align-items:center;justify-content:space-between}.scan-copy{min-width:0}.scan p{font-size:12px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--hf-muted)}.scan p strong{color:var(--hf-text-2)}.scan-info{font-size:11px;white-space:nowrap;color:var(--hf-muted)}.scan-list{border-bottom:1px solid var(--hf-border);padding:0 0 16px;margin-bottom:16px;font-size:12px}.scan-list ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}.scan-list li{color:var(--hf-muted)}.scan-list li strong{color:var(--hf-text-2)}.scan-list li:before{content:'✓';color:var(--hf-accent-text);margin-right:8px}.findings{display:grid;gap:12px}.finding{background:var(--hf-raised);border:1px solid var(--hf-border);border-radius:12px;padding:16px 20px}.finding-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.finding-label{font-size:11px;color:var(--hf-muted)}.finding h3{font-size:16px;line-height:1.45;margin:0 0 6px;font-weight:600}.finding p{margin:0 0 8px;color:var(--hf-text-2);font-size:13px}.finding .why{font-size:12px;color:var(--hf-muted)}.finding-bottom{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}.finding summary{font-size:12px;color:var(--hf-text-2)}.finding details{margin-top:12px;border-top:1px solid var(--hf-border);padding-top:12px}.evidence{padding-top:12px;min-width:0}.table-wrap{overflow:auto;margin-bottom:10px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--hf-border);font-variant-numeric:tabular-nums}th{font-weight:500;color:var(--hf-muted);background:var(--hf-sunken)}.num{text-align:right}.evidence p{font-size:11px;color:var(--hf-muted);margin:8px 0}.bar-pair{display:grid;grid-template-columns:90px minmax(0,1fr) 45px;gap:8px;align-items:center;font-size:12px;margin:8px 0}.track{background:var(--hf-sunken);height:8px;border-radius:3px}.fill{height:100%;background:var(--hf-chart-2);width:var(--share);border-radius:3px}.fill.previous{background:var(--hf-border-strong)}.next{margin-top:28px;padding:16px 0;border-top:1px solid var(--hf-border)}.next h2{font-size:13px;margin:0 0 6px;font-weight:600}.next p{color:var(--hf-muted);font-size:12px;margin:0 0 10px}.chips{display:flex;gap:6px;flex-wrap:wrap}.toast{padding:10px 12px;border:1px solid var(--hf-border);border-radius:8px;background:var(--hf-sunken);margin-top:12px;font-size:12px;color:var(--hf-text-2)}.investigation{border-top:1px solid var(--hf-border);padding-top:12px;margin-top:12px}.investigation p{font-size:12px}.investigation .question{font-weight:500;color:var(--hf-text)}.muted{color:var(--hf-muted)}.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:1100px){.shell{grid-template-columns:60px minmax(0,1fr)}.sidebar{padding:24px 8px}.brand{padding:0;text-align:center;font-size:20px}.brand span,.workspace,.nav,.sidebar-foot{display:none}main{padding:24px}.metric{padding:12px}.value{font-size:23px}}
+@media(max-width:700px){.shell{display:block}.sidebar{display:none}.demo{padding:10px 16px;align-items:start;flex-direction:column;gap:6px}main{padding:24px 16px}.page-head{flex-direction:column;gap:12px}.page-head h1{font-size:23px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.business dl{grid-template-columns:1fr;gap:4px}.business dd{margin-bottom:8px}.finding{padding:16px}.finding h3{font-size:14px}.finding p{font-size:12px}.finding-top{align-items:start}.section-head{align-items:start}.scan{gap:8px}.scan-info{font-size:10px}.finding-bottom .btn{font-size:11px}.bar-pair{grid-template-columns:70px minmax(0,1fr) 36px}.period{white-space:normal}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+.top-callout{font-size:13px;color:var(--hf-text-2);margin:0 0 12px}.scan{border:0;padding:0;margin-bottom:12px}.scan p{font-size:11px}.scan-info .btn{font-size:11px}.finding{padding:20px}.finding h3{font-size:16px;margin-bottom:6px}.finding>p{font-size:13px;margin:0}.finding details{margin-top:14px;padding-top:10px}.finding .why{font-size:12px}.carousel-controls{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px;font-size:11px;color:var(--hf-muted)}.watch-title{margin-bottom:8px}.basis{margin-bottom:28px}.page-head{margin-bottom:24px}.finding[hidden]{display:none!important}
+@media(max-width:700px){.finding{padding:16px}.finding h3{font-size:14px}.finding>p{font-size:12px}.top-callout{font-size:12px}}
+.scan{display:none}.scan[aria-busy="true"]{display:flex}.finding-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}.dismiss-feedback{text-align:center;font-size:11px;color:var(--hf-muted);margin-top:8px}.empty-findings{border:1px solid var(--hf-border);border-radius:12px;padding:20px;color:var(--hf-muted);font-size:12px}.home-ask{margin-bottom:28px}.ask-field{display:flex;align-items:center;gap:10px;background:var(--hf-raised);border:1px solid var(--hf-border-strong);border-radius:12px;padding:10px 12px}.ask-field>span{color:var(--hf-muted);font-size:18px}.ask-field input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--hf-text);font-size:14px}.ask-field input:focus-visible{outline:0}.ask-field:focus-within{outline:2px solid var(--hf-focus);outline-offset:2px}.ask-suggestions{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}.ask-suggestions button{font-size:11px;color:var(--hf-muted)}.ask-result{font-size:12px;color:var(--hf-muted);margin:8px 0}.findings{display:grid;grid-template-columns:repeat(var(--finding-columns,3),minmax(0,1fr));gap:12px;align-items:stretch}.finding{padding:16px;min-width:0;display:flex;flex-direction:column;min-height:230px}.finding h3{font-size:14px;line-height:1.5}.finding>p{font-size:12px}.finding-kind{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--hf-muted);margin-bottom:10px}.finding-kind svg{width:13px;height:13px;fill:none;stroke-width:1.5;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}.finding-kind.issue svg{color:var(--hf-danger-text)}.finding-kind.warning svg{color:var(--hf-warning-text)}.finding-kind.positive svg{color:var(--hf-success-text)}.finding-actions{margin-top:auto;padding-top:10px;justify-content:space-between;gap:0}.finding-actions .btn{font-size:11px;padding:4px 6px}.finding details{margin-top:12px}.finding details p{font-size:11px}.finding .table-wrap table{font-size:11px}.finding .table-wrap{max-width:100%}.home-keymetrics{margin-top:32px}.home-keymetrics .section-head h2{font-size:14px}.home-keymetrics .basis{margin-bottom:16px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.chart-panel,.ontology-panel{background:var(--hf-raised);border:1px solid var(--hf-border);border-radius:12px;overflow:hidden;min-width:0}.chart-panel>header{padding:16px;display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--hf-border)}.chart-panel h3{font-size:13px;font-weight:600;margin:0}.chart-panel header p{margin:3px 0 0;font-size:12px;color:var(--hf-muted)}.chart-panel header>span{font-size:20px;line-height:1.2;text-align:right;font-variant-numeric:tabular-nums}.chart-panel header small{display:block;font-size:11px;color:var(--hf-muted);margin-top:3px}.chart-body{padding:16px;--wk-series:var(--hf-accent-strong)}.chart-body svg{display:block;width:100%;height:184px;overflow:visible}.chart-axis{fill:var(--hf-muted);font-size:11px;font-variant-numeric:tabular-nums}.chart-grid-line{stroke:var(--hf-border);stroke-width:1}.trend-area{fill:var(--wk-series);opacity:.1}.trend-line{fill:none;stroke:var(--wk-series);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.chart-values{font-size:11px;color:var(--hf-muted)}.chart-values summary{width:fit-content;margin-top:4px}.chart-breakdown{display:grid;gap:12px;padding:4px 0}.chart-breakdown .bar-pair{grid-template-columns:75px minmax(0,1fr) 42px;font-size:11px;margin:0}.chart-breakdown .fill{background:var(--wk-series)}.home-health{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:24px}.health-value{font-size:13px;margin:8px 0}.health-value strong{font-size:20px}.health-value>span:last-child{color:var(--hf-muted);font-size:12px}.recents{margin:24px 0}.recents h2{font-size:13px;font-weight:600;margin:0 0 8px}.recent-items{display:flex;gap:8px;flex-wrap:wrap}.ontology-panel{padding:16px}.ontology-panel h2{font-size:14px}.ontology-panel header p{font-size:12px;margin:4px 0 0}.ontology-content{display:grid;grid-template-columns:1.2fr 1fr;gap:24px}.ontology-content>svg{width:100%;height:260px}.ontology-edges path{fill:none;stroke:var(--hf-border-strong);stroke-width:1.5}.ontology-nodes rect{fill:var(--hf-sunken);stroke:var(--hf-border-strong)}.ontology-nodes text{fill:var(--hf-text-2);font-size:12px;text-anchor:middle}.type-list{list-style:none;padding:0;margin:0}.type-list li{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hf-border);font-size:12px}.type-list strong{font-weight:500;font-variant-numeric:tabular-nums}.type-list li:last-child{border:0}.page-foot{font-size:11px;color:var(--hf-muted);margin:16px 0 0}#attention-heading{font-size:14px}.findings+.empty-findings{margin:0}
+@media(max-width:700px){.findings{grid-template-columns:1fr}.finding{min-height:200px}.chart-grid{grid-template-columns:1fr}.home-health{gap:8px}.ontology-content{grid-template-columns:1fr;gap:12px}.ontology-content>svg{height:220px}.ask-field input{font-size:13px}.ask-suggestions button{font-size:10px}.bar-pair{grid-template-columns:70px minmax(0,1fr) 36px}}
+/* Compact findings; evidence stays available on demand. */
+.finding{min-height:190px}
+.finding>p{font-size:11px;color:var(--hf-muted)}
+.finding details{border-top:0;padding-top:0;margin-top:10px}
+.finding summary{display:flex;align-items:center;gap:5px;width:fit-content;list-style:none;font-size:11px;color:var(--hf-muted);font-weight:400}
+.finding summary::-webkit-details-marker{display:none}
+.finding summary::after{content:"⌄";font-size:12px;line-height:1}
+.finding details[open]>summary::after{transform:rotate(180deg)}
+.finding summary:hover{color:var(--hf-text)}
+.finding-actions{justify-content:flex-end}
+
+/* Secondary voice input uses the existing question field. */
+.provider-demo{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--hf-muted)}
+.provider-demo select{font:inherit;color:var(--hf-text);background:var(--hf-raised);border:1px solid var(--hf-border);border-radius:6px;padding:5px}
+.ask-row{display:flex;align-items:center;gap:8px}.ask-row>.ask-field{flex:1;min-width:0}
+.voice-trigger{display:grid;place-items:center;width:28px;height:28px;flex:none;padding:4px;border:0;border-radius:50%;background:transparent;cursor:pointer}
+.voice-trigger:hover{background:var(--hf-info-soft)}
+.orb-mark{display:inline-block;width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 32% 26%,#e5f4ff 0%,#92c5ed 28%,var(--hf-info) 67%,#365e98 100%);box-shadow:inset -2px -2px 4px #315b8229}
+.voice-trigger[aria-pressed="true"] .orb-mark{animation:voice-breathe 1.5s ease-in-out infinite;box-shadow:0 0 0 4px var(--hf-info-soft)}
+@keyframes voice-breathe{50%{transform:scale(1.1)}}
+@media(prefers-reduced-motion:reduce){.voice-trigger .orb-mark{animation:none!important}}
+@media(max-width:700px){.ask-row{gap:4px}.ask-field{gap:7px}.provider-demo{white-space:nowrap}}
+
+/* Normal conversation; the only voice addition is the secondary composer orb. */
+main.chat-mode{padding-top:0;padding-bottom:0}
+.chat-view{display:flex;flex-direction:column;height:calc(100dvh - 86px);min-height:420px;max-width:760px;margin:auto}
+.chat-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--hf-border);padding:16px 0;gap:12px}
+.chat-head h1{font-family:var(--hf-font-display);font-weight:400;font-size:20px;margin:0}
+.chat-head p{font-size:11px;color:var(--hf-muted);margin:2px 0 0}
+.chat-log{flex:1;min-height:0;overflow:auto;padding:24px 0;display:flex;flex-direction:column;gap:24px}
+.chat-question{align-self:flex-end;max-width:90%;padding:10px 14px;border:1px solid var(--hf-border);border-radius:16px;background:var(--hf-sunken);font-size:14px;line-height:1.55}
+.chat-answer{display:flex;gap:12px;font-size:14px;line-height:1.7;max-width:95%}
+.chat-answer>span{color:var(--hf-muted);font-size:18px}.chat-answer p{margin:0}.chat-answer small{display:block;margin-top:8px;font-size:11px;color:var(--hf-muted)}
+.chat-answer.pending p{color:var(--hf-muted);font-size:12px}
+.chat-dock{padding:12px 0 10px;background:var(--hf-bg)}
+.chat-live-controls{display:flex;justify-content:center;margin:0 0 8px}
+.chat-live-controls:has(button[hidden]){display:none}
+.chat-live-controls .voice-trigger{width:44px;height:36px}
+.chat-live-controls .orb-mark{width:24px;height:24px}
+#chat-voice[aria-pressed="true"] .orb-mark{opacity:1;background:radial-gradient(circle at 32% 26%,#eef8ff 0%,#80c5ff 26%,#368fe0 66%,#2464b4 100%);box-shadow:0 0 8px 3px #479feb66,0 0 20px 5px #479feb33;animation:voice-breathe 1.5s ease-in-out infinite}
+.chat-hint{margin:6px 0 0;text-align:center;font-size:11px;color:var(--hf-muted)}
+.voice-trigger[data-phase="thinking"] .orb-mark,.voice-trigger[data-phase="replying"] .orb-mark{animation:none;opacity:.6}
+@media(max-width:700px){.chat-view{height:calc(100dvh - 180px)}.chat-answer{max-width:100%}.chat-question{font-size:13px}}
+
+.chat-followups{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.chat-followup{border:1px solid var(--hf-border);border-radius:99px;background:transparent;color:var(--hf-muted);font-size:11px;line-height:1.4;min-height:28px;padding:5px 10px;text-align:left;max-width:100%}
+.chat-followup:hover{background:var(--hf-hover);color:var(--hf-text)}
+.chat-entry{position:relative;flex:1;min-width:0;display:flex;align-items:center}
+.chat-entry input{position:relative;z-index:1;background:transparent;min-width:0;width:100%;padding:2px 0}
+.chat-completion{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);white-space:pre;overflow:hidden;pointer-events:none;font:inherit;font-size:14px;color:var(--hf-muted);opacity:.65}
+.chat-completion .typed{visibility:hidden}
+.completion-help{display:block;margin:5px 0 0;color:var(--hf-muted);font-size:11px;text-align:right}
+.completion-help kbd{font:inherit;border:1px solid var(--hf-border);border-radius:4px;padding:0 3px}
+@media(max-width:700px){.chat-completion{font-size:13px}}
+</style></head><body>
+<div class="demo"><span><strong>Dashboard concept</strong> · Illustrative data and scan activity. Voice input is simulated; microphone stays off. No backend requests.</span><div class="demo-controls"><label class="provider-demo">Provider <select id="preview-provider" aria-label="Preview AI provider"><option value="chatgpt">ChatGPT</option><option value="claude">Claude</option><option value="local">Local</option></select></label><button class="btn" id="replay">Replay scan</button><button class="btn" id="failed">Scan failure</button><button class="btn" id="theme" aria-label="Switch to dark theme">Dark theme</button></div></div>
+<div class="shell"><aside class="sidebar" aria-label="Workspace navigation"><div class="brand">h<span>elix foundry</span></div><div class="workspace">Meridian Commerce<span>Business workspace</span></div><nav class="nav"><a href="#home" aria-current="page">⌂ &nbsp; Home</a><a href="#findings">✧ &nbsp; Analyst</a><small>WORKSPACE</small><a href="#business">◇ &nbsp; Ontology</a><a href="#coverage">▤ &nbsp; Data</a><a href="#coverage">↗ &nbsp; Connections</a></nav><div class="sidebar-foot"><span class="status-dot"></span>13 datasets connected<br>Latest snapshot: 8 Oct 2026</div></aside>
+<main id="home"><div id="home-content"><header class="page-head"><div><div class="eyebrow">MERIDIAN COMMERCE / HOME</div><h1>Your business, at a glance.</h1></div><span class="period">2–8 Oct 2026 · latest available week</span></header><form class="home-ask" id="home-ask"><div class="ask-row"><div class="ask-field"><span aria-hidden="true">✧</span><input id="ask-input" aria-label="Ask anything about your data" placeholder="Ask anything about your data…" minlength="5" required><button class="btn primary" type="submit" aria-label="Ask Analyst">↑</button></div><button class="voice-trigger" type="button" id="voice-input" aria-label="Dictate question with ChatGPT" aria-pressed="false" title="Voice input · ChatGPT"><span class="orb-mark" aria-hidden="true"></span></button></div><div class="ask-suggestions"><button class="btn ghost suggestion" type="button">What changed this week?</button><button class="btn ghost suggestion" type="button">Which customers order most?</button><button class="btn ghost suggestion" type="button">Explore my data</button></div><p id="ask-result" class="ask-result" hidden role="status"></p></form>
+<section aria-labelledby="attention-heading" id="findings"><div class="section-head watch-title"><h2 id="attention-heading">Some things we noticed</h2><span class="tag" id="finding-count" hidden>1 of 3</span></div>
+<div class="scan" id="scan" aria-busy="false"><div class="scan-copy"><p id="scan-line"><strong>Scanned:</strong> Traffic, customers and orders.</p><p id="scan-line-two" hidden><strong>Business lens:</strong> Acquisition quality and dependence on established customers.</p></div><div class="scan-info"><span id="scan-status" hidden>Latest snapshot</span><button class="btn ghost" id="show-scan" aria-expanded="false" aria-controls="scan-list">Show steps ⌄</button></div></div>
+<div class="scan-list" id="scan-list" hidden><ol id="scan-steps"><li><strong>Understand the business:</strong> Connect visits, customers and purchasing.</li><li><strong>Establish the fundamentals:</strong> Compare complete weeks and fix the customer cohort.</li><li><strong>Look for meaningful shifts:</strong> Review mix and concentration beneath totals.</li></ol><p class="muted">This prototype illustrates the flow; it does not execute a scan.</p></div>
+<div class="findings" id="finding-list" role="region" aria-roledescription="carousel" aria-label="Business findings">
+<article class="finding" id="engagement" role="group" aria-roledescription="slide" aria-label="Finding 1 of 3"><span class="finding-kind issue"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v6m0 3h.01"/></svg>Issue</span><h3>Your regular audience is visiting less.</h3><p>Regular visits <strong>↓25.3%</strong></p><details><summary>Details</summary><div class="evidence"><p class="why"><strong>Why it matters:</strong> Replacement traffic can hide weakening engagement with customers you usually depend on. Its effect on purchasing still needs investigation.</p><div class="bar-pair"><span>Previous week</span><div class="track"><div class="fill previous" style="--share:75%"></div></div><strong>75%</strong></div><div class="bar-pair"><span>Latest week</span><div class="track"><div class="fill" style="--share:56%"></div></div><strong>56%</strong></div><div class="table-wrap"><table><caption class="sr">Visits by fixed customer cohort</caption><thead><tr><th>Customer group</th><th class="num">Previous</th><th class="num">Latest</th></tr></thead><tbody><tr><td>Previously active</td><td class="num">37,500</td><td class="num">28,000</td></tr><tr><td>Other customers</td><td class="num">12,500</td><td class="num">22,000</td></tr><tr><td>Total visits</td><td class="num">50,000</td><td class="num">50,000</td></tr></tbody></table></div><p><strong>Definition:</strong> Customers with at least four sessions during 9–24 Sep. Membership stays fixed across both comparison weeks; “other” does not automatically mean new customers.</p><p><strong>Evidence:</strong> Sessions joined to Customers. Two complete weeks with matching weekdays. Illustrative values; limited history cannot establish long-term seasonality.</p></div></details><div class="finding-actions"><button class="btn ghost dismiss">Dismiss ×</button></div></article>
+<article class="finding" id="traffic" role="group" aria-roledescription="slide" aria-label="Finding 2 of 3" hidden><span class="finding-kind positive"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="m8 12 3 3 5-6"/></svg>Positive</span><h3>Referral visits grew 150%.</h3><p><strong>12,500</strong> referral visits</p><details><summary>Details</summary><div class="evidence"><p class="why"><strong>Why it matters:</strong> Your acquisition mix has changed. Check whether the added traffic converts and whether an expected campaign explains the shift.</p><div class="table-wrap"><table><caption class="sr">Traffic source visits in the two comparison weeks</caption><thead><tr><th>Source</th><th class="num">Previous</th><th class="num">Latest</th><th class="num">Change</th></tr></thead><tbody><tr><td>Organic</td><td class="num">20,000</td><td class="num">15,000</td><td class="num">−25%</td></tr><tr><td>Paid</td><td class="num">12,500</td><td class="num">13,000</td><td class="num">+4%</td></tr><tr><td>Direct</td><td class="num">10,000</td><td class="num">7,000</td><td class="num">−30%</td></tr><tr><td>Referral</td><td class="num">5,000</td><td class="num">12,500</td><td class="num">+150%</td></tr><tr><td>Email</td><td class="num">2,500</td><td class="num">2,500</td><td class="num">0%</td></tr></tbody></table></div><p><strong>Evidence:</strong> Sessions grouped by traffic_source. Shares use all sessions as their denominator. Check source tagging and missing-source records before interpreting a real shift.</p><p><strong>Possible explanation:</strong> A referral campaign or tagging change. Neither is established by these numbers.</p></div></details><div class="finding-actions"><button class="btn ghost dismiss">Dismiss ×</button></div></article>
+<article class="finding" id="concentration" role="group" aria-roledescription="slide" aria-label="Finding 3 of 3" hidden><span class="finding-kind warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4 9 16H3L12 4Z"/><path d="M12 9v4m0 3h.01"/></svg>Warning</span><h3>Sales depend more on a few buyers.</h3><p>Top buyers <strong>48% share</strong></p><details><summary>Details</summary><div class="evidence"><p class="why"><strong>Why it matters:</strong> Stable sales can conceal greater exposure to a small number of buyers. Check whether purchasing weakened across the rest of your customers.</p><div class="bar-pair"><span>Previous week</span><div class="track"><div class="fill previous" style="--share:34%"></div></div><strong>34%</strong></div><div class="bar-pair"><span>Latest week</span><div class="track"><div class="fill" style="--share:48%"></div></div><strong>48%</strong></div><div class="table-wrap"><table><caption class="sr">Net order value concentration</caption><thead><tr><th>Buyer group</th><th class="num">Previous</th><th class="num">Latest</th></tr></thead><tbody><tr><td>Top ten buyers</td><td class="num">$51,408</td><td class="num">$72,000</td></tr><tr><td>Remaining buyers</td><td class="num">$99,792</td><td class="num">$78,000</td></tr><tr><td>Total</td><td class="num">$151,200</td><td class="num">$150,000</td></tr></tbody></table></div><p><strong>Definition:</strong> Top ten buyers ranked independently in each week by summed Orders.net_amount. This measures concentration; it does not mean the same ten customers bought more.</p><p><strong>Next check:</strong> Compare median order value, purchasing frequency and a fixed cohort of customers. A few large orders may explain the change; causation is unverified.</p></div></details><div class="finding-actions"><button class="btn ghost dismiss">Dismiss ×</button></div></article>
+</div><p class="empty-findings" id="empty-findings" hidden>All findings dismissed.</p><div class="carousel-controls" id="carousel-controls"><button class="btn ghost" id="previous" aria-label="Previous finding">←</button><span id="carousel-position" aria-live="polite">1 of 3</span><button class="btn ghost" id="next" aria-label="Next finding">→</button></div><div class="toast" id="scan-error" hidden><strong>Scan interrupted.</strong> The previous findings remain visible. In the product, their scan time and freshness would remain attached. <button class="btn" id="retry">Retry preview</button></div><div class="dismiss-feedback" id="dismiss-feedback" hidden><span id="dismiss-message" role="status">Finding dismissed.</span> <button class="btn ghost" id="undo-dismiss">Undo</button></div><div class="toast" id="notice" hidden role="status"></div></section><section class="home-keymetrics" aria-labelledby="keymetrics"><div class="section-head"><h2 id="keymetrics">Key metrics</h2><span class="muted" style="font-size:11px">From your connected data</span></div><section class="metrics" aria-label="Business fundamentals"><article class="metric"><div class="label">Net order value</div><div class="value">$150,000</div><div class="delta">↓ 0.8% vs previous week</div></article><article class="metric"><div class="label">Orders</div><div class="value">1,500</div><div class="delta">↓ 2.0% vs previous week</div></article><article class="metric"><div class="label">Visits</div><div class="value">50,000</div><div class="delta">Unchanged vs previous week</div></article><article class="metric"><div class="label">Session conversion</div><div class="value">3.0%</div><div class="delta">↓ 0.06 percentage points</div></article></section>
+<p class="basis">Compared with 25 Sep–1 Oct · complete seven-day periods · sample USD amounts</p>
+<div class="chart-grid"><article class="chart-panel"><header><div><h3>Net order value over time</h3><p>Daily · Orders</p></div><span>$150K<small>2–8 Oct</small></span></header><div class="chart-body" id="value-chart"></div></article><article class="chart-panel"><header><div><h3>Orders over time</h3><p>Daily · Orders</p></div><span>1,500<small>2–8 Oct</small></span></header><div class="chart-body" id="orders-chart"></div></article><article class="chart-panel"><header><div><h3>Traffic by source</h3><p>Latest week · Sessions</p></div></header><div class="chart-body" id="source-chart"></div></article><article class="chart-panel"><header><div><h3>Order value by customer group</h3><p>Latest week · Orders, Customers</p></div></header><div class="chart-body" id="buyer-chart"></div></article></div></section>
+<section class="home-health" aria-label="Workspace health"><article class="metric"><div class="label">Connections</div><div class="health-value"><span class="status-dot"></span><strong>13</strong> <span>datasets available</span></div><div class="delta">Imported Meridian snapshot</div></article><article class="metric"><div class="label">Data health</div><div class="health-value"><span class="status-dot"></span><strong>0</strong> <span>open issues</span></div><div class="delta">Illustrative healthy state</div></article></section>
+<section class="recents" aria-label="Recent activity"><h2>Continue where you left off</h2><div class="recent-items"><button class="btn ghost local-action">◷ &nbsp; Customers with the most orders</button><button class="btn ghost local-action">▤ &nbsp; Orders</button><button class="btn ghost local-action">◇ &nbsp; Customer</button></div></section>
+<section class="ontology-panel" id="business"><header class="section-head"><div><h2>Ontology</h2><p class="muted">8 object types · connected business records</p></div><button class="btn ghost local-action">Open →</button></header><div class="ontology-content"><svg viewBox="0 0 440 260" role="img" aria-label="Sample ontology connecting customers, orders, order items, products, categories and regions"><g class="ontology-edges"><path d="M220 130 90 55M220 130 350 55M220 130 90 205M220 130 350 205M90 205 90 55M350 55 350 205"/></g><g class="ontology-nodes"><g><rect x="169" y="111" width="102" height="38" rx="8"/><text x="220" y="135">Order</text></g><g><rect x="37" y="36" width="106" height="38" rx="8"/><text x="90" y="60">Customer</text></g><g><rect x="295" y="36" width="110" height="38" rx="8"/><text x="350" y="60">Order item</text></g><g><rect x="37" y="186" width="106" height="38" rx="8"/><text x="90" y="210">Region</text></g><g><rect x="297" y="186" width="106" height="38" rx="8"/><text x="350" y="210">Product</text></g></g></svg><ul class="type-list"><li><span>Order item</span><strong>247,116</strong></li><li><span>Customer</span><strong>123,700</strong></li><li><span>Order</span><strong>82,372</strong></li><li><span>Product</span><strong>48,640</strong></li><li><span>Category</span><strong>40</strong></li><li><span>Region</span><strong>10</strong></li><li><span>Business event</span><strong>12</strong></li><li class="muted">1 more object type</li></ul></div></section><p class="page-foot" id="coverage">Home layout concept · chart values and findings are illustrative · no live scan</p>
+
+
+</div>
+<section id="chat-view" class="chat-view" aria-label="Analyst conversation" hidden>
+<header class="chat-head"><div><h1>Business shifts</h1><p>Analyst · same conversation</p></div><button class="btn ghost" id="back-home" type="button">Home</button></header>
+<div class="chat-log" id="chat-log" role="log" aria-label="Conversation" aria-live="polite"></div>
+<form id="chat-form" class="chat-dock"><div class="chat-live-controls"><button class="voice-trigger" type="button" id="chat-voice" aria-label="Start hands-free voice with ChatGPT" aria-pressed="false" title="Hands-free voice · ChatGPT"><span class="orb-mark" aria-hidden="true"></span></button></div><div class="ask-row"><div class="ask-field"><div class="chat-entry"><input id="chat-input" aria-label="Chat follow-up" placeholder="Ask a follow-up…" minlength="5" required aria-autocomplete="inline" aria-describedby="completion-help completion-description"><span class="chat-completion" id="chat-completion" aria-hidden="true" hidden></span></div><button class="btn primary" type="submit" id="chat-send" aria-label="Send follow-up">↑</button></div></div><span id="completion-description" class="sr"></span><span id="completion-help" class="completion-help" hidden><kbd>Tab</kbd> to complete · <kbd>Enter</kbd> to send</span><p class="chat-hint" id="chat-hint">Illustrative conversation · no backend requests</p></form>
+</section>
+<div class="sr" id="announce" aria-live="polite"></div></main></div>
+<script>
+const $=id=>document.getElementById(id);let scanTimers=[],scanOpen=false,slide=0;const stages=[['Understand the business','Connect visits, customers and purchasing.'],['Establish the fundamentals','Compare complete weeks and fix the customer cohort.'],['Look for meaningful shifts','Review mix and concentration beneath totals.']];
+function stopTimers(){scanTimers.forEach(clearTimeout);scanTimers=[]}
+function scan(){stopTimers();$('scan-error').hidden=true;$('scan').setAttribute('aria-busy','true');$('replay').disabled=true;$('finding-count').textContent='Scanning';$('scan-status').textContent='Scanning preview';$('scan-line-two').innerHTML='<strong>Business lens:</strong> Acquisition quality and established-customer engagement.';stages.forEach((s,i)=>scanTimers.push(setTimeout(()=>{$('scan-line').innerHTML='<strong>'+s[0]+':</strong> '+s[1];$('scan-steps').innerHTML=stages.map((s,j)=>'<li><strong>'+s[0]+':</strong> '+(j<i?'Completed. ':j===i?'In progress. ':'Pending. ')+s[1]+'</li>').join('');$('announce').textContent=s[0]},i*2200)));scanTimers.push(setTimeout(()=>{$('scan').setAttribute('aria-busy','false');$('replay').disabled=false;$('scan-line').innerHTML='<strong>Scanned:</strong> Traffic, customers and orders.';$('scan-status').textContent='Preview refreshed';$('finding-count').textContent=(slide+1)+' of 3';$('scan-steps').innerHTML=stages.map(s=>'<li><strong>'+s[0]+':</strong> '+s[1]+'</li>').join('');$('announce').textContent='Preview scan complete. Three shifts to review.'},6600))}
+$('replay').onclick=scan;$('retry').onclick=scan;$('failed').onclick=()=>{stopTimers();$('replay').disabled=false;$('scan').setAttribute('aria-busy','false');$('scan-error').hidden=false;$('scan-line').innerHTML='<strong>Scan stopped:</strong> The latest review could not finish.';$('scan-status').textContent='Previous scan retained';$('announce').textContent='Scan interrupted. Previous findings remain visible.'};
+$('show-scan').onclick=()=>{scanOpen=!scanOpen;$('scan-list').hidden=!scanOpen;$('show-scan').setAttribute('aria-expanded',String(scanOpen));$('show-scan').textContent=scanOpen?'Hide steps ⌃':'Show steps ⌄'};
+$('theme').onclick=()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';$('theme').textContent=dark?'Light theme':'Dark theme';$('theme').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme')};
+const questions={engagement:'Did purchasing also decline among the fixed previously active customer cohort, and which regions or traffic sources contributed most?',traffic:'Does the increase in referral sessions compensate for lost organic and direct visits in order-linked sessions? Check device mix, source tagging and known events.',concentration:'Is higher order-value concentration caused by larger purchases among the leaders, weaker purchasing elsewhere, or both? Compare fixed customer cohorts and order-value distributions.'};
+document.querySelectorAll('.investigate').forEach(b=>b.onclick=()=>{const article=$(b.dataset.kind);let el=article.querySelector('.investigation');if(!el){el=document.createElement('div');el.className='investigation';const label=document.createElement('p');label.className='muted';label.textContent='Prepared Analyst question · preview only';const q=document.createElement('p');q.className='question';q.textContent=questions[b.dataset.kind];const note=document.createElement('p');note.className='muted';note.textContent='A real investigation would open Analyst with these cohorts, dates and measures attached. This mockup makes no API call.';el.append(label,q,note);article.append(el)}else el.hidden=!el.hidden;b.setAttribute('aria-expanded',String(!el.hidden))});
+document.querySelectorAll('.feedback').forEach(b=>b.onclick=()=>{const expected=b.textContent==='Expected change';b.textContent=expected?'Marked expected ✓':'Expected change';b.setAttribute('aria-pressed',String(expected));$('notice').hidden=false;$('notice').textContent=expected?'Marked as expected in this preview. In the product, Foundry should ask for the context and duration before changing future priorities.':'Removed the expected-change annotation in this preview.'});
+document.querySelectorAll('.priority').forEach(b=>b.onclick=()=>{const selected=b.getAttribute('aria-pressed')==='true';b.setAttribute('aria-pressed',String(!selected));b.textContent=b.textContent.replace(' ✓','')+(!selected?' ✓':'')});
+const slides=[...document.querySelectorAll('.finding')],dismissed=new Set(),undoStack=[];
+function availableSlides(){return slides.filter(el=>!dismissed.has(el.id))}
+function showSlide(index){const visible=availableSlides(),small=matchMedia('(max-width:700px)').matches;slide=visible.length?((index%visible.length)+visible.length)%visible.length:0;const start=small?slide:Math.floor(slide/3)*3;slides.forEach(el=>el.hidden=!visible.slice(start,start+(small?1:3)).includes(el));$('finding-list').style.setProperty('--finding-columns',Math.min(3,Math.max(1,visible.length)));$('empty-findings').hidden=visible.length>0;$('carousel-controls').hidden=visible.length<=(small?1:3);$('carousel-position').textContent=visible.length?(slide+1)+' of '+visible.length:'';$('finding-count').textContent=visible.length+' findings';visible.forEach((el,i)=>el.setAttribute('aria-label','Finding '+(i+1)+' of '+visible.length));}
+$('previous').onclick=()=>showSlide(slide-1);$('next').onclick=()=>showSlide(slide+1);
+slides.forEach(el=>{el.querySelector('.dismiss').onclick=()=>{dismissed.add(el.id);undoStack.push(el.id);$('dismiss-feedback').hidden=false;$('dismiss-message').textContent='Finding dismissed.';showSlide(Math.min(slide,availableSlides().length-1));$('announce').textContent='Finding dismissed. Undo is available.'};});
+$('undo-dismiss').onclick=()=>{const id=undoStack.pop();if(!id)return;dismissed.delete(id);showSlide(availableSlides().findIndex(el=>el.id===id));$('dismiss-feedback').hidden=undoStack.length===0;$('announce').textContent='Finding restored.'};
+matchMedia('(max-width:700px)').addEventListener('change',()=>showSlide(slide));showSlide(0);
+function trend(id,values,currency=false){const w=400,h=184,left=40,right=10,top=10,bottom=25,max=currency?30000:300;const x=i=>left+i*(w-left-right)/(values.length-1),y=v=>top+(h-top-bottom)*(1-v/max);const line=values.map((v,i)=>(i?'L':'M')+x(i)+','+y(v)).join('');const ticks=[0,max/2,max];const svg='<svg viewBox="0 0 400 184" role="img" aria-label="Illustrative daily '+(currency?'net order value':'order count')+' for 2 to 8 October">'+ticks.map(v=>'<line class="chart-grid-line" x1="40" x2="390" y1="'+y(v)+'" y2="'+y(v)+'"/><text class="chart-axis" x="32" y="'+(y(v)+4)+'" text-anchor="end">'+(currency?'$'+v/1000+'K':v)+'</text>').join('')+'<path class="trend-area" d="'+line+'L390,159L40,159Z"/><path class="trend-line" d="'+line+'"/>'+values.map((v,i)=>'<circle cx="'+x(i)+'" cy="'+y(v)+'" r="3" fill="var(--wk-series)"><title>Oct '+(i+2)+': '+(currency?'$':'')+v.toLocaleString()+'</title></circle>').join('')+[0,3,6].map(i=>'<text class="chart-axis" x="'+x(i)+'" y="180" text-anchor="middle">Oct '+(i+2)+'</text>').join('')+'</svg>';$(id).innerHTML=svg+'<details class="chart-values"><summary>View values</summary><p>'+values.map((v,i)=>'Oct '+(i+2)+': '+(currency?'$':'')+v.toLocaleString()).join(' · ')+'</p></details>'}
+function breakdown(id,rows){const max=Math.max(...rows.map(r=>r[1]));$(id).innerHTML='<div class="chart-breakdown">'+rows.map(r=>'<div class="bar-pair"><span>'+r[0]+'</span><div class="track" aria-hidden="true"><div class="fill" style="--share:'+r[1]/max*100+'%"></div></div><span class="num">'+r[2]+'</span></div>').join('')+'</div>'}
+trend('value-chart',[22000,18000,26000,24000,19000,21000,20000],true);trend('orders-chart',[220,180,260,240,190,210,200]);breakdown('source-chart',[['Organic',15000,'15K'],['Paid',13000,'13K'],['Referral',12500,'12.5K'],['Direct',7000,'7K'],['Email',2500,'2.5K']]);breakdown('buyer-chart',[['Top ten',72000,'$72K'],['Other',78000,'$78K']]);
+document.querySelectorAll('.suggestion').forEach(b=>b.onclick=()=>{stopVoice();$('ask-input').value=b.textContent;$('ask-input').focus()});document.querySelectorAll('.local-action').forEach(b=>b.onclick=()=>{$('notice').hidden=false;$('notice').textContent='This would open '+b.textContent.trim()+' in the workspace. Preview only.'});
+
+
+let voiceTimers=[],voiceSession=0,voiceActive=false,voicePhase='off',voiceTurn=0,chatBusy=false;
+const utterances=['Why are our regular customers visiting less?','Which traffic sources changed?'];
+// Ontology-shaped examples only; production must validate against the accepted ontology.
+const followupCatalog={
+ customers:[{label:'Traffic source changes',question:'Which traffic sources changed?'},{label:'Customer groups',question:'Which customer groups lost visits?'},{label:'Weekly orders',question:'How did orders change this week?'}],
+ traffic:[{label:'Daily traffic',question:'Compare traffic sources by day'},{label:'Customer groups',question:'Compare visits by customer group'},{label:'Weekly orders',question:'How did orders change this week?'}],
+ orders:[{label:'Orders by customer',question:'Which customer groups placed fewer orders?'},{label:'Daily orders',question:'Compare order counts by day'},{label:'Traffic source changes',question:'Which traffic sources changed?'}]
+};
+let nextQuestions=followupCatalog.customers,completion='',dismissedCompletion='';
+function renderCompletion(){
+ const input=$('chat-input'),draft=input.value;
+ completion=!voiceActive&&!chatBusy&&document.activeElement===input&&draft.length>=2&&draft!==dismissedCompletion&&input.selectionStart===draft.length&&input.selectionEnd===draft.length?nextQuestions.find(q=>q.question.toLowerCase().startsWith(draft.toLowerCase())&&q.question.length>draft.length)?.question||'':'';
+ $('completion-description').textContent=completion?'Suggestion: '+completion:'';const ghost=$('chat-completion');ghost.replaceChildren();ghost.hidden=!completion;$('completion-help').hidden=!completion;
+ if(completion){const typed=document.createElement('span');typed.className='typed';typed.textContent=draft;ghost.append(typed,document.createTextNode(completion.slice(draft.length)));ghost.scrollLeft=input.scrollLeft;}
+}
+function acceptFollowup(question){
+ if(chatBusy)return;stopVoice();$('chat-input').value=question;dismissedCompletion='';$('chat-input').focus();$('chat-input').setSelectionRange(question.length,question.length);renderCompletion();$('announce').textContent='Question filled. Press Enter to send.';
+}
+function showFollowups(reply,prompt){
+ document.querySelectorAll('.chat-followups').forEach(el=>el.remove());
+ nextQuestions=/orders?/i.test(prompt)?followupCatalog.orders:/source|traffic|referral/i.test(prompt)?followupCatalog.traffic:followupCatalog.customers;
+ const group=document.createElement('div');group.className='chat-followups';group.setAttribute('role','group');group.setAttribute('aria-label','Suggested follow-up questions');
+ for(const item of nextQuestions){const b=document.createElement('button');b.type='button';b.className='chat-followup';b.textContent=item.label;b.title=item.question;b.setAttribute('aria-label',item.question);b.onclick=()=>acceptFollowup(item.question);group.append(b)}
+ reply.lastElementChild.append(group);renderCompletion();
+}
+$('chat-input').addEventListener('input',()=>{dismissedCompletion='';renderCompletion()});
+for(const event of ['focus','click','keyup','select','scroll'])$('chat-input').addEventListener(event,renderCompletion);
+$('chat-input').addEventListener('blur',()=>{completion='';$('completion-description').textContent='';$('chat-completion').hidden=true;$('completion-help').hidden=true});
+$('chat-input').addEventListener('keydown',e=>{
+ if(e.isComposing)return;
+ if(e.key==='Tab'&&!e.shiftKey&&!e.ctrlKey&&!e.altKey&&!e.metaKey&&completion){e.preventDefault();acceptFollowup(completion)}
+ else if(e.key==='Escape'&&completion){dismissedCompletion=$('chat-input').value;renderCompletion();e.preventDefault()}
+});
+
+function activeInput(){return $('chat-view').hidden?$('ask-input'):$('chat-input')}
+function updateVoice(){
+ for(const id of ['voice-input','chat-voice']){const b=$(id);b.hidden=$('preview-provider').value!=='chatgpt';b.dataset.phase=voicePhase;b.setAttribute('aria-pressed',String(voiceActive));b.setAttribute('aria-label',voiceActive?'Stop hands-free voice':'Start hands-free voice with ChatGPT');b.title=voiceActive?'Voice '+voicePhase+' · click to stop':'Hands-free voice · ChatGPT';}
+ renderCompletion();$('chat-hint').textContent=voiceActive?({listening:'Listening · finish speaking to send',thinking:'Thinking…',replying:'Responding…'}[voicePhase]||'Voice active')+' · simulated, microphone off':'Illustrative conversation · no backend requests';
+}
+function clearVoiceTimers(){voiceTimers.forEach(clearTimeout);voiceTimers=[];voiceSession++}
+function stopVoice(){clearVoiceTimers();voiceActive=false;voicePhase='off';updateVoice();$('announce').textContent='Hands-free voice stopped. You can continue typing.';}
+function later(fn,ms){const session=voiceSession;voiceTimers.push(setTimeout(()=>{if(session===voiceSession)fn()},ms))}
+function openChat(){ $('home-content').hidden=true;$('chat-view').hidden=false;$('home').classList.add('chat-mode'); }
+function addMessage(text,kind){const el=document.createElement('div');el.className=kind;if(kind==='chat-question'){el.textContent=text}else{const mark=document.createElement('span');mark.setAttribute('aria-hidden','true');mark.textContent='✧';const content=document.createElement('div'),p=document.createElement('p');p.textContent=text;content.append(p);el.append(mark,content);} $('chat-log').append(el);$('chat-log').scrollTop=$('chat-log').scrollHeight;return el}
+function sampleAnswer(question){if(/orders?/i.test(question))return 'Order counts fell 2.0% across the two complete comparison weeks. Compare customer groups and daily counts to see where the change came from. These are illustrative values.';if(/group/i.test(question))return 'Visits from the fixed regular-customer cohort declined, while other customers offset the loss. A cohort breakdown helps show the shift hidden by the unchanged total.';if(/source|traffic|referral/i.test(question))return 'Organic visits fell from 20,000 to 15,000, while referral visits rose from 5,000 to 12,500. The total stayed at 50,000. The source mix changed underneath it.';return 'Visits from the fixed regular-customer cohort fell 25.3%. Other visitors offset the decline, so total traffic looked unchanged. The data shows the shift, but does not establish its cause.';}
+function submitChat(prompt){
+ if(chatBusy||prompt.trim().length<5)return;
+ openChat();document.querySelectorAll('.chat-followups').forEach(el=>el.remove());addMessage(prompt,'chat-question');$('ask-input').value='';$('chat-input').value='';chatBusy=true;$('chat-send').disabled=true;
+ renderCompletion();const reply=addMessage('Reviewing the available evidence…','chat-answer pending');
+ if(voiceActive){voicePhase='thinking';updateVoice()}
+ setTimeout(()=>{reply.classList.remove('pending');reply.querySelector('p').textContent=sampleAnswer(prompt);const note=document.createElement('small');note.textContent='Illustrative answer · Sessions, Customers · complete-week comparison';reply.lastElementChild.append(note);chatBusy=false;$('chat-send').disabled=false;showFollowups(reply,prompt);$('chat-log').scrollTop=$('chat-log').scrollHeight;
+ if(voiceActive){voicePhase='replying';updateVoice();later(()=>{voicePhase='listening';updateVoice();if(voiceTurn<utterances.length)later(simulateUtterance,1800)},2000)}else $('chat-input').focus();
+ },1000);
+}
+function simulateUtterance(){
+ if(!voiceActive||chatBusy)return;voicePhase='listening';updateVoice();if(voiceTurn>=utterances.length)return;
+ const input=activeInput(),initial=input.value.trim(),words=utterances[voiceTurn++].split(' ');
+ words.forEach((word,i)=>later(()=>{input.value=(initial?initial+' ':'')+words.slice(0,i+1).join(' ')},200+i*180));
+ later(()=>{if(voiceActive&&input.value.trim())submitChat(input.value.trim())},1000+words.length*180);
+}
+function toggleVoice(){
+ if($('preview-provider').value!=='chatgpt')return;
+ if(voiceActive){stopVoice();activeInput().focus();return;}
+ if(chatBusy)return;if(activeInput().value.trim()){$('chat-hint').textContent='Send or clear your draft before starting voice';$('announce').textContent='Your draft is preserved. Send or clear it before starting voice.';activeInput().focus();return;}clearVoiceTimers();voiceActive=true;voiceTurn=0;voicePhase='listening';updateVoice();$('announce').textContent='Hands-free preview active. A pause sends each simulated utterance; after the response it listens again.';simulateUtterance();
+}
+$('voice-input').onclick=toggleVoice;$('chat-voice').onclick=toggleVoice;
+for(const id of ['ask-input','chat-input']){$(id).addEventListener('input',()=>{if(voiceActive)stopVoice()});$(id).addEventListener('keydown',e=>{if(e.key==='Escape'&&voiceActive){stopVoice();e.preventDefault()}});}
+$('home-ask').onsubmit=e=>{e.preventDefault();if(chatBusy)return;if(voiceActive)clearVoiceTimers();submitChat($('ask-input').value.trim())};
+$('chat-form').onsubmit=e=>{e.preventDefault();if(chatBusy)return;if(voiceActive)clearVoiceTimers();submitChat($('chat-input').value.trim())};
+$('preview-provider').onchange=()=>{stopVoice();updateVoice()};
+$('back-home').onclick=()=>{stopVoice();$('chat-view').hidden=true;$('home-content').hidden=false;$('home').classList.remove('chat-mode');$('ask-input').focus()};
+updateVoice();
+if(location.hash==='#hands-free')toggleVoice();
+if(location.hash==='#followups')submitChat('Why are our regular customers visiting less?');
+</script></body></html>
