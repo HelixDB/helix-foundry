@@ -168,6 +168,460 @@
   color: var(--hf-accent-text);
 }
 
+/* Some things we noticed: up to three compact findings between Ask and the
+   key metrics. Cards stay on the raised paper surface; status shows as a
+   labelled icon in the semantic text colours, never as a fill. Below 640px
+   of section width they become a carousel showing one card at a time. */
+.wk-noticed {
+  margin-bottom: var(--hf-space-3);
+}
+.wk-noticed-head h2,
+.wk-noticed > h2 {
+  margin: 0;
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--hf-text);
+}
+.wk-noticed-scan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 3px 0 var(--hf-space-15);
+}
+.wk-noticed-status {
+  min-width: 0;
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+.wk-noticed-status:empty {
+  display: none;
+}
+.wk-noticed-status strong {
+  color: var(--hf-text-2);
+  font-weight: 600;
+}
+.wk-noticed-status svg {
+  margin-right: 6px;
+  color: var(--hf-accent-text);
+  vertical-align: -2px;
+}
+.wk-noticed-checks {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.wk-noticed-checks > summary,
+.wk-finding-details > summary,
+.wk-finding-query > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  list-style: none;
+  cursor: pointer;
+  transition: color var(--hf-duration) var(--hf-ease);
+}
+.wk-noticed-checks > summary::-webkit-details-marker,
+.wk-finding-details > summary::-webkit-details-marker,
+.wk-finding-query > summary::-webkit-details-marker {
+  display: none;
+}
+.wk-noticed-checks > summary:hover,
+.wk-finding-details > summary:hover,
+.wk-finding-query > summary:hover {
+  color: var(--hf-text);
+}
+.wk-noticed-checks > summary svg,
+.wk-finding-details > summary svg,
+.wk-finding-query > summary svg {
+  flex: none;
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.wk-noticed-checks[open] > summary svg,
+.wk-finding-details[open] > summary svg,
+.wk-finding-query[open] > summary svg {
+  transform: rotate(180deg);
+}
+.wk-noticed-checks-body {
+  display: grid;
+  gap: var(--hf-space-15);
+  max-width: 760px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+.wk-noticed-steps,
+.wk-noticed-driver ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wk-noticed-steps li,
+.wk-noticed-driver li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.wk-noticed-steps li > svg {
+  flex: none;
+  position: relative;
+  top: 2px;
+  color: var(--hf-accent-text);
+}
+.wk-noticed-steps li.is-waiting {
+  color: var(--hf-muted);
+}
+.wk-noticed-step-dot {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: 50%;
+  position: relative;
+  top: 2px;
+}
+.wk-noticed-steps strong,
+.wk-noticed-driver strong {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.wk-noticed-driver h3 {
+  margin: 0 0 6px;
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.wk-noticed-driver li > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wk-noticed-state {
+  flex: none;
+  min-width: 104px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.wk-noticed-state.is-found {
+  color: var(--hf-accent-text);
+  font-weight: 600;
+}
+.wk-noticed-state.is-set_aside {
+  color: var(--hf-warning-text);
+}
+.wk-noticed-priorities {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 0 0;
+  border: 0;
+  border-top: 1px solid var(--hf-border);
+}
+.wk-noticed-priorities legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 4px;
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.wk-noticed-priorities label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+.wk-noticed-priorities input {
+  accent-color: var(--hf-ink);
+}
+.wk-noticed-priority-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.wk-noticed-error,
+.wk-noticed-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 0 var(--hf-space-15);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.wk-noticed-error > svg {
+  flex: none;
+  color: var(--hf-warning-text);
+}
+.wk-noticed-error > span {
+  flex: 1;
+  min-width: 0;
+}
+.wk-noticed-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--hf-space-15);
+  align-items: stretch;
+}
+.wk-noticed-cards.is-carousel {
+  grid-template-columns: minmax(0, 1fr);
+}
+.wk-finding {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 190px;
+  padding: var(--hf-space-2);
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.wk-finding[hidden] {
+  display: none;
+}
+.wk-finding:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.wk-finding:focus:not(:focus-visible) {
+  outline: none;
+}
+.wk-finding.is-loading {
+  gap: 10px;
+}
+.wk-finding-kind {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.wk-finding-kind svg {
+  flex: none;
+}
+.wk-finding.is-positive .wk-finding-kind svg {
+  color: var(--hf-success-text);
+}
+.wk-finding.is-warning .wk-finding-kind svg {
+  color: var(--hf-warning-text);
+}
+.wk-finding.is-issue .wk-finding-kind svg {
+  color: var(--hf-danger-text);
+}
+.wk-finding h3 {
+  margin: 0 0 6px;
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.wk-finding-support {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 1.5;
+}
+.wk-finding-support strong {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.wk-finding-details {
+  margin-top: 10px;
+  min-width: 0;
+}
+.wk-finding-evidence {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  min-width: 0;
+}
+.wk-finding-evidence p {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.wk-finding-evidence p strong {
+  color: var(--hf-text-2);
+  font-weight: 600;
+}
+.wk-finding-evidence .wk-finding-why {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.wk-finding-returned {
+  color: var(--hf-text-2);
+}
+.wk-finding-back {
+  color: var(--hf-muted);
+}
+.wk-finding-bars {
+  display: grid;
+  gap: 6px;
+}
+.wk-finding-bar {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.wk-finding-bar strong {
+  color: var(--hf-text);
+  font-weight: 600;
+  text-align: right;
+}
+.wk-finding-track {
+  height: 8px;
+  border-radius: 3px;
+  background: var(--hf-sunken);
+  overflow: hidden;
+}
+.wk-finding-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 3px;
+  background: var(--wk-series, var(--hf-accent-strong));
+}
+.wk-finding-fill.is-previous {
+  background: var(--hf-border-strong);
+}
+.wk-finding-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.wk-finding-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--hf-text-xs);
+}
+.wk-finding-table th,
+.wk-finding-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--hf-border);
+  color: var(--hf-text-2);
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+.wk-finding-table thead th {
+  color: var(--hf-muted);
+  font-weight: 500;
+}
+.wk-finding-table tbody th {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wk-finding-table tbody tr:last-child th,
+.wk-finding-table tbody tr:last-child td {
+  border-bottom: 0;
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.wk-finding-table .is-num {
+  text-align: right;
+}
+.wk-finding-query pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wk-finding-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: -8px;
+}
+.wk-finding-links .hf-btn {
+  max-width: 100%;
+}
+.wk-finding-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 10px;
+}
+.wk-finding-dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: transparent;
+  color: var(--hf-text-2);
+  font: inherit;
+  font-size: var(--hf-text-xs);
+  cursor: pointer;
+  transition:
+    background var(--hf-duration) var(--hf-ease),
+    color var(--hf-duration) var(--hf-ease);
+}
+.wk-finding-dismiss:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.wk-noticed-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.wk-noticed-empty {
+  margin: 0;
+  padding: var(--hf-space-2);
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.wk-noticed-undo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 8px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+
 /* Key metrics: KPI tiles, then trend and breakdown charts. One series hue,
    validated against the raised surface in each theme (>= 3:1, inside the
    dark lightness band); text always uses text tokens. */

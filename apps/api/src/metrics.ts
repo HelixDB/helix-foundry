@@ -50,13 +50,14 @@ type Stored = {
   version?: number;
 };
 
-const temporal = (t: string) => !nested(t) && /^(DATE|TIMESTAMP)/i.test(t);
-const numericType = (t: string) =>
+export const temporal = (t: string) =>
+  !nested(t) && /^(DATE|TIMESTAMP)/i.test(t);
+export const numericType = (t: string) =>
   !nested(t) &&
   /^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT|FLOAT|REAL|DOUBLE|DECIMAL|NUMERIC)/i.test(
     t,
   );
-const nested = (t: string) =>
+export const nested = (t: string) =>
   /STRUCT|MAP\(|\[\d*\]|UNION\(|^LIST|^JSON/i.test(t);
 const categorical = (c: Column) =>
   !c.sensitive &&

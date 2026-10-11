@@ -190,6 +190,17 @@ failed uses danger; paused and canceled are neutral. Use the existing
 `toStatus`, `statusLabel` and `statusTone` mapping rather than assigning new
 colors or labels independently.
 
+Home's "Some things we noticed" findings
+([`insights.tsx`](../apps/web/src/areas/workspace/insights.tsx)) label each
+card Positive, Warning or Issue with an icon in `--hf-success-text`,
+`--hf-warning-text` or `--hf-danger-text`, on the ordinary raised card: no
+tinted fill and no coloured text. The headline is bold 14px; the supporting
+text is 11px, three or four words, with its figure bold. Evidence sits in a
+quiet native `Details` disclosure (11px muted text and a small chevron, no
+separator). Cards sit three across, or one at a time with manual previous
+and next buttons when the section is narrower than 640px; nothing rotates on
+its own.
+
 Charts do not share one palette yet:
 
 - Home's key metrics draw `TrendChart` and `BreakdownChart`
