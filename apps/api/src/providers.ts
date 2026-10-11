@@ -6,6 +6,13 @@ import type {
 import { config } from "./config.js";
 import { assert, AppError } from "./security.js";
 import { postJson } from "./post.js";
+export const OPENAI_API = "https://api.openai.com/v1";
+// Azure OpenAI's OpenAI-compatible base URL, from the resource endpoint
+// (`https://RESOURCE.openai.azure.com`) or that endpoint with `/openai/v1`.
+export function azureBase(endpoint: string) {
+  const base = endpoint.replace(/\/+$/, "");
+  return base.endsWith("/openai/v1") ? base : base + "/openai/v1";
+}
 export class Provider implements ModelProvider {
   private verified = false;
   constructor(public settings: ProviderSettings) {}
@@ -71,25 +78,20 @@ export class Provider implements ModelProvider {
         ],
         tool_choice: { type: "tool", name: "submit" },
       };
+    } else if (s.provider === "azure") {
+      // The same Responses API, on the Azure resource, with the deployment
+      // name as the model. Azure reads the key from the api-key header.
+      assert(s.apiKey, "Azure OpenAI API key is required");
+      assert(s.baseUrl, "Azure OpenAI endpoint is required");
+      url = azureBase(s.baseUrl) + "/responses";
+      headers["api-key"] = s.apiKey;
+      headers.authorization = "Bearer " + s.apiKey;
+      body = openaiBody(s.model, system, user, schema);
     } else {
       assert(s.apiKey, "OpenAI API key is required");
-      url = "https://api.openai.com/v1/responses";
+      url = OPENAI_API + "/responses";
       headers.authorization = "Bearer " + s.apiKey;
-      body = {
-        model: s.model,
-        max_output_tokens: 8192,
-        store: false,
-        instructions: system,
-        input: user,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "result",
-            schema: strictSchema(schema),
-            strict: true,
-          },
-        },
-      };
+      body = openaiBody(s.model, system, user, schema);
     }
     const abort = signal || AbortSignal.timeout(s.timeoutSeconds * 1000);
     if (s.provider === "local") {
@@ -120,7 +122,7 @@ export class Provider implements ModelProvider {
     if (!response.ok)
       throw new AppError(
         502,
-        `${s.provider} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
+        `${s.provider === "azure" ? "Azure OpenAI" : s.provider} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
       );
     let value: unknown,
       tokens = 0;
@@ -141,6 +143,29 @@ export class Provider implements ModelProvider {
     }
     return { value: withoutNullOptionals(value), tokens };
   }
+}
+// A Responses API request with a strict JSON schema, for OpenAI and Azure OpenAI.
+function openaiBody(
+  model: string,
+  system: string,
+  user: string,
+  schema: Record<string, unknown>,
+) {
+  return {
+    model,
+    max_output_tokens: 8192,
+    store: false,
+    instructions: system,
+    input: user,
+    text: {
+      format: {
+        type: "json_schema",
+        name: "result",
+        schema: strictSchema(schema),
+        strict: true,
+      },
+    },
+  };
 }
 // Accepts a single response object or newline-delimited streamed parts.
 function ollamaResult(text: string) {

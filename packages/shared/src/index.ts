@@ -69,7 +69,7 @@ export type HostedConnection = {
   discovery: any;
 };
 export const ProviderSchema = z.object({
-  provider: z.enum(["local", "claude", "openai"]),
+  provider: z.enum(["local", "claude", "openai", "azure"]),
   model: z.string().min(1).max(150),
   baseUrl: z.url().optional(),
   apiKey: z.string().optional(),

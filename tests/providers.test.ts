@@ -72,7 +72,10 @@ for (const provider of ["local", "claude", "openai"] as const)
         provider,
         model: "test",
         apiKey: "test-only",
-        baseUrl: "http://127.0.0.1:" + (ollama.address() as any).port,
+        baseUrl:
+          provider === "local"
+            ? "http://127.0.0.1:" + (ollama.address() as any).port
+            : undefined,
       }),
     );
     const r = await p.generate(
@@ -158,4 +161,60 @@ it("reports provider outage without contacting another provider", async () => {
     ).generate("", {}, {}),
   ).rejects.toThrow("HTTP 503");
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+it("sends Azure OpenAI requests to the resource's v1 endpoint with the deployment as model", async () => {
+  const fetchMock = vi.fn(async () =>
+    Response.json({
+      output: [{ content: [{ type: "output_text", text: '{"ready":true}' }] }],
+      usage: { total_tokens: 5 },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  // The resource endpoint, with or without the `/openai/v1` route.
+  for (const baseUrl of [
+    "https://example.openai.azure.com/",
+    "https://example.openai.azure.com/openai/v1",
+  ]) {
+    fetchMock.mockClear();
+    const azure = new Provider(
+      ProviderSchema.parse({
+        provider: "azure",
+        model: "gpt-6.1-sol",
+        apiKey: "azure-key",
+        baseUrl,
+      }),
+    );
+    expect(await azure.generate("", {}, {})).toEqual({
+      value: { ready: true },
+      tokens: 5,
+    });
+    const [url, init] = fetchMock.mock.calls[0] as any;
+    expect(url).toBe("https://example.openai.azure.com/openai/v1/responses");
+    expect(init.headers["api-key"]).toBe("azure-key");
+    expect(init.headers.authorization).toBe("Bearer azure-key");
+    expect(JSON.parse(init.body).model).toBe("gpt-6.1-sol");
+    expect(JSON.parse(init.body).text.format.strict).toBe(true);
+  }
+  await expect(
+    new Provider(
+      ProviderSchema.parse({
+        provider: "azure",
+        model: "gpt-6.1-sol",
+        apiKey: "azure-key",
+      }),
+    ).generate("", {}, {}),
+  ).rejects.toThrow("Azure OpenAI endpoint is required");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+
+  fetchMock.mockClear();
+  await new Provider(
+    ProviderSchema.parse({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      apiKey: "sk-test",
+    }),
+  ).generate("", {}, {});
+  const [plainUrl, plainInit] = fetchMock.mock.calls[0] as any;
+  expect(plainUrl).toBe("https://api.openai.com/v1/responses");
+  expect(plainInit.headers["api-key"]).toBeUndefined();
 });

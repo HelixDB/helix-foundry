@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Check, Monitor, ArrowRight } from "lucide-react";
+import { LoaderCircle, Check, Monitor, Cloud, ArrowRight } from "lucide-react";
 import { api, number } from "./api";
 import { useWorkspace } from "./ui";
 import { ChoiceCard } from "./choice-card";
@@ -173,6 +173,11 @@ export function ProviderSetup({
               "OpenAI",
               "Use your OpenAI API key. Your schemas, data samples and answers are sent to OpenAI.",
             ],
+            [
+              "azure",
+              "Azure OpenAI",
+              "Use a deployment in your Azure subscription. Your schemas, data samples and answers are sent to that Azure resource.",
+            ],
           ].map(([value, title, description]) => (
             <ChoiceCard
               key={value}
@@ -190,7 +195,9 @@ export function ProviderSetup({
                       ? "qwen3:4b"
                       : value === "claude"
                         ? "claude-sonnet-4-6"
-                        : "gpt-5.4-mini",
+                        : value === "openai"
+                          ? "gpt-5.4-mini"
+                          : "",
                   baseUrl: value === "local" ? q.data?.baseUrl : undefined,
                   apiKey: "",
                   hasKey: q.data?.provider === value && q.data?.hasKey,
@@ -199,6 +206,8 @@ export function ProviderSetup({
               icon={
                 value === "local" ? (
                   <Monitor className="provider-logo" aria-hidden="true" />
+                ) : value === "azure" ? (
+                  <Cloud className="provider-logo" aria-hidden="true" />
                 ) : (
                   <img
                     className="provider-logo"
@@ -228,6 +237,39 @@ export function ProviderSetup({
               </div>
             </div>
           )}
+        {s.provider === "azure" && (
+          <>
+            <label>
+              Endpoint
+              <input
+                type="url"
+                autoComplete="off"
+                required={owner}
+                placeholder="https://RESOURCE.openai.azure.com"
+                value={s.baseUrl || ""}
+                onChange={(e) =>
+                  update("baseUrl", e.target.value.trim() || undefined)
+                }
+              />
+            </label>
+            <label>
+              Deployment name
+              <input
+                type="text"
+                autoComplete="off"
+                required={owner}
+                placeholder="gpt-5.4"
+                value={s.model || ""}
+                onChange={(e) => update("model", e.target.value.trim())}
+              />
+            </label>
+            <p className="muted">
+              Find the endpoint under Keys and Endpoint on your Azure OpenAI
+              resource, and the deployment name under Deployments. Hands-free
+              voice is not available with Azure OpenAI.
+            </p>
+          </>
+        )}
         {s.provider !== "local" && (
           <label>
             API key
