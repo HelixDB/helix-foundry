@@ -12,6 +12,8 @@ import type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ColumnDictionary,
+  ColumnDefinition,
 } from "@helix-foundry/shared";
 export type {
   Bundle,
@@ -27,6 +29,8 @@ export type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ColumnDictionary,
+  ColumnDefinition,
 };
 export class FoundryError extends Error {
   constructor(
@@ -37,6 +41,23 @@ export class FoundryError extends Error {
   }
 }
 export class FoundryClient {
+  columnDictionary(datasetId: string) {
+    return this.request<ColumnDictionary>(
+      `/datasets/${encodeURIComponent(datasetId)}/dictionary`,
+    );
+  }
+  updateColumnDictionary(
+    datasetId: string,
+    revision: number,
+    datasetRevision: number,
+    definitions: ColumnDefinition[],
+  ) {
+    return this.request<ColumnDictionary>(
+      `/datasets/${encodeURIComponent(datasetId)}/dictionary`,
+      { revision, datasetRevision, definitions },
+      "PUT",
+    );
+  }
   hostingProviders() {
     return this.request("/hosting");
   }

@@ -30,6 +30,10 @@ Each area owns its section below; add new routes to your own section.
 
 ### Data
 
+`GET /datasets/:id/dictionary` returns `{datasetId, revision, datasetRevision, columns, definitions}` for an active dataset. `PUT /datasets/:id/dictionary` accepts `{revision, datasetRevision, definitions: [{column, meaning, unit}]}` and requires editor access. Capture both revisions from GET: concurrent metadata edits or dataset changes return 409. Definitions are bounded to 500 entries, meanings to 1000 characters and units to 80; duplicate or unknown new column names are rejected. A blank meaning and unit removes an entry. Definitions for removed columns may be retained or removed explicitly. Immutable profiles and snapshots are unchanged.
+
+The SDK exposes `columnDictionary(datasetId)` and `updateColumnDictionary(datasetId, revision, datasetRevision, definitions)`. Definitions follow stable dataset identities, including republished pipeline outputs; only currently present columns enter Analyst context. Changed definitions invalidate saved model-analysis checkpoints on a resumed run even if dataset versions are unchanged. These are owner metadata, not a unit-conversion function or model-quality assurance.
+
 | Method / path                       | Input / result                                                          |
 | ----------------------------------- | ----------------------------------------------------------------------- |
 | POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request |

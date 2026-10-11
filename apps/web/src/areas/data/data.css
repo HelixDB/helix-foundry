@@ -1,4 +1,39 @@
 /* Data Connection area styles (prefix dc-). */
+.dc-dictionary dl > div {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hf-border);
+  overflow-wrap: anywhere;
+}
+.dc-dictionary dd {
+  margin: 4px 0 0;
+}
+.dc-dictionary small {
+  color: var(--hf-muted);
+}
+.dc-dictionary-form {
+  display: grid;
+  gap: 16px;
+}
+.dc-dictionary-form fieldset {
+  min-width: 0;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+}
+.dc-dictionary-form legend {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.dc-dictionary-form label {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.dc-dictionary-form input,
+.dc-dictionary-form textarea {
+  width: 100%;
+  min-width: 0;
+}
 .dc-connection-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);

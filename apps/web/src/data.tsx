@@ -13,6 +13,7 @@ import {
   DataTable,
 } from "./ui";
 import type { Resource } from "../../../packages/shared/src";
+import { ColumnDictionaryEditor } from "./areas/data/column-dictionary";
 export default function DataPage() {
   const { id } = useWorkspace(),
     sources = useResources("source");
@@ -176,6 +177,7 @@ function DatasetDetail({
               .join(", "),
           }))}
         />
+        <ColumnDictionaryEditor datasetId={d.id} />
         <h3>Description</h3>
         <label>
           Dataset description

@@ -10,6 +10,7 @@ import {
   SourceSchema,
   DemoSchema,
   datasetTable,
+  ColumnDictionaryUpdateSchema,
 } from "../../../../packages/shared/src/index.js";
 import { config } from "../config.js";
 import { assert, seal } from "../security.js";
@@ -24,9 +25,12 @@ import {
 import { sourceSyncDefaults } from "../source-sync.js";
 import { testedConnection } from "../onboarding.js";
 import { resolveHostedConfig } from "../hosting.js";
+import { columnDictionary, columnDictionaryId } from "../column-dictionary.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
 export const dataSchemas: RequestSchemas = {
+  "PUT /api/v1/workspaces/:w/datasets/:id/dictionary":
+    ColumnDictionaryUpdateSchema,
   "POST /api/v1/workspaces/:w/demo": DemoSchema,
   "POST /api/v1/workspaces/:w/sources": SourceSchema,
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
@@ -49,6 +53,71 @@ export function registerDataRoutes(
   deps: RouteDeps,
 ) {
   const { access, scrub } = deps;
+  app.get("/api/v1/workspaces/:w/datasets/:id/dictionary", async (req: any) => {
+    const a = await access(req),
+      dataset = await store.get(a.scope, req.params.id);
+    assert(
+      dataset?.kind === "dataset" &&
+        deps.visibleIn(dataset, await deps.activeGeneration(a.scope)),
+      "Dataset unavailable",
+      404,
+    );
+    return columnDictionary(
+      dataset,
+      await store.get(a.scope, columnDictionaryId(dataset.id)),
+    );
+  });
+  app.put("/api/v1/workspaces/:w/datasets/:id/dictionary", async (req: any) => {
+    const a = await access(req, "editor"),
+      body = ColumnDictionaryUpdateSchema.parse(req.body);
+    return transaction(store, a.scope, async (tx) => {
+      const dataset = await tx.get(req.params.id),
+        workspace = await tx.get("workspace");
+      assert(
+        dataset?.kind === "dataset" &&
+          deps.visibleIn(dataset, workspace?.data.activeGeneration),
+        "Dataset unavailable",
+        404,
+      );
+      const dictionaryId = columnDictionaryId(dataset.id),
+        previous = await tx.get(dictionaryId);
+      assert(
+        dataset.revision === body.datasetRevision &&
+          (previous?.revision || 0) === body.revision,
+        "Dataset changed; reload the dictionary before saving.",
+        409,
+      );
+      const known = new Set([
+        ...dataset.data.profile.columns.map((c: any) => c.name),
+        ...(previous?.data.definitions || []).map((d: any) => d.column),
+      ]);
+      const columns = body.definitions.map((d) => d.column);
+      assert(
+        new Set(columns).size === columns.length,
+        "Each column can have only one definition.",
+      );
+      assert(
+        columns.every((column) => known.has(column)),
+        "Unknown dataset column.",
+      );
+      const data = {
+        datasetId: dataset.id,
+        definitions: body.definitions.filter((d) => d.meaning || d.unit),
+      };
+      const updated = previous
+        ? tx.update(previous, data)
+        : tx.put(
+            resource(
+              a.scope,
+              "columnDictionary",
+              "Dictionary for " + dataset.name,
+              data,
+              dictionaryId,
+            ),
+          );
+      return columnDictionary(dataset, updated);
+    });
+  });
   app.post("/api/v1/workspaces/:w/demo", async (req) => {
     const a = await access(req, "editor"),
       body = DemoSchema.parse(req.body ?? {});

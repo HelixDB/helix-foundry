@@ -4,6 +4,29 @@
 // Type-only imports from "./index.js" are fine.
 import { z } from "zod";
 
+export const ColumnDefinitionSchema = z
+  .object({
+    column: z.string().min(1).max(300),
+    meaning: z.string().trim().max(1000),
+    unit: z.string().trim().max(80),
+  })
+  .strict();
+export type ColumnDefinition = z.infer<typeof ColumnDefinitionSchema>;
+export const ColumnDictionaryUpdateSchema = z
+  .object({
+    revision: z.number().int().min(0),
+    datasetRevision: z.number().int().min(1),
+    definitions: z.array(ColumnDefinitionSchema).max(500),
+  })
+  .strict();
+export type ColumnDictionary = {
+  datasetId: string;
+  revision: number;
+  datasetRevision: number;
+  columns: { name: string; type: string }[];
+  definitions: ColumnDefinition[];
+};
+
 export const sourceKinds = [
   "upload",
   "postgres",
