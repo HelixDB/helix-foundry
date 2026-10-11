@@ -194,6 +194,18 @@ describe("answer view", () => {
     expect(bold("Fees were $3 and 3% of sales.", customers)).not.toContain(
       "<strong>",
     );
+    // Money is backed only by money, and a percentage only by a rate.
+    const mixed = [
+      { name: "Acme", order_count: 12, revenue: 500 },
+      { name: "Globex", order_count: 9, revenue: 300 },
+    ];
+    expect(bold("Acme grew 12% to $12.", mixed)).not.toContain("<strong>");
+    expect(bold("Acme earned $500 from 12 orders.", mixed)).toContain(
+      "<strong>$500</strong>",
+    );
+    expect(bold("Acme earned $500 from 12 orders.", mixed)).toContain(
+      "<strong>12 orders</strong>",
+    );
     // A negative value backs a number only where the text tells of a fall.
     const delta = [{ name: "Acme", order_delta: -42 }];
     expect(bold("Acme has 42 orders.", delta)).not.toContain("<strong>");
@@ -232,6 +244,20 @@ describe("answer view", () => {
     expect(chart).toContain("Order count by name, highest first");
     expect(chart.match(/wk-bar-rank/g)).toHaveLength(3);
     expect(chart.match(/is-first/g)).toHaveLength(1);
+  });
+  it("keeps a leader without a label in the chart", () => {
+    const groups = [
+      { region: null, revenue: 900 },
+      { region: "North", revenue: 500 },
+      { region: "South", revenue: 300 },
+    ];
+    const shape = answerShape(groups);
+    expect(shape).toMatchObject({ kind: "ranking", label: "region" });
+    const plan = chartPlan(groups, shape)!;
+    expect(plan.points[0]).toEqual({ label: "No region", value: 900 });
+    const chart = renderToStaticMarkup(h(AnswerChart, { plan }));
+    expect(chart.match(/is-first/g)).toHaveLength(1);
+    expect(chart.indexOf("No region")).toBeLessThan(chart.indexOf("North"));
   });
   it("says when a chart has only the result's first rows", () => {
     const ranked = Array.from({ length: 100 }, (_, i) => ({

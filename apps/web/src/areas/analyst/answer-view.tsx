@@ -92,8 +92,11 @@ export function chartPlan(rows: Row[], shape?: AnswerShape): ChartPlan | null {
   if (!["ranking", "trend", "breakdown"].includes(s.kind)) return null;
   const label = s.label!,
     value = s.measure!;
+  // A trend needs each row's date; a category without a label (a null
+  // group) keeps its place, named for what it lacks ("No region").
   const measured = rows.filter(
-    (r) => present(r[label]) && toNumber(r[value]) !== null,
+    (r) =>
+      (s.kind !== "trend" || present(r[label])) && toNumber(r[value]) !== null,
   );
   if (measured.length < 2) return null;
   if (s.kind === "trend") {
@@ -128,7 +131,12 @@ export function chartPlan(rows: Row[], shape?: AnswerShape): ChartPlan | null {
     label,
     value,
     rank: s.kind === "ranking" ? s.order : undefined,
-    points: measured.map((r) => point(String(r[label]), r[value])),
+    points: measured.map((r) =>
+      point(
+        present(r[label]) ? String(r[label]) : `No ${columnWords(label)}`,
+        r[value],
+      ),
+    ),
   };
 }
 
@@ -489,14 +497,25 @@ function unitWords(rows: Row[]) {
   return words;
 }
 // A column's numbers, the words of its name ("order", "count"), its
-// integers' exact digits, and whether it holds cents (Stripe's amount_*
-// columns, "price_cents"), which a summary may state in dollars.
+// integers' exact digits, whether its name says it holds money or a rate,
+// and whether it holds cents (Stripe's amount_* columns, "price_cents"),
+// which a summary may state in dollars.
 type Column = {
   values: number[];
   words: Set<string>;
   exact: Set<string>;
+  money: boolean;
+  rate: boolean;
   cents: boolean;
 };
+const isMoney = (key: string) =>
+  /revenue|amount|price|cost|spend|sales|income|profit|earning|mrr|arr|gmv|aov|ltv|cac|arpu|fee|paid|payment|balance|budget|value|usd|eur|gbp|dollar|cents?/i.test(
+    key,
+  );
+const isRate = (key: string) =>
+  /percent|pct|rate|ratio|share|margin|growth|churn|conversion|retention|change|fraction|proportion/i.test(
+    key,
+  );
 // An integer's digits, with its sign: "-0042" → "-42".
 const digitsOf = (t: string) => t.replace(/^(-?)0+(?=\d)/, "$1");
 const isCents = (key: string) =>
@@ -580,6 +599,8 @@ export function Emphasized({
             .filter((t) => /^-?\d+$/.test(t))
             .map(digitsOf),
         ),
+        money: isMoney(k),
+        rate: isRate(k),
         cents: isCents(k),
       }))
       .filter((c) => c.values.length || c.exact.size);
@@ -620,9 +641,12 @@ export function Emphasized({
       }
       const fall = falls.test(sentenceAt(text, m.index));
       // A unit that names a column ("42 orders", order_count) is backed only
-      // by that column. A row count backs only a plain number.
+      // by that column, money only by a column of money and a percentage only
+      // by a rate. A row count backs only a plain number.
       const named = unit ? values.filter((c) => c.words.has(unit)) : [],
-        sources = named.length ? named : values;
+        sources = (named.length ? named : values).filter(
+          (c) => (!sign || c.money) && (!percent || c.rate),
+        );
       // A scaled number is compared in its own units ("1.2M" as 1.2 million).
       const rounded = sources.map((c) => ({
         ...c,
