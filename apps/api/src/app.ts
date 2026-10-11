@@ -332,6 +332,7 @@ export async function createApp(store: Store) {
     if (
       req.params.kind === "relation" &&
       generation &&
+      (await store.indexesReady()) &&
       (await store.list(a.scope, "objectType")).some(
         (t) => t.data.generation === generation && t.data.sourceVersion,
       )

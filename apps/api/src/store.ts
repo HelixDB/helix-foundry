@@ -95,6 +95,10 @@ export interface Store {
   ): Promise<number>;
   // Generations that have records, including ones never published.
   generations(scope: string): Promise<string[]>;
+  // Whether the store's indexes are built. HelixDB builds an index in the
+  // background: until it is active, lookups scan, and ranges of keys may see
+  // only part of the data.
+  indexesReady(): Promise<boolean>;
 }
 const anchor = (key: string) =>
   g().nWithLabelWhere("FoundryRecord", SourcePredicate.eq("key", key));
@@ -190,8 +194,33 @@ const chunks = <T>(items: T[], size: number) =>
     items.slice(i * size, (i + 1) * size),
   );
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// The indexes lookups depend on. Keys in order (a range index; an equality
+// index does not serve ranges) find a generation's records by their key
+// prefix.
+const indexes = () => [
+  IndexSpec.nodeUniqueEquality("FoundryRecord", "key"),
+  IndexSpec.nodeEquality("FoundryRecord", "scope"),
+  IndexSpec.nodeEquality("FoundryRecord", "scopeKind"),
+  IndexSpec.nodeRange("FoundryRecord", "key"),
+];
 export class HelixStore implements Store {
   constructor(private memoryKilled = oomWatcher()) {}
+  private built = false;
+  // Asking to create an index that exists returns its state: "already_active"
+  // once its build is done.
+  async indexesReady() {
+    if (this.built) return true;
+    for (const index of indexes()) {
+      const r = await this.write(
+        writeBatch()
+          .varAs("index", g().createIndexIfNotExists(index))
+          .returning(["index"]),
+      );
+      const receipt = Array.isArray(r?.index) ? r.index[0] : r?.index;
+      if (receipt?.kind !== "already_active") return false;
+    }
+    return (this.built = true);
+  }
   async read(q: any): Promise<any> {
     return this.send(q, "read");
   }
@@ -255,18 +284,9 @@ export class HelixStore implements Store {
     }
   }
   async init() {
-    // HelixDB builds a new index over existing data in the background.
-    // - keys in order find a generation's records by their key prefix;
-    // - links by generation and by relation find a generation's links and a
-    //   deleted relation's link without reading every link.
-    for (const index of [
-      IndexSpec.nodeUniqueEquality("FoundryRecord", "key"),
-      IndexSpec.nodeEquality("FoundryRecord", "scope"),
-      IndexSpec.nodeEquality("FoundryRecord", "scopeKind"),
-      IndexSpec.nodeRange("FoundryRecord", "key"),
-      IndexSpec.edgeEquality("FoundryRelationship", "generation"),
-      IndexSpec.edgeEquality("FoundryRelationship", "relationId"),
-    ])
+    // HelixDB builds an index in the background, and while writes keep
+    // arriving the build keeps catching up: until it is active, lookups scan.
+    for (const index of indexes())
       await this.write(
         writeBatch()
           .varAs("index", g().createIndexIfNotExists(index))
@@ -514,13 +534,15 @@ export class HelixStore implements Store {
         )
       : new Map<string, string>();
     const todo = objects.filter((o) => !handles.has(o.id));
-    if (!todo.length) return handles;
-    let q = writeBatch();
-    todo.forEach((o, i) => {
-      q = q.varAs("n" + i, g().addN("FoundryRecord", this.props(scope, o)));
+    await this.inParts(todo, async (part) => {
+      let q = writeBatch();
+      part.forEach((o, i) => {
+        q = q.varAs("n" + i, g().addN("FoundryRecord", this.props(scope, o)));
+      });
+      const r = await this.write(q.returning(part.map((_, i) => "n" + i)));
+      part.forEach((o, i) => handles.set(o.id, idOf(r?.["n" + i]?.[0])));
+      return part;
     });
-    const r = await this.write(q.returning(todo.map((_, i) => "n" + i)));
-    todo.forEach((o, i) => handles.set(o.id, idOf(r?.["n" + i]?.[0])));
     return handles;
   }
   async stageRelations(
@@ -535,24 +557,29 @@ export class HelixStore implements Store {
         )
       : new Map<string, string>();
     const todo = relations.filter((r) => !present.has(r.relation.id));
-    if (!todo.length) return 0;
-    let q = writeBatch();
-    todo.forEach(({ relation, from, to }, i) => {
-      q = q
-        .varAs("r" + i, g().addN("FoundryRecord", this.props(scope, relation)))
-        .varAs(
-          "e" + i,
-          g()
-            .n(NodeRef.id(BigInt(from)))
-            .addE("FoundryRelationship", NodeRef.id(BigInt(to)), {
-              scope,
-              generation: relation.data.generation,
-              name: relation.name,
-              relationId: relation.id,
-            }),
-        );
+    await this.inParts(todo, async (part) => {
+      let q = writeBatch();
+      part.forEach(({ relation, from, to }, i) => {
+        q = q
+          .varAs(
+            "r" + i,
+            g().addN("FoundryRecord", this.props(scope, relation)),
+          )
+          .varAs(
+            "e" + i,
+            g()
+              .n(NodeRef.id(BigInt(from)))
+              .addE("FoundryRelationship", NodeRef.id(BigInt(to)), {
+                scope,
+                generation: relation.data.generation,
+                name: relation.name,
+                relationId: relation.id,
+              }),
+          );
+      });
+      await this.write(q.returning(["r0"]));
+      return part;
     });
-    await this.write(q.returning(["r0"]));
     return todo.length;
   }
   async neighborhood(
@@ -697,60 +724,85 @@ export class HelixStore implements Store {
     };
   }
   async dropGeneration(scope: string, generation: string, limit: number) {
-    // Links first: the pinned server keeps a link whose record is dropped.
-    // Relations from before relation ids carried their generation are found
-    // through their links.
-    const e = await this.read(
+    // A generation's records all have keys starting with it. The links of
+    // the first of them go first, since the pinned server keeps a link whose
+    // record is dropped, with the relation records of links from before
+    // relation ids carried their generation; then those records.
+    const prefix = `${scope}:${generation}_`,
+      first = () =>
+        g()
+          .nWithLabelWhere(
+            "FoundryRecord",
+            SourcePredicate.between("key", prefix, prefix + "\uffff"),
+          )
+          .limit(limit);
+    const r = await this.read(
       readBatch()
+        .varAs("n", first().valueMap(["$id"]))
         .varAs(
           "e",
-          g()
-            .eWithLabelWhere(
-              "FoundryRelationship",
-              SourcePredicate.eq("generation", generation),
-            )
-            .where(Predicate.eq("scope", scope))
+          first()
+            .bothE("FoundryRelationship")
             .limit(limit)
             .valueMap(["$id", "relationId"]),
         )
-        .returning(["e"]),
+        .returning(["n", "e"]),
     );
-    const edges: any[] = e.e || [];
-    if (edges.length) {
-      let q = writeBatch().varAs(
-        "links",
-        g().dropEdgeById(EdgeRef.ids(edges.map((x) => BigInt(idOf(x))))),
-      );
-      [...new Set(edges.map((x) => String(x.relationId)))].forEach((id, i) => {
-        q = q.varAs("r" + i, anchor(scope + ":" + id).drop());
+    const links: [string, string][] = [
+      ...new Map<string, string>(
+        (r.e || []).map((x: any) => [idOf(x), String(x.relationId)]),
+      ).entries(),
+    ];
+    if (links.length) {
+      await this.inParts(links, async (part) => {
+        let q = writeBatch().varAs(
+          "links",
+          g().dropEdgeById(EdgeRef.ids(part.map(([id]) => BigInt(id)))),
+        );
+        [...new Set(part.map(([, relation]) => relation))].forEach((id, i) => {
+          q = q.varAs("r" + i, anchor(scope + ":" + id).drop());
+        });
+        await this.write(q.returning(["links"]));
+        return part;
       });
-      await this.write(q.returning(["links"]));
-      return edges.length;
+      return links.length;
     }
-    // Then its records, which all have keys starting with the generation.
-    const prefix = `${scope}:${generation}_`;
-    const n = await this.read(
-      readBatch()
-        .varAs(
-          "n",
-          g()
-            .nWithLabelWhere(
-              "FoundryRecord",
-              SourcePredicate.between("key", prefix, prefix + "\uffff"),
-            )
-            .limit(limit)
-            .valueMap(["$id"]),
-        )
-        .returning(["n"]),
-    );
-    const nodes: string[] = (n.n || []).map(idOf);
+    const nodes: string[] = (r.n || []).map(idOf);
     if (!nodes.length) return 0;
-    await this.write(
-      writeBatch()
-        .varAs("records", g().n(nodeIds(nodes)).drop())
-        .returning(["records"]),
-    );
+    await this.inParts(nodes, async (part) => {
+      await this.write(
+        writeBatch()
+          .varAs("records", g().n(nodeIds(part)).drop())
+          .returning(["records"]),
+      );
+      return part;
+    });
     return nodes.length;
+  }
+  // HelixDB's planner sometimes fails to plan a large write
+  // (internal_planner_error, "unsupported cascades plan"). Nothing was
+  // written then, and the same request would fail again, so it is written in
+  // halves.
+  private async inParts<T, R>(
+    items: T[],
+    write: (part: T[]) => Promise<R[]>,
+  ): Promise<R[]> {
+    // HelixDB refuses a batch with no entries.
+    if (!items.length) return [];
+    try {
+      return await write(items);
+    } catch (e) {
+      const planner =
+        e instanceof HelixError &&
+        (e.code === "internal_planner_error" ||
+          /unsupported cascades plan/i.test(e.serverMessage || e.message));
+      if (items.length < 2 || !planner) throw e;
+      const half = Math.ceil(items.length / 2);
+      return [
+        ...(await this.inParts(items.slice(0, half), write)),
+        ...(await this.inParts(items.slice(half), write)),
+      ];
+    }
   }
   // Walks the workspace's keys in order, reading keys only, and skips each
   // generation's records once its first one is found. Relations from before
@@ -932,6 +984,9 @@ export class MemoryStore implements Store {
       .slice(0, limit);
     for (const [key] of staged) this.rows.delete(key);
     return staged.length;
+  }
+  async indexesReady() {
+    return true;
   }
   async generations(s: string) {
     return [

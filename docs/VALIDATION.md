@@ -6,7 +6,7 @@ The rewritten `scripts/backup.sh`, `restore.sh` and `upgrade.sh` have so far run
 
 ## Verified paths
 
-- Native HelixDB v0.0.6 persistence, indexed workspace identities, conditional atomic metadata writes, stale-write rejection, native object relationships, and relationship deletion.
+- Native HelixDB persistence (v0.0.6 in September 2026; staged publication, bounded reads and generation cleanup on v0.0.6 and v0.0.12 on 10 October 2026), indexed workspace identities, conditional atomic metadata writes, stale-write rejection, native object relationships, and relationship deletion.
 - Real DuckDB Parquet ingestion, profiling, aggregation, input filtering, visual DAG compilation, isolation from files/network/undeclared inputs, and rejected multi-statement SQL.
 - Owner bootstrap, local sessions, one-use invitations, role checks, scoped read-only tokens, cross-workspace API denial, and cross-origin mutation denial.
 - Golden customers/orders: exact metrics and key checks, reference coverage, source freshness guards, preserved manual descriptions, schema drift staging, resumable AI checkpoints, manual objects, and relationship edits surviving rematerialization.
@@ -49,6 +49,20 @@ On an Apple Silicon M1 Pro development machine with 16 GB RAM:
 This benchmark excludes inference and measures the executor workload, not 25 browser sessions. The recorded 149 MB RSS is the benchmark client only and must not be represented as combined platform memory. Run `BENCH_HTTP=1 pnpm benchmark` with the executor available to reproduce it. Hardware, warm caches, storage, and query shape change results.
 
 The benchmark also times how publication reads a type with a million records. On the same machine, in process (10 October 2026), one materialize query read back as JSON lines took 2.1 s. The path it replaced ran 2,000 queries that each loaded and profiled the whole table, 196 ms each, about 6.5 minutes before HTTP and child-process start-up. Neither figure includes writing the records to HelixDB.
+
+## Large workspaces in HelixDB (10 October 2026)
+
+Measured on the same M1 Pro, with Docker given 8 CPUs and 8 GB, against a throwaway HelixDB container, through the real executor. The workspace held 30,000 customers and 70,000 orders, published as 100,000 records and about 67,700 links. Each run waited until HelixDB's indexes were active, as on an installation that has run for a while.
+
+| HelixDB | Publication (records and links per second) | Record list sorted by links | Records within two links |
+| ------- | -----------------------------------------: | --------------------------: | -----------------------: |
+| v0.0.12 |                       64 s (about 2,600/s) |                      182 ms |                    16 ms |
+| v0.0.6  |                       73 s (about 2,300/s) |                      127 ms |                    14 ms |
+
+- **Write path:** one write of 500 staged records took about 100 ms, against about 530 ms through the guarded commit publication used before. Three writes in flight were 2.7 times as fast as one at a time.
+- **Indexes still building:** lookups scan until an index is active, and a build keeps catching up while writes keep arriving. In a database whose indexes were created just before a large import, a lookup by key took about a second at 168,000 records, against 2 ms with the index active. Every request then slowed down with it.
+- **Link indexes:** an index on a link property (such as its generation) halved how fast links were written, so links are found from their records instead.
+- **Upgrade:** after the key range index was added to a database with 40,000 records and 10,000 links, HelixDB built it in about 50 s. Until then, ranges of keys saw part of the data, which is why the cleaner waits for the index.
 
 ## Guided onboarding validation (24 September 2026)
 

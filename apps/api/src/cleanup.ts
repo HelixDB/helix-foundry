@@ -81,6 +81,9 @@ export async function runCleanupJob(
   scope: string,
   job: Resource,
 ): Promise<{ again: boolean; retryIn?: number }> {
+  // After an upgrade HelixDB first builds the indexes the cleaner reads;
+  // until then it would see only part of each generation.
+  if (!(await store.indexesReady())) return { again: true, retryIn: 60_000 };
   const started = Date.now(),
     state = await store.get(scope, "cleanup_state");
   const { keep, staging, latest, graceUntil } = await retained(store, scope);

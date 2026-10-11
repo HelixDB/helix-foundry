@@ -330,7 +330,10 @@ it("resumes a publication the database interrupted, keeping what it wrote", asyn
       (await store.list(scope, "object")).filter(
         (o) => o.data.generation === generation,
       );
-  expect(await staged()).toHaveLength(2000);
+  // Batches already in flight when it failed may have landed too.
+  const partial = (await staged()).length;
+  expect(partial).toBeGreaterThanOrEqual(2000);
+  expect(partial).toBeLessThan(10000);
   // The same proposal again: the same generation, skipping what is there.
   const resumed: boolean[] = [];
   spy.mockImplementation(async (s, objects, resume) => {
@@ -410,6 +413,14 @@ it("removes failed, replaced and leftover generations, and keeps the active one"
   const job = (await store.list(scope, "job")).find(
     (j) => j.data.type === "cleanup" && j.data.status === "queued",
   )!;
+  // Until HelixDB has built the indexes it reads, it waits.
+  const building = vi.spyOn(store, "indexesReady").mockResolvedValue(false);
+  expect(await runCleanupJob(store, scope, job)).toEqual({
+    again: true,
+    retryIn: 60_000,
+  });
+  building.mockRestore();
+  expect(await count(failed)).toBe(1000);
   // It comes back once the replaced generation's grace ends.
   const turn = await runCleanupJob(store, scope, job);
   expect(turn.again).toBe(true);

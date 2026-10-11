@@ -1536,6 +1536,34 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       });
   }
 }
+// Up to `limit` writes in flight at once: HelixDB serves staged writes in
+// parallel, about three times as fast as one at a time. The first failure
+// stops new writes and is thrown once the others have settled.
+function parallelWrites(limit: number) {
+  const pending = new Set<Promise<void>>();
+  let failed: { error: unknown } | undefined;
+  const settle = async () => {
+    await Promise.all(pending);
+    if (failed) throw failed.error;
+  };
+  return {
+    async add(write: () => Promise<unknown>) {
+      if (failed) return settle();
+      const p: Promise<void> = write()
+        .then(
+          () => {},
+          (error) => {
+            failed ??= { error };
+          },
+        )
+        .finally(() => pending.delete(p));
+      pending.add(p);
+      if (pending.size >= limit) await Promise.race(pending);
+      if (failed) return settle();
+    },
+    done: settle,
+  };
+}
 export async function publishProposal(
   store: Store,
   scope: string,
@@ -1582,6 +1610,8 @@ export async function publishProposal(
     (prior.data.baseGeneration || null) === (beforeGeneration || null);
   const generation: string = resume ? prior.data.generation : randomUUID(),
     map = await datasetsMap(store, scope);
+  const overtaken =
+    "This build was overtaken by a newer publication. Retry to build again.";
   // Registers the generation, then marks it as still being written. One the
   // cleaner abandoned (overtaken, or untouched for hours) is being removed and
   // can never be activated.
@@ -1591,7 +1621,7 @@ export async function publishProposal(
       assert(
         first ||
           (r?.data.generation === generation && r.data.status === "staging"),
-        "This build was overtaken by a newer publication. Retry to build again.",
+        overtaken,
         409,
       );
       tx.put({
@@ -1671,6 +1701,7 @@ export async function publishProposal(
         ),
       );
     }
+    const writes = parallelWrites(3);
     // Records of each type by key: their node handles, which the type's
     // relationships use as endpoints.
     const identities = new Map<string, Map<string, string>>();
@@ -1695,9 +1726,13 @@ export async function publishProposal(
     let reported = 0,
       touched = Date.now();
     const progress = async (force = false) => {
+      // Only a build the cleaner took away stops here; a failed save of
+      // this mark, like one of the progress below, never fails it.
       if (Date.now() - touched > 60000) {
         touched = Date.now();
-        await touch();
+        await touch().catch((e) => {
+          if (e instanceof Error && e.message === overtaken) throw e;
+        });
       }
       const runId = proposal.data.onboardingRunId;
       if (!runId || (!force && Date.now() - reported < 2000)) return;
@@ -1726,6 +1761,7 @@ export async function publishProposal(
         }),
       );
       let rows = 0;
+      const keys = new Set<string>();
       for await (const batch of resultBatches(
         {
           scope,
@@ -1738,8 +1774,8 @@ export async function publishProposal(
         for (const row of batch) {
           const key = String(row[type.primaryKey]);
           // A repeated key keeps its first record.
-          if (lookup.has(key) || staged.some((o) => o.data.key === key))
-            continue;
+          if (keys.has(key)) continue;
+          keys.add(key);
           const logicalId = logicalIdOf(typeId, key);
           staged.push(
             resource(
@@ -1759,8 +1795,10 @@ export async function publishProposal(
             ),
           );
         }
-        const handles = await store.stageObjects(scope, staged, resume);
-        for (const o of staged) lookup.set(o.data.key, handles.get(o.id)!);
+        await writes.add(async () => {
+          const handles = await store.stageObjects(scope, staged, resume);
+          for (const o of staged) lookup.set(o.data.key, handles.get(o.id)!);
+        });
         rows += batch.length;
         read.records += batch.length;
         await progress();
@@ -1770,6 +1808,7 @@ export async function publishProposal(
         `Read ${rows} of ${dataset.data.profile.rows} ${type.name} records. The workspace was not published.`,
       );
     }
+    await writes.done();
     for (const o of manualObjects) {
       const lookup = identities.get(o.data.type);
       if (lookup && !lookup.has(o.data.key)) {
@@ -1829,11 +1868,12 @@ export async function publishProposal(
             to,
           });
         }
-        await store.stageRelations(scope, relations, resume);
+        await writes.add(() => store.stageRelations(scope, relations, resume));
         read.relationships += batch.length;
         await progress();
       }
     }
+    await writes.done();
     await progress(true);
     for (const edit of relationEdits) {
       const from = generation + "_" + edit.data.fromLogicalId,
@@ -1960,7 +2000,7 @@ export async function publishProposal(
       assert(
         staging?.data.generation === generation &&
           staging.data.status === "staging",
-        "This build was overtaken by a newer publication. Retry to build again.",
+        overtaken,
         409,
       );
       tx.update(staging, { ...staging.data, status: "active" });
