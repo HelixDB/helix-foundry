@@ -310,6 +310,16 @@ export class FoundryClient {
   setProvider(settings: ProviderSettings) {
     return this.request("/provider", settings, "PUT");
   }
+  previewDatasetVersion(id: string, version: string, offset = 0, limit = 50) {
+    return this.request(
+      "/datasets/" +
+        encodeURIComponent(id) +
+        "/versions/" +
+        encodeURIComponent(version) +
+        "/preview",
+      { offset, limit },
+    );
+  }
   previewDataset(id: string, offset = 0, limit = 50) {
     return this.request("/datasets/" + id + "/preview", { offset, limit });
   }

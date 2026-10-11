@@ -30,18 +30,19 @@ Each area owns its section below; add new routes to your own section.
 
 ### Data
 
-| Method / path                       | Input / result                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request |
-| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB               |
-| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                 |
-| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition        |
-| POST `/sources/:id/sync`            | `{}`; durable job                                                       |
-| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                 |
-| GET `/datasets/:id/export`          | Download active Parquet snapshot                                        |
-| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description               |
-| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                            |
-| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile            |
+| Method / path                                  | Input / result                                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| POST `/ingest`                                 | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request                                             |
+| POST `/upload`                                 | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB                                                           |
+| POST `/sources/test`                           | `{ name, kind, config }`; discovery and key information                                                             |
+| POST `/sources`                                | `{ name, kind, config, schedule? }`; encrypted source definition                                                    |
+| POST `/sources/:id/sync`                       | `{}`; durable job                                                                                                   |
+| POST `/datasets/:id/preview`                   | `{ offset?, limit? }`; rows and profile                                                                             |
+| GET `/datasets/:id/export`                     | Download active Parquet snapshot                                                                                    |
+| PATCH `/datasets/:id`                          | `{ description }`; preserve manually authored description                                                           |
+| POST `/datasets/:id/versions/:version/preview` | `{ offset?, limit? }`; immutable selected snapshot rows, profile, timestamp and exact version citation; read access |
+| POST `/datasets/:id/accept-version`            | `{}`; accept staged schema-changing snapshot                                                                        |
+| POST `/query`                                  | `{ inputs: datasetId[], sql }`; read-only result and profile                                                        |
 
 ### Pipelines
 
