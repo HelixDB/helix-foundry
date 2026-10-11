@@ -13,6 +13,7 @@ import {
 } from "./ui";
 import { PageHeader } from "./kit";
 import { paths } from "./paths";
+import { ProposalChanges } from "./proposal-changes";
 import type { Resource } from "../../../packages/shared/src";
 const ResultPreview = lazy(() =>
   import("./charts").then((m) => ({ default: m.ResultPreview })),
@@ -31,6 +32,7 @@ export function ProposalReview({ proposal: p }: { proposal: Resource }) {
   return (
     <section className="proposal-review">
       <h2>{b.summary}</h2>
+      <ProposalChanges proposal={p} />
       {failed.length > 0 && (
         <div className="error-box" role="alert">
           <strong>These checks need attention before publishing</strong>

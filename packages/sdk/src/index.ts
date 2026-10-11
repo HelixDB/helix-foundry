@@ -282,6 +282,9 @@ export class FoundryClient {
   resume(runId: string) {
     return this.request<Resource>("/assistant/runs/" + runId + "/resume", {});
   }
+  proposalComparison(id: string) {
+    return this.request("/proposals/" + encodeURIComponent(id) + "/comparison");
+  }
   saveAnalysis(runId: string) {
     return this.request<Resource>(
       "/assistant/runs/" + runId + "/save-analysis",
