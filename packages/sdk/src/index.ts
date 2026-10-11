@@ -12,6 +12,7 @@ import type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ThreadEvidenceReport,
 } from "@helix-foundry/shared";
 export type {
   Bundle,
@@ -27,6 +28,7 @@ export type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ThreadEvidenceReport,
 };
 export class FoundryError extends Error {
   constructor(
@@ -182,6 +184,11 @@ export class FoundryClient {
   get(kind: string, id: string) {
     return this.request<Resource>(
       "/resources/" + encodeURIComponent(kind) + "/" + encodeURIComponent(id),
+    );
+  }
+  exportThread(threadId: string) {
+    return this.request<ThreadEvidenceReport>(
+      "/threads/" + encodeURIComponent(threadId) + "/export",
     );
   }
   ingest(name: string, rows: Record<string, unknown>[], datasetId?: string) {

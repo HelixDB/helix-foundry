@@ -16,6 +16,7 @@ import {
   threadOf,
 } from "../assistant.js";
 import { createLiveBridge } from "../live.js";
+import { threadReport, reportMarkdown } from "../thread-report.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
 const LiveSessionSchema = z.object({
@@ -87,6 +88,37 @@ export function registerAnalystRoutes(
       runs: runs.map(scrub),
     };
   });
+  app.get(
+    "/api/v1/workspaces/:w/threads/:threadId/export",
+    async (req: any, reply) => {
+      const a = await access(req);
+      const format = z
+        .enum(["json", "markdown"])
+        .parse(req.query.format || "json");
+      const runs = (await chats(a.scope)).get(req.params.threadId);
+      assert(runs, "Chat not found", 404);
+      assert(
+        !runs.some((r) => ["queued", "running"].includes(r.data.status)),
+        "Wait for the question to finish before exporting this chat.",
+        409,
+      );
+      const report = threadReport(a.scope, req.params.threadId, runs);
+      reply
+        .header(
+          "content-disposition",
+          `attachment; filename="analyst-report.${format === "json" ? "json" : "md"}"`,
+        )
+        .header("x-content-type-options", "nosniff")
+        .header("cache-control", "no-store");
+      return format === "json"
+        ? reply
+            .type("application/json; charset=utf-8")
+            .send(JSON.stringify(report, null, 2) + "\n")
+        : reply
+            .type("text/markdown; charset=utf-8")
+            .send(reportMarkdown(report));
+    },
+  );
   app.delete("/api/v1/workspaces/:w/threads/:threadId", async (req: any) => {
     const a = await access(req, "editor"),
       runs = (await chats(a.scope)).get(req.params.threadId);

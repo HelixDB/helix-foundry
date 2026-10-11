@@ -30,3 +30,33 @@ export type AssistantRun = {
   proposalId?: string;
   error?: string;
 };
+
+export type ThreadEvidenceReport = {
+  format: "helix-foundry.thread-evidence";
+  version: 1;
+  workspaceId: string;
+  threadId: string;
+  title: string;
+  exportedAt: string;
+  notice: string;
+  turns: {
+    id: string;
+    question: string;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+    answer?: {
+      title: string;
+      sql: string;
+      summary: string;
+      highlights: string[];
+      assumptions: string[];
+      inputs: string[];
+      citations: { datasetId: string; name: string; version: string }[];
+      rows: Record<string, unknown>[];
+      total: number | null;
+      includedRows: number;
+      truncated: boolean | null;
+    };
+  }[];
+};

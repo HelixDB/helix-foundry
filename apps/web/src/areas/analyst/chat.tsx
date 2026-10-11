@@ -13,6 +13,7 @@ import {
   ArrowDown,
   ArrowUp,
   CircleAlert,
+  Download,
   Ellipsis,
   LoaderCircle,
   MessageSquareText,
@@ -184,6 +185,25 @@ function ChatHeader({ chat, turns }: { chat: Chat; turns: number }) {
   const [confirming, setConfirming] = useState(false),
     [deleting, setDeleting] = useState(false);
   const busy = anyWorking(chat.runs);
+  const download = async (format: "json" | "markdown") => {
+    try {
+      const response = await fetch(
+        `/api/v1/workspaces/${encodeURIComponent(id)}/threads/${encodeURIComponent(chat.id)}/export?format=${format}`,
+      );
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Couldn’t export this chat");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `analyst-report.${format === "json" ? "json" : "md"}`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      notify((e as Error).message, true);
+    }
+  };
   const updated = chat.runs
     .map((r) => r.updatedAt)
     .sort()
@@ -231,13 +251,29 @@ function ChatHeader({ chat, turns }: { chat: Chat; turns: number }) {
           >
             <span className="an-new-chat-label">New chat</span>
           </ButtonLink>
-          {role !== "viewer" && (
-            <DropdownMenu
-              label="Chat options"
-              align="end"
-              triggerClassName="hf-btn hf-btn--ghost hf-btn--md hf-btn--icon"
-              trigger={<Ellipsis size={16} aria-hidden />}
+          <DropdownMenu
+            label="Chat options"
+            align="end"
+            triggerClassName="hf-btn hf-btn--ghost hf-btn--md hf-btn--icon"
+            trigger={<Ellipsis size={16} aria-hidden />}
+          >
+            <MenuItem
+              icon={Download}
+              disabled={busy}
+              hint={busy ? "Still answering" : undefined}
+              onSelect={() => void download("markdown")}
             >
+              Download evidence report
+            </MenuItem>
+            <MenuItem
+              icon={Download}
+              disabled={busy}
+              hint={busy ? "Still answering" : undefined}
+              onSelect={() => void download("json")}
+            >
+              Download evidence JSON
+            </MenuItem>
+            {role !== "viewer" && (
               <MenuItem
                 icon={Trash2}
                 danger
@@ -247,8 +283,8 @@ function ChatHeader({ chat, turns }: { chat: Chat; turns: number }) {
               >
                 Delete chat
               </MenuItem>
-            </DropdownMenu>
-          )}
+            )}
+          </DropdownMenu>
         </div>
       </div>
       {confirming && (

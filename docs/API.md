@@ -63,6 +63,8 @@ Each area owns its section below; add new routes to your own section.
 
 ### Analyst
 
+`GET /threads/:threadId/export?format=json|markdown` downloads a saved chat evidence report. Read-only workspace tokens may export. Working chats return 409; missing or other-workspace chats return 404. JSON is the default, with format `helix-foundry.thread-evidence`, version 1. Each turn records its question, status and timestamps. Successful answers include saved SQL, exact result rows, snapshot citations, narrative and assumptions. `includedRows`, `total` and `truncated` disclose preview coverage; unknown legacy totals use null. Internal checkpoints, provider settings and execution authority are excluded. `FoundryClient.exportThread(threadId)` returns the typed JSON report. Reports preserve the original saved answers across subsequent dataset refreshes.
+
 | Method / path                                       | Input / result                                                                                            |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | POST `/assistant/runs`                              | `{ goal, intent?: 'build' \| 'answer' \| 'auto', parentId?, context?: {page?,resourceId?} }`; durable run |
