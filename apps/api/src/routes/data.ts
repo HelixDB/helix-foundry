@@ -1,3 +1,4 @@
+import { connectionSources } from "../source-groups.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -21,7 +22,7 @@ import {
   queryDatasets,
   seedDemo,
 } from "../datasets.js";
-import { sourceSyncDefaults } from "../source-sync.js";
+import { sourceSyncDefaults, nextRefresh } from "../source-sync.js";
 import { testedConnection } from "../onboarding.js";
 import { resolveHostedConfig } from "../hosting.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
@@ -30,6 +31,9 @@ export const dataSchemas: RequestSchemas = {
   "POST /api/v1/workspaces/:w/demo": DemoSchema,
   "POST /api/v1/workspaces/:w/sources": SourceSchema,
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
+  "PUT /api/v1/workspaces/:w/sources/:id/schedule": z.object({
+    schedule: z.string().trim().min(1).max(200).nullable(),
+  }),
   "POST /api/v1/workspaces/:w/ingest": z.object({
     name: z.string(),
     rows: z.array(z.record(z.string(), z.unknown())).min(1).max(10000),
@@ -189,6 +193,40 @@ export function registerDataRoutes(
         ),
       ),
     );
+  });
+  app.put("/api/v1/workspaces/:w/sources/:id/schedule", async (req: any) => {
+    const a = await access(req, "owner"),
+      b = z
+        .object({ schedule: z.string().trim().min(1).max(200).nullable() })
+        .parse(req.body);
+    if (b.schedule) {
+      try {
+        CronExpressionParser.parse(b.schedule, { tz: "UTC" });
+      } catch {
+        assert(false, "Provide a valid UTC cron schedule");
+      }
+    }
+    return transaction(store, a.scope, async (tx) => {
+      const source = await tx.get(req.params.id);
+      assert(source?.kind === "source", "Source unavailable", 404);
+      const targets = await connectionSources(tx, source);
+      let result = source;
+      for (const target of targets) {
+        const current = (await tx.get(target.id))!;
+        const changed = {
+          ...current,
+          data: { ...current.data, schedule: b.schedule },
+        };
+        const nextRun =
+          current.data.sync?.mode === "cdc" ||
+          current.data.sync?.mode === "auto"
+            ? null
+            : nextRefresh(changed);
+        const updated = tx.update(current, { ...changed.data, nextRun });
+        if (updated.id === source.id) result = updated;
+      }
+      return scrub(result);
+    });
   });
   app.post("/api/v1/workspaces/:w/sources/test", async (req) => {
     const a = await access(req, "owner");

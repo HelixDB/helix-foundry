@@ -30,18 +30,19 @@ Each area owns its section below; add new routes to your own section.
 
 ### Data
 
-| Method / path                       | Input / result                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request |
-| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB               |
-| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                 |
-| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition        |
-| POST `/sources/:id/sync`            | `{}`; durable job                                                       |
-| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                 |
-| GET `/datasets/:id/export`          | Download active Parquet snapshot                                        |
-| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description               |
-| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                            |
-| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile            |
+| Method / path                       | Input / result                                                                            |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- |
+| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request                   |
+| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB                                 |
+| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                                   |
+| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition                          |
+| PUT `/sources/:id/schedule`         | `{ schedule: string \| null }`; owner-only UTC cadence for every table in this connection |
+| POST `/sources/:id/sync`            | `{}`; durable job                                                                         |
+| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                                   |
+| GET `/datasets/:id/export`          | Download active Parquet snapshot                                                          |
+| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description                                 |
+| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                                              |
+| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile                              |
 
 ### Pipelines
 
@@ -117,3 +118,9 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+### Change a connection refresh schedule
+
+Owners can change snapshot cadence in **Data → connection → Details**, through `PUT /sources/:id/schedule`, or with `FoundryClient.setConnectionSchedule(sourceId, schedule)`. A cron expression uses UTC; `null` restores the connector's Automatic default. The change applies atomically to every source table sharing that connection, including older groups recorded by import operations, and preserves credentials, source identities, existing dataset snapshots, jobs and live-capture state. It does not retest or reconnect the source.
+
+For snapshot mode, the next refresh is recalculated from the saved cadence. Manual **Sync now** remains available. A refresh already running or queued can finish on its existing lifecycle. Live CDC and capability checks remain independent of cron; their next scheduled snapshot stays unset until snapshot fallback is used. The saved expression then governs fallback refreshes. Automatic uses five minutes for ordinary REST/S3/database fallback, one hour for Stripe/WorkOS and six hours for PostHog. Invalid expressions return 400 without changing the connection; non-owners cannot save a schedule.
