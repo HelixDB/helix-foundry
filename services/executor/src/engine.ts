@@ -30,6 +30,9 @@ export type Execution = {
   persist?: boolean;
   offset?: number;
   limit?: number;
+  // Query only: also profile how each column's values run in the result's
+  // row order (ColumnProfile.order), over every row, not only the sample.
+  order?: boolean;
 };
 export type Executed = {
   profile: DatasetProfile;
@@ -252,6 +255,12 @@ export async function execute(
       )
     ).getRowObjectsJson();
     const columns = [];
+    // The result keeps the query's row order, and rowid follows it; a column
+    // named rowid would hide it.
+    const ordered =
+      job.mode === "query" &&
+      job.order &&
+      !schema.some((col) => String(col.column_name).toLowerCase() === "rowid");
     for (const col of schema) {
       const name = String(col.column_name),
         q = quote(name);
@@ -260,6 +269,15 @@ export async function execute(
           `SELECT count(*)-count(${q}) AS null_count, count(DISTINCT ${q}) distincts FROM result`,
         )
       ).getRowObjectsJson()[0];
+      // A column whose values cannot be compared (a map) has no order.
+      const o = ordered
+        ? await c
+            .runAndReadAll(
+              `SELECT count(*) FILTER (WHERE v > p) AS ups, count(*) FILTER (WHERE v < p) AS downs, count(*) FILTER (WHERE v = f) AS firsts FROM (SELECT ${q} AS v, lag(${q}) OVER (ORDER BY rowid) AS p, first_value(${q}) OVER (ORDER BY rowid) AS f FROM result WHERE ${q} IS NOT NULL)`,
+            )
+            .then((r) => r.getRowObjectsJson()[0])
+            .catch(() => null)
+        : null;
       columns.push({
         name,
         type: String(col.column_type),
@@ -274,6 +292,15 @@ export async function execute(
           rows > 0 &&
           Number(p.null_count) === 0 &&
           Number(p.distincts) === rows,
+        ...(o
+          ? {
+              order: {
+                up: Number(o.ups),
+                down: Number(o.downs),
+                first: Number(o.firsts),
+              },
+            }
+          : {}),
       });
     }
     const fp = (

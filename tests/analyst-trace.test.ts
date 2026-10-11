@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { execute as localExecute } from "../services/executor/src/engine.js";
@@ -27,6 +28,7 @@ import {
 } from "../apps/web/src/areas/analyst/chat-data.js";
 import {
   AnswerChart,
+  AnswerResult,
   Emphasized,
   answerColumns,
   chartPlan,
@@ -102,6 +104,18 @@ describe("answer shape", () => {
       order: "desc",
     });
   });
+  it("takes the measure the question names over one that merely runs in order", () => {
+    const weeks = [
+      { week: "2026-09-07", order_count: 12, cumulative_revenue: 100 },
+      { week: "2026-09-14", order_count: 9, cumulative_revenue: 180 },
+      { week: "2026-09-21", order_count: 15, cumulative_revenue: 290 },
+    ];
+    expect(
+      answerShape(weeks, { hint: "How many orders each week?" }),
+    ).toMatchObject({ kind: "trend", label: "week", measure: "order_count" });
+    // With none named, the measure the rows run by.
+    expect(answerShape(weeks).measure).toBe("cumulative_revenue");
+  });
   it("reads one row as a value and no rows as empty", () => {
     expect(answerShape([{ revenue: "65" }])).toEqual({
       kind: "value",
@@ -176,6 +190,43 @@ describe("answer view", () => {
     expect(chart).toContain("Order count by name, highest first");
     expect(chart.match(/wk-bar-rank/g)).toHaveLength(3);
     expect(chart.match(/is-first/g)).toHaveLength(1);
+  });
+  it("shows signed results as a table, and ranks and bolds big integers exactly", () => {
+    const signed = [
+      { region: "North", profit: 120 },
+      { region: "South", profit: -40 },
+      { region: "East", profit: 15 },
+    ];
+    const table = renderToStaticMarkup(
+      h(AnswerResult, {
+        rows: signed,
+        label: "Profit by region",
+        shape: answerShape(signed),
+      }),
+    );
+    expect(answerShape(signed).kind).toBe("breakdown");
+    expect(table).not.toContain("Show the result as");
+    expect(table).not.toContain("wk-bars");
+    // Both round to the same Number; only one is first.
+    const big = [
+      { name: "A", points: "9007199254740993" },
+      { name: "B", points: "9007199254740992" },
+      { name: "C", points: "5" },
+    ];
+    const shape = answerShape(big);
+    expect(shape).toMatchObject({ kind: "ranking", leaders: 1 });
+    const chart = renderToStaticMarkup(
+      h(AnswerChart, { plan: chartPlan(big, shape)! }),
+    );
+    expect(chart.match(/is-first/g)).toHaveLength(1);
+    const text = (t: string) =>
+      renderToStaticMarkup(h(Emphasized, { text: t, rows: [big[0], big[2]] }));
+    expect(text("A has 9,007,199,254,740,993 points.")).toContain(
+      "<strong>9,007,199,254,740,993 points</strong>",
+    );
+    expect(text("A has 9,007,199,254,740,992 points.")).not.toContain(
+      "<strong>",
+    );
   });
 });
 
@@ -364,6 +415,25 @@ describe("analysis steps", () => {
       ["test", "done"],
     ]);
   });
+  it("leaves choosing to build out of a build's steps", () => {
+    const routed = {
+      status: "running",
+      intent: "auto",
+      resolvedIntent: "build",
+      outline: undefined,
+    };
+    expect(states(run(routed, [[1, "routing"]]))).toEqual([
+      ["data", "pending"],
+    ]);
+    expect(
+      states(
+        run(routed, [
+          [1, "routing"],
+          [3, "catalog"],
+        ]),
+      ),
+    ).toEqual([["data", "running"]]);
+  });
   it("words the check and the estimate", () => {
     expect(
       resultText(
@@ -470,6 +540,41 @@ describe("answer runs", () => {
       ),
     );
 
+  it("checks order and ties over the full result, not only the rows shown", async () => {
+    const query = (sql: string) =>
+      localExecute({
+        mode: "query",
+        scope,
+        sql,
+        version: randomUUID(),
+        limit: 100,
+        order: true,
+      });
+    // 150 customers share first place; 100 rows are shown, all tied.
+    const tied = await query(
+      `SELECT 'c' || i::VARCHAR AS name, CASE WHEN i < 150 THEN 5 ELSE 3 END AS order_count FROM range(200) t(i) ORDER BY order_count DESC, i`,
+    );
+    expect(tied.rows).toHaveLength(100);
+    expect(answerShape(tied.rows).kind).toBe("table");
+    expect(answerShape(tied.rows, { profile: tied.profile })).toMatchObject({
+      kind: "ranking",
+      order: "desc",
+      leaders: 150,
+    });
+    // Ranked in the rows shown, but not after them.
+    const unranked = await query(
+      `SELECT 'c' || i::VARCHAR AS name, CASE WHEN i < 100 THEN 500 - i ELSE 900 END AS order_count FROM range(150) t(i) ORDER BY i`,
+    );
+    expect(answerShape(unranked.rows).kind).toBe("ranking");
+    expect(answerShape(unranked.rows, { profile: unranked.profile }).kind).toBe(
+      "table",
+    );
+    expect(unranked.profile.columns[1].order).toEqual({
+      up: 1,
+      down: 99,
+      first: 1,
+    });
+  });
   it("checks the result in code before the summary, and outlines the steps", async () => {
     const contexts: Record<string, any> = {};
     model(contexts);

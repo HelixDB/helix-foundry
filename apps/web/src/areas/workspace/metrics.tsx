@@ -383,10 +383,14 @@ function BreakdownChart({
   const [active, setActive] = useState<number | null>(null),
     [focused, setFocused] = useState(false);
   const max = Math.max(0, ...points.map((p) => p.value));
+  // Places compare exact values: `value` rounds integers beyond 2^53, whose
+  // `text` keeps every digit.
+  const exact = (p: Point) =>
+    p.text ? BigInt(p.text.replace(/[^\d-]/g, "")) : p.value;
   const place = (p: Point) =>
     1 +
     points.filter((q) =>
-      rank === "asc" ? q.value < p.value : q.value > p.value,
+      rank === "asc" ? exact(q) < exact(p) : exact(q) > exact(p),
     ).length;
   const summary = `${m.title}: ${points
     .map((p) => `${p.label} ${formatMetric(p.value, m.format)}`)

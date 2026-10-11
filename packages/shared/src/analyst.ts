@@ -4,6 +4,7 @@
 // index.ts re-exports this file, so a value import from "./index.js" would be circular.
 // Type-only imports from "./index.js" are fine.
 import { z } from "zod";
+import type { DatasetProfile } from "./index.js";
 
 export const GoalSchema = z.object({
   goal: z.string().min(5).max(4000),
@@ -41,7 +42,9 @@ export type AnswerStep = "understand" | "analyze" | "check" | "write";
 // What an answer's rows are, read by code rather than by the model: the
 // shape decides how they are shown, and the measure is the number that
 // answers the question. DuckDB column types, when known, settle what a column
-// holds (VARCHAR digits are text); otherwise its values do.
+// holds (VARCHAR digits are text); otherwise its values do. The executor's
+// profile of the full result, when given, settles the order of its values,
+// ties and which labels are unique; otherwise the rows given do.
 export type AnswerShape = {
   kind: "empty" | "value" | "ranking" | "trend" | "breakdown" | "table";
   // The column naming each row: a category, a date or a year.
@@ -124,11 +127,23 @@ const same = (a: unknown, b: unknown) => {
 
 export function answerShape(
   rows: Row[],
-  { types, hint = "" }: { types?: Record<string, string>; hint?: string } = {},
+  {
+    types,
+    hint = "",
+    profile,
+  }: {
+    types?: Record<string, string>;
+    hint?: string;
+    profile?: Pick<DatasetProfile, "rows" | "columns">;
+  } = {},
 ): AnswerShape {
   const columns = Object.keys(rows[0] || {}),
     keys = columns.filter(isKeyColumn);
   if (!rows.length) return { kind: "empty", keys };
+  const full = new Map(profile?.columns.map((c) => [c.name, c]));
+  types ??=
+    profile && Object.fromEntries(profile.columns.map((c) => [c.name, c.type]));
+  const total = profile?.rows ?? rows.length;
   const numeric = (k: string) =>
     types?.[k]
       ? numericType.test(types[k]) && rows.some((r) => present(r[k]))
@@ -136,13 +151,26 @@ export function answerShape(
   const time = (k: string) =>
     /^(DATE|TIMESTAMP)/i.test(types?.[k] || "") || isTimeColumn(rows, k);
   const year = (k: string) => isYearColumn(rows, k);
-  const unique = (k: string) =>
-    new Set(rows.map((r) => String(r[k] ?? ""))).size === rows.length;
+  const unique = (k: string) => {
+    const c = full.get(k);
+    return c
+      ? c.distinct + Math.min(c.nulls, 1) === total
+      : new Set(rows.map((r) => String(r[k] ?? ""))).size === rows.length;
+  };
   const measures = columns.filter(
     (k) => !isKeyColumn(k) && !year(k) && !time(k) && numeric(k),
   );
   // Measures whose rows run in order, highest or lowest first.
   const ordered = (k: string) => {
+    const o = full.get(k)?.order;
+    if (o)
+      return total - full.get(k)!.nulls < 3 || (!o.up && !o.down)
+        ? null
+        : !o.up
+          ? "desc"
+          : !o.down
+            ? "asc"
+            : null;
     const values = rows
       .map((r) => answerNumber(r[k]))
       .filter((v): v is number => v !== null);
@@ -156,18 +184,20 @@ export function answerShape(
         : "asc"
       : null;
   };
-  // The measure the question names ("orders" → order_count), else the first.
+  // The measure the question names ("orders" → order_count), else one the
+  // rows are ranked by, else the first. Order only decides between measures
+  // the question names equally.
   const asked = new Set(words(hint));
-  const pick = (candidates: string[]) =>
-    candidates
-      .map((k, i) => ({
-        k,
-        i,
-        score: words(k).filter((w) => asked.has(w)).length,
-      }))
-      .sort((a, b) => b.score - a.score || a.i - b.i)[0]?.k;
-  const sorted = measures.filter((k) => ordered(k));
-  const measure = pick(sorted.length ? sorted : measures);
+  const measure = measures
+    .map((k, i) => ({
+      k,
+      i,
+      score: words(k).filter((w) => asked.has(w)).length,
+      sorted: ordered(k) ? 1 : 0,
+    }))
+    .sort(
+      (a, b) => b.score - a.score || b.sorted - a.sorted || a.i - b.i,
+    )[0]?.k;
   if (rows.length === 1) return { kind: "value", measure, keys };
   const when =
     columns.find((k) => time(k) && unique(k)) ??
@@ -185,10 +215,12 @@ export function answerShape(
   // A date column makes a trend, unless the rows are ranked by the measure
   // instead of running in time order ("the months with the most orders").
   if (when) {
-    const times = rows.map((r) => String(r[when] ?? ""));
-    const inTime =
-      times.every((t, i) => !i || t >= times[i - 1]) ||
-      times.every((t, i) => !i || t <= times[i - 1]);
+    const o = full.get(when)?.order,
+      times = rows.map((r) => String(r[when] ?? ""));
+    const inTime = o
+      ? !o.up || !o.down
+      : times.every((t, i) => !i || t >= times[i - 1]) ||
+        times.every((t, i) => !i || t <= times[i - 1]);
     if (inTime || !order) return { kind: "trend", label: when, measure, keys };
   }
   const named = when && order ? when : label;
@@ -200,11 +232,13 @@ export function answerShape(
       label: named,
       measure,
       order,
-      leaders: rows.filter((r) => same(r[measure], top)).length,
+      leaders:
+        full.get(measure)?.order?.first ??
+        rows.filter((r) => same(r[measure], top)).length,
       keys,
     };
   }
-  return rows.length <= 12
+  return total <= 12
     ? { kind: "breakdown", label: named, measure, keys }
     : { kind: "table", label: named, measure, keys };
 }

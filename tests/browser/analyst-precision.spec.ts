@@ -53,9 +53,10 @@ test("Analyst sorts large integers exactly and leaves nulls last", async ({
     { category: "Negative", total: "-9007199254740993" },
     { category: "Small", total: 10 },
   ]);
-  // A small breakdown opens as a chart; the table is one switch away.
-  await expect(page.locator(".an-chart")).toHaveCount(1);
-  await page.getByRole("radio", { name: "Table" }).click();
+  // Bars start at zero, so a breakdown with a negative value shows only as
+  // a table.
+  await expect(page.locator(".an-chart")).toHaveCount(0);
+  await expect(page.getByRole("radio", { name: "Chart" })).toHaveCount(0);
   const grid = page.getByRole("grid", { name: "Totals" });
   const values = grid.locator(
     '[role="row"] [role="gridcell"][aria-colindex="2"]',
@@ -87,9 +88,6 @@ test("Analyst sorts large integers exactly and leaves nulls last", async ({
     "-9,007,199,254,740,993",
     "null",
   ]);
-  // Back to the chart, whose tooltips show the exact values.
-  await page.getByRole("radio", { name: "Chart" }).click();
-  await expect(page.locator(".an-chart")).toHaveCount(1);
 });
 
 test("Analyst shows the same exact total in a single-result answer", async ({

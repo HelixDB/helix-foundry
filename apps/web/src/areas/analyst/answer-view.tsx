@@ -340,7 +340,14 @@ export function AnswerResult({
   shape: AnswerShape;
   heading?: string;
 }) {
-  const plan = useMemo(() => chartPlan(rows, shape), [rows, shape]);
+  // Bars start at zero, so a negative value would vanish: a signed
+  // breakdown shows only as a table.
+  const plan = useMemo(() => {
+    const p = chartPlan(rows, shape);
+    return p?.kind === "breakdown" && p.points.some((x) => x.value < 0)
+      ? null
+      : p;
+  }, [rows, shape]);
   const [view, setView] = useState<"chart" | "table">("chart"),
     [more, setMore] = useState(false);
   const total = plan?.points.length || 0,
@@ -504,13 +511,29 @@ export function Emphasized({
   total?: number;
 }) {
   const parts = useMemo(() => {
-    // Keys are left out: an ID that happens to match backs nothing.
+    // Keys are left out: an ID that happens to match backs nothing. A Number
+    // rounds integers beyond 2^53, so those are compared by their digits.
     const keys = Object.keys(rows[0] || {}).filter((k) => !isKeyColumn(k));
     const values = keys
       .map((k) =>
-        rows.map((r) => toNumber(r[k])).filter((v): v is number => v !== null),
+        rows
+          .map((r) => toNumber(r[k]))
+          .filter(
+            (v): v is number =>
+              v !== null && (!Number.isInteger(v) || Number.isSafeInteger(v)),
+          ),
       )
       .filter((c) => c.length);
+    const digitsOf = (t: string) =>
+      t.replace(/^-/, "").replace(/^0+(?=\d)/, "");
+    const exact = new Set(
+      keys.flatMap((k) =>
+        rows
+          .map((r) => String(r[k] ?? "").trim())
+          .filter((t) => /^-?\d+$/.test(t))
+          .map(digitsOf),
+      ),
+    );
     const counts = [rows.length, ...(total === undefined ? [] : [total])];
     const words = unitWords(rows);
     const out: ReactNode[] = [];
@@ -531,13 +554,18 @@ export function Emphasized({
         continue;
       // A scaled number is compared in its own units ("1.2M" as 1.2 million).
       const rounded = values.map((c) => c.map((v) => v / scale));
-      const backed = backing(
-        n,
-        decimals.length,
-        { percent, money: !!sign },
-        rounded,
-        scale === 1 ? counts : [],
-      );
+      const backed =
+        !decimals && !suffix && n > Number.MAX_SAFE_INTEGER
+          ? exact.has(digitsOf(digits.replace(/,/g, "")))
+            ? "value"
+            : null
+          : backing(
+              n,
+              decimals.length,
+              { percent, money: !!sign },
+              rounded,
+              scale === 1 ? counts : [],
+            );
       if (
         !backed ||
         (backed === "difference" &&

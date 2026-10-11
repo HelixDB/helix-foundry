@@ -194,7 +194,8 @@ export const isAnswering = (data: Record<string, any>) =>
 // An answer's planned steps that haven't started follow as pending.
 export function runSteps(run: Resource): Step[] {
   const d = run.data,
-    steps: Step[] = [];
+    steps: Step[] = [],
+    building = d.intent === "build" || d.resolvedIntent === "build";
   let ended: number | undefined;
   for (const e of attemptEvents(run)) {
     const at = Date.parse(e.at);
@@ -202,7 +203,8 @@ export function runSteps(run: Resource): Step[] {
       ended ??= at;
       continue;
     }
-    const id = stepOf(e.stage),
+    // Choosing to build is not one of a build's steps.
+    const id = e.stage === "routing" && building ? undefined : stepOf(e.stage),
       last = steps.at(-1);
     // Work inside the current step, or going back to an earlier one (a
     // query corrected after it failed), continues the current step.
@@ -236,7 +238,7 @@ export function runSteps(run: Resource): Step[] {
       });
   if (!steps.length && isWorking(d.status))
     steps.push({
-      id: d.intent === "build" ? "data" : "understand",
+      id: building ? "data" : "understand",
       state: "pending",
     });
   return steps;
@@ -280,8 +282,6 @@ function stepWords(step: Step, run: Resource): string {
       ? "No summary this time; the result is below"
       : "Skipped";
   if (step.id === "understand") {
-    if (d.resolvedIntent === "build")
-      return "Chose to prepare changes for your review";
     const title =
       d.answer?.title ||
       d.checkpoints?.["analysis-repair"]?.title ||

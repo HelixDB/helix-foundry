@@ -962,6 +962,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
           sql: p.sql,
           version: randomUUID(),
           limit: 100,
+          order: true,
         });
       };
       let result;
@@ -1004,9 +1005,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       // rows repeated exactly and rows without the measure.
       await event(store, scope, id, "check", "Checking the result");
       const shape = answerShape(result.rows, {
-        types: Object.fromEntries(
-          result.profile.columns.map((c) => [c.name, c.type]),
-        ),
+        profile: result.profile,
         hint: `${run.data.goal} ${plan.title}`,
       });
       const check: AnswerCheck = {

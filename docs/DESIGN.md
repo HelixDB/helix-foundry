@@ -132,8 +132,9 @@ then the rest of the summary with the quantities its rows back (a value, a
 difference between two values or a row count) and their units in bold. There
 is no tint, card or accent behind the answer. The rows show as a chart when the
 server's check found a ranking, a trend or a small breakdown, with a
-Chart/Table switch; the table puts the label and the measure first and keys
-last and quieter.
+Chart/Table switch; a breakdown with a negative value shows only as a table,
+since bars start at zero. The table puts the label and the measure first and
+keys last and quieter.
 
 Follow the same principles in new progress UI:
 

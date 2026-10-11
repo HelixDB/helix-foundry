@@ -92,6 +92,11 @@ export type ColumnProfile = {
   examples: unknown[];
   sensitive: boolean;
   primaryKey: boolean;
+  // Queries that ask for it (an Analyst answer): how the column's values run
+  // in the result's row order, nulls left out. `up` and `down` count values
+  // higher or lower than the one before; `first` counts values equal to the
+  // first.
+  order?: { up: number; down: number; first: number };
 };
 export type DatasetProfile = {
   rows: number;
