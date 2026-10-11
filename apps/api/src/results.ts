@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { createReadStream, type ReadStream } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -56,4 +57,47 @@ export async function sweepResults(maxAge = 10 * 60000) {
       if (info && Date.now() - info.mtimeMs > maxAge)
         await rm(file, { force: true }).catch(() => {});
     }
+}
+
+// CSV is a download of every row, using the same immutable snapshot and JSON
+// conversions as queries. Quote every non-null value so empty strings remain
+// distinct from nulls; nested values are JSON inside the CSV field.
+const csvValue = (value: unknown) => {
+  if (value === null || value === undefined) return "";
+  const text =
+    typeof value === "object" ? JSON.stringify(value) : String(value);
+  return '"' + text.replaceAll('"', '""') + '"';
+};
+export async function datasetCsv(
+  job: Pick<Execution, "scope" | "inputs" | "sql">,
+  columns: string[],
+) {
+  const batches = resultBatches(job, "CSV export");
+  // Start execution before sending download headers, so a missing snapshot or
+  // an executor limit returns the normal API error instead of a broken 200.
+  const first = await batches.next();
+  const stream = Readable.from(
+    (async function* () {
+      try {
+        yield columns.map(csvValue).join(",") + "\r\n";
+        let next = first;
+        while (!next.done) {
+          yield next.value
+            .map(
+              (row) => columns.map((c) => csvValue(row[c])).join(",") + "\r\n",
+            )
+            .join("");
+          next = await batches.next();
+        }
+      } finally {
+        await batches.return(undefined);
+      }
+    })(),
+  );
+  // A caller may close the download before the first read. The batch reader
+  // has already opened its file; close it even when the generator never starts.
+  stream.once("close", () => {
+    void batches.return(undefined).catch(() => {});
+  });
+  return stream;
 }
