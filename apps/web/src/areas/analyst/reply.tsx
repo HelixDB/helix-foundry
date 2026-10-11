@@ -518,7 +518,7 @@ function Answer({ run }: { run: Resource }) {
   const shape = useMemo(
     () =>
       a.check ??
-      answerShape(rows, { hint: `${run.data.goal || ""} ${a.title || ""}` }),
+      answerShape(rows, { hint: [run.data.goal || "", a.title || ""] }),
     [a, rows],
   );
   const lead = a.summary ? leadSentence(a.summary) : null,

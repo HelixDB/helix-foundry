@@ -488,9 +488,16 @@ function unitWords(rows: Row[]) {
     for (const w of columnWords(key).split(" ")) words.add(singular(w));
   return words;
 }
-// A column's numbers, and whether they are cents (Stripe's amount_*
+// A column's numbers, the words of its name ("order", "count"), its
+// integers' exact digits, and whether it holds cents (Stripe's amount_*
 // columns, "price_cents"), which a summary may state in dollars.
-type Column = { values: number[]; cents: boolean };
+type Column = {
+  values: number[];
+  words: Set<string>;
+  exact: Set<string>;
+  cents: boolean;
+};
+const digitsOf = (t: string) => t.replace(/^-/, "").replace(/^0+(?=\d)/, "");
 const isCents = (key: string) =>
   /(^|_)(cents?|amount)($|_)/i.test(key) || /[a-z]Cents?$/.test(key);
 // How the rows back a number: as one of their values (as written, rounded, in
@@ -548,19 +555,16 @@ export function Emphasized({
             (v): v is number =>
               v !== null && (!Number.isInteger(v) || Number.isSafeInteger(v)),
           ),
+        words: new Set(columnWords(k).split(" ").map(singular)),
+        exact: new Set(
+          rows
+            .map((r) => String(r[k] ?? "").trim())
+            .filter((t) => /^-?\d+$/.test(t))
+            .map(digitsOf),
+        ),
         cents: isCents(k),
       }))
-      .filter((c) => c.values.length);
-    const digitsOf = (t: string) =>
-      t.replace(/^-/, "").replace(/^0+(?=\d)/, "");
-    const exact = new Set(
-      keys.flatMap((k) =>
-        rows
-          .map((r) => String(r[k] ?? "").trim())
-          .filter((t) => /^-?\d+$/.test(t))
-          .map(digitsOf),
-      ),
-    );
+      .filter((c) => c.values.length || c.exact.size);
     const counts = [rows.length, ...(total === undefined ? [] : [total])];
     const words = unitWords(rows);
     const out: ReactNode[] = [];
@@ -579,14 +583,35 @@ export function Emphasized({
         n < 2200
       )
         continue;
+      // Its unit: the next word, or the one after a describing word ("1,245
+      // active customers").
+      let end = m.index + whole.length,
+        unit: string | undefined;
+      const next = /^\s([a-z][a-z-]*)(?:\s([a-z][a-z-]*))?/.exec(
+        text.slice(end),
+      );
+      if (next && !percent) {
+        const [first, second] = [next[1], next[2]];
+        if (words.has(singular(first))) {
+          end += 1 + first.length;
+          unit = singular(first);
+        } else if (second && !quiet.has(first) && words.has(singular(second))) {
+          end += 2 + first.length + second.length;
+          unit = singular(second);
+        }
+      }
+      // A unit that names a column ("42 orders", order_count) is backed only
+      // by that column. A row count backs only a plain number.
+      const named = unit ? values.filter((c) => c.words.has(unit)) : [],
+        sources = named.length ? named : values;
       // A scaled number is compared in its own units ("1.2M" as 1.2 million).
-      const rounded = values.map((c) => ({
+      const rounded = sources.map((c) => ({
         ...c,
         values: c.values.map((v) => v / scale),
       }));
       const backed =
         !decimals && !suffix && n > Number.MAX_SAFE_INTEGER
-          ? exact.has(digitsOf(digits.replace(/,/g, "")))
+          ? sources.some((c) => c.exact.has(digitsOf(digits.replace(/,/g, ""))))
             ? "value"
             : null
           : backing(
@@ -594,7 +619,7 @@ export function Emphasized({
               decimals.length,
               { percent, money: !!sign },
               rounded,
-              scale === 1 ? counts : [],
+              scale === 1 && !sign && !percent && !named.length ? counts : [],
             );
       if (
         !backed ||
@@ -602,18 +627,6 @@ export function Emphasized({
           !comparison.test(text.slice(m.index + whole.length)))
       )
         continue;
-      // Its unit: the next word, or the one after a describing word ("1,245
-      // active customers").
-      let end = m.index + whole.length;
-      const next = /^\s([a-z][a-z-]*)(?:\s([a-z][a-z-]*))?/.exec(
-        text.slice(end),
-      );
-      if (next && !percent) {
-        const [first, second] = [next[1], next[2]];
-        if (words.has(singular(first))) end += 1 + first.length;
-        else if (second && !quiet.has(first) && words.has(singular(second)))
-          end += 2 + first.length + second.length;
-      }
       out.push(
         text.slice(at, m.index),
         <strong key={m.index}>{text.slice(m.index, end)}</strong>,

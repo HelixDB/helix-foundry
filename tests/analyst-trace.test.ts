@@ -176,6 +176,24 @@ describe("answer view", () => {
     expect(money).toContain("<strong>12%</strong>");
     expect(money).toContain("<strong>$1.2K</strong>");
     expect(money).toContain("; 7 orders.");
+    // A unit that names a column is backed only by that column, and a row
+    // count backs only a plain number.
+    const bold = (text: string, rows: Record<string, unknown>[]) =>
+      renderToStaticMarkup(h(Emphasized, { text, rows }));
+    const measures = [
+      { name: "Acme", revenue: 42, order_count: 7 },
+      { name: "Globex", revenue: 30, order_count: 5 },
+    ];
+    expect(bold("Acme has 42 orders.", measures)).not.toContain("<strong>");
+    expect(bold("Acme has 7 orders.", measures)).toContain(
+      "<strong>7 orders</strong>",
+    );
+    expect(bold("There are 3 customers.", customers)).toContain(
+      "<strong>3 customers</strong>",
+    );
+    expect(bold("Fees were $3 and 3% of sales.", customers)).not.toContain(
+      "<strong>",
+    );
     // Only cents are stated in dollars: a hundredth of dollars backs nothing.
     expect(
       renderToStaticMarkup(
