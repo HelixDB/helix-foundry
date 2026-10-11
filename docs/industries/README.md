@@ -19,9 +19,9 @@ Three layers, each with one owner and one job.
 
 1. **Playbook: the opinion.** Read-only, shipped with the app, reviewed like code. It never contains a workspace's data. The frontmatter is what code reads; the prose is what people review and what the model reads, one branch at a time.
 2. **Workspace profile: what is true for this business.** One stored resource per workspace (`industry-profile`), plus a small per-person part for role and interests. It records:
-   - the detected and confirmed industry, business-model branch and stage;
-   - the **concept mapping**: which entity and column plays each playbook role (order, customer, amount, order date, traffic source, ...), with how it was found (detected, AI, or confirmed by the owner);
-   - **definitions** the owner confirmed or corrected, for example "an order counts when it is completed, not when it is placed";
+   - the inferred industry, business-model branch and stage (never asked for; changeable in Settings);
+   - the **concept mapping**: which entity and column plays each playbook role (order, customer, amount, order date, traffic source, ...), with how it was found (detected, AI, or changed by the owner);
+   - **definitions** Foundry assumed or the owner changed, for example "an order counts when it is completed, not when it is placed";
    - **interests** learned from questions (see below);
    - **gaps** found from questions that could not be answered;
    - dismissed and completed recommendations, and the playbook version it was built from.
@@ -46,7 +46,7 @@ The playbook is fixed; the profile is not. It changes from four kinds of evidenc
 
 Rules that keep this predictable:
 
-- Learning never changes the playbook or a confirmed definition by itself. It only re-ranks, adds gaps, or proposes a definition for the owner to confirm.
+- Learning never changes the playbook or a confirmed definition by itself. It only re-ranks, adds gaps, or applies an assumed definition that is shown under "Worth checking" with a Change link. Nothing ever asks the owner to choose.
 - Interests decay: a question counts less over time, so the profile follows what the business cares about now.
 - Interests are per person; definitions, mapping and gaps belong to the workspace.
 - Question text is stored only as short evidence on a gap, kept for 90 days, and never sent anywhere new.

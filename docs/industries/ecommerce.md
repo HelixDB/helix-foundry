@@ -71,7 +71,7 @@ checks:
   - { id: payments_match_orders, kind: reconcile, left: "sum(payment.amount captured)", right: "sum(order.amount completed)", tolerance: 0.02 }
   - { id: lines_sum_to_orders, kind: reconcile, left: "sum(order_line net)", right: "sum(order.amount)", tolerance: 0.01 }
   - { id: duplicate_customers, kind: duplicate, of: customer, by: customer_email }
-  - { id: status_meaning, kind: definition, of: order_status, ask: [completed, cancelled, returned, refunded, pending] }
+  - { id: status_meaning, kind: definition, of: order_status, assume: { sale: [completed], undo: [cancelled, returned, refunded], open: [pending] } }
   - { id: amount_units, kind: units, of: amount }
   - { id: test_orders, kind: outliers, of: order, hints: [test, "@example.", zero amount] }
   - { id: date_gaps, kind: continuity, of: order_date, grain: day }
@@ -96,15 +96,23 @@ branches:
 
 Online retail sells products to customers through a store, an app or a marketplace, and ships them. The business works when enough of the right people visit, enough of them buy, they buy again, and each order makes money after products, discounts, shipping and returns. Everything below follows from that sentence.
 
+## Where it shows
+
+The playbook works in the background. Nothing asks the owner to pick an industry, branch or role, and there is no new page. It shows up in three quiet places:
+
+- **Ontology page:** a third notes column, "To understand your customers better", with at most three one-line suggestions, next to the existing "What we merged" and "Worth checking". Data-health findings and assumed definitions join "Worth checking".
+- **Home:** key metrics in the playbook's order, and one small line linking to the suggestions.
+- **Analyst:** a one-line footnote when missing data limited an answer.
+
 ## 1. Signals
 
 A workspace is online retail when it has **orders with amounts**, and most of: order lines, products, customers, sessions, shipments and payments. Confidence rises with each linked entity. It is **not** online retail when the main object is a recurring subscription invoice with seats or plans (SaaS), or when there are orders but no products and no shipping (services); those go to other playbooks or to the generic reading.
 
-> **Meridian example.** `orders`, `order_items`, `products`, `customers`, `sessions`, `shipments` and `payments` are all present and linked by IDs. Detected as online retail with high confidence; the `marketplace` value in `orders.channel` suggests the multi-brand branch is worth asking about.
+> **Meridian example.** `orders`, `order_items`, `products`, `customers`, `sessions`, `shipments` and `payments` are all present and linked by IDs. Detected as online retail with high confidence; the `marketplace` value in `orders.channel` quietly selects the multi-brand branch; nothing is asked.
 
 ## 2. Concepts and how to map them
 
-The playbook never names a column. It talks about **roles**: order, order line, product, customer, session, shipment, payment, refund, spend, and fields such as amount, order date, order status, channel and traffic source. Mapping finds each role in the ontology by entity and column names, types and link evidence, then shows the owner the mapping for anything that matters and is uncertain. A confirmed mapping is stored in the workspace profile and never guessed again.
+The playbook never names a column. It talks about **roles**: order, order line, product, customer, session, shipment, payment, refund, spend, and fields such as amount, order date, order status, channel and traffic source. Mapping finds each role in the ontology by entity and column names, types and link evidence, and picks the best match on its own. It never asks: an uncertain mapping that matters appears as one line under **Worth checking** on the Ontology page, with a small **Change** link. A mapping the owner changes is stored in the workspace profile and never guessed again.
 
 Order amount needs the most care. Prefer the net amount after discounts and before tax and shipping, so revenue matches what the business keeps. When only a gross total exists, say so on every revenue figure.
 
@@ -150,9 +158,9 @@ Coverage asks whether data exists; health asks whether it can be trusted. Each c
 - **Links.** Order lines to orders (aim for 99%), order lines to products (98%), orders to customers (95%), converting sessions to orders (90%). Below the bar: "12% of orders have no customer, so repeat rate is understated. Guest checkouts usually cause this; link them by email."
 - **Reconciliation.** Captured payments should match completed order revenue within 2%, and order lines should add up to their orders within 1%. A gap usually means amounts include tax or shipping on one side only.
 - **Duplicates.** The same email on several customers splits one person into many and makes loyalty look worse than it is.
-- **Meaning of statuses.** Foundry proposes which statuses count as a sale (`completed`), which undo one (`cancelled`, `returned`, `refunded`), and which are not final (`pending`). The owner confirms once; the answer becomes a workspace definition.
+- **Meaning of statuses.** Foundry proposes which statuses count as a sale (`completed`), which undo one (`cancelled`, `returned`, `refunded`), and which are not final (`pending`). Foundry applies this on its own and shows it as one line under **Worth checking**, with **Change**; a change becomes a workspace definition.
 - **Units.** Amounts that are all whole numbers a hundred times larger than prices elsewhere are probably cents.
-- **Test orders.** Zero amounts, test emails, and staff accounts are excluded once confirmed.
+- **Test orders.** Zero amounts, test emails, and staff accounts are excluded, and the exclusion is shown under **Worth checking**.
 - **Gaps in dates.** A day with no orders in a busy store is usually a broken import, not a bad day.
 
 ## 6. How to read the numbers
@@ -177,7 +185,7 @@ These are the opinions the Analyst and Home follow unless the owner sets a diffe
 | **Marketing** | Which sources bring buyers, and what do they cost? | Orders by source, conversion rate, cost per new customer, return on ad spend |
 | **Finance** | What did we actually keep? | Net revenue after returns, gross margin, discount share, payment reconciliation |
 
-The role sets the starting order. After that, the questions a person asks move areas up and down for them (see the README, "How the profile evolves").
+Nobody is asked their role. It is inferred from the questions each person asks, which move areas up and down for them (see the README, "How the profile evolves").
 
 ## 8. What to change in your own systems
 
@@ -225,7 +233,7 @@ How the Analyst reads these words in this industry.
 
 ## 11. Branches
 
-Branches change the defaults; only the chosen branch reaches the model.
+Branches change the defaults; only the chosen branch reaches the model. Every branch is inferred from the data and the questions asked, never asked for, and can be changed in Settings.
 
 - **Model**
   - *Direct to consumer:* the default above.
