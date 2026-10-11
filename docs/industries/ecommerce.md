@@ -86,6 +86,12 @@ advice:
   - { id: delivery_promise, kind: change, area: experience, when: "missing promise" }
   - { id: product_cost, kind: change, area: cost, when: "missing unit_cost" }
   - { id: one_customer_id, kind: change, area: customers, when: "high duplicate_customers" }
+normal:
+  conversion_rate: { low: 0.01, high: 0.03, note: "sessions that end in an order; higher for repeat visitors and low-price items" }
+  cart_abandonment: { low: 0.6, high: 0.8, note: "carts that never reach an order" }
+  return_rate: { low: 0.1, high: 0.2, note: "by order count; apparel and footwear often 20-30%, electronics and home lower" }
+  repeat_rate: { low: 0.2, high: 0.3, note: "buyers who order again within a year" }
+  delivery_days: { low: 3, high: 5, note: "standard domestic shipping" }
 branches:
   model: [direct, multi_brand, marketplace, subscription]
   role: [founder, operations, marketing, finance]
@@ -93,6 +99,8 @@ branches:
 ---
 
 # Online retail
+
+> This playbook is a starting point. The owner can name their industry in their own words in Settings, or tell the Analyst, and add their own targets, normal ranges and facts; those always win over the ranges here.
 
 Online retail sells products to customers through a store, an app or a marketplace, and ships them. The business works when enough of the right people visit, enough of them buy, they buy again, and each order makes money after products, discounts, shipping and returns. Everything below follows from that sentence.
 
@@ -244,3 +252,21 @@ Branches change the defaults; only the chosen branch reaches the model. Every br
 - **Stage**
   - *Early:* new customers, conversion and cost per new customer come first.
   - *Established:* repeat rate, margin and concentration come first.
+
+## 12. Normal ranges
+
+Indicative ranges that help Foundry say whether a number looks usual. They are rules of thumb that vary a lot by category, region, price point and traffic mix. Foundry shows them as "typical", never as facts about this business, and an owner's own target or range always replaces them.
+
+| Metric | Typical | Notes |
+| --- | --- | --- |
+| Conversion rate | 1–3% | Sessions that end in an order. Higher for repeat visitors and cheaper items; lower on mobile. |
+| Cart abandonment | 60–80% | Carts that never become an order. |
+| Return rate | 10–20% | By order count. Apparel and footwear often 20–30%; electronics and home goods lower. |
+| Repeat-customer rate | 20–30% | Buyers who order again within a year. |
+| Days to deliver | 3–5 | Standard domestic shipping. |
+
+How they are used:
+
+- A finding can say "conversion is [X]%, below the typical 1–3% for online retail" only when no target is set and the metric is computed from complete periods.
+- On Home, a metric can carry a small grey "typical 1–3%" under its value; nothing is coloured red or green on a normal range alone.
+- When the owner adds their own knowledge, for example "our target return rate is 8%" or "Black Friday week doubles sales", it is stored with source *You* and used first.
