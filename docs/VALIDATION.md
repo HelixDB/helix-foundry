@@ -54,10 +54,10 @@ The benchmark also times how publication reads a type with a million records. On
 
 Measured on the same M1 Pro, with Docker given 8 CPUs and 8 GB, against a throwaway HelixDB container, through the real executor. The workspace held 30,000 customers and 70,000 orders, published as 100,000 records and about 67,700 links. Each run waited until HelixDB's indexes were active, as on an installation that has run for a while.
 
-| HelixDB | Publication (records and links per second) | Record list sorted by links | Records within two links |
-| ------- | -----------------------------------------: | --------------------------: | -----------------------: |
-| v0.0.12 |                       64 s (about 2,600/s) |                      182 ms |                    16 ms |
-| v0.0.6  |                       73 s (about 2,300/s) |                      127 ms |                    14 ms |
+| HelixDB                             | Publication (records and links per second) | Record list sorted by links | Records within two links |
+| ----------------------------------- | -----------------------------------------: | --------------------------: | -----------------------: |
+| v0.0.12                             |                       64 s (about 2,600/s) |                      182 ms |                    16 ms |
+| v0.0.6, without the key range index |                       73 s (about 2,300/s) |                      127 ms |                    14 ms |
 
 - **Write path:** one write of 500 staged records took about 100 ms, against about 530 ms through the guarded commit publication used before. Three writes in flight were 2.7 times as fast as one at a time.
 - **Indexes still building:** lookups scan until an index is active, and a build keeps catching up while writes keep arriving. In a database whose indexes were created just before a large import, a lookup by key took about a second at 168,000 records, against 2 ms with the index active. Every request then slowed down with it.
