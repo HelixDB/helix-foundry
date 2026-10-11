@@ -8,9 +8,10 @@ Show likely next questions based on the accepted ontology and the current conver
 
 ## The view and interaction
 
-- After the latest completed answer, show at most three small neutral pills. Use short labels, typically 2–4 words, with the complete question available as the accessible label/tooltip. No large recommendation panel, hero space, tabs or introductory paragraph.
+- After the latest completed answer, show at most three small neutral pills. Use short question labels, typically 3–5 words, ending in a question mark, with the complete question available as the accessible label/tooltip. No large recommendation panel, hero space, tabs or introductory paragraph.
 - Suggestions relate to the current answer and available ontology relationships: after a customer-cohort decline, offer traffic-source changes, a customer-group breakdown, or order trends. The prototype examples are illustrative; production must verify each question against the workspace.
 - Clicking a pill fills the existing composer and focuses it. It does **not** start a query. The user can edit the question, then press Enter or Send.
+- Immediately after an answer, show the full primary (top-ranked) suggested question as muted ghost text in the empty focused composer. The draft remains empty until Tab accepts it; Enter alone never submits an unaccepted suggestion. Escape dismisses this empty-draft suggestion and restores the normal placeholder.
 - When typed text matches the beginning of a suggested question, show a muted inline completion suffix inside the composer. Keep the user's actual text visually distinct and unchanged until acceptance. Offer one completion at a time, drawn from the same ranked candidates.
 - **Tab** accepts the displayed completion and keeps focus in the composer. **Enter** then submits exactly once through the existing chat path. Enter without accepting sends the user's actual text, not the invisible proposed suffix. Normal Send remains available.
 - **Escape** dismisses that completion for the current draft; Shift+Tab and Tab without a visible completion retain normal focus navigation. Preserve Shift+Enter, input-method composition, selection, caret movement, multiline editing and existing draft persistence.
@@ -45,7 +46,7 @@ Inspect current versions and available metadata APIs before choosing exact inter
 - [ ] Up to three distinct relevant pills only under the latest completed answer; appropriate fewer/empty, pending and failure states.
 - [ ] Validated candidates adapt to at least two different ontology fixtures; unsupported relationships/measures, inadequate history and stale publication generations do not yield misleading questions.
 - [ ] Pill click fills and focuses without starting a query; edits remain intact. Enter/Send executes one normal follow-up in the same thread.
-- [ ] Visible inline suffix matches the typed prefix; Tab accepts it; Enter sends once. Escape dismisses; unmatched drafts and Tab/Shift+Tab continue normal navigation.
+- [ ] The empty composer offers the complete primary question; one Tab accepts without submitting, then Enter sends once. Enter on an empty draft does not run it. Escape dismisses even the empty-draft suggestion. Visible inline suffix also matches typed prefixes; Tab accepts it; Enter sends once. Escape dismisses; unmatched drafts and Tab/Shift+Tab continue normal navigation.
 - [ ] IME, Shift+Enter, mid-text caret/selection, long/multiline drafts, keyboard and screen-reader descriptions remain usable. Never trap focus when no completion is shown.
 - [ ] Voice transcript deltas are never contaminated by predictions; selection/editing cannot trigger an accidental Live business request. GPT-Live prerequisite remains unchanged.
 - [ ] Rapid thread/workspace/context changes ignore stale results; no per-keystroke model/query calls, broad scans or duplicate Analyst runs.

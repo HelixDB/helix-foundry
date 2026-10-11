@@ -259,30 +259,30 @@ let voiceTimers=[],voiceSession=0,voiceActive=false,voicePhase='off',voiceTurn=0
 const utterances=['Why are our regular customers visiting less?','Which traffic sources changed?'];
 // Ontology-shaped examples only; production must validate against the accepted ontology.
 const followupCatalog={
- customers:[{label:'Traffic source changes',question:'Which traffic sources changed?'},{label:'Customer groups',question:'Which customer groups lost visits?'},{label:'Weekly orders',question:'How did orders change this week?'}],
- traffic:[{label:'Daily traffic',question:'Compare traffic sources by day'},{label:'Customer groups',question:'Compare visits by customer group'},{label:'Weekly orders',question:'How did orders change this week?'}],
- orders:[{label:'Orders by customer',question:'Which customer groups placed fewer orders?'},{label:'Daily orders',question:'Compare order counts by day'},{label:'Traffic source changes',question:'Which traffic sources changed?'}]
+ customers:[{label:'Which sources changed?',question:'Which traffic sources changed?'},{label:'Which groups declined?',question:'Which customer groups lost visits?'},{label:'How did orders change?',question:'How did orders change this week?'}],
+ traffic:[{label:'How did traffic change?',question:'How did traffic sources change by day?'},{label:'Which groups changed?',question:'Which customer groups changed their visits?'},{label:'How did orders change?',question:'How did orders change this week?'}],
+ orders:[{label:'Which buyers ordered less?',question:'Which customer groups placed fewer orders?'},{label:'How did daily orders change?',question:'How did order counts change by day?'},{label:'Which sources changed?',question:'Which traffic sources changed?'}]
 };
-let nextQuestions=followupCatalog.customers,completion='',dismissedCompletion='';
+let nextQuestions=[],completion='',dismissedCompletion=null;
 function renderCompletion(){
  const input=$('chat-input'),draft=input.value;
- completion=!voiceActive&&!chatBusy&&document.activeElement===input&&draft.length>=2&&draft!==dismissedCompletion&&input.selectionStart===draft.length&&input.selectionEnd===draft.length?nextQuestions.find(q=>q.question.toLowerCase().startsWith(draft.toLowerCase())&&q.question.length>draft.length)?.question||'':'';
- $('completion-description').textContent=completion?'Suggestion: '+completion:'';const ghost=$('chat-completion');ghost.replaceChildren();ghost.hidden=!completion;$('completion-help').hidden=!completion;
+ completion=!voiceActive&&!chatBusy&&document.activeElement===input&&(draft.length===0||draft.length>=2)&&draft!==dismissedCompletion&&input.selectionStart===draft.length&&input.selectionEnd===draft.length?nextQuestions.find(q=>q.question.toLowerCase().startsWith(draft.toLowerCase())&&q.question.length>draft.length)?.question||'':'';
+ $('completion-description').textContent=completion?'Suggestion: '+completion:'';const ghost=$('chat-completion');input.placeholder=completion?'':'Ask a follow-up…';ghost.replaceChildren();ghost.hidden=!completion;$('completion-help').hidden=!completion;
  if(completion){const typed=document.createElement('span');typed.className='typed';typed.textContent=draft;ghost.append(typed,document.createTextNode(completion.slice(draft.length)));ghost.scrollLeft=input.scrollLeft;}
 }
 function acceptFollowup(question){
- if(chatBusy)return;stopVoice();$('chat-input').value=question;dismissedCompletion='';$('chat-input').focus();$('chat-input').setSelectionRange(question.length,question.length);renderCompletion();$('announce').textContent='Question filled. Press Enter to send.';
+ if(chatBusy)return;stopVoice();$('chat-input').value=question;dismissedCompletion=null;$('chat-input').focus();$('chat-input').setSelectionRange(question.length,question.length);renderCompletion();$('announce').textContent='Question filled. Press Enter to send.';
 }
 function showFollowups(reply,prompt){
- document.querySelectorAll('.chat-followups').forEach(el=>el.remove());
+ document.querySelectorAll('.chat-followups').forEach(el=>el.remove());dismissedCompletion=null;
  nextQuestions=/orders?/i.test(prompt)?followupCatalog.orders:/source|traffic|referral/i.test(prompt)?followupCatalog.traffic:followupCatalog.customers;
  const group=document.createElement('div');group.className='chat-followups';group.setAttribute('role','group');group.setAttribute('aria-label','Suggested follow-up questions');
  for(const item of nextQuestions){const b=document.createElement('button');b.type='button';b.className='chat-followup';b.textContent=item.label;b.title=item.question;b.setAttribute('aria-label',item.question);b.onclick=()=>acceptFollowup(item.question);group.append(b)}
  reply.lastElementChild.append(group);renderCompletion();
 }
-$('chat-input').addEventListener('input',()=>{dismissedCompletion='';renderCompletion()});
+$('chat-input').addEventListener('input',()=>{dismissedCompletion=null;renderCompletion()});
 for(const event of ['focus','click','keyup','select','scroll'])$('chat-input').addEventListener(event,renderCompletion);
-$('chat-input').addEventListener('blur',()=>{completion='';$('completion-description').textContent='';$('chat-completion').hidden=true;$('completion-help').hidden=true});
+$('chat-input').addEventListener('blur',()=>{$('chat-input').placeholder='Ask a follow-up…';completion='';$('completion-description').textContent='';$('chat-completion').hidden=true;$('completion-help').hidden=true});
 $('chat-input').addEventListener('keydown',e=>{
  if(e.isComposing)return;
  if(e.key==='Tab'&&!e.shiftKey&&!e.ctrlKey&&!e.altKey&&!e.metaKey&&completion){e.preventDefault();acceptFollowup(completion)}

@@ -6,9 +6,9 @@ Open `index.html#followups` in a browser to show a completed example answer. The
 
 ## Interaction
 
-- Up to three subtle pills below the latest completed answer. Clicking fills and focuses the composer, without submitting.
-- Type `Which` after the customer answer to see an inline completion. Tab accepts; Enter sends the completed question once.
-- After the traffic answer, the list changes to daily traffic, customer groups and weekly orders. Type `Compare` for the new contextual completion.
+- Up to three subtle pills phrased as short questions below the latest completed answer. Clicking fills and focuses the composer, without submitting.
+- After the customer answer, the empty focused composer shows the full top-ranked question in muted text. Press Tab once to accept it, then Enter to send. Typing `Which` also filters the same questions and shows the matching suffix.
+- After the traffic answer, the list changes to daily traffic, customer groups and weekly orders. The empty composer offers the new primary question; typing `How` filters matching questions.
 - Escape dismisses the current completion. Shift+Tab and Tab without a suggestion continue ordinary focus navigation. Suggestions only complete at the end of a draft with no selection; composition events are ignored by keyboard acceptance.
 - Suggestions are hidden while the next answer is pending; prior pill rows are removed. Only the latest answer receives the new set.
 - Explicit pill selection/typing stops scripted voice. A non-empty typed draft blocks voice activation until sent or cleared, preserving user text. Predictions do not enter microphone transcripts.
@@ -22,7 +22,7 @@ This PR is limited to the design reference and handoff. It does not modify produ
 
 ## Verification performed
 
-Browser checks covered three pills, pill selection with no submission, inline completion, Tab acceptance and Enter submission exactly once, Escape dismissal, Shift+Tab, ordinary Tab with an unmatched draft, mid-text caret behavior, pending suppression and contextual refresh. Checked a 390px phone layout without horizontal overflow, both light/dark themes, font alignment and accessible question descriptions. No browser errors during these interactions. Additional check: starting voice cannot automatically send a prepared suggested draft, and selecting a pill ends voice before changing the draft.
+Browser checks also verified the full primary question appears in an empty draft, one Tab fills it without submission, Enter sends once, Enter on an empty draft does not send, Escape dismisses the empty-draft suggestion, and the primary updates after the next answer. Browser checks covered three pills, pill selection with no submission, inline completion, Tab acceptance and Enter submission exactly once, Escape dismissal, Shift+Tab, ordinary Tab with an unmatched draft, mid-text caret behavior, pending suppression and contextual refresh. Checked a 390px phone layout without horizontal overflow, both light/dark themes, font alignment and accessible question descriptions. No browser errors during these interactions. Additional check: starting voice cannot automatically send a prepared suggested draft, and selecting a pill ends voice before changing the draft.
 
 JavaScript syntax checked with Node's `vm.Script`. These checks verify prototype interactions; they do not establish real ontology ranking, real voice latency, backend security, actual IME platform behavior or server integration. Those require the production acceptance checks in the linked issue.
 
