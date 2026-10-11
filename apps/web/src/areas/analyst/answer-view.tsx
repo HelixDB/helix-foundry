@@ -115,16 +115,13 @@ export function chartPlan(rows: Row[], shape?: AnswerShape): ChartPlan | null {
       : gaps.length && gaps.every((g) => g === 7)
         ? "week"
         : "day";
-    return {
-      kind: "trend",
-      grain,
-      label,
-      value,
-      points: days.map((d) => ({
-        ...d,
-        label: monthly ? d.label.slice(0, 7) : d.label,
-      })),
-    };
+    const points = days.map((d) => ({
+      ...d,
+      label: monthly ? d.label.slice(0, 7) : d.label,
+    }));
+    // Hours or minutes would share a day's point: they show as a table.
+    if (new Set(points.map((p) => p.label)).size < points.length) return null;
+    return { kind: "trend", grain, label, value, points };
   }
   return {
     kind: "breakdown",
@@ -604,7 +601,8 @@ export function Emphasized({
         cents: isCents(k),
       }))
       .filter((c) => c.values.length || c.exact.size);
-    const counts = [rows.length, ...(total === undefined ? [] : [total])];
+    // How many rows the result has; `rows` may be only its first rows.
+    const counts = [total ?? rows.length];
     const words = unitWords(rows);
     const out: ReactNode[] = [];
     let at = 0;
@@ -643,7 +641,19 @@ export function Emphasized({
       // A unit that names a column ("42 orders", order_count) is backed only
       // by that column, money only by a column of money and a percentage only
       // by a rate. A row count backs only a plain number.
-      const named = unit ? values.filter((c) => c.words.has(unit)) : [],
+      // A plain number with a unit counts things: a count column
+      // ("customer_count") backs it before others the noun names
+      // ("customer_revenue").
+      const naming = unit ? values.filter((c) => c.words.has(unit)) : [],
+        counted =
+          sign || percent
+            ? []
+            : naming.filter((c) =>
+                ["count", "number", "num", "qty", "quantity"].some((w) =>
+                  c.words.has(w),
+                ),
+              ),
+        named = counted.length ? counted : naming,
         sources = (named.length ? named : values).filter(
           (c) => (!sign || c.money) && (!percent || c.rate),
         );

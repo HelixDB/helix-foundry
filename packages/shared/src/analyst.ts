@@ -91,8 +91,9 @@ export const isKeyColumn = (key: string) =>
 export const isNumericColumn = (rows: Row[], key: string) =>
   rows.some((r) => present(r[key])) &&
   rows.every((r) => !present(r[key]) || answerNumber(r[key]) !== null);
+// "year", "order_year", "fiscalYear", with whole years as values.
 export const isYearColumn = (rows: Row[], key: string) =>
-  /^(year|yr|fiscal_year)$/i.test(key) &&
+  (/(^|_)(year|yr)$/i.test(key) || /[a-z]Year$/.test(key)) &&
   rows.every((r) => {
     const n = answerNumber(r[key]);
     return n === null || (Number.isInteger(n) && n > 1900 && n < 2200);

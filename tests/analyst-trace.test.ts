@@ -125,6 +125,18 @@ describe("answer shape", () => {
       }).measure,
     ).toBe("order_count");
   });
+  it("reads suffixed year columns as years, not measures", () => {
+    const years = [
+      { order_year: 2024, order_count: 10 },
+      { order_year: 2025, order_count: 14 },
+      { order_year: 2026, order_count: 9 },
+    ];
+    expect(answerShape(years, { hint: "Orders by year" })).toMatchObject({
+      kind: "trend",
+      label: "order_year",
+      measure: "order_count",
+    });
+  });
   it("reads one row as a value and no rows as empty", () => {
     expect(answerShape([{ revenue: "65" }])).toEqual({
       kind: "value",
@@ -194,6 +206,26 @@ describe("answer view", () => {
     expect(bold("Fees were $3 and 3% of sales.", customers)).not.toContain(
       "<strong>",
     );
+    // A count backs a count before other columns the noun names, and the
+    // rows shown are not the result's row count.
+    const segments = [
+      { segment: "Retail", customer_count: 7, customer_revenue: 42 },
+      { segment: "Wholesale", customer_count: 5, customer_revenue: 30 },
+    ];
+    expect(bold("Retail has 42 customers.", segments)).not.toContain(
+      "<strong>",
+    );
+    expect(bold("Retail has 7 customers.", segments)).toContain(
+      "<strong>7 customers</strong>",
+    );
+    const counted = (text: string) =>
+      renderToStaticMarkup(
+        h(Emphasized, { text, rows: customers, total: 1000 }),
+      );
+    expect(counted("There are 3 customers.")).not.toContain("<strong>");
+    expect(counted("There are 1,000 customers.")).toContain(
+      "<strong>1,000 customers</strong>",
+    );
     // Money is backed only by money, and a percentage only by a rate.
     const mixed = [
       { name: "Acme", order_count: 12, revenue: 500 },
@@ -244,6 +276,14 @@ describe("answer view", () => {
     expect(chart).toContain("Order count by name, highest first");
     expect(chart.match(/wk-bar-rank/g)).toHaveLength(3);
     expect(chart.match(/is-first/g)).toHaveLength(1);
+  });
+  it("shows hours as a table rather than one day's chart", () => {
+    const hours = ["09", "10", "11"].map((hour, i) => ({
+      hour: `2026-10-01T${hour}:00:00`,
+      orders: [5, 8, 3][i],
+    }));
+    expect(answerShape(hours).kind).toBe("trend");
+    expect(chartPlan(hours, answerShape(hours))).toBeNull();
   });
   it("keeps a leader without a label in the chart", () => {
     const groups = [
