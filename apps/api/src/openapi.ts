@@ -14,6 +14,7 @@ import {
 import type { RequestSchemas } from "./routes/deps.js";
 import { dataSchemas } from "./routes/data.js";
 import { pipelinesSchemas } from "./routes/pipelines.js";
+import { recordCollectionSchemas } from "./routes/record-collections.js";
 import { ontologySchemas } from "./routes/ontology.js";
 import { analystSchemas } from "./routes/analyst.js";
 import { workspaceSchemas } from "./routes/workspace.js";
@@ -40,6 +41,7 @@ const schemas: RequestSchemas = {
   ...dataSchemas,
   ...pipelinesSchemas,
   ...ontologySchemas,
+  ...recordCollectionSchemas,
   ...analystSchemas,
   ...workspaceSchemas,
 };

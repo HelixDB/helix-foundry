@@ -185,6 +185,7 @@ export default function RecordsPage() {
         actions={
           <>
             <ExplorerSwitch />
+            <ButtonLink to={paths.recordCollections()}>Collections</ButtonLink>
             {type && (
               <AskButton
                 resourceId={type.data.datasetId}

@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Route, Routes, useParams } from "react-router-dom";
 import { OntologyPage } from "../../graphs";
 import RecordsPage, { RecordDetail } from "../../records";
-import { Page, PageHeader } from "../../kit";
+import { RecordCollectionsPage } from "./collections";
+import { paths } from "../../paths";
+import { Page, PageHeader, ButtonLink } from "../../kit";
 import { useResources } from "../../ui";
 import { ObjectGraph } from "./graph";
 import { ExplorerSwitch, useExplorerView } from "./views";
@@ -45,7 +47,12 @@ function GraphExplorer() {
       <PageHeader
         title="Explorer"
         subtitle="Your records and how they connect."
-        actions={<ExplorerSwitch />}
+        actions={
+          <>
+            <ExplorerSwitch />
+            <ButtonLink to={paths.recordCollections()}>Collections</ButtonLink>
+          </>
+        }
       />
       <ObjectGraph onOpen={setOpen} />
       {open && (
@@ -74,6 +81,7 @@ export function OntologyRoutes() {
     <Routes>
       <Route index element={<OntologyHome />} />
       <Route path="types/:typeId" element={<ObjectTypePage />} />
+      <Route path="collections" element={<RecordCollectionsPage />} />
       <Route path="explore" element={<ObjectExplorer />} />
       <Route path="*" element={<NotFound />} />
     </Routes>

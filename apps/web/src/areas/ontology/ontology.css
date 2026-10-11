@@ -382,3 +382,69 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+.rc-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
+  gap: 32px;
+}
+.rc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rc-list .hf-btn {
+  justify-content: space-between;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.rc-heading,
+.rc-heading > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.rc-heading h2 {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.rc-members,
+.rc-add-results {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+.rc-members li,
+.rc-add-results li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--hf-border);
+  padding: 12px 0;
+}
+.rc-members li > div,
+.rc-add-results li > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.rc-members code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.rc-members .hf-btn {
+  white-space: normal;
+  text-align: left;
+}
+@media (max-width: 640px) {
+  .rc-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+}

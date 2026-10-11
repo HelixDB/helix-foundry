@@ -220,3 +220,9 @@ Backups leave out `ENCRYPTION_KEY` and `INTERNAL_KEY`. They record a fingerprint
 Upgrade with `upgrade.sh`, which refuses to continue unless a fresh backup succeeds. If the rebuild fails, run it again: it finishes the upgrade. To go back, run the two commands it printed: `git reset --keep` with the old commit, then the copy of `restore.sh` saved in the backup (`bash BACKUP/restore.sh BACKUP --replace`), which also reads the backup in a checkout of a release from before `upgrade.sh`. HelixDB upgrades its storage one way (v0.0.10 and later upgrade the index storage, and v0.0.9 and earlier then refuse the database), so when a release changes the HelixDB image, `upgrade.sh` warns and asks first. Keep the backup and the old commit, and run smoke checks (diagnostics, sample ingestion, a saved query and proposal validation) before using the installation again. Never remove volumes during an ordinary upgrade.
 
 See [operations](OPERATIONS.md) for the full procedure and deployment limits, and [validation notes](VALIDATION.md) for tested coverage and current limits.
+
+### Keep records in collections
+
+Choose **Collections** in either Explorer view to keep a named list of records. Create a collection, use **Add record** to search current published records, and select **Add** beside a result. Open any saved record to inspect it. Rename a collection, remove members or delete the collection without changing the underlying records or source data. Read-only collaborators can browse and open records.
+
+Collections follow logical record identities across republications. They show current values, rather than freezing the original record. A removed identity is displayed as unavailable and is retained until you remove it. If another editor changes the collection while a dialog is open, its save is refused; cancel and reopen to use the latest revision. Each workspace supports up to 40 collections with up to 200 members each.

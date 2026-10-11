@@ -117,3 +117,9 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+### Record collections
+
+`GET /record-collections` lists named collections. `POST /record-collections` creates one with `{name}`. `GET /record-collections/:id` resolves its logical record identities against the current publication and returns `{id, name, revision, updatedAt, logicalIds, generation, members}`; each member has `{logicalId, available, name, type}`. Unavailable identities have null name and type and remain until removed. Values are read from current authorized records; these are not saved record snapshots.
+
+`PUT /record-collections/:id` replaces the name and ordered membership with `{revision, name, logicalIds}`. `DELETE /record-collections/:id` takes `{revision}`. Editor access is required for writes; read-only API tokens can list and read. Names are trimmed and bounded to 120 characters, with at most 40 collections and 200 unique members each. New members must exist in the current workspace publication. Stale revisions or a publication that retires an added record return 409. Deletion removes only the collection metadata.

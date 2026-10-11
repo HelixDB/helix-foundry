@@ -2,6 +2,7 @@
 // the ontology area; do not import ../../paths here (it imports this file).
 const enc = encodeURIComponent;
 export const ontologyPaths = {
+  recordCollections: () => "/ontology/collections",
   ontology: () => "/ontology",
   objectType: (typeId: string) => "/ontology/types/" + enc(typeId),
   // The graph; with a type, that type's records in the table.

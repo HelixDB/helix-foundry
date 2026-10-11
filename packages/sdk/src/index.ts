@@ -1,4 +1,6 @@
 import type {
+  RecordCollection,
+  RecordCollectionDetail,
   Bundle,
   Resource,
   ProviderSettings,
@@ -14,6 +16,8 @@ import type {
   PlanetScaleToken,
 } from "@helix-foundry/shared";
 export type {
+  RecordCollection,
+  RecordCollectionDetail,
   Bundle,
   Resource,
   ProviderSettings,
@@ -93,6 +97,36 @@ export class FoundryClient {
     const data = (await r.json()) as any;
     if (!r.ok) throw new FoundryError(r.status, data.error);
     return data;
+  }
+  recordCollections() {
+    return this.request<{ items: RecordCollection[] }>("/record-collections");
+  }
+  recordCollection(id: string) {
+    return this.request<RecordCollectionDetail>(
+      "/record-collections/" + encodeURIComponent(id),
+    );
+  }
+  createRecordCollection(name: string) {
+    return this.request<RecordCollection>("/record-collections", { name });
+  }
+  updateRecordCollection(
+    id: string,
+    revision: number,
+    name: string,
+    logicalIds: string[],
+  ) {
+    return this.request<RecordCollection>(
+      "/record-collections/" + encodeURIComponent(id),
+      { revision, name, logicalIds },
+      "PUT",
+    );
+  }
+  deleteRecordCollection(id: string, revision: number) {
+    return this.request<{ deleted: boolean }>(
+      "/record-collections/" + encodeURIComponent(id),
+      { revision },
+      "DELETE",
+    );
   }
   onboarding() {
     return this.request<OnboardingState>("/onboarding");

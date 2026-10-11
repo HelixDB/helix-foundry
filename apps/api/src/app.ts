@@ -29,6 +29,7 @@ import {
 } from "./routes/deps.js";
 import { registerDataRoutes } from "./routes/data.js";
 import { registerPipelinesRoutes } from "./routes/pipelines.js";
+import { registerRecordCollectionRoutes } from "./routes/record-collections.js";
 import { recordLabel, registerOntologyRoutes } from "./routes/ontology.js";
 import { registerAnalystRoutes } from "./routes/analyst.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
@@ -440,6 +441,7 @@ export async function createApp(store: Store) {
   registerDataRoutes(app, store, deps);
   registerPipelinesRoutes(app, store, deps);
   registerOntologyRoutes(app, store, deps);
+  registerRecordCollectionRoutes(app, store, deps);
   registerAnalystRoutes(app, store, deps);
   registerWorkspaceRoutes(app, store, deps);
   return app;
