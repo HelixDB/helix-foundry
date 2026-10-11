@@ -369,10 +369,25 @@ function TrendChart({ m, points }: { m: HomeMetric; points: Point[] }) {
   );
 }
 
-function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
+// `rank`, for a ranking (an Analyst answer), numbers the bars in the order
+// given, ties sharing a place, and draws first place at full strength.
+function BreakdownChart({
+  m,
+  points,
+  rank,
+}: {
+  m: HomeMetric;
+  points: Point[];
+  rank?: "desc" | "asc";
+}) {
   const [active, setActive] = useState<number | null>(null),
     [focused, setFocused] = useState(false);
   const max = Math.max(0, ...points.map((p) => p.value));
+  const place = (p: Point) =>
+    1 +
+    points.filter((q) =>
+      rank === "asc" ? q.value < p.value : q.value > p.value,
+    ).length;
   const summary = `${m.title}: ${points
     .map((p) => `${p.label} ${formatMetric(p.value, m.format)}`)
     .join(", ")}`;
@@ -380,7 +395,7 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
   return (
     <div className="wk-breakdown">
       <div
-        className="wk-bars wk-chart-focus"
+        className={cx("wk-bars wk-chart-focus", rank && "is-ranked")}
         role="img"
         aria-label={summary}
         tabIndex={0}
@@ -398,14 +413,22 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
         }}
       >
         {points.map((p, i) => {
-          const pct = max > 0 ? (Math.max(0, p.value) / max) * 100 : 0;
+          const pct = max > 0 ? (Math.max(0, p.value) / max) * 100 : 0,
+            at = rank && place(p);
           return (
             <div
               key={i}
-              className={cx("wk-bar-row", active === i && "is-active")}
+              className={cx(
+                "wk-bar-row",
+                active === i && "is-active",
+                at === 1 && "is-first",
+              )}
               onPointerEnter={() => setActive(i)}
             >
-              <span className="wk-bar-label">{p.label}</span>
+              <span className="wk-bar-label">
+                {at && <span className="wk-bar-rank hf-num">{at}</span>}
+                {p.label}
+              </span>
               <span className="wk-bar-track">
                 <span
                   className="wk-bar"

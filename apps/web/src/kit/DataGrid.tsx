@@ -35,6 +35,8 @@ export type GridColumn<Row = Record<string, unknown>> = {
   align?: "left" | "right" | "center";
   sortable?: boolean;
   render?: (row: Row, value: unknown) => ReactNode;
+  // Added to the column's header and cells.
+  className?: string;
   // Value used for sorting when it differs from row[key].
   sortValue?: (row: Row) => unknown;
 };
@@ -249,7 +251,7 @@ export function DataGrid<Row extends Record<string, any>>({
                         : "descending"
                       : undefined
                   }
-                  className={cx("hf-grid-th", `is-${c.align}`)}
+                  className={cx("hf-grid-th", `is-${c.align}`, c.className)}
                 >
                   <button
                     type="button"
@@ -323,6 +325,7 @@ export function DataGrid<Row extends Record<string, any>>({
                             "hf-grid-td",
                             `is-${c.align}`,
                             `is-${c.kind}`,
+                            c.className,
                           )}
                           title={text ?? undefined}
                         >

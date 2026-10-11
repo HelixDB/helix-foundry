@@ -16,7 +16,11 @@ import {
   DashboardSchema,
   datasetTable,
   datasetAliases,
+  answerShape,
+  type AnswerCheck,
+  type AnswerStep,
   type Bundle,
+  type ProviderSettings,
   type Resource,
   type ValidationReport,
 } from "../../../packages/shared/src/index.js";
@@ -84,6 +88,59 @@ export async function providerSettings(store: Store, scope: string) {
         model: "qwen3:4b",
         baseUrl: config.ollama,
       });
+}
+// A summary is written from result rows, so only where rows may be sent to
+// the model.
+const summarizes = (s: Pick<ProviderSettings, "provider" | "allowRawData">) =>
+  s.provider === "local" || !!s.allowRawData;
+// The major steps people see while a question is answered.
+const answerOutline = (s: ProviderSettings): AnswerStep[] => [
+  "understand",
+  "analyze",
+  "check",
+  ...(summarizes(s) ? (["write"] as const) : []),
+];
+// Answers are compared by what decides how long they take: the provider and
+// model, whether a summary is written, and the size of the data, by order of
+// magnitude.
+const timingKey = (s: ProviderSettings, datasets: Resource[]) =>
+  [
+    s.provider,
+    s.model,
+    summarizes(s) ? "summary" : "rows",
+    Math.floor(
+      Math.log10(
+        datasets.reduce((n, d) => n + (Number(d.data.profile?.rows) || 0), 0) +
+          1,
+      ),
+    ),
+  ].join(":");
+// How long comparable answers took here: the middle of the latest 20, as a
+// range in ms. None from fewer than three, or when they disagree too much to
+// promise anything. Nothing is run to find out.
+export async function answerEstimate(store: Store, scope: string) {
+  const settings = await providerSettings(store, scope),
+    datasets = [...(await datasetsMap(store, scope)).values()].filter(
+      (d) => !d.data.retiredSample,
+    ),
+    key = timingKey(settings, datasets);
+  const took: number[] = (await store.list(scope, "run"))
+    .filter((r) => r.data.timing?.key === key && r.data.timing.took > 0)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 20)
+    .map((r) => r.data.timing.took)
+    .sort((a, b) => a - b);
+  if (took.length < 3) return null;
+  const at = (q: number) => {
+    const i = (took.length - 1) * q,
+      lo = Math.floor(i);
+    return took[lo] + (took[Math.ceil(i)] - took[lo]) * (i - lo);
+  };
+  const low = Math.round(at(0.2)),
+    high = Math.round(at(0.8));
+  return high - low > Math.max(2 * low, 15000)
+    ? null
+    : { low, high, samples: took.length };
 }
 async function datasetsMap(store: Store, scope: string) {
   const generation = (await store.get(scope, "workspace"))?.data
@@ -440,6 +497,12 @@ export async function enqueue(
           : new Map((await store.list(scope, "run")).map((r) => [r.id, r])),
       );
   }
+  // Set once, so the range people see doesn't move while they wait. Only a
+  // convenience: a question is asked even when it can't be worked out.
+  const estimate =
+    intent === "build"
+      ? undefined
+      : await answerEstimate(store, scope).catch(() => null);
   return transaction(store, scope, async (tx) =>
     tx.put(
       resource(
@@ -460,6 +523,7 @@ export async function enqueue(
           events: [],
           calls: 0,
           tokens: 0,
+          estimate,
         },
         id,
       ),
@@ -494,13 +558,15 @@ async function event(
     });
   });
 }
-// A retry continues from the run's checkpoints with a fresh call budget.
+// A retry continues from the run's checkpoints with a fresh call budget. It
+// reuses earlier work, so earlier answers say nothing about how long it takes.
 export const retried = (data: Record<string, any>, message: string) => ({
   ...data,
   status: "queued",
   stage: "queued",
   error: null,
   retryAt: null,
+  estimate: null,
   callsBefore: data.calls || 0,
   events: [...(data.events || []), { at: now(), stage: "queued", message }],
 });
@@ -509,7 +575,10 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
   assert(run, "Run missing");
   const settings = await providerSettings(store, scope),
     model = new Provider(settings),
-    start = Date.now();
+    start = Date.now(),
+    timed =
+      (run.data.attempts || 1) === 1 &&
+      !run.data.events?.some((e: any) => e.stage === "queued");
   let calls = run.data.calls || 0,
     tokens = run.data.tokens || 0;
   // Samples replaced by a newer sample set stay available but are never sent to the model.
@@ -606,7 +675,11 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
     prompt: string,
     wire?: z.ZodType,
   ): Promise<z.infer<T>> => {
-    if (checkpoints[stage]) return schema.parse(checkpoints[stage]);
+    if (checkpoints[stage]) {
+      // Noted, so a retry's steps show this work as done.
+      await event(store, scope, id, stage, "Reused the saved result");
+      return schema.parse(checkpoints[stage]);
+    }
     // Each retry gets a fresh call budget; the daily token budget still applies.
     assert(
       calls - (run.data.callsBefore || 0) < settings.maxCalls,
@@ -806,9 +879,15 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         intent === "answer"
           ? "Looking into your question"
           : "Preparing a proposal",
-        { resolvedIntent: intent },
+        {
+          resolvedIntent: intent,
+          ...(intent === "answer" ? { outline: answerOutline(settings) } : {}),
+        },
       );
-    }
+    } else if (intent === "answer")
+      await event(store, scope, id, "analysis", "Looking into your question", {
+        outline: answerOutline(settings),
+      });
     if (intent === "build" && run.data.authority) {
       const member = await store.get(
         "global",
@@ -920,10 +999,27 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         name: map.get(datasetId)!.name,
         version: map.get(datasetId)!.data.activeVersion,
       }));
+      // Code checks the full result before anything describes it: its shape,
+      // the measure that answers the question, rows tied for first place,
+      // rows repeated exactly and rows without the measure.
+      await event(store, scope, id, "check", "Checking the result");
+      const shape = answerShape(result.rows, {
+        types: Object.fromEntries(
+          result.profile.columns.map((c) => [c.name, c.type]),
+        ),
+        hint: `${run.data.goal} ${plan.title}`,
+      });
+      const check: AnswerCheck = {
+        ...shape,
+        duplicates: result.profile.duplicateRows || 0,
+        missing:
+          result.profile.columns.find((c) => c.name === shape.measure)?.nulls ||
+          0,
+      };
       // A short plain-language answer from the result rows: one more call,
       // only where rows may be sent to the model, and never failing the answer.
       let summary: { summary: string; highlights: string[] } | undefined;
-      if (settings.provider === "local" || settings.allowRawData) {
+      if (summarizes(settings)) {
         const clip = (v: unknown) =>
           typeof v === "string" && v.length > 60 ? v.slice(0, 60) + "…" : v;
         context.result = {
@@ -938,6 +1034,14 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
               ),
             ),
           assumptions: plan.assumptions,
+          check: {
+            shape: check.kind,
+            measure: check.measure,
+            order: check.order,
+            leaders: check.leaders,
+            duplicates: check.duplicates,
+            missing: check.missing,
+          },
         };
         try {
           summary = await ask(
@@ -946,7 +1050,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
               summary: z.string().max(700),
               highlights: z.array(z.string().max(200)).max(3),
             }),
-            "Summarise this query result for a business reader. summary: two or three plain sentences that directly answer the question, naming the rows that matter (for example campaign or customer names) with their numbers. highlights: up to three short takeaways such as the strongest, the weakest or anything surprising. Use only numbers that appear in the result rows, rounded sensibly; never invent or estimate figures. If Stripe amount_* values are raw cents, divide by 100 and say dollars. If the result is empty, say what that means. Mention an assumption only when it changes the conclusion. Plain text, no markdown.",
+            'Summarise this query result for a business reader. summary: two or three plain sentences. The first is short and directly answers the question (for example "Acme Corp has the most orders."); the rest name the rows that matter (for example campaign or customer names) with their numbers and units, such as "42 orders" or "$1,200". highlights: up to three short takeaways such as the strongest, the weakest or anything surprising. Use only numbers that appear in the result rows, rounded sensibly, or the difference between two of them; never invent or estimate figures. check is what code verified about the rows: when leaders is more than 1, that many rows share first place, so name them together and never a single leader; mention duplicates or missing values only when they change the conclusion. If Stripe amount_* values are raw cents, divide by 100 and say dollars. If the result is empty, say what that means. Mention an assumption only when it changes the conclusion. Plain text, no markdown.',
           );
         } catch (e) {
           if ((await store.get(scope, id))?.data.status === "canceled") throw e;
@@ -969,11 +1073,22 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         "Answer computed from dataset snapshots",
         {
           status: "succeeded",
+          // A first, uninterrupted attempt, timed from when it was asked, is
+          // evidence for later estimates.
+          ...(timed
+            ? {
+                timing: {
+                  key: timingKey(settings, datasets),
+                  took: Date.now() - Date.parse(run.createdAt),
+                },
+              }
+            : {}),
           answer: {
             ...plan,
             rows: result.rows,
             total: result.profile.rows,
             citations,
+            check,
             ...(summary?.summary.trim()
               ? {
                   summary: summary.summary.trim(),

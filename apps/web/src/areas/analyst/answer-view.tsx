@@ -1,12 +1,23 @@
-// How an answer's rows are shown: a stat row for a single result, a small
-// chart when the shape suits one, and the table.
+// How an answer's rows are shown, by the shape the server checked them to
+// have: a ranking or a breakdown as bars, a trend as a line, one row as a few
+// values, and always the table. The numbers a summary states are emphasised
+// only when the rows back them.
 import "../workspace/home.css";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import type { HomeMetric } from "../../../../../packages/shared/src";
+import {
+  answerNumber as toNumber,
+  answerShape,
+  isKeyColumn,
+  isNumericColumn,
+  isYearColumn,
+  type AnswerShape,
+  type HomeMetric,
+} from "../../../../../packages/shared/src";
 import {
   Button,
   DataGrid,
+  Segmented,
   calendarDate,
   compareValues,
   formatNumber,
@@ -17,54 +28,13 @@ import {
   type GridColumn,
   type GridSort,
 } from "../../kit";
-import { fieldName } from "../../ui";
 import { BreakdownChart, TrendChart, type Point } from "../workspace/metrics";
+import { columnLabel, columnWords } from "./chat-data";
 
 type Row = Record<string, unknown>;
 
-const numberText = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
-// A number, including numbers sent as text (big integers, decimals).
-const toNumber = (v: unknown): number | null =>
-  typeof v === "number"
-    ? Number.isFinite(v)
-      ? v
-      : null
-    : typeof v === "bigint"
-      ? Number(v)
-      : typeof v === "string" && numberText.test(v.trim())
-        ? Number(v)
-        : null;
 const present = (v: unknown) => v !== null && v !== undefined;
-const isNumeric = (rows: Row[], key: string) =>
-  rows.some((r) => present(r[key])) &&
-  rows.every((r) => !present(r[key]) || toNumber(r[key]) !== null);
-// Keys, not measures: "id", "customer_id", "orderId".
-const isIdLike = (key: string) => /(^|_)id$/i.test(key) || /[a-z]Id$/.test(key);
-const isoTime = /^\d{4}-\d{2}(-\d{2}([T ][\d:.]+(Z|[+-]\d{2}:?\d{2})?)?)?$/;
-const isTimeLike = (rows: Row[], key: string) =>
-  rows.every(
-    (r) =>
-      !present(r[key]) ||
-      (typeof r[key] === "string" && isoTime.test(r[key] as string)),
-  ) && rows.some((r) => present(r[key]));
-const isYearLike = (rows: Row[], key: string) =>
-  /^(year|yr|fiscal_year)$/i.test(key) &&
-  rows.every((r) => {
-    const n = toNumber(r[key]);
-    return n === null || (Number.isInteger(n) && n > 1900 && n < 2200);
-  });
-
-const acronyms = new Set(
-  "id url sku mrr arr aov ltv cac arpu roi nps gmv usd eur gbp kpi utm".split(
-    " ",
-  ),
-);
-// Column names read as labels: "total_mrr" -> "Total MRR".
-export const columnLabel = (key: string) =>
-  fieldName(key)
-    .split(" ")
-    .map((w) => (acronyms.has(w.toLowerCase()) ? w.toUpperCase() : w))
-    .join(" ");
+const isYearKey = (key: string) => /^(year|yr|fiscal_year)$/i.test(key);
 const calendar = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/;
 // A date without a time is a calendar day (or month): read it in local time,
 // not as UTC midnight, which would show the day before west of UTC.
@@ -86,7 +56,7 @@ function valueText(key: string, v: unknown): string | null {
   if (day) return day;
   // Numbers are formatted as sent, so an integer beyond 2^53 keeps every digit.
   if (toNumber(v) !== null)
-    return isIdLike(key) || /^(year|yr|fiscal_year)$/i.test(key)
+    return isKeyColumn(key) || isYearKey(key)
       ? String(v)
       : formatNumber(v as number | bigint | string);
   return formatValue(v, inferKind([v]));
@@ -108,37 +78,26 @@ export type ChartPlan = {
   grain?: HomeMetric["grain"];
   label: string;
   value: string;
+  // A ranking's order; its bars keep the rows' order.
+  rank?: "desc" | "asc";
 };
 const DAY = 86400000;
-// A chart only for small, summarised results: a label column (a date, a year
-// or a category) and a measure, each label once.
-export function chartPlan(rows: Row[]): ChartPlan | null {
+// A chart for a ranking, a trend or a small breakdown: a label column (a date,
+// a year or a category) and the measure, each label once. Keys are never the
+// measure. The shape is the server's check, or read from the rows for answers
+// from before it checked them.
+export function chartPlan(rows: Row[], shape?: AnswerShape): ChartPlan | null {
   if (rows.length < 2) return null;
-  const keys = Object.keys(rows[0] || {});
-  if (keys.length < 2 || keys.length > 4) return null;
-  const time = keys.find((k) => isTimeLike(rows, k)),
-    label =
-      time ??
-      keys.find((k) => isYearLike(rows, k)) ??
-      keys.find((k) => !isNumeric(rows, k));
-  if (!label) return null;
-  const value = keys.find(
-    (k) =>
-      k !== label &&
-      !isIdLike(k) &&
-      !isYearLike(rows, k) &&
-      !isTimeLike(rows, k) &&
-      isNumeric(rows, k),
-  );
-  if (!value) return null;
-  const labels = rows.map((r) => String(r[label] ?? ""));
-  if (new Set(labels).size !== labels.length) return null;
+  const s = shape ?? answerShape(rows);
+  if (!["ranking", "trend", "breakdown"].includes(s.kind)) return null;
+  const label = s.label!,
+    value = s.measure!;
   const measured = rows.filter(
     (r) => present(r[label]) && toNumber(r[value]) !== null,
   );
   if (measured.length < 2) return null;
-  if (time) {
-    // Daily, weekly or monthly buckets, oldest first.
+  if (s.kind === "trend") {
+    // Daily, weekly or monthly buckets (or years), oldest first.
     const days = measured
       .map((r) => point(String(r[label]).slice(0, 10), r[value]))
       .sort((a, b) => a.label.localeCompare(b.label));
@@ -164,17 +123,17 @@ export function chartPlan(rows: Row[]): ChartPlan | null {
       })),
     };
   }
-  if (measured.length > 12) return null;
   return {
     kind: "breakdown",
     label,
     value,
+    rank: s.kind === "ranking" ? s.order : undefined,
     points: measured.map((r) => point(String(r[label]), r[value])),
   };
 }
 
 export function AnswerChart({ plan }: { plan: ChartPlan }) {
-  const title = `${columnLabel(plan.value)} by ${columnLabel(plan.label).toLowerCase()}`;
+  const title = `${columnLabel(plan.value)} by ${columnWords(plan.label)}`;
   const m: HomeMetric = {
     id: "answer",
     title,
@@ -187,27 +146,54 @@ export function AnswerChart({ plan }: { plan: ChartPlan }) {
   };
   return (
     <figure className="an-chart">
-      <figcaption>{title}</figcaption>
+      <figcaption>
+        {title}
+        {plan.rank && <>, {plan.rank === "asc" ? "lowest" : "highest"} first</>}
+      </figcaption>
       {plan.kind === "trend" ? (
         <TrendChart m={m} points={plan.points} />
       ) : (
-        <BreakdownChart m={m} points={plan.points} />
+        <BreakdownChart m={m} points={plan.points} rank={plan.rank} />
       )}
     </figure>
   );
 }
 
-// One result row reads best as a few labelled values.
-export function AnswerStats({ row }: { row: Row }) {
+// The columns of a result in the order they matter: what names each row, the
+// measure, the other values, and keys last.
+function ordered(keys: string[], shape?: AnswerShape) {
+  const rank = (k: string) =>
+    k === shape?.label ? 0 : k === shape?.measure ? 1 : isKeyColumn(k) ? 3 : 2;
+  return keys
+    .map((k, i) => ({ k, i }))
+    .sort((a, b) => rank(a.k) - rank(b.k) || a.i - b.i)
+    .map(({ k }) => k);
+}
+
+// One result row reads best as a few labelled values, the measure first and
+// keys last and quieter.
+export function AnswerStats({ row, shape }: { row: Row; shape?: AnswerShape }) {
+  const s = shape ?? answerShape([row]);
   return (
     <dl className="an-stats">
-      {Object.entries(row).map(([key, v]) => {
-        const text = valueText(key, v),
-          numeric = toNumber(v) !== null;
+      {ordered(Object.keys(row), s).map((key) => {
+        const v = row[key],
+          text = valueText(key, v),
+          numeric = toNumber(v) !== null,
+          isKey = isKeyColumn(key);
         return (
-          <div key={key} className="an-stat">
+          <div
+            key={key}
+            className={
+              isKey
+                ? "an-stat is-key"
+                : key === s.measure
+                  ? "an-stat is-measure"
+                  : "an-stat"
+            }
+          >
             <dt>{columnLabel(key)}</dt>
-            <dd className={numeric ? "hf-num" : undefined}>
+            <dd className={numeric && !isKey ? "hf-num" : undefined}>
               {text ?? <span className="hf-null">—</span>}
             </dd>
           </div>
@@ -220,24 +206,26 @@ export function AnswerStats({ row }: { row: Row }) {
 const PREVIEW = 8,
   HEAD = 36,
   ROW = 34;
-// Table columns typed from the first rows. Measures sit on the right.
-export function answerColumns(rows: Row[]) {
+// Table columns typed from the first rows, in the order they matter (the
+// measure emphasised, keys last and quieter). Measures sit on the right.
+export function answerColumns(rows: Row[], shape?: AnswerShape) {
   const sample = rows.slice(0, 50);
   const blank = <span className="hf-null">null</span>;
-  return Object.keys(rows[0] || {}).map((key) => {
+  const s = shape ?? answerShape(rows);
+  return ordered(Object.keys(rows[0] || {}), s).map((key) => {
     const values = sample.map((r) => r[key]);
     const days =
       values.some(present) &&
       values.every((v) => !present(v) || calendarText(v) !== null);
     // Numbers sent as text still sort and align as numbers; years stay
     // as written ("2026", not "2,026").
-    const year = isYearLike(sample, key),
+    const year = isYearColumn(sample, key),
       numeric =
         !days &&
         !year &&
-        !isIdLike(key) &&
+        !isKeyColumn(key) &&
         values.some((v) => typeof v === "string") &&
-        isNumeric(sample, key);
+        isNumericColumn(sample, key);
     const kind: ColumnKind = days
       ? "date"
       : numeric
@@ -252,6 +240,12 @@ export function answerColumns(rows: Row[]) {
       kind,
       numeric,
       align: year ? ("right" as const) : undefined,
+      className:
+        key === s.measure
+          ? "is-measure"
+          : isKeyColumn(key)
+            ? "is-key"
+            : undefined,
       render: days
         ? (r: Row) =>
             present(r[key]) ? (calendarText(r[key]) ?? String(r[key])) : blank
@@ -283,10 +277,18 @@ export function sortAnswer(
   });
 }
 // The first rows, with the rest one click away.
-export function AnswerTable({ rows, label }: { rows: Row[]; label: string }) {
+export function AnswerTable({
+  rows,
+  label,
+  shape,
+}: {
+  rows: Row[];
+  label: string;
+  shape?: AnswerShape;
+}) {
   const [all, setAll] = useState(false),
     [sort, setSort] = useState<GridSort>(null);
-  const columns = useMemo(() => answerColumns(rows), [rows]);
+  const columns = useMemo(() => answerColumns(rows, shape), [rows, shape]);
   const sorted = useMemo(
     () => sortAnswer(rows, columns, sort),
     [rows, sort, columns],
@@ -318,4 +320,250 @@ export function AnswerTable({ rows, label }: { rows: Row[]; label: string }) {
       }
     />
   );
+}
+
+// A ranking's chart starts with its top rows; the rest are one click away,
+// and the table always has every row.
+const TOP = 10,
+  MOST = 30;
+// The rows as a chart when their shape has one, or as the table, with a
+// switch between the two. A heading names them when the answer's statement
+// is not already their title.
+export function AnswerResult({
+  rows,
+  label,
+  shape,
+  heading,
+}: {
+  rows: Row[];
+  label: string;
+  shape: AnswerShape;
+  heading?: string;
+}) {
+  const plan = useMemo(() => chartPlan(rows, shape), [rows, shape]);
+  const [view, setView] = useState<"chart" | "table">("chart"),
+    [more, setMore] = useState(false);
+  const total = plan?.points.length || 0,
+    ranked = !!plan?.rank && total > TOP,
+    top = more ? Math.min(MOST, total) : TOP;
+  return (
+    <div className="an-result">
+      {(heading || plan) && (
+        <div className="an-result-head">
+          {heading && <h3>{heading}</h3>}
+          {plan && (
+            <Segmented
+              label="Show the result as"
+              value={view}
+              onChange={(v) => setView(v as "chart" | "table")}
+              options={[
+                { value: "chart", label: "Chart" },
+                { value: "table", label: "Table" },
+              ]}
+            />
+          )}
+        </div>
+      )}
+      {plan && view === "chart" ? (
+        <>
+          <AnswerChart
+            plan={
+              ranked ? { ...plan, points: plan.points.slice(0, top) } : plan
+            }
+          />
+          {ranked && (
+            <div className="an-result-foot">
+              <span className="hf-num">
+                {top === total
+                  ? `All ${formatNumber(total)}`
+                  : `Top ${formatNumber(top)} of ${formatNumber(total)}`}
+              </span>
+              {more && total > MOST ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setView("table")}
+                >
+                  See every row in the table
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  iconRight={more ? ChevronUp : ChevronDown}
+                  aria-expanded={more}
+                  onClick={() => setMore((v) => !v)}
+                >
+                  {more
+                    ? `Show top ${TOP}`
+                    : total > MOST
+                      ? `Show top ${MOST}`
+                      : `Show all ${formatNumber(total)}`}
+                </Button>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <AnswerTable rows={rows} label={label} shape={shape} />
+      )}
+    </div>
+  );
+}
+
+// The summary's first sentence answers the question, so it leads the answer
+// as its statement when it is short enough to read as one. Initials, titles
+// and abbreviations ("Lucas I. Kim", "Acme Inc.") don't end a sentence.
+const notAnEnd =
+  /(?:^|\s)(?:[A-Z]|Dr|Mr|Mrs|Ms|St|Inc|Ltd|Co|Corp|vs|etc|approx|No|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|e\.g|i\.e)\.$/;
+export function leadSentence(
+  summary: string,
+): { statement: string; rest: string } | null {
+  const text = summary.trim();
+  for (const m of text.matchAll(/[.!?](?=\s+["“$€£A-Z0-9])/g)) {
+    const end = m.index + 1,
+      head = text.slice(0, end);
+    if (notAnEnd.test(head)) continue;
+    return head.length <= 180
+      ? { statement: head, rest: text.slice(end).trim() }
+      : null;
+  }
+  return text.length <= 180 ? { statement: text, rest: "" } : null;
+}
+
+// Numbers in the text, with a currency sign or a scale ("$1.2M", "12%",
+// "3 million"). Not part of a word, a date or a decimal.
+const quantity =
+  /(?<![\w.,:/-])([$€£])?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(%|\s?percent\b|\s?(?:thousand|million|billion)\b|[KkMB]\b|bn\b)?(?![\w/-]|[.,]\d)/g;
+const scales: Record<string, number> = {
+  k: 1e3,
+  thousand: 1e3,
+  m: 1e6,
+  million: 1e6,
+  b: 1e9,
+  bn: 1e9,
+  billion: 1e9,
+};
+const units = new Set(
+  "more fewer less times percent points orders customers users people items units rows records days hours minutes weeks months years dollars sessions events visits products accounts invoices".split(
+    " ",
+  ),
+);
+const quiet = new Set(
+  "a an and are at by for from in into is of on or per than that the their to was were with".split(
+    " ",
+  ),
+);
+const singular = (w: string) =>
+  w.replace(/ies$/, "y").replace(/([^s])s$/, "$1");
+// Unit words for this result: the usual ones and those its columns are named
+// with ("order_count" → order, orders).
+function unitWords(rows: Row[]) {
+  const words = new Set([...units].map(singular));
+  for (const key of Object.keys(rows[0] || {}))
+    for (const w of columnWords(key).split(" ")) words.add(singular(w));
+  return words;
+}
+// How the rows back a number: as one of their values (as written, rounded, in
+// cents, or as a fraction for a percentage) or how many rows there are, or as
+// the difference between two values of a column.
+function backing(
+  n: number,
+  places: number,
+  { percent, money }: { percent: boolean; money: boolean },
+  values: number[][],
+  counts: number[],
+): "value" | "difference" | null {
+  const tolerance = 0.5 * 10 ** -places + 1e-9,
+    near = (v: number) =>
+      Math.abs(Math.abs(v) - n) <= tolerance ||
+      (percent && Math.abs(Math.abs(v) * 100 - n) <= tolerance) ||
+      (money && Math.abs(Math.abs(v) / 100 - n) <= tolerance);
+  if (counts.some(near) || values.some((c) => c.some(near))) return "value";
+  for (const column of values) {
+    const top = column.slice(0, 30);
+    for (let i = 0; i < top.length; i++)
+      for (let j = i + 1; j < top.length; j++)
+        if (near(top[i] - top[j])) return "difference";
+  }
+  return null;
+}
+// A difference is only stated as one: "8 more", "5 orders fewer than".
+const comparison =
+  /^\s(?:[a-z-]+\s)?(?:more|fewer|less|higher|lower|ahead|behind)\b/;
+// The text with each quantity the rows back, and its unit, in bold: "42
+// orders", "8 more", "$1,200". Years and numbers the rows don't back stay
+// as they are.
+export function Emphasized({
+  text,
+  rows,
+  total,
+}: {
+  text: string;
+  rows: Row[];
+  total?: number;
+}) {
+  const parts = useMemo(() => {
+    // Keys are left out: an ID that happens to match backs nothing.
+    const keys = Object.keys(rows[0] || {}).filter((k) => !isKeyColumn(k));
+    const values = keys
+      .map((k) =>
+        rows.map((r) => toNumber(r[k])).filter((v): v is number => v !== null),
+      )
+      .filter((c) => c.length);
+    const counts = [rows.length, ...(total === undefined ? [] : [total])];
+    const words = unitWords(rows);
+    const out: ReactNode[] = [];
+    let at = 0;
+    for (const m of text.matchAll(quantity)) {
+      const [whole, sign, digits, decimals = "", suffix = ""] = m;
+      const scale = scales[suffix.trim().toLowerCase()] ?? 1,
+        percent = /%|percent/.test(suffix),
+        n = Number(digits.replace(/,/g, "") + (decimals && "." + decimals));
+      if (
+        !sign &&
+        !suffix &&
+        !decimals &&
+        !digits.includes(",") &&
+        n >= 1900 &&
+        n < 2200
+      )
+        continue;
+      // A scaled number is compared in its own units ("1.2M" as 1.2 million).
+      const rounded = values.map((c) => c.map((v) => v / scale));
+      const backed = backing(
+        n,
+        decimals.length,
+        { percent, money: !!sign },
+        rounded,
+        scale === 1 ? counts : [],
+      );
+      if (
+        !backed ||
+        (backed === "difference" &&
+          !comparison.test(text.slice(m.index + whole.length)))
+      )
+        continue;
+      // Its unit: the next word, or the one after a describing word ("1,245
+      // active customers").
+      let end = m.index + whole.length;
+      const next = /^\s([a-z][a-z-]*)(?:\s([a-z][a-z-]*))?/.exec(
+        text.slice(end),
+      );
+      if (next && !percent) {
+        const [first, second] = [next[1], next[2]];
+        if (words.has(singular(first))) end += 1 + first.length;
+        else if (second && !quiet.has(first) && words.has(singular(second)))
+          end += 2 + first.length + second.length;
+      }
+      out.push(
+        text.slice(at, m.index),
+        <strong key={m.index}>{text.slice(m.index, end)}</strong>,
+      );
+      at = end;
+    }
+    out.push(text.slice(at));
+    return out;
+  }, [text, rows, total]);
+  return <>{parts}</>;
 }

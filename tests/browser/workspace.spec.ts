@@ -199,6 +199,26 @@ test("connect, review, publish, investigate, and edit business records", async (
   await history.getByRole("link", { name: question }).click();
   await expect(page).toHaveURL(/\/analyst\/.+/);
   await expect(page.getByRole("log").getByText(question).first()).toBeVisible();
+  // The answer arrives with its steps, all reported by the server: the
+  // result checked in code as a ranking, and its statement first.
+  const steps = page.getByRole("region", { name: "Analysis steps" });
+  await expect(steps.getByText("Analysis complete")).toBeVisible({
+    timeout: 30000,
+  });
+  await expect(
+    page.getByRole("heading", { name: "Customer A has the most orders." }),
+  ).toBeVisible();
+  await expect(page.locator(".an-lead strong")).toHaveText([
+    "2 orders",
+    "1 more",
+  ]);
+  await steps.getByRole("button", { name: "Show steps" }).click();
+  await expect(steps.locator(".an-steps > li")).toContainText([
+    "Understand the question: Planned “Customers by order count”",
+    "Analyze the data: Ran a read-only query on Orders.",
+    "Check the results: 2 rows: order count by customer.",
+    "Write the answer: Summarized the result in plain words.",
+  ]);
   await nav.getByRole("link", { name: "Ontology", exact: true }).click();
   await nav.getByRole("link", { name: "Explorer", exact: true }).click();
   // The Explorer opens on the record graph; finding a record selects it.
