@@ -98,7 +98,7 @@ Stripe, WorkOS and PostHog appear beside the database hosts in **Add data**.
 - **REST** supports unpaginated, next-link, cursor and offset responses. Set the items path and the pagination fields to match the API.
 - **S3-compatible storage** imports selected files from a bucket.
 - **Uploads** accept CSV, JSON, JSONL and Parquet files up to 256 MB. Each upload becomes a durable background job, and you can choose several files together.
-- **The ingestion API** (`POST /api/v1/workspaces/:w/ingest`) accepts up to 10,000 rows per request. Ingestion replaces complete snapshots; it is not an append API.
+- **The ingestion API** (`POST /api/v1/workspaces/:w/ingest`) accepts up to 10,000 rows per request. This endpoint replaces complete snapshots. To extend a manual or uploaded dataset, use `POST /datasets/:id/append` with `{ expectedVersion, rows }`, or the SDK's `appendDatasetRows`. Each batch adds 1–10,000 rows in a new immutable snapshot while preserving column types and history. Reload and reconcile on a 409 version conflict; source-connected and pipeline datasets retain their own refresh lifecycle. See [Developer API](API.md#append-ingestion) for batch and retry semantics.
 
 ### Sync and change capture
 

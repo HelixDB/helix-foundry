@@ -30,18 +30,19 @@ Each area owns its section below; add new routes to your own section.
 
 ### Data
 
-| Method / path                       | Input / result                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request |
-| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB               |
-| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                 |
-| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition        |
-| POST `/sources/:id/sync`            | `{}`; durable job                                                       |
-| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                 |
-| GET `/datasets/:id/export`          | Download active Parquet snapshot                                        |
-| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description               |
-| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                            |
-| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile            |
+| Method / path                       | Input / result                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------- |
+| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request                           |
+| POST `/datasets/:id/append`         | `{ expectedVersion, rows: object[] }`; append 1–10,000 rows to a manual dataset as a new snapshot |
+| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB                                         |
+| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                                           |
+| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition                                  |
+| POST `/sources/:id/sync`            | `{}`; durable job                                                                                 |
+| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                                           |
+| GET `/datasets/:id/export`          | Download active Parquet snapshot                                                                  |
+| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description                                         |
+| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                                                      |
+| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile                                      |
 
 ### Pipelines
 
@@ -117,3 +118,22 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+### Append ingestion
+
+Use `POST /datasets/:id/append` or `FoundryClient.appendDatasetRows(datasetId, expectedVersion, rows)` to extend an uploaded or manually ingested dataset. Each request accepts 1–10,000 rows and publishes a complete immutable snapshot; earlier snapshots remain available. Columns retain their original names, order and DuckDB types. Omitted values become NULL; compatible values are cast using DuckDB. New columns and incompatible values are rejected. This is append, including duplicate rows, rather than key-based upsert.
+
+Send the dataset's current `data.activeVersion` as `expectedVersion`. A concurrent append/replacement or a pending schema review returns 409 without promoting the batch. Reload the dataset and reconcile the batch before retrying; repeating a successfully applied batch against the new version appends duplicates. Connected sources and published pipeline outputs keep their existing refresh/build lifecycle and reject append requests. The caller needs editor access. Existing `/ingest` replacement behavior is unchanged.
+
+```ts
+let dataset = await client.ingest("Application events", firstBatch);
+for (const batch of subsequentBatches) {
+  dataset = await client.appendDatasetRows(
+    dataset.id,
+    dataset.data.activeVersion,
+    batch,
+  );
+}
+```
+
+Appending materializes and profiles a new full snapshot, so its cost grows with the dataset. Existing executor memory, spill and time budgets apply; this is a batch ingestion workflow rather than streaming or an external database write.

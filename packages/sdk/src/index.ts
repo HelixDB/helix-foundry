@@ -187,6 +187,16 @@ export class FoundryClient {
   ingest(name: string, rows: Record<string, unknown>[], datasetId?: string) {
     return this.request<Resource>("/ingest", { name, rows, datasetId });
   }
+  appendDatasetRows(
+    datasetId: string,
+    expectedVersion: string,
+    rows: Record<string, unknown>[],
+  ) {
+    return this.request<Resource>(
+      "/datasets/" + encodeURIComponent(datasetId) + "/append",
+      { expectedVersion, rows },
+    );
+  }
   createSource(source: {
     name: string;
     kind:

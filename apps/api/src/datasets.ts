@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 import { config } from "./config.js";
 import { execute } from "./executor.js";
 import { resource, transaction, now, type Store } from "./store.js";
-import type { Resource } from "../../../packages/shared/src/index.js";
+import type {
+  DatasetProfile,
+  Resource,
+} from "../../../packages/shared/src/index.js";
 import {
   datasetTable,
   datasetAliases,
@@ -36,6 +39,29 @@ export async function ingestFile(
     if (existing) return existing;
   }
   const r = await execute({ mode: "ingest", scope, version, file, schema });
+  return commitSnapshot(
+    store,
+    scope,
+    name,
+    version,
+    r,
+    sourceId,
+    datasetId,
+    jobId,
+  );
+}
+
+async function commitSnapshot(
+  store: Store,
+  scope: string,
+  name: string,
+  version: string,
+  r: { profile: DatasetProfile; legacyFingerprint?: string },
+  sourceId?: string,
+  datasetId?: string,
+  jobId?: string,
+  expectedVersion?: string,
+) {
   let unchangedVersion: string | undefined;
   const committed = await transaction(store, scope, async (tx) => {
     if (jobId)
@@ -45,6 +71,18 @@ export async function ingestFile(
         409,
       );
     const old = datasetId ? await tx.get(datasetId) : undefined;
+    if (expectedVersion) {
+      assert(old?.kind === "dataset", "Dataset unavailable", 404);
+      assert(
+        !old.data.sourceId && !old.data.generation,
+        "Append requires a manually ingested dataset",
+      );
+      assert(
+        old.data.activeVersion === expectedVersion && !old.data.pendingVersion,
+        "Dataset changed; reload its current snapshot before appending",
+        409,
+      );
+    }
     const ds =
       old ||
       resource(scope, "dataset", name, { sourceId, versions: [] }, datasetId);
@@ -178,6 +216,93 @@ export async function ingestRows(
   );
   return ingestFile(store, scope, name, file, sourceId, datasetId);
 }
+// Append publishes a new complete immutable snapshot. The public caller names
+// the snapshot it read; transaction retries cannot overwrite a concurrent write.
+export async function appendRows(
+  store: Store,
+  scope: string,
+  datasetId: string,
+  expectedVersion: string,
+  rows: Record<string, unknown>[],
+) {
+  const ds = await store.get(scope, datasetId);
+  assert(ds?.kind === "dataset", "Dataset unavailable", 404);
+  assert(
+    !ds.data.sourceId && !ds.data.generation,
+    "Append requires a manually ingested dataset",
+  );
+  assert(
+    ds.data.activeVersion === expectedVersion && !ds.data.pendingVersion,
+    "Dataset changed; reload its current snapshot before appending",
+    409,
+  );
+  const columns: { name: string; type: string }[] = ds.data.profile.columns;
+  const known = new Set(columns.map((c) => c.name));
+  assert(
+    rows.every((row) => Object.keys(row).every((name) => known.has(name))),
+    "Append cannot add columns; use a replacement snapshot for schema changes",
+  );
+  const dir = resolve(config.dataDir, "incoming", scope);
+  await mkdir(dir, { recursive: true });
+  const file = randomUUID() + ".jsonl",
+    temporary = randomUUID(),
+    version = randomUUID();
+  const parquet = (id: string) =>
+    resolve(config.dataDir, "datasets", scope, id + ".parquet");
+  const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';
+  let committed = false;
+  try {
+    await writeFile(
+      resolve(dir, file),
+      rows
+        .map((row) =>
+          JSON.stringify(
+            Object.keys(row).length ? row : { [columns[0].name]: null },
+          ),
+        )
+        .join("\n"),
+    );
+    const incoming = await execute({
+      mode: "ingest",
+      scope,
+      version: temporary,
+      file,
+    });
+    const present = new Set(incoming.profile.columns.map((c) => c.name));
+    const result = await execute({
+      mode: "query",
+      scope,
+      version,
+      persist: true,
+      inputs: [
+        { table: "append_existing", version: expectedVersion },
+        { table: "append_incoming", version: temporary },
+      ],
+      // Cast incoming values before combining to preserve the original types
+      // and exact BIGINT values. NULL or an
+      // omitted value is allowed; an incompatible value fails without promotion.
+      sql: `SELECT * FROM append_existing UNION ALL SELECT ${columns.map((c) => `CAST(${present.has(c.name) ? quote(c.name) : "NULL"} AS ${c.type}) AS ${quote(c.name)}`).join(",")} FROM append_incoming`,
+    });
+    const updated = await commitSnapshot(
+      store,
+      scope,
+      ds.name,
+      version,
+      result,
+      undefined,
+      datasetId,
+      undefined,
+      expectedVersion,
+    );
+    committed = true;
+    return updated;
+  } finally {
+    await rm(resolve(dir, file), { force: true });
+    await rm(parquet(temporary), { force: true });
+    if (!committed) await rm(parquet(version), { force: true });
+  }
+}
+
 export async function datasetInputs(
   store: Store,
   scope: string,

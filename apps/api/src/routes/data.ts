@@ -18,6 +18,7 @@ import { discover } from "../connectors.js";
 import {
   ingestFile,
   ingestRows,
+  appendRows,
   queryDatasets,
   seedDemo,
 } from "../datasets.js";
@@ -30,6 +31,10 @@ export const dataSchemas: RequestSchemas = {
   "POST /api/v1/workspaces/:w/demo": DemoSchema,
   "POST /api/v1/workspaces/:w/sources": SourceSchema,
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
+  "POST /api/v1/workspaces/:w/datasets/:id/append": z.object({
+    expectedVersion: z.string().min(1),
+    rows: z.array(z.record(z.string(), z.unknown())).min(1).max(10000),
+  }),
   "POST /api/v1/workspaces/:w/ingest": z.object({
     name: z.string(),
     rows: z.array(z.record(z.string(), z.unknown())).min(1).max(10000),
@@ -70,6 +75,16 @@ export function registerDataRoutes(
         404,
       );
     return ingestRows(store, a.scope, b.name, b.rows, undefined, b.datasetId);
+  });
+  app.post("/api/v1/workspaces/:w/datasets/:id/append", async (req: any) => {
+    const a = await access(req, "editor"),
+      b = z
+        .object({
+          expectedVersion: z.string().min(1),
+          rows: z.array(z.record(z.string(), z.unknown())).min(1).max(10000),
+        })
+        .parse(req.body);
+    return appendRows(store, a.scope, req.params.id, b.expectedVersion, b.rows);
   });
   app.post("/api/v1/workspaces/:w/upload", async (req, reply) => {
     const a = await access(req, "editor"),
