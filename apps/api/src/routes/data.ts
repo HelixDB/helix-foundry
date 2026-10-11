@@ -30,6 +30,9 @@ export const dataSchemas: RequestSchemas = {
   "POST /api/v1/workspaces/:w/demo": DemoSchema,
   "POST /api/v1/workspaces/:w/sources": SourceSchema,
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
+  "POST /api/v1/workspaces/:w/sources/:id/refresh": z.object({
+    paused: z.boolean(),
+  }),
   "POST /api/v1/workspaces/:w/ingest": z.object({
     name: z.string(),
     rows: z.array(z.record(z.string(), z.unknown())).min(1).max(10000),
@@ -197,6 +200,34 @@ export function registerDataRoutes(
       b.kind,
       (await resolveHostedConfig(store, a.scope, b.kind, b.config)).config,
     );
+  });
+  app.post("/api/v1/workspaces/:w/sources/:id/refresh", async (req: any) => {
+    const a = await access(req, "owner"),
+      { paused } = z.object({ paused: z.boolean() }).parse(req.body);
+    return transaction(store, a.scope, async (tx) => {
+      const source = await tx.get(req.params.id);
+      assert(source?.kind === "source", "Source unavailable", 404);
+      const sources = source.data.connectionId
+        ? (await tx.list("source")).filter(
+            (s) => s.data.connectionId === source.data.connectionId,
+          )
+        : [source];
+      return {
+        items: sources.map((s) =>
+          scrub(
+            tx.update(s, {
+              ...s.data,
+              paused,
+              ...(!paused &&
+              s.data.sync?.mode !== "cdc" &&
+              s.data.sync?.mode !== "auto"
+                ? { nextRun: Date.now() }
+                : {}),
+            }),
+          ),
+        ),
+      };
+    });
   });
   app.post("/api/v1/workspaces/:w/sources/:id/sync", async (req: any) => {
     const a = await access(req, "editor"),

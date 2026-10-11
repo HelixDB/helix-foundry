@@ -119,7 +119,7 @@
 /* Connections: one card per connection, in the Datasets card style. */
 .cn-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
   gap: 12px;
   margin-top: 14px;
 }
@@ -189,6 +189,7 @@
 }
 .cn-card footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   margin-top: 8px;
@@ -198,8 +199,11 @@
   font-size: var(--hf-text-xs);
 }
 .cn-card footer > span {
-  flex: 1;
+  flex: 1 0 100%;
   min-width: 0;
+}
+.cn-card footer > .hf-btn {
+  flex-shrink: 0;
 }
 .cn-search {
   max-width: 360px;

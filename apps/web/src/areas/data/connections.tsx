@@ -278,6 +278,30 @@ export function DataOverview() {
                     {number(records)} records
                     {refreshed && ` · refreshed ${relative(refreshed)}`}
                   </span>
+                  {c.source && role === "owner" && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={action.pending}
+                      title="Running imports finish. Manual refresh remains available."
+                      onClick={() =>
+                        action.run(
+                          () =>
+                            api(
+                              `/workspaces/${id}/sources/${c.source!.id}/refresh`,
+                              { paused: !c.source!.data.paused },
+                            ),
+                          c.source!.data.paused
+                            ? "Automatic refresh resumed"
+                            : "Automatic refresh paused",
+                        )
+                      }
+                    >
+                      {c.source.data.paused
+                        ? "Resume automatic refresh"
+                        : "Pause automatic refresh"}
+                    </Button>
+                  )}
                   {c.source && role !== "viewer" && (
                     <Button
                       size="sm"

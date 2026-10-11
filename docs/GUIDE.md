@@ -108,6 +108,8 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 
 [Operations](OPERATIONS.md) lists the database permissions change capture needs and how to manage WAL and binlog retention.
 
+Workspace owners can choose **Pause automatic refresh** on a connection's Data card, then **Resume automatic refresh** when ready. This applies to every table in that connection. Queued automatic imports wait; running imports finish, and **Refresh now** still works while paused. Change streams disconnect while keeping their saved positions, then reconnect on resume. Snapshot sources become due immediately on resume. Replication slots remain in place, so check database log retention before leaving a database connection paused for a long time.
+
 ## AI and review
 
 **Providers.** Local inference through Ollama is the default. Claude and OpenAI are explicit choices, and there is no fallback from one provider to another. Hosted keys are entered in the browser, encrypted, and tested before the provider is activated. If a replacement provider fails its test, the existing settings stay active.

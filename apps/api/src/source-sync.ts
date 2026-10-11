@@ -60,6 +60,7 @@ export function sourceSyncDefaults(kind: string, schedule?: string | null) {
 }
 
 export function scheduledRefresh(source: Resource) {
+  if (source.data.paused) return false;
   if (source.data.sync?.mode === "cdc" || source.data.sync?.mode === "auto")
     return false;
   return (
@@ -240,6 +241,7 @@ export async function prepareSourceSync(
 export function needsChangeRefresh(source: Resource) {
   const sync = source.data.sync;
   return (
+    !source.data.paused &&
     !!source.data.datasetId &&
     sync?.mode === "cdc" &&
     Number(sync.changes || 0) > Number(sync.applied || 0)
@@ -531,7 +533,8 @@ export function startChangeStreams(store: Store) {
           const stream = streams.get(key);
           if (
             stream &&
-            (source.data.sync?.mode !== "cdc" ||
+            (source.data.paused ||
+              source.data.sync?.mode !== "cdc" ||
               source.data.secret !== stream.secret ||
               source.data.sync.leaseOwner !== owner)
           ) {
@@ -539,6 +542,7 @@ export function startChangeStreams(store: Store) {
             continue;
           }
           if (
+            source.data.paused ||
             source.data.sync?.mode !== "cdc" ||
             source.data.sync.retryAt > Date.now()
           )
@@ -547,6 +551,7 @@ export function startChangeStreams(store: Store) {
             const s = await tx.get(source.id);
             if (
               !s ||
+              s.data.paused ||
               s.data.sync?.mode !== "cdc" ||
               (s.data.sync.leaseOwner !== owner &&
                 s.data.sync.leaseUntil > Date.now())

@@ -100,12 +100,18 @@ export function startWorker(store: Store) {
           }
         const runs = await store.list(scope, "run"),
           jobs = await store.list(scope, "job"),
-          inputs = await buildSources(store, scope, runs);
+          inputs = await buildSources(store, scope, runs),
+          paused = new Set(
+            (await store.list(scope, "source"))
+              .filter((s) => s.data.paused)
+              .map((s) => s.id),
+          );
         const held = (j: Resource) =>
           j.data.type === "sync" &&
           j.data.background &&
-          inputs.has(j.data.sourceId) &&
-          Date.now() - Date.parse(j.createdAt) < SYNC_DEFERRAL;
+          (paused.has(j.data.sourceId) ||
+            (inputs.has(j.data.sourceId) &&
+              Date.now() - Date.parse(j.createdAt) < SYNC_DEFERRAL));
         const candidate = [...runs, ...jobs]
           .filter(
             (r) =>
@@ -161,6 +167,14 @@ export function startWorker(store: Store) {
                 );
               return false;
             }
+            // Recheck in the claim transaction: the owner can pause after
+            // this tick read the queue. Manual refreshes remain available.
+            if (
+              r.data.type === "sync" &&
+              r.data.background &&
+              (await tx.get(r.data.sourceId))?.data.paused
+            )
+              return false;
             tx.update(r, {
               ...r.data,
               status: "running",

@@ -154,7 +154,11 @@ export function ConnectionDetail({ sourceId }: { sourceId: string }) {
               },
               {
                 label: "Next refresh",
-                value: s.data.nextRun ? formatDate(s.data.nextRun) : null,
+                value: s.data.paused
+                  ? "Automatic refresh paused"
+                  : s.data.nextRun
+                    ? formatDate(s.data.nextRun)
+                    : null,
               },
               { label: "Created", value: formatDate(s.createdAt) },
             ]}

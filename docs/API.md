@@ -30,18 +30,19 @@ Each area owns its section below; add new routes to your own section.
 
 ### Data
 
-| Method / path                       | Input / result                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request |
-| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB               |
-| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                 |
-| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition        |
-| POST `/sources/:id/sync`            | `{}`; durable job                                                       |
-| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                 |
-| GET `/datasets/:id/export`          | Download active Parquet snapshot                                        |
-| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description               |
-| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                            |
-| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile            |
+| Method / path                       | Input / result                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request    |
+| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB                  |
+| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                    |
+| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition           |
+| POST `/sources/:id/sync`            | `{}`; durable job                                                          |
+| POST `/sources/:id/refresh`         | Owner only; `{ paused: boolean }`; returns the connection's source `items` |
+| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                    |
+| GET `/datasets/:id/export`          | Download active Parquet snapshot                                           |
+| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description                  |
+| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                               |
+| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile               |
 
 ### Pipelines
 
@@ -90,6 +91,8 @@ Each area owns its section below; add new routes to your own section.
 MySQL config: `{ host, port:3306, database, user, password, table, tls, ca? }`. PostgreSQL accepts `{ connectionString, schema?, table, tls?, ca? }` or the existing individual connection fields. URL credentials are encrypted with the rest of the connector configuration. URL mode defaults to verified TLS; an explicit `sslmode=disable` or `tls:false` disables it. Supported URL options are `sslmode`, `ssl`, and `application_name`; local certificate file paths are rejected. REST config: `{ url, itemsPath?, token?, header?, pagination:'none'|'next'|'cursor'|'offset', nextPath?, cursorParam?, offsetParam?, limitParam?, pageSize? }`. S3 config: `{ bucket, key, prefix?, region?, endpoint?, accessKeyId?, secretAccessKey? }`.
 
 PostgreSQL/MySQL import jobs attempt native CDC automatically. `source.data.sync` exposes the mode, status, reason, last captured event, and change/applied counters (`SourceSyncState` in the shared package and SDK). Working CDC ignores `schedule`; the optional UTC schedule is only the snapshot fallback, defaulting to five minutes. REST/S3 use snapshot refreshes because these connectors do not expose database logs. Uploaded files and ingestion requests remain explicit inputs. See `OPERATIONS.md` for privileges and materialization limits.
+
+Owners can pause or resume automatic refresh through `/sources/:id/refresh` or `FoundryClient.setConnectionPaused(sourceId, paused)`. All tables in the same onboarding connection are updated together. Pausing holds queued automatic imports and releases owned change streams and leases; running imports finish normally. Manual `/sources/:id/sync` remains available while paused. Resuming makes snapshot refreshes due immediately and reconnects CDC from its saved position. A paused replication slot can retain database logs: review retention before a long pause.
 
 Omitting `intent` retains the API's `build` default. `auto` persists a bounded answer/build routing stage and accounts for it in existing budgets. Context IDs are resolved server-side within the caller's workspace; secrets and inactive generations are not accepted. Read-only tokens may ask questions, but a request routed to build stops before generation. `resources/object` supports `type`, `search`, and exact `field`/`value` filters on effective workspace values. Dashboard routes use `/dashboards/:encodedName`; record routes use `/records/:logicalId`.
 

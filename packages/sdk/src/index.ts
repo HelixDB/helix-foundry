@@ -288,6 +288,12 @@ export class FoundryClient {
       {},
     );
   }
+  setConnectionPaused(sourceId: string, paused: boolean) {
+    return this.request<{ items: Resource[] }>(
+      "/sources/" + encodeURIComponent(sourceId) + "/refresh",
+      { paused },
+    );
+  }
   testSource(source: {
     name: string;
     kind:
