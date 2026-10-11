@@ -15,6 +15,7 @@ import {
   assistantResource,
   threadOf,
 } from "../assistant.js";
+import { chatFollowups } from "../followups.js";
 import { createLiveBridge } from "../live.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
@@ -87,6 +88,47 @@ export function registerAnalystRoutes(
       runs: runs.map(scrub),
     };
   });
+  app.get(
+    "/api/v1/workspaces/:w/threads/:threadId/followups",
+    async (req: any) => {
+      const a = await access(req);
+      const runs = (await chats(a.scope)).get(req.params.threadId);
+      assert(runs, "Chat not found", 404);
+      const latest = runs.at(-1)!;
+      const generation =
+        (await store.get(a.scope, "workspace"))?.data.activeGeneration || null;
+      if (
+        latest.data.status !== "succeeded" ||
+        !latest.data.answer ||
+        !generation
+      )
+        return { runId: latest.id, generation, items: [] };
+      const bundle = await currentBundle(store, a.scope);
+      const ids = [...new Set<string>(latest.data.answer.inputs || [])].slice(
+        0,
+        20,
+      );
+      const datasets = (
+        await Promise.all(ids.map((id) => store.get(a.scope, id)))
+      ).filter(
+        (d): d is Resource =>
+          !!d &&
+          d.kind === "dataset" &&
+          (!d.data.generation || d.data.generation === generation),
+      );
+      // Ignore results if publication changed while the definitions were read.
+      if (
+        (await store.get(a.scope, "workspace"))?.data.activeGeneration !==
+        generation
+      )
+        return { runId: latest.id, generation, items: [] };
+      return {
+        runId: latest.id,
+        generation,
+        items: chatFollowups(bundle, datasets, runs),
+      };
+    },
+  );
   app.delete("/api/v1/workspaces/:w/threads/:threadId", async (req: any) => {
     const a = await access(req, "editor"),
       runs = (await chats(a.scope)).get(req.params.threadId);
