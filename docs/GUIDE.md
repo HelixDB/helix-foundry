@@ -45,7 +45,7 @@ The sidebar has **Home**, **Ontology**, **Data** and **Analyst**, with **Setting
 - **Data** brings every connection option into one **Add data** flow. Open a dataset to see a sample, and expand **Details** for schemas, profiles, versions, lineage, exports and connection settings. The old Advanced page now opens Data.
 - **Analyst** holds your chats with the assistant. The assistant decides whether a request needs an executed answer or a tested proposal. Follow-ups keep the selected resource. Routing uses the same model-call and token budget as the rest of the run, and a saved routing decision is reused on resume when the inputs are unchanged. Read-only API tokens can investigate but cannot create definitions or change records.
 - **Proposals** (`/proposals`) is where definitions from the assistant wait for review before publication. Guided setup publishes its validated build of the confirmed ontology automatically.
-- **Settings** has **AI & models** (choose Local, Claude or OpenAI and enter an API key) and **Developer tools** (API tokens). Other AI settings are set through the API; see [AI and review](#ai-and-review).
+- **Settings** has **AI & models** (choose Local, Claude or OpenAI and enter an API key) and **Developer tools** (create API tokens, inspect their access level, and revoke unused tokens). Other AI settings are set through the API; see [AI and review](#ai-and-review).
 
 ## Guided setup and sample data
 

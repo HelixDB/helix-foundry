@@ -28,6 +28,16 @@ Each area owns its section below; add new routes to your own section.
 | POST `/rollback`                                        | `{}`; revalidate and publish previous definitions, retaining business edits                                                                                                                              |
 | GET / POST `/definitions/export`, `/definitions/import` | Versioned bundles; imports become proposals                                                                                                                                                              |
 
+### Developer tokens
+
+| Method / path        | Input / result                                                                 |
+| -------------------- | ------------------------------------------------------------------------------ |
+| GET `/tokens`        | `{ items: {id, name, readOnly, createdAt}[] }`; opaque revocation handles only |
+| POST `/tokens`       | `{name, readOnly?}` → `{token, id}`; copy the token once                       |
+| DELETE `/tokens/:id` | Revoke one token; `{ok:true}`                                                  |
+
+These routes require owner permissions and a writable credential or the local browser. The SDK exposes `tokens()`, `createToken(name, readOnly)` and `revokeToken(id)`. Authentication digests and stored credential values are not included in the inventory. Revocation ids returned by older versions remain accepted.
+
 ### Data
 
 | Method / path                       | Input / result                                                          |

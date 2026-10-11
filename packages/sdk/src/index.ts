@@ -36,7 +36,30 @@ export class FoundryError extends Error {
     super(message);
   }
 }
+export type ApiTokenMetadata = {
+  id: string;
+  name: string;
+  readOnly: boolean;
+  createdAt: string;
+};
 export class FoundryClient {
+  tokens() {
+    return this.request<{ items: ApiTokenMetadata[] }>("/tokens");
+  }
+  createToken(name: string, readOnly = true) {
+    return this.request<{ token: string; id: string }>("/tokens", {
+      name,
+      readOnly,
+    });
+  }
+  revokeToken(id: string) {
+    return this.request<{ ok: true }>(
+      "/tokens/" + encodeURIComponent(id),
+      {},
+      "DELETE",
+    );
+  }
+
   hostingProviders() {
     return this.request("/hosting");
   }
