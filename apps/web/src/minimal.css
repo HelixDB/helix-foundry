@@ -1529,6 +1529,11 @@ td {
 .dataset-peek span {
   color: #817d74;
 }
+.selection-actions {
+  display: flex;
+  gap: 14px;
+  margin: 2px 0 8px;
+}
 .table-selection {
   max-height: 330px;
   overflow-y: auto;

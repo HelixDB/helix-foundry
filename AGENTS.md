@@ -490,7 +490,7 @@ pnpm build
 
 - `pnpm test` uses in-memory stores and temporary loopback ports, so it needs no running services.
 - `pnpm test:browser` starts its own API, executor and Vite on 3101, 3102 and 5174 (`PW_SLOT=1` to `9` shifts each by 10) with isolated data. It needs Playwright's Chromium; ask before downloading it with `pnpm exec playwright install chromium`.
-- Opt-in suites: `TEST_HELIX=1` writes and then deletes a temporary scope in the HelixDB at `HELIX_URL`, which is the user's development instance. `TEST_MYSQL=1` needs the fixture MySQL on 127.0.0.1:33077. `TEST_CDC_DATABASES=1` and `TEST_ONBOARDING_DATABASES=1` need database fixtures. `ONBOARDING_LOCAL=1` uses real Ollama on 127.0.0.1:11434.
+- Opt-in suites: `TEST_HELIX=1` writes and then deletes a temporary scope in the HelixDB at `HELIX_URL`, which is the user's development instance. `TEST_MYSQL=1` needs the fixture MySQL on 127.0.0.1:33077. `TEST_NEO4J=1` needs a Neo4j 5 on 127.0.0.1:37474 with user `neo4j` and password `foundry-test-only` (`NEO4J_TEST_URL` and `NEO4J_TEST_PASSWORD` override them); it creates and deletes `FoundryCustomer` and `FoundryOrder` nodes there. `TEST_CDC_DATABASES=1` and `TEST_ONBOARDING_DATABASES=1` need database fixtures. `ONBOARDING_LOCAL=1` uses real Ollama on 127.0.0.1:11434.
 - Keep OAuth client secrets (`*_CLIENT_SECRET`) on the server. Never put them in frontend code.
 
 **Layout.**

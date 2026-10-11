@@ -10,6 +10,7 @@ This guide is the detailed companion to the [README](../README.md). It covers wh
 - [Connecting sources](#connecting-sources)
   - [Hosted databases: Neon, Supabase and PlanetScale](#hosted-databases-neon-supabase-and-planetscale)
   - [PostgreSQL and MySQL](#postgresql-and-mysql)
+  - [Neo4j](#neo4j)
   - [Stripe](#stripe)
   - [WorkOS](#workos)
   - [PostHog](#posthog)
@@ -26,7 +27,7 @@ This guide is the detailed companion to the [README](../README.md). It covers wh
 
 Helix Foundry is an AI-assisted data workspace that runs on your own computer, built on HelixDB and DuckDB. You connect data, confirm a suggested ontology or describe an outcome, inspect tested proposals, and publish a shared ontology with key metrics on Home. Local inference is the default; Claude and OpenAI are explicit alternatives.
 
-- **Sources:** PostgreSQL and MySQL discovery and streamed snapshot ingestion, sign-in for Neon, Supabase and PlanetScale, Stripe, WorkOS and PostHog, REST pagination, S3-compatible file imports, CSV, JSON, JSONL and Parquet uploads, and a batch ingestion API.
+- **Sources:** PostgreSQL, MySQL and Neo4j discovery and streamed snapshot ingestion, sign-in for Neon, Supabase and PlanetScale, Stripe, WorkOS and PostHog, REST pagination, S3-compatible file imports, CSV, JSON, JSONL and Parquet uploads, and a batch ingestion API.
 - **Data:** immutable Parquet snapshots, profiles, key candidates, sensitivity hints, schema-drift review, version history and exports.
 - **AI assistance:** generated catalog descriptions, executable pipeline SQL, ontology mappings and relationships, Home key metrics and action suggestions.
 - **Pipelines and questions:** pipelines defined as node graphs (DAGs) that compile to SQL, or as editable SQL, with before and after previews. Read-only AI questions return executed results with snapshot citations.
@@ -74,6 +75,10 @@ Start by choosing where your database is hosted. Provider sign-in requires regis
 **PostgreSQL** accepts a single masked connection URL, including its database username and password; individual fields are also available. Imports use a read-only snapshot transaction and a server cursor.
 
 **MySQL** supports configurable, verified TLS with a custom CA. Large integers and decimals are preserved as strings, and timestamps are read as strings. Transformations can cast them explicitly.
+
+### Neo4j
+
+Neo4j connects over the HTTP Query API of Neo4j 5 or later: the server's HTTP URL on port 7474, a database name, and a username and password. **Test connection** lists every label and relationship type with its count. Each selected label becomes a dataset of its nodes, keyed by Neo4j's element id in a column named for the label (`customer_id` for `Customer`), and each selected relationship type becomes a dataset of its relationships, with the start and end node ids in columns named for their labels, so the suggested ontology links them. A property with the same name as one of those columns is kept with a `_property` suffix. Integers beyond JavaScript's safe range, and dates, times and durations, are preserved as strings. Neo4j exposes no change stream, so snapshots refresh on the schedule.
 
 ### Stripe
 
@@ -194,6 +199,7 @@ pnpm typecheck
 pnpm test
 TEST_HELIX=1 pnpm test       # requires the configured HelixDB instance
 TEST_MYSQL=1 pnpm test       # fixture MySQL on localhost:33077; see tests/mysql.test.ts
+TEST_NEO4J=1 pnpm test       # Neo4j 5 on localhost:37474, user neo4j, password foundry-test-only; see tests/neo4j.test.ts
 pnpm build
 pnpm test:browser            # starts an isolated API, executor and browser installation
 ONBOARDING_LOCAL=1 pnpm exec vitest run tests/onboarding.local.test.ts   # real local Qwen check

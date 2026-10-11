@@ -163,6 +163,13 @@ export function registerOnboarding(
           ),
           "Choose tables from the tested connection",
         );
+      if (body.kind === "neo4j")
+        assert(
+          discovery.tables?.some(
+            (t: any) => t.name === s.table && t.schema === s.schema,
+          ),
+          "Choose labels and relationship types from the tested connection",
+        );
       if (["stripe", "workos", "posthog"].includes(body.kind))
         assert(
           discovery.tables?.some((t: any) => t.name === s.table),
