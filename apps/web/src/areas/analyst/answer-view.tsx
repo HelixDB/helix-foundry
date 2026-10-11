@@ -497,24 +497,31 @@ type Column = {
   exact: Set<string>;
   cents: boolean;
 };
-const digitsOf = (t: string) => t.replace(/^-/, "").replace(/^0+(?=\d)/, "");
+// An integer's digits, with its sign: "-0042" → "-42".
+const digitsOf = (t: string) => t.replace(/^(-?)0+(?=\d)/, "$1");
 const isCents = (key: string) =>
   /(^|_)(cents?|amount)($|_)/i.test(key) || /[a-z]Cents?$/.test(key);
 // How the rows back a number: as one of their values (as written, rounded, in
 // cents, or as a fraction for a percentage) or how many rows there are, or as
-// the difference between two values of a column.
+// the difference between two values of a column. The text's numbers carry no
+// sign, so a negative value backs one only where the text tells of a fall
+// (`fall`); a difference has no sign of its own.
 function backing(
   n: number,
   places: number,
-  { percent, money }: { percent: boolean; money: boolean },
+  { percent, money, fall }: { percent: boolean; money: boolean; fall: boolean },
   values: Column[],
   counts: number[],
 ): "value" | "difference" | null {
   const tolerance = 0.5 * 10 ** -places + 1e-9,
-    near = (v: number, cents = false) =>
-      Math.abs(Math.abs(v) - n) <= tolerance ||
-      (percent && Math.abs(Math.abs(v) * 100 - n) <= tolerance) ||
-      (money && cents && Math.abs(Math.abs(v) / 100 - n) <= tolerance);
+    near = (v: number, cents = false, size = fall) => {
+      const x = size ? Math.abs(v) : v;
+      return (
+        Math.abs(x - n) <= tolerance ||
+        (percent && Math.abs(x * 100 - n) <= tolerance) ||
+        (money && cents && Math.abs(x / 100 - n) <= tolerance)
+      );
+    };
   if (
     counts.some((v) => near(v)) ||
     values.some((c) => c.values.some((v) => near(v, c.cents)))
@@ -524,9 +531,20 @@ function backing(
     const top = column.values.slice(0, 30);
     for (let i = 0; i < top.length; i++)
       for (let j = i + 1; j < top.length; j++)
-        if (near(top[i] - top[j], column.cents)) return "difference";
+        if (near(top[i] - top[j], column.cents, true)) return "difference";
   }
   return null;
+}
+// Words that state a negative value as a size: "fell by 42", "a loss of $8".
+const falls =
+  /\b(?:fell|falls?|falling|dropped|drops?|decreas(?:e|ed|es|ing)|declin(?:e|ed|es|ing)|down|lost|loss(?:es)?|lower|fewer|less|negative|minus|deficit|shr(?:ank|unk|inks?)|below|refund(?:s|ed)?)\b/i;
+// The sentence around a position in the text.
+function sentenceAt(text: string, at: number) {
+  const ends = [...text.matchAll(/[.!?](?=\s|$)/g)].map((m) => m.index + 1);
+  return text.slice(
+    Math.max(0, ...ends.filter((e) => e <= at)),
+    Math.min(text.length, ...ends.filter((e) => e > at)),
+  );
 }
 // A difference is only stated as one: "8 more", "5 orders fewer than".
 const comparison =
@@ -600,6 +618,7 @@ export function Emphasized({
           unit = singular(second);
         }
       }
+      const fall = falls.test(sentenceAt(text, m.index));
       // A unit that names a column ("42 orders", order_count) is backed only
       // by that column. A row count backs only a plain number.
       const named = unit ? values.filter((c) => c.words.has(unit)) : [],
@@ -611,13 +630,17 @@ export function Emphasized({
       }));
       const backed =
         !decimals && !suffix && n > Number.MAX_SAFE_INTEGER
-          ? sources.some((c) => c.exact.has(digitsOf(digits.replace(/,/g, ""))))
+          ? sources.some(
+              (c) =>
+                c.exact.has(digitsOf(digits.replace(/,/g, ""))) ||
+                (fall && c.exact.has("-" + digitsOf(digits.replace(/,/g, "")))),
+            )
             ? "value"
             : null
           : backing(
               n,
               decimals.length,
-              { percent, money: !!sign },
+              { percent, money: !!sign, fall },
               rounded,
               scale === 1 && !sign && !percent && !named.length ? counts : [],
             );

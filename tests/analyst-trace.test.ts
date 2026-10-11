@@ -194,6 +194,12 @@ describe("answer view", () => {
     expect(bold("Fees were $3 and 3% of sales.", customers)).not.toContain(
       "<strong>",
     );
+    // A negative value backs a number only where the text tells of a fall.
+    const delta = [{ name: "Acme", order_delta: -42 }];
+    expect(bold("Acme has 42 orders.", delta)).not.toContain("<strong>");
+    expect(bold("Acme's orders fell by 42.", delta)).toContain(
+      "<strong>42</strong>",
+    );
     // Only cents are stated in dollars: a hundredth of dollars backs nothing.
     expect(
       renderToStaticMarkup(
@@ -650,6 +656,18 @@ describe("answer runs", () => {
         hint: "Which customers have the most orders?",
       }),
     ).toMatchObject({ kind: "ranking", measure: "order_count", leaders: 1 });
+    // When the question asks for the most and every row ties, all of them
+    // share first place.
+    const level = await query(
+      `SELECT 'c' || i::VARCHAR AS name, 1 AS order_count FROM range(40) t(i)`,
+    );
+    const most = "Which customers have the most orders?";
+    expect(
+      answerShape(level.rows, { profile: level.profile, hint: most }),
+    ).toMatchObject({ kind: "ranking", order: "desc", leaders: 40 });
+    expect(answerShape(level.rows, { profile: level.profile }).kind).not.toBe(
+      "ranking",
+    );
     // A column named rowid keeps its name, and every column its order.
     const ids = await query(
       `SELECT i AS rowid, 300 - i AS order_count FROM range(150) t(i) ORDER BY i`,

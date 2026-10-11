@@ -249,6 +249,32 @@ export function answerShape(
       keys,
     };
   }
+  // Every row with the same value: when the question asks for the most or
+  // the least, a ranking in which they all share first place.
+  const extreme =
+    /\b(top|most|highest|largest|biggest|best|leading|least|lowest|fewest|smallest|worst)\b/i.exec(
+      [hint].flat()[0] || "",
+    );
+  const o = full.get(measure)?.order,
+    values = rows.map((r) => r[measure]).filter(present),
+    tied = o
+      ? !o.up && !o.down
+        ? o.first
+        : 0
+      : values.every((v) => same(v, values[0]))
+        ? values.length
+        : 0;
+  if (extreme && tied >= 2)
+    return {
+      kind: "ranking",
+      label: named,
+      measure,
+      order: /least|lowest|fewest|smallest|worst/i.test(extreme[1])
+        ? "asc"
+        : "desc",
+      leaders: tied,
+      keys,
+    };
   return total <= 12
     ? { kind: "breakdown", label: named, measure, keys }
     : { kind: "table", label: named, measure, keys };
