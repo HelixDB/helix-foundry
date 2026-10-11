@@ -747,6 +747,8 @@ export function resultText(question: string, run: Resource | null) {
     return `The lookup for "${question}" was stopped before it finished. No result is available.`;
   if (d.status !== "succeeded" || !d.answer)
     return `The lookup for "${question}" didn't complete${d.error ? `: ${redact(String(d.error)).slice(0, 200)}` : "."} No figures are available; offer to try again or rephrase.`;
+  if (d.answer.saved)
+    return `${d.answer.summary} Confirm briefly that it is noted.`;
   const a = d.answer,
     rows: Record<string, unknown>[] = a.rows || [],
     total = typeof a.total === "number" ? a.total : rows.length,
@@ -774,6 +776,7 @@ export function resultText(question: string, run: Resource | null) {
     );
   if (a.assumptions?.length)
     lines.push(`Caveats: ${a.assumptions.slice(0, 3).join("; ")}`);
+  if (a.note) lines.push(`Limitation, mention briefly: ${a.note}`);
   if (sources) lines.push(`Source: ${sources}.`);
   return lines.join("\n");
 }

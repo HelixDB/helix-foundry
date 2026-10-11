@@ -12,6 +12,7 @@ import {
   Copy,
   Database,
   FileDiff,
+  Info,
   RotateCcw,
   Sparkles,
   Square,
@@ -261,6 +262,18 @@ function SaveAsView({ run }: { run: Resource }) {
 
 function Answer({ run }: { run: Resource }) {
   const { role } = useWorkspace();
+  const a = run.data.answer;
+  // Something said about the business, saved instead of queried.
+  if (a.saved)
+    return (
+      <div className="an-answer">
+        <p className="an-note">{a.summary}</p>
+      </div>
+    );
+  return <AnswerBody run={run} role={role} />;
+}
+
+function AnswerBody({ run, role }: { run: Resource; role: string }) {
   const a = run.data.answer,
     rows: Record<string, unknown>[] = a.rows || [],
     citations: { datasetId: string; name: string; version?: string }[] =
@@ -338,6 +351,14 @@ function Answer({ run }: { run: Resource }) {
           {plan && <AnswerChart plan={plan} />}
           <AnswerTable rows={rows} label={a.title || "Answer rows"} />
         </>
+      )}
+      {a.note && (
+        <p className="an-limit">
+          <Info size={14} aria-hidden />
+          <span>
+            {a.note} <Link to={paths.ontology()}>Suggestions</Link>
+          </span>
+        </p>
       )}
       <div className="an-foot">
         {citations.length > 0 && (

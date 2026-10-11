@@ -7,8 +7,9 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, RefreshCw, Sparkles } from "lucide-react";
+import { ChevronRight, CircleAlert, RefreshCw, Sparkles } from "lucide-react";
 import type {
+  BusinessInsights,
   HomeMetric,
   HomeMetrics,
 } from "../../../../../packages/shared/src";
@@ -474,6 +475,7 @@ function KpiTile({ m }: { m: HomeMetric }) {
         hint={
           <>
             {hint}
+            {m.reference && <> · {m.reference}</>}
             {m.why && <span className="hf-sr-only">. {m.why}</span>}
           </>
         }
@@ -560,6 +562,14 @@ export function KeyMetrics() {
     queryFn: () => api<HomeMetrics>(`/workspaces/${id}/home/metrics`),
     refetchInterval: (q) => (q.state.data?.generating ? 5000 : false),
   });
+  // Suggestions from the industry playbook live on the Ontology page; Home
+  // only points at them, in one quiet line.
+  const business = useQuery({
+    queryKey: [id, "business"],
+    queryFn: () => api<BusinessInsights>(`/workspaces/${id}/business`),
+    staleTime: 60000,
+  });
+  const suggestions = business.data?.suggestions.length || 0;
   const data = query.data;
   if (data?.status === "empty") return null;
   if (!data && query.error)
@@ -655,6 +665,14 @@ export function KeyMetrics() {
                 <KpiTile key={m.id} m={m} />
               ))}
             </div>
+          )}
+          {suggestions > 0 && (
+            <Link className="wk-metrics-more" to={paths.ontology()}>
+              {Math.min(suggestions, 3)}{" "}
+              {suggestions === 1 ? "suggestion" : "suggestions"} to see your
+              customers more clearly
+              <ChevronRight size={12} aria-hidden />
+            </Link>
           )}
           {charts.length > 0 && (
             <div className="wk-metrics-charts">

@@ -360,6 +360,9 @@ export type HomeMetric = {
   // A kpi over a time column compares the last 30 days of data with the 30 before.
   window?: "30d";
   grain?: "day" | "week" | "month";
+  // What the value is judged against: the owner's target, else the industry's
+  // typical range ("typical 1–3%").
+  reference?: string;
   result: {
     value?: number | null;
     previous?: number | null;
@@ -378,4 +381,50 @@ export type HomeMetrics = {
   generatedAt?: string;
   computedAt?: string;
   metrics: HomeMetric[];
+};
+
+// What Foundry believes about the business (docs/industries): the industry's
+// playbook applied to this workspace, what its data covers, how well it links,
+// and what would help next. Computed in the background; nothing is asked.
+export type BusinessKnowledge = {
+  id: string;
+  kind: "target" | "normal" | "seasonality" | "fact" | "definition";
+  text: string;
+  source: "you" | "learned" | "typical";
+  metric?: string;
+};
+export type BusinessSuggestion = {
+  id: string;
+  kind: "connect" | "change" | "fix";
+  area: string;
+  text: string;
+  // Questions that needed it, most recent first.
+  asked?: number;
+};
+export type BusinessInsights = {
+  industry: {
+    id: string;
+    title: string;
+    // How it was found: from the data, from the owner's words, or drafted for
+    // an industry with no built-in playbook.
+    source: "inferred" | "described" | "drafted";
+  } | null;
+  description: string;
+  drafting: boolean;
+  areas: {
+    id: string;
+    title: string;
+    status: "ready" | "partial" | "missing";
+    metrics: { id: string; title: string; supported: boolean }[];
+  }[];
+  // Data health and assumed definitions, for "Worth checking".
+  checks: {
+    id: string;
+    kind: "link" | "duplicate" | "definition";
+    text: string;
+    rate?: number;
+    ok: boolean;
+  }[];
+  suggestions: BusinessSuggestion[];
+  knowledge: BusinessKnowledge[];
 };

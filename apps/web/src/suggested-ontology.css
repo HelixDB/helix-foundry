@@ -789,6 +789,12 @@
 .so-notes li svg.is-merged {
   color: #3f8a60;
 }
+.so-notes li.so-better svg {
+  color: #65675e;
+}
+.so-notes li a {
+  color: #2d6a4b;
+}
 /* The question floats over the schema so it stays in reach while scrolling. */
 .so-confirm {
   position: sticky;

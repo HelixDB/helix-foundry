@@ -4,6 +4,12 @@ A playbook is Foundry's opinion of how to read one industry's data: what matters
 
 Playbooks live in this folder, one markdown file per industry, about 3–4 pages each. [ecommerce.md](ecommerce.md) is the first. Adding an industry means adding a file in this format; no code changes are needed unless the industry needs a new kind of check.
 
+## What is built
+
+This first version applies the e-commerce playbook in the background: detection from the data or from the owner's description, role mapping, coverage by area, link, duplicate and status checks, ranked suggestions on the Ontology page, playbook-ordered Home metrics with typical ranges or the owner's targets, the Analyst's definitions, drivers and one-line notes, learning from questions (interests and gaps), knowledge in Settings or by telling the Analyst, and AI-drafted playbooks for other industries.
+
+Not yet: business-model, role and stage branches (the default reading is used), per-person ordering of Home's metrics (suggestions are ordered per person), payment reconciliation, test-order and date-gap checks, and feeding the insight rules into "Some things we noticed" (#53).
+
 ## Architecture
 
 Three layers, each with one owner and one job.
@@ -92,43 +98,29 @@ Rules that keep this predictable:
 
 ## File format
 
-Each playbook is markdown with YAML frontmatter.
+Each playbook is markdown with frontmatter between `---` lines. The frontmatter is JSON (which is also valid YAML), so the app reads it with no extra dependency; the prose below it is for people and for review. Code loads every `.md` file in this folder except this README.
 
-```yaml
----
-id: ecommerce                # stable identifier, also the file name
-title: Online retail
-version: 1                   # bump when checks or metrics change meaning
-signals:                     # how to recognise the industry
-  require: [order, amount]   # roles that must map
-  boost: [product, order_line, session, shipment, refund]
-  against: [subscription_plan, patient, policy]
-roles:                       # the concepts the playbook talks about
-  order: { entity: true, names: [order, purchase, transaction, sale] }
-  amount: { of: order, type: number, names: [net_amount, total, amount, grand_total] }
-areas:                       # business areas, in default priority order
-  - id: revenue
-    metrics: [net_revenue, orders, aov]
-metrics:                     # defined by role, never by column
-  aov: { title: Average order value, value: "sum(order.amount) / count(order)", where: completed }
-checks:                      # coverage and data-health checks
-  - { id: orders_link_customers, kind: link, from: order, to: customer, good: 0.95 }
-advice:                      # recommendations, tied to the gap they close
-  - { id: utm, kind: change, when: "missing session.campaign", area: marketing }
-normal:                      # indicative normal ranges, always shown as "typical"
-  conversion_rate: { low: 0.01, high: 0.03, note: "varies by category and price point" }
-branches:                    # personalisation
-  model: [direct, multi_brand, marketplace, subscription]
-  role: [founder, operations, marketing, finance]
----
-```
+| Key | What it holds |
+| --- | --- |
+| `id`, `title`, `version` | Stable identifier; bump `version` when a metric or check changes meaning |
+| `match` | Words in an owner's own description that pick this playbook ("retail", "e-commerce", "shop") |
+| `signals` | `require`: roles that must map; `boost`: roles that add confidence; `min`: how many boosts are needed |
+| `roles` | The concepts the playbook talks about. An entity role (`entity: true`) maps to a dataset by name; a field role (`of`, `type`, `names`) maps to a column of one of its entities |
+| `areas` | Business areas in priority order, with the `keywords` people use about them and their `metrics` |
+| `metrics` | Defined by the roles they `need`, never by column; `hint` tells the AI how to compute it for Home |
+| `normal` | Typical ranges (`low`, `high`, `unit`, `text`), always shown as typical |
+| `checks` | `link` (share of rows that link), `duplicate` (unique values), `status` (which statuses undo a sale) |
+| `advice` | Suggestions: `connect` a source or `change` your own systems, when a role is `missing` or a check is `low`; `keywords` match questions; `note` is the Analyst's one-line footnote |
+| `drivers` | How a number breaks down, top down (`equals`, `look`), with the roles each level `needs` |
+| `intelligence` | Rules of thumb from the industry, used as context, never as facts about the business |
+| `glossary`, `reading` | How the Analyst reads the industry's terms and numbers |
 
 The prose follows the same sections in the same order, so playbooks are easy to compare:
 
 1. Signals
 2. Concepts and how to map them
 3. Business areas and what matters
-4. Tracking coverage
+4. Tracking coverage, how to break down a change, and what the industry usually sees
 5. Data health
 6. How to read the numbers
 7. What each person needs
@@ -141,6 +133,6 @@ The prose follows the same sections in the same order, so playbooks are easy to 
 ## Adding an industry
 
 1. Copy [ecommerce.md](ecommerce.md) and keep the section order.
-2. Reuse role names where the meaning is the same (`customer`, `amount`, `created_at`), so shared checks and the Analyst glossary keep working.
+2. Reuse role names where the meaning is the same (`customer`, `amount`, `order_date`), so shared checks and the Analyst glossary keep working. Every metric, advice and driver may only need roles the playbook defines; `tests/industry.test.ts` checks this for every playbook.
 3. Give every metric, check and piece of advice an `id`; never reuse an `id` for a different meaning. Bump `version` when a meaning changes, so profiles built on the old version are re-checked.
-4. Add a fixture workspace that is detected as the new industry, and one that must not be.
+4. Add a test workspace that is detected as the new industry, and one that must not be.

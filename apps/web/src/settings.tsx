@@ -1,4 +1,5 @@
 import { ProviderSetup } from "./setup-components";
+import { BusinessSettings } from "./business-settings";
 import { useState } from "react";
 import {
   Copy,
@@ -28,6 +29,7 @@ export default function SettingsPage() {
       <div className="tabs standalone">
         {[
           ["models", "AI & models"],
+          ["business", "Your business"],
           ["developer", "Developer tools"],
         ].map(([value, label]) => (
           <button
@@ -42,6 +44,10 @@ export default function SettingsPage() {
       {tab === "models" ? (
         <section className="reading-width">
           <ProviderSetup />
+        </section>
+      ) : tab === "business" ? (
+        <section className="reading-width">
+          <BusinessSettings />
         </section>
       ) : (
         <>

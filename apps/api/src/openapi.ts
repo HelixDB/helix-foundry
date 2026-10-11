@@ -17,6 +17,7 @@ import { pipelinesSchemas } from "./routes/pipelines.js";
 import { ontologySchemas } from "./routes/ontology.js";
 import { analystSchemas } from "./routes/analyst.js";
 import { workspaceSchemas } from "./routes/workspace.js";
+import { businessSchemas } from "./routes/business.js";
 // Request bodies for the docs, keyed "METHOD /path". Area route modules export
 // their own maps; setup (onboarding, hosting) stays here.
 const schemas: RequestSchemas = {
@@ -38,6 +39,7 @@ const schemas: RequestSchemas = {
   "POST /api/v1/workspaces/:w/onboarding/ontology/confirm":
     OntologyConfirmSchema,
   ...dataSchemas,
+  ...businessSchemas,
   ...pipelinesSchemas,
   ...ontologySchemas,
   ...analystSchemas,

@@ -221,6 +221,21 @@
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
 }
+/* One quiet pointer to the Ontology page's suggestions. */
+.wk-metrics-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  margin: 2px 0 var(--hf-space-2);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  text-decoration: none;
+}
+.wk-metrics-more:hover {
+  color: var(--hf-text-2);
+  text-decoration: underline;
+}
 .wk-metrics-head .wk-metrics-note {
   margin-top: 6px;
 }

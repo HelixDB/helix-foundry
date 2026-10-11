@@ -4,6 +4,7 @@ import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { SuggestedOntologyView } from "../../suggested-ontology";
 import type {
+  BusinessInsights,
   OnboardingState,
   Resource,
   SuggestedEntity,
@@ -140,9 +141,26 @@ export function PublishedSchema({
     datasets,
     confirmed,
   );
+  // The industry playbook's view of this data, worked out in the background.
+  const business = useQuery({
+    queryKey: [id, "business"],
+    queryFn: () => api<BusinessInsights>(`/workspaces/${id}/business`),
+    staleTime: 60000,
+  });
+  const b = business.data;
   const typeIds = new Set(types.map((t) => t.data.typeId || t.id));
   return (
     <SuggestedOntologyView
+      business={
+        b?.industry
+          ? {
+              checks: b.checks
+                .filter((c) => c.kind === "definition" || !c.ok)
+                .map((c) => c.text),
+              suggestions: b.suggestions,
+            }
+          : undefined
+      }
       readOnly
       ontology={ontology}
       datasets={datasets}

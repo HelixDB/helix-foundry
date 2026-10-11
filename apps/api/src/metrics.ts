@@ -16,6 +16,12 @@ import { queryDatasets } from "./datasets.js";
 import { lit, plural, q } from "./discovery.js";
 import { digest } from "./security.js";
 import { resource, transaction, type Store } from "./store.js";
+import {
+  industryKey,
+  referenceFor,
+  resolve,
+  type Resolved,
+} from "./industry.js";
 
 export const METRICS_ID = "home_metrics";
 // Bumped when compiling or normalising changes: stored specs are then
@@ -98,6 +104,19 @@ export const schemaSignature = (datasets: Resource[]) =>
       ]),
     ),
   );
+// The schema's signature, plus the industry's when a playbook applies: a new
+// industry picks metrics again, the way a new schema does.
+export async function metricsSignature(
+  store: Store,
+  scope: string,
+  datasets: Resource[],
+  industry?: Resolved,
+) {
+  const key = industryKey(industry || (await resolve(store, scope, datasets)));
+  return key
+    ? digest(JSON.stringify([schemaSignature(datasets), key]))
+    : schemaSignature(datasets);
+}
 // A dataset's everyday name: "Users (PlanetScale + WorkOS)" -> "Users",
 // "Stripe · invoices" -> "Invoices".
 export function noun(d: Resource) {
@@ -677,7 +696,7 @@ export async function saveMetrics(
   });
 }
 
-async function aiReady(store: Store, scope: string) {
+export async function aiReady(store: Store, scope: string) {
   const provider = await store.get(scope, "provider"),
     jobId = (await store.get(scope, "workspace"))?.data.onboarding
       ?.providerJobId,
@@ -750,7 +769,8 @@ async function loadMetrics(
       generating: false,
       metrics: [],
     };
-  const signature = schemaSignature(datasets);
+  const industry = await resolve(store, scope, datasets),
+    signature = await metricsSignature(store, scope, datasets, industry);
   let stored = await store.get(scope, METRICS_ID);
   if (stored?.data.signature !== signature) {
     const picked = await validateSpecs(
@@ -840,6 +860,7 @@ async function loadMetrics(
         : "",
       window: m.spec.kind === "kpi" && m.spec.timeColumn ? "30d" : undefined,
       grain: m.spec.grain,
+      reference: referenceFor(industry, m.spec.title),
       result: s.results.values[m.id] || { error: "Not computed yet" },
     })),
   };
@@ -854,7 +875,7 @@ export async function regenerateMetrics(
 ) {
   const datasets = await metricsDatasets(store, scope);
   if (!datasets.length) return;
-  const signature = schemaSignature(datasets);
+  const signature = await metricsSignature(store, scope, datasets);
   if (await aiReady(store, scope)) {
     const stored = await store.get(scope, METRICS_ID);
     const attempt = (stored?.data.attempt || 0) + 1;

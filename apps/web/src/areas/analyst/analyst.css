@@ -134,6 +134,24 @@
   min-width: 0;
   padding-top: 2px;
 }
+/* What missing data limited, in one muted line under the answer. */
+.an-limit {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+.an-limit svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hf-faint);
+}
+.an-limit a {
+  color: var(--hf-accent-text);
+}
 .an-note {
   margin: 0;
   color: var(--hf-text-2);

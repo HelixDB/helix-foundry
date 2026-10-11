@@ -1672,6 +1672,54 @@ details > summary {
   max-width: 890px;
   margin-bottom: 22px;
 }
+/* Settings › Your business */
+.business-knowledge {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+.business-knowledge li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 32px;
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  border-top: 1px solid var(--hf-border, #e4e2da);
+}
+.business-knowledge li.is-typical > span:first-child {
+  color: var(--hf-text-2, #4f534a);
+}
+.business-source {
+  font-size: 12px;
+  color: var(--hf-muted, #65675e);
+}
+.business-source.is-you {
+  color: var(--hf-accent-text, #2d6a4b);
+}
+.business-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--hf-faint, #9b9d93);
+  cursor: pointer;
+}
+.business-remove:hover {
+  background: var(--hf-sunken, #f0efe9);
+  color: var(--hf-text, #292a26);
+}
+.business-add {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+.business-add input {
+  flex: 1;
+  min-width: 0;
+}
 .provider-options {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -16,6 +16,8 @@ import {
   FileUp,
   GitMerge,
   Globe2,
+  Link2,
+  PenLine,
   LoaderCircle,
   Pencil,
   Sparkles,
@@ -23,6 +25,7 @@ import {
   Unlink,
 } from "lucide-react";
 import type {
+  BusinessSuggestion,
   Resource,
   SuggestedEntity,
   SuggestedLink,
@@ -730,6 +733,7 @@ export function SuggestedOntologyView({
   onBack,
   readOnly = false,
   entityHref,
+  business,
 }: {
   ontology: SuggestedOntology;
   datasets: Resource[];
@@ -749,6 +753,9 @@ export function SuggestedOntologyView({
   // and the canvas fits its container instead of breaking out to the window.
   readOnly?: boolean;
   entityHref?: (e: SuggestedEntity) => string | undefined;
+  // The industry playbook's findings for the published ontology: data checks
+  // join "Worth checking", and up to three suggestions get their own column.
+  business?: { checks: string[]; suggestions: BusinessSuggestion[] };
 }) {
   describing = describing ?? false;
   busy = busy ?? false;
@@ -1397,7 +1404,11 @@ export function SuggestedOntologyView({
         </section>
       )}
 
-      {(merged.length > 0 || checks.length > 0 || unplaced.length > 0) && (
+      {(merged.length > 0 ||
+        checks.length > 0 ||
+        unplaced.length > 0 ||
+        !!business?.checks.length ||
+        !!business?.suggestions.length) && (
         <div className="so-notes">
           {merged.length > 0 && (
             <section aria-labelledby={`${uid}-merged`}>
@@ -1412,7 +1423,9 @@ export function SuggestedOntologyView({
               </ul>
             </section>
           )}
-          {(checks.length > 0 || unplaced.length > 0) && (
+          {(checks.length > 0 ||
+            unplaced.length > 0 ||
+            !!business?.checks.length) && (
             <section aria-labelledby={`${uid}-checks`}>
               <h2 id={`${uid}-checks`}>Worth checking</h2>
               <ul>
@@ -1434,6 +1447,37 @@ export function SuggestedOntologyView({
                     {unplaced.length === 1 ? "a table" : "tables"}.
                   </li>
                 )}
+                {business?.checks.map((text) => (
+                  <li key={text}>
+                    <TriangleAlert size={14} aria-hidden />
+                    {text}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {!!business?.suggestions.length && (
+            <section aria-labelledby={`${uid}-better`}>
+              <h2 id={`${uid}-better`}>To understand your customers better</h2>
+              <ul>
+                {business.suggestions.slice(0, 3).map((s) => (
+                  <li key={s.id} className="so-better">
+                    {s.kind === "connect" ? (
+                      <Link2 size={14} aria-hidden />
+                    ) : (
+                      <PenLine size={14} aria-hidden />
+                    )}
+                    <span>
+                      {s.text}
+                      {s.kind === "connect" && (
+                        <>
+                          {" "}
+                          <Link to="/data?add=1">Connect a source</Link>
+                        </>
+                      )}
+                    </span>
+                  </li>
+                ))}
               </ul>
             </section>
           )}
