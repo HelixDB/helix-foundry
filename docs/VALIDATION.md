@@ -61,6 +61,7 @@ Measured on the same M1 Pro, with Docker given 8 CPUs and 8 GB, against a throwa
 
 - **Write path:** one write of 500 staged records took about 100 ms, against about 530 ms through the guarded commit publication used before. Three writes in flight were 2.7 times as fast as one at a time.
 - **Indexes still building:** lookups scan until an index is active, and a build keeps catching up while writes keep arriving. In a database whose indexes were created just before a large import, a lookup by key took about a second at 168,000 records, against 2 ms with the index active. Every request then slowed down with it.
+- **Imports:** a 1 GB JSONL file of 377,371 PostHog-style events, with a property first appearing at row 26,224 and about 300 sparse properties, imported in about 10 s within the default 512 MB. Before, the late property failed the import ("unknown key"), and with every row read for the schema the import ran out of memory.
 - **Link indexes:** an index on a link property (such as its generation) halved how fast links were written, so links are found from their records instead.
 - **Upgrade:** after the key range index was added to a database with 40,000 records and 10,000 links, HelixDB built it in about 50 s. Until then, ranges of keys saw part of the data, which is why the cleaner waits for the index.
 
