@@ -1006,7 +1006,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       await event(store, scope, id, "check", "Checking the result");
       const shape = answerShape(result.rows, {
         profile: result.profile,
-        hint: `${run.data.goal} ${plan.title}`,
+        hint: [run.data.goal, plan.title],
       });
       const check: AnswerCheck = {
         ...shape,

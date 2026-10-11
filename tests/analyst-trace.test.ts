@@ -115,6 +115,15 @@ describe("answer shape", () => {
     ).toMatchObject({ kind: "trend", label: "week", measure: "order_count" });
     // With none named, the measure the rows run by.
     expect(answerShape(weeks).measure).toBe("cumulative_revenue");
+    // The question outranks the query's title, which names both.
+    expect(
+      answerShape(weeks, {
+        hint: [
+          "How many orders each week?",
+          "Orders and cumulative revenue by week",
+        ],
+      }).measure,
+    ).toBe("order_count");
   });
   it("reads one row as a value and no rows as empty", () => {
     expect(answerShape([{ revenue: "65" }])).toEqual({
@@ -167,6 +176,15 @@ describe("answer view", () => {
     expect(money).toContain("<strong>12%</strong>");
     expect(money).toContain("<strong>$1.2K</strong>");
     expect(money).toContain("; 7 orders.");
+    // Only cents are stated in dollars: a hundredth of dollars backs nothing.
+    expect(
+      renderToStaticMarkup(
+        h(Emphasized, {
+          text: "Acme earned $1,200.",
+          rows: [{ name: "Acme", revenue_dollars: 120000 }],
+        }),
+      ),
+    ).not.toContain("<strong>");
   });
   it("puts the measure first and keys last, and ranks the chart", () => {
     const shape = answerShape(customers);
@@ -190,6 +208,36 @@ describe("answer view", () => {
     expect(chart).toContain("Order count by name, highest first");
     expect(chart.match(/wk-bar-rank/g)).toHaveLength(3);
     expect(chart.match(/is-first/g)).toHaveLength(1);
+  });
+  it("says when a chart has only the result's first rows", () => {
+    const ranked = Array.from({ length: 100 }, (_, i) => ({
+      name: `Customer ${i}`,
+      order_count: 500 - i,
+    }));
+    const top = renderToStaticMarkup(
+      h(AnswerResult, {
+        rows: ranked,
+        total: 1000,
+        label: "Customers",
+        shape: answerShape(ranked),
+      }),
+    );
+    expect(top).toContain("Top 10 of 1,000");
+    expect(top).toContain("Show top 30");
+    const days = Array.from({ length: 100 }, (_, i) => ({
+      day: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+      orders: (i * 7) % 13,
+    }));
+    const trend = renderToStaticMarkup(
+      h(AnswerResult, {
+        rows: days,
+        total: 1000,
+        label: "Orders by day",
+        shape: answerShape(days),
+      }),
+    );
+    expect(answerShape(days).kind).toBe("trend");
+    expect(trend).toContain("First 100 of 1,000 rows");
   });
   it("shows signed results as a table, and ranks and bolds big integers exactly", () => {
     const signed = [
@@ -574,6 +622,25 @@ describe("answer runs", () => {
       down: 99,
       first: 1,
     });
+    // A measure empty in the rows shown is still the one asked about.
+    const late = await query(
+      `SELECT 'c' || i::VARCHAR AS name, 1000 - i AS visits, CASE WHEN i >= 100 THEN 200 - i END AS order_count FROM range(150) t(i) ORDER BY i`,
+    );
+    expect(
+      answerShape(late.rows, {
+        profile: late.profile,
+        hint: "Which customers have the most orders?",
+      }),
+    ).toMatchObject({ kind: "ranking", measure: "order_count", leaders: 1 });
+    // A column named rowid keeps its name, and every column its order.
+    const ids = await query(
+      `SELECT i AS rowid, 300 - i AS order_count FROM range(150) t(i) ORDER BY i`,
+    );
+    expect(Object.keys(ids.rows[0])).toEqual(["rowid", "order_count"]);
+    expect(ids.profile.columns.map((c) => [c.name, c.order])).toEqual([
+      ["rowid", { up: 149, down: 0, first: 1 }],
+      ["order_count", { up: 0, down: 149, first: 1 }],
+    ]);
   });
   it("checks the result in code before the summary, and outlines the steps", async () => {
     const contexts: Record<string, any> = {};

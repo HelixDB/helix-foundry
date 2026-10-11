@@ -572,6 +572,7 @@ function Answer({ run }: { run: Resource }) {
       ) : (
         <AnswerResult
           rows={rows}
+          total={total}
           label={title}
           shape={shape}
           heading={lead ? title : undefined}

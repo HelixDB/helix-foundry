@@ -133,7 +133,10 @@ export function answerShape(
     profile,
   }: {
     types?: Record<string, string>;
-    hint?: string;
+    // What was asked, most telling first: the question, then the query's
+    // title. A later hint only decides between measures earlier ones name
+    // equally.
+    hint?: string | string[];
     profile?: Pick<DatasetProfile, "rows" | "columns">;
   } = {},
 ): AnswerShape {
@@ -144,9 +147,14 @@ export function answerShape(
   types ??=
     profile && Object.fromEntries(profile.columns.map((c) => [c.name, c.type]));
   const total = profile?.rows ?? rows.length;
+  // A column with a value somewhere: in the full result when it is profiled.
+  const filled = (k: string) => {
+    const c = full.get(k);
+    return c ? c.nulls < total : rows.some((r) => present(r[k]));
+  };
   const numeric = (k: string) =>
     types?.[k]
-      ? numericType.test(types[k]) && rows.some((r) => present(r[k]))
+      ? numericType.test(types[k]) && filled(k)
       : isNumericColumn(rows, k);
   const time = (k: string) =>
     /^(DATE|TIMESTAMP)/i.test(types?.[k] || "") || isTimeColumn(rows, k);
@@ -186,17 +194,20 @@ export function answerShape(
   };
   // The measure the question names ("orders" → order_count), else one the
   // rows are ranked by, else the first. Order only decides between measures
-  // the question names equally.
-  const asked = new Set(words(hint));
+  // the hints name equally.
+  const asked = [hint].flat().map((h) => new Set(words(h)));
   const measure = measures
     .map((k, i) => ({
       k,
       i,
-      score: words(k).filter((w) => asked.has(w)).length,
+      scores: asked.map((a) => words(k).filter((w) => a.has(w)).length),
       sorted: ordered(k) ? 1 : 0,
     }))
     .sort(
-      (a, b) => b.score - a.score || b.sorted - a.sorted || a.i - b.i,
+      (a, b) =>
+        a.scores.reduce((d, s, j) => d || b.scores[j] - s, 0) ||
+        b.sorted - a.sorted ||
+        a.i - b.i,
     )[0]?.k;
   if (rows.length === 1) return { kind: "value", measure, keys };
   const when =

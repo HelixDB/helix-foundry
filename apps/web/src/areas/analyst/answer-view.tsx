@@ -331,11 +331,14 @@ const TOP = 10,
 // is not already their title.
 export function AnswerResult({
   rows,
+  total: all = rows.length,
   label,
   shape,
   heading,
 }: {
   rows: Row[];
+  // Rows in the full result; `rows` may be its first rows only.
+  total?: number;
   label: string;
   shape: AnswerShape;
   heading?: string;
@@ -350,9 +353,13 @@ export function AnswerResult({
   }, [rows, shape]);
   const [view, setView] = useState<"chart" | "table">("chart"),
     [more, setMore] = useState(false);
-  const total = plan?.points.length || 0,
-    ranked = !!plan?.rank && total > TOP,
-    top = more ? Math.min(MOST, total) : TOP;
+  // The chart has the rows given, which may be the result's first rows:
+  // then it says so.
+  const count = plan?.points.length || 0,
+    partial = all > rows.length,
+    whole = partial ? all : count,
+    ranked = !!plan?.rank && count > TOP,
+    top = more ? Math.min(MOST, count) : TOP;
   return (
     <div className="an-result">
       {(heading || plan) && (
@@ -378,20 +385,22 @@ export function AnswerResult({
               ranked ? { ...plan, points: plan.points.slice(0, top) } : plan
             }
           />
-          {ranked && (
+          {ranked ? (
             <div className="an-result-foot">
               <span className="hf-num">
-                {top === total
-                  ? `All ${formatNumber(total)}`
-                  : `Top ${formatNumber(top)} of ${formatNumber(total)}`}
+                {top === whole
+                  ? `All ${formatNumber(whole)}`
+                  : `Top ${formatNumber(top)} of ${formatNumber(whole)}`}
               </span>
-              {more && total > MOST ? (
+              {more && count > MOST ? (
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={() => setView("table")}
                 >
-                  See every row in the table
+                  {partial
+                    ? `See the first ${formatNumber(rows.length)} rows in the table`
+                    : "See every row in the table"}
                 </Button>
               ) : (
                 <Button
@@ -403,12 +412,20 @@ export function AnswerResult({
                 >
                   {more
                     ? `Show top ${TOP}`
-                    : total > MOST
-                      ? `Show top ${MOST}`
-                      : `Show all ${formatNumber(total)}`}
+                    : count > MOST || partial
+                      ? `Show top ${formatNumber(Math.min(MOST, count))}`
+                      : `Show all ${formatNumber(count)}`}
                 </Button>
               )}
             </div>
+          ) : (
+            partial && (
+              <div className="an-result-foot">
+                <span className="hf-num">
+                  First {formatNumber(rows.length)} of {plural(all, "row")}
+                </span>
+              </div>
+            )
           )}
         </>
       ) : (
@@ -471,6 +488,11 @@ function unitWords(rows: Row[]) {
     for (const w of columnWords(key).split(" ")) words.add(singular(w));
   return words;
 }
+// A column's numbers, and whether they are cents (Stripe's amount_*
+// columns, "price_cents"), which a summary may state in dollars.
+type Column = { values: number[]; cents: boolean };
+const isCents = (key: string) =>
+  /(^|_)(cents?|amount)($|_)/i.test(key) || /[a-z]Cents?$/.test(key);
 // How the rows back a number: as one of their values (as written, rounded, in
 // cents, or as a fraction for a percentage) or how many rows there are, or as
 // the difference between two values of a column.
@@ -478,20 +500,24 @@ function backing(
   n: number,
   places: number,
   { percent, money }: { percent: boolean; money: boolean },
-  values: number[][],
+  values: Column[],
   counts: number[],
 ): "value" | "difference" | null {
   const tolerance = 0.5 * 10 ** -places + 1e-9,
-    near = (v: number) =>
+    near = (v: number, cents = false) =>
       Math.abs(Math.abs(v) - n) <= tolerance ||
       (percent && Math.abs(Math.abs(v) * 100 - n) <= tolerance) ||
-      (money && Math.abs(Math.abs(v) / 100 - n) <= tolerance);
-  if (counts.some(near) || values.some((c) => c.some(near))) return "value";
+      (money && cents && Math.abs(Math.abs(v) / 100 - n) <= tolerance);
+  if (
+    counts.some((v) => near(v)) ||
+    values.some((c) => c.values.some((v) => near(v, c.cents)))
+  )
+    return "value";
   for (const column of values) {
-    const top = column.slice(0, 30);
+    const top = column.values.slice(0, 30);
     for (let i = 0; i < top.length; i++)
       for (let j = i + 1; j < top.length; j++)
-        if (near(top[i] - top[j])) return "difference";
+        if (near(top[i] - top[j], column.cents)) return "difference";
   }
   return null;
 }
@@ -514,16 +540,17 @@ export function Emphasized({
     // Keys are left out: an ID that happens to match backs nothing. A Number
     // rounds integers beyond 2^53, so those are compared by their digits.
     const keys = Object.keys(rows[0] || {}).filter((k) => !isKeyColumn(k));
-    const values = keys
-      .map((k) =>
-        rows
+    const values: Column[] = keys
+      .map((k) => ({
+        values: rows
           .map((r) => toNumber(r[k]))
           .filter(
             (v): v is number =>
               v !== null && (!Number.isInteger(v) || Number.isSafeInteger(v)),
           ),
-      )
-      .filter((c) => c.length);
+        cents: isCents(k),
+      }))
+      .filter((c) => c.values.length);
     const digitsOf = (t: string) =>
       t.replace(/^-/, "").replace(/^0+(?=\d)/, "");
     const exact = new Set(
@@ -553,7 +580,10 @@ export function Emphasized({
       )
         continue;
       // A scaled number is compared in its own units ("1.2M" as 1.2 million).
-      const rounded = values.map((c) => c.map((v) => v / scale));
+      const rounded = values.map((c) => ({
+        ...c,
+        values: c.values.map((v) => v / scale),
+      }));
       const backed =
         !decimals && !suffix && n > Number.MAX_SAFE_INTEGER
           ? exact.has(digitsOf(digits.replace(/,/g, "")))

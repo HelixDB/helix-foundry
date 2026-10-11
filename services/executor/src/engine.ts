@@ -3,7 +3,7 @@ import {
   type DuckDBConnection,
   type Json,
 } from "@duckdb/node-api";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
@@ -255,12 +255,37 @@ export async function execute(
       )
     ).getRowObjectsJson();
     const columns = [];
-    // The result keeps the query's row order, and rowid follows it; a column
-    // named rowid would hide it.
-    const ordered =
-      job.mode === "query" &&
-      job.order &&
-      !schema.some((col) => String(col.column_name).toLowerCase() === "rowid");
+    // How each column's values run in the result's row order, which rowid
+    // follows. A column named rowid hides it, so that column is renamed
+    // while the order is read.
+    const orders = new Map<string, Record<string, Json>>();
+    if (job.mode === "query" && job.order) {
+      const names = schema.map((col) => String(col.column_name));
+      const hiding = names.find((n) => n.toLowerCase() === "rowid"),
+        aside = "foundry_rowid_" + randomUUID().replaceAll("-", "");
+      if (hiding)
+        await c.run(
+          `ALTER TABLE result RENAME COLUMN ${quote(hiding)} TO ${quote(aside)}`,
+        );
+      try {
+        for (const name of names) {
+          const q = quote(name === hiding ? aside : name);
+          // A column whose values cannot be compared (a map) has no order.
+          const o = await c
+            .runAndReadAll(
+              `SELECT count(*) FILTER (WHERE v > p) AS ups, count(*) FILTER (WHERE v < p) AS downs, count(*) FILTER (WHERE v = f) AS firsts FROM (SELECT ${q} AS v, lag(${q}) OVER (ORDER BY rowid) AS p, first_value(${q}) OVER (ORDER BY rowid) AS f FROM result WHERE ${q} IS NOT NULL)`,
+            )
+            .then((r) => r.getRowObjectsJson()[0])
+            .catch(() => null);
+          if (o) orders.set(name, o);
+        }
+      } finally {
+        if (hiding)
+          await c.run(
+            `ALTER TABLE result RENAME COLUMN ${quote(aside)} TO ${quote(hiding)}`,
+          );
+      }
+    }
     for (const col of schema) {
       const name = String(col.column_name),
         q = quote(name);
@@ -269,15 +294,7 @@ export async function execute(
           `SELECT count(*)-count(${q}) AS null_count, count(DISTINCT ${q}) distincts FROM result`,
         )
       ).getRowObjectsJson()[0];
-      // A column whose values cannot be compared (a map) has no order.
-      const o = ordered
-        ? await c
-            .runAndReadAll(
-              `SELECT count(*) FILTER (WHERE v > p) AS ups, count(*) FILTER (WHERE v < p) AS downs, count(*) FILTER (WHERE v = f) AS firsts FROM (SELECT ${q} AS v, lag(${q}) OVER (ORDER BY rowid) AS p, first_value(${q}) OVER (ORDER BY rowid) AS f FROM result WHERE ${q} IS NOT NULL)`,
-            )
-            .then((r) => r.getRowObjectsJson()[0])
-            .catch(() => null)
-        : null;
+      const o = orders.get(name);
       columns.push({
         name,
         type: String(col.column_type),
