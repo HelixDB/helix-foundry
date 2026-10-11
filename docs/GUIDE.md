@@ -108,6 +108,13 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 
 [Operations](OPERATIONS.md) lists the database permissions change capture needs and how to manage WAL and binlog retention.
 
+
+### Choose your own Home metrics
+
+On Home, **Pinned metrics** lets an editor keep up to eight numbers alongside automatically picked metrics. Choose **Pin metric**, a dataset, and a row count, sum or average. Sums and averages need a non-sensitive numeric column. Pick how values are displayed and whether stored minor units should be divided by100. An optional date column compares the latest30days of data with the preceding30days, anchored on the dataset’s latest date.
+
+**Save metric** runs the definition before saving. Revisit Home or choose **Refresh pinned metrics** to evaluate it against current snapshots. **Definition and evidence** shows the SQL, exact snapshot ID and evaluation time. **Edit** preserves your chosen definition; conflicting edits require a reload. If a dataset or column is unavailable, the pin keeps its definition and shows an error for you to correct. **Remove** removes only the pin. Automatic **Regenerate** does not replace your choices, and pinned metrics do not require AI.
+
 ## AI and review
 
 **Providers.** Local inference through Ollama is the default. Claude and OpenAI are explicit choices, and there is no fallback from one provider to another. Hosted keys are entered in the browser, encrypted, and tested before the provider is activated. If a replacement provider fails its test, the existing settings stay active.

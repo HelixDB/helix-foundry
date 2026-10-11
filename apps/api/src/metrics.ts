@@ -321,15 +321,27 @@ export function compileMetric(
 
 const num = (v: unknown) =>
   v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-async function run(
+export async function runMetric(
   store: Store,
   scope: string,
   m: Compiled,
+  expectedVersion?: string,
 ): Promise<HomeMetric["result"]> {
   try {
     const r = await queryDatasets(store, scope, [m.spec.datasetId], m.sql, {
       limit: 100,
     });
+    if (
+      expectedVersion &&
+      !r.citations.some(
+        (c) =>
+          c.datasetId === m.spec.datasetId && c.version === expectedVersion,
+      )
+    )
+      return {
+        error:
+          "The dataset changed while computing this metric; refresh to retry",
+      };
     if (m.spec.kind === "kpi")
       return {
         value: num(r.rows[0]?.value),
@@ -348,6 +360,7 @@ async function run(
     return { error: (e as Error).message.slice(0, 300) };
   }
 }
+const run = runMetric;
 const usable = (m: Compiled, r: HomeMetric["result"]) =>
   !r.error &&
   (m.spec.kind === "kpi"

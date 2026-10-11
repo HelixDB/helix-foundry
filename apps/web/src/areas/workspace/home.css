@@ -868,3 +868,23 @@
   padding: 10px;
   border-top: 1px solid var(--hf-border);
 }
+
+.wk-pinned .wk-metrics-head {
+  flex-wrap: wrap;
+}
+.wk-pinned .buttons {
+  flex-wrap: wrap;
+}
+.wk-pinned .disclosure {
+  overflow-wrap: anywhere;
+}
+.wk-pinned .disclosure pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.wk-pinned .wk-metrics-kpis > div {
+  min-width: 0;
+}
+.wk-pinned .hf-btn {
+  white-space: normal;
+}

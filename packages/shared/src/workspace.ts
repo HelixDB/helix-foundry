@@ -347,6 +347,51 @@ export const MetricSpecSchema = z.object({
   scale: z.enum(["none", "cents"]).default("none"),
 });
 export type MetricSpec = z.infer<typeof MetricSpecSchema>;
+// Human-authored headline metrics keep their exact definition independently
+// of automatic metric selection and regeneration.
+export const PinnedMetricSpecSchema = MetricSpecSchema.omit({
+  filter: true,
+  groupBy: true,
+})
+  .extend({ kind: z.literal("kpi"), measure: z.enum(["count", "sum", "avg"]) })
+  .strict()
+  .superRefine((spec, ctx) => {
+    if (
+      spec.measure === "count" &&
+      (spec.column !== undefined ||
+        spec.scale !== "none" ||
+        spec.format !== "number")
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Row counts use number format, no column and no scaling",
+      });
+    if (spec.measure !== "count" && !spec.column)
+      ctx.addIssue({
+        code: "custom",
+        message: "Sum and average need a numeric column",
+      });
+  });
+export type PinnedMetricSpec = z.infer<typeof PinnedMetricSpecSchema>;
+export type PinnedMetric = {
+  id: string;
+  revision: number;
+  spec: PinnedMetricSpec;
+  sql: string;
+  dataset: string;
+  version: string | null;
+  computedAt: string;
+  result: HomeMetric["result"];
+};
+export type PinnedMetrics = {
+  datasets: {
+    id: string;
+    name: string;
+    numericColumns: string[];
+    timeColumns: string[];
+  }[];
+  items: PinnedMetric[];
+};
 export const MetricPickSchema = z.object({
   metrics: z.array(MetricSpecSchema).min(1).max(8),
 });

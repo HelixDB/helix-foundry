@@ -434,7 +434,7 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
   );
 }
 
-function KpiTile({ m }: { m: HomeMetric }) {
+export function KpiTile({ m }: { m: HomeMetric }) {
   const r = m.result;
   if (r.error)
     return (

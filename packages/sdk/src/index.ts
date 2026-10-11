@@ -12,6 +12,9 @@ import type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  PinnedMetric,
+  PinnedMetricSpec,
+  PinnedMetrics,
 } from "@helix-foundry/shared";
 export type {
   Bundle,
@@ -27,6 +30,9 @@ export type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  PinnedMetric,
+  PinnedMetricSpec,
+  PinnedMetrics,
 };
 export class FoundryError extends Error {
   constructor(
@@ -37,6 +43,26 @@ export class FoundryError extends Error {
   }
 }
 export class FoundryClient {
+  pinnedMetrics() {
+    return this.request<PinnedMetrics>("/home/pinned-metrics");
+  }
+  pinMetric(spec: PinnedMetricSpec) {
+    return this.request<PinnedMetric>("/home/pinned-metrics", { spec });
+  }
+  updatePinnedMetric(id: string, revision: number, spec: PinnedMetricSpec) {
+    return this.request<PinnedMetric>(
+      "/home/pinned-metrics/" + encodeURIComponent(id),
+      { spec, revision },
+      "PUT",
+    );
+  }
+  removePinnedMetric(id: string, revision: number) {
+    return this.request<{ deleted: true }>(
+      "/home/pinned-metrics/" + encodeURIComponent(id),
+      { revision },
+      "DELETE",
+    );
+  }
   hostingProviders() {
     return this.request("/hosting");
   }

@@ -11,6 +11,7 @@ import {
   type HealthStatus,
   type HomeSummary,
   type Resource,
+  PinnedMetricSpecSchema,
 } from "../../../../packages/shared/src/index.js";
 import { config } from "../config.js";
 import { assert, digest, token, seal } from "../security.js";
@@ -24,12 +25,26 @@ import { testProvider } from "../providers.js";
 import { localAiMemory } from "../memory.js";
 import { homeMetrics, regenerateMetrics } from "../metrics.js";
 import {
+  pinnedMetrics,
+  savePinnedMetric,
+  removePinnedMetric,
+} from "../pinned-metrics.js";
+import {
   generationKinds,
   type RequestSchemas,
   type RouteDeps,
 } from "./deps.js";
 
 export const workspaceSchemas: RequestSchemas = {
+  "POST /api/v1/workspaces/:w/home/pinned-metrics": z
+    .object({ spec: PinnedMetricSpecSchema })
+    .strict(),
+  "PUT /api/v1/workspaces/:w/home/pinned-metrics/:id": z
+    .object({ spec: PinnedMetricSpecSchema, revision: z.number().int().min(1) })
+    .strict(),
+  "DELETE /api/v1/workspaces/:w/home/pinned-metrics/:id": z
+    .object({ revision: z.number().int().min(1) })
+    .strict(),
   "PUT /api/v1/workspaces/:w/provider": ProviderSchema,
   "PUT /api/v1/workspaces/:w/proposals/:id": BundleSchema,
   "POST /api/v1/workspaces/:w/proposals/:id/publish": z.object({
@@ -80,6 +95,40 @@ export function registerWorkspaceRoutes(
   deps: RouteDeps,
 ) {
   const { access, scrub, visibleIn } = deps;
+  app.get("/api/v1/workspaces/:w/home/pinned-metrics", async (req) => {
+    const a = await access(req);
+    return pinnedMetrics(store, a.scope);
+  });
+  app.post("/api/v1/workspaces/:w/home/pinned-metrics", async (req: any) => {
+    const a = await access(req, "editor");
+    const b = z
+      .object({ spec: PinnedMetricSpecSchema })
+      .strict()
+      .parse(req.body);
+    return savePinnedMetric(store, a.scope, b);
+  });
+  app.put("/api/v1/workspaces/:w/home/pinned-metrics/:id", async (req: any) => {
+    const a = await access(req, "editor");
+    const b = z
+      .object({
+        spec: PinnedMetricSpecSchema,
+        revision: z.number().int().min(1),
+      })
+      .strict()
+      .parse(req.body);
+    return savePinnedMetric(store, a.scope, b, req.params.id);
+  });
+  app.delete(
+    "/api/v1/workspaces/:w/home/pinned-metrics/:id",
+    async (req: any) => {
+      const a = await access(req, "editor");
+      const b = z
+        .object({ revision: z.number().int().min(1) })
+        .strict()
+        .parse(req.body);
+      return removePinnedMetric(store, a.scope, req.params.id, b.revision);
+    },
+  );
   // Home's growth and analytics metrics: picked once (by the AI when it is set
   // up) and re-run by code when the data changes.
   app.get("/api/v1/workspaces/:w/home/metrics", async (req) => {
