@@ -1,3 +1,4 @@
+import { withDatasetPrivacy } from "./dataset-privacy.js";
 import { registerOnboarding } from "./onboarding.js";
 import { registerHosting } from "./hosting.js";
 import { publicResource } from "./onboarding-state.js";
@@ -310,14 +311,16 @@ export async function createApp(store: Store) {
     );
     if (req.params.kind === "dataset")
       rows = await Promise.all(
-        rows.map(async (r) => ({
-          ...r,
-          data: {
-            ...r.data,
-            snapshotAt: (await store.get(a.scope, r.data.activeVersion))
-              ?.createdAt,
-          },
-        })),
+        rows.map(async (r) =>
+          withDatasetPrivacy(store, a.scope, {
+            ...r,
+            data: {
+              ...r.data,
+              snapshotAt: (await store.get(a.scope, r.data.activeVersion))
+                ?.createdAt,
+            },
+          }),
+        ),
       );
     if (req.params.kind === "object") {
       // Records carry a readable name and how many records they link to.
@@ -414,7 +417,9 @@ export async function createApp(store: Store) {
         404,
       );
     return scrub(
-      r.kind === "object" ? await effectiveObject(store, a.scope, r) : r,
+      r.kind === "object"
+        ? await effectiveObject(store, a.scope, r)
+        : await withDatasetPrivacy(store, a.scope, r),
     );
   });
   app.get("/api/openapi.json", async () => app.swagger());

@@ -30,18 +30,19 @@ Each area owns its section below; add new routes to your own section.
 
 ### Data
 
-| Method / path                       | Input / result                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request |
-| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB               |
-| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                 |
-| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition        |
-| POST `/sources/:id/sync`            | `{}`; durable job                                                       |
-| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                 |
-| GET `/datasets/:id/export`          | Download active Parquet snapshot                                        |
-| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description               |
-| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                            |
-| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile            |
+| Method / path                       | Input / result                                                                   |
+| ----------------------------------- | -------------------------------------------------------------------------------- |
+| POST `/ingest`                      | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request          |
+| POST `/upload`                      | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB                        |
+| POST `/sources/test`                | `{ name, kind, config }`; discovery and key information                          |
+| POST `/sources`                     | `{ name, kind, config, schedule? }`; encrypted source definition                 |
+| POST `/sources/:id/sync`            | `{}`; durable job                                                                |
+| POST `/datasets/:id/preview`        | `{ offset?, limit? }`; rows and profile                                          |
+| GET `/datasets/:id/export`          | Download active Parquet snapshot                                                 |
+| PATCH `/datasets/:id`               | `{ description }`; preserve manually authored description                        |
+| PUT `/datasets/:id/privacy`         | Owner only; `{ additionalColumns: string[] }`; returns effective dataset profile |
+| POST `/datasets/:id/accept-version` | `{}`; accept staged schema-changing snapshot                                     |
+| POST `/query`                       | `{ inputs: datasetId[], sql }`; read-only result and profile                     |
 
 ### Pipelines
 
@@ -117,3 +118,5 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+Owners can use `FoundryClient.setDatasetPrivacy(datasetId, additionalColumns)` or `PUT /datasets/:id/privacy` to mark additional columns sensitive. Policy adds to heuristic detection and cannot disable detected protection. It applies to future hosted AI sample context and Home metric suggestions, persists independently of immutable version profiles, and follows ordinary refreshes, accepted schema changes and stable pipeline dataset identities. Names absent after a schema change remain protected if they return; they can be removed explicitly. Unknown new names are rejected. Local AI and hosted `allowRawData: true` retain their existing behavior. This does not restrict authorized dataset preview, query or export access or recall requests already sent.

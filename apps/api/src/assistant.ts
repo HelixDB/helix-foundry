@@ -1,3 +1,4 @@
+import { withDatasetPrivacy } from "./dataset-privacy.js";
 import {
   onboardingState,
   assertOnboardingPublication,
@@ -89,9 +90,13 @@ async function datasetsMap(store: Store, scope: string) {
   const generation = (await store.get(scope, "workspace"))?.data
     .activeGeneration;
   return new Map(
-    (await store.list(scope, "dataset"))
-      .filter((d) => !d.data.generation || d.data.generation === generation)
-      .map((d) => [d.id, d]),
+    (
+      await Promise.all(
+        (await store.list(scope, "dataset"))
+          .filter((d) => !d.data.generation || d.data.generation === generation)
+          .map((d) => withDatasetPrivacy(store, scope, d)),
+      )
+    ).map((d) => [d.id, d]),
   );
 }
 function inputsFor(ids: string[], datasets: Map<string, Resource>) {
