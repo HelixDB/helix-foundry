@@ -36,7 +36,7 @@ import {
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
-  return { ...fs, rename: vi.fn(fs.rename) };
+  return { ...fs, rename: vi.fn(fs.rename), rm: vi.fn(fs.rm) };
 });
 let dir: string;
 beforeAll(async () => {
@@ -441,15 +441,23 @@ describe("isolated dataset execution", () => {
   it("starts even when stale scratch cannot be removed", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await mkdir(join(scratchRoot(dir), "job-stale"));
-    await chmod(scratchRoot(dir), 0o555);
+    // A read-only directory does not stop root, as in a container, so the
+    // permission error is simulated.
+    vi.mocked(rm)
+      .mockClear()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("EACCES: permission denied"), {
+          code: "EACCES",
+        }),
+      );
     try {
       await expect(sweepScratch(dir)).resolves.toBeUndefined();
+      expect(rm).toHaveBeenCalledOnce();
       expect(log).toHaveBeenCalledWith(
         "Could not remove executor scratch:",
         expect.stringContaining("EACCES"),
       );
     } finally {
-      await chmod(scratchRoot(dir), 0o755);
       log.mockRestore();
     }
     await sweepScratch(dir);
