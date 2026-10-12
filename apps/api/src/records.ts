@@ -297,15 +297,11 @@ export async function listRecords(
     }
   }
   const typeIds = new Map(all.map((t) => [t.name, t.data.typeId as string]));
-  const objects = await store.getMany(
-    scope,
-    rows.map(
-      (r) =>
-        generation +
-        "_" +
-        digest(typeIds.get(r.__type) + ":" + String(r.__key)).slice(0, 32),
-    ),
-  );
+  const idOf = (r: Record<string, any>) =>
+    generation +
+    "_" +
+    digest(typeIds.get(r.__type) + ":" + String(r.__key)).slice(0, 32);
+  const objects = await store.getMany(scope, rows.map(idOf));
   const page = [
     ...fromPinned,
     ...objects
@@ -320,15 +316,41 @@ export async function listRecords(
         },
       })),
   ];
+  // Sorting by links already counted them in the snapshot, the way
+  // publication linked them. HelixDB walks every link of a record to count
+  // them, which takes a second for one with tens of thousands. Records whose
+  // links were edited no longer follow the joins, so HelixDB counts those.
+  const snapshotLinks =
+    query.sort === "links"
+      ? new Map(rows.map((r) => [idOf(r), Number(r.__links) || 0]))
+      : new Map<string, number>();
+  for (const id of await relationEditedIds(store, scope, generation))
+    snapshotLinks.delete(id);
   const links = await store.linkCounts(
     scope,
-    page.map((o) => o.id),
+    page.map((o) => o.id).filter((id) => !snapshotLinks.has(id)),
   );
   return {
     items: page.map((o) => ({
       ...o,
-      data: { ...o.data, links: links.get(o.id) || 0 },
+      data: {
+        ...o.data,
+        links: links.get(o.id) ?? snapshotLinks.get(o.id) ?? 0,
+      },
     })),
     total: pinned.length + counted,
   };
+}
+
+// Records at either end of a relation edit, whose links differ from the
+// snapshot's joins.
+async function relationEditedIds(
+  store: Store,
+  scope: string,
+  generation: string,
+) {
+  return (await store.list(scope, "relationEdit")).flatMap((e) => [
+    generation + "_" + e.data.fromLogicalId,
+    generation + "_" + e.data.toLogicalId,
+  ]);
 }

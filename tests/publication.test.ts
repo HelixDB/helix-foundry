@@ -469,6 +469,41 @@ it("lists records from the snapshot a page at a time, with workspace edits first
       dir: "desc",
     });
     expect(linked.items.map((o) => o.data.links)).toEqual(Array(20).fill(3));
+    // Sorted by links, the snapshot's counts are shown: the database counts
+    // only a record whose links were edited.
+    const counts = vi.spyOn(store, "linkCounts");
+    const byLinks = () =>
+      records({ type: "Customer", sort: "links", dir: "desc" });
+    expect((await byLinks()).items.map((o) => o.data.links)).toEqual(
+      Array(20).fill(3),
+    );
+    expect(counts.mock.calls.flatMap(([, ids]) => ids)).toEqual([]);
+    await transaction(store, scope, async (tx) =>
+      tx.put(
+        resource(
+          scope,
+          "relationEdit",
+          "Placed by",
+          {
+            fromLogicalId: "unpublished",
+            toLogicalId: linked.items[0].data.logicalId,
+            enabled: false,
+          },
+          "relationEdit_links",
+        ),
+      ),
+    );
+    counts.mockClear();
+    expect((await byLinks()).items.map((o) => o.data.links)).toEqual(
+      Array(20).fill(3),
+    );
+    expect(counts.mock.calls.flatMap(([, ids]) => ids)).toEqual([
+      linked.items[0].id,
+    ]);
+    counts.mockRestore();
+    await transaction(store, scope, async (tx) =>
+      tx.delete("relationEdit_links"),
+    );
     const last = await records({ type: "Customer", offset: 2990 });
     expect(last.total).toBe(3000);
     expect(last.items).toHaveLength(10);

@@ -125,6 +125,26 @@ export type ColumnProfile = {
   sensitive: boolean;
   primaryKey: boolean;
 };
+// A profile's sample rows are stored on the dataset and its version, and read
+// back by every list of datasets, so a long value keeps only its start:
+// previews, examples and prompts show the beginning of a value, and a table of
+// large documents would otherwise store megabytes per dataset.
+export const SAMPLE_VALUE_LIMIT = 200;
+export function compactValue(v: unknown): unknown {
+  const text =
+    typeof v === "string"
+      ? v
+      : v && typeof v === "object"
+        ? JSON.stringify(v)
+        : undefined;
+  return text !== undefined && text.length > SAMPLE_VALUE_LIMIT
+    ? text.slice(0, SAMPLE_VALUE_LIMIT) + "…"
+    : v;
+}
+export const compactSample = (rows: Record<string, unknown>[]) =>
+  rows.map((r) =>
+    Object.fromEntries(Object.entries(r).map(([k, v]) => [k, compactValue(v)])),
+  );
 export type DatasetProfile = {
   rows: number;
   duplicateRows?: number;

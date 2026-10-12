@@ -608,7 +608,8 @@ it("serves the published records as a graph, whole or around one record", async 
   await buildWorkspace(store, scope, state.buildRun.id);
   // Without a focus: the records around the best-connected ones, never the
   // whole workspace at once.
-  const list = vi.spyOn(store, "list");
+  const list = vi.spyOn(store, "list"),
+    linkCounts = vi.spyOn(store, "linkCounts");
   const all = (await request("GET", "/graph")).json();
   expect(
     list.mock.calls.filter(([, kind]) =>
@@ -616,6 +617,19 @@ it("serves the published records as a graph, whole or around one record", async 
     ),
   ).toEqual([]);
   list.mockRestore();
+  const countedIds = linkCounts.mock.calls.flatMap(([, ids]) => ids);
+  linkCounts.mockRestore();
+  // Degrees are the database's own counts, though the best-connected records
+  // were counted in the snapshot instead of by walking their links.
+  const generation = (await store.get(scope, "workspace"))!.data
+    .activeGeneration;
+  const real = await store.linkCounts(
+    scope,
+    all.nodes.map((n: any) => generation + "_" + n.id),
+  );
+  expect(all.nodes.map((n: any) => n.degree)).toEqual(
+    all.nodes.map((n: any) => real.get(generation + "_" + n.id)),
+  );
   expect(all.nodes.length).toBeGreaterThan(0);
   expect(all.nodes.length).toBeLessThanOrEqual(all.total);
   expect(all.truncated).toBe(all.nodes.length < all.total);
@@ -628,6 +642,7 @@ it("serves the published records as a graph, whole or around one record", async 
     (await request("GET", "/resources/object?" + query)).json().items;
   const [best] = await records("sort=links&dir=desc&limit=1");
   expect(ids.has(best.data.logicalId)).toBe(true);
+  expect(countedIds).not.toContain(best.id);
   // Records are named by their own fields where they have one.
   const [first] = await records("type=Account&sort=links&dir=desc&limit=1");
   const account = {

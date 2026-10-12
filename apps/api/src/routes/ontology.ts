@@ -109,6 +109,8 @@ export function registerOntologyRoutes(
     if (!generation || !total)
       return { total: 0, nodes: [], edges: [], truncated: false };
     let seeds: string[];
+    // Links already counted for the seeds, which are the best-connected.
+    let counted = new Map<string, number>();
     if (q.focus) {
       const start = await store.get(a.scope, `${generation}_${q.focus}`);
       assert(
@@ -117,15 +119,18 @@ export function registerOntologyRoutes(
         404,
       );
       seeds = [start.id];
-    } else
-      seeds = (
+    } else {
+      const best = (
         await listRecords(store, a.scope, {
           sort: "links",
           dir: "desc",
           offset: 0,
           limit: Math.min(20, q.limit),
         })
-      ).items.map((o) => o.id);
+      ).items;
+      seeds = best.map((o) => o.id);
+      counted = new Map(best.map((o) => [o.id, o.data.links as number]));
+    }
     const hood = await store.neighborhood(
       a.scope,
       seeds,
@@ -136,10 +141,13 @@ export function registerOntologyRoutes(
         (o) => o.kind === "object" && o.data.generation === generation,
       ),
       kept = new Map(nodes.map((o) => [o.id, o])),
-      degree = await store.linkCounts(
-        a.scope,
-        nodes.map((o) => o.id),
-      );
+      degree = new Map([
+        ...counted,
+        ...(await store.linkCounts(
+          a.scope,
+          nodes.map((o) => o.id).filter((id) => !counted.has(id)),
+        )),
+      ]);
     return {
       total,
       truncated: hood.truncated || nodes.length < total,
