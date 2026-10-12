@@ -97,6 +97,25 @@ describe("workspace UI kit", () => {
     expect(connectorKey("PostgreSQL")).toBe("postgres");
     expect(connectorKey(undefined, "Stripe")).toBe("stripe");
   });
+  it("reads a DuckDB type by its name, not its parameters", () => {
+    expect(columnKind("UTINYINT")).toBe("integer");
+    expect(columnKind("UHUGEINT")).toBe("integer");
+    expect(columnKind("ENUM('REAL', 'INTEGER', 'MAPLE')")).toBe("string");
+    expect(columnKind("INTEGER[2]")).toBe("json");
+  });
+  it("shows INTERVAL values as JSON, not [object Object]", () => {
+    const html = render(
+      h(DataGrid, {
+        label: "Waits",
+        rows: [{ wait: { months: 0, days: 2, micros: "0" } }],
+        columns: [{ key: "wait", type: "INTERVAL" }],
+      }),
+    );
+    expect(html).not.toContain("[object Object]");
+    expect(html).toContain(
+      "{&quot;months&quot;:0,&quot;days&quot;:2,&quot;micros&quot;:&quot;0&quot;}",
+    );
+  });
   it("keeps neighboring 64-bit integers distinct", () => {
     expect(formatNumber(9007199254740993n)).toBe("9,007,199,254,740,993");
     expect(formatNumber("9007199254740993")).toBe("9,007,199,254,740,993");
