@@ -13,6 +13,7 @@ import { runSyncJob, runUploadJob } from "./data-jobs.js";
 import { runPipelineJob } from "./pipeline-jobs.js";
 import { queueCleanup, runCleanupJob } from "./cleanup.js";
 import { sweepResults } from "./results.js";
+import { reduceStoredDiscovery } from "./source-discovery.js";
 // A job gets three attempts, whether it throws or its worker dies mid-run.
 const MAX_ATTEMPTS = 3;
 // Queue, leases and retries live here; each job type's work lives with its area.
@@ -72,6 +73,13 @@ export function startWorker(store: Store) {
         const scope = workspace.id;
         if (!swept.has(scope)) {
           swept.add(scope);
+          // A pass that fails runs again at the next start; jobs still run.
+          await reduceStoredDiscovery(store, scope).catch((e) =>
+            console.error(
+              "Worker: reducing stored discovery:",
+              e instanceof Error ? e.message : e,
+            ),
+          );
           if (
             (await store.get(scope, "workspace"))?.data.activeGeneration &&
             !(await store.get(scope, "cleanup_state"))?.data.swept
