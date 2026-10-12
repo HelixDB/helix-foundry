@@ -132,8 +132,9 @@ then the rest of the summary with the quantities its rows back (a value, a
 difference between two values or a row count) and their units in bold. There
 is no tint, card or accent behind the answer. The rows show as a chart when the
 server's check found a ranking, a trend or a small breakdown, with a
-Chart/Table switch; a breakdown with a negative value shows only as a table,
-since bars start at zero. A chart of only the result's first rows says so
+Chart/Table switch; signed breakdowns use bars around a visible zero baseline.
+Lowest-first rankings use "Lowest" labels; highest-first rankings use "Top".
+A chart of only the result's first rows says so
 ("Top 10 of 1,000", "First 100 of 1,000 rows"). The table puts the label and
 the measure first and keys last and quieter.
 
