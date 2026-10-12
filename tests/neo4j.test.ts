@@ -3,11 +3,13 @@ import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { discover, importSource } from "../apps/api/src/connectors.js";
-import { neo4jPaging, neo4jQuery } from "../apps/api/src/neo4j.js";
+import { neo4jPaging } from "../apps/api/src/neo4j.js";
 import { config } from "../apps/api/src/config.js";
+import { sourceSyncDefaults } from "../apps/api/src/source-sync.js";
 afterEach(() => {
   vi.unstubAllGlobals();
-  neo4jPaging.size = 5000;
+  vi.useRealTimers();
+  neo4jPaging.size = 1000;
 });
 const T = (type: string, value: unknown) => ({ $type: type, _value: value });
 const rowsOf = async (scope: string, file: string) =>
@@ -144,6 +146,7 @@ it("discovers labels and relationship types with keys that link them", async () 
   });
   expect(calls[0].url).toBe("http://neo4j.test:7474/db/neo4j/query/v2");
   expect(calls[0].headers.accept).toBe("application/vnd.neo4j.query");
+  expect(calls.map((c) => c.body.accessMode)).toEqual(calls.map(() => "Read"));
   expect(d.tables).toEqual([
     { name: "Customer", schema: "node", estimatedRows: 2 },
     { name: "Order", schema: "node", estimatedRows: 1 },
@@ -210,6 +213,12 @@ it("imports nodes page by page and relationships with their end node ids", async
     expect(
       pages.map(([, init]: any) => JSON.parse(init.body).parameters.after),
     ).toEqual(["", "4:db:0", "4:db:1"]);
+    // Rows were written, so the graph-wide schema scan is skipped.
+    expect(
+      fetchMock.mock.calls.some(([, init]: any) =>
+        JSON.parse(init.body).statement.includes("TypeProperties"),
+      ),
+    ).toBe(false);
 
     const rels = await importSource(scope, "neo4j", {
       ...connection,
@@ -266,7 +275,20 @@ it.skipIf(process.env.TEST_NEO4J !== "1")(
       user: "neo4j",
       password: process.env.NEO4J_TEST_PASSWORD || "foundry-test-only",
     };
-    const run = (statement: string) => neo4jQuery(c, statement);
+    // The connector sends read-only queries, so the fixture is written directly.
+    const run = async (statement: string) => {
+      const r = await fetch(`${c.url}/db/neo4j/query/v2`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization:
+            "Basic " +
+            Buffer.from(`${c.user}:${c.password}`).toString("base64"),
+        },
+        body: JSON.stringify({ statement }),
+      });
+      expect(r.ok, await r.text()).toBe(true);
+    };
     const scope = "neo4j-" + randomUUID();
     try {
       await run(
@@ -340,4 +362,12 @@ it("asks for the URL before trying to connect", async () => {
     discover("neo4j", { ...connection, url: "not a url" }),
   ).rejects.toThrow("is not a valid URL");
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("refreshes hourly, because each refresh re-reads a whole label", () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-01-01T10:07:00Z"));
+  expect(new Date(sourceSyncDefaults("neo4j").nextRun!).toISOString()).toBe(
+    "2026-01-01T11:00:00.000Z",
+  );
 });

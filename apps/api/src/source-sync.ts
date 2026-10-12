@@ -14,12 +14,13 @@ import { postgresPoolConfig } from "./postgres-config.js";
 import { unseal } from "./security.js";
 
 const FALLBACK = "*/5 * * * *";
-// Hourly keeps full SaaS API snapshots well within their rate limits.
+// Hourly keeps full SaaS API snapshots well within their rate limits, and
+// spares Neo4j re-reading whole labels and relationship types every 5 minutes.
 // PostHog re-reads recent event history, so it refreshes less often.
 const fallback = (kind: string) =>
   kind === "posthog"
     ? "0 */6 * * *"
-    : kind === "stripe" || kind === "workos"
+    : kind === "stripe" || kind === "workos" || kind === "neo4j"
       ? "0 * * * *"
       : FALLBACK;
 const quote = (s: string) => '"' + s.replaceAll('"', '""') + '"';

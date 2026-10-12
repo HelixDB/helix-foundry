@@ -8,8 +8,9 @@ import { checkedURL, type ConnectorConfig } from "./connectors.js";
 // and order_id columns that match customer_id in Customer and order_id in
 // Order, which is how the suggested ontology links them.
 
-// Tests shrink the page to exercise paging.
-export const neo4jPaging = { size: 5000 };
+// Each page is parsed whole, and nodes that carry embeddings are large. Tests
+// shrink the page to exercise paging.
+export const neo4jPaging = { size: 1000 };
 
 type Shape = { from?: string; to?: string; ambiguous?: boolean };
 type Column = {
@@ -101,7 +102,9 @@ export async function neo4jQuery(
           "Basic " +
           Buffer.from(`${c.user || ""}:${c.password || ""}`).toString("base64"),
       },
-      body: JSON.stringify({ statement, parameters }),
+      // Foundry only reads. Read mode also sends the query to a cluster's
+      // readers rather than its writer.
+      body: JSON.stringify({ statement, parameters, accessMode: "Read" }),
       redirect: "error",
       signal: AbortSignal.timeout(options.timeoutMs || 30000),
     },
@@ -363,7 +366,8 @@ export async function importNeo4j(
   const name = String(c.table),
     relationship = c.schema === "relationship";
   const shapes = await relationshipShapes(c);
-  let after = "";
+  let after = "",
+    written = 0;
   while (true) {
     const { rows, last } = await page(
       c,
@@ -374,9 +378,13 @@ export async function importNeo4j(
       shapes,
     );
     for (const row of rows) await write(row);
+    written += rows.length;
     if (rows.length < neo4jPaging.size || !last) break;
     after = last;
   }
+  // The column list only describes an empty dataset, and working it out scans
+  // the whole graph.
+  if (written) return undefined;
   return (
     await allColumns(
       c,
