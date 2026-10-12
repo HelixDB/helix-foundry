@@ -27,6 +27,10 @@ export const SourceSchema = z.object({
       "UTC snapshot fallback schedule. Working PostgreSQL/MySQL CDC takes precedence; defaults to every five minutes when CDC is unavailable, hourly for Stripe and WorkOS, and every six hours for PostHog.",
     ),
 });
+// Uploaded files use the upload endpoint rather than a connected source.
+export type ConnectedSourceInput = Omit<z.input<typeof SourceSchema>, "kind"> & {
+  kind: Exclude<z.input<typeof SourceSchema>["kind"], "upload">;
+};
 export type SourceSyncState = {
   mode: "auto" | "cdc" | "snapshot";
   status: "checking" | "starting" | "live" | "retrying" | "ready";
