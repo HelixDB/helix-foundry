@@ -77,8 +77,15 @@
   cursor: pointer;
 }
 .og-matches button:hover,
+.og-matches button[aria-selected="true"],
 .og-panel li button:hover {
   background: var(--hf-hover);
+}
+.og-search-status {
+  margin: 4px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  overflow-wrap: anywhere;
 }
 .og-matches small,
 .og-panel li small {

@@ -8,6 +8,7 @@ export const sourceKinds = [
   "upload",
   "postgres",
   "mysql",
+  "neo4j",
   "rest",
   "s3",
   "stripe",

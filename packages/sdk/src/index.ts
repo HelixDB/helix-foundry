@@ -12,6 +12,7 @@ import type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ApiTokenMetadata,
 } from "@helix-foundry/shared";
 export type {
   Bundle,
@@ -27,6 +28,7 @@ export type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ApiTokenMetadata,
 };
 export class FoundryError extends Error {
   constructor(
@@ -37,6 +39,23 @@ export class FoundryError extends Error {
   }
 }
 export class FoundryClient {
+  tokens() {
+    return this.request<{ items: ApiTokenMetadata[] }>("/tokens");
+  }
+  createToken(name: string, readOnly = true) {
+    return this.request<{ token: string; id: string }>("/tokens", {
+      name,
+      readOnly,
+    });
+  }
+  revokeToken(id: string) {
+    return this.request<{ ok: true }>(
+      "/tokens/" + encodeURIComponent(id),
+      {},
+      "DELETE",
+    );
+  }
+
   hostingProviders() {
     return this.request("/hosting");
   }
@@ -288,6 +307,9 @@ export class FoundryClient {
   }
   resume(runId: string) {
     return this.request<Resource>("/assistant/runs/" + runId + "/resume", {});
+  }
+  proposalComparison(id: string) {
+    return this.request("/proposals/" + encodeURIComponent(id) + "/comparison");
   }
   saveAnalysis(runId: string) {
     return this.request<Resource>(

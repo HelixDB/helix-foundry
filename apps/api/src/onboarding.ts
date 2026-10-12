@@ -1,13 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { canReuseProviderKey } from "./providers.js";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { platform } from "node:os";
 import { resolve, extname } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { CronExpressionParser } from "cron-parser";
-import { sourceSyncDefaults } from "./source-sync.js";
+import { sourceSyncDefaults, validateRefreshSchedule } from "./source-sync.js";
 import { resolveHostedConfig } from "./hosting.js";
 import {
   OnboardingProviderSchema,
@@ -81,13 +81,18 @@ export function registerOnboarding(
       const existing = m.providerJobId && (await tx.get(m.providerJobId));
       const selected = { ...settings };
       if (!selected.apiKey) {
-        if (existing?.data.settings?.provider === selected.provider)
+        if (
+          existing?.data.settings &&
+          canReuseProviderKey(existing.data.settings, selected)
+        )
           selected.apiKey = unseal(existing.data.secret).apiKey;
-        else if (selected.provider === old.provider)
+        else if (canReuseProviderKey(old, selected))
           selected.apiKey = old.apiKey;
       }
       assert(
-        selected.provider === "local" || !!selected.apiKey?.trim(),
+        selected.provider === "local" ||
+          selected.provider === "custom" ||
+          !!selected.apiKey?.trim(),
         "Enter an API key for the selected provider.",
       );
       const fingerprint = digest(JSON.stringify(selected));
@@ -130,7 +135,7 @@ export function registerOnboarding(
     const a = await access(req, "owner"),
       body = OnboardingImportSchema.parse(req.body);
     assert(body.kind !== "upload", "Use the upload endpoint");
-    if (body.schedule) CronExpressionParser.parse(body.schedule, { tz: "UTC" });
+    validateRefreshSchedule(body.schedule);
     const opId = "connection_" + digest(body.operationId),
       fingerprint = digest(JSON.stringify(body));
     const prior = await store.get(a.scope, opId);
@@ -162,6 +167,13 @@ export function registerOnboarding(
                 t.schema === (s.schema || body.config.schema || "public")),
           ),
           "Choose tables from the tested connection",
+        );
+      if (body.kind === "neo4j")
+        assert(
+          discovery.tables?.some(
+            (t: any) => t.name === s.table && t.schema === s.schema,
+          ),
+          "Choose labels and relationship types from the tested connection",
         );
       if (["stripe", "workos", "posthog"].includes(body.kind))
         assert(
@@ -232,7 +244,7 @@ export function registerOnboarding(
     const old = await store.get(a.scope, req.params.id);
     assert(old?.kind === "source", "Source not found", 404);
     assert(old.data.kind === body.kind, "Keep the existing connector type");
-    if (body.schedule) CronExpressionParser.parse(body.schedule, { tz: "UTC" });
+    validateRefreshSchedule(body.schedule);
     const resolved = await resolveHostedConfig(
       store,
       a.scope,
