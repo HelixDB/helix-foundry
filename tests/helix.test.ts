@@ -1,4 +1,4 @@
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   HelixStore,
@@ -6,6 +6,7 @@ import {
   transaction,
   resource,
 } from "../apps/api/src/store.js";
+import { config } from "../apps/api/src/config.js";
 it.skipIf(process.env.TEST_HELIX !== "1")(
   "persists atomic scoped changes and graph relationships in real HelixDB",
   async () => {
@@ -45,6 +46,52 @@ it.skipIf(process.env.TEST_HELIX !== "1")(
     });
   },
 );
+it("refuses a transaction too large for one HelixDB request, and says what to do", async () => {
+  const sent: string[] = [];
+  const fetch = vi.fn(async (_url: unknown, init: any) => {
+    sent.push(init.body);
+    return new Response("{}", { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const store = new HelixStore(() => false),
+      big = resource("w", "source", "Big", {
+        discovery: "x".repeat(config.helixWriteLimit),
+      });
+    const tooLarge = {
+      statusCode: 413,
+      message: expect.stringMatching(/Select fewer tables at once/),
+    };
+    await expect(store.commit("w", 1, [{ put: big }])).rejects.toMatchObject(
+      tooLarge,
+    );
+    // Only the read of existing records went out, not the write.
+    expect(sent).toHaveLength(1);
+    expect(sent[0].length).toBeLessThan(10_000);
+    // HelixDB's own limit may be lower; its refusal says the same.
+    fetch.mockImplementationOnce(async (_url, init) => {
+      sent.push(init.body);
+      return new Response("{}", { status: 200 });
+    });
+    fetch.mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: "failed to read request body: length limit exceeded",
+          }),
+          { status: 400 },
+        ),
+    );
+    await expect(
+      store.commit("w", 1, [{ put: resource("w", "source", "Small") }]),
+    ).rejects.toMatchObject(tooLarge);
+    // A publication's staged batch is bounded by its record count instead.
+    await store.stageObjects("w", [big], false);
+    expect(sent.at(-1)!.length).toBeGreaterThan(config.helixWriteLimit);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 it("returns each in-memory neighbor once, as HelixDB does", async () => {
   const store = new MemoryStore();
   await transaction(store, "test", async (tx) => {

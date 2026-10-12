@@ -185,6 +185,18 @@ export function databaseError(
     e,
   );
 }
+// HelixDB refuses a request body over its limit with only "length limit
+// exceeded", so a transaction's write is measured before it is sent. Imports
+// are the usual cause: each selected table is one source in one transaction.
+export const writeTooLarge = (bytes: number) =>
+  new AppError(
+    413,
+    `This change is too large to save at once (${(bytes / 1e6).toFixed(1)} MB). Select fewer tables at once, then try again.`,
+  );
+const tooLong = (e: unknown) =>
+  e instanceof HelixError &&
+  (e.statusCode === 413 ||
+    /length limit exceeded/i.test(e.serverMessage || e.message));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // HelixDB's 64-bit node and edge ids, as decimal strings.
 const idOf = (row: any) => String(row?.["$id"] ?? "");
@@ -224,16 +236,29 @@ export class HelixStore implements Store {
   async read(q: any): Promise<any> {
     return this.send(q, "read");
   }
-  async write(q: any): Promise<any> {
-    return this.send(q, "write");
+  async write(q: any, limit?: number): Promise<any> {
+    return this.send(q, "write", limit);
   }
   // One request with a time limit and the cause of any failure kept. Reads
   // are repeated while HelixDB restarts or drops the connection, for up to
   // about half a minute; writes never are, since one may already have
-  // committed.
-  async send(q: any, op: "read" | "write"): Promise<any> {
+  // committed. A body over `limit` bytes is refused before it is sent.
+  async send(q: any, op: "read" | "write", limit?: number): Promise<any> {
     const body = q.toQueryRequest().toJsonString(),
-      url = new URL("/v2/query", config.helix).toString();
+      url = new URL("/v2/query", config.helix).toString(),
+      bytes = limit ? Buffer.byteLength(body) : 0;
+    if (limit && bytes > limit) {
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          msg: "HelixDB write too large",
+          op,
+          bytes,
+          limit,
+        }),
+      );
+      throw writeTooLarge(bytes);
+    }
     for (let attempt = 1; ; attempt++) {
       const started = Date.now();
       try {
@@ -258,6 +283,8 @@ export class HelixStore implements Store {
           );
         return parseJson(text);
       } catch (e) {
+        // HelixDB's own limit can be lower than HELIX_WRITE_LIMIT.
+        if (limit && tooLong(e)) throw writeTooLarge(bytes);
         const ms = Date.now() - started,
           error = databaseError(e, op, ms, this.memoryKilled);
         if (error instanceof DatabaseError)
@@ -479,7 +506,8 @@ export class HelixStore implements Store {
     }
     q = q.returning(["guard"]);
     try {
-      const r = await this.write(q);
+      // Staged publication writes are bounded by their record count instead.
+      const r = await this.write(q, config.helixWriteLimit);
       return !!r.guard?.length;
     } catch (e) {
       if (/conflict|unique/i.test(String(e))) return false;

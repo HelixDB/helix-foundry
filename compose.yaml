@@ -21,6 +21,8 @@ x-app: &app
     # The executor's time limits, which the API waits for. See the executor.
     EXECUTOR_QUERY_TIMEOUT: ${EXECUTOR_QUERY_TIMEOUT:-}
     EXECUTOR_JOB_TIMEOUT: ${EXECUTOR_JOB_TIMEOUT:-}
+    # Bytes in one transaction's HelixDB write (docs/OPERATIONS.md).
+    HELIX_WRITE_LIMIT: ${HELIX_WRITE_LIMIT:-}
   networks: [default, execution]
   depends_on:
     helix:
