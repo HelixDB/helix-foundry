@@ -580,6 +580,11 @@ it("finds the best-connected records' neighbours in the snapshot, linked as publ
   const all = await snapshotNeighbours(store, scope, seeds, 100);
   expect(all.truncated).toBe(false);
   expect(new Set(all.links.map(key))).toEqual(real);
+  // Their links are counted with them, as HelixDB counts them.
+  expect(all.degrees).toEqual(
+    await store.linkCounts(scope, [...all.degrees.keys()]),
+  );
+  expect([...all.degrees.keys()].sort()).toEqual([...all.ids].sort());
   // A pair with a relation edit is left out; an edit adding a link is in.
   const generation = best[0].id.slice(0, best[0].id.indexOf("_") + 1),
     logical = (id: string) => id.slice(generation.length),
@@ -621,4 +626,7 @@ it("finds the best-connected records' neighbours in the snapshot, linked as publ
     name: "Placed by",
   });
   expect(edited.ids).toContain(other.from);
+  // Records with an edit are left for HelixDB to count.
+  expect(edited.degrees.has(other.from)).toBe(false);
+  expect(edited.degrees.has(dropped.from)).toBe(false);
 });

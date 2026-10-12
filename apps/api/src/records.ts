@@ -331,6 +331,8 @@ export type SnapshotLink = { from: string; to: string; name: string };
 // are those publication made: a pair with a relation edit is left out, and an
 // edit that adds a link to a seed is included. A seed the snapshot does not
 // find is returned in `unmatched`, for the caller to walk in HelixDB.
+// `degrees` holds the links of each record found, counted the same way,
+// except for records with relation edits.
 export async function snapshotNeighbours(
   store: Store,
   scope: string,
@@ -339,6 +341,7 @@ export async function snapshotNeighbours(
 ): Promise<{
   ids: string[];
   links: SnapshotLink[];
+  degrees: Map<string, number>;
   truncated: boolean;
   unmatched: string[];
 }> {
@@ -346,7 +349,13 @@ export async function snapshotNeighbours(
     .activeGeneration;
   const linked = seeds.filter((s) => s.links > 0);
   if (!generation || !linked.length)
-    return { ids: [], links: [], truncated: false, unmatched: [] };
+    return {
+      ids: [],
+      links: [],
+      degrees: new Map(),
+      truncated: false,
+      unmatched: [],
+    };
   const all = (await store.list(scope, "objectType")).filter(
     (t) => t.data.generation === generation,
   );
@@ -358,7 +367,8 @@ export async function snapshotNeighbours(
   const total = linked.reduce((n, s) => n + s.links, 0);
   const share = (s: { links: number }) =>
     Math.min(s.links, Math.max(1, Math.floor((room * s.links) / total)));
-  const selects: string[] = [];
+  const selects: string[] = [],
+    counts: string[] = [];
   for (const rel of bundle.relationships) {
     const from = byName.get(rel.fromType),
       to = byName.get(rel.toType),
@@ -379,12 +389,18 @@ export async function snapshotNeighbours(
         selects.push(
           `SELECT DISTINCT ${lit(seedType.name)} AS seed_type, ${seedKey} AS seed_key, ${lit(otherType.name)} AS other_type, ${otherKey} AS other_key, ${lit(rel.name)} AS name, ${outgoing} AS outgoing FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)} WHERE ${seedKey} IN (${keys.join(", ")})`,
         );
+      // The links of the records found, counted as the record list counts
+      // them, so they need no count in HelixDB either.
+      counts.push(
+        `SELECT ${lit(seedType.name)} AS type, ${seedKey} AS key, count(DISTINCT ${otherKey}) AS c FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)} WHERE ${seedKey} IN (SELECT other_key FROM near WHERE other_type = ${lit(seedType.name)}) GROUP BY 1, 2`,
+      );
     }
   }
   if (!selects.length)
     return {
       ids: [],
       links: [],
+      degrees: new Map(),
       truncated: false,
       unmatched: linked.map((s) => s.record.id),
     };
@@ -400,7 +416,7 @@ export async function snapshotNeighbours(
     scope,
     inputs,
     version: randomUUID(),
-    sql: `SELECT seed_type, seed_key, count(*) AS found, list({other_type: other_type, other_key: other_key, name: name, outgoing: outgoing} ORDER BY rank) FILTER (WHERE rank <= n) AS near FROM (SELECT p.*, s.n, row_number() OVER (PARTITION BY p.seed_type, p.seed_key ORDER BY p.other_type, p.other_key, p.name) AS rank FROM (${selects.join(" UNION ALL ")}) p JOIN (VALUES ${shares}) s(seed_type, seed_key, n) USING (seed_type, seed_key)) GROUP BY seed_type, seed_key`,
+    sql: `WITH ranked AS (SELECT p.*, s.n, row_number() OVER (PARTITION BY p.seed_type, p.seed_key ORDER BY p.other_type, p.other_key, p.name) AS rank FROM (${selects.join(" UNION ALL ")}) p JOIN (VALUES ${shares}) s(seed_type, seed_key, n) USING (seed_type, seed_key)), near AS (SELECT * FROM ranked WHERE rank <= n), degrees AS (SELECT type, key, sum(c) AS links FROM (${counts.join(" UNION ALL ")}) GROUP BY type, key) SELECT r.seed_type, r.seed_key, count(*) AS found, list({other_type: r.other_type, other_key: r.other_key, name: r.name, outgoing: r.outgoing, links: coalesce(d.links, 0)} ORDER BY r.rank) FILTER (WHERE r.rank <= r.n) AS partners FROM ranked r LEFT JOIN degrees d ON d.type = r.other_type AND d.key = r.other_key GROUP BY r.seed_type, r.seed_key`,
     limit: linked.length,
   });
   const edits = await store.list(scope, "relationEdit"),
@@ -411,18 +427,20 @@ export async function snapshotNeighbours(
     );
   const ids: string[] = [],
     links: SnapshotLink[] = [],
+    degrees = new Map<string, number>(),
     found = new Set<string>();
   let truncated = false;
   for (const row of result.rows) {
     const seed = logicalId(row.seed_type, String(row.seed_key));
     found.add(generation + "_" + seed);
-    const near: any[] = row.near || [];
+    const near: any[] = row.partners || [];
     if (Number(row.found) > near.length) truncated = true;
     for (const n of near) {
       const other = logicalId(n.other_type, String(n.other_key)),
         [from, to] = n.outgoing ? [seed, other] : [other, seed];
       if (edited.has([from, to, n.name].join(":"))) continue;
       ids.push(generation + "_" + other);
+      degrees.set(generation + "_" + other, Number(n.links) || 0);
       links.push({
         from: generation + "_" + from,
         to: generation + "_" + to,
@@ -446,9 +464,14 @@ export async function snapshotNeighbours(
         name: e.name,
       });
     }
+  for (const e of edits) {
+    degrees.delete(generation + "_" + e.data.fromLogicalId);
+    degrees.delete(generation + "_" + e.data.toLogicalId);
+  }
   return {
     ids: [...new Set(ids)],
     links,
+    degrees,
     truncated: truncated || linked.some((s) => s.links > share(s)),
     unmatched: linked.map((s) => s.record.id).filter((id) => !found.has(id)),
   };

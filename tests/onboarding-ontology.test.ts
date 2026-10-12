@@ -666,7 +666,8 @@ it("serves the published records as a graph, whole or around one record", async 
     (await request("GET", "/resources/object?" + query)).json().items;
   const [best] = await records("sort=links&dir=desc&limit=1");
   expect(ids.has(best.data.logicalId)).toBe(true);
-  expect(countedIds).not.toContain(best.id);
+  // Every node's links were counted in the snapshot, none by HelixDB.
+  expect(countedIds).toEqual([]);
   // Records are named by their own fields where they have one.
   const [first] = await records("type=Account&sort=links&dir=desc&limit=1");
   const account = {

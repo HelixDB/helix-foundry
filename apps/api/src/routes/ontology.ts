@@ -133,7 +133,9 @@ export function registerOntologyRoutes(
       seeds = best.map((o) => o.id);
       counted = new Map(best.map((o) => [o.id, o.data.links as number]));
     }
-    const hood = q.focus
+    const hood: Awaited<ReturnType<Store["neighborhood"]>> & {
+      degrees?: Map<string, number>;
+    } = q.focus
       ? await store.neighborhood(a.scope, seeds, q.depth, q.limit)
       : await bestConnectedNeighbourhood(
           store,
@@ -142,6 +144,8 @@ export function registerOntologyRoutes(
           counted,
           q.limit,
         );
+    // The neighbours' links were counted with them, where they could be.
+    for (const [id, n] of hood.degrees ?? []) counted.set(id, n);
     const nodes = hood.nodes.filter(
         (o) => o.kind === "object" && o.data.generation === generation,
       ),
@@ -344,7 +348,10 @@ async function bestConnectedNeighbourhood(
       "Graph: snapshot neighbours:",
       e instanceof Error ? e.message : e,
     );
-    return store.neighborhood(scope, seeds, 1, limit);
+    return {
+      ...(await store.neighborhood(scope, seeds, 1, limit)),
+      degrees: new Map<string, number>(),
+    };
   }
   const walked = near.unmatched.length
     ? await store.neighborhood(scope, near.unmatched, 1, limit)
@@ -362,5 +369,6 @@ async function bestConnectedNeighbourhood(
       near.truncated ||
       walked.truncated ||
       seeds.length + near.ids.length > limit,
+    degrees: near.degrees,
   };
 }
