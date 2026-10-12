@@ -1,7 +1,5 @@
-import {
-  BundleSchema,
-  type Bundle,
-} from "../../../packages/shared/src/index.js";
+import { BundleSchema } from "../../../packages/shared/src/index.js";
+import { publishedBundle } from "./assistant.js";
 import { assert } from "./security.js";
 import type { Store } from "./store.js";
 
@@ -34,29 +32,15 @@ export async function proposalComparison(
 ) {
   const proposal = await store.get(scope, id);
   assert(proposal?.kind === "proposal", "Proposal unavailable", 404);
-  const workspace = await store.get(scope, "workspace"),
-    activeGeneration = workspace?.data.activeGeneration || null;
-  const published = activeGeneration
-    ? (await store.list(scope, "proposal")).find(
-        (p) => p.data.publishedGeneration === activeGeneration,
-      )
-    : undefined;
+  const {
+    generation: activeGeneration,
+    proposal: published,
+    bundle: current,
+  } = await publishedBundle(store, scope);
   assert(
     !activeGeneration || published,
     "Published definitions unavailable",
     409,
-  );
-  const current: Bundle = BundleSchema.parse(
-    published?.data.bundle || {
-      summary: "",
-      assumptions: [],
-      catalog: [],
-      pipelines: [],
-      ontology: [],
-      relationships: [],
-      dashboards: [],
-      actions: [],
-    },
   );
   const proposed = BundleSchema.parse(proposal.data.bundle),
     changes: any[] = [];

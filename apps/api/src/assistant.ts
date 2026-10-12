@@ -1832,17 +1832,18 @@ export async function publishProposal(
   });
 }
 
-export async function currentBundle(
-  store: Store,
-  scope: string,
-): Promise<Bundle> {
-  const generation = (await store.get(scope, "workspace"))?.data
-    .activeGeneration;
-  const published = (await store.list(scope, "proposal")).find(
-    (p) => p.data.publishedGeneration === generation,
-  );
-  return BundleSchema.parse(
-    published?.data.bundle || {
+// The active generation, the proposal that published it, and its bundle; an
+// empty bundle before the first publish.
+export async function publishedBundle(store: Store, scope: string) {
+  const generation: string | null =
+    (await store.get(scope, "workspace"))?.data.activeGeneration || null;
+  const proposal = generation
+    ? (await store.list(scope, "proposal")).find(
+        (p) => p.data.publishedGeneration === generation,
+      )
+    : undefined;
+  const bundle: Bundle = BundleSchema.parse(
+    proposal?.data.bundle || {
       summary: "Workspace definitions",
       assumptions: [],
       catalog: [],
@@ -1853,4 +1854,12 @@ export async function currentBundle(
       actions: [],
     },
   );
+  return { generation, proposal, bundle };
+}
+
+export async function currentBundle(
+  store: Store,
+  scope: string,
+): Promise<Bundle> {
+  return (await publishedBundle(store, scope)).bundle;
 }

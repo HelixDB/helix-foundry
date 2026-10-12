@@ -32,7 +32,6 @@ export function ProposalReview({ proposal: p }: { proposal: Resource }) {
   return (
     <section className="proposal-review">
       <h2>{b.summary}</h2>
-      <ProposalChanges proposal={p} />
       {failed.length > 0 && (
         <div className="error-box" role="alert">
           <strong>These checks need attention before publishing</strong>
@@ -43,6 +42,7 @@ export function ProposalReview({ proposal: p }: { proposal: Resource }) {
           ))}
         </div>
       )}
+      <ProposalChanges proposal={p} />
       {published && <p className="muted">Published to your workspace</p>}
       {b.dashboards.map((d: any) => (
         <section key={d.name} className="review-result">
