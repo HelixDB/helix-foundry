@@ -163,7 +163,9 @@ export class Provider implements ModelProvider {
       );
     let value: unknown,
       tokens = 0;
-    const data = (await response.json()) as any;
+    const data = (await response.json().catch((error) => {
+      throwJsonError(error, s.provider);
+    })) as any;
     if (s.provider === "claude") {
       value = data.content.find(
         (x: any) => x.type === "tool_use" && x.name === "submit",
@@ -196,7 +198,11 @@ export class Provider implements ModelProvider {
         ?.flatMap((x: any) => x.content || [])
         .find((x: any) => x.type === "output_text")?.text;
       assert(text, "Model did not return a structured response");
-      value = s.provider === "custom" ? customJson(text) : JSON.parse(text);
+      try {
+        value = s.provider === "custom" ? customJson(text) : JSON.parse(text);
+      } catch (error) {
+        throwJsonError(error, s.provider);
+      }
       tokens = data.usage?.total_tokens || 0;
     }
     return { value: withoutNullOptionals(value), tokens };
@@ -211,6 +217,16 @@ function customJson(text: string): unknown {
       "Custom model did not return valid JSON. Choose a model that supports structured output.",
     );
   }
+}
+// JSON decoder messages can include response contents. Only decoding failures
+// get recovery guidance; transport failures and cancellation keep their identity.
+function throwJsonError(error: unknown, provider: string): never {
+  if (error instanceof SyntaxError)
+    throw new AppError(
+      502,
+      `${provider} returned invalid structured JSON. Retry the request or choose a more capable model.`,
+    );
+  throw error;
 }
 // Accepts a single response object or newline-delimited streamed parts.
 function ollamaResult(text: string) {

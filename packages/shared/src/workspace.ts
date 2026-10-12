@@ -183,6 +183,18 @@ export function describeActivity(r: Describable): ActivityItem {
             : `Prepared ${p}`,
       };
     }
+    case "cleanup":
+      return {
+        ...base,
+        ref,
+        kind: "job",
+        label: "Storage",
+        title: active
+          ? "Removing old workspace builds"
+          : d.status === "failed"
+            ? "Couldn’t remove old workspace builds"
+            : "Removed old workspace builds",
+      };
     default:
       return { ...base, ref, kind: "job", label: "Job", title: r.name };
   }

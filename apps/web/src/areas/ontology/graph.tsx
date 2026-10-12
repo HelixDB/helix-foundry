@@ -641,14 +641,14 @@ export function ObjectGraph({
                 setSelected(null);
               }}
             >
-              Show all records
+              Show the best-connected records
             </button>
           </>
         ) : data!.nodes.length < data!.total ? (
           <>
-            The {number(data!.nodes.length)} best-connected of{" "}
-            {number(data!.total)} records. Double-click a record to see
-            everything around it.
+            {number(data!.nodes.length)} of {number(data!.total)} records: the
+            best-connected and the records around them. Double-click a record to
+            see everything around it.
           </>
         ) : (
           <>

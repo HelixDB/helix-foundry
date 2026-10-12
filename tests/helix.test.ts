@@ -57,3 +57,86 @@ it("returns each in-memory neighbor once, as HelixDB does", async () => {
   });
   expect(await store.neighbors("test", "a")).toEqual(["b"]);
 });
+it.skipIf(process.env.TEST_HELIX !== "1")(
+  "stages, reads within bounds and removes a generation in real HelixDB",
+  async () => {
+    const store = new HelixStore();
+    await store.init();
+    const scope = "test-" + randomUUID(),
+      generation = randomUUID(),
+      other = randomUUID();
+    const object = (g: string, i: number) =>
+      resource(
+        scope,
+        "object",
+        "Record " + i,
+        { generation: g, logicalId: String(i).padStart(32, "0"), key: i },
+        `${g}_${String(i).padStart(32, "0")}`,
+      );
+    const objects = Array.from({ length: 30 }, (_, i) => object(generation, i));
+    const handles = await store.stageObjects(scope, objects, false);
+    expect(handles.size).toBe(30);
+    // Resuming skips what is there and returns the same handles.
+    const again = await store.stageObjects(scope, objects.slice(0, 5), true);
+    expect(again.get(objects[0].id)).toBe(handles.get(objects[0].id));
+    // A star: record 0 links to every other record.
+    const relations = objects.slice(1).map((o, i) => ({
+      relation: resource(
+        scope,
+        "relation",
+        "Links",
+        { from: objects[0].id, to: o.id, generation },
+        `${generation}_r${String(i).padStart(32, "0")}`,
+      ),
+      from: handles.get(objects[0].id)!,
+      to: handles.get(o.id)!,
+    }));
+    expect(await store.stageRelations(scope, relations, false)).toBe(29);
+    expect(await store.stageRelations(scope, relations, true)).toBe(0);
+    const hood = await store.neighborhood(scope, [objects[0].id], 1, 10);
+    expect(hood.nodes).toHaveLength(10);
+    expect(hood.truncated).toBe(true);
+    expect(hood.edges.length).toBeGreaterThanOrEqual(9);
+    expect(
+      hood.edges.every((e) => e.from === objects[0].id && e.name === "Links"),
+    ).toBe(true);
+    const counts = await store.linkCounts(scope, [
+      objects[0].id,
+      objects[1].id,
+    ]);
+    expect([...counts.values()]).toEqual([29, 1]);
+    expect(
+      await store.relationsBetween(
+        scope,
+        objects[0].id,
+        objects[2].id,
+        "Links",
+      ),
+    ).toEqual([relations[1].relation.id]);
+    const page = await store.page(scope, generation + "_r", 10, 5);
+    expect(page.total).toBe(29);
+    expect(page.items.map((r: any) => r.id)).toEqual(
+      relations.slice(10, 15).map((r) => r.relation.id),
+    );
+    expect(
+      (await store.getMany(scope, [objects[3].id, "missing"])).map(
+        (r) => r?.id,
+      ),
+    ).toEqual([objects[3].id, undefined]);
+    // A second generation, then the first is removed in bounded batches.
+    await store.stageObjects(scope, [object(other, 1)], false);
+    expect((await store.generations(scope)).sort()).toEqual(
+      [generation, other].sort(),
+    );
+    let removed = 0,
+      n: number;
+    while ((n = await store.dropGeneration(scope, generation, 7))) {
+      expect(n).toBeLessThanOrEqual(7);
+      removed += n;
+    }
+    expect(removed).toBe(59);
+    expect(await store.generations(scope)).toEqual([other]);
+    expect(await store.get(scope, objects[0].id)).toBeUndefined();
+    while (await store.dropGeneration(scope, other, 100));
+  },
+);

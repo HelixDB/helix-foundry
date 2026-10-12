@@ -140,7 +140,7 @@ pnpm install
 ./scripts/setup.sh
 docker run -d --name helix-foundry-dev -p 127.0.0.1:6996:8080 \
   -e HELIX_DATA_DIR=/var/lib/helix -v helix-foundry-dev:/var/lib/helix \
-  ghcr.io/helixdb/helixdb:v0.0.6@sha256:94b29942658ebdca0a91bf15edffe921a46da3e26e1223ea333ccce58c6212dd
+  ghcr.io/helixdb/helixdb:v0.0.12@sha256:f22b50fdab8fadbf8b5a881e656f293fdf5c688bad018f503b8dbc2f0f29543d
 pnpm dev
 ```
 

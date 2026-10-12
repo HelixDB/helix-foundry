@@ -5,7 +5,11 @@ import {
   oomKills,
   oomWatcher,
 } from "../apps/api/src/memory.js";
-import { HelixStore, databaseOutOfMemory } from "../apps/api/src/store.js";
+import {
+  DatabaseError,
+  databaseError,
+  databaseOutOfMemory,
+} from "../apps/api/src/store.js";
 
 const vmstat = (kills: number) =>
   `pgfault 123\noom_kill ${kills}\nnr_free_pages 4\n`;
@@ -59,24 +63,43 @@ it("reports a recent out-of-memory kill until the window passes", () => {
   expect(unreadable()).toBe(false);
 });
 
-it("explains an unreachable database after Docker ran out of memory", async () => {
-  const network = Object.assign(new Error("fetch failed"), {
-    kind: "Network",
+it("explains an unreachable database after Docker ran out of memory", () => {
+  const network = Object.assign(new TypeError("fetch failed"), {
+    cause: { code: "ECONNREFUSED" },
   });
-  const fail = (e: Error) => () => Promise.reject(e);
-  await expect(
-    new HelixStore(() => true).send(fail(network)),
-  ).rejects.toMatchObject({
+  expect(databaseError(network, "read", 5, () => true)).toMatchObject({
     statusCode: 503,
     message: databaseOutOfMemory,
+    code: "oom",
+    transient: true,
     cause: network,
   });
-  await expect(new HelixStore(() => false).send(fail(network))).rejects.toBe(
-    network,
-  );
   const remote = Object.assign(new Error("conflict"), { kind: "Remote" });
-  await expect(new HelixStore(() => true).send(fail(remote))).rejects.toBe(
-    remote,
-  );
-  expect(await new HelixStore(() => true).send(async () => 1)).toBe(1);
+  expect(databaseError(remote, "write", 5, () => true)).toBe(remote);
+});
+
+it("names why HelixDB could not answer, and keeps the cause", () => {
+  const failed = (code: string) =>
+    databaseError(
+      Object.assign(new TypeError("fetch failed"), { cause: { code } }),
+      "write",
+      5,
+      () => false,
+    ) as DatabaseError;
+  expect(failed("ECONNREFUSED")).toMatchObject({
+    code: "ECONNREFUSED",
+    transient: true,
+    message: expect.stringMatching(/not accepting connections/),
+  });
+  expect(failed("UND_ERR_SOCKET").message).toMatch(/dropped during a write/);
+  expect(failed("ENOTFOUND").message).toMatch(/Cannot reach HelixDB/);
+  expect(failed("ENOTFOUND").message).not.toMatch(/helix start/);
+  const timeout = databaseError(
+    Object.assign(new Error("aborted"), { name: "TimeoutError" }),
+    "read",
+    120_000,
+    () => false,
+  ) as DatabaseError;
+  expect(timeout).toMatchObject({ code: "timeout", transient: true });
+  expect(timeout.message).toMatch(/within 120 seconds/);
 });

@@ -7,8 +7,7 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 import { platform } from "node:os";
 import { resolve, extname } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { CronExpressionParser } from "cron-parser";
-import { sourceSyncDefaults } from "./source-sync.js";
+import { sourceSyncDefaults, validateRefreshSchedule } from "./source-sync.js";
 import { resolveHostedConfig } from "./hosting.js";
 import {
   OnboardingProviderSchema,
@@ -136,7 +135,7 @@ export function registerOnboarding(
     const a = await access(req, "owner"),
       body = OnboardingImportSchema.parse(req.body);
     assert(body.kind !== "upload", "Use the upload endpoint");
-    if (body.schedule) CronExpressionParser.parse(body.schedule, { tz: "UTC" });
+    validateRefreshSchedule(body.schedule);
     const opId = "connection_" + digest(body.operationId),
       fingerprint = digest(JSON.stringify(body));
     const prior = await store.get(a.scope, opId);
@@ -238,7 +237,7 @@ export function registerOnboarding(
     const old = await store.get(a.scope, req.params.id);
     assert(old?.kind === "source", "Source not found", 404);
     assert(old.data.kind === body.kind, "Keep the existing connector type");
-    if (body.schedule) CronExpressionParser.parse(body.schedule, { tz: "UTC" });
+    validateRefreshSchedule(body.schedule);
     const resolved = await resolveHostedConfig(
       store,
       a.scope,
