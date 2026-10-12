@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Resource } from "../../../packages/shared/src/index.js";
+import type { Bundle, Resource } from "../../../packages/shared/src/index.js";
 import { currentBundle } from "./assistant.js";
 import { execute } from "./executor.js";
 import { digest } from "./security.js";
@@ -206,35 +206,14 @@ export async function listRecords(
           ]
         : []),
     ];
-    // Links per record, counted from the relationships' joins as publication
-    // linked them, for sorting by links.
-    const links: { alias: string; join: string }[] = [];
-    if (query.sort === "links")
-      bundle.relationships.forEach((rel, i) => {
-        const from = all.find((x) => x.name === rel.fromType),
-          to = all.find((x) => x.name === rel.toType),
-          a = from && tableOf.get(from.name),
-          b = to && tableOf.get(to.name);
-        if (!from || !to || !a || !b) return;
-        const join = `FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)}`;
-        if (from.name === t.name)
-          links.push({
-            alias: "o" + i,
-            join: `LEFT JOIN (SELECT a.${q(from.data.primaryKey)} AS k, count(DISTINCT b.${q(to.data.primaryKey)}) AS n ${join} GROUP BY 1) o${i} ON o${i}.k = ${key}`,
-          });
-        if (to.name === t.name)
-          links.push({
-            alias: "i" + i,
-            join: `LEFT JOIN (SELECT b.${q(to.data.primaryKey)} AS k, count(DISTINCT a.${q(from.data.primaryKey)}) AS n ${join} GROUP BY 1) i${i} ON i${i}.k = ${key}`,
-          });
-      });
-    const linkSum = links.length
-      ? links.map((l) => `COALESCE(${l.alias}.n, 0)`).join(" + ")
-      : "0";
+    const { joins, linkSum } =
+      query.sort === "links"
+        ? linkCounting(bundle, all, tableOf, t, key)
+        : { joins: "", linkSum: "0" };
     const sortValue =
       field && columns.includes(query.sort!) ? `t.${q(query.sort!)}` : "NULL";
     return [
-      `SELECT ${lit(t.name)} AS __type, ${types.length > 1 ? `CAST(${key} AS VARCHAR)` : key} AS __key, ${labelSql(columns, t.name, key)} AS __label, TRY_CAST(${sortValue} AS DOUBLE) AS __num, ${text(sortValue)} AS __text, ${linkSum} AS __links FROM ${q(table)} t ${links.map((l) => l.join).join(" ")}${where.length ? " WHERE " + where.join(" AND ") : ""}`,
+      `SELECT ${lit(t.name)} AS __type, ${types.length > 1 ? `CAST(${key} AS VARCHAR)` : key} AS __key, ${labelSql(columns, t.name, key)} AS __label, TRY_CAST(${sortValue} AS DOUBLE) AS __num, ${text(sortValue)} AS __text, ${linkSum} AS __links FROM ${q(table)} t ${joins}${where.length ? " WHERE " + where.join(" AND ") : ""}`,
     ];
   });
   const offset = Math.max(0, query.offset),
@@ -324,50 +303,70 @@ export async function listRecords(
 
 export type SnapshotLink = { from: string; to: string; name: string };
 
-// The records linked to each seed, found in the snapshot by the published
-// relationships' joins rather than by walking the seed's links in HelixDB,
-// which takes a second for a record with tens of thousands of links whatever
-// the limit. Seeds share `room` records in proportion to their links. Links
-// are those publication made: a pair with a relation edit is left out, and an
-// edit that adds a link to a seed is included. A seed the snapshot does not
-// find is returned in `unmatched`, for the caller to walk in HelixDB.
-// `degrees` holds the links of each record found, counted the same way,
-// except for records with relation edits.
-export async function snapshotNeighbours(
+// The best-connected records and the records linked to them, in one query
+// over the snapshot: the `seeds` records with the most links, as the record
+// list sorts them, and up to `room` records around them, shared in proportion
+// to their links. Walking a record's links in HelixDB takes a second for one
+// with tens of thousands, whatever the limit, and each executor query starts
+// its own process, so the whole graph is one query. Links are those
+// publication made: a pair with a relation edit is left out, and an edit that
+// adds a link to a seed is included. `links` counts each seed's and
+// neighbour's links the same way, except for records with relation edits,
+// which the caller counts in HelixDB.
+export async function snapshotGraph(
   store: Store,
   scope: string,
-  seeds: { record: Resource; links: number }[],
-  room: number,
+  size: { seeds: number; room: number },
 ): Promise<{
+  seeds: string[];
   ids: string[];
   links: SnapshotLink[];
-  degrees: Map<string, number>;
+  counts: Map<string, number>;
   truncated: boolean;
-  unmatched: string[];
 }> {
+  const empty = {
+    seeds: [],
+    ids: [],
+    links: [],
+    counts: new Map<string, number>(),
+    truncated: false,
+  };
   const generation = (await store.get(scope, "workspace"))?.data
     .activeGeneration;
-  const linked = seeds.filter((s) => s.links > 0);
-  if (!generation || !linked.length)
-    return {
-      ids: [],
-      links: [],
-      degrees: new Map(),
-      truncated: false,
-      unmatched: [],
-    };
+  if (!generation) return empty;
   const all = (await store.list(scope, "objectType")).filter(
     (t) => t.data.generation === generation,
   );
   const byName = new Map(all.map((t) => [t.name, t])),
     bundle = await currentBundle(store, scope),
     { inputs, tableOf } = await snapshotInputs(store, scope, all);
-  const logicalId = (type: string, key: string) =>
-    digest(byName.get(type)?.data.typeId + ":" + key).slice(0, 32);
-  const total = linked.reduce((n, s) => n + s.links, 0);
-  const share = (s: { links: number }) =>
-    Math.min(s.links, Math.max(1, Math.floor((room * s.links) / total)));
-  const selects: string[] = [],
+  const datasets = new Map(
+    (
+      await store.getMany(
+        scope,
+        all.map((t) => t.data.datasetId),
+      )
+    )
+      .filter((d): d is Resource => !!d)
+      .map((d) => [d.id, d]),
+  );
+  // Every record with its label and links, as the record list ranks them.
+  const records = all.flatMap((t) => {
+    const table = tableOf.get(t.name),
+      columns: string[] = (
+        datasets.get(t.data.datasetId)?.data.profile?.columns || []
+      ).map((c: any) => c.name),
+      key = "t." + q(t.data.primaryKey);
+    if (!table || !columns.includes(t.data.primaryKey)) return [];
+    const { joins, linkSum } = linkCounting(bundle, all, tableOf, t, key);
+    return [
+      `SELECT ${lit(t.name)} AS __type, CAST(${key} AS VARCHAR) AS __key, ${labelSql(columns, t.name, key)} AS __label, ${linkSum} AS __links FROM ${q(table)} t ${joins}`,
+    ];
+  });
+  if (!records.length) return empty;
+  // For each relationship, the records at the other end from a seed, and
+  // the links of those records, counted as above.
+  const pairs: string[] = [],
     counts: string[] = [];
   for (const rel of bundle.relationships) {
     const from = byName.get(rel.fromType),
@@ -376,71 +375,67 @@ export async function snapshotNeighbours(
       b = to && tableOf.get(to.name);
     if (!from || !to || !a || !b) continue;
     const fromKey = `CAST(a.${q(from.data.primaryKey)} AS VARCHAR)`,
-      toKey = `CAST(b.${q(to.data.primaryKey)} AS VARCHAR)`;
-    // A seed at either end: its own key, the other end's type and key.
+      toKey = `CAST(b.${q(to.data.primaryKey)} AS VARCHAR)`,
+      join = `FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)}`;
     for (const [seedType, seedKey, otherType, otherKey, outgoing] of [
       [from, fromKey, to, toKey, true],
       [to, toKey, from, fromKey, false],
     ] as const) {
-      const keys = linked
-        .filter((s) => s.record.data.type === seedType.name)
-        .map((s) => lit(String(s.record.data.key)));
-      if (keys.length)
-        selects.push(
-          `SELECT DISTINCT ${lit(seedType.name)} AS seed_type, ${seedKey} AS seed_key, ${lit(otherType.name)} AS other_type, ${otherKey} AS other_key, ${lit(rel.name)} AS name, ${outgoing} AS outgoing FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)} WHERE ${seedKey} IN (${keys.join(", ")})`,
-        );
-      // The links of the records found, counted as the record list counts
-      // them, so they need no count in HelixDB either.
+      pairs.push(
+        `SELECT DISTINCT ${lit(seedType.name)} AS seed_type, ${seedKey} AS seed_key, ${lit(otherType.name)} AS other_type, ${otherKey} AS other_key, ${lit(rel.name)} AS name, ${outgoing} AS outgoing ${join} WHERE ${seedKey} IN (SELECT seed_key FROM seeds WHERE seed_type = ${lit(seedType.name)})`,
+      );
       counts.push(
-        `SELECT ${lit(seedType.name)} AS type, ${seedKey} AS key, count(DISTINCT ${otherKey}) AS c FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)} WHERE ${seedKey} IN (SELECT other_key FROM near WHERE other_type = ${lit(seedType.name)}) GROUP BY 1, 2`,
+        `SELECT ${lit(seedType.name)} AS type, ${seedKey} AS key, count(DISTINCT ${otherKey}) AS c ${join} WHERE ${seedKey} IN (SELECT other_key FROM near WHERE other_type = ${lit(seedType.name)}) GROUP BY 1, 2`,
       );
     }
   }
-  if (!selects.length)
-    return {
-      ids: [],
-      links: [],
-      degrees: new Map(),
-      truncated: false,
-      unmatched: linked.map((s) => s.record.id),
-    };
-  const shares = linked
-    .map(
-      (s) =>
-        `(${lit(s.record.data.type)}, ${lit(String(s.record.data.key))}, ${share(s)})`,
-    )
-    .join(", ");
+  const none = (columns: string) => `SELECT ${columns} WHERE false`;
+  const ctes = [
+    `records AS (${records.join(" UNION ALL ")})`,
+    `seeds AS (SELECT __type AS seed_type, __key AS seed_key, __label AS label, __links AS links FROM records ORDER BY __links DESC, lower(__label), __type, __key LIMIT ${size.seeds})`,
+    `shares AS (SELECT *, least(links, greatest(1, floor(${size.room} * links / greatest(1, sum(links) OVER ())))) AS n FROM seeds)`,
+    `pairs AS (${pairs.length ? pairs.join(" UNION ALL ") : none("NULL::VARCHAR AS seed_type, NULL::VARCHAR AS seed_key, NULL::VARCHAR AS other_type, NULL::VARCHAR AS other_key, NULL::VARCHAR AS name, NULL::BOOLEAN AS outgoing")})`,
+    `ranked AS (SELECT p.*, s.n, row_number() OVER (PARTITION BY p.seed_type, p.seed_key ORDER BY p.other_type, p.other_key, p.name) AS rank FROM pairs p JOIN shares s USING (seed_type, seed_key))`,
+    `near AS (SELECT * FROM ranked WHERE rank <= n)`,
+    `degrees AS (SELECT type, key, sum(c) AS links FROM (${counts.length ? counts.join(" UNION ALL ") : none("NULL::VARCHAR AS type, NULL::VARCHAR AS key, 0 AS c")}) GROUP BY type, key)`,
+    `found AS (SELECT r.seed_type, r.seed_key, count(*) AS found, list({other_type: r.other_type, other_key: r.other_key, name: r.name, outgoing: r.outgoing, links: coalesce(d.links, 0)} ORDER BY r.rank) FILTER (WHERE r.rank <= r.n) AS partners FROM ranked r LEFT JOIN degrees d ON d.type = r.other_type AND d.key = r.other_key GROUP BY r.seed_type, r.seed_key)`,
+  ];
   // One row per seed, so the result stays within the executor's row limit.
+  const sql = `WITH ${ctes.join(", ")} SELECT s.seed_type, s.seed_key, s.links, s.n, coalesce(f.found, 0) AS found, f.partners FROM shares s LEFT JOIN found f USING (seed_type, seed_key) ORDER BY s.links DESC, lower(s.label), s.seed_type, s.seed_key`;
   const result = await execute({
     mode: "query",
     scope,
     inputs,
     version: randomUUID(),
-    sql: `WITH ranked AS (SELECT p.*, s.n, row_number() OVER (PARTITION BY p.seed_type, p.seed_key ORDER BY p.other_type, p.other_key, p.name) AS rank FROM (${selects.join(" UNION ALL ")}) p JOIN (VALUES ${shares}) s(seed_type, seed_key, n) USING (seed_type, seed_key)), near AS (SELECT * FROM ranked WHERE rank <= n), degrees AS (SELECT type, key, sum(c) AS links FROM (${counts.join(" UNION ALL ")}) GROUP BY type, key) SELECT r.seed_type, r.seed_key, count(*) AS found, list({other_type: r.other_type, other_key: r.other_key, name: r.name, outgoing: r.outgoing, links: coalesce(d.links, 0)} ORDER BY r.rank) FILTER (WHERE r.rank <= r.n) AS partners FROM ranked r LEFT JOIN degrees d ON d.type = r.other_type AND d.key = r.other_key GROUP BY r.seed_type, r.seed_key`,
-    limit: linked.length,
+    sql,
+    limit: size.seeds,
   });
+  const logicalId = (type: string, key: string) =>
+    digest(byName.get(type)?.data.typeId + ":" + key).slice(0, 32);
   const edits = await store.list(scope, "relationEdit"),
     edited = new Set(
       edits.map((e) =>
         [e.data.fromLogicalId, e.data.toLogicalId, e.name].join(":"),
       ),
     );
-  const ids: string[] = [],
+  const seeds: string[] = [],
+    ids: string[] = [],
     links: SnapshotLink[] = [],
-    degrees = new Map<string, number>(),
-    found = new Set<string>();
+    linkCounts = new Map<string, number>();
   let truncated = false;
   for (const row of result.rows) {
     const seed = logicalId(row.seed_type, String(row.seed_key));
-    found.add(generation + "_" + seed);
-    const near: any[] = row.partners || [];
-    if (Number(row.found) > near.length) truncated = true;
-    for (const n of near) {
+    seeds.push(generation + "_" + seed);
+    linkCounts.set(generation + "_" + seed, Number(row.links) || 0);
+    const partners: any[] = row.partners || [];
+    if (Number(row.found) > partners.length) truncated = true;
+    for (const n of partners) {
       const other = logicalId(n.other_type, String(n.other_key)),
         [from, to] = n.outgoing ? [seed, other] : [other, seed];
       if (edited.has([from, to, n.name].join(":"))) continue;
       ids.push(generation + "_" + other);
-      degrees.set(generation + "_" + other, Number(n.links) || 0);
+      if (!linkCounts.has(generation + "_" + other))
+        linkCounts.set(generation + "_" + other, Number(n.links) || 0);
       links.push({
         from: generation + "_" + from,
         to: generation + "_" + to,
@@ -448,8 +443,8 @@ export async function snapshotNeighbours(
       });
     }
   }
-  const seedIds = new Set(linked.map((s) => s.record.data.logicalId));
-  for (const e of edits)
+  const seedIds = new Set(seeds.map((id) => id.slice(generation.length + 1)));
+  for (const e of edits) {
     if (
       e.data.enabled &&
       (seedIds.has(e.data.fromLogicalId) || seedIds.has(e.data.toLogicalId))
@@ -464,16 +459,15 @@ export async function snapshotNeighbours(
         name: e.name,
       });
     }
-  for (const e of edits) {
-    degrees.delete(generation + "_" + e.data.fromLogicalId);
-    degrees.delete(generation + "_" + e.data.toLogicalId);
+    linkCounts.delete(generation + "_" + e.data.fromLogicalId);
+    linkCounts.delete(generation + "_" + e.data.toLogicalId);
   }
   return {
-    ids: [...new Set(ids)],
+    seeds,
+    ids: [...new Set(ids)].filter((id) => !seeds.includes(id)),
     links,
-    degrees,
-    truncated: truncated || linked.some((s) => s.links > share(s)),
-    unmatched: linked.map((s) => s.record.id).filter((id) => !found.has(id)),
+    counts: linkCounts,
+    truncated,
   };
 }
 
@@ -488,6 +482,43 @@ async function relationEditedIds(
     generation + "_" + e.data.fromLogicalId,
     generation + "_" + e.data.toLogicalId,
   ]);
+}
+
+// Links per record of type `t`, counted from the published relationships'
+// joins as publication linked them: joins to add to a SELECT over the type's
+// snapshot (aliased t, keyed by `key`), and the sum of their counts.
+function linkCounting(
+  bundle: Bundle,
+  all: Resource[],
+  tableOf: Map<string, string>,
+  t: Resource,
+  key: string,
+) {
+  const links: { alias: string; join: string }[] = [];
+  bundle.relationships.forEach((rel, i) => {
+    const from = all.find((x) => x.name === rel.fromType),
+      to = all.find((x) => x.name === rel.toType),
+      a = from && tableOf.get(from.name),
+      b = to && tableOf.get(to.name);
+    if (!from || !to || !a || !b) return;
+    const join = `FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)}`;
+    if (from.name === t.name)
+      links.push({
+        alias: "o" + i,
+        join: `LEFT JOIN (SELECT a.${q(from.data.primaryKey)} AS k, count(DISTINCT b.${q(to.data.primaryKey)}) AS n ${join} GROUP BY 1) o${i} ON o${i}.k = ${key}`,
+      });
+    if (to.name === t.name)
+      links.push({
+        alias: "i" + i,
+        join: `LEFT JOIN (SELECT b.${q(to.data.primaryKey)} AS k, count(DISTINCT a.${q(from.data.primaryKey)}) AS n ${join} GROUP BY 1) i${i} ON i${i}.k = ${key}`,
+      });
+  });
+  return {
+    joins: links.map((l) => l.join).join(" "),
+    linkSum: links.length
+      ? links.map((l) => `COALESCE(${l.alias}.n, 0)`).join(" + ")
+      : "0",
+  };
 }
 
 // Each published type's snapshot, named for one executor job: the version its

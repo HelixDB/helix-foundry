@@ -31,7 +31,7 @@ import {
 import { runCleanupJob } from "../apps/api/src/cleanup.js";
 import {
   listRecords,
-  snapshotNeighbours,
+  snapshotGraph,
   type RecordQuery,
 } from "../apps/api/src/records.js";
 import { ingestFile } from "../apps/api/src/datasets.js";
@@ -546,7 +546,7 @@ it("lists records from the snapshot a page at a time, with workspace edits first
     list.mockRestore();
   }
 });
-it("finds the best-connected records' neighbours in the snapshot, linked as publication linked them", async () => {
+it("finds the best-connected records and their neighbours in one snapshot query, linked as publication linked them", async () => {
   const { scope, draft } = await workspace();
   await (
     await draft()
@@ -559,7 +559,6 @@ it("finds the best-connected records' neighbours in the snapshot, linked as publ
       limit: 3,
     })
   ).items;
-  const seeds = best.map((record) => ({ record, links: record.data.links }));
   const walked = await store.neighborhood(
     scope,
     best.map((o) => o.id),
@@ -569,23 +568,26 @@ it("finds the best-connected records' neighbours in the snapshot, linked as publ
   const key = (e: { from: string; to: string; name: string }) =>
     [e.from, e.to, e.name].join(":");
   const real = new Set(walked.edges.map(key));
-  // Three customers placed by three orders each share six places.
-  const near = await snapshotNeighbours(store, scope, seeds, 6);
-  expect(near.unmatched).toEqual([]);
+  // Three customers placed by three orders each share six places, found by
+  // one query, ranked as the record list ranks them.
+  executor.mockClear();
+  const near = await snapshotGraph(store, scope, { seeds: 3, room: 6 });
+  expect(executor).toHaveBeenCalledTimes(1);
+  expect(near.seeds).toEqual(best.map((o) => o.id));
   expect(near.truncated).toBe(true);
   expect(near.links).toHaveLength(6);
   expect(near.links.every((e) => real.has(key(e)))).toBe(true);
   expect(new Set(near.ids)).toEqual(new Set(near.links.map((e) => e.from)));
-  // With room for all of them, they are every link HelixDB walks.
-  const all = await snapshotNeighbours(store, scope, seeds, 100);
+  // With room for all of them, they are every link HelixDB walks, and every
+  // record's links are counted as HelixDB counts them.
+  const all = await snapshotGraph(store, scope, { seeds: 3, room: 100 });
   expect(all.truncated).toBe(false);
   expect(new Set(all.links.map(key))).toEqual(real);
-  // Their links are counted with them, as HelixDB counts them.
-  expect(all.degrees).toEqual(
-    await store.linkCounts(scope, [...all.degrees.keys()]),
+  expect(all.counts).toEqual(
+    await store.linkCounts(scope, [...all.seeds, ...all.ids]),
   );
-  expect([...all.degrees.keys()].sort()).toEqual([...all.ids].sort());
-  // A pair with a relation edit is left out; an edit adding a link is in.
+  // A pair with a relation edit is left out; an edit adding a link is in,
+  // and records with an edit are left for HelixDB to count.
   const generation = best[0].id.slice(0, best[0].id.indexOf("_") + 1),
     logical = (id: string) => id.slice(generation.length),
     [dropped] = all.links,
@@ -618,7 +620,7 @@ it("finds the best-connected records' neighbours in the snapshot, linked as publ
       ),
     );
   });
-  const edited = await snapshotNeighbours(store, scope, seeds, 100);
+  const edited = await snapshotGraph(store, scope, { seeds: 3, room: 100 });
   expect(edited.links.map(key)).not.toContain(key(dropped));
   expect(edited.links).toContainEqual({
     from: other.from,
@@ -626,7 +628,6 @@ it("finds the best-connected records' neighbours in the snapshot, linked as publ
     name: "Placed by",
   });
   expect(edited.ids).toContain(other.from);
-  // Records with an edit are left for HelixDB to count.
-  expect(edited.degrees.has(other.from)).toBe(false);
-  expect(edited.degrees.has(dropped.from)).toBe(false);
+  for (const id of [other.from, dropped.from, dropped.to])
+    expect(edited.counts.has(id)).toBe(false);
 });

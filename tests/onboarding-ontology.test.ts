@@ -610,8 +610,15 @@ it("serves the published records as a graph, whole or around one record", async 
   // whole workspace at once.
   const list = vi.spyOn(store, "list"),
     linkCounts = vi.spyOn(store, "linkCounts"),
-    walk = vi.spyOn(store, "neighborhood");
+    walk = vi.spyOn(store, "neighborhood"),
+    queries: unknown[] = [];
+  gate.onQuery = async (job) => {
+    queries.push(job);
+  };
   const all = (await request("GET", "/graph")).json();
+  gate.onQuery = undefined;
+  // One executor query finds the seeds, their neighbours and their links.
+  expect(queries).toHaveLength(1);
   expect(
     list.mock.calls.filter(([, kind]) =>
       ["object", "relation", undefined].includes(kind),

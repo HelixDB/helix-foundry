@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Resource } from "../../../../packages/shared/src/index.js";
-import { listRecords, recordLabel, snapshotNeighbours } from "../records.js";
+import { listRecords, recordLabel, snapshotGraph } from "../records.js";
 import { assert, digest } from "../security.js";
 import { resource, transaction, type Store } from "../store.js";
 import { effectiveObject } from "../context.js";
@@ -109,10 +109,9 @@ export function registerOntologyRoutes(
       .reduce((n, t) => n + (t.data.objectCount || 0), 0);
     if (!generation || !total)
       return { total: 0, nodes: [], edges: [], truncated: false };
-    let seeds: string[];
-    // Links already counted for the seeds, which are the best-connected.
-    let counted = new Map<string, number>(),
-      best: Resource[] = [];
+    let hood: Awaited<ReturnType<Store["neighborhood"]>> & {
+      counts?: Map<string, number>;
+    };
     if (q.focus) {
       const start = await store.get(a.scope, `${generation}_${q.focus}`);
       assert(
@@ -120,32 +119,10 @@ export function registerOntologyRoutes(
         "Record unavailable",
         404,
       );
-      seeds = [start.id];
-    } else {
-      best = (
-        await listRecords(store, a.scope, {
-          sort: "links",
-          dir: "desc",
-          offset: 0,
-          limit: Math.min(20, q.limit),
-        })
-      ).items;
-      seeds = best.map((o) => o.id);
-      counted = new Map(best.map((o) => [o.id, o.data.links as number]));
-    }
-    const hood: Awaited<ReturnType<Store["neighborhood"]>> & {
-      degrees?: Map<string, number>;
-    } = q.focus
-      ? await store.neighborhood(a.scope, seeds, q.depth, q.limit)
-      : await bestConnectedNeighbourhood(
-          store,
-          a.scope,
-          best,
-          counted,
-          q.limit,
-        );
-    // The neighbours' links were counted with them, where they could be.
-    for (const [id, n] of hood.degrees ?? []) counted.set(id, n);
+      hood = await store.neighborhood(a.scope, [start.id], q.depth, q.limit);
+    } else hood = await bestConnectedNeighbourhood(store, a.scope, q.limit);
+    // Links already counted in the snapshot, where they could be.
+    const counted = hood.counts ?? new Map<string, number>();
     const nodes = hood.nodes.filter(
         (o) => o.kind === "object" && o.data.generation === generation,
       ),
@@ -323,52 +300,52 @@ export function registerOntologyRoutes(
   });
 }
 
-// The best-connected records and those linked to them. Their neighbours come
-// from the snapshot, since walking the links of a record with tens of
+// The best-connected records and those linked to them, found and counted in
+// one snapshot query, since walking the links of a record with tens of
 // thousands of them takes HelixDB a second; records are then read by id. A
-// seed the snapshot cannot place, or a failed query, falls back to the walk.
+// failed query falls back to the record list and the walk.
 async function bestConnectedNeighbourhood(
   store: Store,
   scope: string,
-  best: Resource[],
-  counted: Map<string, number>,
   limit: number,
 ) {
-  const seeds = best.map((o) => o.id);
-  let near: Awaited<ReturnType<typeof snapshotNeighbours>>;
+  const seeds = Math.min(20, limit);
   try {
-    near = await snapshotNeighbours(
-      store,
+    const graph = await snapshotGraph(store, scope, {
+      seeds,
+      room: limit - seeds,
+    });
+    const nodes = new Map<string, Resource>();
+    for (const o of await store.getMany(
       scope,
-      best.map((record) => ({ record, links: counted.get(record.id) || 0 })),
-      limit - best.length,
-    );
-  } catch (e) {
-    console.error(
-      "Graph: snapshot neighbours:",
-      e instanceof Error ? e.message : e,
-    );
+      [...graph.seeds, ...graph.ids].slice(0, limit),
+    ))
+      if (o) nodes.set(o.id, o);
     return {
-      ...(await store.neighborhood(scope, seeds, 1, limit)),
-      degrees: new Map<string, number>(),
+      nodes: [...nodes.values()],
+      edges: graph.links.filter((e) => nodes.has(e.from) && nodes.has(e.to)),
+      truncated:
+        graph.truncated || graph.seeds.length + graph.ids.length > limit,
+      counts: graph.counts,
+    };
+  } catch (e) {
+    console.error("Graph: snapshot query:", e instanceof Error ? e.message : e);
+    const best = (
+      await listRecords(store, scope, {
+        sort: "links",
+        dir: "desc",
+        offset: 0,
+        limit: seeds,
+      })
+    ).items;
+    return {
+      ...(await store.neighborhood(
+        scope,
+        best.map((o) => o.id),
+        1,
+        limit,
+      )),
+      counts: new Map(best.map((o) => [o.id, o.data.links as number])),
     };
   }
-  const walked = near.unmatched.length
-    ? await store.neighborhood(scope, near.unmatched, 1, limit)
-    : { nodes: [], edges: [], truncated: false };
-  const ids = [...new Set([...seeds, ...near.ids])].slice(0, limit),
-    nodes = new Map<string, Resource>();
-  for (const o of [...(await store.getMany(scope, ids)), ...walked.nodes])
-    if (o && nodes.size < limit) nodes.set(o.id, o);
-  return {
-    nodes: [...nodes.values()],
-    edges: [...near.links, ...walked.edges].filter(
-      (e) => nodes.has(e.from) && nodes.has(e.to),
-    ),
-    truncated:
-      near.truncated ||
-      walked.truncated ||
-      seeds.length + near.ids.length > limit,
-    degrees: near.degrees,
-  };
 }
