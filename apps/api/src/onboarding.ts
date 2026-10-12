@@ -198,7 +198,7 @@ export function registerOnboarding(
               connectionName: body.name,
               secret: seal({ ...resolved.config, ...s }),
               hostedProvider: resolved.provider,
-              discovery,
+              discovery: selectionDiscovery(discovery, s, body.config.schema),
               ...sourceSyncDefaults(body.kind, body.schedule),
             },
           ),
@@ -631,6 +631,29 @@ async function setupRun(
       ),
     )
   );
+}
+
+// Discovery describes the whole database, and a connection writes all its
+// sources in one HelixDB request, which has a size limit. Each source keeps
+// only its own table and columns. Keys and foreign keys stay whole, because
+// relationship suggestions read them across sources.
+function selectionDiscovery(
+  discovery: any,
+  s: { table?: string; schema?: string },
+  defaultSchema: unknown,
+) {
+  if (!s.table || !Array.isArray(discovery?.columns)) return discovery;
+  const schema = s.schema || (defaultSchema as string | undefined);
+  const mine = (schemaName: unknown, tableName: unknown) =>
+    tableName === s.table &&
+    (schema === undefined || schemaName === undefined || schemaName === schema);
+  return {
+    ...discovery,
+    tables: (discovery.tables || []).filter((t: any) => mine(t.schema, t.name)),
+    columns: discovery.columns.filter((c: any) =>
+      mine(c.schema, c.table_name ?? c.tableName),
+    ),
+  };
 }
 
 export async function testedConnection(

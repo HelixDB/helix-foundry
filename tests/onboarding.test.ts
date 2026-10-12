@@ -550,6 +550,69 @@ it("surfaces TLS/authentication failures without creating partial connections", 
   expect(r.statusCode).toBeGreaterThanOrEqual(400);
   expect(await store.list(scope, "source")).toHaveLength(0);
 });
+it("stores each imported table's own columns, so a wide database's selection fits one write", async () => {
+  // Discovery describes the whole database, far more than one table's share.
+  const tables = Array.from({ length: 120 }, (_, i) => ({
+    schema: "public",
+    name: `t${i}`,
+  }));
+  const columns = tables.flatMap((t) =>
+    Array.from({ length: 40 }, (_, c) => ({
+      schema: t.schema,
+      table_name: t.name,
+      name: `column_${c}`,
+      type: "character varying",
+      nullable: "YES",
+    })),
+  );
+  const foreignKeys = [
+    {
+      table_schema: "public",
+      table_name: "t1",
+      column_name: "column_0",
+      referenced_schema: "public",
+      referenced_table: "t0",
+      referenced_column: "column_0",
+    },
+  ];
+  vi.mocked(discover).mockResolvedValueOnce({
+    tables,
+    keys: [],
+    columns,
+    foreignKeys,
+    sample: [],
+  } as any);
+  // HelixDB refuses a request body over its limit.
+  const limit = 2_000_000,
+    commit = store.commit.bind(store);
+  vi.spyOn(store, "commit").mockImplementation(async (s, v, changes) => {
+    if (JSON.stringify(changes).length > limit)
+      throw new Error("failed to read request body: length limit exceeded");
+    return commit(s, v, changes);
+  });
+  const r = await request("POST", "/onboarding/sources", {
+    kind: "postgres",
+    name: "Warehouse",
+    config: { database: "warehouse" },
+    selections: tables
+      .slice(0, 100)
+      .map((t) => ({ schema: t.schema, table: t.name })),
+    operationId: "wide-database",
+  });
+  expect(r.statusCode, r.body).toBe(200);
+  const sources = await store.list(scope, "source");
+  expect(sources).toHaveLength(100);
+  for (const s of sources) {
+    expect(s.data.discovery.tables).toEqual([
+      { schema: "public", name: s.name },
+    ]);
+    expect(s.data.discovery.columns).toHaveLength(40);
+    expect(
+      s.data.discovery.columns.every((c: any) => c.table_name === s.name),
+    ).toBe(true);
+    expect(s.data.discovery.foreignKeys).toEqual(foreignKeys);
+  }
+});
 it("keeps S3 selections explicit and detects ingestion API arrivals without seeding data", async () => {
   expect((await onboardingState(store, scope)).datasets).toHaveLength(0);
   vi.mocked(discover).mockResolvedValueOnce({
