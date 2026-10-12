@@ -162,27 +162,7 @@ export async function listRecords(
   );
   // One SELECT per type, over the snapshot publication read.
   const bundle = await currentBundle(store, scope),
-    inputs: { table: string; version: string }[] = [],
-    tableOf = new Map<string, string>();
-  const versionOf = async (t: Resource) => {
-    if (t.data.sourceVersion) return t.data.sourceVersion as string;
-    // Published before types recorded it: the version the dataset had when
-    // publication began.
-    const ds = await store.get(scope, t.data.datasetId);
-    if (!ds) return undefined;
-    if (ds.data.generation) return ds.data.activeVersion as string;
-    const versions = (await store.getMany(scope, ds.data.versions || []))
-      .filter((v): v is Resource => !!v && v.createdAt <= t.createdAt)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return (versions[0]?.id ?? ds.data.activeVersion) as string;
-  };
-  for (const t of all) {
-    const version = await versionOf(t);
-    if (!version) continue;
-    const table = "t" + inputs.length;
-    inputs.push({ table, version });
-    tableOf.set(t.name, table);
-  }
+    { inputs, tableOf } = await snapshotInputs(store, scope, all);
   const datasets = new Map(
     (
       await store.getMany(
@@ -342,6 +322,138 @@ export async function listRecords(
   };
 }
 
+export type SnapshotLink = { from: string; to: string; name: string };
+
+// The records linked to each seed, found in the snapshot by the published
+// relationships' joins rather than by walking the seed's links in HelixDB,
+// which takes a second for a record with tens of thousands of links whatever
+// the limit. Seeds share `room` records in proportion to their links. Links
+// are those publication made: a pair with a relation edit is left out, and an
+// edit that adds a link to a seed is included. A seed the snapshot does not
+// find is returned in `unmatched`, for the caller to walk in HelixDB.
+export async function snapshotNeighbours(
+  store: Store,
+  scope: string,
+  seeds: { record: Resource; links: number }[],
+  room: number,
+): Promise<{
+  ids: string[];
+  links: SnapshotLink[];
+  truncated: boolean;
+  unmatched: string[];
+}> {
+  const generation = (await store.get(scope, "workspace"))?.data
+    .activeGeneration;
+  const linked = seeds.filter((s) => s.links > 0);
+  if (!generation || !linked.length)
+    return { ids: [], links: [], truncated: false, unmatched: [] };
+  const all = (await store.list(scope, "objectType")).filter(
+    (t) => t.data.generation === generation,
+  );
+  const byName = new Map(all.map((t) => [t.name, t])),
+    bundle = await currentBundle(store, scope),
+    { inputs, tableOf } = await snapshotInputs(store, scope, all);
+  const logicalId = (type: string, key: string) =>
+    digest(byName.get(type)?.data.typeId + ":" + key).slice(0, 32);
+  const total = linked.reduce((n, s) => n + s.links, 0);
+  const share = (s: { links: number }) =>
+    Math.min(s.links, Math.max(1, Math.floor((room * s.links) / total)));
+  const selects: string[] = [];
+  for (const rel of bundle.relationships) {
+    const from = byName.get(rel.fromType),
+      to = byName.get(rel.toType),
+      a = from && tableOf.get(from.name),
+      b = to && tableOf.get(to.name);
+    if (!from || !to || !a || !b) continue;
+    const fromKey = `CAST(a.${q(from.data.primaryKey)} AS VARCHAR)`,
+      toKey = `CAST(b.${q(to.data.primaryKey)} AS VARCHAR)`;
+    // A seed at either end: its own key, the other end's type and key.
+    for (const [seedType, seedKey, otherType, otherKey, outgoing] of [
+      [from, fromKey, to, toKey, true],
+      [to, toKey, from, fromKey, false],
+    ] as const) {
+      const keys = linked
+        .filter((s) => s.record.data.type === seedType.name)
+        .map((s) => lit(String(s.record.data.key)));
+      if (keys.length)
+        selects.push(
+          `SELECT DISTINCT ${lit(seedType.name)} AS seed_type, ${seedKey} AS seed_key, ${lit(otherType.name)} AS other_type, ${otherKey} AS other_key, ${lit(rel.name)} AS name, ${outgoing} AS outgoing FROM ${q(a)} a JOIN ${q(b)} b ON a.${q(rel.fromColumn)} = b.${q(rel.toColumn)} WHERE ${seedKey} IN (${keys.join(", ")})`,
+        );
+    }
+  }
+  if (!selects.length)
+    return {
+      ids: [],
+      links: [],
+      truncated: false,
+      unmatched: linked.map((s) => s.record.id),
+    };
+  const shares = linked
+    .map(
+      (s) =>
+        `(${lit(s.record.data.type)}, ${lit(String(s.record.data.key))}, ${share(s)})`,
+    )
+    .join(", ");
+  // One row per seed, so the result stays within the executor's row limit.
+  const result = await execute({
+    mode: "query",
+    scope,
+    inputs,
+    version: randomUUID(),
+    sql: `SELECT seed_type, seed_key, count(*) AS found, list({other_type: other_type, other_key: other_key, name: name, outgoing: outgoing} ORDER BY rank) FILTER (WHERE rank <= n) AS near FROM (SELECT p.*, s.n, row_number() OVER (PARTITION BY p.seed_type, p.seed_key ORDER BY p.other_type, p.other_key, p.name) AS rank FROM (${selects.join(" UNION ALL ")}) p JOIN (VALUES ${shares}) s(seed_type, seed_key, n) USING (seed_type, seed_key)) GROUP BY seed_type, seed_key`,
+    limit: linked.length,
+  });
+  const edits = await store.list(scope, "relationEdit"),
+    edited = new Set(
+      edits.map((e) =>
+        [e.data.fromLogicalId, e.data.toLogicalId, e.name].join(":"),
+      ),
+    );
+  const ids: string[] = [],
+    links: SnapshotLink[] = [],
+    found = new Set<string>();
+  let truncated = false;
+  for (const row of result.rows) {
+    const seed = logicalId(row.seed_type, String(row.seed_key));
+    found.add(generation + "_" + seed);
+    const near: any[] = row.near || [];
+    if (Number(row.found) > near.length) truncated = true;
+    for (const n of near) {
+      const other = logicalId(n.other_type, String(n.other_key)),
+        [from, to] = n.outgoing ? [seed, other] : [other, seed];
+      if (edited.has([from, to, n.name].join(":"))) continue;
+      ids.push(generation + "_" + other);
+      links.push({
+        from: generation + "_" + from,
+        to: generation + "_" + to,
+        name: n.name,
+      });
+    }
+  }
+  const seedIds = new Set(linked.map((s) => s.record.data.logicalId));
+  for (const e of edits)
+    if (
+      e.data.enabled &&
+      (seedIds.has(e.data.fromLogicalId) || seedIds.has(e.data.toLogicalId))
+    ) {
+      const other = seedIds.has(e.data.fromLogicalId)
+        ? e.data.toLogicalId
+        : e.data.fromLogicalId;
+      ids.push(generation + "_" + other);
+      links.push({
+        from: generation + "_" + e.data.fromLogicalId,
+        to: generation + "_" + e.data.toLogicalId,
+        name: e.name,
+      });
+    }
+  return {
+    ids: [...new Set(ids)],
+    links,
+    truncated: truncated || linked.some((s) => s.links > share(s)),
+    unmatched: linked.map((s) => s.record.id).filter((id) => !found.has(id)),
+  };
+}
+
 // Records at either end of a relation edit, whose links differ from the
 // snapshot's joins.
 async function relationEditedIds(
@@ -353,4 +465,31 @@ async function relationEditedIds(
     generation + "_" + e.data.fromLogicalId,
     generation + "_" + e.data.toLogicalId,
   ]);
+}
+
+// Each published type's snapshot, named for one executor job: the version its
+// records were published from.
+async function snapshotInputs(store: Store, scope: string, all: Resource[]) {
+  const inputs: { table: string; version: string }[] = [],
+    tableOf = new Map<string, string>();
+  const versionOf = async (t: Resource) => {
+    if (t.data.sourceVersion) return t.data.sourceVersion as string;
+    // Published before types recorded it: the version the dataset had when
+    // publication began.
+    const ds = await store.get(scope, t.data.datasetId);
+    if (!ds) return undefined;
+    if (ds.data.generation) return ds.data.activeVersion as string;
+    const versions = (await store.getMany(scope, ds.data.versions || []))
+      .filter((v): v is Resource => !!v && v.createdAt <= t.createdAt)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return (versions[0]?.id ?? ds.data.activeVersion) as string;
+  };
+  for (const t of all) {
+    const version = await versionOf(t);
+    if (!version) continue;
+    const table = "t" + inputs.length;
+    inputs.push({ table, version });
+    tableOf.set(t.name, table);
+  }
+  return { inputs, tableOf };
 }

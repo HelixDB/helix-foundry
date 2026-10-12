@@ -609,7 +609,8 @@ it("serves the published records as a graph, whole or around one record", async 
   // Without a focus: the records around the best-connected ones, never the
   // whole workspace at once.
   const list = vi.spyOn(store, "list"),
-    linkCounts = vi.spyOn(store, "linkCounts");
+    linkCounts = vi.spyOn(store, "linkCounts"),
+    walk = vi.spyOn(store, "neighborhood");
   const all = (await request("GET", "/graph")).json();
   expect(
     list.mock.calls.filter(([, kind]) =>
@@ -619,6 +620,9 @@ it("serves the published records as a graph, whole or around one record", async 
   list.mockRestore();
   const countedIds = linkCounts.mock.calls.flatMap(([, ids]) => ids);
   linkCounts.mockRestore();
+  // The neighbours come from the snapshot, not from walking links.
+  expect(walk).not.toHaveBeenCalled();
+  walk.mockRestore();
   // Degrees are the database's own counts, though the best-connected records
   // were counted in the snapshot instead of by walking their links.
   const generation = (await store.get(scope, "workspace"))!.data
@@ -630,6 +634,26 @@ it("serves the published records as a graph, whole or around one record", async 
   expect(all.nodes.map((n: any) => n.degree)).toEqual(
     all.nodes.map((n: any) => real.get(generation + "_" + n.id)),
   );
+  // Every link drawn is one the database has.
+  const stored = await store.neighborhood(
+    scope,
+    all.nodes.map((n: any) => generation + "_" + n.id),
+    1,
+    1_000_000,
+  );
+  const linkKey = (e: any) => [e.from, e.to, e.name].join(":");
+  const storedKeys = new Set(stored.edges.map(linkKey));
+  expect(
+    all.edges.every((e: any) =>
+      storedKeys.has(
+        linkKey({
+          from: generation + "_" + e.from,
+          to: generation + "_" + e.to,
+          name: e.name,
+        }),
+      ),
+    ),
+  ).toBe(true);
   expect(all.nodes.length).toBeGreaterThan(0);
   expect(all.nodes.length).toBeLessThanOrEqual(all.total);
   expect(all.truncated).toBe(all.nodes.length < all.total);

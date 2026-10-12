@@ -29,7 +29,11 @@ import {
   transaction,
 } from "../apps/api/src/store.js";
 import { runCleanupJob } from "../apps/api/src/cleanup.js";
-import { listRecords, type RecordQuery } from "../apps/api/src/records.js";
+import {
+  listRecords,
+  snapshotNeighbours,
+  type RecordQuery,
+} from "../apps/api/src/records.js";
 import { ingestFile } from "../apps/api/src/datasets.js";
 import { publishProposal, saveProposal } from "../apps/api/src/assistant.js";
 import { config } from "../apps/api/src/config.js";
@@ -541,4 +545,80 @@ it("lists records from the snapshot a page at a time, with workspace edits first
   } finally {
     list.mockRestore();
   }
+});
+it("finds the best-connected records' neighbours in the snapshot, linked as publication linked them", async () => {
+  const { scope, draft } = await workspace();
+  await (
+    await draft()
+  )();
+  const best = (
+    await listRecords(store, scope, {
+      sort: "links",
+      dir: "desc",
+      offset: 0,
+      limit: 3,
+    })
+  ).items;
+  const seeds = best.map((record) => ({ record, links: record.data.links }));
+  const walked = await store.neighborhood(
+    scope,
+    best.map((o) => o.id),
+    1,
+    100_000,
+  );
+  const key = (e: { from: string; to: string; name: string }) =>
+    [e.from, e.to, e.name].join(":");
+  const real = new Set(walked.edges.map(key));
+  // Three customers placed by three orders each share six places.
+  const near = await snapshotNeighbours(store, scope, seeds, 6);
+  expect(near.unmatched).toEqual([]);
+  expect(near.truncated).toBe(true);
+  expect(near.links).toHaveLength(6);
+  expect(near.links.every((e) => real.has(key(e)))).toBe(true);
+  expect(new Set(near.ids)).toEqual(new Set(near.links.map((e) => e.from)));
+  // With room for all of them, they are every link HelixDB walks.
+  const all = await snapshotNeighbours(store, scope, seeds, 100);
+  expect(all.truncated).toBe(false);
+  expect(new Set(all.links.map(key))).toEqual(real);
+  // A pair with a relation edit is left out; an edit adding a link is in.
+  const generation = best[0].id.slice(0, best[0].id.indexOf("_") + 1),
+    logical = (id: string) => id.slice(generation.length),
+    [dropped] = all.links,
+    other = all.links.find((e) => e.to !== dropped.to)!;
+  await transaction(store, scope, async (tx) => {
+    tx.put(
+      resource(
+        scope,
+        "relationEdit",
+        dropped.name,
+        {
+          fromLogicalId: logical(dropped.from),
+          toLogicalId: logical(dropped.to),
+          enabled: false,
+        },
+        "relationEdit_dropped",
+      ),
+    );
+    tx.put(
+      resource(
+        scope,
+        "relationEdit",
+        "Placed by",
+        {
+          fromLogicalId: logical(other.from),
+          toLogicalId: logical(dropped.to),
+          enabled: true,
+        },
+        "relationEdit_added",
+      ),
+    );
+  });
+  const edited = await snapshotNeighbours(store, scope, seeds, 100);
+  expect(edited.links.map(key)).not.toContain(key(dropped));
+  expect(edited.links).toContainEqual({
+    from: other.from,
+    to: dropped.to,
+    name: "Placed by",
+  });
+  expect(edited.ids).toContain(other.from);
 });

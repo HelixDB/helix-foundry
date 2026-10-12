@@ -100,6 +100,9 @@ export function ObjectGraph({
     nodes = useRef<Node[]>([]),
     links = useRef<Link[]>([]),
     view = useRef({ x: 0, y: 0, k: 1 }),
+    // Whether the view keeps fitting a new layout as it settles: until the
+    // person pans, zooms or drags.
+    following = useRef(false),
     size = useRef({ w: 0, h: 0 }),
     frame = useRef(0),
     state = useRef({
@@ -289,6 +292,7 @@ export function ObjectGraph({
     cx = size.current.w / 2,
     cy = size.current.h / 2,
   ) => {
+    following.current = false;
     const v = view.current,
       k = Math.min(6, Math.max(0.1, v.k * factor));
     view.current = {
@@ -301,6 +305,7 @@ export function ObjectGraph({
   const centre = (nodeId: string) => {
     const n = nodes.current.find((n) => n.id === nodeId);
     if (!n) return;
+    following.current = false;
     const k = Math.max(view.current.k, 1.4),
       w = size.current.w - (size.current.w > 720 ? 324 : 0);
     view.current = {
@@ -358,12 +363,19 @@ export function ObjectGraph({
       .stop();
     const changed =
       list.length !== previous.size || list.some((n) => !previous.has(n.id));
-    for (let i = 0; i < (previous.size ? 60 : 180); i++) s.tick();
+    // A first layout of 1,500 records takes about two seconds before anything
+    // is drawn. Enough of it runs to draw, and the rest settles on screen,
+    // unless motion is reduced, when all of it runs first.
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (let i = 0; i < (previous.size || !still ? 60 : 180); i++) s.tick();
     nodes.current = list;
     links.current = edges;
     sim.current = s;
+    following.current = changed;
     if (changed) fit();
-    s.alpha(0.12).on("tick", redraw).restart();
+    s.alpha(Math.max(s.alpha(), 0.12))
+      .on("tick", () => (following.current ? fit() : redraw()))
+      .restart();
     return () => {
       s.stop();
     };
@@ -444,6 +456,7 @@ export function ObjectGraph({
       | undefined;
     const down = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      following.current = false;
       const p = point(e);
       drag = { node: hit(p), start: p, moved: false };
       c.setPointerCapture(e.pointerId);
