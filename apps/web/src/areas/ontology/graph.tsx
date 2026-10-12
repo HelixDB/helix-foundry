@@ -41,6 +41,10 @@ type Node = GraphNode & SimulationNodeDatum & { r: number };
 type Link = SimulationLinkDatum<Node> & { name: string };
 
 const FOCUS_DEPTH = 2;
+// Each search scans every type's records, so it waits for this many
+// characters and a pause in typing.
+const MIN_SEARCH = 2;
+const SEARCH_DELAY_MS = 300;
 
 // Records as dots coloured by type and their links as lines. Hover shows a
 // record's connections, click selects it, double-click shows only the records
@@ -74,9 +78,11 @@ export function ObjectGraph({
   const [term, setTerm] = useState("");
   const [matchIndex, setMatchIndex] = useState(0);
   const [enterRequested, setEnterRequested] = useState(false);
+  const searchable = search.trim().length >= MIN_SEARCH;
   useEffect(() => {
     setMatchIndex(0);
-    const timer = setTimeout(() => setTerm(search.trim()), 200);
+    const next = searchable ? search.trim() : "";
+    const timer = setTimeout(() => setTerm(next), SEARCH_DELAY_MS);
     return () => clearTimeout(timer);
   }, [search]);
   const results = useQuery({
@@ -608,7 +614,7 @@ export function ObjectGraph({
                 e.preventDefault();
                 if (matches[0])
                   choose(matches[Math.min(matchIndex, matches.length - 1)]);
-                else if (!searchReady) setEnterRequested(true);
+                else if (searchable && !searchReady) setEnterRequested(true);
               }
               if (
                 (e.key === "ArrowDown" || e.key === "ArrowUp") &&
@@ -662,13 +668,15 @@ export function ObjectGraph({
               className="og-search-status"
               role={searchReady && results.error ? "alert" : "status"}
             >
-              {!searchReady
-                ? "Searching all records…"
-                : results.error
-                  ? results.error.message
-                  : matches.length
-                    ? `${results.data!.total} matching records${results.data!.total > 8 ? " · showing the first 8" : ""}`
-                    : "No matching records"}
+              {!searchable
+                ? `Type at least ${MIN_SEARCH} characters to search`
+                : !searchReady
+                  ? "Searching all records…"
+                  : results.error
+                    ? results.error.message
+                    : matches.length
+                      ? `${results.data!.total} matching records${results.data!.total > 8 ? " · showing the first 8" : ""}`
+                      : "No matching records"}
             </p>
           )}
         </div>

@@ -68,7 +68,8 @@ test("finds and investigates records outside the graph sample and current neighb
   expect((await api(page, base + "/onboarding")).complete).toBe(true);
   const sample = await api(page, base + "/graph");
   expect(sample.total).toBe(1605);
-  expect(sample.nodes).toHaveLength(1500);
+  // The overview starts from the best-connected records, not every record.
+  expect(sample.nodes.length).toBeLessThan(sample.total);
   const ids = new Set(sample.nodes.map((n: any) => n.id));
   const records: any[] = [];
   for (let offset = 0; offset < 1605; offset += 500) {
@@ -80,7 +81,7 @@ test("finds and investigates records outside the graph sample and current neighb
     records.push(...result.items);
   }
   const outside = records.filter((r) => !ids.has(r.data.logicalId));
-  expect(outside.length).toBe(105);
+  expect(outside.length).toBe(1605 - sample.nodes.length);
   const [first, second] = outside;
   // The existing public full-record API already finds the omitted record.
   // The regression is its missing integration into graph navigation.
@@ -93,7 +94,7 @@ test("finds and investigates records outside the graph sample and current neighb
   await page.goto("/ontology/explore");
   await expect(
     page.getByRole("img", {
-      name: "Graph of 1500 records and 0 links. Use the Table view for the same records as a list.",
+      name: `Graph of ${sample.nodes.length} records and 0 links. Use the Table view for the same records as a list.`,
     }),
   ).toBeVisible();
   const search = page.getByLabel("Find a record");
@@ -113,7 +114,9 @@ test("finds and investigates records outside the graph sample and current neighb
   const detail = page.getByRole("dialog", { name: first.name, exact: true });
   await expect(detail).toBeVisible();
   await expect(
-    detail.getByRole("definition").filter({ hasText: first.data.effective.region }),
+    detail
+      .getByRole("definition")
+      .filter({ hasText: first.data.effective.region }),
   ).toBeVisible();
   await detail.getByRole("button", { name: "Close", exact: true }).click();
   // Searching from this one-record neighbourhood still reaches the whole workspace.
@@ -143,10 +146,11 @@ test("finds and investigates records outside the graph sample and current neighb
     path: info.outputPath("global-graph-mobile.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Show all records" }).click();
-  await expect(
-    page.getByRole("img", { name: /^Graph of 1500 records/ }),
-  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Show the best-connected records" })
+    .click();
+  const overview = new RegExp(`^Graph of ${sample.nodes.length} records`);
+  await expect(page.getByRole("img", { name: overview })).toBeVisible();
   // Immediate Enter remains usable while the remote search is pending.
   const local = sample.nodes[0];
   await search.fill(local.label);
@@ -154,9 +158,7 @@ test("finds and investigates records outside the graph sample and current neighb
   await expect(
     page.getByRole("complementary", { name: local.label }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("img", { name: /^Graph of 1500 records/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("img", { name: overview })).toBeVisible();
   // The new UI does not mutate imported rows or their immutable version.
   const unchanged = await api(page, base + `/resources/dataset/${ds.id}`);
   expect(unchanged.data.activeVersion).toBe(ds.data.activeVersion);

@@ -100,12 +100,13 @@ async function fixture() {
   await publish();
   return { request, dataset, publish, base };
 }
-it("finds records outside the1500-node sample and resolves their native record neighbourhood", async () => {
+it("finds a record outside the graph sample and opens its neighbourhood", async () => {
   const f = await fixture(),
     sample = await f.request("GET", "/graph");
   expect(sample.total).toBe(1605);
-  expect(sample.nodes).toHaveLength(1500);
+  // The overview starts from the best-connected records, not every record.
   const ids = new Set(sample.nodes.map((n: any) => n.id));
+  expect(ids.size).toBeLessThan(sample.total);
   let omitted: any;
   for (let offset = 0; offset < 1605 && !omitted; offset += 500) {
     const page = await f.request(
