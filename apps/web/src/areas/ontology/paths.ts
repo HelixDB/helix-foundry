@@ -3,6 +3,7 @@
 const enc = encodeURIComponent;
 export const ontologyPaths = {
   ontology: () => "/ontology",
+  ontologyDesigner: () => "/ontology/designer",
   objectType: (typeId: string) => "/ontology/types/" + enc(typeId),
   // The graph; with a type, that type's records in the table.
   explorer: (typeName?: string) =>

@@ -52,6 +52,10 @@ Each area owns its section below; add new routes to your own section.
 
 ### Ontology
 
+`GET /ontology/definitions` returns `{ activeGeneration, bundle }` from the actual published proposal, or an empty bundle before the first publication. Missing published provenance returns 409. Read-only callers can inspect it; unaccepted proposals do not become the editing baseline.
+
+`POST /ontology/draft` accepts `{ expectedGeneration: string | null, ontology, relationships }` and creates a validated review proposal. It requires editor access. The arrays use the shared `Bundle` schemas (at most 20 object types and 30 relationships). Catalog, pipelines, dashboards, actions and assumptions are preserved from the accepted bundle. Explicit dataset and primary-key mappings are validated as supplied, including when that proposal is retested; invalid mappings are not silently repaired to another dataset. A publication change before or during validation returns 409 without saving a stale proposal. Review the resulting evidence and use the existing hash-checked publication endpoint to apply it. The SDK exposes `ontologyDefinitions()` and `draftOntology(expectedGeneration, ontology, relationships)`.
+
 | Method / path                  | Input / result                                                                                                                    |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | POST `/actions/preview`        | `{ objectId, values }`; before, after and revision                                                                                |

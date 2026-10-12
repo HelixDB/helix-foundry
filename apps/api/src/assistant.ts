@@ -109,6 +109,7 @@ export async function validateBundle(
   store: Store,
   scope: string,
   bundle: Bundle,
+  options: { preserveOntologyMappings?: boolean } = {},
 ): Promise<ValidationReport> {
   const datasets = await datasetsMap(store, scope),
     checks: ValidationReport["checks"] = [],
@@ -126,7 +127,8 @@ export async function validateBundle(
   };
   for (const c of bundle.catalog) c.datasetId = resolveDataset(c.datasetId);
   for (const p of bundle.pipelines) p.inputs = p.inputs.map(resolveDataset);
-  for (const t of bundle.ontology) t.datasetId = resolveDataset(t.datasetId);
+  if (!options.preserveOntologyMappings)
+    for (const t of bundle.ontology) t.datasetId = resolveDataset(t.datasetId);
   // Small models sometimes pair a type with the wrong dataset ID. When the type's key
   // and properties exist, key unique, in exactly one dataset, use that dataset.
   const fits = (d: Resource | undefined, t: Bundle["ontology"][number]) => {
@@ -139,6 +141,7 @@ export async function validateBundle(
   // Types on a pipeline output are never moved: the output does not exist yet.
   const derived = new Set(bundle.pipelines.map((p) => pipelineId(p.name)));
   for (const t of bundle.ontology) {
+    if (options.preserveOntologyMappings) continue;
     if (
       derived.has(t.datasetId) ||
       t.datasetId.startsWith("pipeline_") ||
@@ -353,9 +356,33 @@ export async function saveProposal(
   scope: string,
   bundle: Bundle,
   parentId?: string,
+  options: {
+    expectedGeneration?: string | null;
+    preserveOntologyMappings?: boolean;
+  } = {},
 ) {
-  const report = await validateBundle(store, scope, bundle);
+  const inherited = parentId ? await store.get(scope, parentId) : undefined,
+    preserveOntologyMappings =
+      options.preserveOntologyMappings ||
+      inherited?.data.preserveOntologyMappings === true,
+    expectedGeneration = options.expectedGeneration;
+  const report = await validateBundle(store, scope, bundle, {
+    preserveOntologyMappings,
+  });
+  if (expectedGeneration !== undefined)
+    assert(
+      report.baseGeneration === expectedGeneration,
+      "Published definitions changed. Reopen the designer.",
+      409,
+    );
   return transaction(store, scope, async (tx) => {
+    if (expectedGeneration !== undefined)
+      assert(
+        ((await tx.get("workspace"))?.data.activeGeneration || null) ===
+          expectedGeneration,
+        "Published definitions changed. Reopen the designer.",
+        409,
+      );
     const parent = parentId ? await tx.get(parentId) : undefined;
     const p = tx.put(
       resource(scope, "proposal", bundle.summary.slice(0, 90), {
@@ -364,6 +391,7 @@ export async function saveProposal(
         status: report.valid ? "ready" : "draft",
         hash: proposalHash(bundle, report),
         parentId,
+        ...(preserveOntologyMappings ? { preserveOntologyMappings: true } : {}),
         ...(parent?.data.onboardingSignature
           ? {
               onboardingSignature: parent.data.onboardingSignature,

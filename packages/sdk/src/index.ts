@@ -231,6 +231,22 @@ export class FoundryClient {
   runPipeline(id: string) {
     return this.request<Resource>("/pipelines/" + id + "/run", {});
   }
+  ontologyDefinitions() {
+    return this.request<{ activeGeneration: string | null; bundle: Bundle }>(
+      "/ontology/definitions",
+    );
+  }
+  draftOntology(
+    expectedGeneration: string | null,
+    ontology: Bundle["ontology"],
+    relationships: Bundle["relationships"],
+  ) {
+    return this.request<Resource>("/ontology/draft", {
+      expectedGeneration,
+      ontology,
+      relationships,
+    });
+  }
   neighbors(objectId: string) {
     return this.request<{ ids: string[] }>(
       "/objects/" + objectId + "/neighbors",

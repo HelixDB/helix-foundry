@@ -382,3 +382,32 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+.ontology-designer > fieldset {
+  margin: 16px 0;
+  padding: 18px;
+  min-width: 0;
+}
+.ontology-designer label {
+  display: block;
+  margin: 10px 0;
+}
+.ontology-designer input:not([type="checkbox"]),
+.ontology-designer select {
+  width: 100%;
+}
+.ontology-designer fieldset fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ontology-designer .mapping-property {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+.ontology-designer code {
+  overflow-wrap: anywhere;
+}

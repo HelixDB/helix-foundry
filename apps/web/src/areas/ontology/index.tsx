@@ -10,6 +10,7 @@ import { ObjectGraph } from "./graph";
 import { ExplorerSwitch, useExplorerView } from "./views";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { ObjectTypeDetail } from "./object-type";
+import { OntologyDesigner } from "./designer";
 
 // /ontology
 export function OntologyHome() {
@@ -73,6 +74,7 @@ export function OntologyRoutes() {
   return (
     <Routes>
       <Route index element={<OntologyHome />} />
+      <Route path="designer" element={<OntologyDesigner />} />
       <Route path="types/:typeId" element={<ObjectTypePage />} />
       <Route path="explore" element={<ObjectExplorer />} />
       <Route path="*" element={<NotFound />} />

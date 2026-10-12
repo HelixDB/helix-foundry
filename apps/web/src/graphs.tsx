@@ -4,6 +4,7 @@ import { Network, Plus, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useWorkspace, useResources, PageHeader, Empty, Modal } from "./ui";
 import { PublishedSchema } from "./areas/ontology/schema";
+import { paths } from "./paths";
 import type { Resource } from "../../../packages/shared/src";
 export function OntologyPage() {
   const { role } = useWorkspace(),
@@ -35,6 +36,9 @@ export function OntologyPage() {
             <Plus size={15} /> Workspace action
           </button>
         )}
+        <Link className="button" to={paths.ontologyDesigner()}>
+          Design mappings
+        </Link>
         <Link className="button" to="/proposals">
           <Sparkles size={16} /> Review suggestions
         </Link>

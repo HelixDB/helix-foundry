@@ -145,7 +145,8 @@ function SetupGate({
 // Reachable while setup is unfinished: publishing a review is one way to
 // finish setup, and setup itself links to Data (a schema change is accepted on
 // the dataset page; viewers are sent to "Open data").
-const ungated = /^\/(proposals|settings|data|sources|explore)(\/|$)/;
+const ungated =
+  /^\/(proposals|settings|data|sources|explore)(\/|$)|^\/ontology\/designer\/?$/;
 
 function App() {
   const location = useLocation();
@@ -169,6 +170,19 @@ function App() {
     enabled: !!selected && !inSetup,
     // Once setup is complete the shell stays open; no need to ask again.
     staleTime: (q) => ((q.state.data as any)?.complete ? Infinity : 0),
+  });
+  const ontologyInspection =
+    !ungated.test(location.pathname) &&
+    /^\/(ontology|records)(\/|$)/.test(location.pathname);
+  const publishedTypes = useQuery({
+    queryKey: [selected?.id, "ontology-route-readiness"],
+    queryFn: () =>
+      api<{ total: number }>(
+        `/workspaces/${selected.id}/resources/objectType?limit=1`,
+      ),
+    enabled:
+      !!selected && ontologyInspection && onboarding.data?.complete === false,
+    staleTime: 0,
   });
   useEffect(() => {
     if (selected) writeStorage("foundry.workspace", selected.id);
@@ -199,7 +213,18 @@ function App() {
     );
   if (gated && onboarding.error)
     return <GateError retry={() => onboarding.refetch()} />;
-  if (gated && !onboarding.data?.complete)
+  const needsSetup = gated && !onboarding.data?.complete;
+  if (needsSetup && ontologyInspection && publishedTypes.isPending)
+    return (
+      <div className="hf-app hf-center">
+        <Loading />
+      </div>
+    );
+  if (needsSetup && ontologyInspection && publishedTypes.error)
+    return <GateError retry={() => publishedTypes.refetch()} />;
+  const canInspectOntology =
+    ontologyInspection && (publishedTypes.data?.total || 0) > 0;
+  if (needsSetup && !canInspectOntology)
     return (
       <SetupGate
         key={selected.id + location.pathname}

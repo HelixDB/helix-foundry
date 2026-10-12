@@ -126,6 +126,14 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 
 **Publishing and rollback.** Publishing checks the exact proposal hash and input versions, then switches generations. Each object type and relationship is one executor query, whose rows the worker reads back and stages in batches; a type whose record count differs from its snapshot stops the publication, and the previous generation stays active. Revalidating creates a new reviewable proposal. Rollback revalidates and rematerialises the previous definitions against current snapshots, while preserving manual actions and their audit history. Failed staging artifacts can be removed during offline maintenance, after checking that no publication references them.
 
+## Design business objects yourself
+
+Open **Data → Map business objects** or **Ontology → Design mappings** to map imported datasets without an AI provider. Add an object type, choose its dataset and unique primary key, and select its properties. Add relationships by choosing the two object types and their matching source columns. The designer is also available before the first publication.
+
+**Create mapping review** executes validation and opens the existing review workflow with actual business records and relationship evidence. Review the mapping, then publish explicitly. Reopening the designer starts from the current accepted publication and preserves other accepted definitions and assumptions. Creating a review leaves the current generation and records unchanged. A background refresh or reconnect does not replace an unsaved mapping draft. If someone publishes while you are editing or validating, creating a review reports a conflict. **Reload accepted definitions** explicitly discards the draft and adopts the current publication before another review. Published mappings and their records can be inspected even when no Home dashboard has been defined; incomplete workspaces still require setup before opening Home or Analyst. Invalid mappings stay visible for correction rather than being automatically reassigned to another dataset. Read-only callers can inspect accepted mappings but cannot create reviews.
+
+Property selection describes the object type; it does not redact the imported dataset or grant additional access. Dataset refresh, proposal publication and manual record edits retain their existing permissions and checks.
+
 ## Architecture
 
 | Service  | Responsibility                                                                |

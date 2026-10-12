@@ -3,6 +3,41 @@ import { z } from "zod";
 import { assert, digest } from "../security.js";
 import { resource, transaction, type Store } from "../store.js";
 import { effectiveObject } from "../context.js";
+import { BundleSchema } from "../../../../packages/shared/src/index.js";
+import { saveProposal } from "../assistant.js";
+
+const OntologyDraftSchema = z.object({
+  expectedGeneration: z.string().min(1).nullable(),
+  ontology: BundleSchema.shape.ontology,
+  relationships: BundleSchema.shape.relationships,
+});
+async function acceptedDefinitions(store: Store, scope: string) {
+  const activeGeneration =
+    (await store.get(scope, "workspace"))?.data.activeGeneration || null;
+  const published = activeGeneration
+    ? (await store.list(scope, "proposal")).find(
+        (p) => p.data.publishedGeneration === activeGeneration,
+      )
+    : undefined;
+  assert(
+    !activeGeneration || published,
+    "Published definitions unavailable",
+    409,
+  );
+  const bundle = BundleSchema.parse(
+    published?.data.bundle || {
+      summary: "Workspace definitions",
+      assumptions: [],
+      catalog: [],
+      pipelines: [],
+      ontology: [],
+      relationships: [],
+      dashboards: [],
+      actions: [],
+    },
+  );
+  return { activeGeneration, bundle };
+}
 import {
   ObjectActionSchema,
   previewObjectAction,
@@ -11,6 +46,7 @@ import {
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
 export const ontologySchemas: RequestSchemas = {
+  "POST /api/v1/workspaces/:w/ontology/draft": OntologyDraftSchema,
   "POST /api/v1/workspaces/:w/actions/change/preview": ObjectActionSchema,
   "POST /api/v1/workspaces/:w/actions/change/execute": z.object({
     action: ObjectActionSchema,
@@ -57,6 +93,35 @@ export function registerOntologyRoutes(
   deps: RouteDeps,
 ) {
   const { access } = deps;
+  app.get("/api/v1/workspaces/:w/ontology/definitions", async (req) => {
+    const a = await access(req);
+    return acceptedDefinitions(store, a.scope);
+  });
+  app.post("/api/v1/workspaces/:w/ontology/draft", async (req) => {
+    const a = await access(req, "editor"),
+      b = OntologyDraftSchema.parse(req.body),
+      current = await acceptedDefinitions(store, a.scope);
+    assert(
+      current.activeGeneration === b.expectedGeneration,
+      "Published definitions changed. Reopen the designer.",
+      409,
+    );
+    return saveProposal(
+      store,
+      a.scope,
+      {
+        ...current.bundle,
+        summary: "Update ontology mappings",
+        ontology: b.ontology,
+        relationships: b.relationships,
+      },
+      undefined,
+      {
+        expectedGeneration: b.expectedGeneration,
+        preserveOntologyMappings: true,
+      },
+    );
+  });
   app.get("/api/v1/workspaces/:w/records/:logicalId", async (req: any) => {
     const a = await access(req),
       ws = await store.get(a.scope, "workspace");
