@@ -13,8 +13,12 @@ import { AppError } from "./security.js";
 const REPLY_MARGIN = 15000;
 export async function execute(
   job: Execution & { mode: "materialize" },
+  callerSignal?: AbortSignal,
 ): Promise<Materialized>;
-export async function execute(job: Execution): Promise<{
+export async function execute(
+  job: Execution,
+  callerSignal?: AbortSignal,
+): Promise<{
   profile: DatasetProfile;
   version: string;
   rows: Record<string, any>[];
@@ -22,9 +26,10 @@ export async function execute(job: Execution): Promise<{
   // stored.
   legacyFingerprint?: string;
 }>;
-export async function execute(job: Execution) {
+export async function execute(job: Execution, callerSignal?: AbortSignal) {
   const limit = timeLimit(job),
-    signal = AbortSignal.timeout(limit.ms + REPLY_MARGIN);
+    timeout = AbortSignal.timeout(limit.ms + REPLY_MARGIN),
+    signal = callerSignal ? AbortSignal.any([timeout, callerSignal]) : timeout;
   const r = await postJson(
     config.executor + "/execute",
     JSON.stringify(job),
@@ -33,7 +38,8 @@ export async function execute(job: Execution) {
       "x-internal-key": config.internalKey,
     },
   ).catch((e) => {
-    if (!signal.aborted) throw e;
+    if (callerSignal?.aborted) throw callerSignal.reason;
+    if (!timeout.aborted) throw e;
     throw new AppError(
       504,
       `The executor did not answer within its time limit (${duration(limit.ms)}, ${limit.setting})`,

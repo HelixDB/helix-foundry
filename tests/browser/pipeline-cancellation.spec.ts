@@ -1,0 +1,148 @@
+import { test, expect } from "@playwright/test";
+import { api, openApp } from "./support/workspace";
+import { artifact, dataDir } from "./support/ports";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { resolve } from "node:path";
+import { readdir } from "node:fs/promises";
+
+const processList = promisify(execFile);
+const runnerPath = resolve("services/executor/src/runner.ts");
+// Observe only children executing this isolated checkout; never log other
+// processes' arguments and never terminate anything through this observer.
+async function ownRunnerPids() {
+  let stdout: string;
+  try {
+    ({ stdout } = await processList("ps", ["-axww", "-o", "pid=,command="], {
+      maxBuffer: 8 * 1024 * 1024,
+    }));
+  } catch {
+    // execFile errors can contain stdout; never expose other process arguments.
+    throw new Error("Task-owned executor process observer unavailable");
+  }
+  return stdout
+    .split("\n")
+    .filter(
+      (line) =>
+        line.includes(" --import ") && line.trimEnd().endsWith(runnerPath),
+    )
+    .map((line) => Number(line.trim().split(/\s+/, 1)[0]));
+}
+
+test("cancel a running pipeline from Data before Home is available and retain the published snapshot", async ({
+  page,
+}) => {
+  await openApp(page);
+  const workspace = await api(page, "/workspaces", {
+      name: "Pipeline cancellation " + Date.now(),
+    }),
+    base = `/workspaces/${workspace.id}`;
+  const raw = await api(page, base + "/ingest", {
+    name: "Cancel work",
+    rows: [{ id: 1, work: 2 }],
+  });
+  const proposal = await api(page, base + "/pipelines/draft", {
+    name: "Cancelable browser totals",
+    inputs: [raw.id],
+    sql: `SELECT id, sum(x % 100) AS total FROM "${raw.data.table}", range(work) AS series(x) GROUP BY id`,
+  });
+  expect(proposal.data.validation.valid).toBe(true);
+  await api(page, base + `/proposals/${proposal.id}/publish`, {
+    hash: proposal.data.hash,
+  });
+  const pipeline = (await api(page, base + "/resources/pipeline")).items[0],
+    before = await api(
+      page,
+      base + `/resources/dataset/${pipeline.data.outputDatasetId}`,
+    );
+  expect((await api(page, base + "/onboarding")).complete).toBe(false);
+  await page.evaluate(
+    (id) => localStorage.setItem("foundry.workspace", id),
+    workspace.id,
+  );
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/onboarding$/);
+  await page.goto("/data");
+  await expect(page).toHaveURL(/\/data$/);
+  await api(page, base + "/ingest", {
+    name: "Cancel work",
+    datasetId: raw.id,
+    rows: [{ id: 1, work: 1000000000000 }],
+  });
+  const job = await api(page, base + `/pipelines/${pipeline.id}/run`, {});
+  await page.evaluate(
+    (id) => localStorage.setItem("foundry.workspace", id),
+    workspace.id,
+  );
+  await page.goto("/data");
+  await expect
+    .poll(
+      async () =>
+        (await api(page, base + `/resources/job/${job.id}`)).data.status,
+      { timeout: 20000 },
+    )
+    .toBe("running");
+  await expect.poll(async () => (await ownRunnerPids()).length).toBe(1);
+  const [runningPid] = await ownRunnerPids();
+  const panel = page.getByRole("region", { name: "Pipeline jobs" }),
+    cancel = panel.getByRole("button", {
+      name: "Cancel Run Cancelable browser totals",
+      exact: true,
+    });
+  await expect(panel.getByText(/running ·/)).toBeVisible();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1040 });
+    await expect(cancel).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page.screenshot({
+      path: artifact(`pipeline-cancel-${width}.png`),
+      fullPage: true,
+    });
+  }
+  expect((await api(page, base + `/resources/job/${job.id}`)).data.status).toBe(
+    "running",
+  );
+  expect(await ownRunnerPids()).toContain(runningPid);
+  await cancel.click();
+  await expect
+    .poll(
+      async () =>
+        (await api(page, base + `/resources/job/${job.id}`)).data.status,
+    )
+    .toBe("canceled");
+  await expect
+    .poll(async () => await ownRunnerPids())
+    .not.toContain(runningPid);
+  await expect
+    .poll(async () => await readdir(resolve(dataDir, "scratch")))
+    .toEqual([]);
+  await expect(panel.getByText(/canceled ·/)).toBeVisible();
+  await expect(cancel).toHaveCount(0);
+  expect(
+    (await api(page, base + `/resources/dataset/${before.id}`)).data
+      .activeVersion,
+  ).toBe(before.data.activeVersion);
+  const preview = await api(page, base + `/datasets/${before.id}/preview`, {});
+  expect(preview.rows).toEqual([{ id: "1", total: 1 }]);
+  await page.reload();
+  await expect(panel.getByText(/canceled ·/)).toBeVisible();
+  await api(page, base + "/ingest", {
+    name: "Cancel work",
+    datasetId: raw.id,
+    rows: [{ id: 1, work: 2 }],
+  });
+  const next = await api(page, base + `/pipelines/${pipeline.id}/run`, {});
+  await expect
+    .poll(
+      async () =>
+        (await api(page, base + `/resources/job/${next.id}`)).data.status,
+      { timeout: 20000 },
+    )
+    .toBe("succeeded");
+  expect(
+    (await api(page, base + `/resources/dataset/${before.id}`)).data
+      .activeVersion,
+  ).not.toBe(before.data.activeVersion);
+});

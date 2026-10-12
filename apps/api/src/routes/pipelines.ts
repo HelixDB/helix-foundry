@@ -43,4 +43,32 @@ export function registerPipelinesRoutes(
       ),
     );
   });
+  app.post(
+    "/api/v1/workspaces/:w/pipeline-jobs/:id/cancel",
+    async (req: any) => {
+      const a = await access(req, "editor");
+      return transaction(store, a.scope, async (tx) => {
+        const job = await tx.get(req.params.id);
+        assert(
+          job?.kind === "job" && job.data.type === "pipeline",
+          "Pipeline job unavailable",
+          404,
+        );
+        if (job.data.status === "canceled") return job;
+        assert(
+          ["queued", "running"].includes(job.data.status),
+          "Pipeline job has already finished",
+          409,
+        );
+        return tx.update(job, {
+          ...job.data,
+          status: "canceled",
+          error: null,
+          progress: {
+            message: "Pipeline canceled; previous snapshot retained",
+          },
+        });
+      });
+    },
+  );
 }

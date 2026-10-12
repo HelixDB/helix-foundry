@@ -19,8 +19,16 @@ app.post("/execute", async (req, reply) => {
     !timingSafeEqual(Buffer.from(key), Buffer.from(expected))
   )
     return reply.code(401).send({ error: "Unauthorized" });
-  const r = await submit(req.body, root);
-  return reply.code(r.status).send(r.body);
+  const controller = new AbortController();
+  const close = () => controller.abort(new Error("Executor request canceled"));
+  reply.raw.once("close", close);
+  try {
+    const r = await submit(req.body, root, controller.signal);
+    if (!reply.raw.destroyed) return reply.code(r.status).send(r.body);
+    return reply;
+  } finally {
+    reply.raw.off("close", close);
+  }
 });
 // Compose stops a container with SIGTERM and kills it 10 seconds later, which
 // would leave running jobs' spill files on the data volume, and in a backup

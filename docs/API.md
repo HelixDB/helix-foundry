@@ -117,3 +117,17 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+### Cancel pipeline jobs
+
+`POST /pipeline-jobs/:id/cancel` cancels a queued or running pipeline job for an
+editor. It is idempotent for an already canceled job; completed/failed jobs return
+409 and other job kinds or workspace scopes return 404. `client.cancelPipelineJob(jobId)`
+returns the updated job. Read-only tokens cannot cancel.
+
+Queued jobs never start. Running jobs poll cancellation every 250 ms, abort their own
+executor request, and stop only its waiting queue entry or disposable child; owned
+scratch and unpromoted output are removed. The previous dataset snapshot remains
+active. Output promotion and the job's completed status commit together, so a
+cancel that loses that race returns409 rather than claiming to undo publication.
+A later `runPipeline` is independent and can rebuild normally.

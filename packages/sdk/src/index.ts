@@ -228,6 +228,9 @@ export class FoundryClient {
   query(inputs: string[], sql: string) {
     return this.request("/query", { inputs, sql });
   }
+  cancelPipelineJob(id: string) {
+    return this.request<Resource>("/pipeline-jobs/" + id + "/cancel", {});
+  }
   runPipeline(id: string) {
     return this.request<Resource>("/pipelines/" + id + "/run", {});
   }

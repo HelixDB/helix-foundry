@@ -1,3 +1,4 @@
+import { PipelineJobs } from "../../pipeline-jobs";
 import "./home.css";
 import {
   useEffect,
@@ -561,6 +562,7 @@ export function HomePage() {
         <AskBox summary={s} />
       </header>
       <KeyMetrics />
+      <PipelineJobs />
       {home.error ? (
         <div role="alert" className="wk-error">
           <span>
