@@ -8,6 +8,7 @@ vi.mock("../apps/api/src/executor.js", () => ({
 import { MemoryStore, resource, transaction } from "../apps/api/src/store.js";
 import { ingestRows, seedDemo } from "../apps/api/src/datasets.js";
 import { onboardingState } from "../apps/api/src/onboarding-state.js";
+import { storedDiscovery } from "../apps/api/src/source-discovery.js";
 import {
   confirmOntology,
   entityName,
@@ -662,4 +663,107 @@ it("names entities after files, not their folders", async () => {
     "Customer",
     "Order",
   ]);
+});
+
+// A shop database's discovery, as a connection reads it: every table's
+// columns, keys and foreign keys, whichever tables are selected.
+const shop = {
+  customers: range(5, (i) => ({ id: i + 1, name: "C" + i })),
+  orders: range(5, (i) => ({ order_id: i + 1, buyer: (i % 5) + 1 })),
+  shipments: range(5, (i) => ({ shipment_id: i + 1, parcel: (i % 5) + 1 })),
+};
+type ShopTable = keyof typeof shop;
+const shopKey = (table_name: string, column_name: string, type: string) => ({
+  table_schema: "public",
+  table_name,
+  column_name,
+  constraint_type: type,
+});
+const shopForeignKey = (
+  table_name: string,
+  column_name: string,
+  referenced_table: string,
+  referenced_column: string,
+) => ({
+  table_schema: "public",
+  table_name,
+  column_name,
+  referenced_schema: "public",
+  referenced_table,
+  referenced_column,
+});
+const shopDiscovery = {
+  tables: Object.keys(shop).map((name) => ({ schema: "public", name })),
+  columns: Object.entries(shop).flatMap(([table_name, rows]) =>
+    Object.keys(rows[0]).map((name) => ({
+      schema: "public",
+      table_name,
+      name,
+      type: "integer",
+      nullable: "NO",
+    })),
+  ),
+  keys: [
+    shopKey("customers", "id", "PRIMARY KEY"),
+    shopKey("orders", "order_id", "PRIMARY KEY"),
+    shopKey("orders", "buyer", "FOREIGN KEY"),
+    shopKey("shipments", "shipment_id", "PRIMARY KEY"),
+    shopKey("shipments", "parcel", "FOREIGN KEY"),
+  ],
+  foreignKeys: [
+    shopForeignKey("orders", "buyer", "customers", "id"),
+    shopForeignKey("shipments", "parcel", "orders", "order_id"),
+  ],
+  sample: shop.orders,
+};
+const ownKeys = (table: string) => (k: any) =>
+  k.table_schema === "public" && k.table_name === table;
+const linkNames = (s: SuggestedOntology) =>
+  s.links
+    .map((l) => [l.from, l.fromColumn, l.to, l.toColumn, l.evidence].join(" "))
+    .sort();
+
+it("suggests the same declared links from each source's own keys as from the whole discovery", async () => {
+  const links = async (tables: ShopTable[], stored: boolean) =>
+    linkNames(
+      (
+        await suggestFor(
+          tables.map((name) => ({
+            name,
+            rows: shop[name],
+            kind: "postgres",
+            connection: "shop",
+            discovery: stored
+              ? storedDiscovery("postgres", shopDiscovery, {
+                  schema: "public",
+                  table: name,
+                })
+              : shopDiscovery,
+          })),
+        )
+      ).suggestion,
+    );
+  // Without a schema, PostgreSQL's is public, as an import reads it.
+  expect(
+    storedDiscovery("postgres", shopDiscovery, { table: "orders" }),
+  ).toEqual({
+    keys: shopDiscovery.keys.filter(ownKeys("orders")),
+    foreignKeys: [shopDiscovery.foreignKeys[0]],
+  });
+  const all: ShopTable[] = ["customers", "orders", "shipments"];
+  expect(await links(all, false)).toEqual(
+    expect.arrayContaining(["order buyer customer id declared"]),
+  );
+  // Including when only one side of a foreign key is selected.
+  for (const tables of [
+    all,
+    ["orders", "shipments"],
+    ["customers", "shipments"],
+    ["customers", "orders"],
+    ["orders"],
+    ["shipments"],
+  ] as ShopTable[][])
+    expect(await links(tables, true), tables.join()).toEqual(
+      await links(tables, false),
+    );
 });

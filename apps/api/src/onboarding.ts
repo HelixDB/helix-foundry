@@ -25,6 +25,11 @@ import { config } from "./config.js";
 import { discover } from "./connectors.js";
 import { providerSettings, retried } from "./assistant.js";
 import { onboardingState, publicResource } from "./onboarding-state.js";
+import {
+  importedItem,
+  importResponse,
+  storedDiscovery,
+} from "./source-discovery.js";
 import { confirmOntology, ontologyGoal, suggestOntology } from "./discovery.js";
 
 type Access = (req: any, role?: "owner" | "editor" | "viewer") => Promise<any>;
@@ -145,7 +150,9 @@ export function registerOnboarding(
         "Operation was already used for different inputs",
         409,
       );
-      return prior.data.result;
+      return importResponse(prior.data.result, (ids) =>
+        store.getMany(a.scope, ids),
+      );
     }
     const resolved = await resolveHostedConfig(
       store,
@@ -194,10 +201,15 @@ export function registerOnboarding(
           "Operation was already used for different inputs",
           409,
         );
-        return existing.data.result;
+        return importResponse(existing.data.result, (ids) =>
+          Promise.all(ids.map((id) => tx.get(id))),
+        );
       }
-      const result = [];
+      // The operation stores ids only; the response carries the resources.
+      const result = [],
+        response = [];
       for (const s of selections) {
+        const settings = { ...resolved.config, ...s };
         const source = tx.put(
           resource(
             a.scope,
@@ -208,9 +220,9 @@ export function registerOnboarding(
               kind: body.kind,
               connectionId: opId,
               connectionName: body.name,
-              secret: seal({ ...resolved.config, ...s }),
+              secret: seal(settings),
               hostedProvider: resolved.provider,
-              discovery,
+              discovery: storedDiscovery(body.kind, discovery, settings),
               ...sourceSyncDefaults(body.kind, body.schedule),
             },
           ),
@@ -224,7 +236,8 @@ export function registerOnboarding(
             progress: { message: "Waiting to import" },
           }),
         );
-        result.push({ source: publicResource(source), job });
+        result.push(importedItem(source, opId, job));
+        response.push({ source: publicResource(source), job });
       }
       tx.put(
         resource(
@@ -235,7 +248,7 @@ export function registerOnboarding(
           opId,
         ),
       );
-      return result;
+      return response;
     });
   });
   app.put(base + "/sources/:id", async (req: any) => {
@@ -264,7 +277,7 @@ export function registerOnboarding(
         ...source.data,
         secret: seal(resolved.config),
         hostedProvider: resolved.provider,
-        discovery,
+        discovery: storedDiscovery(body.kind, discovery, resolved.config),
         ...sourceSyncDefaults(body.kind, body.schedule),
       });
       return tx.put(

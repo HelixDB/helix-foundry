@@ -120,8 +120,9 @@ export async function discover(kind: string, c: ConnectorConfig) {
       const tables = await pool.query(
         "SELECT table_schema schema, table_name name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type='BASE TABLE'",
       );
+      // The schema lets each source keep only its own table's keys.
       const keys = await pool.query(
-        "SELECT tc.table_name, kcu.column_name, tc.constraint_type FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type IN ('PRIMARY KEY','FOREIGN KEY')",
+        "SELECT tc.table_schema, tc.table_name, kcu.column_name, tc.constraint_type FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type IN ('PRIMARY KEY','FOREIGN KEY') AND tc.table_schema NOT IN ('pg_catalog','information_schema')",
       );
       const columns = await pool.query(
         "SELECT table_schema AS schema,table_name AS table_name,column_name AS name,data_type AS type,is_nullable AS nullable FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog','information_schema') ORDER BY table_schema,table_name,ordinal_position",
