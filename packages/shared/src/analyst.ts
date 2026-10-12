@@ -30,3 +30,17 @@ export type AssistantRun = {
   proposalId?: string;
   error?: string;
 };
+
+// A possible next investigation, supported by a published ontology property.
+export type ChatFollowup = {
+  id: string;
+  label: string;
+  question: string;
+  ontology: { type: string; datasetId: string; property: string };
+  version: string;
+};
+export type ChatFollowups = {
+  runId: string | null;
+  generation: string | null;
+  items: ChatFollowup[];
+};
