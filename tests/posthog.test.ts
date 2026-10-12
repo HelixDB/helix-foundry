@@ -7,6 +7,8 @@ import { resolve } from "node:path";
 import { discover, importSource } from "../apps/api/src/connectors.js";
 import { sourceSyncDefaults } from "../apps/api/src/source-sync.js";
 import { config } from "../apps/api/src/config.js";
+import { SourceSchema } from "../packages/shared/src/index.js";
+import { importPosthog } from "../apps/api/src/posthog.js";
 
 const persons = Array.from({ length: 23_456 }, (_, i) => [
   "2025-01-01T00:00:00Z",
@@ -194,3 +196,44 @@ it("refreshes every six hours", () => {
   expect(next.getUTCHours() % 6).toBe(0);
   expect(next.getUTCMinutes()).toBe(0);
 });
+
+it.each([
+  ["nonnumeric text", "not-a-number", 30],
+  ["NaN text", "NaN", 30],
+  ["absent", undefined, 30],
+  ["null", null, 30],
+  ["cleared", "", 30],
+  ["numeric zero", 0, 30],
+  ["text zero", "0", 1],
+  ["negative", -4, 1],
+  ["text overrange", "366", 365],
+  ["numeric overrange", 366, 365],
+  ["positive infinity text", "Infinity", 365],
+  ["negative infinity text", "-Infinity", 1],
+  ["numeric text", "2", 2],
+] as [string, unknown, number][])(
+  "preserves PostHog history defaults and clamps: %s",
+  async (_label, eventDays, expectedDays) => {
+    // The public source routes accept this schema, then pass its config to
+    // discovery and to the importer that also serves scheduled refreshes.
+    const source = SourceSchema.parse({
+      name: "PostHog events",
+      kind: "posthog",
+      config: connection({ table: "events", projectId: "7", eventDays }),
+    });
+    const before = queries.length;
+    const preview: any = await discover(source.kind, source.config);
+    expect(preview.sample.map((row: any) => row.event_id)).toEqual([
+      "e1",
+      "e2",
+      "e3",
+    ]);
+    const rows: any[] = [];
+    await importPosthog(source.config, async (row) => {
+      rows.push(row);
+    });
+    expect(rows.map((row) => row.event_id)).toEqual(["e1", "e2", "e3"]);
+    // Preview reads one day; an import reads the configured, clamped window.
+    expect(queries.slice(before)).toHaveLength(expectedDays + 1);
+  },
+);

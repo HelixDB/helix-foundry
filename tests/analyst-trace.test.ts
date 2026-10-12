@@ -314,6 +314,17 @@ describe("answer view", () => {
     );
     expect(top).toContain("Top 10 of 1,000");
     expect(top).toContain("Show top 30");
+    const lowest = renderToStaticMarkup(
+      h(AnswerResult, {
+        rows: [...ranked].reverse(),
+        total: 1000,
+        label: "Customers with fewest orders",
+        shape: answerShape([...ranked].reverse()),
+      }),
+    );
+    expect(lowest).toContain("Lowest 10 of 1,000");
+    expect(lowest).toContain("Show lowest 30");
+    expect(lowest).not.toContain("Top 10");
     const days = Array.from({ length: 100 }, (_, i) => ({
       day: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
       orders: (i * 7) % 13,
@@ -329,7 +340,7 @@ describe("answer view", () => {
     expect(answerShape(days).kind).toBe("trend");
     expect(trend).toContain("First 100 of 1,000 rows");
   });
-  it("shows signed results as a table, and ranks and bolds big integers exactly", () => {
+  it("shows signed bars around zero, and ranks and bolds big integers exactly", () => {
     const signed = [
       { region: "North", profit: 120 },
       { region: "South", profit: -40 },
@@ -343,8 +354,8 @@ describe("answer view", () => {
       }),
     );
     expect(answerShape(signed).kind).toBe("breakdown");
-    expect(table).not.toContain("Show the result as");
-    expect(table).not.toContain("wk-bars");
+    expect(table).toContain("Show the result as");
+    expect(table).toContain("wk-bar-zero");
     // Both round to the same Number; only one is first.
     const big = [
       { name: "A", points: "9007199254740993" },

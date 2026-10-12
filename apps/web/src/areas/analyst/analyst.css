@@ -907,3 +907,56 @@
     display: none;
   }
 }
+
+/* The next investigation stays below the latest answer, out of hero space. */
+.an-followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0 36px;
+}
+.an-followup {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: transparent;
+  color: var(--hf-muted);
+  font: inherit;
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+  min-height: 28px;
+  padding: 5px 10px;
+  text-align: left;
+  max-width: 100%;
+  cursor: pointer;
+}
+.an-followup:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.an-followup:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.an-completion-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.an-composer .an-completion-field .an-input {
+  display: block;
+  width: 100%;
+}
+.an-completion {
+  position: absolute;
+  inset: 7px 0 auto;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-md);
+  line-height: 22px;
+  opacity: 0.7;
+}
+.an-completion > span {
+  visibility: hidden;
+}

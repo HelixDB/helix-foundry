@@ -280,3 +280,17 @@ export function answerShape(
     ? { kind: "breakdown", label: named, measure, keys }
     : { kind: "table", label: named, measure, keys };
 }
+
+// A possible next investigation, supported by a published ontology property.
+export type ChatFollowup = {
+  id: string;
+  label: string;
+  question: string;
+  ontology: { type: string; datasetId: string; property: string };
+  version: string;
+};
+export type ChatFollowups = {
+  runId: string | null;
+  generation: string | null;
+  items: ChatFollowup[];
+};

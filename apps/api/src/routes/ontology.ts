@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { listRecords, recordLabel } from "../records.js";
 import { assert, digest } from "../security.js";
 import { resource, transaction, type Store } from "../store.js";
 import { effectiveObject } from "../context.js";
@@ -29,26 +30,6 @@ export const ontologySchemas: RequestSchemas = {
     revert: z.boolean().optional(),
   }),
 };
-
-// A readable name for a record: a person's name, a name or title, an email;
-// otherwise its type and a shortened key.
-const blank = (v: unknown) =>
-  v == null || ["", "None", "null", "NaN"].includes(String(v).trim());
-export function recordLabel(name: string, type: string, values: object) {
-  const entries = Object.entries(values).filter(([, v]) => !blank(v));
-  const find = (test: RegExp) => entries.find(([k]) => test.test(k))?.[1];
-  const first = find(/(^|_)first_?name$/i),
-    last = find(/(^|_)last_?name$/i);
-  if (first || last) return [first, last].filter(Boolean).join(" ");
-  const named =
-    find(/^(name|full_?name|display_?name|title|subject|company(_?name)?)$/i) ??
-    find(/(^|_)(name|title)$/i) ??
-    // Only the record's own email: requester_email names someone else.
-    find(/^e-?mail$/i);
-  if (named) return String(named).slice(0, 80);
-  const key = name.startsWith(type + " ") ? name.slice(type.length + 1) : name;
-  return `${type} ${key.length > 14 ? key.slice(0, 12) + "…" : key}`;
-}
 
 // Ontology: object views, neighbors and object actions (edits, create, link).
 export function registerOntologyRoutes(
@@ -107,9 +88,10 @@ export function registerOntologyRoutes(
     );
     return { ids: await store.neighbors(a.scope, o.id) };
   });
-  // The record graph: records as nodes and their links as edges. Without a
-  // focus it is the whole graph, or its best-connected records when that is
-  // too big to draw; with a focus, the records within `depth` links of it.
+  // The record graph: records as nodes and their links as edges. With a
+  // focus, the records within `depth` links of it; without one, the records
+  // around the best-connected ones. Only those records are read, and
+  // `truncated` says when the limit left some out.
   app.get("/api/v1/workspaces/:w/graph", async (req: any) => {
     const a = await access(req),
       q = z
@@ -121,68 +103,59 @@ export function registerOntologyRoutes(
         .parse(req.query),
       generation = (await store.get(a.scope, "workspace"))?.data
         .activeGeneration;
-    const objects = new Map(
-      (await store.list(a.scope, "object"))
-        .filter((o) => o.data.generation === generation)
-        .map((o) => [o.id, o]),
-    );
-    const relations = (await store.list(a.scope, "relation")).filter(
-      (r) =>
-        r.data.generation === generation &&
-        objects.has(r.data.from) &&
-        objects.has(r.data.to),
-    );
-    const adjacent = new Map<string, string[]>();
-    for (const r of relations)
-      for (const [x, y] of [
-        [r.data.from, r.data.to],
-        [r.data.to, r.data.from],
-      ]) {
-        if (!adjacent.has(x)) adjacent.set(x, []);
-        adjacent.get(x)!.push(y);
-      }
-    const degree = (id: string) => adjacent.get(id)?.length || 0;
-    let keep: string[];
+    const total = (await store.list(a.scope, "objectType"))
+      .filter((t) => t.data.generation === generation)
+      .reduce((n, t) => n + (t.data.objectCount || 0), 0);
+    if (!generation || !total)
+      return { total: 0, nodes: [], edges: [], truncated: false };
+    let seeds: string[];
     if (q.focus) {
-      const start = `${generation}_${q.focus}`;
-      assert(objects.has(start), "Record unavailable", 404);
-      const seen = new Set([start]);
-      let frontier = [start];
-      for (let d = 0; d < q.depth && seen.size < q.limit; d++) {
-        const next: string[] = [];
-        for (const id of frontier)
-          for (const n of adjacent.get(id) || [])
-            if (!seen.has(n) && seen.size < q.limit) {
-              seen.add(n);
-              next.push(n);
-            }
-        frontier = next;
-      }
-      keep = [...seen];
+      const start = await store.get(a.scope, `${generation}_${q.focus}`);
+      assert(
+        start?.kind === "object" && start.data.generation === generation,
+        "Record unavailable",
+        404,
+      );
+      seeds = [start.id];
     } else
-      keep = [...objects.keys()]
-        .sort((x, y) => degree(y) - degree(x) || x.localeCompare(y))
-        .slice(0, q.limit);
-    const kept = new Set(keep);
-    const node = (id: string) => objects.get(id)!;
+      seeds = (
+        await listRecords(store, a.scope, {
+          sort: "links",
+          dir: "desc",
+          offset: 0,
+          limit: Math.min(20, q.limit),
+        })
+      ).items.map((o) => o.id);
+    const hood = await store.neighborhood(
+      a.scope,
+      seeds,
+      q.focus ? q.depth : 1,
+      q.limit,
+    );
+    const nodes = hood.nodes.filter(
+        (o) => o.kind === "object" && o.data.generation === generation,
+      ),
+      kept = new Map(nodes.map((o) => [o.id, o])),
+      degree = await store.linkCounts(
+        a.scope,
+        nodes.map((o) => o.id),
+      );
     return {
-      total: objects.size,
-      nodes: keep.map((id) => {
-        const o = node(id);
-        return {
-          id: o.data.logicalId,
-          type: o.data.type,
-          name: o.name,
-          label: recordLabel(o.name, o.data.type, o.data.base || {}),
-          degree: degree(id),
-        };
-      }),
-      edges: relations
-        .filter((r) => kept.has(r.data.from) && kept.has(r.data.to))
-        .map((r) => ({
-          from: node(r.data.from).data.logicalId,
-          to: node(r.data.to).data.logicalId,
-          name: r.name,
+      total,
+      truncated: hood.truncated || nodes.length < total,
+      nodes: nodes.map((o) => ({
+        id: o.data.logicalId,
+        type: o.data.type,
+        name: o.name,
+        label: recordLabel(o.name, o.data.type, o.data.base || {}),
+        degree: degree.get(o.id) || 0,
+      })),
+      edges: hood.edges
+        .filter((e) => kept.has(e.from) && kept.has(e.to))
+        .map((e) => ({
+          from: kept.get(e.from)!.data.logicalId,
+          to: kept.get(e.to)!.data.logicalId,
+          name: e.name,
         })),
     };
   });

@@ -8,6 +8,8 @@
 export function analystReply(system: string, context: any): unknown {
   if (system.includes("Choose answer for questions"))
     return { intent: "answer" };
+  const signed = signedReply(system, context);
+  if (signed !== undefined) return signed;
   const orders = context.datasets?.find((d: any) => /^orders$/i.test(d.name));
   if (system.includes("Answer the question with one read-only SQL") && orders)
     return {
@@ -28,5 +30,25 @@ export function analystReply(system: string, context: any): unknown {
       highlights: [],
     };
   }
+  return undefined;
+}
+
+// Local model boundary only: the actual acceptance worker executes this SQL.
+function signedReply(system: string, context: any): unknown {
+  if (!context.goal?.startsWith("Signed breakdown ")) return undefined;
+  const dataset = context.datasets?.find((d: any) => d.name === context.goal);
+  if (system.includes("Answer the question") && dataset)
+    return {
+      title: context.goal,
+      sql: `SELECT category, sum(profit) profit FROM "${dataset.table}" GROUP BY category ORDER BY category`,
+      inputs: [dataset.id],
+      assumptions: [],
+    };
+  if (system.includes("Summarise this query result"))
+    return {
+      summary:
+        "The table and chart show the executed profit totals by category.",
+      highlights: [],
+    };
   return undefined;
 }

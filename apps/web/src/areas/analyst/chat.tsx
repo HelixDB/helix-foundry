@@ -20,7 +20,10 @@ import {
   SquarePen,
   Trash2,
 } from "lucide-react";
-import type { Resource } from "../../../../../packages/shared/src";
+import type {
+  ChatFollowups,
+  Resource,
+} from "../../../../../packages/shared/src";
 import { api } from "../../api";
 import { useWorkspace } from "../../ui";
 import {
@@ -79,7 +82,13 @@ export function ChatPage({ chatId }: { chatId: string }) {
       />
     );
   if (!chat.data) return <RunFallback chatId={chatId} />;
-  return <Conversation chat={chat.data} offline={chat.isRefetchError} />;
+  return (
+    <Conversation
+      key={`${id}:${chat.data.id}`}
+      chat={chat.data}
+      offline={chat.isRefetchError}
+    />
+  );
 }
 
 // Not a chat id: a follow-up's run id (an old /runs link) opens its chat.
@@ -283,6 +292,38 @@ function Conversation({ chat, offline }: { chat: Chat; offline?: boolean }) {
   const [text, setText] = useState(() => readDraft(draftKey)),
     [pending, setPending] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const suggestions = useQuery({
+    queryKey: [
+      ...chatKey(id, chat.id),
+      "followups",
+      latest?.id,
+      latest?.updatedAt,
+    ],
+    queryFn: () =>
+      api<ChatFollowups>(
+        `/workspaces/${id}/threads/${encodeURIComponent(chat.id)}/followups`,
+      ),
+    enabled:
+      !!latest?.data.answer && latest.data.status === "succeeded" && !pending,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const followups =
+    !pending && !latestWorking && suggestions.data?.runId === latest?.id
+      ? suggestions.data?.items || []
+      : [];
+  const changeDraft = (value: string) => {
+    if (voiceHere && value) voice.pauseForTyping();
+    setText(value);
+    writeDraft(draftKey, value);
+  };
+  const chooseFollowup = (question: string) => {
+    changeDraft(question);
+    requestAnimationFrame(() => {
+      input.current?.focus();
+      input.current?.setSelectionRange(question.length, question.length);
+    });
+  };
   // Hands-free voice in this chat: the user's words show in the composer
   // until GPT-Live hands them to the Analyst; typing pauses the microphone.
   const voice = useVoice(),
@@ -386,6 +427,25 @@ function Conversation({ chat, offline }: { chat: Chat; offline?: boolean }) {
                 <p>{r.data.goal}</p>
               </div>
               <Reply run={r} offline={offline} />
+              {r.id === latest?.id && followups.length > 0 && (
+                <div
+                  className="an-followups"
+                  role="group"
+                  aria-label="Suggested follow-up questions"
+                >
+                  {followups.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="an-followup"
+                      title={item.question}
+                      onClick={() => chooseFollowup(item.question)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
           {pending && (
@@ -436,6 +496,16 @@ function Conversation({ chat, offline }: { chat: Chat; offline?: boolean }) {
           >
             <PromptInput
               inputRef={input}
+              completionKey={latest?.id}
+              completion={
+                voiceHere && !voice.paused
+                  ? ""
+                  : followups.find((item) =>
+                      item.question
+                        .toLowerCase()
+                        .startsWith(text.toLowerCase()),
+                    )?.question || ""
+              }
               className={cx("an-input", showHeard && "is-voice")}
               aria-label="Ask a follow-up"
               aria-describedby="an-composer-hint"
@@ -444,13 +514,7 @@ function Conversation({ chat, offline }: { chat: Chat; offline?: boolean }) {
               }
               maxLength={4000}
               value={showHeard ? voice.heard : text}
-              onValueChange={(v) => {
-                // Typing (or correcting what was heard) takes the composer
-                // back from voice until it is sent or cleared.
-                if (voiceHere && v) voice.pauseForTyping();
-                setText(v);
-                writeDraft(draftKey, v);
-              }}
+              onValueChange={changeDraft}
               onSubmit={() => void send()}
             />
             {latestWorking ? (
@@ -492,7 +556,9 @@ function Conversation({ chat, offline }: { chat: Chat; offline?: boolean }) {
             {hint ||
               (latestWorking
                 ? "You can send a follow-up once this answer is ready."
-                : "Enter to send · Shift+Enter for a new line")}
+                : followups.length > 0
+                  ? "Tab to accept a suggestion · Enter to send"
+                  : "Enter to send · Shift+Enter for a new line")}
           </p>
         </div>
       </div>

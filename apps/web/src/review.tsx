@@ -13,6 +13,7 @@ import {
 } from "./ui";
 import { PageHeader } from "./kit";
 import { paths } from "./paths";
+import { ProposalChanges } from "./proposal-changes";
 import type { Resource } from "../../../packages/shared/src";
 const ResultPreview = lazy(() =>
   import("./charts").then((m) => ({ default: m.ResultPreview })),
@@ -41,6 +42,7 @@ export function ProposalReview({ proposal: p }: { proposal: Resource }) {
           ))}
         </div>
       )}
+      <ProposalChanges proposal={p} />
       {published && <p className="muted">Published to your workspace</p>}
       {b.dashboards.map((d: any) => (
         <section key={d.name} className="review-result">

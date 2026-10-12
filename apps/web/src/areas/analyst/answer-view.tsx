@@ -348,14 +348,8 @@ export function AnswerResult({
   shape: AnswerShape;
   heading?: string;
 }) {
-  // Bars start at zero, so a negative value would vanish: a signed
-  // breakdown shows only as a table.
-  const plan = useMemo(() => {
-    const p = chartPlan(rows, shape);
-    return p?.kind === "breakdown" && p.points.some((x) => x.value < 0)
-      ? null
-      : p;
-  }, [rows, shape]);
+  // The shared bars support signed values around a visible zero baseline.
+  const plan = useMemo(() => chartPlan(rows, shape), [rows, shape]);
   const [view, setView] = useState<"chart" | "table">("chart"),
     [more, setMore] = useState(false);
   // The chart has the rows given, which may be the result's first rows:
@@ -364,7 +358,8 @@ export function AnswerResult({
     partial = all > rows.length,
     whole = partial ? all : count,
     ranked = !!plan?.rank && count > TOP,
-    top = more ? Math.min(MOST, count) : TOP;
+    top = more ? Math.min(MOST, count) : TOP,
+    rankingLabel = plan?.rank === "asc" ? "Lowest" : "Top";
   return (
     <div className="an-result">
       {(heading || plan) && (
@@ -395,7 +390,7 @@ export function AnswerResult({
               <span className="hf-num">
                 {top === whole
                   ? `All ${formatNumber(whole)}`
-                  : `Top ${formatNumber(top)} of ${formatNumber(whole)}`}
+                  : `${rankingLabel} ${formatNumber(top)} of ${formatNumber(whole)}`}
               </span>
               {more && count > MOST ? (
                 <Button
@@ -416,9 +411,9 @@ export function AnswerResult({
                   onClick={() => setMore((v) => !v)}
                 >
                   {more
-                    ? `Show top ${TOP}`
+                    ? `Show ${rankingLabel.toLowerCase()} ${TOP}`
                     : count > MOST || partial
-                      ? `Show top ${formatNumber(Math.min(MOST, count))}`
+                      ? `Show ${rankingLabel.toLowerCase()} ${formatNumber(Math.min(MOST, count))}`
                       : `Show all ${formatNumber(count)}`}
                 </Button>
               )}

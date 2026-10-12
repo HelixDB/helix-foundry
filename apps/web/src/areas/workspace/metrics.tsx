@@ -382,7 +382,11 @@ function BreakdownChart({
 }) {
   const [active, setActive] = useState<number | null>(null),
     [focused, setFocused] = useState(false);
-  const max = Math.max(0, ...points.map((p) => p.value));
+  const lo = Math.min(0, ...points.map((p) => p.value)),
+    hi = Math.max(0, ...points.map((p) => p.value)),
+    scale = Math.max(Math.abs(lo), hi) || 1,
+    span = hi / scale - lo / scale || 1,
+    zero = (-lo / scale / span) * 100;
   // Places compare exact values: `value` rounds integers beyond 2^53, whose
   // `text` keeps every digit.
   const exact = (p: Point) =>
@@ -417,7 +421,8 @@ function BreakdownChart({
         }}
       >
         {points.map((p, i) => {
-          const pct = max > 0 ? (Math.max(0, p.value) / max) * 100 : 0,
+          const pct = (Math.abs(p.value) / scale / span) * 100,
+            left = ((Math.min(0, p.value) / scale - lo / scale) / span) * 100,
             at = rank && place(p);
           return (
             <div
@@ -434,9 +439,23 @@ function BreakdownChart({
                 {p.label}
               </span>
               <span className="wk-bar-track">
+                {lo < 0 && (
+                  <span
+                    className="wk-bar-zero"
+                    style={{ left: `${zero}%` }}
+                    aria-hidden
+                  >
+                    {i === points.length - 1 && <span>0</span>}
+                  </span>
+                )}
                 <span
                   className="wk-bar"
-                  style={{ width: `${pct}%`, minWidth: pct > 0 ? 2 : 0 }}
+                  style={{
+                    left: `${left}%`,
+                    width: `${pct}%`,
+                    minWidth: lo === 0 && pct > 0 ? 2 : 0,
+                    borderRadius: p.value < 0 ? "4px 0 0 4px" : undefined,
+                  }}
                 />
               </span>
               <span className="wk-bar-value hf-num">
