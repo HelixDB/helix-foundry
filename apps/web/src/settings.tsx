@@ -1,7 +1,7 @@
 import { ProviderSetup } from "./setup-components";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ApiTokenMetadata } from "../../../packages/sdk/src";
+import type { ApiTokenMetadata } from "../../../packages/shared/src";
 import {
   Copy,
   Download,
@@ -15,6 +15,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { useWorkspace, useAction, PageHeader } from "./ui";
+import { Button, ConfirmDialog } from "./kit";
 import { api } from "./api";
 export default function SettingsPage() {
   const { id, role } = useWorkspace(),
@@ -22,7 +23,8 @@ export default function SettingsPage() {
     [tab, setTab] = useState(
       new URLSearchParams(location.search).get("tab") || "models",
     ),
-    [issued, setIssued] = useState<{ token: string; id: string } | null>(null);
+    [issued, setIssued] = useState<{ token: string; id: string } | null>(null),
+    [revoking, setRevoking] = useState<ApiTokenMetadata | null>(null);
   const owner = role === "owner";
   const tokens = useQuery({
     queryKey: [id, "developer-tokens"],
@@ -133,34 +135,28 @@ export default function SettingsPage() {
                 ) : tokens.error ? (
                   <p role="alert">{tokens.error.message}</p>
                 ) : tokens.data?.items.length ? (
-                  <ul className="token-list">
+                  <ul className="simple-list">
                     {tokens.data.items.map((t) => (
-                      <li key={t.id}>
-                        <strong>{t.name}</strong>
-                        {" · "}
-                        {t.readOnly ? "Read-only" : "Read and write"}
-                        {" · "}
-                        Created {new Date(
-                          t.createdAt,
-                        ).toLocaleDateString()}{" "}
-                        <button
-                          type="button"
-                          className="button small"
-                          disabled={action.pending}
-                          aria-label={`Revoke ${t.name}`}
-                          onClick={() =>
-                            action.run(async () => {
-                              await api(
-                                `/workspaces/${id}/tokens/${t.id}`,
-                                {},
-                                "DELETE",
-                              );
-                              if (issued?.id === t.id) setIssued(null);
-                            }, "API token revoked")
-                          }
-                        >
-                          Revoke
-                        </button>
+                      <li className="simple-row" key={t.id}>
+                        <div>
+                          <strong>{t.name}</strong>
+                          <p>
+                            {t.readOnly ? "Read-only" : "Read and write"}
+                            {" · "}
+                            Created {new Date(t.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            disabled={action.pending}
+                            aria-label={`Revoke ${t.name}`}
+                            onClick={() => setRevoking(t)}
+                          >
+                            Revoke
+                          </Button>
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -168,6 +164,27 @@ export default function SettingsPage() {
                   <p>No active API tokens.</p>
                 )}
               </div>
+              {revoking && (
+                <ConfirmDialog
+                  title={`Revoke “${revoking.name}”?`}
+                  description="Integrations that use this token will stop working. This can’t be undone."
+                  confirmLabel="Revoke token"
+                  tone="danger"
+                  pending={action.pending}
+                  onConfirm={() =>
+                    action.run(async () => {
+                      await api(
+                        `/workspaces/${id}/tokens/${revoking.id}`,
+                        {},
+                        "DELETE",
+                      );
+                      if (issued?.id === revoking.id) setIssued(null);
+                      setRevoking(null);
+                    }, "API token revoked")
+                  }
+                  onCancel={() => setRevoking(null)}
+                />
+              )}
             </section>
           )}
           <section className="panel settings-panel">

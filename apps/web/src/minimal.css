@@ -899,6 +899,9 @@ td {
 .settings-panel .notice strong {
   font-size: 13px;
 }
+.settings-panel .simple-list {
+  margin-top: var(--hf-space-2);
+}
 .settings-panel .modal-actions {
   flex-wrap: wrap;
 }

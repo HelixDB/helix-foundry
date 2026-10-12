@@ -36,6 +36,14 @@ test("Developer tools show saved token metadata and revoke only the selected int
   await expect(inventory).toContainText("New automation");
   await expect(page.locator(".copy-box")).toHaveCount(0);
   await page.getByRole("button", { name: "Revoke New automation" }).click();
+  const confirm = page.getByRole("dialog", {
+    name: "Revoke “New automation”?",
+  });
+  await expect(confirm).toContainText(
+    "Integrations that use this token will stop working.",
+  );
+  await confirm.getByRole("button", { name: "Revoke token" }).click();
+  await expect(confirm).toHaveCount(0);
   await expect(inventory).not.toContainText("New automation");
   await expect(inventory).toContainText("Existing notebook");
   const revoked = await page.request.get(

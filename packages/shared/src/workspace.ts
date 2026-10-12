@@ -379,3 +379,11 @@ export type HomeMetrics = {
   computedAt?: string;
   metrics: HomeMetric[];
 };
+
+// GET /workspaces/:w/tokens: one workspace API token, without its secret.
+export type ApiTokenMetadata = {
+  id: string;
+  name: string;
+  readOnly: boolean;
+  createdAt: string;
+};

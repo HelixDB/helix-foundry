@@ -12,6 +12,7 @@ import type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ApiTokenMetadata,
 } from "@helix-foundry/shared";
 export type {
   Bundle,
@@ -27,6 +28,7 @@ export type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ApiTokenMetadata,
 };
 export class FoundryError extends Error {
   constructor(
@@ -36,12 +38,6 @@ export class FoundryError extends Error {
     super(message);
   }
 }
-export type ApiTokenMetadata = {
-  id: string;
-  name: string;
-  readOnly: boolean;
-  createdAt: string;
-};
 export class FoundryClient {
   tokens() {
     return this.request<{ items: ApiTokenMetadata[] }>("/tokens");
