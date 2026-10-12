@@ -217,3 +217,36 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+.pipeline-workspace {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 24px;
+}
+.pipeline-workspace section,
+.pipeline-workspace nav {
+  min-width: 0;
+}
+.pipeline-workspace label {
+  display: block;
+  margin-bottom: 14px;
+}
+.pipeline-workspace textarea {
+  width: 100%;
+  font-family: monospace;
+}
+.pipeline-workspace .pipeline-input {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pipeline-input code {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .pipeline-workspace {
+    grid-template-columns: 1fr;
+  }
+}

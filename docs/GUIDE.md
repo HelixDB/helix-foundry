@@ -108,6 +108,14 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 
 [Operations](OPERATIONS.md) lists the database permissions change capture needs and how to manage WAL and binlog retention.
 
+## Human SQL pipelines
+
+Open **Data → Pipelines** to create a SQL transform from selected dataset inputs. Table names are shown beside each dataset. **Create review** executes validation and opens the existing proposal review, where Details shows actual transformed preview rows and checks. Publish only after reviewing those results. This creates a new immutable accepted pipeline and its output dataset.
+
+Reopen an accepted pipeline to create a revised review; edits do not change the accepted definition until publication. **Run accepted pipeline** always runs the accepted SQL, even if the form contains unsaved edits. Its durable job status and current output snapshot appear below the editor. Open **Inspect output dataset** for native rows, schema, profile and exports. Each successful refresh retains earlier immutable output versions. Read-only users can inspect accepted definitions and outputs; creating reviews and enqueueing runs require editor permission. The editor uses explicit SQL, and warns when replacing an existing node graph. Scheduling and cancellation use their separate existing workflows.
+
+The pipeline workspace currently lists up to 500 accepted pipelines and up to 500 input datasets. It does not page beyond that limit. Viewer members can inspect accepted definitions and outputs; editing and running require editor access.
+
 ## AI and review
 
 **Providers.** Local inference through Ollama is the default. Claude and OpenAI are explicit choices, and there is no fallback from one provider to another. Hosted keys are entered in the browser, encrypted, and tested before the provider is activated. If a replacement provider fails its test, the existing settings stay active.

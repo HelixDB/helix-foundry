@@ -138,6 +138,7 @@ export function DataOverview() {
     <Page>
       <PageHeader
         title="Data"
+        meta={<Link to={paths.pipelines()}>Pipelines</Link>}
         subtitle="Where your data comes from, what it holds and how it stays up to date."
         actions={
           role !== "viewer" && (

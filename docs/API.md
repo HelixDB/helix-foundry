@@ -117,3 +117,5 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+**Human Pipeline Builder.** `/data/pipelines` and `/data/pipelines/:id` use the existing `FoundryClient.draftPipeline(definition)` and `runPipeline(id)` contracts. A draft is a complete validated review proposal, and publication creates a fresh immutable pipeline ID. Accepted generation filtering applies to resource reads. A run executes the persisted accepted definition and refreshes its output dataset through a durable job; it does not publish edited form SQL. Source snapshot citations remain available through ordinary readonly queries of the output dataset.

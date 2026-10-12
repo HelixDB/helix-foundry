@@ -13,6 +13,7 @@ import { NotFound } from "../../shell/ErrorBoundary";
 import { paths } from "../../paths";
 import { ConnectionDetail } from "./connection";
 import { DataOverview } from "./connections";
+import { PipelineWorkspace } from "./pipelines";
 
 // /data (?add=1 opens the connector picker): connections and their tables
 export function DataHome() {
@@ -42,6 +43,8 @@ export function DataRoutes() {
   return (
     <Routes>
       <Route index element={<DataHome />} />
+      <Route path="pipelines" element={<PipelineWorkspace />} />
+      <Route path="pipelines/:pipelineId" element={<PipelineWorkspace />} />
       <Route path="connections" element={<ConnectionsPage />} />
       <Route path="connections/:sourceId" element={<ConnectionPage />} />
       <Route path="datasets/:datasetId" element={<DatasetPage />} />
