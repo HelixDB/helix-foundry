@@ -47,9 +47,15 @@ function DatasetDetail({
   const { id, role } = useWorkspace(),
     action = useAction(),
     [description, setDescription] = useState(d.description),
-    [offset, setOffset] = useState(0),
+    [page, setPage] = useState<{ versionId: string; offset: number }>({
+      versionId: d.data.activeVersion,
+      offset: 0,
+    }),
     [selectedVersion, setSelectedVersion] = useState<string>();
   const versionId = selectedVersion || d.data.activeVersion;
+  // An implicit current-snapshot refresh owns a new page too. Derive its
+  // offset before querying, while retaining pages on pinned historical data.
+  const offset = page.versionId === versionId ? page.offset : 0;
   const preview = useQuery({
     queryKey: [id, "preview", d.id, versionId, offset],
     queryFn: () =>
@@ -129,7 +135,7 @@ function DatasetDetail({
                 ? undefined
                 : e.target.value,
             );
-            setOffset(0);
+            setPage({ versionId: e.target.value, offset: 0 });
           }}
         >
           {choices.map((v, i) => {
@@ -193,13 +199,15 @@ function DatasetDetail({
             <div className="buttons">
               <button
                 disabled={!offset}
-                onClick={() => setOffset((n) => Math.max(0, n - 50))}
+                onClick={() =>
+                  setPage({ versionId, offset: Math.max(0, offset - 50) })
+                }
               >
                 Previous
               </button>
               <button
                 disabled={offset + 50 >= profile.rows}
-                onClick={() => setOffset((n) => n + 50)}
+                onClick={() => setPage({ versionId, offset: offset + 50 })}
               >
                 Next
               </button>
