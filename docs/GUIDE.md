@@ -10,6 +10,7 @@ This guide is the detailed companion to the [README](../README.md). It covers wh
 - [Connecting sources](#connecting-sources)
   - [Hosted databases: Neon, Supabase and PlanetScale](#hosted-databases-neon-supabase-and-planetscale)
   - [PostgreSQL and MySQL](#postgresql-and-mysql)
+  - [Neo4j](#neo4j)
   - [Stripe](#stripe)
   - [WorkOS](#workos)
   - [PostHog](#posthog)
@@ -26,7 +27,7 @@ This guide is the detailed companion to the [README](../README.md). It covers wh
 
 Helix Foundry is an AI-assisted data workspace that runs on your own computer, built on HelixDB and DuckDB. You connect data, confirm a suggested ontology or describe an outcome, inspect tested proposals, and publish a shared ontology with key metrics on Home. Local inference is the default; Claude and OpenAI are explicit alternatives.
 
-- **Sources:** PostgreSQL and MySQL discovery and streamed snapshot ingestion, sign-in for Neon, Supabase and PlanetScale, Stripe, WorkOS and PostHog, REST pagination, S3-compatible file imports, CSV, JSON, JSONL and Parquet uploads, and a batch ingestion API.
+- **Sources:** PostgreSQL, MySQL and Neo4j discovery and streamed snapshot ingestion, sign-in for Neon, Supabase and PlanetScale, Stripe, WorkOS and PostHog, REST pagination, S3-compatible file imports, CSV, JSON, JSONL and Parquet uploads, and a batch ingestion API.
 - **Data:** immutable Parquet snapshots, profiles, key candidates, sensitivity hints, schema-drift review, version history and exports.
 - **AI assistance:** generated catalog descriptions, executable pipeline SQL, ontology mappings and relationships, Home key metrics and action suggestions.
 - **Pipelines and questions:** pipelines defined as node graphs (DAGs) that compile to SQL, or as editable SQL, with before and after previews. Read-only AI questions return executed results with snapshot citations.
@@ -41,11 +42,11 @@ Helix Foundry is an AI-assisted data workspace that runs on your own computer, b
 The sidebar has **Home**, **Ontology**, **Data** and **Analyst**, with **Settings** at the bottom. Switch workspaces from the menu at the top of the sidebar.
 
 - **Home** shows the workspace's key metrics: growth and analytics metrics picked by AI from your datasets' schemas, or by code until AI is set up. They are recomputed only when an input dataset gets a new version. Ask anything about your data from the box at the top. Home also shows connections, data health, items that need attention, where you left off, and an overview of the ontology. Old dashboard links open Home.
-- **Ontology** opens on the **Explorer**, which shows your records and how they connect, as a graph or a table. **Object types** lists the published business types. Open a record to see its related records and source history. Edits to a record need a before and after preview and explicit application. Workspace edits do not change imported snapshots, Home's metrics or source systems. Old `/records` links open the Explorer.
+- **Ontology** opens on the **Explorer**, which shows your records and how they connect, as a graph or a table. **Object types** lists the published business types. Open a record to see its related records and source history. Edits to a record need a before and after preview and explicit application. Workspace edits do not change imported snapshots, Home's metrics or source systems. Old `/records` links open the Explorer. In the graph, **Find a record** searches the whole current workspace once you type at least two characters, including records the graph does not show. Choose a result with the mouse, or with the arrow keys and Enter. A record already in the graph is selected in place; any other record opens its neighbourhood, where **Open record** shows its details. **Show the best-connected records** returns to the overview. Search shows up to eight matches and their total; refine the text when there are more. Search does not edit records or imported data.
 - **Data** brings every connection option into one **Add data** flow. Open a dataset to see a sample, and expand **Details** for schemas, profiles, versions, lineage, exports and connection settings. Choose **Snapshot** on a dataset to inspect current, historical or schema-changing pending rows and their selected profile/timestamp. Selection is read-only: it does not accept a schema, change current snapshots, or change views, exports and queries. Historical snapshots retain exact version citations; empty snapshots still show their typed schema. The SDK offers `previewDatasetVersion(datasetId, versionId, offset, limit)`. The old Advanced page now opens Data.
 - **Analyst** holds your chats with the assistant. The assistant decides whether a request needs an executed answer or a tested proposal. Follow-ups keep the selected resource. Routing uses the same model-call and token budget as the rest of the run, and a saved routing decision is reused on resume when the inputs are unchanged. Read-only API tokens can investigate but cannot create definitions or change records.
 - **Proposals** (`/proposals`) is where definitions from the assistant wait for review before publication. Guided setup publishes its validated build of the confirmed ontology automatically.
-- **Settings** has **AI & models** (choose Local, Claude or OpenAI and enter an API key) and **Developer tools** (API tokens). Other AI settings are set through the API; see [AI and review](#ai-and-review).
+- **Settings** has **AI & models** (choose Local, Claude or OpenAI and enter an API key) and **Developer tools** (create API tokens, inspect their access level, and revoke unused tokens). Other AI settings are set through the API; see [AI and review](#ai-and-review).
 
 ## Guided setup and sample data
 
@@ -74,6 +75,10 @@ Start by choosing where your database is hosted. Provider sign-in requires regis
 **PostgreSQL** accepts a single masked connection URL, including its database username and password; individual fields are also available. Imports use a read-only snapshot transaction and a server cursor.
 
 **MySQL** supports configurable, verified TLS with a custom CA. Large integers and decimals are preserved as strings, and timestamps are read as strings. Transformations can cast them explicitly.
+
+### Neo4j
+
+Neo4j connects over the HTTP Query API of Neo4j 5 or later: the server's HTTP URL on port 7474, a database name, and a username and password. Queries are sent in read mode. From the Docker install, `localhost` is the app's own container, so a Neo4j server running on this computer is reached as `http://host.docker.internal:7474`; this name comes from Docker Desktop. With `pnpm dev`, use `http://localhost:7474`. **Test connection** lists every label and relationship type with its count. Each selected label becomes a dataset of its nodes, keyed by Neo4j's element id in a column named for the label (`customer_id` for `Customer`), and each selected relationship type becomes a dataset of its relationships, with the start and end node ids in columns named for their labels, so the suggested ontology links them. A property with the same name as one of those columns is kept with a `_property` suffix. Integers beyond JavaScript's safe range, and dates, times and durations, are preserved as strings. Neo4j exposes no change stream, so imports are complete snapshots that refresh hourly by default.
 
 ### Stripe
 
@@ -110,7 +115,15 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 
 ## AI and review
 
-**Providers.** Local inference through Ollama is the default. Claude and OpenAI are explicit choices, and there is no fallback from one provider to another. Hosted keys are entered in the browser, encrypted, and tested before the provider is activated. If a replacement provider fails its test, the existing settings stay active.
+**Providers.** Local inference through Ollama is the default. Claude, OpenAI and Custom are explicit choices, and there is no fallback from one provider to another. Hosted keys are entered in the browser, encrypted, and tested before the provider is activated. If a replacement provider fails its test, the existing settings stay active.
+
+**Custom models.** In **Settings → AI & models → Custom** (also available during setup), enter an HTTP(S) API base URL including its version, a model ID or routing alias, and choose **OpenAI Chat Completions** or **OpenAI Responses**. The endpoint must support structured JSON output with `json_schema`. Enter an API key when the endpoint requires bearer authentication; it is optional for unauthenticated self-hosted models. Credentials belong in the key field, not the URL. A saved key is retained only when the Custom endpoint is unchanged; enter the key again when changing endpoints. Custom providers use the hosted-provider data controls and do not enable OpenAI voice sessions or Ollama model downloads.
+
+Click **Test and save AI** to save a Custom provider. The connection is tested in the background and becomes active only after it succeeds. Some common setups:
+
+- **Azure OpenAI:** base URL `https://<resource>.openai.azure.com/openai/v1`, the **OpenAI Responses** format, the resource's key as the API key, and the deployment name as the model.
+- **An OpenAI-compatible server on this computer**, such as vLLM or LM Studio: from the Docker install, `localhost` is the app's own container, so use `http://host.docker.internal:<port>/v1` (a name Docker Desktop provides). With `pnpm dev`, use `http://127.0.0.1:<port>/v1`.
+- **Reasoning models**, such as OpenAI's o-series and gpt-5, need the **OpenAI Responses** format. The Chat Completions format sends `max_tokens`, which they reject.
 
 **Context and privacy.** AI sees bounded schema, profile and sample context. Samples sent to a hosted provider mask detected sensitive columns unless `allowRawData` is set to `true` in the provider settings (an API-only setting, off by default). Detection is a heuristic, so review your source policies before using a hosted provider.
 
@@ -123,6 +136,8 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 **Hands-free voice.** With the OpenAI provider, and a project that has access to GPT-Live (`gpt-live-1`), a small blue orb appears after the Ask box on Home and above the chat composer. Pressing it asks for the microphone and starts a voice conversation; the orb glows for as long as the session is connected. GPT-Live holds the conversation and hands business questions to Foundry, which answers each with an ordinary read-only Analyst run in the same chat, so tables, charts and sources appear as usual. GPT-Live then speaks the verified result; it is told never to state workspace figures the backend did not return. Follow-ups continue without pressing Send, and starting voice inside a chat keeps that chat's context. Typing pauses the microphone until the text is sent or cleared. Press the orb or Escape, say that you want to stop, or leave the chat to end voice. Voice never builds or changes anything. A one-row answer is said aloud with its numbers; a table gets a one-sentence headline and stays in the chat. Voice is available only with the OpenAI provider, and it sends each answer to OpenAI so it can be spoken; setup's OpenAI card says this. The OpenAI key stays on the server, which creates each session and controls it over a server-side WebSocket. Voice is billed by OpenAI per second of session, plus the model calls that interpret each spoken request.
 
 **Validation.** Model-generated definitions are schema-checked and executed against the data. A passing syntax and quality check does not prove business meaning, so proposals show their assumptions and unmatched relationships for review. Guided setup publishes only what passes validation, built from the ontology you confirmed. Model quality and latency depend on your hardware and the selected model. The default Qwen digest is recorded in [`models.json`](models.json), and installation verifies it before activation.
+
+**Definition changes.** Each unpublished proposal shows the added, changed and removed catalog entries, pipelines, object types, relationships, dashboards and actions compared with the currently published definitions. Expand an entry to read the exact current and proposed definitions, including changed SQL. Summary and assumption changes are shown separately. Before the first publication, every proposed asset is an addition. A warning identifies proposals whose input snapshots or published generation changed since validation; retest before publishing. This comparison describes definitions, not affected record counts or semantic SQL equivalence, and opening it changes no data.
 
 **Publishing and rollback.** Publishing checks the exact proposal hash and input versions, then switches generations. Each object type and relationship is one executor query, whose rows the worker reads back and stages in batches; a type whose record count differs from its snapshot stops the publication, and the previous generation stays active. Revalidating creates a new reviewable proposal. Rollback revalidates and rematerialises the previous definitions against current snapshots, while preserving manual actions and their audit history. Failed staging artifacts can be removed during offline maintenance, after checking that no publication references them.
 
@@ -171,7 +186,7 @@ pnpm install
 # HelixDB on 6996. Use a port not occupied by another Helix project.
 docker run -d --name helix-foundry-dev -p 127.0.0.1:6996:8080 \
   -e HELIX_DATA_DIR=/var/lib/helix -v helix-foundry-dev:/var/lib/helix \
-  ghcr.io/helixdb/helixdb:v0.0.6@sha256:94b29942658ebdca0a91bf15edffe921a46da3e26e1223ea333ccce58c6212dd
+  ghcr.io/helixdb/helixdb:v0.0.12@sha256:f22b50fdab8fadbf8b5a881e656f293fdf5c688bad018f503b8dbc2f0f29543d
 ollama serve &   # or run it in its own terminal; skip if Ollama is already running
 # Optional: the app also pulls the model when you choose Local.
 ollama pull qwen3:4b
@@ -194,6 +209,7 @@ pnpm typecheck
 pnpm test
 TEST_HELIX=1 pnpm test       # requires the configured HelixDB instance
 TEST_MYSQL=1 pnpm test       # fixture MySQL on localhost:33077; see tests/mysql.test.ts
+TEST_NEO4J=1 pnpm test       # Neo4j 5 on localhost:37474, user neo4j, password foundry-test-only; see tests/neo4j.test.ts
 pnpm build
 pnpm test:browser            # starts an isolated API, executor and browser installation
 ONBOARDING_LOCAL=1 pnpm exec vitest run tests/onboarding.local.test.ts   # real local Qwen check

@@ -6,8 +6,8 @@ import {
   GetObjectCommand,
 } from "@aws-sdk/client-s3";
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { pipeline } from "node:stream/promises";
+import { mkdir, rm } from "node:fs/promises";
+import { pipeline, finished } from "node:stream/promises";
 import { once } from "node:events";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -17,6 +17,7 @@ import { postgresPoolConfig } from "./postgres-config.js";
 import { discoverStripe, importStripe } from "./stripe.js";
 import { discoverWorkos, importWorkos } from "./workos.js";
 import { discoverPosthog, importPosthog } from "./posthog.js";
+import { discoverNeo4j, importNeo4j } from "./neo4j.js";
 export type ConnectorConfig = Record<string, any>;
 function mysqlPool(c: ConnectorConfig) {
   return mysql.createPool({
@@ -193,6 +194,7 @@ export async function discover(kind: string, c: ConnectorConfig) {
   if (kind === "stripe") return discoverStripe(c);
   if (kind === "workos") return discoverWorkos(c);
   if (kind === "posthog") return discoverPosthog(c);
+  if (kind === "neo4j") return discoverNeo4j(c);
   if (kind === "rest") {
     const r = await fetch(checkedURL(c.url), {
       headers: headers(c),
@@ -405,6 +407,8 @@ export async function importSource(
       schema = await importWorkos(c, write);
     } else if (kind === "posthog") {
       schema = await importPosthog(c, write);
+    } else if (kind === "neo4j") {
+      schema = await importNeo4j(c, write);
     } else if (kind === "s3") {
       assert(c.key, "Select an object key");
       const client = s3(c);
@@ -443,6 +447,8 @@ export async function importSource(
     return { file, records: count, schema: count === 0 ? schema : undefined };
   } catch (e) {
     out.destroy();
+    await finished(out).catch(() => {});
+    await rm(path, { force: true }).catch(() => {});
     throw e;
   }
 }

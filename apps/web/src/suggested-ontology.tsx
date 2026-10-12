@@ -21,6 +21,7 @@ import {
   Sparkles,
   TriangleAlert,
   Unlink,
+  Waypoints,
 } from "lucide-react";
 import type {
   Resource,
@@ -40,6 +41,7 @@ const sourceNames: Record<string, string> = {
   s3: "S3",
   postgres: "PostgreSQL",
   mysql: "MySQL",
+  neo4j: "Neo4j",
   neon: "Neon",
   supabase: "Supabase",
   upload: "Upload",
@@ -57,7 +59,12 @@ const logoFiles: Record<string, string> = {
   neon: "neon",
   supabase: "supabase",
 };
-const genericIcons = { upload: FileUp, rest: Globe2, api: Braces };
+const genericIcons = {
+  upload: FileUp,
+  rest: Globe2,
+  api: Braces,
+  neo4j: Waypoints,
+};
 
 function sourceKey(...candidates: unknown[]) {
   const keys = candidates

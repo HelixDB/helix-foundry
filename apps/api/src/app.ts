@@ -29,7 +29,8 @@ import {
 } from "./routes/deps.js";
 import { registerDataRoutes } from "./routes/data.js";
 import { registerPipelinesRoutes } from "./routes/pipelines.js";
-import { recordLabel, registerOntologyRoutes } from "./routes/ontology.js";
+import { registerOntologyRoutes } from "./routes/ontology.js";
+import { listRecords } from "./records.js";
 import { registerAnalystRoutes } from "./routes/analyst.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
 // Helix Foundry runs on one computer for one person, with no sign-in. That
@@ -301,7 +302,44 @@ export async function createApp(store: Store) {
   app.get("/api/v1/workspaces/:w/resources/:kind", async (req: any) => {
     const a = await access(req);
     assert(publicKinds.has(req.params.kind), "Resource type not found", 404);
+    const offset = Math.max(Number(req.query.offset) || 0, 0),
+      limit = Math.max(1, Math.min(Number(req.query.limit) || 100, 500));
+    // Records carry a readable name and how many records they link to. They
+    // sort by name (?sort=record), a field, or their link count
+    // (?sort=links), with ?dir=desc to reverse; empty values go last.
+    if (req.params.kind === "object") {
+      const text = (v: unknown) => (v === undefined ? undefined : String(v));
+      const r = await listRecords(store, a.scope, {
+        type: text(req.query.type) || undefined,
+        search: text(req.query.search) || undefined,
+        field: text(req.query.field) || undefined,
+        value: text(req.query.value),
+        sort: text(req.query.sort) || undefined,
+        dir: req.query.dir === "desc" ? "desc" : "asc",
+        offset,
+        limit,
+      });
+      return { items: r.items.map(scrub), total: r.total };
+    }
+    assert(
+      !(req.query.field && req.query.value !== undefined),
+      "Field filters apply to records",
+    );
     const ws = await store.get(a.scope, "workspace");
+    // Relations are paged by id: those of a generation share its prefix. A
+    // generation published before relation ids carried it is listed whole.
+    const generation = ws?.data.activeGeneration;
+    if (
+      req.params.kind === "relation" &&
+      generation &&
+      (await store.indexesReady()) &&
+      (await store.list(a.scope, "objectType")).some(
+        (t) => t.data.generation === generation && t.data.sourceVersion,
+      )
+    ) {
+      const page = await store.page(a.scope, generation + "_r", offset, limit);
+      return { items: page.items.map(scrub), total: page.total };
+    }
     let rows = (await store.list(a.scope, req.params.kind)).filter(
       (r) =>
         (!generationKinds.has(r.kind) &&
@@ -319,27 +357,6 @@ export async function createApp(store: Store) {
           },
         })),
       );
-    if (req.params.kind === "object") {
-      // Records carry a readable name and how many records they link to.
-      const links = new Map<string, number>();
-      for (const r of await store.list(a.scope, "relation"))
-        if (r.data.generation === ws?.data.activeGeneration)
-          for (const end of [r.data.from, r.data.to])
-            links.set(end, (links.get(end) || 0) + 1);
-      rows = await Promise.all(
-        rows.map(async (r) => {
-          const o = await effectiveObject(store, a.scope, r);
-          return {
-            ...o,
-            data: {
-              ...o.data,
-              label: recordLabel(o.name, o.data.type, o.data.effective),
-              links: links.get(o.id) || 0,
-            },
-          };
-        }),
-      );
-    }
     if (req.query.search)
       rows = rows.filter((r) =>
         JSON.stringify([r.name, r.description, r.data.effective || r.data.base])
@@ -348,52 +365,11 @@ export async function createApp(store: Store) {
       );
     if (req.query.type)
       rows = rows.filter((r) => r.data.type === req.query.type);
-    if (req.query.field && req.query.value !== undefined) {
-      assert(req.params.kind === "object", "Field filters apply to records");
-      rows = rows.filter(
-        (r) =>
-          Object.hasOwn(r.data.effective, String(req.query.field)) &&
-          String(r.data.effective[String(req.query.field)]) ===
-            String(req.query.value),
-      );
-    }
-    const total = rows.length,
-      offset = Math.max(Number(req.query.offset) || 0, 0),
-      limit = Math.max(1, Math.min(Number(req.query.limit) || 100, 500));
-    // Records sort by name (?sort=record), a field, or their link count
-    // (?sort=links), with ?dir=desc to reverse; empty values go last.
-    const field = String(req.query.sort || ""),
-      dir = req.query.dir === "desc" ? -1 : 1,
-      valueOf = (r: Resource) =>
-        field === "links" ? r.data.links : r.data.effective?.[field],
-      blank = (v: unknown) =>
-        v == null || ["", "None", "null", "NaN"].includes(String(v));
-    const byField = (x: Resource, y: Resource) => {
-      const a = valueOf(x),
-        b = valueOf(y);
-      if (blank(a) || blank(b)) return Number(blank(a)) - Number(blank(b));
-      const n = Number(a) - Number(b);
-      return (
-        dir *
-        (Number.isFinite(n) &&
-        String(a).trim() !== "" &&
-        String(b).trim() !== ""
-          ? n
-          : String(a).localeCompare(String(b), undefined, { numeric: true }))
-      );
-    };
+    const total = rows.length;
     rows = rows
-      .sort((x, y) =>
-        req.params.kind === "object"
-          ? (field && field !== "record" ? byField(x, y) : 0) ||
-            (field === "record" ? dir : 1) *
-              String(x.data.label || x.name).localeCompare(
-                String(y.data.label || y.name),
-                undefined,
-                { numeric: true },
-              ) ||
-            x.id.localeCompare(y.id)
-          : y.updatedAt.localeCompare(x.updatedAt) || x.id.localeCompare(y.id),
+      .sort(
+        (x, y) =>
+          y.updatedAt.localeCompare(x.updatedAt) || x.id.localeCompare(y.id),
       )
       .slice(offset, offset + limit);
     return { items: rows.map(scrub), total };

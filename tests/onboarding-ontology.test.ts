@@ -16,13 +16,18 @@ vi.mock("../apps/api/src/executor.js", () => ({
   },
 }));
 import { createApp } from "../apps/api/src/app.js";
-import { MemoryStore, resource, transaction } from "../apps/api/src/store.js";
+import {
+  DatabaseError,
+  MemoryStore,
+  resource,
+  transaction,
+} from "../apps/api/src/store.js";
 import { buildWorkspace, pipelineId } from "../apps/api/src/assistant.js";
 import { onboardingState } from "../apps/api/src/onboarding-state.js";
 import { sampleDatasets } from "../apps/api/src/sample-data.js";
 import { Provider } from "../apps/api/src/providers.js";
 import { config } from "../apps/api/src/config.js";
-import { recordLabel } from "../apps/api/src/routes/ontology.js";
+import { recordLabel } from "../apps/api/src/records.js";
 import { referenceReply } from "./fixtures-reference.js";
 
 let store: MemoryStore,
@@ -601,25 +606,45 @@ it("serves the published records as a graph, whole or around one record", async 
     })
   ).json();
   await buildWorkspace(store, scope, state.buildRun.id);
+  // Without a focus: the records around the best-connected ones, never the
+  // whole workspace at once.
+  const list = vi.spyOn(store, "list");
   const all = (await request("GET", "/graph")).json();
-  expect(all.nodes).toHaveLength(all.total);
+  expect(
+    list.mock.calls.filter(([, kind]) =>
+      ["object", "relation", undefined].includes(kind),
+    ),
+  ).toEqual([]);
+  list.mockRestore();
+  expect(all.nodes.length).toBeGreaterThan(0);
+  expect(all.nodes.length).toBeLessThanOrEqual(all.total);
+  expect(all.truncated).toBe(all.nodes.length < all.total);
   expect(all.edges.length).toBeGreaterThan(0);
   const ids = new Set(all.nodes.map((n: any) => n.id));
   expect(all.edges.every((e: any) => ids.has(e.from) && ids.has(e.to))).toBe(
     true,
   );
+  const records = async (query: string) =>
+    (await request("GET", "/resources/object?" + query)).json().items;
+  const [best] = await records("sort=links&dir=desc&limit=1");
+  expect(ids.has(best.data.logicalId)).toBe(true);
   // Records are named by their own fields where they have one.
-  const account = all.nodes
-    .filter((n: any) => n.type === "Account")
-    .sort((a: any, b: any) => b.degree - a.degree)[0];
+  const [first] = await records("type=Account&sort=links&dir=desc&limit=1");
+  const account = {
+    id: first.data.logicalId,
+    label: first.data.label,
+    degree: first.data.links,
+  };
   expect(account.label).not.toMatch(/^Account /);
   expect(
-    all.nodes.some((n: any) => n.type === "User" && !/^User /.test(n.label)),
+    (await records("type=User&limit=100")).some(
+      (o: any) => !/^User /.test(o.data.label),
+    ),
   ).toBe(true);
   expect(
-    all.nodes
-      .filter((n: any) => n.type === "Support ticket")
-      .every((n: any) => n.label.startsWith("Support ticket ")),
+    (await records("type=Support%20ticket&limit=100")).every((o: any) =>
+      o.data.label.startsWith("Support ticket "),
+    ),
   ).toBe(true);
   // Around one record: it comes first, and everything else links to it.
   const near = (
@@ -660,6 +685,7 @@ it("serves the published records as a graph, whole or around one record", async 
     label: account.label,
     links: account.degree,
   });
+  expect(near.nodes[0].degree).toBe(account.degree);
   const counts = listed.items.map((o: any) => o.data.links);
   expect(counts).toEqual([...counts].sort((a, b) => b - a));
 });
@@ -684,4 +710,47 @@ it("names records readably", () => {
   expect(
     recordLabel("Invoice in_1aFTyPqAEQQCd1LrWgyIgIyF", "Invoice", {}),
   ).toBe("Invoice in_1aFTyPqAE…");
+});
+
+it("tries a build again by itself when the database stops, and resumes it", async () => {
+  await samples();
+  const suggested = (await request("POST", "/onboarding/ontology", {})).json()
+    .ontology;
+  const state = (
+    await request("POST", "/onboarding/ontology/confirm", {
+      hash: suggested.hash,
+    })
+  ).json();
+  const id = state.buildRun.id,
+    stage = store.stageObjects.bind(store);
+  let batches = 0;
+  const spy = vi
+    .spyOn(store, "stageObjects")
+    .mockImplementation(async (s, objects, resume) => {
+      if (++batches === 2)
+        throw new DatabaseError(
+          "The connection to HelixDB was dropped during a write. Try again.",
+          "ECONNRESET",
+          true,
+        );
+      return stage(s, objects, resume);
+    });
+  try {
+    await buildWorkspace(store, scope, id);
+    let run = (await store.get(scope, id))!;
+    expect(run.data).toMatchObject({ status: "queued", databaseRetries: 1 });
+    expect(run.data.retryAt).toBeGreaterThan(Date.now() + 25_000);
+    expect(run.data.events.at(-1).message).toMatch(
+      /dropped during a write\. Try again\. Trying again in 30 seconds/,
+    );
+    const [staging] = await store.list(scope, "staging");
+    await buildWorkspace(store, scope, id);
+    run = (await store.get(scope, id))!;
+    expect(run.data.status).toBe("succeeded");
+    expect((await store.get(scope, "workspace"))!.data.activeGeneration).toBe(
+      staging.data.generation,
+    );
+  } finally {
+    spy.mockRestore();
+  }
 });
