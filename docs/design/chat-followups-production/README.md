@@ -8,8 +8,8 @@ Implementation for [issue #72](https://github.com/HelixDB/helix-foundry/issues/7
 
 ## Behavior
 
-- Show up to three short question pills below the latest successful answer. Clicking fills and focuses the existing composer; it does not submit.
-- Show the primary full question as muted text in an empty composer, and complete matching typed prefixes. Tab accepts; Enter sends through the existing Analyst flow. Escape dismisses, Shift+Enter inserts a line, and unmatched drafts retain ordinary Tab navigation.
+- Show up to three question pills below the latest successful answer. Each label is the start of its question and names the counted type and the column, for example "How do Order counts vary by status?". Clicking fills and focuses the existing composer with the full question, which ends "with the same filters and scope"; it does not submit.
+- Show the primary full question as muted text in the empty composer while it has focus, and complete matching typed prefixes. Tab accepts; Enter sends through the existing Analyst flow. Escape dismisses, Shift+Enter inserts a line, and unmatched drafts retain ordinary Tab navigation.
 - Keep drafts scoped to their workspace and chat. Suggestions disappear while a question runs. Typing or selecting a question pauses an active voice session through the existing GPT-Live controls; live transcripts receive no autocomplete text.
 - Reuse project typography, colors, spacing and focus styles. Mobile suggestions wrap inside the composer without horizontal overflow.
 

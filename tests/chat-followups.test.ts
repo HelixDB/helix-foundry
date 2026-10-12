@@ -110,10 +110,17 @@ it("offers up to three supported property questions, prioritizing current contex
   const result = chatFollowups(bundle, [dataset], [run]);
   expect(result).toHaveLength(3);
   expect(result[0].ontology.property).toBe("status");
+  expect(result[0].label).toBe("How do Order counts vary by status?");
+  expect(result[0].question).toBe(
+    "How do Order counts vary by status, with the same filters and scope?",
+  );
+  // Typing the start of a label completes the question it stands for.
   expect(
     result.every(
       (s) =>
-        s.label.endsWith("?") && s.question.includes("same filters and scope"),
+        s.label.endsWith("?") &&
+        s.question.startsWith(s.label.slice(0, -1)) &&
+        s.question.endsWith(", with the same filters and scope?"),
     ),
   ).toBe(true);
   expect(result.map((s) => s.ontology.property).sort()).toEqual([
@@ -121,9 +128,26 @@ it("offers up to three supported property questions, prioritizing current contex
     "date",
     "status",
   ]);
+  expect(result.find((s) => s.ontology.property === "date")?.label).toBe(
+    "How do Order counts vary daily by date?",
+  );
   expect(
     chatFollowups(fixture("Invoice").bundle, [dataset], [run])[0].question,
   ).toContain("Invoice");
+});
+it("gives each date column its own label naming the column and the counted type", () => {
+  const { bundle, dataset, run } = fixture();
+  const date = dataset.data.profile.columns.find((c: any) => c.name === "date");
+  dataset.data.profile.columns.push(
+    { ...date, name: "created_at" },
+    { ...date, name: "updatedAt" },
+  );
+  bundle.ontology[0].properties = ["created_at", "updatedAt"];
+  const labels = chatFollowups(bundle, [dataset], [run]).map((s) => s.label);
+  expect(labels.sort()).toEqual([
+    "How do Order counts vary daily by created at?",
+    "How do Order counts vary daily by updated at?",
+  ]);
 });
 it("omits unsupported, stale, failed, absent and already-asked candidates", () => {
   const { bundle, dataset, run } = fixture();

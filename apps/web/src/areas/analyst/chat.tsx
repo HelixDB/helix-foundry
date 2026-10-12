@@ -430,7 +430,6 @@ function Conversation({ chat }: { chat: Chat }) {
                       key={item.id}
                       type="button"
                       className="an-followup"
-                      aria-label={item.question}
                       title={item.question}
                       onClick={() => chooseFollowup(item.question)}
                     >

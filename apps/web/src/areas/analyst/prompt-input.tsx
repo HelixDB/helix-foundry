@@ -48,7 +48,9 @@ export function PromptInput({
     !composing &&
     atEnd &&
     !value.includes("\n") &&
-    (value.length === 0 || (focused && value.length >= 2)) &&
+    focused &&
+    // One typed letter is too little to guess from.
+    value.length !== 1 &&
     completion.toLowerCase().startsWith(value.toLowerCase()) &&
     completion.length > value.length &&
     dismissed !== stamp;
