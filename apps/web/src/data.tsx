@@ -329,6 +329,12 @@ function DatasetDetail({
               ? "Export Parquet"
               : "Export current Parquet"}
           </a>
+          <a
+            className="button"
+            href={`/api/v1/workspaces/${id}/datasets/${d.id}/export?format=csv`}
+          >
+            Export CSV
+          </a>
           {source && (
             <Link className="button" to={paths.connections()}>
               Connection settings

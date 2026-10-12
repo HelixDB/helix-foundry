@@ -19,8 +19,10 @@ import {
   ingestRows,
   queryDatasets,
   previewDatasetVersion,
+  datasetInputs,
   seedDemo,
 } from "../datasets.js";
+import { datasetCsv } from "../results.js";
 import { sourceSyncDefaults, validateRefreshSchedule } from "../source-sync.js";
 import { testedConnection } from "../onboarding.js";
 import { resolveHostedConfig } from "../hosting.js";
@@ -187,6 +189,27 @@ export function registerDataRoutes(
       const a = await access(req),
         ds = await store.get(a.scope, req.params.id);
       assert(ds?.kind === "dataset", "Dataset unavailable", 404);
+      const { format } = z
+        .object({ format: z.enum(["parquet", "csv"]).default("parquet") })
+        .parse(req.query);
+      if (format === "csv") {
+        const inputs = await datasetInputs(store, a.scope, [ds.id]),
+          version = await store.get(a.scope, inputs[0].version);
+        assert(version?.kind === "version", "Snapshot unavailable", 404);
+        const stream = await datasetCsv(
+          {
+            scope: a.scope,
+            inputs,
+            sql: `SELECT * FROM "${datasetTable(ds.id)}"`,
+          },
+          version.data.profile.columns.map((c: any) => c.name),
+        );
+        reply
+          .header("content-disposition", 'attachment; filename="dataset.csv"')
+          .header("x-foundry-version", inputs[0].version)
+          .type("text/csv; charset=utf-8");
+        return stream;
+      }
       reply
         .header("content-disposition", `attachment; filename="dataset.parquet"`)
         .type("application/octet-stream");

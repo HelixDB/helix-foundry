@@ -236,3 +236,8 @@ Backups leave out `ENCRYPTION_KEY` and `INTERNAL_KEY`. They record a fingerprint
 Upgrade with `upgrade.sh`, which refuses to continue unless a fresh backup succeeds. If the rebuild fails, run it again: it finishes the upgrade. To go back, run the two commands it printed: `git reset --keep` with the old commit, then the copy of `restore.sh` saved in the backup (`bash BACKUP/restore.sh BACKUP --replace`), which also reads the backup in a checkout of a release from before `upgrade.sh`. HelixDB upgrades its storage one way (v0.0.10 and later upgrade the index storage, and v0.0.9 and earlier then refuse the database), so when a release changes the HelixDB image, `upgrade.sh` warns and asks first. Keep the backup and the old commit, and run smoke checks (diagnostics, sample ingestion, a saved query and proposal validation) before using the installation again. Never remove volumes during an ordinary upgrade.
 
 See [operations](OPERATIONS.md) for the full procedure and deployment limits, and [validation notes](VALIDATION.md) for tested coverage and current limits.
+
+From a dataset's details, **Export CSV** downloads every row of the current
+snapshot for spreadsheets or other tools. **Export Parquet** preserves the
+native column types. CSV includes headers even for an empty dataset; nested
+values are represented as JSON, with nulls as empty fields.
