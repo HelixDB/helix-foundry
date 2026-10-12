@@ -87,6 +87,9 @@ importers:
         specifier: ^4.1.11
         version: 4.6.5
     devDependencies:
+      '@helix-foundry/sdk':
+        specifier: workspace:*
+        version: link:packages/sdk
       '@playwright/test':
         specifier: ^1.55.1
         version: 1.63.0

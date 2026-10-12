@@ -9,6 +9,7 @@ const connector = Fastify({ logger: false });
 let connectorOrigin: string, origin: string, scope: string;
 let writerToken: string, readerToken: string;
 let restRequests = 0;
+let neo4jSourceId: string;
 const calls: { statement: string; accessMode: string; accept: string }[] = [];
 const typed = (type: string, value: unknown) => ({ $type: type, _value: value });
 
@@ -64,6 +65,40 @@ it("creates the already supported Neo4j source through the real public SDK and n
   expect(calls.some(c => c.accept === "application/vnd.neo4j.query")).toBe(true);
   expect(calls.some(c => c.statement.includes("RETURN count(n)"))).toBe(true);
   expect((await client().get("source", source.id)).id).toBe(source.id);
+  neo4jSourceId = source.id;
+});
+
+it("preflights the supported Neo4j kind without persisting a source", async () => {
+  const before = await client().list("source");
+  const beforeCalls = calls.length;
+  const discovery = await client().testSource({
+    name: "Neo4j preflight", kind: "neo4j", schedule: null,
+    config: { url: connectorOrigin, database: "neo4j", user: "synthetic", password: "synthetic-only" },
+  });
+  expect(discovery).toMatchObject({ tables: [expect.objectContaining({ name: "Customer", schema: "node", estimatedRows: 1 })] });
+  expect((await client().list("source")).items.map(s => s.id).sort()).toEqual(before.items.map(s => s.id).sort());
+  expect(calls.length).toBeGreaterThan(beforeCalls);
+  expect(calls.slice(beforeCalls).every(c => c.accessMode === "Read")).toBe(true);
+});
+
+it("corrects the existing Neo4j connection and returns its queued refresh job", async () => {
+  const job = await client().correctSource(neo4jSourceId, {
+    name: "Typed Neo4j source", kind: "neo4j", schedule: "0 * * * *",
+    config: { url: connectorOrigin, database: "neo4j", user: "synthetic", password: "synthetic-only", table: "Customer", schema: "node" },
+  });
+  expect(job).toMatchObject({ kind: "job", data: { type: "sync", status: "queued", sourceId: neo4jSourceId } });
+  const corrected = await client().get("source", neo4jSourceId);
+  expect(corrected.data.kind).toBe("neo4j");
+  expect(corrected.data.schedule).toBe("0 * * * *");
+  expect(corrected.data.discovery.keys).toEqual([expect.objectContaining({ tableName: "Customer", columnName: "customer_id" })]);
+  expect(corrected.data).not.toHaveProperty("secret");
+  const automaticJob = await client().correctSource(neo4jSourceId, {
+    name: "Typed Neo4j source", kind: "neo4j", schedule: null,
+    config: { url: connectorOrigin, database: "neo4j", user: "synthetic", password: "synthetic-only", table: "Customer", schema: "node" },
+  });
+  expect(automaticJob.data.sourceId).toBe(neo4jSourceId);
+  expect((await client().get("source", neo4jSourceId)).data.schedule).toBeNull();
+  expect((await client().get("job", job.id)).data.status).toBe("canceled");
 });
 
 it("keeps omitted and null Automatic cadence and explicit cron through the existing REST source route", async () => {
@@ -83,8 +118,17 @@ it("keeps omitted and null Automatic cadence and explicit cron through the exist
 it("preserves authorization and server-side unsupported kind validation", async () => {
   const before = calls.length, beforeRest = restRequests;
   await expect(client(readerToken).createSource({ name: "Read-only denied", kind: "rest", config: { url: connectorOrigin + "/records" }, schedule: null })).rejects.toMatchObject({ status: 403 });
+  const neo4j = { name: "Read-only denied", kind: "neo4j" as const, config: { url: connectorOrigin, database: "neo4j", user: "synthetic", password: "synthetic-only" } };
+  await expect(client(readerToken).testSource(neo4j)).rejects.toMatchObject({ status: 403 });
+  await expect(client(readerToken).correctSource(neo4jSourceId, neo4j)).rejects.toMatchObject({ status: 403 });
   expect(calls).toHaveLength(before);
   expect(restRequests).toBe(beforeRest);
   const invalid = await app.inject({ method: "POST", url: `/api/v1/workspaces/${scope}/sources`, payload: { name: "Unsupported connector", kind: "unsupported", config: {} }, headers: { authorization: "Bearer " + writerToken } });
   expect(invalid.statusCode).toBe(400);
+  for (const [method, url] of [["POST", `/api/v1/workspaces/${scope}/sources/test`], ["PUT", `/api/v1/workspaces/${scope}/onboarding/sources/${neo4jSourceId}`]] as const) {
+    const denied = await app.inject({ method, url, payload: { name: "Unsupported connector", kind: "unsupported", config: {} }, headers: { authorization: "Bearer " + writerToken } });
+    expect(denied.statusCode).toBe(400);
+  }
+  expect(calls).toHaveLength(before);
+  expect(restRequests).toBe(beforeRest);
 });

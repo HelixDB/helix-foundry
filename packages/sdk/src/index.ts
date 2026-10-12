@@ -130,22 +130,7 @@ export class FoundryClient {
       input,
     );
   }
-  correctSource(
-    id: string,
-    source: {
-      name: string;
-      kind:
-        | "mysql"
-        | "postgres"
-        | "rest"
-        | "s3"
-        | "stripe"
-        | "workos"
-        | "posthog";
-      config: Record<string, unknown>;
-      schedule?: string | null;
-    },
-  ) {
+  correctSource(id: string, source: ConnectedSourceInput) {
     return this.request<Resource>(
       "/onboarding/sources/" + encodeURIComponent(id),
       source,
@@ -307,18 +292,7 @@ export class FoundryClient {
       {},
     );
   }
-  testSource(source: {
-    name: string;
-    kind:
-      | "postgres"
-      | "mysql"
-      | "rest"
-      | "s3"
-      | "stripe"
-      | "workos"
-      | "posthog";
-    config: Record<string, unknown>;
-  }) {
+  testSource(source: ConnectedSourceInput) {
     return this.request("/sources/test", source);
   }
   provider() {
