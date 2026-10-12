@@ -2,10 +2,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { CronExpressionParser } from "cron-parser";
 import {
   SourceSchema,
   DemoSchema,
@@ -21,7 +20,7 @@ import {
   queryDatasets,
   seedDemo,
 } from "../datasets.js";
-import { sourceSyncDefaults } from "../source-sync.js";
+import { sourceSyncDefaults, validateRefreshSchedule } from "../source-sync.js";
 import { testedConnection } from "../onboarding.js";
 import { resolveHostedConfig } from "../hosting.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
@@ -84,11 +83,21 @@ export function registerDataRoutes(
     await mkdir(resolve(config.dataDir, "incoming", a.scope), {
       recursive: true,
     });
-    await pipeline(
-      part.file,
-      createWriteStream(resolve(config.dataDir, "incoming", a.scope, file)),
-    );
-    assert(!part.file.truncated, "File exceeds 256 MB limit");
+    const target = resolve(config.dataDir, "incoming", a.scope, file),
+      interrupted = () => part.file.destroy(new Error("Upload interrupted"));
+    req.raw.once("aborted", interrupted);
+    try {
+      if (req.raw.aborted) interrupted();
+      await pipeline(part.file, createWriteStream(target));
+      assert(!part.file.truncated, "File exceeds 256 MB limit");
+    } catch (error) {
+      await rm(target, { force: true }).catch((cleanupError) =>
+        req.log.warn({ err: cleanupError }, "Could not remove partial upload"),
+      );
+      throw error;
+    } finally {
+      req.raw.off("aborted", interrupted);
+    }
     return ingestFile(
       store,
       a.scope,
@@ -168,7 +177,7 @@ export function registerDataRoutes(
   app.post("/api/v1/workspaces/:w/sources", async (req) => {
     const a = await access(req, "owner"),
       b = SourceSchema.parse(req.body);
-    if (b.schedule) CronExpressionParser.parse(b.schedule, { tz: "UTC" });
+    validateRefreshSchedule(b.schedule);
     const resolved = await resolveHostedConfig(
       store,
       a.scope,

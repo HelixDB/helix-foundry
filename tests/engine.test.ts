@@ -104,6 +104,61 @@ describe("isolated dataset execution", () => {
     // Only ingest compares against a fingerprint stored before the upgrade.
     expect(r.legacyFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
+  it("keeps JSON properties that first appear after DuckDB's sample", async () => {
+    // DuckDB infers JSON columns from its first 20,480 rows by default. A
+    // later property was dropped at the top level, and failed the import when
+    // nested ("unknown key").
+    await writeFile(
+      join(dir, "incoming", "a", "late.jsonl"),
+      Array.from({ length: 25_000 }, (_, i) =>
+        JSON.stringify(
+          i < 21_000
+            ? { id: i, properties: { browser: "Chrome" } }
+            : {
+                id: i,
+                plan: "pro",
+                properties: { browser: "Chrome", plan: "pro" },
+              },
+        ),
+      ).join("\n"),
+    );
+    const r = await execute(
+      { mode: "ingest", scope: "a", version: "late", file: "late.jsonl" },
+      dir,
+    );
+    expect(r.profile.rows).toBe(25_000);
+    expect(r.profile.columns.find((c) => c.name === "plan")).toMatchObject({
+      nulls: 21_000,
+      distinct: 1,
+    });
+    expect(
+      r.profile.columns.find((c) => c.name === "properties")?.type,
+    ).toMatch(/\bplan VARCHAR\b/);
+  });
+  it("imports wide events within DuckDB's memory", async () => {
+    // Events with hundreds of properties: the whole file loaded as a table,
+    // a default-sized Parquet row group, or a distinct set of whole values
+    // each passed the limit.
+    vi.stubEnv("DUCKDB_MEMORY", "128MB");
+    const lines: string[] = [];
+    for (let i = 0; i < 40_000; i++) {
+      const properties: Record<string, unknown> = { text: "x".repeat(1500) };
+      for (let k = 0; k < 40; k++)
+        properties[`prop_${(i + k * 7) % 300}`] = (i * k) % 1000;
+      lines.push(JSON.stringify({ id: i, event: "$pageview", properties }));
+    }
+    await writeFile(join(dir, "incoming", "a", "wide.jsonl"), lines.join("\n"));
+    const r = await execute(
+      { mode: "ingest", scope: "a", version: "wide", file: "wide.jsonl" },
+      dir,
+    );
+    expect(r.profile.rows).toBe(40_000);
+    expect(r.profile.duplicateRows).toBe(0);
+    expect(r.profile.columns.find((c) => c.name === "id")?.primaryKey).toBe(
+      true,
+    );
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+  });
   it("executes and persists a verified aggregate", async () => {
     const r = await execute(
       {

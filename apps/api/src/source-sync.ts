@@ -11,7 +11,7 @@ import { CronExpressionParser } from "cron-parser";
 import type { Resource } from "../../../packages/shared/src/index.js";
 import { now, transaction, type Store } from "./store.js";
 import { postgresPoolConfig } from "./postgres-config.js";
-import { unseal } from "./security.js";
+import { AppError, unseal } from "./security.js";
 
 const FALLBACK = "*/5 * * * *";
 // Hourly keeps full SaaS API snapshots well within their rate limits.
@@ -29,6 +29,18 @@ export const databaseSource = (kind: string) =>
 const database = databaseSource;
 const nextRun = (schedule: string) =>
   CronExpressionParser.parse(schedule, { tz: "UTC" }).next().getTime();
+// Validate user input before connection discovery or stored settings change.
+export function validateRefreshSchedule(schedule?: string | null) {
+  if (!schedule) return;
+  try {
+    CronExpressionParser.parse(schedule, { tz: "UTC" }).next();
+  } catch {
+    throw new AppError(
+      400,
+      "Use a valid refresh schedule in UTC, for example 0 * * * * for hourly refreshes.",
+    );
+  }
+}
 const mysqlConfig = (c: Record<string, any>) => ({
   host: c.host,
   port: Number(c.port || 3306),

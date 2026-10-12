@@ -460,7 +460,7 @@ lsof -nP -iTCP:6996 -sTCP:LISTEN
 ```sh
 docker run -d --name helix-foundry-dev -p 127.0.0.1:6996:8080 \
   -e HELIX_DATA_DIR=/var/lib/helix -v helix-foundry-dev:/var/lib/helix \
-  ghcr.io/helixdb/helixdb:v0.0.6@sha256:94b29942658ebdca0a91bf15edffe921a46da3e26e1223ea333ccce58c6212dd
+  ghcr.io/helixdb/helixdb:v0.0.12@sha256:f22b50fdab8fadbf8b5a881e656f293fdf5c688bad018f503b8dbc2f0f29543d
 ```
 
 **Ollama (optional).** Check `curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:11434/api/tags` first. If nothing answers, ask the user to start Ollama rather than running `ollama serve` from your own shell, which can stop when your session ends. `ollama pull qwen3:4b` is optional, because the app pulls the model when Local is chosen.

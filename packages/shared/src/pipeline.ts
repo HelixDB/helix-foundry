@@ -1,12 +1,14 @@
 import { PipelineNodeSchema } from "./pipelines.js";
 import { datasetTable } from "./index.js";
 import { z } from "zod";
+export class PipelineValidationError extends Error {}
 export type PipelineNode = z.infer<typeof PipelineNodeSchema>;
 const q = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 export function compilePipeline(nodes: PipelineNode[]) {
-  if (!nodes.length) throw new Error("Add at least one node");
+  if (!nodes.length) throw new PipelineValidationError("Add at least one node");
   const map = new Map(nodes.map((n) => [n.id, n]));
-  if (map.size !== nodes.length) throw new Error("Node IDs must be unique");
+  if (map.size !== nodes.length)
+    throw new PipelineValidationError("Node IDs must be unique");
   const visiting = new Set<string>(),
     done = new Set<string>(),
     ctes: string[] = [],
@@ -14,13 +16,14 @@ export function compilePipeline(nodes: PipelineNode[]) {
   const ref = (id: string) => q("node_" + id);
   function visit(id: string) {
     if (done.has(id)) return;
-    if (visiting.has(id)) throw new Error("Pipeline has a cycle");
+    if (visiting.has(id))
+      throw new PipelineValidationError("Pipeline has a cycle");
     const n = map.get(id);
-    if (!n) throw new Error("Unknown node " + id);
+    if (!n) throw new PipelineValidationError("Unknown node " + id);
     if (n.type === "source" && n.inputs.length !== 0)
-      throw new Error("A source cannot have inputs");
+      throw new PipelineValidationError("A source cannot have inputs");
     if (!["source", "sql", "join"].includes(n.type) && n.inputs.length !== 1)
-      throw new Error("A transform needs exactly one input");
+      throw new PipelineValidationError("A transform needs exactly one input");
     visiting.add(id);
     n.inputs.forEach(visit);
     const c = n.config as any,
@@ -28,12 +31,13 @@ export function compilePipeline(nodes: PipelineNode[]) {
       columns = (xs: string[]) => xs.map(q).join(", ");
     let sql = "";
     if (n.type === "source") {
-      if (!n.datasetId) throw new Error("Select a source dataset");
+      if (!n.datasetId)
+        throw new PipelineValidationError("Select a source dataset");
       inputs.add(n.datasetId);
       sql = "SELECT * FROM " + q(datasetTable(n.datasetId));
     } else {
       if (!source && n.type !== "sql")
-        throw new Error("Connect an input to " + id);
+        throw new PipelineValidationError("Connect an input to " + id);
       switch (n.type) {
         case "select":
           sql = `SELECT ${columns(z.array(z.string()).min(1).parse(c.columns))} FROM ${source}`;
@@ -68,7 +72,8 @@ export function compilePipeline(nodes: PipelineNode[]) {
             : `SELECT DISTINCT * FROM ${source}`;
           break;
         case "join":
-          if (n.inputs.length !== 2) throw new Error("A join needs two inputs");
+          if (n.inputs.length !== 2)
+            throw new PipelineValidationError("A join needs two inputs");
           sql = `SELECT ${c.select || "a.*, b.*"} FROM ${source} a ${c.joinType === "left" ? "LEFT" : "INNER"} JOIN ${ref(n.inputs[1])} b ON ${z.string().min(1).parse(c.on)}`;
           break;
         case "aggregate": {
@@ -93,7 +98,9 @@ export function compilePipeline(nodes: PipelineNode[]) {
     (n) => !nodes.some((other) => other.inputs.includes(n.id)),
   );
   if (leaves.length !== 1)
-    throw new Error("Connect every branch to one output node");
+    throw new PipelineValidationError(
+      "Connect every branch to one output node",
+    );
   return {
     inputs: [...inputs],
     sql: `WITH ${ctes.join(",\n")}\nSELECT * FROM ${ref(leaves[0].id)}`,
