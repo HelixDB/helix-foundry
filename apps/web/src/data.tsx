@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api, relative, number } from "./api";
 import { paths } from "./paths";
 import {
@@ -64,6 +64,26 @@ function DatasetDetail({
     queryFn: () =>
       api(`/workspaces/${id}/resources/version/${d.data.pendingVersion}`),
   });
+  // Every refresh that changes the data adds a snapshot, newest first: offer
+  // the current and pending ones, then the latest 30 others (and the one on
+  // display, should newer refreshes push it out).
+  const historical: string[] = d.data.versions.filter(
+      (v: string) => v !== d.data.activeVersion && v !== d.data.pendingVersion,
+    ),
+    listed = historical.filter((v, i) => i < 30 || v === versionId),
+    unlisted = historical.length - listed.length,
+    choices: string[] = [
+      d.data.activeVersion,
+      d.data.pendingVersion,
+      ...listed,
+    ].filter(Boolean);
+  const choiceVersions = useQueries({
+    queries: choices.map((v) => ({
+      queryKey: [id, "version", v],
+      staleTime: Infinity,
+      queryFn: () => api<Resource>(`/workspaces/${id}/resources/version/${v}`),
+    })),
+  });
   const snapshot = preview.data?.snapshot;
   const profile = snapshot?.profile;
   const lineage = useResources("lineage"),
@@ -112,16 +132,24 @@ function DatasetDetail({
             setOffset(0);
           }}
         >
-          {d.data.versions.map((v: string) => (
-            <option key={v} value={v}>
-              {v === d.data.activeVersion
-                ? "Current"
-                : v === d.data.pendingVersion
-                  ? "Needs review"
-                  : "Historical"}{" "}
-              · {v}
+          {choices.map((v, i) => {
+            const at = choiceVersions[i].data?.createdAt;
+            return (
+              <option key={v} value={v}>
+                {(v === d.data.activeVersion
+                  ? "Current"
+                  : v === d.data.pendingVersion
+                    ? "Needs review"
+                    : "Historical") +
+                  (at ? ` · ${new Date(at).toLocaleString()}` : "")}
+              </option>
+            );
+          })}
+          {unlisted > 0 && (
+            <option disabled>
+              {`${number(unlisted)} older ${unlisted === 1 ? "snapshot" : "snapshots"} not listed`}
             </option>
-          ))}
+          )}
         </select>
       </label>
       {snapshot && (

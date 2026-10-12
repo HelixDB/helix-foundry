@@ -60,6 +60,13 @@ test("inspect historical and pending rows without changing the current dataset s
     "datetime",
     version.createdAt,
   );
+  const shown = await page.evaluate(
+    (at) => new Date(at).toLocaleString(),
+    version.createdAt,
+  );
+  await expect(
+    selector.locator(`option[value="${first.data.activeVersion}"]`),
+  ).toHaveText(`Historical · ${shown}`);
   await expect(page.getByText("Sample · 1–2", { exact: true })).toBeVisible();
   await selector.selectOption(staged.data.pendingVersion);
   await expect(
