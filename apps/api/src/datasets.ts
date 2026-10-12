@@ -208,6 +208,49 @@ export async function datasetInputs(
   }
   return results;
 }
+export async function previewDatasetVersion(
+  store: Store,
+  scope: string,
+  datasetId: string,
+  versionId: string,
+  opts: { offset?: number; limit?: number } = {},
+) {
+  const [input] = await datasetInputs(store, scope, [datasetId]);
+  const ds = (await store.get(scope, datasetId))!;
+  const version = await store.get(scope, versionId);
+  assert(
+    ds.data.versions.includes(versionId) &&
+      version?.kind === "version" &&
+      version.data.datasetId === datasetId,
+    "Snapshot unavailable",
+    404,
+  );
+  const result = await execute({
+    mode: "query",
+    scope,
+    inputs: [{ ...input, version: versionId }],
+    sql: `SELECT * FROM "${datasetTable(datasetId)}"`,
+    version: randomUUID(),
+    limit: opts.limit,
+    offset: opts.offset,
+  });
+  return {
+    ...result,
+    snapshot: {
+      id: versionId,
+      createdAt: version.createdAt,
+      profile: version.data.profile,
+      status:
+        versionId === ds.data.activeVersion
+          ? "current"
+          : versionId === ds.data.pendingVersion
+            ? "pending"
+            : "historical",
+    },
+    citations: [{ datasetId, version: versionId }],
+    state: "dataset_snapshot",
+  };
+}
 export async function queryDatasets(
   store: Store,
   scope: string,

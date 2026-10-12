@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api, relative, number } from "./api";
 import { paths } from "./paths";
 import {
@@ -47,11 +47,16 @@ function DatasetDetail({
   const { id, role } = useWorkspace(),
     action = useAction(),
     [description, setDescription] = useState(d.description),
-    [offset, setOffset] = useState(0);
+    [offset, setOffset] = useState(0),
+    [selectedVersion, setSelectedVersion] = useState<string>();
+  const versionId = selectedVersion || d.data.activeVersion;
   const preview = useQuery({
-    queryKey: [id, "preview", d.id, d.data.activeVersion, offset],
+    queryKey: [id, "preview", d.id, versionId, offset],
     queryFn: () =>
-      api(`/workspaces/${id}/datasets/${d.id}/preview`, { offset, limit: 50 }),
+      api(`/workspaces/${id}/datasets/${d.id}/versions/${versionId}/preview`, {
+        offset,
+        limit: 50,
+      }),
   });
   const pending = useQuery({
     queryKey: [id, "version", d.data.pendingVersion],
@@ -59,11 +64,28 @@ function DatasetDetail({
     queryFn: () =>
       api(`/workspaces/${id}/resources/version/${d.data.pendingVersion}`),
   });
-  const currentVersion = useQuery({
-    queryKey: [id, "version", d.data.activeVersion],
-    queryFn: () =>
-      api(`/workspaces/${id}/resources/version/${d.data.activeVersion}`),
+  // Every refresh that changes the data adds a snapshot, newest first: offer
+  // the current and pending ones, then the latest 30 others (and the one on
+  // display, should newer refreshes push it out).
+  const historical: string[] = d.data.versions.filter(
+      (v: string) => v !== d.data.activeVersion && v !== d.data.pendingVersion,
+    ),
+    listed = historical.filter((v, i) => i < 30 || v === versionId),
+    unlisted = historical.length - listed.length,
+    choices: string[] = [
+      d.data.activeVersion,
+      d.data.pendingVersion,
+      ...listed,
+    ].filter(Boolean);
+  const choiceVersions = useQueries({
+    queries: choices.map((v) => ({
+      queryKey: [id, "version", v],
+      staleTime: Infinity,
+      queryFn: () => api<Resource>(`/workspaces/${id}/resources/version/${v}`),
+    })),
   });
+  const snapshot = preview.data?.snapshot;
+  const profile = snapshot?.profile;
   const lineage = useResources("lineage"),
     source = sources.find((s) => s.id === d.data.sourceId);
   return (
@@ -97,22 +119,76 @@ function DatasetDetail({
           )}
         </div>
       )}
-      <div className="dataset-meta">
-        <span>
-          {source?.name || "Imported data"} · {number(d.data.profile.rows)} rows
-          · refreshed {relative(currentVersion.data?.createdAt || d.updatedAt)}
-        </span>
-      </div>
+      <label>
+        Snapshot
+        <select
+          value={versionId}
+          onChange={(e) => {
+            setSelectedVersion(
+              e.target.value === d.data.activeVersion
+                ? undefined
+                : e.target.value,
+            );
+            setOffset(0);
+          }}
+        >
+          {choices.map((v, i) => {
+            const at = choiceVersions[i].data?.createdAt;
+            return (
+              <option key={v} value={v}>
+                {(v === d.data.activeVersion
+                  ? "Current"
+                  : v === d.data.pendingVersion
+                    ? "Needs review"
+                    : "Historical") +
+                  (at ? ` · ${new Date(at).toLocaleString()}` : "")}
+              </option>
+            );
+          })}
+          {unlisted > 0 && (
+            <option disabled>
+              {`${number(unlisted)} older ${unlisted === 1 ? "snapshot" : "snapshots"} not listed`}
+            </option>
+          )}
+        </select>
+      </label>
+      {snapshot && (
+        <div className="dataset-meta">
+          <span>
+            {source?.name || "Imported data"} · {number(profile.rows)} rows ·
+            {snapshot.status === "current"
+              ? "Current snapshot"
+              : snapshot.status === "pending"
+                ? "Snapshot awaiting review"
+                : "Historical snapshot"}
+            {" · "}
+            <time dateTime={snapshot.createdAt} title={snapshot.createdAt}>
+              {new Date(snapshot.createdAt).toLocaleString()} (
+              {relative(snapshot.createdAt)})
+            </time>
+          </span>
+        </div>
+      )}
       {preview.isPending ? (
         <Loading />
       ) : preview.error ? (
         <p role="alert">{preview.error.message}</p>
       ) : (
         <>
-          <DataTable rows={preview.data.rows} />
+          {profile.rows === 0 ? (
+            <p role="status">
+              This snapshot has no rows. Schema:{" "}
+              {profile.columns
+                .map((c: any) => `${c.name} (${c.type})`)
+                .join(", ")}
+            </p>
+          ) : (
+            <DataTable rows={preview.data.rows} />
+          )}
           <div className="pagination">
             <span>
-              Sample · {offset + 1}–{Math.min(offset + 50, d.data.profile.rows)}
+              Sample · {Math.min(offset + 1, profile.rows)}–
+              {Math.min(offset + 50, profile.rows)}
             </span>
             <div className="buttons">
               <button
@@ -122,7 +198,7 @@ function DatasetDetail({
                 Previous
               </button>
               <button
-                disabled={offset + 50 >= d.data.profile.rows}
+                disabled={offset + 50 >= profile.rows}
                 onClick={() => setOffset((n) => n + 50)}
               >
                 Next
@@ -163,7 +239,7 @@ function DatasetDetail({
         )}
         <h3>Schema and profile</h3>
         <DataTable
-          rows={d.data.profile.columns.map((c: any) => ({
+          rows={(profile?.columns || []).map((c: any) => ({
             column: c.name,
             type: c.type,
             distinct: c.distinct,
@@ -238,12 +314,26 @@ function DatasetDetail({
             Origin: {source?.name || "File / ingestion API"}
           </p>
         </details>
+        {versionId !== d.data.activeVersion && (
+          <p className="muted">
+            Exports and queries use the current snapshot. Selecting another
+            snapshot here only changes this preview.
+          </p>
+        )}
         <div className="buttons">
           <a
             className="button"
             href={`/api/v1/workspaces/${id}/datasets/${d.id}/export`}
           >
-            Export Parquet
+            {versionId === d.data.activeVersion
+              ? "Export Parquet"
+              : "Export current Parquet"}
+          </a>
+          <a
+            className="button"
+            href={`/api/v1/workspaces/${id}/datasets/${d.id}/export?format=csv`}
+          >
+            Export CSV
           </a>
           {source && (
             <Link className="button" to={paths.connections()}>

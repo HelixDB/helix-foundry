@@ -19,8 +19,11 @@ import {
   ingestFile,
   ingestRows,
   queryDatasets,
+  previewDatasetVersion,
+  datasetInputs,
   seedDemo,
 } from "../datasets.js";
+import { datasetCsv } from "../results.js";
 import {
   sourceSyncDefaults,
   nextRefresh,
@@ -31,6 +34,12 @@ import { resolveHostedConfig } from "../hosting.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
 export const dataSchemas: RequestSchemas = {
+  "POST /api/v1/workspaces/:w/datasets/:id/versions/:version/preview": z.object(
+    {
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(500).default(50),
+    },
+  ),
   "POST /api/v1/workspaces/:w/demo": DemoSchema,
   "POST /api/v1/workspaces/:w/sources": SourceSchema,
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
@@ -131,6 +140,25 @@ export function registerDataRoutes(
       b,
     );
   });
+  app.post(
+    "/api/v1/workspaces/:w/datasets/:id/versions/:version/preview",
+    async (req: any) => {
+      const a = await access(req);
+      const b = z
+        .object({
+          offset: z.number().int().min(0).default(0),
+          limit: z.number().int().min(1).max(500).default(50),
+        })
+        .parse(req.body || {});
+      return previewDatasetVersion(
+        store,
+        a.scope,
+        req.params.id,
+        req.params.version,
+        b,
+      );
+    },
+  );
   app.patch("/api/v1/workspaces/:w/datasets/:id", async (req: any) => {
     const a = await access(req, "editor"),
       b = z.object({ description: z.string().max(4000) }).parse(req.body);
@@ -169,6 +197,27 @@ export function registerDataRoutes(
       const a = await access(req),
         ds = await store.get(a.scope, req.params.id);
       assert(ds?.kind === "dataset", "Dataset unavailable", 404);
+      const { format } = z
+        .object({ format: z.enum(["parquet", "csv"]).default("parquet") })
+        .parse(req.query);
+      if (format === "csv") {
+        const inputs = await datasetInputs(store, a.scope, [ds.id]),
+          version = await store.get(a.scope, inputs[0].version);
+        assert(version?.kind === "version", "Snapshot unavailable", 404);
+        const stream = await datasetCsv(
+          {
+            scope: a.scope,
+            inputs,
+            sql: `SELECT * FROM "${datasetTable(ds.id)}"`,
+          },
+          version.data.profile.columns.map((c: any) => c.name),
+        );
+        reply
+          .header("content-disposition", 'attachment; filename="dataset.csv"')
+          .header("x-foundry-version", inputs[0].version)
+          .type("text/csv; charset=utf-8");
+        return stream;
+      }
       reply
         .header("content-disposition", `attachment; filename="dataset.parquet"`)
         .type("application/octet-stream");
