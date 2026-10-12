@@ -345,6 +345,27 @@ describe("review regressions", () => {
     ).toBe(200);
   });
 
+  it("keeps a real revenue driver when the activity also records spend", async () => {
+    const data = commerce();
+    for (const o of data.orders) o.spend_usd = Number(o.net_amount) / 3;
+    await publish(data);
+    const ws = (await store.get(scope, "workspace"))!,
+      datasets = await store.list(scope, "dataset"),
+      bundle = await publishedBundle(
+        (k) => store.list(scope, k),
+        ws.data.activeGeneration,
+      );
+    const activities = findActivities(acceptedOntology(ws, bundle, datasets));
+    const revenue = proposeDrivers(activities, datasets, "").find(
+      (d) => d.kind === "revenue",
+    );
+    expect(revenue?.measure?.column).toBe("net_amount");
+    expect(
+      revenue?.activity.measures.find((m) => m.column === "spend_usd")
+        ?.direction,
+    ).toBe("down");
+  });
+
   it("clears confirmation when the chosen driver no longer has sufficient history", async () => {
     await publish(commerce());
     const first = await scan(),

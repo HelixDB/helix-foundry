@@ -412,7 +412,13 @@ export function findActivities(
           rank,
         });
     }
-    measures.sort((a, b) => a.rank - b.rank);
+    // Matching cost names first decides their direction, not whether they
+    // outrank an independently supported revenue measure on the same activity.
+    measures.sort(
+      (a, b) =>
+        Number(b.direction === "up") - Number(a.direction === "up") ||
+        a.rank - b.rank,
+    );
     const zoned = /WITH TIME ZONE|TIMESTAMPTZ/i.test(time.type);
     const qualifies =
       e.kind === "activity" ||
