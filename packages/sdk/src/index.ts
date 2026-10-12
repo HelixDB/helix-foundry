@@ -12,6 +12,7 @@ import type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ApiTokenMetadata,
 } from "@helix-foundry/shared";
 export type {
   Bundle,
@@ -27,6 +28,7 @@ export type {
   HostingOptions,
   HostedConnection,
   PlanetScaleToken,
+  ApiTokenMetadata,
 };
 export class FoundryError extends Error {
   constructor(
@@ -37,6 +39,23 @@ export class FoundryError extends Error {
   }
 }
 export class FoundryClient {
+  tokens() {
+    return this.request<{ items: ApiTokenMetadata[] }>("/tokens");
+  }
+  createToken(name: string, readOnly = true) {
+    return this.request<{ token: string; id: string }>("/tokens", {
+      name,
+      readOnly,
+    });
+  }
+  revokeToken(id: string) {
+    return this.request<{ ok: true }>(
+      "/tokens/" + encodeURIComponent(id),
+      {},
+      "DELETE",
+    );
+  }
+
   hostingProviders() {
     return this.request("/hosting");
   }
@@ -202,6 +221,13 @@ export class FoundryClient {
   }) {
     return this.request<Resource>("/sources", source);
   }
+  setConnectionSchedule(sourceId: string, schedule: string | null) {
+    return this.request<Resource>(
+      "/sources/" + encodeURIComponent(sourceId) + "/schedule",
+      { schedule },
+      "PUT",
+    );
+  }
   sync(sourceId: string) {
     return this.request<Resource>("/sources/" + sourceId + "/sync", {});
   }
@@ -282,6 +308,9 @@ export class FoundryClient {
   resume(runId: string) {
     return this.request<Resource>("/assistant/runs/" + runId + "/resume", {});
   }
+  proposalComparison(id: string) {
+    return this.request("/proposals/" + encodeURIComponent(id) + "/comparison");
+  }
   saveAnalysis(runId: string) {
     return this.request<Resource>(
       "/assistant/runs/" + runId + "/save-analysis",
@@ -309,6 +338,16 @@ export class FoundryClient {
   }
   setProvider(settings: ProviderSettings) {
     return this.request("/provider", settings, "PUT");
+  }
+  previewDatasetVersion(id: string, version: string, offset = 0, limit = 50) {
+    return this.request(
+      "/datasets/" +
+        encodeURIComponent(id) +
+        "/versions/" +
+        encodeURIComponent(version) +
+        "/preview",
+      { offset, limit },
+    );
   }
   previewDataset(id: string, offset = 0, limit = 50) {
     return this.request("/datasets/" + id + "/preview", { offset, limit });

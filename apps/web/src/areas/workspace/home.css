@@ -876,11 +876,28 @@
   height: 12px;
 }
 .wk-bar {
+  position: absolute;
   display: block;
   height: 100%;
   border-radius: 0 4px 4px 0;
   background: var(--wk-series);
   transition: background var(--hf-duration) var(--hf-ease);
+}
+.wk-bar-zero {
+  position: absolute;
+  z-index: 1;
+  top: -3px;
+  bottom: -3px;
+  border-left: 1px solid var(--hf-muted);
+  pointer-events: none;
+}
+.wk-bar-zero > span {
+  position: absolute;
+  top: 100%;
+  transform: translateX(-50%);
+  color: var(--hf-muted);
+  font-size: 10px;
+  line-height: 12px;
 }
 .wk-bar-row.is-active .wk-bar {
   background: color-mix(in oklab, var(--wk-series) 78%, var(--hf-text));

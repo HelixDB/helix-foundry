@@ -34,6 +34,7 @@ export function ConnectionForm({
     {
       postgres: form.database || "PostgreSQL",
       mysql: form.database || "MySQL",
+      neo4j: form.database || "Neo4j",
       s3: form.bucket || "Blob storage",
       stripe: stripeMode ? `Stripe (${stripeMode})` : "Stripe",
       workos: "WorkOS",
@@ -303,6 +304,31 @@ Content-Type: application/json
                 )}
               </>
             )}
+          {!initialConnection && kind === "neo4j" && (
+            <>
+              {[
+                ["url", "HTTP URL", "http://localhost:7474"],
+                ["database", "Database", "neo4j"],
+                ["user", "Username", "neo4j"],
+                ["password", "Password", ""],
+              ].map(([key, label, placeholder]) => (
+                <label
+                  key={key}
+                  className={key === "url" ? "span2" : undefined}
+                >
+                  {label}
+                  <input
+                    type={key === "password" ? "password" : "text"}
+                    autoComplete="off"
+                    required={key === "url"}
+                    placeholder={placeholder}
+                    value={form[key] || ""}
+                    onChange={(e) => update(key, e.target.value)}
+                  />
+                </label>
+              ))}
+            </>
+          )}
           {!initialConnection && kind === "postgres" && (
             <>
               <button
@@ -558,8 +584,40 @@ Content-Type: application/json
                     ? `Choose Stripe objects to import (${discovered.mode} mode)`
                     : kind === "workos" || kind === "posthog"
                       ? `Choose ${kind === "workos" ? "WorkOS" : "PostHog"} objects to import`
-                      : "Choose tables to import"}
+                      : kind === "neo4j"
+                        ? "Choose labels and relationship types to import"
+                        : "Choose tables to import"}
               </legend>
+              {!correctSource && discovered.tables.length > 1 && (
+                <div className="selection-actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={
+                      selected.length >= Math.min(discovered.tables.length, 100)
+                    }
+                    onClick={() => {
+                      operation.current = crypto.randomUUID();
+                      setSelected(discovered.tables.slice(0, 100).map(keyFor));
+                    }}
+                  >
+                    {discovered.tables.length > 100
+                      ? "Select the first 100"
+                      : "Select all"}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={selected.length === 0}
+                    onClick={() => {
+                      operation.current = crypto.randomUUID();
+                      setSelected([]);
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
               <div className="table-selection">
                 {discovered.tables.map((t: any) => {
                   const key = keyFor(t);
@@ -581,8 +639,16 @@ Content-Type: application/json
                           }}
                         />
                         <span>
-                          {t.schema ? t.schema + "." : ""}
-                          {t.name}
+                          {kind === "neo4j"
+                            ? t.name
+                            : (t.schema ? t.schema + "." : "") + t.name}
+                          {kind === "neo4j" && (
+                            <small>
+                              {t.schema === "relationship"
+                                ? `relationship type${t.from && t.to ? `, ${t.from} to ${t.to}` : ""}`
+                                : "label"}
+                            </small>
+                          )}
                           {related.has(key) && !selected.includes(key) && (
                             <small>Related to your selection</small>
                           )}
@@ -620,7 +686,9 @@ Content-Type: application/json
                   ? "files"
                   : kind === "stripe"
                     ? "objects"
-                    : "tables"}{" "}
+                    : kind === "neo4j"
+                      ? "labels and relationship types"
+                      : "tables"}{" "}
                 will be imported.
                 {discovered.unavailable?.length > 0 &&
                   ` This key cannot read: ${discovered.unavailable.join(", ")}.`}

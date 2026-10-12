@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Resource } from "../../../packages/shared/src/index.js";
 import { resource, transaction, type Store, type Tx } from "./store.js";
 import { assert, digest } from "./security.js";
 export const ObjectActionSchema = z.discriminatedUnion("operation", [
@@ -16,7 +17,7 @@ export const ObjectActionSchema = z.discriminatedUnion("operation", [
 ]);
 export type ObjectAction = z.infer<typeof ObjectActionSchema>;
 async function resolveAction(
-  store: Pick<Store, "get" | "list">,
+  store: Pick<Store, "get" | "list" | "getMany" | "relationsBetween">,
   scope: string,
   action: ObjectAction,
 ) {
@@ -62,12 +63,18 @@ async function resolveAction(
     "Objects unavailable",
     404,
   );
-  const relations = (await store.list(scope, "relation")).filter(
-    (r) =>
+  // Read from the record's own links, not every relation in the workspace.
+  const relations = (
+    await store.getMany(
+      scope,
+      await store.relationsBetween(scope, from.id, to.id, action.name),
+    )
+  ).filter(
+    (r): r is Resource =>
+      !!r &&
       r.data.generation === generation &&
       r.data.from === from.id &&
-      r.data.to === to.id &&
-      r.name === action.name,
+      r.data.to === to.id,
   );
   const editId =
     "relationEdit_" +
@@ -121,6 +128,9 @@ export async function executeObjectAction(
     const scoped = {
       get: (_s: string, id: string) => tx.get(id),
       list: (_s: string, kind: string) => tx.list(kind),
+      getMany: (_s: string, ids: string[]) =>
+        Promise.all(ids.map((id) => tx.get(id))),
+      relationsBetween: store.relationsBetween.bind(store),
     };
     const evidence: any = await resolveAction(scoped, scope, action);
     assert(
@@ -184,11 +194,22 @@ export async function executeObjectAction(
       for (const id of evidence.relations) tx.delete(id);
       if (action.operation === "link")
         tx.put(
-          resource(scope, "relation", action.name, {
-            from: action.from,
-            to: action.to,
-            generation: evidence.generation,
-          }),
+          resource(
+            scope,
+            "relation",
+            action.name,
+            {
+              from: action.from,
+              to: action.to,
+              generation: evidence.generation,
+            },
+            // As publication names it, so the generation's id prefix finds it.
+            `${evidence.generation}_r${digest(
+              [action.name, evidence.fromLogicalId, evidence.toLogicalId].join(
+                ":",
+              ),
+            ).slice(0, 32)}`,
+          ),
         );
     }
     return tx.put(

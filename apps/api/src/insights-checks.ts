@@ -210,31 +210,35 @@ export function driverQuery(
   const f = d.funnel,
     up = f && activities.get(f.upstream),
     down = f && activities.get(f.downstream);
-  if (f && up && down) {
+  if (
+    f &&
+    up &&
+    down &&
+    d.checks.conversion === null &&
+    f.link.side !== "flag"
+  ) {
     inputs.add(up.datasetId);
     inputs.add(down.datasetId);
     const lag = t.conversionLagDays * DAY,
       seg = up.dimensions.find((x) => x.role === "source") || up.dimensions[0],
       ut = ts(up, "u");
-    let x = "",
-      converted = "";
-    if (f.link.side === "flag")
-      converted = `CASE WHEN TRY_CAST(u.${q(f.link.column)} AS BOOLEAN) THEN 1.0 ELSE 0.0 END`;
-    else {
+    let converted = "";
+    {
       const [col, key] =
         f.link.side === "downstream"
           ? [f.link.column, up.key!]
           : [f.link.key, f.link.column];
       // downstream: a downstream row names the upstream key; upstream: the
       // upstream row names a downstream key.
-      x =
-        f.link.side === "downstream"
-          ? ` LEFT JOIN (SELECT DISTINCT ${str(q(col))} AS __k FROM ${q(datasetTable(down.datasetId))} WHERE ${q(col)} IS NOT NULL) x ON ${str(`u.${q(key)}`)} = x.__k`
-          : ` LEFT JOIN (SELECT DISTINCT ${str(q(col))} AS __k FROM ${q(datasetTable(down.datasetId))}) x ON ${str(`u.${q(key)}`)} = x.__k`;
-      converted = "CASE WHEN x.__k IS NULL THEN 0.0 ELSE 1.0 END";
+      const dt = ts(down, "d"),
+        end = `CASE WHEN ${ut} >= ${at(w.current[0])} THEN ${at(w.current[1])} ELSE ${at(w.baseline[1])} END`;
+      // Count each upstream row once, and observe outcomes only within its
+      // comparison period, after the upstream event. Later snapshots cannot
+      // give baseline rows more follow-up time than current rows.
+      converted = `CASE WHEN EXISTS (SELECT 1 FROM ${q(datasetTable(down.datasetId))} d WHERE ${str(`d.${q(col)}`)} = ${str(`u.${q(key)}`)} AND ${dt} >= ${ut} AND ${dt} < ${end}) THEN 1.0 ELSE 0.0 END`;
     }
     ctes.push(
-      `u AS (SELECT CASE WHEN ${ut} >= ${at(w.current[0])} THEN 'cur' ELSE 'base' END AS __w, ${seg ? str(`u.${q(seg.column)}`) : "CAST(NULL AS VARCHAR)"} AS __s, ${converted} AS __x FROM ${q(datasetTable(up.datasetId))} u${x} WHERE u.${q(up.time.column)} IS NOT NULL AND ((${ut} >= ${at(w.baseline[0])} AND ${ut} < ${at(w.baseline[1] - lag)}) OR (${ut} >= ${at(w.current[0])} AND ${ut} < ${at(w.end - lag)})))`,
+      `u AS (SELECT CASE WHEN ${ut} >= ${at(w.current[0])} THEN 'cur' ELSE 'base' END AS __w, ${seg ? str(`u.${q(seg.column)}`) : "CAST(NULL AS VARCHAR)"} AS __s, ${converted} AS __x FROM ${q(datasetTable(up.datasetId))} u WHERE u.${q(up.time.column)} IS NOT NULL AND ((${ut} >= ${at(w.baseline[0])} AND ${ut} < ${at(w.baseline[1] - lag)}) OR (${ut} >= ${at(w.current[0])} AND ${ut} < ${at(w.end - lag)})))`,
     );
     parts.push(
       `${row("conv_total", "__w", "''", { n: "count(*)", v: "sum(__x)" })} FROM u GROUP BY __w`,
@@ -301,27 +305,24 @@ const int = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }),
     maximumFractionDigits: 1,
   }),
   dec2 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }),
-  usd = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }),
-  usdCents = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }),
-  usdCompact = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  });
-const money = (v: number) =>
-  Math.abs(v) >= 1000 || Number.isInteger(v)
-    ? usd.format(v)
-    : usdCents.format(v);
+  plainMoney = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const moneyFormats = new Map<string, Intl.NumberFormat>();
+const formatMoney = (v: number, currency?: "USD" | "EUR" | "GBP") => {
+  const decimals = !(Math.abs(v) >= 1000 || Number.isInteger(v));
+  if (!currency && !decimals) return plainMoney.format(v);
+  const key = currency + (decimals ? ":cents" : ":whole");
+  let format = moneyFormats.get(key);
+  if (!format) {
+    format = new Intl.NumberFormat("en-US", {
+      style: currency ? "currency" : "decimal",
+      currency,
+      minimumFractionDigits: decimals ? 2 : 0,
+      maximumFractionDigits: decimals ? 2 : 0,
+    });
+    moneyFormats.set(key, format);
+  }
+  return format.format(v);
+};
 const pctOf = (r: number) => {
   const p = Math.abs(r * 100);
   return (p >= 100 ? int.format(p) : dec1.format(p)) + "%";
@@ -433,6 +434,7 @@ export function evaluate(
     cur = periodLabel(...w.current),
     // Keeps findings of different measures on one activity apart.
     measured = d.measure?.column ?? "count";
+  const money = (v: number) => formatMoney(v, d.measure?.currency);
   const isMoney = !!d.measure,
     // What is measured, in words: "revenue", "sessions".
     noun = isMoney ? d.label.toLowerCase() : a.many,
@@ -452,10 +454,13 @@ export function evaluate(
     return { candidates, notes };
   }
   // A period missing most of its days of data is a gap, not a business change.
-  if (T0.days >= 0.85 * w.days && T1.days < 0.6 * w.days) {
+  if (
+    Math.min(T0.days, T1.days) < 0.6 * w.days &&
+    Math.max(T0.days, T1.days) >= 0.85 * w.days
+  ) {
     all(
       "set_aside",
-      `The latest period has ${a.many} on only ${T1.days} of ${w.days} days, which looks like a gap in the data rather than a business change.`,
+      `The ${T0.days < T1.days ? "baseline" : "latest"} period has ${a.many} on only ${Math.min(T0.days, T1.days)} of ${w.days} days, which looks like a gap in the data rather than a business change.`,
     );
     return { candidates, notes };
   }
@@ -1102,7 +1107,7 @@ export function evaluate(
                   ? `Fewer ${pick.g ? valueLower(pick.g) + " " : ""}${up.many} lead to ${an(outcome)}.${hidden ? " Gains elsewhere keep the overall rate steady." : ""} The cause is not established by these figures.`
                   : `${pick.g ? `${G} ${up.many}` : capital(up.many)} lead to ${an(outcome)} more often. Whether it lasts is not established.`,
               contribution: `${pick.g ? `${G} conversion` : "Conversion"} went from ${share(a0)} to ${share(a1)}${pick.g ? `; overall conversion ${share(r0) === share(r1) ? `stayed at ${share(r1)}` : `went from ${share(r0)} to ${share(r1)}`}${hidden ? ", so the overall rate hides it" : ""}` : ""}.`,
-              definition: `${linkText} Only ${up.many} from the first ${w.days - lag} days of each period count, so each had at least ${lag} ${lag === 1 ? "day" : "days"} to convert.`,
+              definition: `${linkText} Only outcomes recorded after the upstream event and before its period ends count. Only ${up.many} from the first ${w.days - lag} days of each period count, so each had at least ${lag} ${lag === 1 ? "day" : "days"} to convert.`,
               evidence: `${capital(up.many)} from ${up.datasetName}${f.link.side === "flag" ? "" : ` and ${down.many} from ${down.datasetName}`}. ${int.format(C0.n)} and ${int.format(C1.n)} ${up.many} in the two periods.`,
               limitations: [
                 `Conversion follows recorded links; ${up.many} without one count as not converted.`,

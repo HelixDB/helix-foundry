@@ -67,6 +67,7 @@ const labels: Record<string, string> = {
   s3: "S3",
   postgres: "PostgreSQL",
   mysql: "MySQL",
+  neo4j: "Neo4j",
   rest: "REST",
   upload: "Upload",
 };

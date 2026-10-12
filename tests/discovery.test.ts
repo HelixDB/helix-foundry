@@ -7,7 +7,15 @@ vi.mock("../apps/api/src/executor.js", () => ({
 }));
 import { MemoryStore, resource, transaction } from "../apps/api/src/store.js";
 import { ingestRows, seedDemo } from "../apps/api/src/datasets.js";
-import { onboardingState } from "../apps/api/src/onboarding-state.js";
+import {
+  onboardingState,
+  publicResource,
+} from "../apps/api/src/onboarding-state.js";
+import {
+  reduceStoredDiscovery,
+  storedDiscovery,
+} from "../apps/api/src/source-discovery.js";
+import { seal } from "../apps/api/src/security.js";
 import {
   confirmOntology,
   entityName,
@@ -662,4 +670,217 @@ it("names entities after files, not their folders", async () => {
     "Customer",
     "Order",
   ]);
+});
+
+// A shop database's discovery, as a connection reads it: every table's
+// columns, keys and foreign keys, whichever tables are selected.
+const shop = {
+  customers: range(5, (i) => ({ id: i + 1, name: "C" + i })),
+  orders: range(5, (i) => ({ order_id: i + 1, buyer: (i % 5) + 1 })),
+  shipments: range(5, (i) => ({ shipment_id: i + 1, parcel: (i % 5) + 1 })),
+};
+type ShopTable = keyof typeof shop;
+const shopKey = (table_name: string, column_name: string, type: string) => ({
+  table_schema: "public",
+  table_name,
+  column_name,
+  constraint_type: type,
+});
+const shopForeignKey = (
+  table_name: string,
+  column_name: string,
+  referenced_table: string,
+  referenced_column: string,
+) => ({
+  table_schema: "public",
+  table_name,
+  column_name,
+  referenced_schema: "public",
+  referenced_table,
+  referenced_column,
+});
+const shopDiscovery = {
+  tables: Object.keys(shop).map((name) => ({ schema: "public", name })),
+  columns: Object.entries(shop).flatMap(([table_name, rows]) =>
+    Object.keys(rows[0]).map((name) => ({
+      schema: "public",
+      table_name,
+      name,
+      type: "integer",
+      nullable: "NO",
+    })),
+  ),
+  keys: [
+    shopKey("customers", "id", "PRIMARY KEY"),
+    shopKey("orders", "order_id", "PRIMARY KEY"),
+    shopKey("orders", "buyer", "FOREIGN KEY"),
+    shopKey("shipments", "shipment_id", "PRIMARY KEY"),
+    shopKey("shipments", "parcel", "FOREIGN KEY"),
+  ],
+  foreignKeys: [
+    shopForeignKey("orders", "buyer", "customers", "id"),
+    shopForeignKey("shipments", "parcel", "orders", "order_id"),
+  ],
+  sample: shop.orders,
+};
+const ownKeys = (table: string) => (k: any) =>
+  k.table_schema === "public" && k.table_name === table;
+const linkNames = (s: SuggestedOntology) =>
+  s.links
+    .map((l) => [l.from, l.fromColumn, l.to, l.toColumn, l.evidence].join(" "))
+    .sort();
+
+it("suggests the same declared links from each source's own keys as from the whole discovery", async () => {
+  const links = async (tables: ShopTable[], stored: boolean) =>
+    linkNames(
+      (
+        await suggestFor(
+          tables.map((name) => ({
+            name,
+            rows: shop[name],
+            kind: "postgres",
+            connection: "shop",
+            discovery: stored
+              ? storedDiscovery("postgres", shopDiscovery, {
+                  schema: "public",
+                  table: name,
+                })
+              : shopDiscovery,
+          })),
+        )
+      ).suggestion,
+    );
+  // Without a schema, PostgreSQL's is public, as an import reads it.
+  expect(
+    storedDiscovery("postgres", shopDiscovery, { table: "orders" }),
+  ).toEqual({
+    keys: shopDiscovery.keys.filter(ownKeys("orders")),
+    foreignKeys: [shopDiscovery.foreignKeys[0]],
+  });
+  const all: ShopTable[] = ["customers", "orders", "shipments"];
+  expect(await links(all, false)).toEqual(
+    expect.arrayContaining(["order buyer customer id declared"]),
+  );
+  // Including when only one side of a foreign key is selected.
+  for (const tables of [
+    all,
+    ["orders", "shipments"],
+    ["customers", "shipments"],
+    ["customers", "orders"],
+    ["orders"],
+    ["shipments"],
+  ] as ShopTable[][])
+    expect(await links(tables, true), tables.join()).toEqual(
+      await links(tables, false),
+    );
+});
+
+it("reduces discovery stored by older releases once, with the same links", async () => {
+  const s = `${scope}_${n++}`;
+  scopes.push(s);
+  await workspace(s);
+  const operation = "connection_legacy";
+  // Older imports stored the whole discovery on each source, and grouped
+  // their sources only on the operation, which stored each source again.
+  const sources = await transaction(store, s, async (tx) =>
+    (["customers", "orders", "shipments"] as const).map((name) =>
+      tx.put(
+        resource(s, "source", name, {
+          kind: "postgres",
+          secret: seal({ database: "shop", schema: "public", table: name }),
+          discovery: shopDiscovery,
+        }),
+      ),
+    ),
+  );
+  for (const source of sources)
+    await ingestRows(
+      store,
+      s,
+      source.name,
+      shop[source.name as ShopTable],
+      source.id,
+    );
+  const jobs = sources.map((source) =>
+    resource(s, "job", source.name, {
+      type: "sync",
+      sourceId: source.id,
+      status: "succeeded",
+    }),
+  );
+  await transaction(store, s, async (tx) => {
+    for (const job of jobs) tx.put(job);
+    tx.put(
+      resource(
+        s,
+        "operation",
+        "Connection import",
+        {
+          fingerprint: "legacy",
+          result: sources.map((source, i) => ({
+            source: publicResource(source),
+            job: jobs[i],
+          })),
+        },
+        operation,
+      ),
+    );
+  });
+  const suggested = async () => {
+    const state = await onboardingState(store, s);
+    return linkNames(
+      await suggestOntology(store, s, {
+        datasets: state.datasets,
+        sources: state.sources,
+        signature: state.signature,
+      }),
+    );
+  };
+  const before = await suggested();
+  expect(before).toContain("order buyer customer id declared");
+
+  await reduceStoredDiscovery(store, s);
+  const reduced = await store.list(s, "source");
+  for (const source of reduced)
+    expect(source.data.discovery).toEqual({
+      keys: shopDiscovery.keys.filter(ownKeys(source.name)),
+      foreignKeys: shopDiscovery.foreignKeys.filter(ownKeys(source.name)),
+    });
+  const op = (await store.get(s, operation))!;
+  expect(JSON.stringify(op.data)).not.toContain("discovery");
+  expect(op.data.result).toEqual(
+    sources.map((source, i) => ({
+      source: { id: source.id, name: source.name, connectionId: operation },
+      job: { id: jobs[i].id },
+    })),
+  );
+  expect(await suggested()).toEqual(before);
+
+  // Once done, it does nothing; and records already reduced stay as they are.
+  const version = await store.version(s);
+  await reduceStoredDiscovery(store, s);
+  expect(await store.version(s)).toBe(version);
+  await transaction(store, s, async (tx) => tx.delete("migration_state"));
+  await reduceStoredDiscovery(store, s);
+  expect(await store.list(s, "source")).toEqual(reduced);
+  expect(await store.get(s, operation)).toEqual(op);
+  expect(
+    (await store.get(s, "migration_state"))?.data.storedDiscovery,
+  ).toBeTruthy();
+
+  // A source whose settings this key cannot read is left as it is, and the
+  // pass runs again at the next start.
+  await transaction(store, s, async (tx) => {
+    tx.delete("migration_state");
+    tx.update(reduced[0], {
+      ...reduced[0].data,
+      secret: "unreadable",
+      discovery: shopDiscovery,
+    });
+  });
+  await reduceStoredDiscovery(store, s);
+  expect((await store.get(s, reduced[0].id))?.data.discovery).toEqual(
+    shopDiscovery,
+  );
+  expect(await store.get(s, "migration_state")).toBeUndefined();
 });

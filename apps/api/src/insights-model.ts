@@ -48,6 +48,7 @@ export type Participant = {
 export type Measure = {
   column: string;
   scale: "none" | "cents";
+  currency?: "USD" | "EUR" | "GBP";
   // up: more is better (revenue); down: less is better (refunds, cost).
   direction: "up" | "down";
 };
@@ -138,6 +139,10 @@ const STATE = /(^|_)(status|state|stage|outcome|result)(_|$)/i;
 const KEYISH = /(^|_)(id|key|code|uuid|number|no)$/i;
 const MONEY: [RegExp, Measure["direction"]][] = [
   [
+    /^(spend|costs?|expenses?|refunds?|discount)(_(usd|eur|gbp|amount|total|cents))?$/i,
+    "down",
+  ],
+  [
     /^(net|net_amount|net_revenue|net_sales|revenue|amount_paid|paid_amount|gmv|sales|total_paid)$/i,
     "up",
   ],
@@ -146,10 +151,6 @@ const MONEY: [RegExp, Measure["direction"]][] = [
     "up",
   ],
   [/(_amount|_total|_revenue|_value|_usd|_eur|_gbp|_cents|_price)$/i, "up"],
-  [
-    /^(spend|spend_usd|cost|costs|expense|expenses|refund|refunds|discount)$/i,
-    "down",
-  ],
 ];
 const BOOLEAN_OUTCOME =
   /^(is_|has_|was_)?(converted|purchased|ordered|won|activated|subscribed|retained|completed|booked)$/i;
@@ -404,6 +405,9 @@ export function findActivities(
         measures.push({
           column: c.name,
           scale: isCents(e.dataset, c.name) ? "cents" : "none",
+          currency: /_(usd|eur|gbp)(_|$)/i
+            .exec(c.name)?.[1]
+            .toUpperCase() as Measure["currency"],
           direction: MONEY[rank][1],
           rank,
         });
@@ -550,9 +554,12 @@ export function proposeDrivers(
       unit: opts.measure
         ? null
         : `No money amount or other outcome is measured per ${a.one}.`,
-      conversion: funnel
-        ? null
-        : `No recorded link between ${a.many} and a later outcome.`,
+      conversion:
+        funnel?.link.side === "flag"
+          ? "The outcome flag has no event time to bound both observation periods."
+          : funnel
+            ? null
+            : `No recorded link between ${a.many} and a later outcome.`,
     };
     const eligible = Object.values(checks).filter((c) => c === null).length;
     if (!eligible) return;

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Readable } from "node:stream";
@@ -16,6 +17,7 @@ import {
   type Resource,
 } from "../../../../packages/shared/src/index.js";
 import { config } from "../config.js";
+import { proposalComparison } from "../proposal-comparison.js";
 import { assert, digest, token, seal } from "../security.js";
 import { resource, transaction, type Store } from "../store.js";
 import {
@@ -23,7 +25,7 @@ import {
   publishProposal,
   providerSettings,
 } from "../assistant.js";
-import { testProvider } from "../providers.js";
+import { testProvider, canReuseProviderKey } from "../providers.js";
 import { localAiMemory } from "../memory.js";
 import { homeMetrics, regenerateMetrics } from "../metrics.js";
 import {
@@ -445,7 +447,7 @@ export function registerWorkspaceRoutes(
       s = ProviderSchema.parse(req.body);
     if (!s.apiKey) {
       const old = await providerSettings(store, a.scope);
-      if (old.provider === s.provider) s.apiKey = old.apiKey;
+      if (canReuseProviderKey(old, s)) s.apiKey = old.apiKey;
     }
     await testProvider(s);
     await transaction(store, a.scope, async (tx) =>
@@ -543,6 +545,13 @@ export function registerWorkspaceRoutes(
     req.raw.on("close", () => clearInterval(timer));
     void send();
   });
+  app.get(
+    "/api/v1/workspaces/:w/proposals/:id/comparison",
+    async (req: any) => {
+      const a = await access(req);
+      return proposalComparison(store, a.scope, req.params.id);
+    },
+  );
   app.put("/api/v1/workspaces/:w/proposals/:id", async (req: any) => {
     const a = await access(req, "editor"),
       old = await store.get(a.scope, req.params.id);
@@ -613,29 +622,67 @@ export function registerWorkspaceRoutes(
     );
     return result;
   });
+  app.get("/api/v1/workspaces/:w/tokens", async (req) => {
+    const a = await access(req, "owner");
+    return transaction(store, "global", async (tx) => {
+      const items = (await tx.list("token"))
+        .filter((t) => t.data.workspaceId === a.scope)
+        .map((t) => {
+          // Tokens predating this inventory had only their private authentication
+          // digest as an id. Give those tokens a stable, opaque revocation handle.
+          const current = t.data.publicId
+            ? t
+            : tx.update(t, { ...t.data, publicId: randomUUID() });
+          return {
+            id: current.data.publicId as string,
+            name: current.name,
+            readOnly: !!current.data.readOnly,
+            createdAt: current.createdAt,
+          };
+        })
+        .sort(
+          (x, y) =>
+            y.createdAt.localeCompare(x.createdAt) || x.id.localeCompare(y.id),
+        );
+      return { items };
+    });
+  });
   app.post("/api/v1/workspaces/:w/tokens", async (req) => {
     const a = await access(req, "owner"),
       b = z
         .object({ name: z.string(), readOnly: z.boolean().default(true) })
         .parse(req.body),
-      raw = token();
+      raw = token(),
+      publicId = randomUUID();
     await transaction(store, "global", async (tx) =>
       tx.put(
         resource(
           "global",
           "token",
           b.name,
-          { userId: a.user.id, workspaceId: a.scope, readOnly: b.readOnly },
+          {
+            userId: a.user.id,
+            workspaceId: a.scope,
+            readOnly: b.readOnly,
+            publicId,
+          },
           digest(raw),
         ),
       ),
     );
-    return { token: raw, id: digest(raw) };
+    return { token: raw, id: publicId };
   });
   app.delete("/api/v1/workspaces/:w/tokens/:id", async (req: any) => {
     const a = await access(req, "owner");
     await transaction(store, "global", async (tx) => {
-      const t = await tx.get(req.params.id);
+      // Keep ids returned by older versions valid without exposing them in
+      // the inventory. New callers use the opaque public handle.
+      const t =
+        (await tx.get(req.params.id)) ||
+        (await tx.list("token")).find(
+          (t) =>
+            t.data.workspaceId === a.scope && t.data.publicId === req.params.id,
+        );
       assert(
         t?.kind === "token" && t.data.workspaceId === a.scope,
         "Token unavailable",

@@ -1,13 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { canReuseProviderKey } from "./providers.js";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { platform } from "node:os";
 import { resolve, extname } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { CronExpressionParser } from "cron-parser";
-import { sourceSyncDefaults } from "./source-sync.js";
+import { sourceSyncDefaults, validateRefreshSchedule } from "./source-sync.js";
 import { resolveHostedConfig } from "./hosting.js";
 import {
   OnboardingProviderSchema,
@@ -25,6 +25,11 @@ import { config } from "./config.js";
 import { discover } from "./connectors.js";
 import { providerSettings, retried } from "./assistant.js";
 import { onboardingState, publicResource } from "./onboarding-state.js";
+import {
+  importedItem,
+  importResponse,
+  storedDiscovery,
+} from "./source-discovery.js";
 import { confirmOntology, ontologyGoal, suggestOntology } from "./discovery.js";
 
 type Access = (req: any, role?: "owner" | "editor" | "viewer") => Promise<any>;
@@ -81,13 +86,18 @@ export function registerOnboarding(
       const existing = m.providerJobId && (await tx.get(m.providerJobId));
       const selected = { ...settings };
       if (!selected.apiKey) {
-        if (existing?.data.settings?.provider === selected.provider)
+        if (
+          existing?.data.settings &&
+          canReuseProviderKey(existing.data.settings, selected)
+        )
           selected.apiKey = unseal(existing.data.secret).apiKey;
-        else if (selected.provider === old.provider)
+        else if (canReuseProviderKey(old, selected))
           selected.apiKey = old.apiKey;
       }
       assert(
-        selected.provider === "local" || !!selected.apiKey?.trim(),
+        selected.provider === "local" ||
+          selected.provider === "custom" ||
+          !!selected.apiKey?.trim(),
         "Enter an API key for the selected provider.",
       );
       const fingerprint = digest(JSON.stringify(selected));
@@ -130,7 +140,7 @@ export function registerOnboarding(
     const a = await access(req, "owner"),
       body = OnboardingImportSchema.parse(req.body);
     assert(body.kind !== "upload", "Use the upload endpoint");
-    if (body.schedule) CronExpressionParser.parse(body.schedule, { tz: "UTC" });
+    validateRefreshSchedule(body.schedule);
     const opId = "connection_" + digest(body.operationId),
       fingerprint = digest(JSON.stringify(body));
     const prior = await store.get(a.scope, opId);
@@ -140,7 +150,9 @@ export function registerOnboarding(
         "Operation was already used for different inputs",
         409,
       );
-      return prior.data.result;
+      return importResponse(prior.data.result, (ids) =>
+        store.getMany(a.scope, ids),
+      );
     }
     const resolved = await resolveHostedConfig(
       store,
@@ -163,6 +175,13 @@ export function registerOnboarding(
           ),
           "Choose tables from the tested connection",
         );
+      if (body.kind === "neo4j")
+        assert(
+          discovery.tables?.some(
+            (t: any) => t.name === s.table && t.schema === s.schema,
+          ),
+          "Choose labels and relationship types from the tested connection",
+        );
       if (["stripe", "workos", "posthog"].includes(body.kind))
         assert(
           discovery.tables?.some((t: any) => t.name === s.table),
@@ -182,10 +201,15 @@ export function registerOnboarding(
           "Operation was already used for different inputs",
           409,
         );
-        return existing.data.result;
+        return importResponse(existing.data.result, (ids) =>
+          Promise.all(ids.map((id) => tx.get(id))),
+        );
       }
-      const result = [];
+      // The operation stores ids only; the response carries the resources.
+      const result = [],
+        response = [];
       for (const s of selections) {
+        const settings = { ...resolved.config, ...s };
         const source = tx.put(
           resource(
             a.scope,
@@ -196,9 +220,9 @@ export function registerOnboarding(
               kind: body.kind,
               connectionId: opId,
               connectionName: body.name,
-              secret: seal({ ...resolved.config, ...s }),
+              secret: seal(settings),
               hostedProvider: resolved.provider,
-              discovery,
+              discovery: storedDiscovery(body.kind, discovery, settings),
               ...sourceSyncDefaults(body.kind, body.schedule),
             },
           ),
@@ -212,7 +236,8 @@ export function registerOnboarding(
             progress: { message: "Waiting to import" },
           }),
         );
-        result.push({ source: publicResource(source), job });
+        result.push(importedItem(source, opId, job));
+        response.push({ source: publicResource(source), job });
       }
       tx.put(
         resource(
@@ -223,7 +248,7 @@ export function registerOnboarding(
           opId,
         ),
       );
-      return result;
+      return response;
     });
   });
   app.put(base + "/sources/:id", async (req: any) => {
@@ -232,7 +257,7 @@ export function registerOnboarding(
     const old = await store.get(a.scope, req.params.id);
     assert(old?.kind === "source", "Source not found", 404);
     assert(old.data.kind === body.kind, "Keep the existing connector type");
-    if (body.schedule) CronExpressionParser.parse(body.schedule, { tz: "UTC" });
+    validateRefreshSchedule(body.schedule);
     const resolved = await resolveHostedConfig(
       store,
       a.scope,
@@ -252,7 +277,7 @@ export function registerOnboarding(
         ...source.data,
         secret: seal(resolved.config),
         hostedProvider: resolved.provider,
-        discovery,
+        discovery: storedDiscovery(body.kind, discovery, resolved.config),
         ...sourceSyncDefaults(body.kind, body.schedule),
       });
       return tx.put(

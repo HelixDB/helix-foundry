@@ -23,12 +23,21 @@ import {
   publishProposal,
   saveProposal,
 } from "../apps/api/src/assistant.js";
-import { ingestRows } from "../apps/api/src/datasets.js";
+import { ingestRows, queryDatasets } from "../apps/api/src/datasets.js";
 import { rankCandidates, runInsightsScan } from "../apps/api/src/insights.js";
 import {
   chooseWindow,
   DEFAULT_THRESHOLDS,
+  driverQuery,
 } from "../apps/api/src/insights-checks.js";
+import {
+  acceptedOntology,
+  findActivities,
+  publishedBundle,
+  proposeDrivers,
+  type Activity,
+  type Driver,
+} from "../apps/api/src/insights-model.js";
 import { config } from "../apps/api/src/config.js";
 import {
   BundleSchema,
@@ -117,6 +126,259 @@ async function scan() {
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
 const finding = (r: HomeInsights, check: string, re: RegExp) =>
   r.findings.find((f) => f.check === check && re.test(f.headline));
+
+describe("review regressions", () => {
+  it.each(["downstream", "upstream"] as const)(
+    "bounds %s conversion links to the upstream period and never counts preceding events",
+    async (side) => {
+      const b = weekStart(1),
+        c = weekStart(0),
+        at = (t: number) => new Date(t).toISOString();
+      const upRows = [
+        { id: "b1", target: "d1", time: at(b + DAY) },
+        { id: "b2", target: "d2", time: at(b + 2 * DAY) },
+        { id: "c1", target: "d3", time: at(c + DAY) },
+        { id: "c2", target: "d4", time: at(c + 2 * DAY) },
+      ];
+      const downstream = [
+        { id: "d1", source: "b1", time: at(c + DAY) }, // after baseline ends
+        { id: "d2", source: "b2", time: at(b + DAY) }, // before upstream event
+        { id: "d3", source: "c1", time: at(c + DAY + 1000) },
+        { id: "d3", source: "c1", time: at(c + DAY + 2000) }, // still one conversion
+        { id: "d4", source: "c2", time: at(c + 8 * DAY) }, // after current ends
+      ];
+      const u = await ingestRows(store, scope, "Upstream", upRows),
+        d = await ingestRows(store, scope, "Downstream", downstream);
+      const activity = (id: string, datasetId: string): Activity => ({
+        id,
+        name: id,
+        one: id,
+        many: id,
+        datasetId,
+        datasetName: id,
+        key: "id",
+        time: { column: "time", zoned: false },
+        rows: 4,
+        direction: "up",
+        participants: [],
+        measures: [],
+        dimensions: [],
+        funnels: [],
+      });
+      const up = activity("up", u.id),
+        down = activity("down", d.id);
+      const driver: Driver = {
+        id: "test",
+        kind: "activity",
+        label: "Test",
+        activity: up,
+        dimensions: [],
+        prior: 1,
+        reasons: [],
+        checks: {
+          cohort: "unsupported",
+          mix: "unsupported",
+          unit: "unsupported",
+          conversion: null,
+        },
+        funnel: {
+          upstream: "up",
+          downstream: "down",
+          link:
+            side === "downstream"
+              ? { side, column: "source", key: "id" }
+              : { side, column: "target", key: "id" },
+        },
+      };
+      const query = driverQuery(
+        driver,
+        {
+          days: 7,
+          end: c + 7 * DAY,
+          current: [c, c + 7 * DAY],
+          baseline: [b, c],
+          cohort: [b - 14 * DAY, b],
+          cohortReady: false,
+        },
+        DEFAULT_THRESHOLDS,
+        new Map([
+          ["up", up],
+          ["down", down],
+        ]),
+      );
+      const result = await queryDatasets(
+        store,
+        scope,
+        query.inputs,
+        query.sql,
+        { limit: 1000 },
+      );
+      expect(
+        result.rows
+          .filter((r: any) => r.part === "conv_total")
+          .map((r: any) => [r.w, r.n, r.v]),
+      ).toEqual([
+        ["base", 2, 0],
+        ["cur", 2, 1],
+      ]);
+    },
+  );
+
+  it("sets aside missing baseline days rather than calling recovery a business shift", async () => {
+    const data = commerce(),
+      b = weekStart(1),
+      c = weekStart(0);
+    data.orders = data.orders.filter((o) => {
+      const t = Date.parse(String(o.ordered_at));
+      return t < b || t >= c || [0, 1, 6].includes(Math.floor((t - b) / DAY));
+    });
+    await publish(data);
+    const r = await scan();
+    expect(r.findings.some((f) => f.driver.label === "Revenue")).toBe(false);
+    expect(
+      r.coverage
+        .find((c) => c.label === "Revenue")
+        ?.checks.some(
+          (c) => c.state === "set_aside" && c.note?.includes("baseline period"),
+        ),
+    ).toBe(true);
+  });
+
+  it("marks old event periods stale even when the snapshot was synchronized near them", async () => {
+    const shift = 35 * DAY,
+      data = commerce();
+    for (const rows of Object.values(data))
+      for (const row of rows)
+        for (const [k, v] of Object.entries(row))
+          if (typeof v === "string" && /^202\d-\d\d-\d\dT/.test(v))
+            (row as Record<string, unknown>)[k] = new Date(
+              Date.parse(v) - shift,
+            ).toISOString();
+    await publish(data);
+    await transaction(store, scope, async (tx) => {
+      for (const d of await tx.list("dataset"))
+        tx.update(d, {
+          ...d.data,
+          lastSync: new Date(Date.now() - shift).toISOString(),
+        });
+    });
+    const r = await scan();
+    expect(r.findings.length).toBeGreaterThan(0);
+    expect(
+      r.findings.every((f) =>
+        f.details.limitations.some((l) => l.startsWith("The data ends on")),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["EUR", "€"],
+    ["GBP", "£"],
+    ["USD", "$"],
+  ] as const)(
+    "preserves %s currency in evidence and Analyst follow-ups",
+    async (currency, symbol) => {
+      const data = commerce({ hiddenShifts: true });
+      for (const o of data.orders) {
+        o["revenue_" + currency.toLowerCase()] = o.net_amount;
+        delete o.net_amount;
+      }
+      await publish(data);
+      const r = await scan(),
+        f = r.findings.find((f) => f.check === "unit")!;
+      expect(f).toBeDefined();
+      expect(f.details.table.rows.flat().join(" ")).toContain(symbol);
+      expect(f.ask).toContain(symbol);
+      if (currency !== "USD") expect(f.ask).not.toContain("$");
+    },
+  );
+
+  it("classifies named spend before generic currency suffixes and never proposes it as Revenue", async () => {
+    const data = commerce();
+    for (const o of data.orders) {
+      o.spend_usd = o.net_amount;
+      delete o.net_amount;
+    }
+    await publish(data);
+    const ws = (await store.get(scope, "workspace"))!,
+      datasets = await store.list(scope, "dataset"),
+      bundle = await publishedBundle(
+        (k) => store.list(scope, k),
+        ws.data.activeGeneration,
+      );
+    const activities = findActivities(acceptedOntology(ws, bundle, datasets)),
+      money = activities
+        .flatMap((a) => a.measures)
+        .find((m) => m.column === "spend_usd")!;
+    expect(money).toMatchObject({ direction: "down", currency: "USD" });
+    expect(
+      proposeDrivers(activities, datasets, "").some(
+        (d) => d.kind === "revenue",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a dismissal from before a finding escalated", async () => {
+    await publish(commerce());
+    const r = await scan(),
+      f = r.findings[0];
+    await transaction(store, scope, async (tx) => {
+      const s = (await tx.get("home_insights"))!;
+      tx.update(s, {
+        ...s.data,
+        findings: s.data.findings.map((x: HomeInsight) =>
+          x.id === f.id ? { ...x, version: "escalated", severity: "issue" } : x,
+        ),
+      });
+    });
+    const rejected = await request("POST", `/home/insights/${f.id}/dismiss`, {
+      version: f.version,
+    });
+    expect(rejected.statusCode).toBe(409);
+    expect(await store.list(scope, "insightDismissal")).toHaveLength(0);
+    expect(
+      (
+        await request("POST", `/home/insights/${f.id}/dismiss`, {
+          version: "escalated",
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+
+  it("clears confirmation when the chosen driver no longer has sufficient history", async () => {
+    await publish(commerce());
+    const first = await scan(),
+      revenue = first.priorities.candidates.find((d) => d.label === "Revenue")!;
+    await request("PUT", "/home/insights/priorities", {
+      drivers: [revenue.id],
+    });
+    await runQueued();
+    const d = (await store.list(scope, "dataset")).find(
+      (d) => d.name === "orders",
+    )!;
+    await ingestRows(
+      store,
+      scope,
+      d.name,
+      [{ ...commerce().orders[0], ordered_at: new Date().toISOString() }],
+      undefined,
+      d.id,
+    );
+    const refreshed = (await store.get(scope, d.id))!;
+    if (refreshed.data.pendingVersion)
+      expect(
+        (await request("POST", `/datasets/${d.id}/accept-version`, {}))
+          .statusCode,
+      ).toBe(200);
+    expect((await store.get(scope, d.id))!.data.activeVersion).not.toBe(
+      d.data.activeVersion,
+    );
+    const after = await scan();
+    expect(after.priorities.confirmed).toBe(false);
+    expect((await stored())?.priorities).toBeUndefined();
+    expect(after.scan.steps[0].detail).not.toContain("confirmed by an owner");
+  });
+});
 // What every finding promises, whatever the data.
 function wellFormed(r: HomeInsights) {
   expect(r.findings.length).toBeLessThanOrEqual(3);
@@ -165,7 +427,11 @@ describe("a shop whose totals hold steady", () => {
     });
     // Asking again reuses the queued scan.
     await insights();
-    expect(await store.list(scope, "job")).toHaveLength(1);
+    expect(
+      (await store.list(scope, "job")).filter(
+        (j) => j.data.type === "home_insights",
+      ),
+    ).toHaveLength(1);
     expect(executor.queries).toHaveLength(0);
   });
 
@@ -204,7 +470,11 @@ describe("a shop whose totals hold steady", () => {
     executor.queries = [];
     await insights();
     expect(executor.queries).toHaveLength(0);
-    expect(await store.list(scope, "job")).toHaveLength(1);
+    expect(
+      (await store.list(scope, "job")).filter(
+        (j) => j.data.type === "home_insights",
+      ),
+    ).toHaveLength(1);
   });
 
   it("reveals a source-mix shift, a fixed-cohort decline and buyer concentration with their figures", async () => {
@@ -269,9 +539,9 @@ describe("a shop whose totals hold steady", () => {
     expect(top.values.baseline).toBeCloseTo(0.22, 4);
     expect(top.values.current).toBeCloseTo(0.45, 4);
     expect(top.details.table.rows).toEqual([
-      ["Top 10 customers", "$6,600", "$13,500"],
-      ["Everyone else", "$23,400", "$16,500"],
-      ["Total", "$30,000", "$30,000"],
+      ["Top 10 customers", "6,600", "13,500"],
+      ["Everyone else", "23,400", "16,500"],
+      ["Total", "30,000", "30,000"],
     ]);
     expect(top.details.definition).toMatch(
       /ranked independently in each period/,
@@ -524,8 +794,8 @@ describe("constant totals that hide offsetting changes", () => {
     expect(unit.support).toEqual({ text: "Value per order", figure: "↑25.0%" });
     expect(unit.details.table.rows).toEqual([
       ["Orders", "800", "640", "−20.0%"],
-      ["Value per order", "$50", "$62.50", "+25.0%"],
-      ["Revenue", "$40,000", "$40,000", "0%"],
+      ["Value per order", "50", "62.50", "+25.0%"],
+      ["Revenue", "40,000", "40,000", "0%"],
     ]);
     const conversion = finding(r, "conversion", /^Paid sessions convert less/)!;
     expect(conversion).toBeDefined();

@@ -51,7 +51,7 @@ import { now, resource, transaction, type Store } from "./store.js";
 
 export const INSIGHTS_ID = "home_insights";
 // Bumped when the checks change, so every workspace scans again.
-export const INSIGHTS_VERSION = 1;
+export const INSIGHTS_VERSION = 2;
 const MAX_DRIVERS = 3,
   MAX_FINDINGS = 3,
   // Candidate activities whose coverage is probed before choosing drivers.
@@ -379,6 +379,11 @@ export async function dismissInsight(
       (await tx.get(INSIGHTS_ID))?.data as Stored | undefined
     )?.findings?.find((x) => x.id === findingId);
     assert(f, "That finding is no longer shown", 404);
+    assert(
+      f.version === version,
+      "That finding changed. Review it before dismissing it.",
+      409,
+    );
     tx.put(
       resource(
         scope,
@@ -479,6 +484,7 @@ type Selection = {
   candidates: InsightDriver[];
   unavailable: { id: string; label: string; reason: string }[];
   ambiguous: boolean;
+  ownerConfirmed: boolean;
   probes: Record<string, Coverage | null>;
 };
 // Drivers with enough history and activity, then the owner's choice or the
@@ -556,6 +562,7 @@ async function selectDrivers(
     candidates: scored.map((s) => driverSummary(s.d)),
     unavailable: unavailable.slice(0, 6),
     ambiguous,
+    ownerConfirmed: confirmed.length > 0,
     probes,
   };
 }
@@ -659,7 +666,7 @@ export async function runInsightsScan(
     await stage(
       "understand",
       names.length
-        ? `Priorities: ${list(names)}${stored?.priorities ? " (confirmed by an owner)" : ""}.`
+        ? `Priorities: ${list(names)}${sel.ownerConfirmed ? " (confirmed by an owner)" : ""}.`
         : "No activity with enough dated history to check yet.",
     );
     const first = sel.drivers[0] && sel.windows.get(sel.drivers[0].id);
@@ -686,14 +693,18 @@ export async function runInsightsScan(
         r.rows as Record<string, unknown>[],
         byActivity,
       );
-      const stale =
-        syncedAt(byId.get(d.activity.datasetId)!) - w.end > 14 * DAY;
+      const stale = Date.now() - w.end > 14 * DAY;
       const sources = inputs.map((id) => ({
         datasetId: id,
         name: byId.get(id)?.name || id,
       }));
       for (const c of candidates) {
         c.details.limitations.push(
+          ...(d.measure && !d.measure.currency
+            ? [
+                "Currency is not specified; amounts are shown without a currency symbol.",
+              ]
+            : []),
           ...(stale
             ? [
                 `The data ends on ${new Date(w.end - DAY).toLocaleDateString("en-US", { timeZone: "UTC", dateStyle: "medium" })}; nothing newer was imported.`,
@@ -771,7 +782,12 @@ export async function runInsightsScan(
     await saveStored(store, scope, (x) => ({
       ...x,
       version: INSIGHTS_VERSION,
-      key,
+      key:
+        !sel.ownerConfirmed &&
+        stored?.priorities &&
+        JSON.stringify(x.priorities) === JSON.stringify(stored.priorities)
+          ? inputsKey(workspace, datasets, { ...stored, priorities: undefined })
+          : key,
       stage: undefined,
       stageDetail: {
         ...x.stageDetail,
@@ -784,6 +800,11 @@ export async function runInsightsScan(
       candidates: sel.candidates,
       unavailable: sel.unavailable,
       selected: sel.drivers.map((d) => d.id),
+      priorities:
+        !sel.ownerConfirmed &&
+        JSON.stringify(x.priorities) === JSON.stringify(stored?.priorities)
+          ? undefined
+          : x.priorities,
       ambiguous: sel.ambiguous,
       coverage,
       findings,

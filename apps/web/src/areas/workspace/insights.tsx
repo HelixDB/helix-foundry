@@ -541,6 +541,7 @@ export function Noticed() {
           { version: f.version },
         ),
       );
+      setGone((g) => g.filter((x) => x !== f.id));
     } catch (e) {
       setGone((g) => g.filter((x) => x !== f.id));
       setUndo(null);
