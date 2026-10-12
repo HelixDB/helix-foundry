@@ -32,7 +32,7 @@ const connection = {
   config: { url: "http://127.0.0.1/fixture" },
 };
 
-for (const [method, path, extra] of [
+const routes = [
   ["POST", "/sources", {}],
   [
     "POST",
@@ -40,19 +40,32 @@ for (const [method, path, extra] of [
     { selections: [{}], operationId: "invalid-schedule" },
   ],
   ["PUT", "/onboarding/sources/existing", {}],
-] as const)
+  ["PUT", "/sources/existing/schedule", {}],
+] as const;
+const existing = () =>
+  transaction(store, scope, async (tx) => {
+    tx.put(
+      resource(
+        scope,
+        "source",
+        "Existing",
+        { kind: "rest", secret: "unchanged" },
+        "existing",
+      ),
+    );
+  });
+const unchanged = async () => {
+  expect(discover).not.toHaveBeenCalled();
+  const source = await store.get(scope, "existing");
+  expect(source?.data.secret).toBe("unchanged");
+  expect(source?.data.schedule).toBeUndefined();
+  expect(await store.list(scope, "job")).toHaveLength(0);
+  expect(await store.list(scope, "operation")).toHaveLength(0);
+};
+
+for (const [method, path, extra] of routes)
   it(`rejects invalid schedules through ${method} ${path} before discovery`, async () => {
-    await transaction(store, scope, async (tx) => {
-      tx.put(
-        resource(
-          scope,
-          "source",
-          "Existing",
-          { kind: "rest", secret: "unchanged" },
-          "existing",
-        ),
-      );
-    });
+    await existing();
     const response = await request(method, path, {
       ...connection,
       ...extra,
@@ -60,11 +73,56 @@ for (const [method, path, extra] of [
     });
     expect(response.statusCode, response.body).toBe(400);
     expect(response.json().error).toContain("refresh schedule");
-    expect(discover).not.toHaveBeenCalled();
-    expect((await store.get(scope, "existing"))?.data.secret).toBe("unchanged");
-    expect(await store.list(scope, "job")).toHaveLength(0);
-    expect(await store.list(scope, "operation")).toHaveLength(0);
+    await unchanged();
   });
+
+// Six-field expressions start with a seconds field.
+for (const [method, path, extra] of routes)
+  it(`rejects schedules that run more than once a minute through ${method} ${path}`, async () => {
+    await existing();
+    for (const schedule of [
+      "* * * * * *",
+      "*/30 * * * * *",
+      "0,30 * * * * *",
+      "@secondly",
+    ]) {
+      const response = await request(method, path, {
+        ...connection,
+        ...extra,
+        schedule,
+      });
+      expect(response.statusCode, response.body).toBe(400);
+      expect(response.json().error).toContain("at most once a minute");
+    }
+    await unchanged();
+  });
+
+it("accepts schedules that run at most once a minute", async () => {
+  const created = await request("POST", "/sources", connection);
+  expect(created.statusCode, created.body).toBe(200);
+  for (const schedule of [
+    "* * * * *",
+    "@minutely",
+    "30 * * * * *",
+    "0 */5 * * * *",
+    "@hourly",
+  ]) {
+    const response = await request(
+      "PUT",
+      `/sources/${created.json().id}/schedule`,
+      { schedule },
+    );
+    expect(response.statusCode, schedule + response.body).toBe(200);
+    expect(response.json().data.schedule).toBe(schedule);
+    expect(response.json().data.nextRun).toBeGreaterThan(Date.now() - 1000);
+  }
+  const response = await request("POST", "/sources", {
+    ...connection,
+    schedule: "* * * * *",
+  });
+  expect(response.statusCode, response.body).toBe(200);
+  expect(response.json().data.schedule).toBe("* * * * *");
+});
 
 it("accepts valid cron expressions and keeps the saved UTC schedule", async () => {
   const response = await request("POST", "/sources", {

@@ -31,16 +31,26 @@ const database = databaseSource;
 const nextRun = (schedule: string) =>
   CronExpressionParser.parse(schedule, { tz: "UTC" }).next().getTime();
 // Validate user input before connection discovery or stored settings change.
+// A six-field expression starts with seconds; more than one of them would
+// re-import every table of the connection several times a minute.
 export function validateRefreshSchedule(schedule?: string | null) {
   if (!schedule) return;
+  let seconds: number;
   try {
-    CronExpressionParser.parse(schedule, { tz: "UTC" }).next();
+    const cron = CronExpressionParser.parse(schedule, { tz: "UTC" });
+    cron.next();
+    seconds = cron.fields.second.values.length;
   } catch {
     throw new AppError(
       400,
       "Use a valid refresh schedule in UTC, for example 0 * * * * for hourly refreshes.",
     );
   }
+  if (seconds > 1)
+    throw new AppError(
+      400,
+      "A refresh schedule can run at most once a minute. Leave out the seconds field, for example * * * * * for every minute.",
+    );
 }
 const mysqlConfig = (c: Record<string, any>) => ({
   host: c.host,

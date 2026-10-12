@@ -211,8 +211,15 @@ describe("credential-preserving connection cadence", () => {
   it("uses the saved cadence in the real worker without replacing a connection", async () => {
     const f = await fixture(),
       before = (await f.store.get(f.scope, f.source.id))!;
-    const r = await f.schedule("* * * * * *");
+    const r = await f.schedule("* * * * *");
     expect(r.statusCode, r.body).toBe(200);
+    // Every minute is the most frequent cadence: make the saved one due now
+    // instead of waiting for the next minute.
+    const due = Date.now() - 1;
+    await transaction(f.store, f.scope, async (tx) => {
+      const s = (await tx.get(f.source.id))!;
+      tx.update(s, { ...s.data, nextRun: due });
+    });
     f.owner.stop = startWorker(f.store);
     await expect
       .poll(
@@ -228,8 +235,12 @@ describe("credential-preserving connection cadence", () => {
     const current = (await f.store.get(f.scope, f.source.id))!;
     expect(current.id).toBe(before.id);
     expect(current.data.secret).toBe(before.data.secret);
-    expect(current.data.schedule).toBe("* * * * * *");
-    expect(current.data.nextRun).toBeGreaterThan(r.json().data.nextRun);
+    expect(current.data.schedule).toBe("* * * * *");
+    // The worker re-armed the source from the saved cadence: the next whole
+    // minute after it queued the refresh.
+    expect(current.data.nextRun).toBeGreaterThan(due);
+    expect(current.data.nextRun % 60000).toBe(0);
+    expect(current.data.nextRun).toBeLessThanOrEqual(Date.now() + 60000);
   });
   it("keeps CDC and capability checks independent of a saved snapshot fallback cadence", async () => {
     const f = await fixture();

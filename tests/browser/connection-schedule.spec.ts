@@ -84,7 +84,7 @@ test("owners edit preset and custom cadence without losing the connection or man
   await schedule
     .getByRole("button", { name: "Save schedule", exact: true })
     .click();
-  await expect(page.getByRole("alert")).toContainText("valid UTC cron");
+  await expect(page.getByRole("alert")).toContainText("valid refresh schedule");
   expect(
     (await api(page, base + `/resources/source/${source.id}`)).data.schedule,
   ).toBe("*/15 * * * *");
