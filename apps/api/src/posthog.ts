@@ -278,7 +278,11 @@ async function* rows(config: ConnectorConfig, limit = Infinity) {
     id = await project(c, config),
     object = posthogObjects.find((o) => o.name === config.table);
   assert(object, "Choose a PostHog object");
-  const days = Math.min(Math.max(Number(config.eventDays || 30), 1), 365);
+  const configuredDays = Number(config.eventDays || 30);
+  const days = Math.min(
+    Math.max(Number.isNaN(configuredDays) ? 30 : configuredDays, 1),
+    365,
+  );
   const types = object.name === "groups" ? await groupTypes(c, id) : new Map();
   let pages = 0,
     count = 0;

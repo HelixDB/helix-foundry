@@ -23,10 +23,21 @@ Each area owns its section below; add new routes to your own section.
 | GET `/events`                                           | Authenticated server-sent events: `{runs, jobs, reviews}` with active or last-24h runs and jobs (id, kind, name, times and status fields only) and the pending review count; sent when something changes |
 | PUT `/proposals/:id`                                    | Complete `Bundle`; creates and validates a new proposal                                                                                                                                                  |
 | POST `/proposals/:id/validate`                          | `{}`; creates a fresh validated proposal                                                                                                                                                                 |
+| GET `/proposals/:id/comparison`                         | Read-only definition comparison against the active published bundle; asset changes, metadata and validation staleness; available to read-only tokens                                                     |
 | POST `/proposals/:id/publish`                           | `{ hash }`; atomically publish the reviewed bundle                                                                                                                                                       |
 | POST `/proposals/:id/reject`                            | `{}`; reject an unpublished proposal                                                                                                                                                                     |
 | POST `/rollback`                                        | `{}`; revalidate and publish previous definitions, retaining business edits                                                                                                                              |
 | GET / POST `/definitions/export`, `/definitions/import` | Versioned bundles; imports become proposals                                                                                                                                                              |
+
+### Developer tokens
+
+| Method / path        | Input / result                                                                 |
+| -------------------- | ------------------------------------------------------------------------------ |
+| GET `/tokens`        | `{ items: {id, name, readOnly, createdAt}[] }`; opaque revocation handles only |
+| POST `/tokens`       | `{name, readOnly?}` → `{token, id}`; copy the token once                       |
+| DELETE `/tokens/:id` | Revoke one token; `{ok:true}`                                                  |
+
+These routes require owner permissions and a writable credential or the local browser. The SDK exposes `tokens()`, `createToken(name, readOnly)` and `revokeToken(id)`. Authentication digests and stored credential values are not included in the inventory. Revocation ids returned by older versions remain accepted.
 
 ### Data
 
@@ -117,6 +128,8 @@ const run = await foundry.requestAssistance("Create a revenue dashboard", {
 // Use foundry.ask(question) or foundry.build(goal) for an explicit intent.
 // Review the resulting proposal and its validation before calling publish().
 ```
+
+**Definition comparison.** `FoundryClient.proposalComparison(id)` returns `activeGeneration`, `validatedGeneration`, `stale`, exact `staleInputs`, `counts`, `changes` and `metadata`. Each asset change has `kind`, `name`, `status` (`added`, `changed`, `removed`), `before`, `after` and changed top-level `fields`. Catalog identity is `datasetId`; other asset identities are their exact names. Arrays retain order and SQL is compared as text. Missing active publication provenance returns 409; ambiguous duplicate asset names return 422. The endpoint does not execute, validate, publish or estimate affected records.
 
 CSV downloads use one immutable active snapshot and include its version in
 `x-foundry-version`. Column names are headers. Non-null fields are quoted,

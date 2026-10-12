@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { PipelineSchema } from "../../../../packages/shared/src/index.js";
-import { compilePipeline } from "../../../../packages/shared/src/pipeline.js";
-import { assert } from "../security.js";
+import {
+  compilePipeline,
+  PipelineValidationError,
+} from "../../../../packages/shared/src/pipeline.js";
+import { assert, AppError } from "../security.js";
 import { resource, transaction, type Store } from "../store.js";
 import { saveProposal, currentBundle } from "../assistant.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
@@ -20,7 +23,15 @@ export function registerPipelinesRoutes(
   app.post("/api/v1/workspaces/:w/pipelines/draft", async (req) => {
     const a = await access(req, "editor"),
       p = PipelineSchema.parse(req.body);
-    if (p.nodes.length) Object.assign(p, compilePipeline(p.nodes));
+    if (p.nodes.length) {
+      try {
+        Object.assign(p, compilePipeline(p.nodes));
+      } catch (error) {
+        if (error instanceof PipelineValidationError)
+          throw new AppError(400, error.message);
+        throw error;
+      }
+    }
     const bundle = await currentBundle(store, a.scope);
     bundle.pipelines = [
       ...bundle.pipelines.filter((x) => x.name !== p.name),

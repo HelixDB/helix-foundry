@@ -6,6 +6,18 @@ import type {
 import { config } from "./config.js";
 import { assert, AppError } from "./security.js";
 import { postJson } from "./post.js";
+// A blank key keeps the saved credential only for the endpoint it belongs to.
+export function canReuseProviderKey(
+  previous: Pick<ProviderSettings, "provider" | "baseUrl">,
+  next: Pick<ProviderSettings, "provider" | "baseUrl">,
+) {
+  return (
+    previous.provider === next.provider &&
+    (next.provider !== "custom" ||
+      previous.baseUrl?.replace(/\/+$/, "") ===
+        next.baseUrl?.replace(/\/+$/, ""))
+  );
+}
 export class Provider implements ModelProvider {
   private verified = false;
   constructor(public settings: ProviderSettings) {}
@@ -71,10 +83,36 @@ export class Provider implements ModelProvider {
         ],
         tool_choice: { type: "tool", name: "submit" },
       };
+    } else if (s.provider === "custom" && s.apiFormat !== "responses") {
+      assert(s.baseUrl, "Enter an API base URL.");
+      url = s.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+      if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
+      body = {
+        model: s.model,
+        max_tokens: 8192,
+        stream: false,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "result",
+            schema: strictSchema(schema),
+            strict: true,
+          },
+        },
+      };
     } else {
-      assert(s.apiKey, "OpenAI API key is required");
-      url = "https://api.openai.com/v1/responses";
-      headers.authorization = "Bearer " + s.apiKey;
+      if (s.provider === "custom") {
+        assert(s.baseUrl, "Enter an API base URL.");
+        url = s.baseUrl.replace(/\/+$/, "") + "/responses";
+      } else {
+        assert(s.apiKey, "OpenAI API key is required");
+        url = "https://api.openai.com/v1/responses";
+      }
+      if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
       body = {
         model: s.model,
         max_output_tokens: 8192,
@@ -116,31 +154,83 @@ export class Provider implements ModelProvider {
       headers,
       body: JSON.stringify(body),
       signal: abort,
+      ...(s.provider === "custom" ? { redirect: "error" as const } : {}),
     });
     if (!response.ok)
       throw new AppError(
         502,
-        `${s.provider} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
+        `${providerName(s.provider)} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
       );
     let value: unknown,
       tokens = 0;
-    const data = (await response.json()) as any;
+    const data = (await response.json().catch((error) => {
+      throwJsonError(error, s.provider);
+    })) as any;
     if (s.provider === "claude") {
       value = data.content.find(
         (x: any) => x.type === "tool_use" && x.name === "submit",
       )?.input;
       tokens =
         (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
+    } else if (s.provider === "custom" && s.apiFormat !== "responses") {
+      const choice = data.choices?.[0];
+      assert(
+        choice?.finish_reason !== "length",
+        "Custom model ran out of room for its answer.",
+        502,
+      );
+      const text = choice?.message?.content;
+      assert(
+        typeof text === "string" && text,
+        "Custom model did not return a structured response",
+        502,
+      );
+      value = customJson(text);
+      tokens = data.usage?.total_tokens || 0;
     } else {
+      if (s.provider === "custom")
+        assert(
+          data.status !== "incomplete" && data.status !== "failed",
+          "Custom model did not complete its answer.",
+          502,
+        );
       const text = data.output
         ?.flatMap((x: any) => x.content || [])
         .find((x: any) => x.type === "output_text")?.text;
       assert(text, "Model did not return a structured response");
-      value = JSON.parse(text);
+      try {
+        value = s.provider === "custom" ? customJson(text) : JSON.parse(text);
+      } catch (error) {
+        throwJsonError(error, s.provider);
+      }
       tokens = data.usage?.total_tokens || 0;
     }
     return { value: withoutNullOptionals(value), tokens };
   }
+}
+// How errors name a provider: "The custom AI provider returned HTTP 401".
+function providerName(provider: string) {
+  return provider === "custom" ? "The custom AI provider" : provider;
+}
+function customJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AppError(
+      502,
+      "Custom model did not return valid JSON. Choose a model that supports structured output.",
+    );
+  }
+}
+// JSON decoder messages can include response contents. Only decoding failures
+// get recovery guidance; transport failures and cancellation keep their identity.
+function throwJsonError(error: unknown, provider: string): never {
+  if (error instanceof SyntaxError)
+    throw new AppError(
+      502,
+      `${providerName(provider)} returned invalid structured JSON. Retry the request or choose a more capable model.`,
+    );
+  throw error;
 }
 // Accepts a single response object or newline-delimited streamed parts.
 function ollamaResult(text: string) {
