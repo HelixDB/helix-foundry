@@ -159,7 +159,7 @@ export class Provider implements ModelProvider {
     if (!response.ok)
       throw new AppError(
         502,
-        `${s.provider} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
+        `${providerName(s.provider)} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
       );
     let value: unknown,
       tokens = 0;
@@ -208,6 +208,10 @@ export class Provider implements ModelProvider {
     return { value: withoutNullOptionals(value), tokens };
   }
 }
+// How errors name a provider: "The custom AI provider returned HTTP 401".
+function providerName(provider: string) {
+  return provider === "custom" ? "The custom AI provider" : provider;
+}
 function customJson(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -224,7 +228,7 @@ function throwJsonError(error: unknown, provider: string): never {
   if (error instanceof SyntaxError)
     throw new AppError(
       502,
-      `${provider} returned invalid structured JSON. Retry the request or choose a more capable model.`,
+      `${providerName(provider)} returned invalid structured JSON. Retry the request or choose a more capable model.`,
     );
   throw error;
 }

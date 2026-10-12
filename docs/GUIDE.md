@@ -114,7 +114,11 @@ If replication is unavailable, snapshots refresh every five minutes (or on an ex
 
 **Custom models.** In **Settings → AI & models → Custom** (also available during setup), enter an HTTP(S) API base URL including its version, a model ID or routing alias, and choose **OpenAI Chat Completions** or **OpenAI Responses**. The endpoint must support structured JSON output with `json_schema`. Enter an API key when the endpoint requires bearer authentication; it is optional for unauthenticated self-hosted models. Credentials belong in the key field, not the URL. A saved key is retained only when the Custom endpoint is unchanged; enter the key again when changing endpoints. Custom providers use the hosted-provider data controls and do not enable OpenAI voice sessions or Ollama model downloads.
 
-For **DP MaaS**, use base URL `https://dev.agify.app/infra/maas/v1`, model `best`, and the desired OpenAI-compatible format. Enter your DP MaaS token in the API key field, then click **Test and save AI**. The connection is tested in the background and becomes active only after it succeeds.
+Click **Test and save AI** to save a Custom provider. The connection is tested in the background and becomes active only after it succeeds. Some common setups:
+
+- **Azure OpenAI:** base URL `https://<resource>.openai.azure.com/openai/v1`, the **OpenAI Responses** format, the resource's key as the API key, and the deployment name as the model.
+- **An OpenAI-compatible server on this computer**, such as vLLM or LM Studio: from the Docker install, `localhost` is the app's own container, so use `http://host.docker.internal:<port>/v1` (a name Docker Desktop provides). With `pnpm dev`, use `http://127.0.0.1:<port>/v1`.
+- **Reasoning models**, such as OpenAI's o-series and gpt-5, need the **OpenAI Responses** format. The Chat Completions format sends `max_tokens`, which they reject.
 
 **Context and privacy.** AI sees bounded schema, profile and sample context. Samples sent to a hosted provider mask detected sensitive columns unless `allowRawData` is set to `true` in the provider settings (an API-only setting, off by default). Detection is a heuristic, so review your source policies before using a hosted provider.
 

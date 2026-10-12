@@ -12,7 +12,7 @@ import { unseal } from "../apps/api/src/security.js";
 const base = {
   provider: "custom" as const,
   model: "best",
-  baseUrl: "https://gateway.example/infra/maas/v1/",
+  baseUrl: "https://gateway.example/ai/v1/",
 };
 const key = "dummy-custom-provider-key";
 const schema = {
@@ -158,8 +158,18 @@ it("does not retry a failed Custom endpoint against a different provider", async
   vi.stubGlobal("fetch", transport);
   await expect(
     new Provider(ProviderSchema.parse(base)).generate("", {}, schema),
-  ).rejects.toThrow("HTTP 503");
+  ).rejects.toThrow("The custom AI provider returned HTTP 503.");
   expect(transport).toHaveBeenCalledTimes(1);
+});
+
+it("names the Custom provider when its reply is not JSON", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response('{"private-record":')),
+  );
+  await expect(
+    new Provider(ProviderSchema.parse(base)).generate("", {}, schema),
+  ).rejects.toThrow("The custom AI provider returned invalid structured JSON.");
 });
 
 it("reuses keys only for the same Custom endpoint", () => {
