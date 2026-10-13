@@ -68,9 +68,26 @@ export type HostedConnection = {
   config: { hostedConnectionId: string };
   discovery: any;
 };
+const bedrockHost =
+  /^(?:vpce-[a-z0-9-]+\.)?bedrock-runtime(?:-fips)?\.[a-z]{2}(?:-[a-z]+)+-\d+\.(?:vpce\.)?amazonaws\.com(?:\.cn)?$/;
+// Amazon Bedrock Runtime's endpoint for a region, such as us-east-1.
+export function bedrockEndpoint(region: string) {
+  return `https://bedrock-runtime.${region}.amazonaws.com${region.startsWith("cn-") ? ".cn" : ""}`;
+}
+// The region of an Amazon Bedrock Runtime endpoint.
+export function bedrockRegion(endpoint?: string) {
+  return endpoint?.match(/bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\./)?.[1];
+}
 export const ProviderSchema = z
   .object({
-    provider: z.enum(["local", "claude", "openai", "custom"]),
+    provider: z.enum([
+      "local",
+      "claude",
+      "openai",
+      "azure",
+      "bedrock",
+      "custom",
+    ]),
     model: z.string().trim().min(1).max(150),
     baseUrl: z.url().optional(),
     apiFormat: z.enum(["chat-completions", "responses"]).optional(),
@@ -82,12 +99,41 @@ export const ProviderSchema = z
     continuous: z.boolean().default(true),
   })
   .superRefine((settings, ctx) => {
-    if (settings.provider !== "custom") return;
+    if (settings.provider === "bedrock") {
+      // The key goes only to an Amazon Bedrock Runtime endpoint: a region's,
+      // its FIPS variant or a VPC endpoint, in AWS or AWS China.
+      let url: URL | undefined;
+      try {
+        url = settings.baseUrl ? new URL(settings.baseUrl) : undefined;
+      } catch {}
+      if (
+        !url ||
+        url.protocol !== "https:" ||
+        url.port ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        !["", "/"].includes(url.pathname) ||
+        !bedrockHost.test(url.hostname)
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["baseUrl"],
+          message:
+            "Choose an AWS region for Amazon Bedrock, such as us-east-1.",
+        });
+      return;
+    }
+    if (settings.provider !== "custom" && settings.provider !== "azure") return;
+    const azure = settings.provider === "azure";
     if (!settings.baseUrl) {
       ctx.addIssue({
         code: "custom",
         path: ["baseUrl"],
-        message: "Enter an API base URL.",
+        message: azure
+          ? "Enter your Azure OpenAI endpoint."
+          : "Enter an API base URL.",
       });
       return;
     }
@@ -97,8 +143,10 @@ export const ProviderSchema = z
     } catch {
       return;
     } // z.url() reports malformed URLs.
+    // Azure OpenAI keys travel only over HTTPS. Custom also allows plain HTTP
+    // for a model server on this computer.
     if (
-      !["http:", "https:"].includes(url.protocol) ||
+      !(azure ? ["https:"] : ["http:", "https:"]).includes(url.protocol) ||
       url.username ||
       url.password ||
       url.search ||
@@ -107,8 +155,9 @@ export const ProviderSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["baseUrl"],
-        message:
-          "Use an HTTP(S) API base URL without credentials, a query string or a fragment.",
+        message: azure
+          ? "Use an https:// Azure OpenAI endpoint without credentials, a query string or a fragment."
+          : "Use an HTTP(S) API base URL without credentials, a query string or a fragment.",
       });
   });
 export type ProviderSettings = z.infer<typeof ProviderSchema>;
@@ -124,7 +173,32 @@ export type ColumnProfile = {
   examples: unknown[];
   sensitive: boolean;
   primaryKey: boolean;
+  // Queries that ask for it (an Analyst answer): how the column's values run
+  // in the result's row order, nulls left out. `up` and `down` count values
+  // higher or lower than the one before; `first` counts values equal to the
+  // first.
+  order?: { up: number; down: number; first: number };
 };
+// A profile's sample rows are stored on the dataset and its version, and read
+// back by every list of datasets, so a long value keeps only its start:
+// previews, examples and prompts show the beginning of a value, and a table of
+// large documents would otherwise store megabytes per dataset.
+export const SAMPLE_VALUE_LIMIT = 200;
+export function compactValue(v: unknown): unknown {
+  const text =
+    typeof v === "string"
+      ? v
+      : v && typeof v === "object"
+        ? JSON.stringify(v)
+        : undefined;
+  return text !== undefined && text.length > SAMPLE_VALUE_LIMIT
+    ? text.slice(0, SAMPLE_VALUE_LIMIT) + "…"
+    : v;
+}
+export const compactSample = (rows: Record<string, unknown>[]) =>
+  rows.map((r) =>
+    Object.fromEntries(Object.entries(r).map(([k, v]) => [k, compactValue(v)])),
+  );
 export type DatasetProfile = {
   rows: number;
   duplicateRows?: number;

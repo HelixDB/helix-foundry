@@ -6,6 +6,90 @@ import {
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Text in a literal or comment is data, not a dataset reference. Keep quoted
+// identifiers intact and replace only non-code spans; execution still receives
+// the original SQL. This is a lexical filter, not a SQL parser.
+function referenceSql(sql: string) {
+  let result = "",
+    start = 0,
+    i = 0;
+  const blank = (end: number) => {
+    result += sql.slice(start, i) + sql.slice(i, end).replace(/[^\r\n]/g, " ");
+    start = i = end;
+  };
+  while (i < sql.length) {
+    if (sql[i] === '"') {
+      // Double quotes delimit identifiers; doubled quotes are part of the name.
+      i++;
+      while (i < sql.length) {
+        if (sql[i++] === '"') {
+          if (sql[i] !== '"') break;
+          i++;
+        }
+      }
+    } else if (sql[i] === "'") {
+      const escaped = /(?:^|[^a-z0-9_$])e$/i.test(
+        sql.slice(Math.max(0, i - 2), i),
+      );
+      let end = i + 1;
+      // The E of an escape string is syntax too, not a reference to a table E.
+      if (escaped) i--;
+      while (end < sql.length) {
+        if (escaped && sql[end] === "\\") end += 2;
+        else if (sql[end++] === "'") {
+          if (sql[end] === "'") {
+            end++;
+            continue;
+          }
+          // A newline can continue the same string, retaining its E escape
+          // mode. Line comments are whitespace in this continuation grammar.
+          let next = end,
+            newline = false;
+          while (next < sql.length) {
+            if (/[ \t\f\r\n]/.test(sql[next])) {
+              newline ||= /[\r\n]/.test(sql[next]);
+              next++;
+            } else if (sql.startsWith("--", next)) {
+              while (next < sql.length && !/[\r\n]/.test(sql[next])) next++;
+            } else break;
+          }
+          if (!newline || sql[next] !== "'") break;
+          end = next + 1;
+        }
+      }
+      blank(Math.min(end, sql.length));
+    } else if (sql.startsWith("--", i)) {
+      const end = sql.slice(i).search(/[\r\n]/);
+      blank(end < 0 ? sql.length : i + end);
+    } else if (sql.startsWith("/*", i)) {
+      let end = i + 2,
+        depth = 1;
+      while (end < sql.length && depth) {
+        if (sql.startsWith("/*", end)) {
+          depth++;
+          end += 2;
+        } else if (sql.startsWith("*/", end)) {
+          depth--;
+          end += 2;
+        } else end++;
+      }
+      blank(end);
+    } else {
+      const delimiter =
+        sql[i] === "$" && !/[a-z0-9_$\u0080-\uffff]/i.test(sql[i - 1] || "")
+          ? /^\$(?:[a-z_\u0080-\uffff][a-z0-9_\u0080-\uffff]*)?\$/i.exec(
+              sql.slice(i),
+            )?.[0]
+          : undefined;
+      if (delimiter) {
+        const end = sql.indexOf(delimiter, i + delimiter.length);
+        blank(end < 0 ? sql.length : end + delimiter.length);
+      } else i++;
+    }
+  }
+  return result + sql.slice(start);
+}
+
 // The table references of a query: what follows FROM, JOIN or PIVOT, split
 // at commas so each table of a comma join ("FROM orders o, customers c")
 // starts its own reference. A reference runs to the next clause keyword or
@@ -48,6 +132,7 @@ export function queryInputs(
   listed: string[],
   datasets: Map<string, Resource>,
 ): string[] {
+  sql = referenceSql(sql);
   const names = (id: string) => datasetAliases(datasets.get(id)!.name);
   const declared = listed.map((ref) => {
     if (datasets.has(ref)) return ref;

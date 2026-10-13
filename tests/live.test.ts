@@ -64,7 +64,11 @@ let sockets: FakeSocket[],
   openai: { url: string; body?: any; headers: any }[],
   liveStatus: number;
 
-async function useProvider(provider: "openai" | "claude", allowRawData = true) {
+async function useProvider(
+  provider: "openai" | "claude" | "azure",
+  allowRawData = true,
+  baseUrl?: string,
+) {
   await transaction(store, scope, async (tx) =>
     tx.put(
       resource(
@@ -74,8 +78,14 @@ async function useProvider(provider: "openai" | "claude", allowRawData = true) {
         {
           settings: {
             provider,
-            model: provider === "openai" ? "gpt-5.5" : "claude-sonnet-5-5",
+            model:
+              provider === "openai"
+                ? "gpt-5.5"
+                : provider === "azure"
+                  ? "gpt-6.1-sol"
+                  : "claude-sonnet-5-5",
             allowRawData,
+            baseUrl,
           },
           secret: seal("sk-test-key"),
         },
@@ -213,6 +223,17 @@ it("offers voice only for OpenAI projects with GPT-Live access", async () => {
   expect(
     (await request("POST", "/live/sessions", { sdp: "o" })).json().error,
   ).toContain("doesn't have access to GPT-Live");
+});
+
+it("keeps voice off, and the key at home, with Azure OpenAI", async () => {
+  await useProvider("azure", true, "https://example.openai.azure.com");
+  expect((await request("GET", "/live")).json()).toEqual({
+    available: false,
+    reason: "Voice works with the OpenAI provider.",
+  });
+  const denied = await request("POST", "/live/sessions", { sdp: "offer" });
+  expect(denied.statusCode).toBe(409);
+  expect(openai).toHaveLength(0);
 });
 
 it("creates a GPT-Live session with client delegation and attaches the sideband", async () => {

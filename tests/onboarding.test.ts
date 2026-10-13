@@ -28,6 +28,7 @@ import {
   saveProposal,
 } from "../apps/api/src/assistant.js";
 import { onboardingState } from "../apps/api/src/onboarding-state.js";
+import { datasetTable } from "../packages/shared/src/index.js";
 import { connectionGroups } from "../apps/web/src/connection-groups.js";
 import { Provider } from "../apps/api/src/providers.js";
 import { prepareProvider } from "../apps/api/src/setup-jobs.js";
@@ -170,6 +171,43 @@ it("retries recommendations that cite missing columns", async () => {
   expect(
     (await onboardingState(store, scope)).recommendations?.outcomes,
   ).toHaveLength(1);
+});
+it("redacts a credential the engine quotes from the data before a dashboard repair", async () => {
+  await inputs();
+  // A text column holding a request header, as a webhook log might.
+  const hooks = await ingestRows(store, scope, "Webhooks", [
+    { id: 1, header: "Bearer sk-proj-0123456789abcdefghij" },
+  ]);
+  const repairs: any[] = [];
+  vi.spyOn(Provider.prototype, "generate").mockImplementation(
+    async (system, context: any) => {
+      if (system.includes("Correct these definitions")) {
+        repairs.push(context.repair);
+        return {
+          value: referenceReply("focused dashboard", context),
+          tokens: 12,
+        };
+      }
+      const value: any = referenceReply(system, context);
+      if (system.includes("focused dashboard"))
+        value.dashboards[0].widgets[0] = {
+          title: "Hooks",
+          type: "metric",
+          inputs: [hooks.id],
+          sql: `SELECT CAST(header AS INTEGER) AS n FROM ${datasetTable(hooks.id)}`,
+        };
+      return { value, tokens: 12 };
+    },
+  );
+  const r = await request("POST", "/onboarding/recommendations", {});
+  await buildWorkspace(store, scope, r.json().id);
+  const goal = (await onboardingState(store, scope)).recommendations!
+    .outcomes[0].goal;
+  const run = (await request("POST", "/onboarding/build", { goal })).json();
+  await buildWorkspace(store, scope, run.id);
+  const details = repairs[0].failures.map((f: any) => f.detail).join("\n");
+  expect(details).not.toContain("0123456789abcdefghij");
+  expect(details).toContain("Could not convert string 'Bearer [redacted]'");
 });
 it("recommends from full snapshots, resumes, tests one view and atomically completes on publication", async () => {
   await inputs();

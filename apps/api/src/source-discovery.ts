@@ -61,7 +61,7 @@ export async function importResponse(
   });
 }
 
-const MIGRATIONS = "migration_state";
+export const MIGRATIONS = "migration_state";
 
 // Releases before #94 stored the whole discovery on every source, and again
 // on its import operation. Once per workspace, each is cut down to what is

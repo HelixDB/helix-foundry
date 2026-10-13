@@ -47,9 +47,16 @@ function DatasetDetail({
   const { id, role } = useWorkspace(),
     action = useAction(),
     [description, setDescription] = useState(d.description),
-    [offset, setOffset] = useState(0),
+    [page, setPage] = useState<{ versionId: string; offset: number }>({
+      versionId: d.data.activeVersion,
+      offset: 0,
+    }),
     [selectedVersion, setSelectedVersion] = useState<string>();
   const versionId = selectedVersion || d.data.activeVersion;
+  // A page belongs to the snapshot it was turned on. When a refresh replaces
+  // the current snapshot, its rows start again from the first page; a chosen
+  // historical snapshot keeps its page.
+  const offset = page.versionId === versionId ? page.offset : 0;
   const preview = useQuery({
     queryKey: [id, "preview", d.id, versionId, offset],
     queryFn: () =>
@@ -129,7 +136,7 @@ function DatasetDetail({
                 ? undefined
                 : e.target.value,
             );
-            setOffset(0);
+            setPage({ versionId: e.target.value, offset: 0 });
           }}
         >
           {choices.map((v, i) => {
@@ -193,13 +200,15 @@ function DatasetDetail({
             <div className="buttons">
               <button
                 disabled={!offset}
-                onClick={() => setOffset((n) => Math.max(0, n - 50))}
+                onClick={() =>
+                  setPage({ versionId, offset: Math.max(0, offset - 50) })
+                }
               >
                 Previous
               </button>
               <button
                 disabled={offset + 50 >= profile.rows}
-                onClick={() => setOffset((n) => n + 50)}
+                onClick={() => setPage({ versionId, offset: offset + 50 })}
               >
                 Next
               </button>
@@ -252,6 +261,7 @@ function DatasetDetail({
               .join(", "),
           }))}
         />
+        <DatasetPrivacy key={JSON.stringify(d.data.privacy)} dataset={d} />
         <h3>Description</h3>
         <label>
           Dataset description
@@ -343,5 +353,87 @@ function DatasetDetail({
         </div>
       </details>
     </>
+  );
+}
+
+function DatasetPrivacy({ dataset }: { dataset: Resource }) {
+  const { id, role } = useWorkspace(),
+    action = useAction();
+  const saved: string[] = dataset.data.privacy?.additionalColumns || [];
+  const detected = new Set<string>(dataset.data.privacy?.detectedColumns || []);
+  const [additional, setAdditional] = useState(saved);
+  const names: string[] = [
+    ...new Set<string>([
+      ...dataset.data.profile.columns.map((c: any) => c.name),
+      ...saved,
+    ]),
+  ];
+  return (
+    <section className="dataset-privacy" aria-label="Hosted AI privacy">
+      <h3>Hosted AI privacy</h3>
+      <p className="muted">
+        Columns you mark are masked in sample rows sent to hosted AI, unless raw
+        data is allowed. Home leaves them out of its key metrics with any AI,
+        including Local AI, even when raw data is allowed. Hands-free voice, if
+        you use it, still speaks answers, which can include values from these
+        columns, because it sends answers to OpenAI.
+      </p>
+      <fieldset
+        className="plain-fieldset"
+        disabled={role !== "owner" || action.pending}
+      >
+        <legend>Columns to mask</legend>
+        {names.map((name) => (
+          <label key={name}>
+            <input
+              type="checkbox"
+              aria-label={"Mask " + name}
+              disabled={detected.has(name)}
+              checked={detected.has(name) || additional.includes(name)}
+              onChange={(e) =>
+                setAdditional((values) =>
+                  e.target.checked
+                    ? [...values, name]
+                    : values.filter((n) => n !== name),
+                )
+              }
+            />
+            <span>
+              {name}
+              {detected.has(name)
+                ? " (detected sensitive)"
+                : !dataset.data.profile.columns.some(
+                      (c: any) => c.name === name,
+                    )
+                  ? " (not in current snapshot)"
+                  : ""}
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      {role === "owner" && (
+        <button
+          className="button"
+          disabled={
+            action.pending ||
+            JSON.stringify([...additional].sort()) ===
+              JSON.stringify([...saved].sort())
+          }
+          onClick={() =>
+            action.run(
+              () =>
+                api(
+                  `/workspaces/${id}/datasets/${dataset.id}/privacy`,
+                  { additionalColumns: additional },
+                  "PUT",
+                ),
+              "Privacy saved",
+            )
+          }
+        >
+          Save privacy
+        </button>
+      )}
+    </section>
   );
 }

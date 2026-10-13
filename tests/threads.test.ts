@@ -489,6 +489,41 @@ it("repairs a failing query once, and Retry asks afresh when that fails too", as
   expect(contexts.length).toBe(before + 1);
 });
 
+it("redacts a credential the engine quotes from the data before the repair sees it", async () => {
+  // A text column holding a request header, as a webhook log might.
+  const hooks = (
+    await request("POST", "/ingest", {
+      name: "Webhooks",
+      rows: [{ id: 1, header: "Bearer sk-proj-0123456789abcdefghij" }],
+    })
+  ).json().id;
+  const failing = {
+    ...plan,
+    inputs: [hooks],
+    sql: `SELECT CAST(header AS INTEGER) AS n FROM ${datasetTable(hooks)}`,
+  };
+  const replies = [failing, plan];
+  const contexts: any[] = [];
+  vi.spyOn(Provider.prototype, "generate").mockImplementation(
+    async (system: string, context: any) => {
+      if (system.includes("Choose answer"))
+        return { value: { intent: "answer" }, tokens: 1 };
+      if (system.includes("Summarise this query result"))
+        return {
+          value: { summary: "Revenue was 65.", highlights: [] },
+          tokens: 1,
+        };
+      contexts.push(context);
+      return { value: replies.shift()!, tokens: 1 };
+    },
+  );
+  await answer((await ask("Total revenue?")).id);
+  expect(contexts[1].repair.error).not.toContain("0123456789abcdefghij");
+  expect(contexts[1].repair.error).toContain(
+    "Could not convert string 'Bearer [redacted]'",
+  );
+});
+
 it("adds a plain-language summary from the result rows, and still answers if it fails", async () => {
   const contexts: Record<string, any> = {};
   let summary: any = {

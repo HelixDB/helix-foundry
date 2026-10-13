@@ -95,6 +95,8 @@ const providers: Record<string, string> = {
   local: "the local AI model",
   claude: "Claude",
   openai: "OpenAI",
+  azure: "Azure OpenAI",
+  bedrock: "Amazon Bedrock",
   custom: "your custom AI model",
 };
 // Describes a job, run or audit resource (or the slim copy the event stream sends).

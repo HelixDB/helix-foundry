@@ -82,7 +82,13 @@ export function ChatPage({ chatId }: { chatId: string }) {
       />
     );
   if (!chat.data) return <RunFallback chatId={chatId} />;
-  return <Conversation key={`${id}:${chat.data.id}`} chat={chat.data} />;
+  return (
+    <Conversation
+      key={`${id}:${chat.data.id}`}
+      chat={chat.data}
+      offline={chat.isRefetchError}
+    />
+  );
 }
 
 // Not a chat id: a follow-up's run id (an old /runs link) opens its chat.
@@ -124,6 +130,7 @@ function RunFallback({ chatId }: { chatId: string }) {
   return (
     <Conversation
       chat={{ id: chatId, title: run.data.goal || run.name, runs: [run] }}
+      offline={found.isRefetchError}
     />
   );
 }
@@ -272,7 +279,8 @@ function ChatHeader({ chat, turns }: { chat: Chat; turns: number }) {
 // How close to the end counts as "at the latest message".
 const NEAR = 72;
 
-function Conversation({ chat }: { chat: Chat }) {
+// `offline`: the latest refresh failed, so progress shows as last known.
+function Conversation({ chat, offline }: { chat: Chat; offline?: boolean }) {
   const { id, role, user, notify } = useWorkspace(),
     qc = useQueryClient();
   useTitle(chat.title);
@@ -418,7 +426,7 @@ function Conversation({ chat }: { chat: Chat }) {
                 <span className="hf-sr-only">You asked: </span>
                 <p>{r.data.goal}</p>
               </div>
-              <Reply run={r} />
+              <Reply run={r} offline={offline} />
               {r.id === latest?.id && followups.length > 0 && (
                 <div
                   className="an-followups"

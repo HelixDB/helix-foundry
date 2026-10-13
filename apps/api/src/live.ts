@@ -457,7 +457,7 @@ export function createLiveBridge(store: Store) {
     } as unknown as LiveTask;
     task.resolved = run(session, task).catch((e) => {
       task.status = "failed";
-      task.error = redact((e as Error).message);
+      task.error = redact((e as Error).message).slice(0, 1000);
       append(
         session,
         "commentary",

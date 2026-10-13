@@ -1,3 +1,4 @@
+import { withDatasetPrivacy } from "./dataset-privacy.js";
 import { registerOnboarding } from "./onboarding.js";
 import { registerHosting } from "./hosting.js";
 import { publicResource } from "./onboarding-state.js";
@@ -347,15 +348,19 @@ export async function createApp(store: Store) {
         r.data.generation === ws?.data.activeGeneration,
     );
     if (req.params.kind === "dataset")
-      rows = await Promise.all(
-        rows.map(async (r) => ({
-          ...r,
-          data: {
-            ...r.data,
-            snapshotAt: (await store.get(a.scope, r.data.activeVersion))
-              ?.createdAt,
-          },
-        })),
+      rows = await withDatasetPrivacy(
+        store,
+        a.scope,
+        await Promise.all(
+          rows.map(async (r) => ({
+            ...r,
+            data: {
+              ...r.data,
+              snapshotAt: (await store.get(a.scope, r.data.activeVersion))
+                ?.createdAt,
+            },
+          })),
+        ),
       );
     if (req.query.search)
       rows = rows.filter((r) =>
@@ -390,7 +395,9 @@ export async function createApp(store: Store) {
         404,
       );
     return scrub(
-      r.kind === "object" ? await effectiveObject(store, a.scope, r) : r,
+      r.kind === "object"
+        ? await effectiveObject(store, a.scope, r)
+        : (await withDatasetPrivacy(store, a.scope, [r]))[0],
     );
   });
   app.get("/api/openapi.json", async () => app.swagger());

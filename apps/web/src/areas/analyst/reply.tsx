@@ -1,22 +1,32 @@
-// One assistant turn in a chat: progress while it works, then the answer (or
-// the prepared changes, or what went wrong).
-import { useEffect, useId, useState, type ReactNode } from "react";
+// One assistant turn in a chat: the analysis as it happens, then the answer
+// (or the prepared changes, or what went wrong).
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   BookmarkPlus,
   Check,
   ChevronDown,
+  Circle,
   CircleAlert,
+  CircleMinus,
   CircleSlash,
   Copy,
   Database,
   FileDiff,
+  LoaderCircle,
   RotateCcw,
   Sparkles,
   Square,
 } from "lucide-react";
-import type { Resource } from "../../../../../packages/shared/src";
+import { answerShape, type Resource } from "../../../../../packages/shared/src";
 import { api } from "../../api";
 import { useWorkspace } from "../../ui";
 import {
@@ -29,19 +39,29 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import {
+  STEPS,
   canControl,
+  compactSteps,
+  currentStep,
+  duration,
+  endedAt,
+  estimateRange,
+  isAnswering,
   isWorking,
   listText,
   plainError,
-  stageText,
+  runSteps,
   startedAt,
+  stepText,
+  type Step,
+  type StepState,
 } from "./chat-data";
 import { chatListKey } from "./launcher";
 import {
-  AnswerChart,
+  AnswerResult,
   AnswerStats,
-  AnswerTable,
-  chartPlan,
+  Emphasized,
+  leadSentence,
 } from "./answer-view";
 
 export function Avatar() {
@@ -51,13 +71,6 @@ export function Avatar() {
     </span>
   );
 }
-
-const duration = (ms: number) => {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return s < 60
-    ? `${s}s`
-    : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
-};
 
 // Stop and retry: after either, the chat and the sidebar list refresh.
 export function useRunControl(run?: Resource) {
@@ -79,19 +92,8 @@ export function useRunControl(run?: Resource) {
   return { pending, stop: () => call("cancel"), retry: () => call("resume") };
 }
 
-// The status line while a question is being worked on.
-export function Working({
-  text,
-  since,
-  onStop,
-  stopping,
-}: {
-  text: string;
-  since?: number;
-  onStop?: () => void;
-  stopping?: boolean;
-}) {
-  const now = useNow(1000);
+// The status line while a question is being sent, before it has a run.
+export function Working({ text }: { text: string }) {
   return (
     <div className="an-working">
       <span className="an-dots" aria-hidden>
@@ -100,24 +102,6 @@ export function Working({
         <span />
       </span>
       <span className="an-working-text">{text}</span>
-      {since !== undefined && (
-        // Hidden from screen readers: a ticking number would be read out every second.
-        <span className="an-working-time hf-num" aria-hidden>
-          {duration(now - since)}
-        </span>
-      )}
-      {onStop && (
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={Square}
-          className="an-working-stop"
-          pending={stopping}
-          onClick={onStop}
-        >
-          Stop
-        </Button>
-      )}
     </div>
   );
 }
@@ -199,34 +183,294 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function Details({ run }: { run: Resource }) {
-  const d = run.data,
-    took = Date.parse(run.updatedAt) - startedAt(run);
-  const events: { at: string; message: string }[] = d.events || [];
+const stateWords: Record<StepState, string> = {
+  pending: "not started",
+  running: "in progress",
+  done: "done",
+  skipped: "skipped",
+  failed: "failed",
+  stopped: "stopped",
+};
+function StepMark({ state }: { state: StepState }) {
+  const Icon =
+    state === "done"
+      ? Check
+      : state === "running"
+        ? LoaderCircle
+        : state === "failed"
+          ? CircleAlert
+          : state === "stopped"
+            ? CircleSlash
+            : state === "skipped"
+              ? CircleMinus
+              : Circle;
   return (
-    <>
-      <p className="an-details-meta">
-        {plural(d.calls || 0, "model call")} · {formatNumber(d.tokens || 0)}{" "}
-        tokens
-        {!isWorking(d.status) && took > 0 && <> · took {duration(took)}</>}
+    <Icon
+      size={13}
+      className={cx("an-step-mark", state === "running" && "hf-spin")}
+      aria-hidden
+    />
+  );
+}
+// One step, its name in bold and what it did (or is doing) on the same line.
+// Compact rows stay on one line, with the whole text in a tooltip.
+function StepRow({
+  step,
+  run,
+  full,
+}: {
+  step: Step;
+  run: Resource;
+  full?: boolean;
+}) {
+  const label = STEPS[step.id].label,
+    text = stepText(step, run);
+  const took =
+    full &&
+    (step.state === "done" || step.state === "skipped") &&
+    step.startedAt !== undefined &&
+    step.endedAt !== undefined
+      ? step.endedAt - step.startedAt
+      : null;
+  return (
+    <li
+      className={cx("an-step", `is-${step.state}`)}
+      title={full ? undefined : `${label}: ${text}`}
+    >
+      <StepMark state={step.state} />
+      <p className="an-step-text">
+        <strong>{label}:</strong> {text}
+        <span className="hf-sr-only"> ({stateWords[step.state]})</span>
       </p>
-      {events.length > 0 && (
-        <ol className="an-events">
-          {events.map((e, i) => (
-            <li key={i}>
-              <time dateTime={e.at} className="hf-num">
-                {new Date(e.at).toLocaleTimeString(undefined, {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })}
-              </time>
-              <span title={e.message}>{e.message}</span>
-            </li>
-          ))}
-        </ol>
+      {took !== null && (
+        <span className="an-step-time hf-num">
+          {took < 1000 ? "<1s" : duration(took)}
+        </span>
       )}
-    </>
+    </li>
+  );
+}
+
+// What the trace announces: a new step, a long wait, a lost connection and
+// how it ended. Never the clock.
+function announcement(
+  phase: string,
+  step: Step | undefined,
+  answering: boolean,
+) {
+  const name = step ? STEPS[step.id].label : "";
+  switch (phase) {
+    case "working":
+      return name;
+    case "slow":
+      return `Taking longer than usual. Still on: ${name}.`;
+    case "offline":
+      return "Lost the connection to Foundry. The analysis may still be running; reconnecting.";
+    case "succeeded":
+      return answering ? "Answer ready." : "Done.";
+    case "awaiting_review":
+      return "Ready for your review.";
+    case "failed":
+      return "The analysis stopped with an error.";
+    case "canceled":
+      return "Stopped.";
+    default:
+      return "";
+  }
+}
+
+// The analysis as it happens and afterwards: up to three major steps in plain
+// words, how long it has taken (and usually takes), and behind "Show steps"
+// every step with its time and the query used. All of it comes from the run's
+// events: nothing shows as done before the server reports it.
+function Trace({
+  run,
+  offline,
+  onStop,
+  stopping,
+}: {
+  run: Resource;
+  offline?: boolean;
+  onStop?: () => void;
+  stopping?: boolean;
+}) {
+  const d = run.data,
+    working = isWorking(d.status),
+    answering = isAnswering(d) || (!d.resolvedIntent && d.intent !== "build");
+  const now = useNow(working ? 1000 : 3600000);
+  const steps = useMemo(() => runSteps(run), [run]),
+    compact = compactSteps(steps),
+    current = currentStep(steps);
+  const [open, setOpen] = useState(false),
+    panel = useId();
+  const since = startedAt(run),
+    elapsed = (working ? now : endedAt(run)) - since;
+  const range = answering ? estimateRange(d.estimate) : null,
+    slow = working && !!range && elapsed > range.high;
+  // The query: the answer's, else the latest one written (a failed run
+  // keeps no saved plan, only the model's last reply).
+  const sql: string | undefined =
+    d.answer?.sql ||
+    d.checkpoints?.["analysis-repair"]?.sql ||
+    d.checkpoints?.analysis?.sql ||
+    (["analysis", "analysis-repair"].includes(d.partialStage?.stage)
+      ? d.partialStage.value?.sql
+      : undefined);
+  const phase =
+    offline && working
+      ? "offline"
+      : working
+        ? slow
+          ? "slow"
+          : "working"
+        : d.status;
+  const headline =
+    phase === "offline"
+      ? "Connection lost, reconnecting…"
+      : phase === "slow"
+        ? "Taking longer than usual"
+        : working
+          ? d.status === "queued" && !current
+            ? "Getting started"
+            : answering
+              ? "Analyzing your question"
+              : "Preparing changes"
+          : d.status === "failed"
+            ? answering
+              ? "Analysis stopped with an error"
+              : "Stopped with an error"
+            : d.status === "canceled"
+              ? answering
+                ? "Analysis stopped"
+                : "Stopped"
+              : d.status === "awaiting_review"
+                ? "Ready for your review"
+                : answering
+                  ? "Analysis complete"
+                  : "Done";
+  // Announced on change only, so opening a chat doesn't read every reply.
+  const said = useRef<string | null>(null),
+    [message, setMessage] = useState("");
+  const key = `${phase}:${current?.id ?? ""}`;
+  useEffect(() => {
+    if (said.current !== null && said.current !== key)
+      setMessage(announcement(phase, current, answering));
+    said.current = key;
+  }, [key]);
+  const expandable = steps.length > 0 || !!sql;
+  return (
+    <section
+      className={cx("an-trace", `is-${phase}`)}
+      aria-label="Analysis steps"
+      aria-live="off"
+    >
+      <div className="an-trace-head">
+        <span className="an-trace-status">
+          <span className="an-trace-dot" aria-hidden />
+          {headline}
+        </span>
+        <span className="an-trace-tools">
+          <span className="an-trace-time">
+            {working ? (
+              <>
+                {range && (
+                  <span>
+                    {slow ? "Usually" : "About"} {range.text}
+                  </span>
+                )}
+                {range && <span aria-hidden> · </span>}
+                {/* A ticking number would be read out every second. */}
+                <span className="hf-num" aria-hidden>
+                  {duration(elapsed)}
+                </span>
+              </>
+            ) : (
+              elapsed > 0 && (
+                <span className="hf-num">
+                  {d.status === "failed" || d.status === "canceled"
+                    ? `Stopped after ${duration(elapsed)}`
+                    : answering
+                      ? `Answered in ${duration(elapsed)}`
+                      : `Took ${duration(elapsed)}`}
+                </span>
+              )
+            )}
+          </span>
+          {expandable && (
+            <button
+              type="button"
+              className={cx("an-toggle", open && "is-open")}
+              aria-expanded={open}
+              aria-controls={open ? panel : undefined}
+              onClick={() => setOpen((v) => !v)}
+            >
+              {open ? "Hide steps" : "Show steps"}
+              <ChevronDown size={13} aria-hidden />
+            </button>
+          )}
+          {onStop && working && (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={Square}
+              className="an-trace-stop"
+              pending={stopping}
+              onClick={onStop}
+            >
+              Stop
+            </Button>
+          )}
+        </span>
+      </div>
+      {open ? (
+        <div id={panel} className="an-trace-full">
+          {steps.length > 0 && (
+            <ol className="an-steps">
+              {steps.map((s) => (
+                <StepRow key={s.id} step={s} run={run} full />
+              ))}
+            </ol>
+          )}
+          {sql && (
+            <details className="an-query">
+              <summary>
+                {d.answer
+                  ? "Query used"
+                  : working
+                    ? "Query planned"
+                    : "Query attempted"}
+              </summary>
+              <div className="an-sql">
+                <div className="an-sql-head">
+                  <span>Read-only query over your data snapshots</span>
+                  <CopyButton text={sql} />
+                </div>
+                <pre tabIndex={0} aria-label="SQL query">
+                  <code>{sql}</code>
+                </pre>
+              </div>
+            </details>
+          )}
+          {(d.calls || 0) > 0 && (
+            <p className="an-trace-note">
+              {plural(d.calls, "model call")} · {formatNumber(d.tokens || 0)}{" "}
+              tokens
+            </p>
+          )}
+        </div>
+      ) : (
+        compact.length > 0 && (
+          <ol className="an-steps is-compact">
+            {compact.map((s) => (
+              <StepRow key={s.id} step={s} run={run} />
+            ))}
+          </ol>
+        )
+      )}
+      <span className="hf-sr-only" role="status">
+        {message}
+      </span>
+    </section>
   );
 }
 
@@ -259,6 +503,9 @@ function SaveAsView({ run }: { run: Resource }) {
   );
 }
 
+// The answer leads with its statement (the summary's first sentence), with
+// the numbers the rows back in bold, then the rows as a chart or a table.
+// Without a summary, its title leads.
 function Answer({ run }: { run: Resource }) {
   const { role } = useWorkspace();
   const a = run.data.answer,
@@ -268,12 +515,20 @@ function Answer({ run }: { run: Resource }) {
     assumptions: string[] = a.assumptions || [];
   const total: number = typeof a.total === "number" ? a.total : rows.length;
   const names = [...new Set(citations.map((c) => c.name))];
+  const shape = useMemo(
+    () =>
+      a.check ??
+      answerShape(rows, { hint: [run.data.goal || "", a.title || ""] }),
+    [a, rows],
+  );
+  const lead = a.summary ? leadSentence(a.summary) : null,
+    rest = lead ? lead.rest : a.summary;
+  const title = a.title || "Answer";
   const count =
     total > rows.length
       ? `First ${formatNumber(rows.length)} of ${plural(total, "row")}`
       : plural(total, "row");
-  const plan = rows.length > 1 ? chartPlan(rows) : null,
-    single = rows.length === 1 && Object.keys(rows[0]).length <= 4;
+  const single = rows.length === 1 && Object.keys(rows[0]).length <= 6;
   const sections: Section[] = [];
   if (assumptions.length)
     sections.push({
@@ -287,57 +542,41 @@ function Answer({ run }: { run: Resource }) {
         </ul>
       ),
     });
-  if (a.sql)
-    sections.push({
-      id: "sql",
-      label: "SQL",
-      content: (
-        <div className="an-sql">
-          <div className="an-sql-head">
-            <span>Read-only query over the cited snapshots</span>
-            <CopyButton text={a.sql} />
-          </div>
-          <pre tabIndex={0} aria-label="SQL query">
-            <code>{a.sql}</code>
-          </pre>
-        </div>
-      ),
-    });
-  sections.push({
-    id: "details",
-    label: "Details",
-    content: <Details run={run} />,
-  });
   return (
     <div className="an-answer">
       <div className="an-answer-head">
-        <h2>{a.title || "Answer"}</h2>
-        <p>
+        <h2>{lead?.statement || title}</h2>
+        {rest && (
+          <p className="an-lead">
+            <Emphasized text={rest} rows={rows} total={total} />
+          </p>
+        )}
+        {a.highlights?.length > 0 && (
+          <ul className="an-highlights">
+            {a.highlights.map((h: string) => (
+              <li key={h}>
+                <Emphasized text={h} rows={rows} total={total} />
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="an-answer-meta">
           {count}
           {names.length > 0 && <> from {listText(names)}</>}
         </p>
       </div>
-      {a.summary && (
-        <div className="an-summary">
-          <p>{a.summary}</p>
-          {a.highlights?.length > 0 && (
-            <ul>
-              {a.highlights.map((h: string) => (
-                <li key={h}>{h}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
       {!rows.length ? (
         <p className="an-note">The query ran, but no rows matched.</p>
       ) : single ? (
-        <AnswerStats row={rows[0]} />
+        <AnswerStats row={rows[0]} shape={shape} />
       ) : (
-        <>
-          {plan && <AnswerChart plan={plan} />}
-          <AnswerTable rows={rows} label={a.title || "Answer rows"} />
-        </>
+        <AnswerResult
+          rows={rows}
+          total={total}
+          label={title}
+          shape={shape}
+          heading={lead ? title : undefined}
+        />
       )}
       <div className="an-foot">
         {citations.length > 0 && (
@@ -358,10 +597,12 @@ function Answer({ run }: { run: Resource }) {
             ))}
           </div>
         )}
-        <Disclosures
-          sections={sections}
-          actions={role !== "viewer" && <SaveAsView run={run} />}
-        />
+        {(sections.length > 0 || role !== "viewer") && (
+          <Disclosures
+            sections={sections}
+            actions={role !== "viewer" && <SaveAsView run={run} />}
+          />
+        )}
       </div>
     </div>
   );
@@ -432,7 +673,9 @@ function Problem({
   );
 }
 
-export function Reply({ run }: { run: Resource }) {
+// `offline`: the latest refresh of the chat failed, so the progress shown is
+// the last known, not a failure.
+export function Reply({ run, offline }: { run: Resource; offline?: boolean }) {
   const { role, user } = useWorkspace(),
     control = useRunControl(run),
     d = run.data,
@@ -442,14 +685,13 @@ export function Reply({ run }: { run: Resource }) {
     <div className="an-reply">
       <Avatar />
       <div className="an-reply-body">
-        {isWorking(d.status) ? (
-          <Working
-            text={stageText(d)}
-            since={startedAt(run)}
-            onStop={allowed ? control.stop : undefined}
-            stopping={control.pending}
-          />
-        ) : (
+        <Trace
+          run={run}
+          offline={offline}
+          onStop={allowed ? control.stop : undefined}
+          stopping={control.pending}
+        />
+        {!isWorking(d.status) && (
           <>
             {d.answer && <Answer run={run} />}
             {d.proposalId && <PreparedChanges run={run} />}
@@ -466,19 +708,6 @@ export function Reply({ run }: { run: Resource }) {
                   ? "Ready for your review."
                   : "Done."}
               </p>
-            )}
-            {!d.answer && (
-              <div className="an-foot">
-                <Disclosures
-                  sections={[
-                    {
-                      id: "details",
-                      label: "Details",
-                      content: <Details run={run} />,
-                    },
-                  ]}
-                />
-              </div>
             )}
           </>
         )}

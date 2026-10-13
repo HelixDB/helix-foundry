@@ -1,3 +1,4 @@
+import { withDatasetPrivacy } from "./dataset-privacy.js";
 // Home metrics. The AI picks growth and analytics metrics once from the
 // datasets' schemas (columns, types and the observed values of low-cardinality
 // non-sensitive text columns, never whole rows) as specs; code compiles each
@@ -75,27 +76,35 @@ export async function metricsDatasets(store: Store, scope: string) {
   const w = await store.get(scope, "workspace"),
     generation = w?.data.activeGeneration,
     excluded = new Set<string>(w?.data.onboarding?.excludedIds || []);
-  return (await store.list(scope, "dataset"))
-    .filter(
-      (d) =>
-        (!d.data.generation || d.data.generation === generation) &&
-        !d.data.retiredSample &&
-        !excluded.has(d.id) &&
-        !excluded.has(d.data.sourceId) &&
-        !excluded.has(d.data.importJobId) &&
-        d.data.activeVersion &&
-        d.data.profile?.columns?.length,
-    )
-    .sort((a, b) => a.id.localeCompare(b.id));
+  return withDatasetPrivacy(
+    store,
+    scope,
+    (await store.list(scope, "dataset"))
+      .filter(
+        (d) =>
+          (!d.data.generation || d.data.generation === generation) &&
+          !d.data.retiredSample &&
+          !excluded.has(d.id) &&
+          !excluded.has(d.data.sourceId) &&
+          !excluded.has(d.data.importJobId) &&
+          d.data.activeVersion &&
+          d.data.profile?.columns?.length,
+      )
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
 }
 const columnsOf = (d: Resource): Column[] => d.data.profile?.columns || [];
-// Changes when a dataset or a column's name or type does, not with new rows.
+// Changes with dataset/column schema or an explicit privacy policy, not new rows.
+// Empty policies preserve existing signatures and do not reset every workspace.
 export const schemaSignature = (datasets: Resource[]) =>
   digest(
     JSON.stringify(
       datasets.map((d) => [
         d.id,
         columnsOf(d).map((c) => c.name + " " + c.type),
+        ...(d.data.privacy?.additionalColumns?.length
+          ? [d.data.privacy.additionalColumns]
+          : []),
       ]),
     ),
   );

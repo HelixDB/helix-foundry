@@ -34,9 +34,10 @@ import {
   timeLimit,
 } from "../services/executor/src/limits.js";
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
+import { SAMPLE_VALUE_LIMIT } from "../packages/shared/src/index.js";
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
-  return { ...fs, rename: vi.fn(fs.rename) };
+  return { ...fs, rename: vi.fn(fs.rename), rm: vi.fn(fs.rm) };
 });
 let dir: string;
 beforeAll(async () => {
@@ -219,6 +220,35 @@ describe("isolated dataset execution", () => {
       b = '{"id":"b"}';
     expect(await fingerprint(a, a)).not.toBe(await fingerprint(b, b));
     expect(await fingerprint(a, b, a)).toBe(await fingerprint(a, a, b));
+  });
+  it("stores only the start of long sample values, and previews them whole", async () => {
+    const document = "x".repeat(50_000),
+      nested = { fields: Array.from({ length: 500 }, (_, i) => `field_${i}`) };
+    await writeFile(
+      join(dir, "incoming", "a", "documents.jsonl"),
+      [
+        JSON.stringify({ id: 1, name: "short", document, nested }),
+        JSON.stringify({ id: 2, name: "also short", document, nested }),
+      ].join("\n"),
+    );
+    const r = await execute(
+      {
+        mode: "ingest",
+        scope: "a",
+        version: "documents",
+        file: "documents.jsonl",
+      },
+      dir,
+    );
+    const [first] = r.profile.sample;
+    expect(first.name).toBe("short");
+    expect(first.document).toBe("x".repeat(SAMPLE_VALUE_LIMIT) + "…");
+    expect(String(first.nested)).toHaveLength(SAMPLE_VALUE_LIMIT + 1);
+    expect(
+      r.profile.columns.find((c) => c.name === "document")?.examples[0],
+    ).toBe(first.document);
+    expect(JSON.stringify(r.profile).length).toBeLessThan(5_000);
+    expect(r.rows[0].document).toBe(document);
   });
   it("materializes every row once as JSON lines, converted like query rows", async () => {
     await writeFile(
@@ -441,15 +471,23 @@ describe("isolated dataset execution", () => {
   it("starts even when stale scratch cannot be removed", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await mkdir(join(scratchRoot(dir), "job-stale"));
-    await chmod(scratchRoot(dir), 0o555);
+    // A read-only directory does not stop root, as in a container, so the
+    // permission error is simulated.
+    vi.mocked(rm)
+      .mockClear()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("EACCES: permission denied"), {
+          code: "EACCES",
+        }),
+      );
     try {
       await expect(sweepScratch(dir)).resolves.toBeUndefined();
+      expect(rm).toHaveBeenCalledOnce();
       expect(log).toHaveBeenCalledWith(
         "Could not remove executor scratch:",
         expect.stringContaining("EACCES"),
       );
     } finally {
-      await chmod(scratchRoot(dir), 0o755);
       log.mockRestore();
     }
     await sweepScratch(dir);

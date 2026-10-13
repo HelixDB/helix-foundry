@@ -12,16 +12,21 @@ export type ColumnKind =
   | "date"
   | "timestamp"
   | "json";
+// A type is read by its name, not its parameters: ENUM('REAL') holds text
+// and DECIMAL(18,3) is a DECIMAL. Arrays such as INTEGER[2], and INTERVAL,
+// whose values arrive as {months, days, micros} objects, show as JSON.
 export function columnKind(type?: string): ColumnKind {
   const t = (type || "").toUpperCase();
   if (!t) return "string";
-  if (/STRUCT|MAP|LIST|JSON|\[\]|UNION/.test(t)) return "json";
-  if (/^(TINY|SMALL|BIG|HUGE|U)?INT|INTEGER|UBIGINT|USMALLINT/.test(t))
+  if (/\[\d*\]$/.test(t) || /^(STRUCT|MAP|LIST|UNION|JSON|INTERVAL)\b/.test(t))
+    return "json";
+  const name = t.split("(")[0];
+  if (/^U?((TINY|SMALL|BIG|HUGE)?INT(EGER)?|INT\d+)$/.test(name))
     return "integer";
-  if (/DOUBLE|FLOAT|DECIMAL|NUMERIC|REAL/.test(t)) return "number";
-  if (t.startsWith("BOOL")) return "boolean";
-  if (t.startsWith("TIMESTAMP") || t === "DATETIME") return "timestamp";
-  if (t === "DATE") return "date";
+  if (/^(DOUBLE|FLOAT\d*|DECIMAL|NUMERIC|REAL)\b/.test(name)) return "number";
+  if (name.startsWith("BOOL")) return "boolean";
+  if (name.startsWith("TIMESTAMP") || name === "DATETIME") return "timestamp";
+  if (name === "DATE") return "date";
   return "string";
 }
 const isoDate = /^\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/;
