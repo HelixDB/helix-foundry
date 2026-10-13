@@ -53,8 +53,9 @@ function DatasetDetail({
     }),
     [selectedVersion, setSelectedVersion] = useState<string>();
   const versionId = selectedVersion || d.data.activeVersion;
-  // An implicit current-snapshot refresh owns a new page too. Derive its
-  // offset before querying, while retaining pages on pinned historical data.
+  // A page belongs to the snapshot it was turned on. When a refresh replaces
+  // the current snapshot, its rows start again from the first page; a chosen
+  // historical snapshot keeps its page.
   const offset = page.versionId === versionId ? page.offset : 0;
   const preview = useQuery({
     queryKey: [id, "preview", d.id, versionId, offset],
