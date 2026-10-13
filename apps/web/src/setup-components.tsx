@@ -5,6 +5,7 @@ import {
   Check,
   Monitor,
   Cloud,
+  Layers,
   ArrowRight,
   SlidersHorizontal,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import type {
   Resource,
   ProviderSettings,
 } from "../../../packages/shared/src";
+import { bedrockEndpoint, bedrockRegion } from "../../../packages/shared/src";
 
 // Polls faster while samples load, the AI describes the suggestion or the
 // workspace builds, so the loading screens follow along.
@@ -146,12 +148,14 @@ export function ProviderSetup({
   }, [q.data, setup.data, settings]);
   const s = settings || { provider: "local", model: "qwen3:4b" };
   // A saved key belongs to its endpoint, and for Azure OpenAI also to its
-  // deployment: changing either asks for the key again.
+  // deployment: changing either asks for the key again. An Amazon Bedrock
+  // key works in every region.
   const update = (k: string, v: any) =>
     setSettings({
       ...s,
       [k]: v,
-      ...(k === "baseUrl" || (k === "model" && s.provider === "azure")
+      ...((k === "baseUrl" && s.provider !== "bedrock") ||
+      (k === "model" && s.provider === "azure")
         ? { apiKey: "", hasKey: false }
         : {}),
     });
@@ -205,6 +209,11 @@ export function ProviderSetup({
               "Use your Azure OpenAI key. Your schemas and data samples are sent to your Azure resource.",
             ],
             [
+              "bedrock",
+              "Amazon Bedrock",
+              "Use your Amazon Bedrock API key. Your schemas and data samples are sent to Amazon Bedrock in the region you choose.",
+            ],
+            [
               "custom",
               "Custom",
               "Use your own model endpoint. Data is sent to the endpoint you configure.",
@@ -219,7 +228,10 @@ export function ProviderSetup({
               checked={s.provider === value}
               onChange={() => {
                 const saved = savedFor(value),
-                  endpoint = value === "custom" || value === "azure";
+                  endpoint =
+                    value === "custom" ||
+                    value === "azure" ||
+                    value === "bedrock";
                 setSettings({
                   ...s,
                   provider: value,
@@ -248,6 +260,8 @@ export function ProviderSetup({
                   <Monitor className="provider-logo" aria-hidden="true" />
                 ) : value === "azure" ? (
                   <Cloud className="provider-logo" aria-hidden="true" />
+                ) : value === "bedrock" ? (
+                  <Layers className="provider-logo" aria-hidden="true" />
                 ) : value === "custom" ? (
                   <SlidersHorizontal
                     className="provider-logo"
@@ -316,6 +330,55 @@ export function ProviderSetup({
               resource, and the deployment name under Deployments. Hands-free
               voice is not available with Azure OpenAI.
             </p>
+          </>
+        )}
+        {s.provider === "bedrock" && (
+          <>
+            <label>
+              AWS region
+              <input
+                type="text"
+                autoComplete="off"
+                required={owner}
+                pattern="[a-z]{2}(-[a-z]+)+-[0-9]+"
+                title="An AWS region, such as us-east-1."
+                placeholder="us-east-1"
+                value={bedrockRegion(s.baseUrl) || ""}
+                onChange={(e) => {
+                  const region = e.target.value
+                    .toLowerCase()
+                    .replace(/[^a-z0-9-]/g, "");
+                  update(
+                    "baseUrl",
+                    region ? bedrockEndpoint(region) : undefined,
+                  );
+                }}
+              />
+            </label>
+            <label>
+              Model ID
+              <input
+                type="text"
+                autoComplete="off"
+                required={owner}
+                maxLength={150}
+                placeholder="us.anthropic.claude-sonnet-4-6"
+                value={s.model || ""}
+                onChange={(e) => update("model", e.target.value.trim())}
+              />
+            </label>
+            <p className="muted">
+              Create an API key under API keys in the Amazon Bedrock console.
+              Use a model or inference profile ID your account can use in this
+              region; the model must support tool use. Hands-free voice is not
+              available with Amazon Bedrock.
+            </p>
+            {s.baseUrl &&
+              bedrockRegion(s.baseUrl) &&
+              s.baseUrl.replace(/\/+$/, "") !==
+                bedrockEndpoint(bedrockRegion(s.baseUrl)!) && (
+                <p className="muted">Uses the endpoint {s.baseUrl}.</p>
+              )}
           </>
         )}
         {s.provider === "custom" && (

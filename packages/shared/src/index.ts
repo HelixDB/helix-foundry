@@ -68,9 +68,26 @@ export type HostedConnection = {
   config: { hostedConnectionId: string };
   discovery: any;
 };
+const bedrockHost =
+  /^(?:vpce-[a-z0-9-]+\.)?bedrock-runtime(?:-fips)?\.[a-z]{2}(?:-[a-z]+)+-\d+\.(?:vpce\.)?amazonaws\.com(?:\.cn)?$/;
+// Amazon Bedrock Runtime's endpoint for a region, such as us-east-1.
+export function bedrockEndpoint(region: string) {
+  return `https://bedrock-runtime.${region}.amazonaws.com${region.startsWith("cn-") ? ".cn" : ""}`;
+}
+// The region of an Amazon Bedrock Runtime endpoint.
+export function bedrockRegion(endpoint?: string) {
+  return endpoint?.match(/bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\./)?.[1];
+}
 export const ProviderSchema = z
   .object({
-    provider: z.enum(["local", "claude", "openai", "azure", "custom"]),
+    provider: z.enum([
+      "local",
+      "claude",
+      "openai",
+      "azure",
+      "bedrock",
+      "custom",
+    ]),
     model: z.string().trim().min(1).max(150),
     baseUrl: z.url().optional(),
     apiFormat: z.enum(["chat-completions", "responses"]).optional(),
@@ -82,6 +99,32 @@ export const ProviderSchema = z
     continuous: z.boolean().default(true),
   })
   .superRefine((settings, ctx) => {
+    if (settings.provider === "bedrock") {
+      // The key goes only to an Amazon Bedrock Runtime endpoint: a region's,
+      // its FIPS variant or a VPC endpoint, in AWS or AWS China.
+      let url: URL | undefined;
+      try {
+        url = settings.baseUrl ? new URL(settings.baseUrl) : undefined;
+      } catch {}
+      if (
+        !url ||
+        url.protocol !== "https:" ||
+        url.port ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        !["", "/"].includes(url.pathname) ||
+        !bedrockHost.test(url.hostname)
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["baseUrl"],
+          message:
+            "Choose an AWS region for Amazon Bedrock, such as us-east-1.",
+        });
+      return;
+    }
     if (settings.provider !== "custom" && settings.provider !== "azure") return;
     const azure = settings.provider === "azure";
     if (!settings.baseUrl) {
