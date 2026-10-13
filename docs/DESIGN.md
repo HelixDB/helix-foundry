@@ -260,7 +260,9 @@ or one of $10,000 or more. An integer that an answer sends as digits keeps
 every digit there, even beyond 2^53. Format values with the kit's
 `formatNumber`, `formatCompact`, `formatDate` and `formatRelative`; Home
 formats metric values, including currency, with `formatMetric` in
-`metrics.tsx`.
+`metrics.tsx`. DuckDB intervals read as DuckDB writes them ("1 day
+02:00:00") with `formatInterval` from the shared package, and sort with
+`compareIntervals` in the order of DuckDB's `ORDER BY`.
 
 ## Responsive and accessible behavior
 

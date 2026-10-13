@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { Resource } from "../../../packages/shared/src/index.js";
+import {
+  formatInterval,
+  isInterval,
+  type Resource,
+} from "../../../packages/shared/src/index.js";
 import type { Store } from "./store.js";
 import {
   enqueue,
@@ -752,11 +756,18 @@ export function resultText(question: string, run: Resource | null) {
     total = typeof a.total === "number" ? a.total : rows.length,
     sources = (a.citations || []).map((c: any) => c.name).join(", "),
     lines = [`Result for "${question}": ${a.title}.`];
-  // "region_name: North America, order_count: 8473" in plain words.
+  // "region_name: North America, order_count: 8473" in plain words; an
+  // interval reads as "2 days 01:30:00" and other nested values as JSON.
+  const text = (v: unknown) =>
+    isInterval(v)
+      ? formatInterval(v)
+      : v && typeof v === "object"
+        ? JSON.stringify(v)
+        : String(v);
   const row = (r: Record<string, unknown>) =>
     Object.entries(r)
       .slice(0, 8)
-      .map(([k, v]) => `${k.replace(/_/g, " ")}: ${String(v).slice(0, 80)}`)
+      .map(([k, v]) => `${k.replace(/_/g, " ")}: ${text(v).slice(0, 80)}`)
       .join(", ");
   if (total === 0 || !rows.length)
     lines.push(
