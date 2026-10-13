@@ -363,11 +363,11 @@ function DatasetPrivacy({ dataset }: { dataset: Resource }) {
     <section className="dataset-privacy" aria-label="Hosted AI privacy">
       <h3>Hosted AI privacy</h3>
       <p className="muted">
-        Mask additional columns in samples sent to hosted AI. Detected sensitive
-        columns stay protected. These choices follow the dataset across
-        snapshots and exclude these columns from Home metric suggestions. Data
-        previews and exports remain available; Local AI and the owner's Allow
-        raw data setting keep their existing behavior.
+        Columns you mark are masked in sample rows sent to hosted AI, unless raw
+        data is allowed. Home leaves them out of its key metrics with any AI,
+        including Local AI, even when raw data is allowed. Hands-free voice, if
+        you use it, still speaks answers, which can include values from these
+        columns, because it sends answers to OpenAI.
       </p>
       <fieldset
         className="plain-fieldset"
