@@ -5,6 +5,7 @@ import {
   Globe2,
   Workflow,
   type LucideIcon,
+  Waypoints,
 } from "lucide-react";
 import type { Resource } from "../../../../packages/shared/src";
 import { cx } from "./util";
@@ -29,6 +30,7 @@ const labels: Record<string, string> = {
   s3: "Amazon S3",
   postgres: "PostgreSQL",
   mysql: "MySQL",
+  neo4j: "Neo4j",
   neon: "Neon",
   supabase: "Supabase",
   upload: "Files",
@@ -37,6 +39,7 @@ const labels: Record<string, string> = {
   pipeline: "Pipeline output",
 };
 const generic: Record<string, LucideIcon> = {
+  neo4j: Waypoints,
   upload: FileUp,
   rest: Globe2,
   api: Braces,

@@ -34,9 +34,10 @@ import {
   timeLimit,
 } from "../services/executor/src/limits.js";
 import { resultFile, scratchRoot } from "../services/executor/src/paths.js";
+import { SAMPLE_VALUE_LIMIT } from "../packages/shared/src/index.js";
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
-  return { ...fs, rename: vi.fn(fs.rename) };
+  return { ...fs, rename: vi.fn(fs.rename), rm: vi.fn(fs.rm) };
 });
 let dir: string;
 beforeAll(async () => {
@@ -104,6 +105,61 @@ describe("isolated dataset execution", () => {
     // Only ingest compares against a fingerprint stored before the upgrade.
     expect(r.legacyFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
+  it("keeps JSON properties that first appear after DuckDB's sample", async () => {
+    // DuckDB infers JSON columns from its first 20,480 rows by default. A
+    // later property was dropped at the top level, and failed the import when
+    // nested ("unknown key").
+    await writeFile(
+      join(dir, "incoming", "a", "late.jsonl"),
+      Array.from({ length: 25_000 }, (_, i) =>
+        JSON.stringify(
+          i < 21_000
+            ? { id: i, properties: { browser: "Chrome" } }
+            : {
+                id: i,
+                plan: "pro",
+                properties: { browser: "Chrome", plan: "pro" },
+              },
+        ),
+      ).join("\n"),
+    );
+    const r = await execute(
+      { mode: "ingest", scope: "a", version: "late", file: "late.jsonl" },
+      dir,
+    );
+    expect(r.profile.rows).toBe(25_000);
+    expect(r.profile.columns.find((c) => c.name === "plan")).toMatchObject({
+      nulls: 21_000,
+      distinct: 1,
+    });
+    expect(
+      r.profile.columns.find((c) => c.name === "properties")?.type,
+    ).toMatch(/\bplan VARCHAR\b/);
+  });
+  it("imports wide events within DuckDB's memory", async () => {
+    // Events with hundreds of properties: the whole file loaded as a table,
+    // a default-sized Parquet row group, or a distinct set of whole values
+    // each passed the limit.
+    vi.stubEnv("DUCKDB_MEMORY", "128MB");
+    const lines: string[] = [];
+    for (let i = 0; i < 40_000; i++) {
+      const properties: Record<string, unknown> = { text: "x".repeat(1500) };
+      for (let k = 0; k < 40; k++)
+        properties[`prop_${(i + k * 7) % 300}`] = (i * k) % 1000;
+      lines.push(JSON.stringify({ id: i, event: "$pageview", properties }));
+    }
+    await writeFile(join(dir, "incoming", "a", "wide.jsonl"), lines.join("\n"));
+    const r = await execute(
+      { mode: "ingest", scope: "a", version: "wide", file: "wide.jsonl" },
+      dir,
+    );
+    expect(r.profile.rows).toBe(40_000);
+    expect(r.profile.duplicateRows).toBe(0);
+    expect(r.profile.columns.find((c) => c.name === "id")?.primaryKey).toBe(
+      true,
+    );
+    expect(await readdir(scratchRoot(dir))).toEqual([]);
+  });
   it("executes and persists a verified aggregate", async () => {
     const r = await execute(
       {
@@ -164,6 +220,35 @@ describe("isolated dataset execution", () => {
       b = '{"id":"b"}';
     expect(await fingerprint(a, a)).not.toBe(await fingerprint(b, b));
     expect(await fingerprint(a, b, a)).toBe(await fingerprint(a, a, b));
+  });
+  it("stores only the start of long sample values, and previews them whole", async () => {
+    const document = "x".repeat(50_000),
+      nested = { fields: Array.from({ length: 500 }, (_, i) => `field_${i}`) };
+    await writeFile(
+      join(dir, "incoming", "a", "documents.jsonl"),
+      [
+        JSON.stringify({ id: 1, name: "short", document, nested }),
+        JSON.stringify({ id: 2, name: "also short", document, nested }),
+      ].join("\n"),
+    );
+    const r = await execute(
+      {
+        mode: "ingest",
+        scope: "a",
+        version: "documents",
+        file: "documents.jsonl",
+      },
+      dir,
+    );
+    const [first] = r.profile.sample;
+    expect(first.name).toBe("short");
+    expect(first.document).toBe("x".repeat(SAMPLE_VALUE_LIMIT) + "…");
+    expect(String(first.nested)).toHaveLength(SAMPLE_VALUE_LIMIT + 1);
+    expect(
+      r.profile.columns.find((c) => c.name === "document")?.examples[0],
+    ).toBe(first.document);
+    expect(JSON.stringify(r.profile).length).toBeLessThan(5_000);
+    expect(r.rows[0].document).toBe(document);
   });
   it("materializes every row once as JSON lines, converted like query rows", async () => {
     await writeFile(
@@ -386,15 +471,23 @@ describe("isolated dataset execution", () => {
   it("starts even when stale scratch cannot be removed", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await mkdir(join(scratchRoot(dir), "job-stale"));
-    await chmod(scratchRoot(dir), 0o555);
+    // A read-only directory does not stop root, as in a container, so the
+    // permission error is simulated.
+    vi.mocked(rm)
+      .mockClear()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("EACCES: permission denied"), {
+          code: "EACCES",
+        }),
+      );
     try {
       await expect(sweepScratch(dir)).resolves.toBeUndefined();
+      expect(rm).toHaveBeenCalledOnce();
       expect(log).toHaveBeenCalledWith(
         "Could not remove executor scratch:",
         expect.stringContaining("EACCES"),
       );
     } finally {
-      await chmod(scratchRoot(dir), 0o755);
       log.mockRestore();
     }
     await sweepScratch(dir);

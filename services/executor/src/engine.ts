@@ -3,12 +3,23 @@ import {
   type DuckDBConnection,
   type Json,
 } from "@duckdb/node-api";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  open,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { resolve, dirname } from "node:path";
-import type { DatasetProfile } from "../../../packages/shared/src/index.js";
+import {
+  compactSample,
+  type DatasetProfile,
+} from "../../../packages/shared/src/index.js";
 import { resultFile, scratchRoot } from "./paths.js";
 export const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 const lit = (v: string) => "'" + v.replaceAll("'", "''") + "'";
@@ -30,6 +41,9 @@ export type Execution = {
   persist?: boolean;
   offset?: number;
   limit?: number;
+  // Query only: also profile how each column's values run in the result's
+  // row order (ColumnProfile.order), over every row, not only the sample.
+  order?: boolean;
 };
 export type Executed = {
   profile: DatasetProfile;
@@ -62,6 +76,47 @@ export function bytes(size: string) {
     /^\s*(\d+(?:\.\d+)?)\s*([a-z]+)?\s*$/i.exec(size) || [];
   return Number(n) * (units[unit.toLowerCase()] ?? NaN);
 }
+// Rows per Parquet row group for an imported file. The writer keeps a group
+// in memory and cannot spill it, so a group holds about 1/16 of DuckDB's
+// memory setting of the file's data: a default-sized group of wide rows
+// (events with hundreds of properties) passes the limit. The row width comes
+// from a Parquet file's metadata, or from the first megabyte of a text file.
+async function rowGroupSize(
+  c: DuckDBConnection,
+  file: string,
+  size: number,
+  parquet: boolean,
+) {
+  let width: number;
+  if (parquet)
+    width = Number(
+      (
+        await c.runAndReadAll(
+          `SELECT (SELECT sum(total_uncompressed_size) FROM parquet_metadata(${lit(file)})) / greatest(1, (SELECT num_rows FROM parquet_file_metadata(${lit(file)}))) AS width`,
+        )
+      ).getRowObjectsJson()[0].width,
+    );
+  else {
+    const handle = await open(file, "r");
+    try {
+      const head = Buffer.alloc(Math.min(size, 1 << 20)),
+        { bytesRead } = await handle.read(head, 0, head.length, 0);
+      let lines = 1;
+      for (let i = 0; i < bytesRead; i++) if (head[i] === 10) lines++;
+      width = bytesRead / lines;
+    } finally {
+      await handle.close();
+    }
+  }
+  const budget = Math.min(
+    32 << 20,
+    bytes(process.env.DUCKDB_MEMORY || "512MB") / 16,
+  );
+  return Math.max(
+    2048,
+    Math.min(122_880, Math.floor(budget / Math.max(1, width || 1))),
+  );
+}
 // The executor passes a scratch directory it removes however the job ends;
 // without one, the job makes its own and removes it when it finishes.
 export async function execute(
@@ -92,6 +147,8 @@ export async function execute(
     scratch || (await mkdtemp(resolve(scratchRoot(root), "executor-")));
   let db: DuckDBInstance | undefined;
   let c: DuckDBConnection | undefined;
+  // The Parquet file an ingest wrote while reading its input.
+  let streamed: string | undefined;
   try {
     db = await DuckDBInstance.create(":memory:", {
       memory_limit: process.env.DUCKDB_MEMORY || "512MB",
@@ -137,8 +194,26 @@ export async function execute(
         await c.run(
           `CREATE TABLE result (${job.schema.map((col) => quote(col.name) + " " + (typeMap[col.type.toLowerCase()] || "VARCHAR")).join(",")})`,
         );
-      } else
-        await c.run(`CREATE TABLE result AS SELECT * FROM ${fn}(${lit(file)})`);
+      } else {
+        // The file goes straight to Parquet, which the profile then reads: a
+        // table of a large import does not fit DuckDB's memory. JSON columns
+        // come from every row, not the first 20,480, since a property that
+        // first appears later would otherwise be dropped or fail the import.
+        // It is written in scratch and moved into place once profiled.
+        streamed = resolve(temp, "ingest.parquet");
+        // Nested objects become structs of every property seen, and each
+        // writer thread keeps buffers for every one: a JSON file is written
+        // by one thread.
+        const json = fn === "read_json_auto";
+        if (json) await c.run("SET threads = 1");
+        await c.run(
+          `COPY (SELECT * FROM ${fn}(${lit(file)}${json ? ", sample_size = -1" : ""})) TO ${lit(streamed)} (FORMAT PARQUET, ROW_GROUP_SIZE ${await rowGroupSize(c, file, info.size, fn === "read_parquet")})`,
+        );
+        if (json) await c.run("SET threads = 2");
+        await c.run(
+          `CREATE VIEW result AS SELECT * FROM read_parquet(${lit(streamed)})`,
+        );
+      }
     } else {
       for (const input of job.inputs || []) {
         if (!safePart(input.table) || !safePart(input.version))
@@ -236,7 +311,7 @@ export async function execute(
       const path = out.replace(/\.parquet$/, ".csv");
       throw new Error("Use dataset Parquet export or paginated CSV export");
     }
-    if (job.mode === "ingest" || job.persist)
+    if ((job.mode === "ingest" && !streamed) || job.persist)
       await c.run(`COPY result TO ${lit(out)} (FORMAT PARQUET)`);
     const rows = Number(
       (
@@ -251,21 +326,57 @@ export async function execute(
         `SELECT * FROM result LIMIT ${Math.min(job.limit || 50, 1000)} OFFSET ${Math.max(job.offset || 0, 0)}`,
       )
     ).getRowObjectsJson();
+    const stored = compactSample(sample);
     const columns = [];
+    // How each column's values run in the result's row order, which rowid
+    // follows. A column named rowid hides it, so that column is renamed
+    // while the order is read.
+    const orders = new Map<string, Record<string, Json>>();
+    if (job.mode === "query" && job.order) {
+      const names = schema.map((col) => String(col.column_name));
+      const hiding = names.find((n) => n.toLowerCase() === "rowid"),
+        aside = "foundry_rowid_" + randomUUID().replaceAll("-", "");
+      if (hiding)
+        await c.run(
+          `ALTER TABLE result RENAME COLUMN ${quote(hiding)} TO ${quote(aside)}`,
+        );
+      try {
+        for (const name of names) {
+          const q = quote(name === hiding ? aside : name);
+          // A column whose values cannot be compared (a map) has no order.
+          const o = await c
+            .runAndReadAll(
+              `SELECT count(*) FILTER (WHERE v > p) AS ups, count(*) FILTER (WHERE v < p) AS downs, count(*) FILTER (WHERE v = f) AS firsts FROM (SELECT ${q} AS v, lag(${q}) OVER (ORDER BY rowid) AS p, first_value(${q}) OVER (ORDER BY rowid) AS f FROM result WHERE ${q} IS NOT NULL)`,
+            )
+            .then((r) => r.getRowObjectsJson()[0])
+            .catch(() => null);
+          if (o) orders.set(name, o);
+        }
+      } finally {
+        if (hiding)
+          await c.run(
+            `ALTER TABLE result RENAME COLUMN ${quote(aside)} TO ${quote(hiding)}`,
+          );
+      }
+    }
     for (const col of schema) {
       const name = String(col.column_name),
         q = quote(name);
       const p = (
         await c.runAndReadAll(
-          `SELECT count(*)-count(${q}) AS null_count, count(DISTINCT ${q}) distincts FROM result`,
+          // Distinct values are counted by their hashes: DuckDB cannot spill
+          // a distinct set of wide values (an event's hundreds of
+          // properties) to disk within its memory limit.
+          `SELECT (SELECT count(*)-count(${q}) FROM result) AS null_count, (SELECT count(*) FROM (SELECT DISTINCT hash(${q}) FROM result WHERE ${q} IS NOT NULL)) AS distincts`,
         )
       ).getRowObjectsJson()[0];
+      const o = orders.get(name);
       columns.push({
         name,
         type: String(col.column_type),
         nulls: Number(p.null_count),
         distinct: Number(p.distincts),
-        examples: sample.slice(0, 3).map((r) => r[name]),
+        examples: stored.slice(0, 3).map((r) => r[name]),
         sensitive:
           /email|phone|ssn|password|secret|token|address|birth|credit/i.test(
             name,
@@ -274,6 +385,15 @@ export async function execute(
           rows > 0 &&
           Number(p.null_count) === 0 &&
           Number(p.distincts) === rows,
+        ...(o
+          ? {
+              order: {
+                up: Number(o.ups),
+                down: Number(o.downs),
+                first: Number(o.firsts),
+              },
+            }
+          : {}),
       });
     }
     const fp = (
@@ -284,7 +404,7 @@ export async function execute(
     const duplicateRows = Number(
       (
         await c.runAndReadAll(
-          "SELECT (SELECT count(*) FROM result) - count(*) AS duplicate_rows FROM (SELECT DISTINCT * FROM result)",
+          "SELECT (SELECT count(*) FROM result) - count(*) AS duplicate_rows FROM (SELECT DISTINCT hash(result) FROM result)",
         )
       ).getRowObjectsJson()[0].duplicate_rows,
     );
@@ -294,10 +414,17 @@ export async function execute(
       rows,
       duplicateRows,
       columns,
-      sample,
+      sample: stored,
       // Tagged since it counts duplicate rows; untagged ones are older.
       fingerprint: "v2:" + digest([schema, rows, fp]),
     };
+    if (streamed) {
+      c.closeSync();
+      c = undefined;
+      await rename(streamed, out).catch((e) =>
+        e.code === "EXDEV" ? copyFile(streamed!, out) : Promise.reject(e),
+      );
+    }
     return {
       profile,
       version: job.version,

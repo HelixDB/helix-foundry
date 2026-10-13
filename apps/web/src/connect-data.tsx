@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { paths } from "./paths";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileUp, Globe2, Braces, Plus } from "lucide-react";
+import { FileUp, Globe2, Braces, Plus, Waypoints } from "lucide-react";
 import { api, number } from "./api";
 import { useWorkspace, Modal, DataTable } from "./ui";
 import {
@@ -24,6 +24,7 @@ const choices = [
   ["upload", "Upload files", "CSV, JSON, JSONL, or Parquet"],
   ["postgres", "PostgreSQL", "Import tables from your database."],
   ["mysql", "MySQL", "Import tables from your database."],
+  ["neo4j", "Neo4j", "Import nodes and relationships from your graph."],
   ["rest", "REST API", "Pull records from another service."],
   ["s3", "Blob storage", "S3 compatible storage"],
   ["api", "Ingestion API", "Send records from your application."],
@@ -38,6 +39,7 @@ const sourceIcons: Record<string, typeof FileUp> = {
   upload: FileUp,
   rest: Globe2,
   api: Braces,
+  neo4j: Waypoints,
 };
 
 export function ConnectData({

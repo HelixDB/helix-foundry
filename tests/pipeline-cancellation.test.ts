@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -16,29 +15,10 @@ const root = resolve(config.dataDir),
   key = "synthetic-cancel-executor-key-not-production";
 let child: ChildProcess;
 let output = "";
-const processList = promisify(execFile),
-  runnerPath = resolve("services/executor/src/runner.ts");
-async function ownRunnerPids() {
-  let stdout: string;
-  try {
-    ({ stdout } = await processList(
-      "ps",
-      ["-axww", "-o", "pid=,ppid=,command="],
-      { maxBuffer: 8 * 1024 * 1024 },
-    ));
-  } catch {
-    // execFile errors can contain stdout; never expose other process arguments.
-    throw new Error("Task-owned executor process observer unavailable");
-  }
-  return stdout
-    .split("\n")
-    .filter(
-      (line) =>
-        line.includes(" --import ") && line.trimEnd().endsWith(runnerPath),
-    )
-    .map((line) => line.trim().split(/\s+/))
-    .filter((parts) => Number(parts[1]) === child.pid)
-    .map((parts) => Number(parts[0]));
+async function ownJobDirectories() {
+  return (await readdir(resolve(root, "scratch")).catch(() => []))
+    .filter((name) => name.startsWith("job-"))
+    .sort();
 }
 
 beforeAll(async () => {
@@ -184,7 +164,9 @@ describe("public pipeline cancellation through the real disposable executor", ()
   it("retains healthy accepted pipeline execution and publication", async () => {
     const f = await fixture(),
       job = await f.sdk.runPipeline(f.pipeline.id);
-    expect((await f.app.inject(f.base + "/onboarding")).json().complete).toBe(false);
+    expect((await f.app.inject(f.base + "/onboarding")).json().complete).toBe(
+      false,
+    );
     f.start();
     await expect
       .poll(async () => (await f.store.get(f.scope, job.id))?.data.status, {
@@ -234,8 +216,8 @@ describe("public pipeline cancellation through the real disposable executor", ()
         { timeout: 10000 },
       )
       .toBe(true);
-    await expect.poll(async () => (await ownRunnerPids()).length).toBe(1);
-    const [runningPid] = await ownRunnerPids();
+    await expect.poll(async () => (await ownJobDirectories()).length).toBe(1);
+    const [runningJob] = await ownJobDirectories();
     const other = await fetch(config.executor + "/execute", {
       method: "POST",
       headers: { "content-type": "application/json", "x-internal-key": key },
@@ -248,11 +230,11 @@ describe("public pipeline cancellation through the real disposable executor", ()
     expect(other.status).toBe(200);
     expect((await other.json()).rows).toEqual([{ answer: 42 }]);
     expect((await f.store.get(f.scope, job.id))?.data.status).toBe("running");
-    expect(await ownRunnerPids()).toContain(runningPid);
+    expect(await ownJobDirectories()).toContain(runningJob);
     expect((await f.cancel(job.id)).statusCode).toBe(200);
     await expect
-      .poll(async () => await ownRunnerPids())
-      .not.toContain(runningPid);
+      .poll(async () => await ownJobDirectories())
+      .not.toContain(runningJob);
     await expect
       .poll(async () => await files(resolve(root, "scratch")), {
         timeout: 10000,
@@ -385,7 +367,7 @@ describe("public pipeline cancellation through the real disposable executor", ()
           { timeout: 10000 },
         )
         .toBe(2);
-      await expect.poll(async () => (await ownRunnerPids()).length).toBe(2);
+      await expect.poll(async () => (await ownJobDirectories()).length).toBe(2);
       const requestId = randomUUID();
       canceled = post(
         {
@@ -435,7 +417,7 @@ describe("public pipeline cancellation through the real disposable executor", ()
           { timeout: 10000 },
         )
         .toBe(0);
-      await expect.poll(async () => await ownRunnerPids()).toEqual([]);
+      await expect.poll(async () => await ownJobDirectories()).toEqual([]);
       await rm(resolve(scratch, marker), { force: true });
     }
   });

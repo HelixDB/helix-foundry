@@ -16,6 +16,7 @@ import { api, number } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { typeHue } from "./colors";
+import type { Resource } from "../../../../../packages/shared/src";
 import {
   Button,
   ButtonLink,
@@ -40,6 +41,10 @@ type Node = GraphNode & SimulationNodeDatum & { r: number };
 type Link = SimulationLinkDatum<Node> & { name: string };
 
 const FOCUS_DEPTH = 2;
+// Each search scans every type's records, so it waits for this many
+// characters and a pause in typing.
+const MIN_SEARCH = 2;
+const SEARCH_DELAY_MS = 300;
 
 // Records as dots coloured by type and their links as lines. Hover shows a
 // record's connections, click selects it, double-click shows only the records
@@ -70,6 +75,24 @@ export function ObjectGraph({
     y: number;
   } | null>(null);
   const [search, setSearch] = useState("");
+  const [term, setTerm] = useState("");
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [enterRequested, setEnterRequested] = useState(false);
+  const searchable = search.trim().length >= MIN_SEARCH;
+  useEffect(() => {
+    setMatchIndex(0);
+    const next = searchable ? search.trim() : "";
+    const timer = setTimeout(() => setTerm(next), SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const results = useQuery({
+    queryKey: [id, "graph-record-search", term],
+    queryFn: () =>
+      api<{ items: Resource[]; total: number }>(
+        `/workspaces/${id}/resources/object?${new URLSearchParams({ search: term, limit: "8" })}`,
+      ),
+    enabled: !!term,
+  });
 
   const wrap = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
@@ -77,6 +100,9 @@ export function ObjectGraph({
     nodes = useRef<Node[]>([]),
     links = useRef<Link[]>([]),
     view = useRef({ x: 0, y: 0, k: 1 }),
+    // Whether the view keeps fitting a new layout as it settles: until the
+    // person pans, zooms or drags.
+    following = useRef(false),
     size = useRef({ w: 0, h: 0 }),
     frame = useRef(0),
     state = useRef({
@@ -266,6 +292,7 @@ export function ObjectGraph({
     cx = size.current.w / 2,
     cy = size.current.h / 2,
   ) => {
+    following.current = false;
     const v = view.current,
       k = Math.min(6, Math.max(0.1, v.k * factor));
     view.current = {
@@ -278,6 +305,7 @@ export function ObjectGraph({
   const centre = (nodeId: string) => {
     const n = nodes.current.find((n) => n.id === nodeId);
     if (!n) return;
+    following.current = false;
     const k = Math.max(view.current.k, 1.4),
       w = size.current.w - (size.current.w > 720 ? 324 : 0);
     view.current = {
@@ -335,12 +363,21 @@ export function ObjectGraph({
       .stop();
     const changed =
       list.length !== previous.size || list.some((n) => !previous.has(n.id));
-    for (let i = 0; i < (previous.size ? 60 : 180); i++) s.tick();
+    // A first layout of 1,500 records takes about two seconds before anything
+    // is drawn. Enough of it runs to draw, and the rest settles on screen,
+    // unless motion is reduced, when all of it runs first.
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (let i = 0; i < (previous.size || !still ? 60 : 180); i++) s.tick();
     nodes.current = list;
     links.current = edges;
     sim.current = s;
+    // With motion reduced the view is fitted once, not moved as it settles.
+    following.current = changed && !still;
     if (changed) fit();
-    s.alpha(0.12).on("tick", redraw).restart();
+    // A later layout settles gently from where its records already were.
+    s.alpha(previous.size || still ? 0.12 : s.alpha())
+      .on("tick", () => (following.current ? fit() : redraw()))
+      .restart();
     return () => {
       s.stop();
     };
@@ -421,6 +458,7 @@ export function ObjectGraph({
       | undefined;
     const down = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      following.current = false;
       const p = point(e);
       drag = { node: hit(p), start: p, moved: false };
       c.setPointerCapture(e.pointerId);
@@ -491,6 +529,7 @@ export function ObjectGraph({
   }, [ready]);
 
   const show = (n: GraphNode) => {
+    setHidden((h) => new Set([...h].filter((t) => t !== n.type)));
     setFocus(n);
     setSelected(n.id);
   };
@@ -501,15 +540,28 @@ export function ObjectGraph({
       setHidden((h) => new Set([...h].filter((t) => t !== n.type)));
     centre(nodeId);
   };
-  const matches = search.trim()
-    ? (data?.nodes || [])
-        .filter((n) =>
-          (n.label + " " + n.name)
-            .toLowerCase()
-            .includes(search.trim().toLowerCase()),
-        )
-        .slice(0, 8)
-    : [];
+  const searchReady = !!term && term === search.trim() && !results.isFetching;
+  const matches: GraphNode[] =
+    searchReady && !results.error
+      ? (results.data?.items || []).map((r) => ({
+          id: r.data.logicalId,
+          type: r.data.type,
+          name: r.name,
+          label: r.data.label,
+          degree: r.data.links,
+        }))
+      : [];
+  const choose = (n: GraphNode) => {
+    if (byId.has(n.id)) select(n.id);
+    else show(n);
+    setSearch("");
+    setEnterRequested(false);
+  };
+  useEffect(() => {
+    if (!enterRequested || !searchReady) return;
+    if (matches[0]) choose(matches[0]);
+    else setEnterRequested(false);
+  }, [enterRequested, searchReady, results.data, results.error]);
   const current = selected ? byId.get(selected) : undefined;
   const hovered = hover ? byId.get(hover.id) : undefined;
   // Linked records by type and link, e.g. "User · belongs to" on an account.
@@ -555,33 +607,64 @@ export function ObjectGraph({
         <div className="og-search">
           <SearchInput
             value={search}
-            onChange={setSearch}
+            onChange={(value) => {
+              setEnterRequested(false);
+              setSearch(value);
+            }}
             label="Find a record"
             placeholder="Find a record"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls={
+              matches.length ? "graph-matching-records" : undefined
+            }
+            aria-expanded={matches.length > 0}
+            aria-activedescendant={
+              matches.length
+                ? `graph-match-${Math.min(matchIndex, matches.length - 1)}`
+                : undefined
+            }
             onKeyDown={(e) => {
-              if (e.key === "Enter" && matches[0]) {
-                select(matches[0].id);
+              if (e.key === "Enter" && search.trim()) {
+                e.preventDefault();
+                if (matches[0])
+                  choose(matches[Math.min(matchIndex, matches.length - 1)]);
+                else if (searchable && !searchReady) setEnterRequested(true);
+              }
+              if (
+                (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+                matches.length
+              ) {
+                e.preventDefault();
+                setMatchIndex(
+                  (i) =>
+                    (i + (e.key === "ArrowDown" ? 1 : -1) + matches.length) %
+                    matches.length,
+                );
+              }
+              if (e.key === "Escape") {
+                setEnterRequested(false);
                 setSearch("");
               }
-              if (e.key === "Escape") setSearch("");
             }}
           />
           {matches.length > 0 && (
             <ul
+              id="graph-matching-records"
               className="og-matches"
               role="listbox"
               aria-label="Matching records"
             >
-              {matches.map((n) => (
+              {matches.map((n, i) => (
                 <li key={n.id}>
                   <button
                     type="button"
                     role="option"
-                    aria-selected={false}
-                    onClick={() => {
-                      select(n.id);
-                      setSearch("");
-                    }}
+                    id={`graph-match-${i}`}
+                    aria-selected={
+                      i === Math.min(matchIndex, matches.length - 1)
+                    }
+                    onClick={() => choose(n)}
                   >
                     <span
                       className="og-dot"
@@ -594,6 +677,22 @@ export function ObjectGraph({
                 </li>
               ))}
             </ul>
+          )}
+          {search.trim() && (
+            <p
+              className="og-search-status"
+              role={searchReady && results.error ? "alert" : "status"}
+            >
+              {!searchable
+                ? `Type at least ${MIN_SEARCH} characters to search`
+                : !searchReady
+                  ? "Searching all records…"
+                  : results.error
+                    ? results.error.message
+                    : matches.length
+                      ? `${results.data!.total} matching records${results.data!.total > 8 ? " · showing the first 8" : ""}`
+                      : "No matching records"}
+            </p>
           )}
         </div>
         <ul className="og-legend" aria-label="Object types">
@@ -641,14 +740,15 @@ export function ObjectGraph({
                 setSelected(null);
               }}
             >
-              Show all records
+              Show the best-connected records
             </button>
           </>
         ) : data!.nodes.length < data!.total ? (
           <>
-            The {number(data!.nodes.length)} best-connected of{" "}
-            {number(data!.total)} records. Double-click a record to see
-            everything around it.
+            {number(data!.nodes.length)} of {number(data!.total)} records: the
+            best-connected and the records around them. Double-click a record to
+            see everything around it. Search finds records across the whole
+            workspace.
           </>
         ) : (
           <>

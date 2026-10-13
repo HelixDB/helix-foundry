@@ -11,15 +11,16 @@ import { CronExpressionParser } from "cron-parser";
 import type { Resource } from "../../../packages/shared/src/index.js";
 import { now, transaction, type Store } from "./store.js";
 import { postgresPoolConfig } from "./postgres-config.js";
-import { unseal } from "./security.js";
+import { AppError, unseal } from "./security.js";
 
 const FALLBACK = "*/5 * * * *";
-// Hourly keeps full SaaS API snapshots well within their rate limits.
+// Hourly keeps full SaaS API snapshots well within their rate limits, and
+// spares Neo4j re-reading whole labels and relationship types every 5 minutes.
 // PostHog re-reads recent event history, so it refreshes less often.
 const fallback = (kind: string) =>
   kind === "posthog"
     ? "0 */6 * * *"
-    : kind === "stripe" || kind === "workos"
+    : kind === "stripe" || kind === "workos" || kind === "neo4j"
       ? "0 * * * *"
       : FALLBACK;
 const quote = (s: string) => '"' + s.replaceAll('"', '""') + '"';
@@ -29,6 +30,28 @@ export const databaseSource = (kind: string) =>
 const database = databaseSource;
 const nextRun = (schedule: string) =>
   CronExpressionParser.parse(schedule, { tz: "UTC" }).next().getTime();
+// Validate user input before connection discovery or stored settings change.
+// A six-field expression starts with seconds; more than one of them would
+// re-import every table of the connection several times a minute.
+export function validateRefreshSchedule(schedule?: string | null) {
+  if (!schedule) return;
+  let seconds: number;
+  try {
+    const cron = CronExpressionParser.parse(schedule, { tz: "UTC" });
+    cron.next();
+    seconds = cron.fields.second.values.length;
+  } catch {
+    throw new AppError(
+      400,
+      "Use a valid refresh schedule in UTC, for example 0 * * * * for hourly refreshes.",
+    );
+  }
+  if (seconds > 1)
+    throw new AppError(
+      400,
+      "A refresh schedule can run at most once a minute. Leave out the seconds field, for example * * * * * for every minute.",
+    );
+}
 const mysqlConfig = (c: Record<string, any>) => ({
   host: c.host,
   port: Number(c.port || 3306),

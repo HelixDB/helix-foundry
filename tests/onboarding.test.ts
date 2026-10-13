@@ -28,6 +28,7 @@ import {
   saveProposal,
 } from "../apps/api/src/assistant.js";
 import { onboardingState } from "../apps/api/src/onboarding-state.js";
+import { datasetTable } from "../packages/shared/src/index.js";
 import { connectionGroups } from "../apps/web/src/connection-groups.js";
 import { Provider } from "../apps/api/src/providers.js";
 import { prepareProvider } from "../apps/api/src/setup-jobs.js";
@@ -171,6 +172,43 @@ it("retries recommendations that cite missing columns", async () => {
     (await onboardingState(store, scope)).recommendations?.outcomes,
   ).toHaveLength(1);
 });
+it("redacts a credential the engine quotes from the data before a dashboard repair", async () => {
+  await inputs();
+  // A text column holding a request header, as a webhook log might.
+  const hooks = await ingestRows(store, scope, "Webhooks", [
+    { id: 1, header: "Bearer sk-proj-0123456789abcdefghij" },
+  ]);
+  const repairs: any[] = [];
+  vi.spyOn(Provider.prototype, "generate").mockImplementation(
+    async (system, context: any) => {
+      if (system.includes("Correct these definitions")) {
+        repairs.push(context.repair);
+        return {
+          value: referenceReply("focused dashboard", context),
+          tokens: 12,
+        };
+      }
+      const value: any = referenceReply(system, context);
+      if (system.includes("focused dashboard"))
+        value.dashboards[0].widgets[0] = {
+          title: "Hooks",
+          type: "metric",
+          inputs: [hooks.id],
+          sql: `SELECT CAST(header AS INTEGER) AS n FROM ${datasetTable(hooks.id)}`,
+        };
+      return { value, tokens: 12 };
+    },
+  );
+  const r = await request("POST", "/onboarding/recommendations", {});
+  await buildWorkspace(store, scope, r.json().id);
+  const goal = (await onboardingState(store, scope)).recommendations!
+    .outcomes[0].goal;
+  const run = (await request("POST", "/onboarding/build", { goal })).json();
+  await buildWorkspace(store, scope, run.id);
+  const details = repairs[0].failures.map((f: any) => f.detail).join("\n");
+  expect(details).not.toContain("0123456789abcdefghij");
+  expect(details).toContain("Could not convert string 'Bearer [redacted]'");
+});
 it("recommends from full snapshots, resumes, tests one view and atomically completes on publication", async () => {
   await inputs();
   const ai = model();
@@ -294,6 +332,136 @@ it.each(["mysql", "postgres"])(
     expect((await onboardingState(store, scope)).inputsReady).toBe(true);
   },
 );
+it("stores only each table's own keys, so importing 100 tables of a large database fits one write", async () => {
+  // About 1 MB of discovery, as in #94: 300 tables of 40 columns, each with a
+  // primary key and a foreign key to the table before it, and a table of the
+  // same name in another schema.
+  const tables = Array.from(
+    { length: 300 },
+    (_, i) => "table_" + String(i).padStart(3, "0"),
+  );
+  const own = (schema: string, table: string) => (k: any) =>
+    k.table_schema === schema && k.table_name === table;
+  const discovery = {
+    tables: [
+      ...tables.map((name) => ({ schema: "public", name })),
+      { schema: "archive", name: "table_001" },
+    ],
+    columns: tables.flatMap((table_name) =>
+      Array.from({ length: 40 }, (_, c) => ({
+        schema: "public",
+        table_name,
+        name: "measurement_column_" + c,
+        type: "character varying",
+        nullable: "YES",
+      })),
+    ),
+    keys: tables.flatMap((table_name, i) => [
+      {
+        table_schema: "public",
+        table_name,
+        column_name: "id",
+        constraint_type: "PRIMARY KEY",
+      },
+      ...(i
+        ? [
+            {
+              table_schema: "public",
+              table_name,
+              column_name: "parent_id",
+              constraint_type: "FOREIGN KEY",
+            },
+          ]
+        : []),
+    ]),
+    foreignKeys: [
+      ...tables.slice(1).map((table_name, i) => ({
+        table_schema: "public",
+        table_name,
+        column_name: "parent_id",
+        referenced_schema: "public",
+        referenced_table: tables[i],
+        referenced_column: "id",
+      })),
+      {
+        table_schema: "archive",
+        table_name: "table_001",
+        column_name: "parent_id",
+        referenced_schema: "archive",
+        referenced_table: "table_000",
+        referenced_column: "id",
+      },
+    ],
+    sample: [{ id: 1, parent_id: null }],
+  };
+  const selections = tables
+    .slice(0, 100)
+    .map((table) => ({ schema: "public", table }));
+  expect(Buffer.byteLength(JSON.stringify(discovery))).toBeGreaterThan(
+    1_000_000,
+  );
+  expect(Buffer.byteLength(JSON.stringify(discovery))).toBeGreaterThan(
+    config.helixWriteLimit / selections.length,
+  );
+  vi.mocked(discover).mockResolvedValueOnce(discovery as any);
+  // HelixStore sends each record as JSON inside the request's JSON.
+  const commit = store.commit.bind(store);
+  let largest = 0;
+  vi.spyOn(store, "commit").mockImplementation(async (s, v, changes) => {
+    largest = Math.max(
+      largest,
+      Buffer.byteLength(
+        JSON.stringify(
+          changes.map((c) => ("put" in c ? JSON.stringify(c.put) : c.delete)),
+        ),
+      ),
+    );
+    return commit(s, v, changes);
+  });
+  const payload = {
+    kind: "postgres",
+    name: "Warehouse",
+    config: { database: "warehouse", password: "secret-test" },
+    selections,
+    operationId: "large-database",
+  };
+  const r = await request("POST", "/onboarding/sources", payload);
+  expect(r.statusCode, r.body).toBe(200);
+  expect(largest).toBeLessThan(config.helixWriteLimit);
+  const sources = await store.list(scope, "source");
+  expect(sources).toHaveLength(100);
+  for (const source of sources) {
+    expect(source.data.discovery).toEqual({
+      keys: discovery.keys.filter(own("public", source.name)),
+      foreignKeys: discovery.foreignKeys.filter(own("public", source.name)),
+    });
+    expect(JSON.stringify(source).length).toBeLessThan(3000);
+  }
+  // The table in another schema keeps its key to itself.
+  const twin = sources.find((s) => s.name === "table_001")!;
+  expect(twin.data.discovery.foreignKeys).toHaveLength(1);
+  expect(twin.data.discovery.foreignKeys[0].table_schema).toBe("public");
+  // The operation stores ids, not the sources again.
+  const [operation] = await store.list(scope, "operation");
+  expect(JSON.stringify(operation.data)).not.toContain("discovery");
+  const job = (await store.list(scope, "job")).find(
+    (j) => j.data.sourceId === twin.id,
+  )!;
+  expect(operation.data.result[1]).toEqual({
+    source: { id: twin.id, name: twin.name, connectionId: operation.id },
+    job: { id: job.id },
+  });
+  // The response still carries each source and its job, and a repeat matches.
+  const { secret, ...shown } = twin.data;
+  expect(r.json()[1]).toEqual({ source: { ...twin, data: shown }, job });
+  expect(r.body).not.toContain("secret-test");
+  expect(
+    (await request("POST", "/onboarding/sources", payload)).json(),
+  ).toEqual(r.json());
+  expect(
+    connectionGroups(await onboardingState(store, scope))[0].sources,
+  ).toHaveLength(100);
+});
 it("blocks stale approvals when goal, selection or source versions change, including definition retests", async () => {
   await inputs();
   model();

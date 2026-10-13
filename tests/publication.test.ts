@@ -22,7 +22,18 @@ vi.mock("../apps/api/src/results.js", async (original) => {
 });
 import { execute } from "../apps/api/src/executor.js";
 import { resultBatches, sweepResults } from "../apps/api/src/results.js";
-import { MemoryStore, resource, transaction } from "../apps/api/src/store.js";
+import {
+  DatabaseError,
+  MemoryStore,
+  resource,
+  transaction,
+} from "../apps/api/src/store.js";
+import { runCleanupJob } from "../apps/api/src/cleanup.js";
+import {
+  listRecords,
+  snapshotGraph,
+  type RecordQuery,
+} from "../apps/api/src/records.js";
 import { ingestFile } from "../apps/api/src/datasets.js";
 import { publishProposal, saveProposal } from "../apps/api/src/assistant.js";
 import { config } from "../apps/api/src/config.js";
@@ -125,6 +136,8 @@ async function* paged(job: Parameters<typeof resultBatches>[0]) {
   for (let offset = 0, total = Infinity; offset < total; offset += 500) {
     const r = await localExecute({
       ...job,
+      // Pages of a query are only consistent in a total order.
+      sql: `SELECT * FROM (${job.sql}) AS paged ORDER BY ALL`,
       mode: "query",
       version: randomUUID(),
       offset,
@@ -263,20 +276,20 @@ it("leaves the previous generation active when a relationship or staging fails",
   }
   // HelixDB fails while a type's records are being staged.
   publish = await draft();
-  const commit = store.commit.bind(store);
-  let commits = 0;
+  const stage = store.stageObjects.bind(store);
+  let batches = 0;
   const failing = vi
-    .spyOn(store, "commit")
+    .spyOn(store, "stageObjects")
     .mockImplementation(async (...args) => {
-      if (++commits === 4) throw new Error("HelixDB is unavailable");
-      return commit(...args);
+      if (++batches === 4) throw new Error("HelixDB is unavailable");
+      return stage(...args);
     });
   try {
     await expect(publish()).rejects.toThrow("HelixDB is unavailable");
   } finally {
     failing.mockRestore();
   }
-  expect(commits).toBe(4);
+  expect(batches).toBe(4);
   expect((await store.get(scope, "workspace"))!.data.activeGeneration).toBe(
     active,
   );
@@ -296,4 +309,325 @@ it("sweeps result files that a stopped publication left behind", async () => {
     await utimes(resolve(dir, name), old, old);
   await sweepResults();
   expect((await readdir(dir)).sort()).toEqual(["reading.jsonl", "stray"]);
+});
+it("resumes a publication the database interrupted, keeping what it wrote", async () => {
+  const { scope, draft } = await workspace();
+  const publish = await draft();
+  const stage = store.stageObjects.bind(store);
+  let batches = 0;
+  const spy = vi
+    .spyOn(store, "stageObjects")
+    .mockImplementation(async (s, objects, resume) => {
+      if (++batches === 5)
+        throw new DatabaseError(
+          "HelixDB is not accepting connections",
+          "ECONNREFUSED",
+          true,
+        );
+      return stage(s, objects, resume);
+    });
+  await expect(publish()).rejects.toThrow("not accepting connections");
+  const [staging] = await store.list(scope, "staging");
+  expect(staging.data.status).toBe("staging");
+  const generation = staging.data.generation,
+    staged = async () =>
+      (await store.list(scope, "object")).filter(
+        (o) => o.data.generation === generation,
+      );
+  // Batches already in flight when it failed may have landed too.
+  const partial = (await staged()).length;
+  expect(partial).toBeGreaterThanOrEqual(2000);
+  expect(partial).toBeLessThan(10000);
+  // The same proposal again: the same generation, skipping what is there.
+  const resumed: boolean[] = [];
+  spy.mockImplementation(async (s, objects, resume) => {
+    resumed.push(resume);
+    return stage(s, objects, resume);
+  });
+  try {
+    await publish();
+  } finally {
+    spy.mockRestore();
+  }
+  expect(resumed.length).toBeGreaterThan(0);
+  expect(resumed.every(Boolean)).toBe(true);
+  expect((await store.get(scope, "workspace"))!.data.activeGeneration).toBe(
+    generation,
+  );
+  expect(await staged()).toHaveLength(10000);
+  expect(
+    (await store.list(scope, "relation")).filter(
+      (r) => r.data.generation === generation,
+    ),
+  ).toHaveLength(6800);
+  expect((await store.get(scope, staging.id))!.data.status).toBe("active");
+});
+
+it("removes failed, replaced and leftover generations, and keeps the active one", async () => {
+  const { scope, draft } = await workspace();
+  await (
+    await draft()
+  )();
+  const first = (await store.get(scope, "workspace"))!.data.activeGeneration;
+  // An attempt that fails for good leaves 1,000 staged records.
+  let publish = await draft();
+  const stage = store.stageObjects.bind(store);
+  let batches = 0;
+  const spy = vi
+    .spyOn(store, "stageObjects")
+    .mockImplementation(async (s, objects, resume) => {
+      if (++batches === 3) throw new Error("Unexpected record");
+      return stage(s, objects, resume);
+    });
+  await expect(publish()).rejects.toThrow("Unexpected record");
+  spy.mockRestore();
+  const failed = (await store.list(scope, "staging")).find(
+    (s) => s.data.status === "abandoned",
+  )!.data.generation;
+  // Records an earlier release staged and never removed, which no resource
+  // names.
+  const leftover = randomUUID();
+  await transaction(store, scope, async (tx) => {
+    for (const id of ["a", "b"])
+      tx.put(
+        resource(
+          scope,
+          "object",
+          "Old " + id,
+          { generation: leftover },
+          `${leftover}_${id}`,
+        ),
+      );
+    tx.put(
+      resource(scope, "relation", "Old link", {
+        from: `${leftover}_a`,
+        to: `${leftover}_b`,
+        generation: leftover,
+      }),
+    );
+  });
+  publish = await draft();
+  await publish();
+  const second = (await store.get(scope, "workspace"))!.data.activeGeneration;
+  const count = async (generation: string) =>
+    (await store.list(scope))
+      .filter((r) => ["object", "relation"].includes(r.kind))
+      .filter((r) => r.data.generation === generation).length;
+  expect(await count(failed)).toBe(1000);
+  const job = (await store.list(scope, "job")).find(
+    (j) => j.data.type === "cleanup" && j.data.status === "queued",
+  )!;
+  // Until HelixDB has built the indexes it reads, it waits.
+  const building = vi.spyOn(store, "indexesReady").mockResolvedValue(false);
+  expect(await runCleanupJob(store, scope, job)).toEqual({
+    again: true,
+    retryIn: 60_000,
+  });
+  building.mockRestore();
+  expect(await count(failed)).toBe(1000);
+  // It comes back once the replaced generation's grace ends.
+  const turn = await runCleanupJob(store, scope, job);
+  expect(turn.again).toBe(true);
+  expect(turn.retryIn).toBeGreaterThan(9 * 60_000);
+  expect(await count(failed)).toBe(0);
+  expect(await count(leftover)).toBe(0);
+  // The replaced generation stays a few minutes for requests still reading it.
+  expect(await count(first)).toBe(16800);
+  expect(await count(second)).toBe(16800);
+  await transaction(store, scope, async (tx) => {
+    for (const p of await tx.list("publication"))
+      tx.put({
+        ...p,
+        createdAt: new Date(Date.now() - 3600_000).toISOString(),
+      });
+  });
+  expect(await runCleanupJob(store, scope, job)).toEqual({ again: false });
+  expect(await count(first)).toBe(0);
+  expect(await count(second)).toBe(16800);
+  expect((await store.get(scope, "cleanup_state"))!.data.swept).toBe(true);
+});
+
+it("lists records from the snapshot a page at a time, with workspace edits first", async () => {
+  const { scope, draft } = await workspace();
+  await (
+    await draft()
+  )();
+  const list = vi.spyOn(store, "list");
+  const records = (query: Partial<RecordQuery>) =>
+    listRecords(store, scope, { offset: 0, limit: 20, ...query });
+  try {
+    const found = await records({ type: "Customer", search: "customer 2999" });
+    expect(found.total).toBe(1);
+    expect(found.items[0].data.effective.name).toBe("Customer 2999");
+    expect(
+      (await records({ type: "Customer", field: "region", value: "EU" })).total,
+    ).toBe(2000);
+    const scores = (
+      await records({ type: "Customer", sort: "score", dir: "desc", limit: 3 })
+    ).items.map((o) => o.data.effective.score);
+    expect(scores).toEqual([374.875, 374.75, 374.625]);
+    // Customers below 800 are placed by three orders, the rest by two.
+    const linked = await records({
+      type: "Customer",
+      sort: "links",
+      dir: "desc",
+    });
+    expect(linked.items.map((o) => o.data.links)).toEqual(Array(20).fill(3));
+    // Sorted by links, the snapshot's counts are shown: the database counts
+    // only a record whose links were edited.
+    const counts = vi.spyOn(store, "linkCounts");
+    const byLinks = () =>
+      records({ type: "Customer", sort: "links", dir: "desc" });
+    expect((await byLinks()).items.map((o) => o.data.links)).toEqual(
+      Array(20).fill(3),
+    );
+    expect(counts.mock.calls.flatMap(([, ids]) => ids)).toEqual([]);
+    await transaction(store, scope, async (tx) =>
+      tx.put(
+        resource(
+          scope,
+          "relationEdit",
+          "Placed by",
+          {
+            fromLogicalId: "unpublished",
+            toLogicalId: linked.items[0].data.logicalId,
+            enabled: false,
+          },
+          "relationEdit_links",
+        ),
+      ),
+    );
+    counts.mockClear();
+    expect((await byLinks()).items.map((o) => o.data.links)).toEqual(
+      Array(20).fill(3),
+    );
+    expect(counts.mock.calls.flatMap(([, ids]) => ids)).toEqual([
+      linked.items[0].id,
+    ]);
+    counts.mockRestore();
+    await transaction(store, scope, async (tx) =>
+      tx.delete("relationEdit_links"),
+    );
+    const last = await records({ type: "Customer", offset: 2990 });
+    expect(last.total).toBe(3000);
+    expect(last.items).toHaveLength(10);
+    const both = await records({ limit: 5 });
+    expect(both.total).toBe(10000);
+    // An edited record is listed first, with its edited values.
+    const edited = found.items[0];
+    await transaction(store, scope, async (tx) =>
+      tx.put(
+        resource(
+          scope,
+          "overlay",
+          edited.name,
+          { values: { region: "Mars" } },
+          "overlay_" + edited.data.logicalId,
+        ),
+      ),
+    );
+    const mars = await records({
+      type: "Customer",
+      field: "region",
+      value: "Mars",
+    });
+    expect(mars.total).toBe(1);
+    expect(mars.items[0].data.edits).toEqual({ region: "Mars" });
+    const all = await records({ type: "Customer" });
+    expect(all.total).toBe(3000);
+    expect(all.items[0].id).toBe(edited.id);
+    // No request read every record or link.
+    expect(
+      list.mock.calls.filter(([, kind]) =>
+        ["object", "relation", undefined].includes(kind),
+      ),
+    ).toEqual([]);
+  } finally {
+    list.mockRestore();
+  }
+});
+it("finds the best-connected records and their neighbours in one snapshot query, linked as publication linked them", async () => {
+  const { scope, draft } = await workspace();
+  await (
+    await draft()
+  )();
+  const best = (
+    await listRecords(store, scope, {
+      sort: "links",
+      dir: "desc",
+      offset: 0,
+      limit: 3,
+    })
+  ).items;
+  const walked = await store.neighborhood(
+    scope,
+    best.map((o) => o.id),
+    1,
+    100_000,
+  );
+  const key = (e: { from: string; to: string; name: string }) =>
+    [e.from, e.to, e.name].join(":");
+  const real = new Set(walked.edges.map(key));
+  // Three customers placed by three orders each share six places, found by
+  // one query, ranked as the record list ranks them.
+  executor.mockClear();
+  const near = await snapshotGraph(store, scope, { seeds: 3, room: 6 });
+  expect(executor).toHaveBeenCalledTimes(1);
+  expect(near.seeds).toEqual(best.map((o) => o.id));
+  expect(near.truncated).toBe(true);
+  expect(near.links).toHaveLength(6);
+  expect(near.links.every((e) => real.has(key(e)))).toBe(true);
+  expect(new Set(near.ids)).toEqual(new Set(near.links.map((e) => e.from)));
+  // With room for all of them, they are every link HelixDB walks, and every
+  // record's links are counted as HelixDB counts them.
+  const all = await snapshotGraph(store, scope, { seeds: 3, room: 100 });
+  expect(all.truncated).toBe(false);
+  expect(new Set(all.links.map(key))).toEqual(real);
+  expect(all.counts).toEqual(
+    await store.linkCounts(scope, [...all.seeds, ...all.ids]),
+  );
+  // A pair with a relation edit is left out; an edit adding a link is in,
+  // and records with an edit are left for HelixDB to count.
+  const generation = best[0].id.slice(0, best[0].id.indexOf("_") + 1),
+    logical = (id: string) => id.slice(generation.length),
+    [dropped] = all.links,
+    other = all.links.find((e) => e.to !== dropped.to)!;
+  await transaction(store, scope, async (tx) => {
+    tx.put(
+      resource(
+        scope,
+        "relationEdit",
+        dropped.name,
+        {
+          fromLogicalId: logical(dropped.from),
+          toLogicalId: logical(dropped.to),
+          enabled: false,
+        },
+        "relationEdit_dropped",
+      ),
+    );
+    tx.put(
+      resource(
+        scope,
+        "relationEdit",
+        "Placed by",
+        {
+          fromLogicalId: logical(other.from),
+          toLogicalId: logical(dropped.to),
+          enabled: true,
+        },
+        "relationEdit_added",
+      ),
+    );
+  });
+  const edited = await snapshotGraph(store, scope, { seeds: 3, room: 100 });
+  expect(edited.links.map(key)).not.toContain(key(dropped));
+  expect(edited.links).toContainEqual({
+    from: other.from,
+    to: dropped.to,
+    name: "Placed by",
+  });
+  expect(edited.ids).toContain(other.from);
+  for (const id of [other.from, dropped.from, dropped.to])
+    expect(edited.counts.has(id)).toBe(false);
 });

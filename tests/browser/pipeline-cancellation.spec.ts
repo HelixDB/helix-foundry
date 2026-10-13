@@ -1,32 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { api, openApp } from "./support/workspace";
 import { artifact, dataDir } from "./support/ports";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { readdir } from "node:fs/promises";
 
-const processList = promisify(execFile);
-const runnerPath = resolve("services/executor/src/runner.ts");
-// Observe only children executing this isolated checkout; never log other
-// processes' arguments and never terminate anything through this observer.
-async function ownRunnerPids() {
-  let stdout: string;
-  try {
-    ({ stdout } = await processList("ps", ["-axww", "-o", "pid=,command="], {
-      maxBuffer: 8 * 1024 * 1024,
-    }));
-  } catch {
-    // execFile errors can contain stdout; never expose other process arguments.
-    throw new Error("Task-owned executor process observer unavailable");
-  }
-  return stdout
-    .split("\n")
-    .filter(
-      (line) =>
-        line.includes(" --import ") && line.trimEnd().endsWith(runnerPath),
-    )
-    .map((line) => Number(line.trim().split(/\s+/, 1)[0]));
+async function ownJobDirectories() {
+  return (await readdir(resolve(dataDir, "scratch")).catch(() => []))
+    .filter((name) => name.startsWith("job-"))
+    .sort();
 }
 
 test("cancel a running pipeline from Data before Home is available and retain the published snapshot", async ({
@@ -82,8 +63,8 @@ test("cancel a running pipeline from Data before Home is available and retain th
       { timeout: 20000 },
     )
     .toBe("running");
-  await expect.poll(async () => (await ownRunnerPids()).length).toBe(1);
-  const [runningPid] = await ownRunnerPids();
+  await expect.poll(async () => (await ownJobDirectories()).length).toBe(1);
+  const [runningJob] = await ownJobDirectories();
   const panel = page.getByRole("region", { name: "Pipeline jobs" }),
     cancel = panel.getByRole("button", {
       name: "Cancel Run Cancelable browser totals",
@@ -104,7 +85,7 @@ test("cancel a running pipeline from Data before Home is available and retain th
   expect((await api(page, base + `/resources/job/${job.id}`)).data.status).toBe(
     "running",
   );
-  expect(await ownRunnerPids()).toContain(runningPid);
+  expect(await ownJobDirectories()).toContain(runningJob);
   await cancel.click();
   await expect
     .poll(
@@ -113,8 +94,8 @@ test("cancel a running pipeline from Data before Home is available and retain th
     )
     .toBe("canceled");
   await expect
-    .poll(async () => await ownRunnerPids())
-    .not.toContain(runningPid);
+    .poll(async () => await ownJobDirectories())
+    .not.toContain(runningJob);
   await expect
     .poll(async () => await readdir(resolve(dataDir, "scratch")))
     .toEqual([]);

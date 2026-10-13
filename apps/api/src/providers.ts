@@ -6,6 +6,33 @@ import type {
 import { config } from "./config.js";
 import { assert, AppError } from "./security.js";
 import { postJson } from "./post.js";
+// Azure OpenAI's OpenAI-compatible base URL, from the resource endpoint
+// (`https://RESOURCE.openai.azure.com`) or that endpoint with `/openai/v1`.
+export function azureBase(endpoint: string) {
+  const base = endpoint.replace(/\/+$/, "");
+  return base.endsWith("/openai/v1") ? base : base + "/openai/v1";
+}
+// A blank key keeps the saved credential only for the endpoint it belongs to:
+// the same Custom base URL, or the same Azure OpenAI endpoint and deployment.
+// An Amazon Bedrock key keeps working across regions and models, since the
+// schema only allows AWS's own Bedrock endpoints.
+export function canReuseProviderKey(
+  previous: Pick<ProviderSettings, "provider" | "baseUrl" | "model">,
+  next: Pick<ProviderSettings, "provider" | "baseUrl" | "model">,
+) {
+  if (previous.provider !== next.provider) return false;
+  if (next.provider === "azure")
+    return (
+      !!previous.baseUrl &&
+      !!next.baseUrl &&
+      azureBase(previous.baseUrl) === azureBase(next.baseUrl) &&
+      previous.model === next.model
+    );
+  return (
+    next.provider !== "custom" ||
+    previous.baseUrl?.replace(/\/+$/, "") === next.baseUrl?.replace(/\/+$/, "")
+  );
+}
 export class Provider implements ModelProvider {
   private verified = false;
   constructor(public settings: ProviderSettings) {}
@@ -71,10 +98,76 @@ export class Provider implements ModelProvider {
         ],
         tool_choice: { type: "tool", name: "submit" },
       };
-    } else {
-      assert(s.apiKey, "OpenAI API key is required");
-      url = "https://api.openai.com/v1/responses";
+    } else if (s.provider === "bedrock") {
+      // Amazon Bedrock's Converse API, which serves most of its models the
+      // same way. The schema is a tool the model must call, as for Claude.
+      assert(s.apiKey, "Amazon Bedrock API key is required");
+      assert(s.baseUrl, "Choose an AWS region for Amazon Bedrock.");
+      url =
+        s.baseUrl.replace(/\/+$/, "") +
+        `/model/${encodeURIComponent(s.model)}/converse`;
       headers.authorization = "Bearer " + s.apiKey;
+      const json = { ...schema };
+      delete json.$schema;
+      body = {
+        system: [{ text: system }],
+        messages: [{ role: "user", content: [{ text: user }] }],
+        inferenceConfig: { maxTokens: 8192 },
+        toolConfig: {
+          tools: [
+            {
+              toolSpec: {
+                name: "submit",
+                description: "Return the requested structured result",
+                inputSchema: { json },
+              },
+            },
+          ],
+          // The only tool, so "any" means this one, on more models than
+          // naming it does.
+          toolChoice: { any: {} },
+        },
+      };
+    } else if (s.provider === "custom" && s.apiFormat !== "responses") {
+      assert(s.baseUrl, "Enter an API base URL.");
+      url = s.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+      if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
+      body = {
+        model: s.model,
+        max_tokens: 8192,
+        stream: false,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "result",
+            schema: strictSchema(schema),
+            strict: true,
+          },
+        },
+      };
+    } else {
+      // OpenAI, Azure OpenAI and Custom endpoints in the Responses format.
+      if (s.provider === "azure") {
+        // The same Responses API, on the Azure resource, with the deployment
+        // name as the model. Azure's v1 API reads the key from the api-key
+        // header only, so it is not also sent as a bearer token.
+        assert(s.apiKey, "Azure OpenAI API key is required");
+        assert(s.baseUrl, "Azure OpenAI endpoint is required");
+        url = azureBase(s.baseUrl) + "/responses";
+        headers["api-key"] = s.apiKey;
+      } else if (s.provider === "custom") {
+        assert(s.baseUrl, "Enter an API base URL.");
+        url = s.baseUrl.replace(/\/+$/, "") + "/responses";
+        if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
+      } else {
+        assert(s.apiKey, "OpenAI API key is required");
+        url = "https://api.openai.com/v1/responses";
+        headers.authorization = "Bearer " + s.apiKey;
+      }
       body = {
         model: s.model,
         max_output_tokens: 8192,
@@ -116,31 +209,133 @@ export class Provider implements ModelProvider {
       headers,
       body: JSON.stringify(body),
       signal: abort,
+      // A user-entered endpoint must not forward the key somewhere else.
+      ...(s.provider === "custom" ||
+      s.provider === "azure" ||
+      s.provider === "bedrock"
+        ? { redirect: "error" as const }
+        : {}),
     });
+    if (!response.ok && s.provider === "bedrock")
+      throw new AppError(502, bedrockError(response));
     if (!response.ok)
       throw new AppError(
         502,
-        `${s.provider} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
+        `${providerName(s.provider)} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
       );
     let value: unknown,
       tokens = 0;
-    const data = (await response.json()) as any;
+    const data = (await response.json().catch((error) => {
+      throwJsonError(error, s.provider);
+    })) as any;
     if (s.provider === "claude") {
       value = data.content.find(
         (x: any) => x.type === "tool_use" && x.name === "submit",
       )?.input;
       tokens =
         (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
+    } else if (s.provider === "bedrock") {
+      assert(
+        data.stopReason !== "max_tokens",
+        "The Amazon Bedrock model ran out of room for its answer.",
+        502,
+      );
+      const input = data.output?.message?.content?.find(
+        (x: any) => x.toolUse?.name === "submit",
+      )?.toolUse?.input;
+      assert(
+        input && typeof input === "object",
+        "The Amazon Bedrock model did not return a structured response. Choose a model that supports tool use, such as Claude or Amazon Nova.",
+        502,
+      );
+      value = input;
+      tokens =
+        data.usage?.totalTokens ||
+        (data.usage?.inputTokens || 0) + (data.usage?.outputTokens || 0);
+    } else if (s.provider === "custom" && s.apiFormat !== "responses") {
+      const choice = data.choices?.[0];
+      assert(
+        choice?.finish_reason !== "length",
+        "Custom model ran out of room for its answer.",
+        502,
+      );
+      const text = choice?.message?.content;
+      assert(
+        typeof text === "string" && text,
+        "Custom model did not return a structured response",
+        502,
+      );
+      value = customJson(text);
+      tokens = data.usage?.total_tokens || 0;
     } else {
+      if (s.provider === "custom")
+        assert(
+          data.status !== "incomplete" && data.status !== "failed",
+          "Custom model did not complete its answer.",
+          502,
+        );
       const text = data.output
         ?.flatMap((x: any) => x.content || [])
         .find((x: any) => x.type === "output_text")?.text;
       assert(text, "Model did not return a structured response");
-      value = JSON.parse(text);
+      try {
+        value = s.provider === "custom" ? customJson(text) : JSON.parse(text);
+      } catch (error) {
+        throwJsonError(error, s.provider);
+      }
       tokens = data.usage?.total_tokens || 0;
     }
     return { value: withoutNullOptionals(value), tokens };
   }
+}
+// How errors name a provider: "The custom AI provider returned HTTP 401".
+function providerName(provider: string) {
+  return provider === "custom"
+    ? "The custom AI provider"
+    : provider === "azure"
+      ? "Azure OpenAI"
+      : provider === "bedrock"
+        ? "Amazon Bedrock"
+        : provider;
+}
+// Amazon Bedrock's errors by kind, from its x-amzn-errortype header. The
+// response body is not repeated, since it can quote the request.
+function bedrockError(response: Response) {
+  const type = response.headers.get("x-amzn-errortype")?.split(":")[0];
+  const reason =
+    type === "UnrecognizedClientException" ||
+    type === "AccessDeniedException" ||
+    response.status === 401 ||
+    response.status === 403
+      ? "Check the API key, and that the model is enabled for your account in this region."
+      : type === "ResourceNotFoundException" || response.status === 404
+        ? "Check the model ID and the region."
+        : type === "ValidationException" || response.status === 400
+          ? "Check the model ID. Some models need an inference profile ID, such as us.anthropic.claude-sonnet-4-6, and the model must support tool use."
+          : type === "ThrottlingException" || response.status === 429
+            ? "Retry later, or ask for a higher quota for this model."
+            : "Check the model, credentials, and provider quota.";
+  return `Amazon Bedrock returned HTTP ${response.status}${type ? ` (${type})` : ""}. ${reason}`;
+}
+function customJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AppError(
+      502,
+      "Custom model did not return valid JSON. Choose a model that supports structured output.",
+    );
+  }
+}
+// JSON decoder messages can include response contents. Only decoding failures
+// get recovery guidance; transport failures and cancellation keep their identity.
+function throwJsonError(error: unknown, provider: string): never {
+  if (error instanceof SyntaxError)
+    throw new AppError(
+      502,
+      `${providerName(provider)} returned invalid structured JSON. Retry the request or choose a more capable model.`,
+    );
+  throw error;
 }
 // Accepts a single response object or newline-delimited streamed parts.
 function ollamaResult(text: string) {

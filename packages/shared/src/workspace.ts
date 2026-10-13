@@ -95,6 +95,9 @@ const providers: Record<string, string> = {
   local: "the local AI model",
   claude: "Claude",
   openai: "OpenAI",
+  azure: "Azure OpenAI",
+  bedrock: "Amazon Bedrock",
+  custom: "your custom AI model",
 };
 // Describes a job, run or audit resource (or the slim copy the event stream sends).
 export function describeActivity(r: Describable): ActivityItem {
@@ -182,6 +185,18 @@ export function describeActivity(r: Describable): ActivityItem {
             : `Prepared ${p}`,
       };
     }
+    case "cleanup":
+      return {
+        ...base,
+        ref,
+        kind: "job",
+        label: "Storage",
+        title: active
+          ? "Removing old workspace builds"
+          : d.status === "failed"
+            ? "Couldn’t remove old workspace builds"
+            : "Removed old workspace builds",
+      };
     default:
       return { ...base, ref, kind: "job", label: "Job", title: r.name };
   }
@@ -378,4 +393,12 @@ export type HomeMetrics = {
   generatedAt?: string;
   computedAt?: string;
   metrics: HomeMetric[];
+};
+
+// GET /workspaces/:w/tokens: one workspace API token, without its secret.
+export type ApiTokenMetadata = {
+  id: string;
+  name: string;
+  readOnly: boolean;
+  createdAt: string;
 };

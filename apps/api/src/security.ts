@@ -52,12 +52,37 @@ export function assert(
 ): asserts condition {
   if (!condition) throw new AppError(status, message);
 }
+// Error text can reach the AI provider, so credentials in it are replaced.
+// A database URL goes whole; any other URL keeps its host but not its user
+// and password. An Authorization value goes up to the end of the line or a
+// comma, semicolon or brace, since Basic and PlanetScale's ID:TOKEN have no
+// fixed shape, and so does the word after any Bearer. A named secret's value
+// goes, quoted or not, also under a JSON key; a :: cast is not a separator.
+// The keys of the services Foundry connects to go by their prefix only when
+// a long token follows, so DuckDB names such as sk_customer_key or sbp_mmhg
+// stay and a failed query can still be repaired. Callers cut the result to
+// length afterwards, so a match is never split.
 export function redact(message: string) {
   return message
-    .replace(/\b(postgres(?:ql)?|mysql):\/\/[^\s]+/gi, "$1://[redacted]")
     .replace(
-      /(password|api[_-]?key|authorization|token)\s*[:=]\s*[^\s,;]+/gi,
-      "$1=[redacted]",
+      /\b(postgres(?:ql)?|mysql|neo4j(?:\+s)?|bolt(?:\+s)?):\/\/[^\s]+/gi,
+      "$1://[redacted]",
     )
-    .slice(0, 1000);
+    .replace(
+      /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi,
+      "$1[redacted]@",
+    )
+    .replace(
+      /(authorization\\?["']?\s*(?:=|:(?!:))\s*)(?:"(?:[^"\\]|\\.)*"|\\"[^"]*"|'[^']*'|[^\r\n,;}]+)/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /((?:password|passwd|secret|token|(?:api|access|secret|private|internal|encryption)[_-]?key)\\?["']?\s*(?:=|:(?!:))\s*)(?:"(?:[^"\\]|\\.)*"|\\"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      "$1[redacted]",
+    )
+    .replace(/\b(bearer)\s+[^\s,;"']+/gi, "$1 [redacted]")
+    .replace(
+      /\b(?:[sr]k_(?:live|test)|phx|napi|sbp|pscale_(?:tkn|pw|oauth))_[a-zA-Z0-9]{20}[\w-]*|\bsk-[\w-]{20,}/g,
+      "[redacted]",
+    );
 }

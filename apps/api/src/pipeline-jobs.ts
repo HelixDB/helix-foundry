@@ -24,10 +24,18 @@ export async function runPipelineJob(
   };
   await check();
   controller.signal.throwIfAborted();
-  const poll = setInterval(
-    () => void check().catch((error) => controller.abort(error)),
-    250,
-  );
+  let finished = false;
+  let poll: ReturnType<typeof setTimeout> | undefined;
+  const pollCancellation = async () => {
+    try {
+      await check();
+    } catch {
+      // A transient status read must not cancel a healthy executor request.
+    }
+    if (!finished && !controller.signal.aborted)
+      poll = setTimeout(() => void pollCancellation(), 1000);
+  };
+  poll = setTimeout(() => void pollCancellation(), 1000);
   let committed = false;
   try {
     const result = await queryDatasets(
@@ -85,7 +93,8 @@ export async function runPipelineJob(
     });
     committed = true;
   } finally {
-    clearInterval(poll);
+    finished = true;
+    clearTimeout(poll);
     if (!committed)
       await rm(
         resolve(config.dataDir, "datasets", scope, version + ".parquet"),

@@ -1,3 +1,4 @@
+import { withDatasetPrivacy } from "./dataset-privacy.js";
 import {
   onboardingState,
   assertOnboardingPublication,
@@ -16,11 +17,22 @@ import {
   DashboardSchema,
   datasetTable,
   datasetAliases,
+  answerShape,
+  type AnswerCheck,
+  type AnswerStep,
   type Bundle,
+  type ProviderSettings,
   type Resource,
   type ValidationReport,
 } from "../../../packages/shared/src/index.js";
-import { transaction, resource, now, type Store } from "./store.js";
+import {
+  transaction,
+  resource,
+  now,
+  DatabaseError,
+  type Store,
+} from "./store.js";
+import { queueCleanup } from "./cleanup.js";
 import { digest, assert, unseal, seal, AppError, redact } from "./security.js";
 import { queryInputs } from "./query-inputs.js";
 import { Provider } from "./providers.js";
@@ -85,13 +97,72 @@ export async function providerSettings(store: Store, scope: string) {
         baseUrl: config.ollama,
       });
 }
+// A summary is written from result rows, so only where rows may be sent to
+// the model.
+const summarizes = (s: Pick<ProviderSettings, "provider" | "allowRawData">) =>
+  s.provider === "local" || !!s.allowRawData;
+// The major steps people see while a question is answered.
+const answerOutline = (s: ProviderSettings): AnswerStep[] => [
+  "understand",
+  "analyze",
+  "check",
+  ...(summarizes(s) ? (["write"] as const) : []),
+];
+// Answers are compared by what decides how long they take: the provider and
+// model, whether a summary is written, and the size of the data, by order of
+// magnitude.
+const timingKey = (s: ProviderSettings, datasets: Resource[]) =>
+  [
+    s.provider,
+    s.model,
+    summarizes(s) ? "summary" : "rows",
+    Math.floor(
+      Math.log10(
+        datasets.reduce((n, d) => n + (Number(d.data.profile?.rows) || 0), 0) +
+          1,
+      ),
+    ),
+  ].join(":");
+// How long comparable answers took here: the middle of the latest 20, as a
+// range in ms. None from fewer than three, or when they disagree too much to
+// promise anything. Nothing is run to find out.
+export async function answerEstimate(store: Store, scope: string) {
+  const settings = await providerSettings(store, scope),
+    datasets = [...(await datasetsMap(store, scope)).values()].filter(
+      (d) => !d.data.retiredSample,
+    ),
+    key = timingKey(settings, datasets);
+  const took: number[] = (await store.list(scope, "run"))
+    .filter((r) => r.data.timing?.key === key && r.data.timing.took > 0)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 20)
+    .map((r) => r.data.timing.took)
+    .sort((a, b) => a - b);
+  if (took.length < 3) return null;
+  const at = (q: number) => {
+    const i = (took.length - 1) * q,
+      lo = Math.floor(i);
+    return took[lo] + (took[Math.ceil(i)] - took[lo]) * (i - lo);
+  };
+  const low = Math.round(at(0.2)),
+    high = Math.round(at(0.8));
+  return high - low > Math.max(2 * low, 15000)
+    ? null
+    : { low, high, samples: took.length };
+}
 async function datasetsMap(store: Store, scope: string) {
   const generation = (await store.get(scope, "workspace"))?.data
     .activeGeneration;
   return new Map(
-    (await store.list(scope, "dataset"))
-      .filter((d) => !d.data.generation || d.data.generation === generation)
-      .map((d) => [d.id, d]),
+    (
+      await withDatasetPrivacy(
+        store,
+        scope,
+        (await store.list(scope, "dataset")).filter(
+          (d) => !d.data.generation || d.data.generation === generation,
+        ),
+      )
+    ).map((d) => [d.id, d]),
   );
 }
 function inputsFor(ids: string[], datasets: Map<string, Resource>) {
@@ -440,6 +511,12 @@ export async function enqueue(
           : new Map((await store.list(scope, "run")).map((r) => [r.id, r])),
       );
   }
+  // Set once, so the range people see doesn't move while they wait. Only a
+  // convenience: a question is asked even when it can't be worked out.
+  const estimate =
+    intent === "build"
+      ? undefined
+      : await answerEstimate(store, scope).catch(() => null);
   return transaction(store, scope, async (tx) =>
     tx.put(
       resource(
@@ -460,6 +537,7 @@ export async function enqueue(
           events: [],
           calls: 0,
           tokens: 0,
+          estimate,
         },
         id,
       ),
@@ -494,13 +572,15 @@ async function event(
     });
   });
 }
-// A retry continues from the run's checkpoints with a fresh call budget.
+// A retry continues from the run's checkpoints with a fresh call budget. It
+// reuses earlier work, so earlier answers say nothing about how long it takes.
 export const retried = (data: Record<string, any>, message: string) => ({
   ...data,
   status: "queued",
   stage: "queued",
   error: null,
   retryAt: null,
+  estimate: null,
   callsBefore: data.calls || 0,
   events: [...(data.events || []), { at: now(), stage: "queued", message }],
 });
@@ -509,7 +589,10 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
   assert(run, "Run missing");
   const settings = await providerSettings(store, scope),
     model = new Provider(settings),
-    start = Date.now();
+    start = Date.now(),
+    timed =
+      (run.data.attempts || 1) === 1 &&
+      !run.data.events?.some((e: any) => e.stage === "queued");
   let calls = run.data.calls || 0,
     tokens = run.data.tokens || 0;
   // Samples replaced by a newer sample set stay available but are never sent to the model.
@@ -606,7 +689,11 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
     prompt: string,
     wire?: z.ZodType,
   ): Promise<z.infer<T>> => {
-    if (checkpoints[stage]) return schema.parse(checkpoints[stage]);
+    if (checkpoints[stage]) {
+      // Noted, so a retry's steps show this work as done.
+      await event(store, scope, id, stage, "Reused the saved result");
+      return schema.parse(checkpoints[stage]);
+    }
     // Each retry gets a fresh call budget; the daily token budget still applies.
     assert(
       calls - (run.data.callsBefore || 0) < settings.maxCalls,
@@ -806,9 +893,15 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         intent === "answer"
           ? "Looking into your question"
           : "Preparing a proposal",
-        { resolvedIntent: intent },
+        {
+          resolvedIntent: intent,
+          ...(intent === "answer" ? { outline: answerOutline(settings) } : {}),
+        },
       );
-    }
+    } else if (intent === "answer")
+      await event(store, scope, id, "analysis", "Looking into your question", {
+        outline: answerOutline(settings),
+      });
     if (intent === "build" && run.data.authority) {
       const member = await store.get(
         "global",
@@ -883,6 +976,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
           sql: p.sql,
           version: randomUUID(),
           limit: 100,
+          order: true,
         });
       };
       let result;
@@ -920,10 +1014,25 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         name: map.get(datasetId)!.name,
         version: map.get(datasetId)!.data.activeVersion,
       }));
+      // Code checks the full result before anything describes it: its shape,
+      // the measure that answers the question, rows tied for first place,
+      // rows repeated exactly and rows without the measure.
+      await event(store, scope, id, "check", "Checking the result");
+      const shape = answerShape(result.rows, {
+        profile: result.profile,
+        hint: [run.data.goal, plan.title],
+      });
+      const check: AnswerCheck = {
+        ...shape,
+        duplicates: result.profile.duplicateRows || 0,
+        missing:
+          result.profile.columns.find((c) => c.name === shape.measure)?.nulls ||
+          0,
+      };
       // A short plain-language answer from the result rows: one more call,
       // only where rows may be sent to the model, and never failing the answer.
       let summary: { summary: string; highlights: string[] } | undefined;
-      if (settings.provider === "local" || settings.allowRawData) {
+      if (summarizes(settings)) {
         const clip = (v: unknown) =>
           typeof v === "string" && v.length > 60 ? v.slice(0, 60) + "…" : v;
         context.result = {
@@ -938,6 +1047,14 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
               ),
             ),
           assumptions: plan.assumptions,
+          check: {
+            shape: check.kind,
+            measure: check.measure,
+            order: check.order,
+            leaders: check.leaders,
+            duplicates: check.duplicates,
+            missing: check.missing,
+          },
         };
         try {
           summary = await ask(
@@ -946,7 +1063,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
               summary: z.string().max(700),
               highlights: z.array(z.string().max(200)).max(3),
             }),
-            "Summarise this query result for a business reader. summary: two or three plain sentences that directly answer the question, naming the rows that matter (for example campaign or customer names) with their numbers. highlights: up to three short takeaways such as the strongest, the weakest or anything surprising. Use only numbers that appear in the result rows, rounded sensibly; never invent or estimate figures. If Stripe amount_* values are raw cents, divide by 100 and say dollars. If the result is empty, say what that means. Mention an assumption only when it changes the conclusion. Plain text, no markdown.",
+            'Summarise this query result for a business reader. summary: two or three plain sentences. The first is short and directly answers the question (for example "Acme Corp has the most orders."); the rest name the rows that matter (for example campaign or customer names) with their numbers and units, such as "42 orders" or "$1,200". highlights: up to three short takeaways such as the strongest, the weakest or anything surprising. Use only numbers that appear in the result rows, rounded sensibly, or the difference between two of them; never invent or estimate figures. check is what code verified about the rows: when leaders is more than 1, that many rows share first place, so name them together and never a single leader; mention duplicates or missing values only when they change the conclusion. If Stripe amount_* values are raw cents, divide by 100 and say dollars. If the result is empty, say what that means. Mention an assumption only when it changes the conclusion. Plain text, no markdown.',
           );
         } catch (e) {
           if ((await store.get(scope, id))?.data.status === "canceled") throw e;
@@ -969,11 +1086,22 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         "Answer computed from dataset snapshots",
         {
           status: "succeeded",
+          // A first, uninterrupted attempt, timed from when it was asked, is
+          // evidence for later estimates.
+          ...(timed
+            ? {
+                timing: {
+                  key: timingKey(settings, datasets),
+                  took: Date.now() - Date.parse(run.createdAt),
+                },
+              }
+            : {}),
           answer: {
             ...plan,
             rows: result.rows,
             total: result.profile.rows,
             citations,
+            check,
             ...(summary?.summary.trim()
               ? {
                   summary: summary.summary.trim(),
@@ -1350,7 +1478,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
           definitions: Object.fromEntries(
             group.fields.map((key) => [key, (bundle as any)[key]]),
           ),
-          failures,
+          failures: failures.map((f) => ({ ...f, detail: redact(f.detail) })),
         };
         let repaired;
         try {
@@ -1492,6 +1620,34 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         : e instanceof Error
           ? e.message
           : "Build failed";
+    // The database stopped, dropped the connection or did not answer: the
+    // run is tried again by itself, a few times, and a publication resumes
+    // the records it already wrote.
+    const retries = current?.data.databaseRetries || 0;
+    if (
+      e instanceof DatabaseError &&
+      e.transient &&
+      retries < 3 &&
+      current &&
+      current.data.status !== "canceled"
+    ) {
+      const wait = 30 * 2 ** retries;
+      await event(
+        store,
+        scope,
+        id,
+        "queued",
+        `${message} Trying again in ${wait} seconds; work already saved is kept.`,
+        {
+          status: "queued",
+          retryAt: Date.now() + wait * 1000,
+          databaseRetries: retries + 1,
+          calls,
+          tokens,
+        },
+      ).catch(() => {});
+      return;
+    }
     if (current?.data.status !== "canceled")
       await event(store, scope, id, "failed", message, {
         status: "failed",
@@ -1500,6 +1656,34 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         tokens,
       });
   }
+}
+// Up to `limit` writes in flight at once: HelixDB serves staged writes in
+// parallel, about three times as fast as one at a time. The first failure
+// stops new writes and is thrown once the others have settled.
+function parallelWrites(limit: number) {
+  const pending = new Set<Promise<void>>();
+  let failed: { error: unknown } | undefined;
+  const settle = async () => {
+    await Promise.all(pending);
+    if (failed) throw failed.error;
+  };
+  return {
+    async add(write: () => Promise<unknown>) {
+      if (failed) return settle();
+      const p: Promise<void> = write()
+        .then(
+          () => {},
+          (error) => {
+            failed ??= { error };
+          },
+        )
+        .finally(() => pending.delete(p));
+      pending.add(p);
+      if (pending.size >= limit) await Promise.race(pending);
+      if (failed) return settle();
+    },
+    done: settle,
+  };
 }
 export async function publishProposal(
   store: Store,
@@ -1536,313 +1720,426 @@ export async function publishProposal(
     "Published definitions changed. Revalidate this proposal.",
     409,
   );
-  const generation = randomUUID(),
+  // The generation is registered before any record is written, so the
+  // cleaner can tell it from an abandoned one. A retry of the same validated
+  // proposal over the same published state resumes it: records an earlier
+  // attempt wrote are kept, not written again.
+  const stagingId = "staging_" + digest(proposal.data.hash).slice(0, 32);
+  const prior = await store.get(scope, stagingId);
+  const resume =
+    prior?.data.status === "staging" &&
+    (prior.data.baseGeneration || null) === (beforeGeneration || null);
+  const generation: string = resume ? prior.data.generation : randomUUID(),
     map = await datasetsMap(store, scope);
-  const assets: Resource[] = [];
-  for (const p of bundle.pipelines) {
-    const preview = report.previews[pipelineId(p.name)] as any;
-    assert(preview?.version, "Missing pipeline output");
-    const ds = resource(
-      scope,
-      "dataset",
-      p.name,
-      {
-        activeVersion: preview.version,
-        versions: [preview.version],
-        profile: preview.profile,
-        table: datasetTable(pipelineId(p.name)),
-        generation,
-      },
-      pipelineId(p.name),
-    );
-    map.set(ds.id, ds);
-    for (const input of p.inputs)
-      assets.push(
-        resource(scope, "lineage", p.name, {
-          from: input,
-          to: ds.id,
-          generation,
-          inputVersion: map.get(input)?.data.activeVersion,
-        }),
-      );
-    assets.push(
-      ds,
-      resource(scope, "pipeline", p.name, {
-        ...p,
-        generation,
-        outputDatasetId: ds.id,
-      }),
-      resource(
-        scope,
-        "version",
-        p.name,
-        {
-          datasetId: ds.id,
-          profile: preview.profile,
-          file: preview.version + ".parquet",
-        },
-        preview.version,
-      ),
-    );
-  }
-  const identities = new Map<string, Map<string, string>>();
-  const manualObjects = await store.list(scope, "manualObject");
-  const relationEdits = await store.list(scope, "relationEdit");
-  const edits = new Map(
-    relationEdits.map((r) => [
-      [r.data.fromLogicalId, r.data.toLogicalId, r.name].join(":"),
-      r,
-    ]),
-  );
-  // Setup's progress shows how many records and relationships publication
-  // has read. Saving it is best effort and never fails the publication.
-  const read = { records: 0, relationships: 0 };
-  let reported = 0;
-  const progress = async (force = false) => {
-    const runId = proposal.data.onboardingRunId;
-    if (!runId || (!force && Date.now() - reported < 2000)) return;
-    reported = Date.now();
-    await transaction(store, scope, async (tx) => {
-      const run = await tx.get(runId);
-      if (run && ["queued", "running"].includes(run.data.status))
-        tx.update(run, { ...run.data, progress: { ...read } });
-    }).catch(() => {});
-  };
-  // Each type and relationship is one executor query, read back in batches of
-  // 500 staged records.
-  for (const type of bundle.ontology) {
-    const dataset = map.get(type.datasetId);
-    assert(dataset, "Dataset unavailable");
-    const typeId = digest(type.name).slice(0, 20),
-      lookup = new Map<string, string>();
-    identities.set(type.name, lookup);
-    assets.push(
-      resource(scope, "objectType", type.name, { ...type, generation, typeId }),
-    );
-    let rows = 0;
-    for await (const batch of resultBatches(
-      {
-        scope,
-        inputs: inputsFor([type.datasetId], map),
-        sql: `SELECT * FROM "${datasetTable(type.datasetId)}"`,
-      },
-      `${type.name} records`,
-    )) {
-      const staged = batch.map((row) => {
-        const key = String(row[type.primaryKey]),
-          logicalId = digest(typeId + ":" + key).slice(0, 32),
-          obj = resource(
-            scope,
-            "object",
-            `${type.name} ${key}`,
-            {
-              type: type.name,
-              typeId,
-              key,
-              logicalId,
-              generation,
-              base: row,
-              sourceVersion: dataset.data.activeVersion,
-            },
-            generation + "_" + logicalId,
-          );
-        lookup.set(key, obj.id);
-        return obj;
-      });
-      await transaction(store, scope, async (tx) => {
-        staged.forEach((o) => tx.put(o));
-      });
-      rows += batch.length;
-      read.records += batch.length;
-      await progress();
-    }
-    assert(
-      rows === dataset.data.profile.rows,
-      `Read ${rows} of ${dataset.data.profile.rows} ${type.name} records. The workspace was not published.`,
-    );
-  }
-  for (const o of manualObjects) {
-    const lookup = identities.get(o.data.type);
-    if (lookup && !lookup.has(o.data.key)) {
-      const staged = resource(
-        scope,
-        "object",
-        o.name,
-        { ...o.data, generation },
-        generation + "_" + o.data.logicalId,
-      );
-      lookup.set(o.data.key, staged.id);
-      await transaction(store, scope, async (tx) => tx.put(staged));
-    }
-  }
-  const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
-  for (const rel of bundle.relationships) {
-    const fromType = bundle.ontology.find((o) => o.name === rel.fromType)!,
-      toType = bundle.ontology.find((o) => o.name === rel.toType)!;
-    const sql = `SELECT a.${quote(fromType.primaryKey)} AS from_key,b.${quote(toType.primaryKey)} AS to_key FROM ${quote(datasetTable(fromType.datasetId))} a JOIN ${quote(datasetTable(toType.datasetId))} b ON a.${quote(rel.fromColumn)}=b.${quote(rel.toColumn)}`;
-    for await (const batch of resultBatches(
-      {
-        scope,
-        inputs: inputsFor([fromType.datasetId, toType.datasetId], map),
-        sql,
-      },
-      `the ${rel.name} relationship`,
-    )) {
-      await transaction(store, scope, async (tx) => {
-        for (const row of batch) {
-          const from = identities.get(rel.fromType)!.get(String(row.from_key)),
-            to = identities.get(rel.toType)!.get(String(row.to_key));
-          const edit =
-            from && to
-              ? edits.get(
-                  [
-                    from.slice(generation.length + 1),
-                    to.slice(generation.length + 1),
-                    rel.name,
-                  ].join(":"),
-                )
-              : undefined;
-          if (from && to && !edit)
-            tx.put(
-              resource(scope, "relation", rel.name, { from, to, generation }),
-            );
-        }
-      });
-      read.relationships += batch.length;
-      await progress();
-    }
-  }
-  await progress(true);
-  for (const edit of relationEdits) {
-    const from = generation + "_" + edit.data.fromLogicalId,
-      to = generation + "_" + edit.data.toLogicalId;
-    if (
-      edit.data.enabled &&
-      (await store.get(scope, from)) &&
-      (await store.get(scope, to))
-    )
-      await transaction(store, scope, async (tx) =>
-        tx.put(
-          resource(scope, "relation", edit.name, { from, to, generation }),
-        ),
-      );
-  }
-  for (const asset of assets)
-    if (asset.kind === "objectType")
-      asset.data.objectCount = identities.get(asset.name)?.size || 0;
-  for (const d of bundle.dashboards)
-    assets.push(resource(scope, "dashboard", d.name, { ...d, generation }));
-  for (const a of bundle.actions)
-    assets.push(resource(scope, "actionType", a.name, { ...a, generation }));
-  return transaction(store, scope, async (tx) => {
-    const p = await tx.get(id);
-    assert(
-      p?.data.hash === hash && p.data.status === "ready",
-      "Proposal changed during publication",
-      409,
-    );
-    for (const [datasetId, v] of Object.entries(report.inputVersions))
+  const overtaken =
+    "This build was overtaken by a newer publication. Retry to build again.";
+  // Registers the generation, then marks it as still being written. One the
+  // cleaner abandoned (overtaken, or untouched for hours) is being removed and
+  // can never be activated.
+  const touch = (first = false) =>
+    transaction(store, scope, async (tx) => {
+      const r = await tx.get(stagingId);
       assert(
-        (await tx.get(datasetId))?.data.activeVersion === v,
-        "Inputs changed during publication",
+        first ||
+          (r?.data.generation === generation && r.data.status === "staging"),
+        overtaken,
         409,
       );
-    const workspace = await tx.get("workspace");
-    assert(workspace, "Workspace missing");
-    await assertOnboardingPublication(tx, p);
-    assert(
-      workspace.data.activeGeneration === beforeGeneration,
-      "Another proposal was published. Revalidate this proposal.",
-      409,
-    );
-    const membership = await store.get("global", `${actor}:${scope}`);
-    assert(
-      membership && ["owner", "editor"].includes(membership.data.role),
-      "Publish permission changed",
-      403,
-    );
-    for (const asset of assets) tx.put(asset);
-    for (const c of bundle.catalog) {
-      const ds = await tx.get(c.datasetId);
-      if (ds && !ds.data.manualDescription)
-        tx.put({
-          ...ds,
-          description: c.description,
-          revision: ds.revision + 1,
-          data: { ...ds.data, tags: c.tags },
-        });
-    }
-    tx.update(workspace, {
-      ...workspace.data,
-      activeGeneration: generation,
-      previousGeneration: workspace.data.activeGeneration || null,
-      ...(p.data.onboardingSignature
-        ? {
-            onboarding: {
-              ...workspace.data.onboarding,
-              completedAt: now(),
-              completedGeneration: generation,
-              dashboardId: assets.find((a) => a.kind === "dashboard")?.id,
-              step: "review",
-              deferred: false,
-            },
-          }
-        : {}),
-    });
-    tx.put(
-      resource(scope, "publication", proposal.name, {
-        generation,
-        previousGeneration: workspace.data.activeGeneration || null,
-        proposalId: id,
-        actor,
-      }),
-    );
-    for (const run of await tx.list("run"))
-      if (
-        run.data.proposalId &&
-        run.data.status !== "canceled" &&
-        [id, p.data.parentId].includes(run.data.proposalId)
-      )
-        tx.update(run, {
-          ...run.data,
-          status: "succeeded",
-          stage: "published",
+      tx.put({
+        ...(r || resource(scope, "staging", proposal.name, {}, stagingId)),
+        updatedAt: now(),
+        revision: (r?.revision || 0) + 1,
+        data: {
+          generation,
           proposalId: id,
-          events: [
-            ...run.data.events,
-            {
-              at: now(),
-              stage: "published",
-              message,
-            },
-          ],
-        });
-    tx.put(
-      resource(scope, "audit", "Published workspace", {
-        actor,
-        proposalId: id,
-        generation,
-      }),
-    );
-    return tx.update(p, {
-      ...p.data,
-      status: "published",
-      publishedGeneration: generation,
+          baseGeneration: beforeGeneration || null,
+          status: "staging",
+          touchedAt: Date.now(),
+        },
+      });
     });
-  });
+  await touch(true);
+  try {
+    return await stageAndActivate(proposal);
+  } catch (e) {
+    // A database that stopped or did not answer leaves the generation for a
+    // retry to resume; any other failure means it can never be activated.
+    if (!(e instanceof DatabaseError && e.transient))
+      await transaction(store, scope, async (tx) => {
+        const r = await tx.get(stagingId);
+        if (r?.data.generation === generation && r.data.status === "staging")
+          tx.update(r, { ...r.data, status: "abandoned" });
+      })
+        .then(() => queueCleanup(store, scope))
+        .catch(() => {});
+    throw e;
+  }
+  async function stageAndActivate(proposal: Resource) {
+    const assets: Resource[] = [];
+    for (const p of bundle.pipelines) {
+      const preview = report.previews[pipelineId(p.name)] as any;
+      assert(preview?.version, "Missing pipeline output");
+      const ds = resource(
+        scope,
+        "dataset",
+        p.name,
+        {
+          activeVersion: preview.version,
+          versions: [preview.version],
+          profile: preview.profile,
+          table: datasetTable(pipelineId(p.name)),
+          generation,
+        },
+        pipelineId(p.name),
+      );
+      map.set(ds.id, ds);
+      for (const input of p.inputs)
+        assets.push(
+          resource(scope, "lineage", p.name, {
+            from: input,
+            to: ds.id,
+            generation,
+            inputVersion: map.get(input)?.data.activeVersion,
+          }),
+        );
+      assets.push(
+        ds,
+        resource(scope, "pipeline", p.name, {
+          ...p,
+          generation,
+          outputDatasetId: ds.id,
+        }),
+        resource(
+          scope,
+          "version",
+          p.name,
+          {
+            datasetId: ds.id,
+            profile: preview.profile,
+            file: preview.version + ".parquet",
+          },
+          preview.version,
+        ),
+      );
+    }
+    const writes = parallelWrites(3);
+    // Records of each type by key: their node handles, which the type's
+    // relationships use as endpoints.
+    const identities = new Map<string, Map<string, string>>();
+    const logicalIdOf = (typeId: string, key: string) =>
+      digest(typeId + ":" + key).slice(0, 32);
+    const manualObjects = await store.list(scope, "manualObject");
+    const relationEdits = await store.list(scope, "relationEdit");
+    const edits = new Map(
+      relationEdits.map((r) => [
+        [r.data.fromLogicalId, r.data.toLogicalId, r.name].join(":"),
+        r,
+      ]),
+    );
+    // A relationship's id names its generation and its ends, so a resumed
+    // publication finds the ones it already wrote, and the cleaner finds them
+    // all by the generation's key prefix.
+    const relationId = (name: string, from: string, to: string) =>
+      `${generation}_r${digest([name, from, to].join(":")).slice(0, 32)}`;
+    // Setup's progress shows how many records and relationships publication
+    // has read. Saving it is best effort and never fails the publication.
+    const read = { records: 0, relationships: 0 };
+    let reported = 0,
+      touched = Date.now();
+    const progress = async (force = false) => {
+      // Only a build the cleaner took away stops here; a failed save of
+      // this mark, like one of the progress below, never fails it.
+      if (Date.now() - touched > 60000) {
+        touched = Date.now();
+        await touch().catch((e) => {
+          if (e instanceof Error && e.message === overtaken) throw e;
+        });
+      }
+      const runId = proposal.data.onboardingRunId;
+      if (!runId || (!force && Date.now() - reported < 2000)) return;
+      reported = Date.now();
+      await transaction(store, scope, async (tx) => {
+        const run = await tx.get(runId);
+        if (run && ["queued", "running"].includes(run.data.status))
+          tx.update(run, { ...run.data, progress: { ...read } });
+      }).catch(() => {});
+    };
+    // Each type and relationship is one executor query, read back and written
+    // in batches of 500 records.
+    for (const type of bundle.ontology) {
+      const dataset = map.get(type.datasetId);
+      assert(dataset, "Dataset unavailable");
+      const typeId = digest(type.name).slice(0, 20),
+        lookup = new Map<string, string>();
+      identities.set(type.name, lookup);
+      assets.push(
+        resource(scope, "objectType", type.name, {
+          ...type,
+          generation,
+          typeId,
+          // The snapshot its records come from, which the record list reads.
+          sourceVersion: dataset.data.activeVersion,
+        }),
+      );
+      let rows = 0;
+      const keys = new Set<string>();
+      for await (const batch of resultBatches(
+        {
+          scope,
+          inputs: inputsFor([type.datasetId], map),
+          sql: `SELECT * FROM "${datasetTable(type.datasetId)}"`,
+        },
+        `${type.name} records`,
+      )) {
+        const staged: Resource[] = [];
+        for (const row of batch) {
+          const key = String(row[type.primaryKey]);
+          // A repeated key keeps its first record.
+          if (keys.has(key)) continue;
+          keys.add(key);
+          const logicalId = logicalIdOf(typeId, key);
+          staged.push(
+            resource(
+              scope,
+              "object",
+              `${type.name} ${key}`,
+              {
+                type: type.name,
+                typeId,
+                key,
+                logicalId,
+                generation,
+                base: row,
+                sourceVersion: dataset.data.activeVersion,
+              },
+              generation + "_" + logicalId,
+            ),
+          );
+        }
+        await writes.add(async () => {
+          const handles = await store.stageObjects(scope, staged, resume);
+          for (const o of staged) lookup.set(o.data.key, handles.get(o.id)!);
+        });
+        rows += batch.length;
+        read.records += batch.length;
+        await progress();
+      }
+      assert(
+        rows === dataset.data.profile.rows,
+        `Read ${rows} of ${dataset.data.profile.rows} ${type.name} records. The workspace was not published.`,
+      );
+    }
+    await writes.done();
+    for (const o of manualObjects) {
+      const lookup = identities.get(o.data.type);
+      if (lookup && !lookup.has(o.data.key)) {
+        const staged = resource(
+          scope,
+          "object",
+          o.name,
+          { ...o.data, generation },
+          generation + "_" + o.data.logicalId,
+        );
+        const handles = await store.stageObjects(scope, [staged], resume);
+        lookup.set(o.data.key, handles.get(staged.id)!);
+      }
+    }
+    const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
+    for (const rel of bundle.relationships) {
+      const fromType = bundle.ontology.find((o) => o.name === rel.fromType)!,
+        toType = bundle.ontology.find((o) => o.name === rel.toType)!,
+        fromTypeId = digest(fromType.name).slice(0, 20),
+        toTypeId = digest(toType.name).slice(0, 20),
+        fromLookup = identities.get(rel.fromType)!,
+        toLookup = identities.get(rel.toType)!;
+      // Each pair of records is linked once, however many rows join them.
+      const sql = `SELECT DISTINCT a.${quote(fromType.primaryKey)} AS from_key,b.${quote(toType.primaryKey)} AS to_key FROM ${quote(datasetTable(fromType.datasetId))} a JOIN ${quote(datasetTable(toType.datasetId))} b ON a.${quote(rel.fromColumn)}=b.${quote(rel.toColumn)}`;
+      for await (const batch of resultBatches(
+        {
+          scope,
+          inputs: inputsFor([fromType.datasetId, toType.datasetId], map),
+          sql,
+        },
+        `the ${rel.name} relationship`,
+      )) {
+        const relations: { relation: Resource; from: string; to: string }[] =
+          [];
+        for (const row of batch) {
+          const fromKey = String(row.from_key),
+            toKey = String(row.to_key),
+            from = fromLookup.get(fromKey),
+            to = toLookup.get(toKey);
+          if (!from || !to) continue;
+          const fromId = logicalIdOf(fromTypeId, fromKey),
+            toId = logicalIdOf(toTypeId, toKey);
+          if (edits.has([fromId, toId, rel.name].join(":"))) continue;
+          relations.push({
+            relation: resource(
+              scope,
+              "relation",
+              rel.name,
+              {
+                from: generation + "_" + fromId,
+                to: generation + "_" + toId,
+                generation,
+              },
+              relationId(rel.name, fromId, toId),
+            ),
+            from,
+            to,
+          });
+        }
+        await writes.add(() => store.stageRelations(scope, relations, resume));
+        read.relationships += batch.length;
+        await progress();
+      }
+    }
+    await writes.done();
+    await progress(true);
+    for (const edit of relationEdits) {
+      const from = generation + "_" + edit.data.fromLogicalId,
+        to = generation + "_" + edit.data.toLogicalId;
+      if (
+        edit.data.enabled &&
+        (await store.get(scope, from)) &&
+        (await store.get(scope, to))
+      )
+        await transaction(store, scope, async (tx) =>
+          tx.put(
+            resource(
+              scope,
+              "relation",
+              edit.name,
+              { from, to, generation },
+              relationId(
+                edit.name,
+                edit.data.fromLogicalId,
+                edit.data.toLogicalId,
+              ),
+            ),
+          ),
+        );
+    }
+    for (const asset of assets)
+      if (asset.kind === "objectType")
+        asset.data.objectCount = identities.get(asset.name)?.size || 0;
+    for (const d of bundle.dashboards)
+      assets.push(resource(scope, "dashboard", d.name, { ...d, generation }));
+    for (const a of bundle.actions)
+      assets.push(resource(scope, "actionType", a.name, { ...a, generation }));
+    const published = await transaction(store, scope, async (tx) => {
+      const p = await tx.get(id);
+      assert(
+        p?.data.hash === hash && p.data.status === "ready",
+        "Proposal changed during publication",
+        409,
+      );
+      for (const [datasetId, v] of Object.entries(report.inputVersions))
+        assert(
+          (await tx.get(datasetId))?.data.activeVersion === v,
+          "Inputs changed during publication",
+          409,
+        );
+      const workspace = await tx.get("workspace");
+      assert(workspace, "Workspace missing");
+      await assertOnboardingPublication(tx, p);
+      assert(
+        workspace.data.activeGeneration === beforeGeneration,
+        "Another proposal was published. Revalidate this proposal.",
+        409,
+      );
+      const membership = await store.get("global", `${actor}:${scope}`);
+      assert(
+        membership && ["owner", "editor"].includes(membership.data.role),
+        "Publish permission changed",
+        403,
+      );
+      for (const asset of assets) tx.put(asset);
+      tx.update(workspace, {
+        ...workspace.data,
+        activeGeneration: generation,
+        previousGeneration: workspace.data.activeGeneration || null,
+        ...(p.data.onboardingSignature
+          ? {
+              onboarding: {
+                ...workspace.data.onboarding,
+                completedAt: now(),
+                completedGeneration: generation,
+                dashboardId: assets.find((a) => a.kind === "dashboard")?.id,
+                step: "review",
+                deferred: false,
+              },
+            }
+          : {}),
+      });
+      tx.put(
+        resource(scope, "publication", proposal.name, {
+          generation,
+          previousGeneration: workspace.data.activeGeneration || null,
+          proposalId: id,
+          actor,
+        }),
+      );
+      for (const run of await tx.list("run"))
+        if (
+          run.data.proposalId &&
+          run.data.status !== "canceled" &&
+          [id, p.data.parentId].includes(run.data.proposalId)
+        )
+          tx.update(run, {
+            ...run.data,
+            status: "succeeded",
+            stage: "published",
+            proposalId: id,
+            events: [
+              ...run.data.events,
+              {
+                at: now(),
+                stage: "published",
+                message,
+              },
+            ],
+          });
+      tx.put(
+        resource(scope, "audit", "Published workspace", {
+          actor,
+          proposalId: id,
+          generation,
+        }),
+      );
+      const staging = await tx.get(stagingId);
+      assert(
+        staging?.data.generation === generation &&
+          staging.data.status === "staging",
+        overtaken,
+        409,
+      );
+      tx.update(staging, { ...staging.data, status: "active" });
+      return tx.update(p, {
+        ...p.data,
+        status: "published",
+        publishedGeneration: generation,
+      });
+    });
+    // The generation it replaces, and any left by failed attempts, go now.
+    await queueCleanup(store, scope).catch(() => {});
+    await describeDatasets(store, scope, generation, bundle.catalog);
+    return published;
+  }
 }
 
-export async function currentBundle(
-  store: Store,
-  scope: string,
-): Promise<Bundle> {
-  const generation = (await store.get(scope, "workspace"))?.data
-    .activeGeneration;
-  const published = (await store.list(scope, "proposal")).find(
-    (p) => p.data.publishedGeneration === generation,
-  );
-  return BundleSchema.parse(
-    published?.data.bundle || {
+// The active generation, the proposal that published it, and its bundle; an
+// empty bundle before the first publish.
+export async function publishedBundle(store: Store, scope: string) {
+  const generation: string | null =
+    (await store.get(scope, "workspace"))?.data.activeGeneration || null;
+  const proposal = generation
+    ? (await store.list(scope, "proposal")).find(
+        (p) => p.data.publishedGeneration === generation,
+      )
+    : undefined;
+  const bundle: Bundle = BundleSchema.parse(
+    proposal?.data.bundle || {
       summary: "Workspace definitions",
       assumptions: [],
       catalog: [],
@@ -1853,4 +2150,46 @@ export async function currentBundle(
       actions: [],
     },
   );
+  return { generation, proposal, bundle };
+}
+
+// Each dataset carries its full column profile, so the published catalog is
+// written one dataset per transaction: together they can pass HelixDB's
+// request limit, which would fail the whole publication. It runs after
+// activation, so a failure here leaves a published workspace without some
+// descriptions rather than an unpublished one. It stops once another
+// publication or a rollback replaces the generation, so it never overwrites
+// that one's descriptions.
+async function describeDatasets(
+  store: Store,
+  scope: string,
+  generation: string,
+  catalog: Bundle["catalog"],
+) {
+  for (const c of catalog) {
+    const active = await transaction(store, scope, async (tx) => {
+      if ((await tx.get("workspace"))?.data.activeGeneration !== generation)
+        return false;
+      const ds = await tx.get(c.datasetId);
+      if (ds && !ds.data.manualDescription)
+        tx.put({
+          ...ds,
+          description: c.description,
+          revision: ds.revision + 1,
+          data: { ...ds.data, tags: c.tags },
+        });
+      return true;
+    }).catch((e) => {
+      console.error("Dataset description:", e instanceof Error ? e.message : e);
+      return true;
+    });
+    if (!active) return;
+  }
+}
+
+export async function currentBundle(
+  store: Store,
+  scope: string,
+): Promise<Bundle> {
+  return (await publishedBundle(store, scope)).bundle;
 }

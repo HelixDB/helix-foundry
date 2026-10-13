@@ -141,7 +141,7 @@
   line-height: 1.55;
 }
 
-/* Working: a quiet pulse, what is happening now and how long it has taken. */
+/* Sending: a quiet pulse until the question has a run. */
 .an-working {
   display: flex;
   flex-wrap: wrap;
@@ -187,12 +187,167 @@
     animation: none;
   }
 }
-.an-working-time {
+
+/* Trace: the analysis as it happens, between two fine rules and quieter than
+   the answer under it. Each step is one line: its name in bold, then what it
+   did. Folded, a step never wraps; expanded, every line wraps. */
+.an-trace {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 0 10px;
+  border-top: 1px solid var(--hf-border);
+  border-bottom: 1px solid var(--hf-border);
+}
+.an-trace-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 12px;
+  min-height: 30px;
+}
+.an-trace-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  font-weight: 500;
+}
+.an-trace-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hf-info);
+}
+.an-trace.is-working .an-trace-dot {
+  animation: an-pulse 1.6s ease-in-out infinite;
+}
+.an-trace.is-succeeded .an-trace-dot,
+.an-trace.is-awaiting_review .an-trace-dot {
+  background: var(--hf-success);
+}
+.an-trace.is-slow .an-trace-dot,
+.an-trace.is-offline .an-trace-dot {
+  background: var(--hf-warning);
+}
+.an-trace.is-failed .an-trace-dot {
+  background: var(--hf-danger);
+}
+.an-trace.is-canceled .an-trace-dot {
+  background: var(--hf-faint);
+}
+@keyframes an-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.an-trace-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px 4px;
+  margin-left: auto;
+}
+.an-trace-time {
+  padding-right: 4px;
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
+  white-space: nowrap;
 }
-.an-working .an-working-stop {
-  margin-left: 2px;
+.an-steps {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.an-step {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 20px;
+}
+.an-step-mark {
+  margin-top: 3.5px;
+  color: var(--hf-faint);
+}
+.an-step.is-done .an-step-mark {
+  color: var(--hf-accent-text);
+}
+.an-step.is-running {
+  color: var(--hf-text-2);
+}
+.an-step.is-running .an-step-mark {
+  color: var(--hf-info-text);
+}
+.an-step.is-failed .an-step-mark {
+  color: var(--hf-danger-text);
+}
+.an-step-text {
+  min-width: 0;
+  margin: 0;
+}
+.an-step-text strong {
+  color: var(--hf-text-2);
+  font-weight: 600;
+}
+.an-step.is-running .an-step-text strong {
+  color: var(--hf-text);
+}
+.an-steps.is-compact .an-step-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-trace-full {
+  display: grid;
+  min-width: 0;
+  padding-top: 6px;
+}
+.an-trace-full .an-steps {
+  gap: 8px;
+}
+.an-trace-full .an-step-text {
+  overflow-wrap: anywhere;
+}
+.an-step-time {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.an-query {
+  min-width: 0;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hf-border);
+}
+.an-query > summary {
+  width: fit-content;
+  padding: 0;
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+}
+.an-query .an-sql {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-sunken);
+}
+.an-trace-note {
+  margin: 10px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
 }
 
 /* Answer */
@@ -201,39 +356,86 @@
   gap: var(--hf-space-15);
   min-width: 0;
 }
+/* The answer's statement leads, in bold on the page itself (no card, tint or
+   accent); then the rest of the summary, whose backed quantities are bold. */
+.an-answer-head {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
 .an-answer-head h2 {
+  max-width: 68ch;
   margin: 0;
   color: var(--hf-text);
   font-family: var(--hf-font-sans);
-  font-size: var(--hf-text-lg);
+  font-size: var(--hf-text-xl);
   font-weight: 600;
-  letter-spacing: -0.1px;
+  letter-spacing: -0.2px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
-.an-answer-head p {
-  margin: 3px 0 0;
+.an-lead {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-md);
+  line-height: 1.6;
+}
+.an-lead strong,
+.an-highlights strong {
+  color: var(--hf-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.an-highlights {
+  display: grid;
+  gap: 4px;
+  max-width: 68ch;
+  margin: 0;
+  padding-left: 1.2em;
+  list-style: disc;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.55;
+}
+.an-answer-meta {
+  margin: 0;
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
   line-height: 1.5;
 }
-/* The plain-language answer, read before the numbers behind it. */
-.an-summary {
+/* The rows: a heading and a Chart/Table switch, then one of the two. */
+.an-result {
   display: grid;
-  gap: var(--hf-space-1);
-  color: var(--hf-text);
-  font-size: var(--hf-text-md);
-  line-height: 1.6;
+  gap: 8px;
+  min-width: 0;
 }
-.an-summary p {
-  margin: 0;
-  max-width: 68ch;
+.an-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
 }
-.an-summary ul {
-  display: grid;
-  gap: 4px;
+.an-result-head h3 {
+  flex: 1;
+  min-width: min(200px, 100%);
   margin: 0;
-  padding-left: 1.2em;
   color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.an-result-head .hf-segmented {
+  margin-left: auto;
+}
+.an-result-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin-top: -2px;
+  color: var(--hf-muted);
   font-size: var(--hf-text-sm);
 }
 .an-chart {
@@ -256,6 +458,18 @@
 }
 .an-chart .wk-bars {
   margin: -2px -8px;
+}
+/* A ranking: places beside the names, and first place at full strength. */
+.an-chart .wk-bar-rank {
+  display: inline-block;
+  min-width: 2ch;
+  margin-right: 8px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  text-align: right;
+}
+.an-chart .wk-bars.is-ranked .wk-bar-row:not(.is-first) .wk-bar {
+  background: color-mix(in oklab, var(--wk-series) 55%, var(--hf-raised));
 }
 .an-stats {
   display: grid;
@@ -292,6 +506,15 @@
   letter-spacing: -0.4px;
   line-height: 1.15;
 }
+/* Keys say which record this is; they are not the answer. */
+.an-stat.is-key {
+  background: transparent;
+}
+.an-stat.is-key dd {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  font-weight: 400;
+}
 /* Columns share the card's width (the grid's own sizing makes every column
    as wide as the widest, which pushes the last ones out of view); a narrow
    card still scrolls sideways past the columns' minimum widths. */
@@ -300,6 +523,14 @@
 }
 .an-table .hf-grid-foot {
   padding: 4px 6px;
+}
+/* The measure stands out; keys and codes stay quieter. */
+.an-table .hf-grid-td.is-measure {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.an-table .hf-grid-td.is-key {
+  color: var(--hf-muted);
 }
 
 /* Footer: sources, then quiet toggles for the rest. */
@@ -426,35 +657,6 @@
   color: inherit;
   font-size: inherit;
 }
-.an-details-meta {
-  margin: 0 0 8px;
-  color: var(--hf-text-2);
-}
-.an-events {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  font-size: var(--hf-text-sm);
-  list-style: none;
-}
-.an-events li {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
-  gap: 10px;
-}
-.an-events time {
-  color: var(--hf-muted);
-}
-.an-events span {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--hf-text-2);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-}
-
 /* Cards: prepared changes, and what went wrong. */
 .an-card {
   display: flex;
@@ -671,6 +873,9 @@
   .an-question {
     max-width: 90%;
   }
+  .an-answer-head h2 {
+    font-size: var(--hf-text-lg);
+  }
   .an-reply {
     grid-template-columns: 24px minmax(0, 1fr);
     gap: 10px;
@@ -701,4 +906,57 @@
   .an-chat .an-hint {
     display: none;
   }
+}
+
+/* The next investigation stays below the latest answer, out of hero space. */
+.an-followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0 36px;
+}
+.an-followup {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: transparent;
+  color: var(--hf-muted);
+  font: inherit;
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+  min-height: 28px;
+  padding: 5px 10px;
+  text-align: left;
+  max-width: 100%;
+  cursor: pointer;
+}
+.an-followup:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.an-followup:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.an-completion-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.an-composer .an-completion-field .an-input {
+  display: block;
+  width: 100%;
+}
+.an-completion {
+  position: absolute;
+  inset: 7px 0 auto;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-md);
+  line-height: 22px;
+  opacity: 0.7;
+}
+.an-completion > span {
+  visibility: hidden;
 }
