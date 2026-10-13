@@ -552,6 +552,11 @@ it("says a single answer aloud and gives a table only as a headline", () => {
   expect(table).toContain("First row: region: North America, orders: 8473");
   expect(table).not.toContain("Europe");
   expect(table).toContain("Do not read out the table");
+  const wait = resultText(
+    "Average wait?",
+    run([{ average_wait: { months: 0, days: 1, micros: "7200000000" } }]),
+  );
+  expect(wait).toContain("Answer: average wait: 1 day 02:00:00.");
   // It never asks the user to read the result.
   for (const text of [one, table])
     expect(text).not.toMatch(/read .* to you|ask the user to read/i);

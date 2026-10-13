@@ -32,6 +32,7 @@ import {
   secondaryNav,
 } from "../apps/web/src/shell/nav.js";
 import { paths } from "../apps/web/src/paths.js";
+import { DataTable } from "../apps/web/src/ui.js";
 import { chatIsActive } from "../apps/web/src/areas/analyst/launcher.js";
 import {
   collapseActivity,
@@ -102,18 +103,52 @@ describe("workspace UI kit", () => {
     expect(columnKind("UHUGEINT")).toBe("integer");
     expect(columnKind("ENUM('REAL', 'INTEGER', 'MAPLE')")).toBe("string");
     expect(columnKind("INTEGER[2]")).toBe("json");
+    expect(columnKind("INTERVAL")).toBe("interval");
+    expect(columnKind("INTERVAL[]")).toBe("json");
   });
-  it("shows INTERVAL values as JSON, not [object Object]", () => {
+  it("shows and sorts INTERVAL values as DuckDB does", () => {
+    const waits = [
+      { wait: { months: 0, days: 1, micros: "-3600000000" } },
+      { wait: { months: 14, days: 3, micros: "14706789000" } },
+      { wait: { months: 0, days: 0, micros: "82800000000" } },
+      { wait: { months: 0, days: -1, micros: "0" } },
+    ];
+    // 23 hours sorts before 1 day less an hour, as in DuckDB's ORDER BY.
+    const ascending = [
+      "-1 day",
+      "23:00:00",
+      "1 day -01:00:00",
+      "1 year 2 months 3 days 04:05:06.789",
+    ];
     const html = render(
       h(DataGrid, {
         label: "Waits",
-        rows: [{ wait: { months: 0, days: 2, micros: "0" } }],
+        rows: waits,
         columns: [{ key: "wait", type: "INTERVAL" }],
       }),
     );
-    expect(html).not.toContain("[object Object]");
-    expect(html).toContain(
-      "{&quot;months&quot;:0,&quot;days&quot;:2,&quot;micros&quot;:&quot;0&quot;}",
+    expect(
+      [...html.matchAll(/role="gridcell"[^>]*title="([^"]*)"/g)].map(
+        (m) => m[1],
+      ),
+    ).toEqual([ascending[2], ascending[3], ascending[1], ascending[0]]);
+    // What a click on the column header sorts with.
+    expect(
+      [...waits]
+        .sort((a, b) => compareValues(a.wait, b.wait, columnKind("INTERVAL")))
+        .map((r) => formatValue(r.wait, "interval")),
+    ).toEqual(ascending);
+    // The Analyst types the column from its values and sorts it the same way.
+    expect(inferKind(waits.map((r) => r.wait))).toBe("interval");
+    const columns = answerColumns(waits);
+    expect(
+      sortAnswer(waits, columns, { key: "wait", dir: "desc" }).map((r) =>
+        formatValue(r.wait, columns[0].kind),
+      ),
+    ).toEqual([...ascending].reverse());
+    // The dataset preview has no types, so it knows an interval by its shape.
+    expect(render(h(DataTable, { rows: waits.slice(0, 1) }))).toContain(
+      "1 day -01:00:00",
     );
   });
   it("keeps neighboring 64-bit integers distinct", () => {
