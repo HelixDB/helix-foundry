@@ -190,19 +190,31 @@ it("sends Azure OpenAI requests to the resource's v1 endpoint with the deploymen
     });
     const [url, init] = fetchMock.mock.calls[0] as any;
     expect(url).toBe("https://example.openai.azure.com/openai/v1/responses");
+    // Azure's v1 API reads the key from api-key only, and a redirect
+    // cannot carry it to another host.
     expect(init.headers["api-key"]).toBe("azure-key");
-    expect(init.headers.authorization).toBe("Bearer azure-key");
+    expect(init.headers).not.toHaveProperty("authorization");
+    expect(init.redirect).toBe("error");
     expect(JSON.parse(init.body).model).toBe("gpt-6.1-sol");
     expect(JSON.parse(init.body).text.format.strict).toBe(true);
   }
+  expect(
+    ProviderSchema.safeParse({
+      provider: "azure",
+      model: "gpt-6.1-sol",
+      apiKey: "azure-key",
+    }).success,
+  ).toBe(false);
   await expect(
-    new Provider(
-      ProviderSchema.parse({
+    new Provider({
+      ...ProviderSchema.parse({
         provider: "azure",
         model: "gpt-6.1-sol",
         apiKey: "azure-key",
+        baseUrl: "https://example.openai.azure.com",
       }),
-    ).generate("", {}, {}),
+      baseUrl: undefined,
+    }).generate("", {}, {}),
   ).rejects.toThrow("Azure OpenAI endpoint is required");
   expect(fetchMock).toHaveBeenCalledTimes(1);
 

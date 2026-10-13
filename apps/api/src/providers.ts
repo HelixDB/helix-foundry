@@ -12,16 +12,23 @@ export function azureBase(endpoint: string) {
   const base = endpoint.replace(/\/+$/, "");
   return base.endsWith("/openai/v1") ? base : base + "/openai/v1";
 }
-// A blank key keeps the saved credential only for the endpoint it belongs to.
+// A blank key keeps the saved credential only for the endpoint it belongs to:
+// the same Custom base URL, or the same Azure OpenAI endpoint and deployment.
 export function canReuseProviderKey(
-  previous: Pick<ProviderSettings, "provider" | "baseUrl">,
-  next: Pick<ProviderSettings, "provider" | "baseUrl">,
+  previous: Pick<ProviderSettings, "provider" | "baseUrl" | "model">,
+  next: Pick<ProviderSettings, "provider" | "baseUrl" | "model">,
 ) {
+  if (previous.provider !== next.provider) return false;
+  if (next.provider === "azure")
+    return (
+      !!previous.baseUrl &&
+      !!next.baseUrl &&
+      azureBase(previous.baseUrl) === azureBase(next.baseUrl) &&
+      previous.model === next.model
+    );
   return (
-    previous.provider === next.provider &&
-    (next.provider !== "custom" ||
-      previous.baseUrl?.replace(/\/+$/, "") ===
-        next.baseUrl?.replace(/\/+$/, ""))
+    next.provider !== "custom" ||
+    previous.baseUrl?.replace(/\/+$/, "") === next.baseUrl?.replace(/\/+$/, "")
   );
 }
 export class Provider implements ModelProvider {
@@ -114,7 +121,8 @@ export class Provider implements ModelProvider {
       // OpenAI, Azure OpenAI and Custom endpoints in the Responses format.
       if (s.provider === "azure") {
         // The same Responses API, on the Azure resource, with the deployment
-        // name as the model. Azure reads the key from the api-key header.
+        // name as the model. Azure's v1 API reads the key from the api-key
+        // header only, so it is not also sent as a bearer token.
         assert(s.apiKey, "Azure OpenAI API key is required");
         assert(s.baseUrl, "Azure OpenAI endpoint is required");
         url = azureBase(s.baseUrl) + "/responses";
@@ -122,11 +130,12 @@ export class Provider implements ModelProvider {
       } else if (s.provider === "custom") {
         assert(s.baseUrl, "Enter an API base URL.");
         url = s.baseUrl.replace(/\/+$/, "") + "/responses";
+        if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
       } else {
         assert(s.apiKey, "OpenAI API key is required");
         url = "https://api.openai.com/v1/responses";
+        headers.authorization = "Bearer " + s.apiKey;
       }
-      if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
       body = {
         model: s.model,
         max_output_tokens: 8192,
@@ -168,7 +177,10 @@ export class Provider implements ModelProvider {
       headers,
       body: JSON.stringify(body),
       signal: abort,
-      ...(s.provider === "custom" ? { redirect: "error" as const } : {}),
+      // A user-entered endpoint must not forward the key somewhere else.
+      ...(s.provider === "custom" || s.provider === "azure"
+        ? { redirect: "error" as const }
+        : {}),
     });
     if (!response.ok)
       throw new AppError(
