@@ -39,6 +39,7 @@ const labels: Record<string, string> = {
   neon: "Neon",
   supabase: "Supabase",
   mysql: "MySQL",
+  neo4j: "Neo4j",
   upload: "Uploads",
   rest: "REST API",
 };

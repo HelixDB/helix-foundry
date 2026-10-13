@@ -20,6 +20,8 @@ export const config = {
   modelKeepAlive: process.env.MODEL_KEEP_ALIVE || "30s",
   // Requests per minute per IP; local acceptance runs raise it.
   rateLimit: Number(process.env.RATE_LIMIT_MAX) || 240,
+  // Bytes in one transaction's HelixDB write, below HelixDB's request limit.
+  helixWriteLimit: Number(process.env.HELIX_WRITE_LIMIT) || 1_500_000,
 };
 export function requireSecrets() {
   if (config.encryptionKey.length < 32 || config.internalKey.length < 32)

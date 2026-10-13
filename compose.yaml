@@ -21,6 +21,8 @@ x-app: &app
     # The executor's time limits, which the API waits for. See the executor.
     EXECUTOR_QUERY_TIMEOUT: ${EXECUTOR_QUERY_TIMEOUT:-}
     EXECUTOR_JOB_TIMEOUT: ${EXECUTOR_JOB_TIMEOUT:-}
+    # Bytes in one transaction's HelixDB write (docs/OPERATIONS.md).
+    HELIX_WRITE_LIMIT: ${HELIX_WRITE_LIMIT:-}
   networks: [default, execution]
   depends_on:
     helix:
@@ -93,7 +95,7 @@ services:
     # first and asks before it starts a new HelixDB image. The development
     # docker run commands in README.md, AGENTS.md and docs/GUIDE.md use the same
     # image, and tests/scripts.test.ts checks that they match.
-    image: ghcr.io/helixdb/helixdb:v0.0.6@sha256:94b29942658ebdca0a91bf15edffe921a46da3e26e1223ea333ccce58c6212dd
+    image: ghcr.io/helixdb/helixdb:v0.0.12@sha256:f22b50fdab8fadbf8b5a881e656f293fdf5c688bad018f503b8dbc2f0f29543d
     restart: unless-stopped
     environment:
       HELIX_DATA_DIR: /var/lib/helix

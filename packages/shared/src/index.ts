@@ -68,19 +68,51 @@ export type HostedConnection = {
   config: { hostedConnectionId: string };
   discovery: any;
 };
-export const ProviderSchema = z.object({
-  provider: z.enum(["local", "claude", "openai", "azure"]),
-  model: z.string().min(1).max(150),
-  baseUrl: z.url().optional(),
-  apiKey: z.string().optional(),
-  allowRawData: z.boolean().default(false),
-  dailyTokens: z.number().int().min(1000).max(10_000_000).default(200_000),
-  maxCalls: z.number().int().min(1).max(20).default(20),
-  timeoutSeconds: z.number().int().min(30).max(1800).default(600),
-  continuous: z.boolean().default(true),
-});
+export const ProviderSchema = z
+  .object({
+    provider: z.enum(["local", "claude", "openai", "azure", "custom"]),
+    model: z.string().trim().min(1).max(150),
+    baseUrl: z.url().optional(),
+    apiFormat: z.enum(["chat-completions", "responses"]).optional(),
+    apiKey: z.string().optional(),
+    allowRawData: z.boolean().default(false),
+    dailyTokens: z.number().int().min(1000).max(10_000_000).default(200_000),
+    maxCalls: z.number().int().min(1).max(20).default(20),
+    timeoutSeconds: z.number().int().min(30).max(1800).default(600),
+    continuous: z.boolean().default(true),
+  })
+  .superRefine((settings, ctx) => {
+    if (settings.provider !== "custom") return;
+    if (!settings.baseUrl) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseUrl"],
+        message: "Enter an API base URL.",
+      });
+      return;
+    }
+    let url: URL;
+    try {
+      url = new URL(settings.baseUrl);
+    } catch {
+      return;
+    } // z.url() reports malformed URLs.
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseUrl"],
+        message:
+          "Use an HTTP(S) API base URL without credentials, a query string or a fragment.",
+      });
+  });
 export type ProviderSettings = z.infer<typeof ProviderSchema>;
-export const OnboardingProviderSchema = ProviderSchema.extend({
+export const OnboardingProviderSchema = ProviderSchema.safeExtend({
   advanceToData: z.boolean().optional(),
 });
 export type OnboardingProvider = z.infer<typeof OnboardingProviderSchema>;

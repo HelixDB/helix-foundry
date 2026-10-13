@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Check, Monitor, Cloud, ArrowRight } from "lucide-react";
+import {
+  LoaderCircle,
+  Check,
+  Monitor,
+  Cloud,
+  ArrowRight,
+  SlidersHorizontal,
+} from "lucide-react";
 import { api, number } from "./api";
 import { useWorkspace } from "./ui";
 import { ChoiceCard } from "./choice-card";
@@ -138,7 +145,12 @@ export function ProviderSetup({
     }
   }, [q.data, setup.data, settings]);
   const s = settings || { provider: "local", model: "qwen3:4b" };
-  const update = (k: string, v: any) => setSettings({ ...s, [k]: v });
+  const update = (k: string, v: any) =>
+    setSettings({
+      ...s,
+      [k]: v,
+      ...(k === "baseUrl" ? { apiKey: "", hasKey: false } : {}),
+    });
   const job = setup.data?.providerJob,
     working = job && ["queued", "running"].includes(job.data.status);
   const owner = role === "owner";
@@ -178,6 +190,11 @@ export function ProviderSetup({
               "Azure OpenAI",
               "Use a deployment in your Azure subscription. Your schemas, data samples and answers are sent to that Azure resource.",
             ],
+            [
+              "custom",
+              "Custom",
+              "Use your own model endpoint. Data is sent to the endpoint you configure.",
+            ],
           ].map(([value, title, description]) => (
             <ChoiceCard
               key={value}
@@ -191,14 +208,29 @@ export function ProviderSetup({
                   ...s,
                   provider: value,
                   model:
-                    value === "local"
-                      ? "qwen3:4b"
-                      : value === "claude"
-                        ? "claude-sonnet-4-6"
-                        : value === "openai"
-                          ? "gpt-5.4-mini"
-                          : "",
-                  baseUrl: value === "local" ? q.data?.baseUrl : undefined,
+                    value === "custom"
+                      ? q.data?.provider === value
+                        ? q.data.model
+                        : ""
+                      : value === "local"
+                        ? "qwen3:4b"
+                        : value === "claude"
+                          ? "claude-sonnet-4-6"
+                          : value === "openai"
+                            ? "gpt-5.4-mini"
+                            : "",
+                  baseUrl:
+                    value === "custom"
+                      ? q.data?.provider === value
+                        ? q.data.baseUrl
+                        : ""
+                      : value === "local"
+                        ? q.data?.baseUrl
+                        : undefined,
+                  apiFormat:
+                    value === "custom"
+                      ? q.data?.apiFormat || "chat-completions"
+                      : undefined,
                   apiKey: "",
                   hasKey: q.data?.provider === value && q.data?.hasKey,
                 })
@@ -208,6 +240,11 @@ export function ProviderSetup({
                   <Monitor className="provider-logo" aria-hidden="true" />
                 ) : value === "azure" ? (
                   <Cloud className="provider-logo" aria-hidden="true" />
+                ) : value === "custom" ? (
+                  <SlidersHorizontal
+                    className="provider-logo"
+                    aria-hidden="true"
+                  />
                 ) : (
                   <img
                     className="provider-logo"
@@ -270,13 +307,57 @@ export function ProviderSetup({
             </p>
           </>
         )}
+        {s.provider === "custom" && (
+          <>
+            <label>
+              API base URL
+              <input
+                type="url"
+                required
+                value={s.baseUrl || ""}
+                placeholder="https://your-gateway.example/v1"
+                onChange={(e) => update("baseUrl", e.target.value)}
+              />
+            </label>
+            <p className="muted">
+              Include the API version, such as /v1. Enter credentials in the API
+              key field.
+            </p>
+            <label>
+              Model name
+              <input
+                required
+                maxLength={150}
+                value={s.model || ""}
+                placeholder="Model ID or routing alias"
+                onChange={(e) => update("model", e.target.value)}
+              />
+            </label>
+            <label>
+              API format
+              <select
+                value={s.apiFormat || "chat-completions"}
+                onChange={(e) => update("apiFormat", e.target.value)}
+              >
+                <option value="chat-completions">
+                  OpenAI Chat Completions
+                </option>
+                <option value="responses">OpenAI Responses</option>
+              </select>
+            </label>
+            <p className="muted">
+              Choose the format your endpoint supports. The model must support
+              structured JSON output.
+            </p>
+          </>
+        )}
         {s.provider !== "local" && (
           <label>
             API key
             <input
               type="password"
               autoComplete="off"
-              required={owner && !s.hasKey}
+              required={owner && s.provider !== "custom" && !s.hasKey}
               placeholder={
                 s.hasKey
                   ? "Leave blank to keep your saved key"
@@ -286,6 +367,12 @@ export function ProviderSetup({
               onChange={(e) => update("apiKey", e.target.value)}
             />
           </label>
+        )}
+        {s.provider === "custom" && (
+          <p className="muted">
+            API key is optional for endpoints without authentication. Leave
+            blank to keep the saved key for this endpoint.
+          </p>
         )}
       </fieldset>
       {!owner && (

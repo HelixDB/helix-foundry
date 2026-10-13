@@ -3,7 +3,7 @@
 # handle a key or a passphrase turn off tracing (bash -x), which would print them.
 
 # The .env lines a backup keeps in settings.env. Keys and client secrets stay out.
-settings_pattern='^[[:space:]]*(export[[:space:]]+)?(PUBLIC_PORT|PUBLIC_ORIGIN|MODEL_ENDPOINT|COMPOSE_PROJECT_NAME|DUCKDB_SPILL_LIMIT|EXECUTOR_RESULT_LIMIT|EXECUTOR_QUERY_TIMEOUT|EXECUTOR_JOB_TIMEOUT|APP_ORIGIN|HELIX_URL|EXECUTOR_URL|OLLAMA_URL|DATA_DIR|PORT|EXECUTOR_PORT|NEON_CLIENT_ID|SUPABASE_CLIENT_ID|PLANETSCALE_CLIENT_ID)[[:space:]]*='
+settings_pattern='^[[:space:]]*(export[[:space:]]+)?(PUBLIC_PORT|PUBLIC_ORIGIN|MODEL_ENDPOINT|COMPOSE_PROJECT_NAME|DUCKDB_SPILL_LIMIT|EXECUTOR_RESULT_LIMIT|EXECUTOR_QUERY_TIMEOUT|EXECUTOR_JOB_TIMEOUT|HELIX_WRITE_LIMIT|APP_ORIGIN|HELIX_URL|EXECUTOR_URL|OLLAMA_URL|DATA_DIR|PORT|EXECUTOR_PORT|NEON_CLIENT_ID|SUPABASE_CLIENT_ID|PLANETSCALE_CLIENT_ID)[[:space:]]*='
 # PBKDF2 iterations for env.enc, the passphrase-encrypted .env (backup.sh --include-key).
 key_iterations=600000
 

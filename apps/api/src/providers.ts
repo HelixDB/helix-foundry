@@ -6,12 +6,23 @@ import type {
 import { config } from "./config.js";
 import { assert, AppError } from "./security.js";
 import { postJson } from "./post.js";
-export const OPENAI_API = "https://api.openai.com/v1";
 // Azure OpenAI's OpenAI-compatible base URL, from the resource endpoint
 // (`https://RESOURCE.openai.azure.com`) or that endpoint with `/openai/v1`.
 export function azureBase(endpoint: string) {
   const base = endpoint.replace(/\/+$/, "");
   return base.endsWith("/openai/v1") ? base : base + "/openai/v1";
+}
+// A blank key keeps the saved credential only for the endpoint it belongs to.
+export function canReuseProviderKey(
+  previous: Pick<ProviderSettings, "provider" | "baseUrl">,
+  next: Pick<ProviderSettings, "provider" | "baseUrl">,
+) {
+  return (
+    previous.provider === next.provider &&
+    (next.provider !== "custom" ||
+      previous.baseUrl?.replace(/\/+$/, "") ===
+        next.baseUrl?.replace(/\/+$/, ""))
+  );
 }
 export class Provider implements ModelProvider {
   private verified = false;
@@ -78,20 +89,59 @@ export class Provider implements ModelProvider {
         ],
         tool_choice: { type: "tool", name: "submit" },
       };
-    } else if (s.provider === "azure") {
-      // The same Responses API, on the Azure resource, with the deployment
-      // name as the model. Azure reads the key from the api-key header.
-      assert(s.apiKey, "Azure OpenAI API key is required");
-      assert(s.baseUrl, "Azure OpenAI endpoint is required");
-      url = azureBase(s.baseUrl) + "/responses";
-      headers["api-key"] = s.apiKey;
-      headers.authorization = "Bearer " + s.apiKey;
-      body = openaiBody(s.model, system, user, schema);
+    } else if (s.provider === "custom" && s.apiFormat !== "responses") {
+      assert(s.baseUrl, "Enter an API base URL.");
+      url = s.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+      if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
+      body = {
+        model: s.model,
+        max_tokens: 8192,
+        stream: false,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "result",
+            schema: strictSchema(schema),
+            strict: true,
+          },
+        },
+      };
     } else {
-      assert(s.apiKey, "OpenAI API key is required");
-      url = OPENAI_API + "/responses";
-      headers.authorization = "Bearer " + s.apiKey;
-      body = openaiBody(s.model, system, user, schema);
+      // OpenAI, Azure OpenAI and Custom endpoints in the Responses format.
+      if (s.provider === "azure") {
+        // The same Responses API, on the Azure resource, with the deployment
+        // name as the model. Azure reads the key from the api-key header.
+        assert(s.apiKey, "Azure OpenAI API key is required");
+        assert(s.baseUrl, "Azure OpenAI endpoint is required");
+        url = azureBase(s.baseUrl) + "/responses";
+        headers["api-key"] = s.apiKey;
+      } else if (s.provider === "custom") {
+        assert(s.baseUrl, "Enter an API base URL.");
+        url = s.baseUrl.replace(/\/+$/, "") + "/responses";
+      } else {
+        assert(s.apiKey, "OpenAI API key is required");
+        url = "https://api.openai.com/v1/responses";
+      }
+      if (s.apiKey) headers.authorization = "Bearer " + s.apiKey;
+      body = {
+        model: s.model,
+        max_output_tokens: 8192,
+        store: false,
+        instructions: system,
+        input: user,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "result",
+            schema: strictSchema(schema),
+            strict: true,
+          },
+        },
+      };
     }
     const abort = signal || AbortSignal.timeout(s.timeoutSeconds * 1000);
     if (s.provider === "local") {
@@ -118,54 +168,87 @@ export class Provider implements ModelProvider {
       headers,
       body: JSON.stringify(body),
       signal: abort,
+      ...(s.provider === "custom" ? { redirect: "error" as const } : {}),
     });
     if (!response.ok)
       throw new AppError(
         502,
-        `${s.provider === "azure" ? "Azure OpenAI" : s.provider} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
+        `${providerName(s.provider)} returned HTTP ${response.status}. Check the model, credentials, and provider quota.`,
       );
     let value: unknown,
       tokens = 0;
-    const data = (await response.json()) as any;
+    const data = (await response.json().catch((error) => {
+      throwJsonError(error, s.provider);
+    })) as any;
     if (s.provider === "claude") {
       value = data.content.find(
         (x: any) => x.type === "tool_use" && x.name === "submit",
       )?.input;
       tokens =
         (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
+    } else if (s.provider === "custom" && s.apiFormat !== "responses") {
+      const choice = data.choices?.[0];
+      assert(
+        choice?.finish_reason !== "length",
+        "Custom model ran out of room for its answer.",
+        502,
+      );
+      const text = choice?.message?.content;
+      assert(
+        typeof text === "string" && text,
+        "Custom model did not return a structured response",
+        502,
+      );
+      value = customJson(text);
+      tokens = data.usage?.total_tokens || 0;
     } else {
+      if (s.provider === "custom")
+        assert(
+          data.status !== "incomplete" && data.status !== "failed",
+          "Custom model did not complete its answer.",
+          502,
+        );
       const text = data.output
         ?.flatMap((x: any) => x.content || [])
         .find((x: any) => x.type === "output_text")?.text;
       assert(text, "Model did not return a structured response");
-      value = JSON.parse(text);
+      try {
+        value = s.provider === "custom" ? customJson(text) : JSON.parse(text);
+      } catch (error) {
+        throwJsonError(error, s.provider);
+      }
       tokens = data.usage?.total_tokens || 0;
     }
     return { value: withoutNullOptionals(value), tokens };
   }
 }
-// A Responses API request with a strict JSON schema, for OpenAI and Azure OpenAI.
-function openaiBody(
-  model: string,
-  system: string,
-  user: string,
-  schema: Record<string, unknown>,
-) {
-  return {
-    model,
-    max_output_tokens: 8192,
-    store: false,
-    instructions: system,
-    input: user,
-    text: {
-      format: {
-        type: "json_schema",
-        name: "result",
-        schema: strictSchema(schema),
-        strict: true,
-      },
-    },
-  };
+// How errors name a provider: "The custom AI provider returned HTTP 401".
+function providerName(provider: string) {
+  return provider === "custom"
+    ? "The custom AI provider"
+    : provider === "azure"
+      ? "Azure OpenAI"
+      : provider;
+}
+function customJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AppError(
+      502,
+      "Custom model did not return valid JSON. Choose a model that supports structured output.",
+    );
+  }
+}
+// JSON decoder messages can include response contents. Only decoding failures
+// get recovery guidance; transport failures and cancellation keep their identity.
+function throwJsonError(error: unknown, provider: string): never {
+  if (error instanceof SyntaxError)
+    throw new AppError(
+      502,
+      `${providerName(provider)} returned invalid structured JSON. Retry the request or choose a more capable model.`,
+    );
+  throw error;
 }
 // Accepts a single response object or newline-delimited streamed parts.
 function ollamaResult(text: string) {
