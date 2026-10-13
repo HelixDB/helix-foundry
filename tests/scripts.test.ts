@@ -1,6 +1,6 @@
 // Runs scripts/backup.sh, restore.sh and upgrade.sh against a fake docker
 // (tests/fixtures/fake-docker.sh) in a throwaway copy of the repository.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -23,6 +23,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { SCHEMA_VERSION } from "../apps/api/src/store.js";
+
+// These tests run their scripts synchronously, and a synchronous test lets
+// the worker's event loop run only when it ends. Without a turn between
+// tests, vitest's own messages wait for the whole file, over a minute on a
+// slow machine, and time out.
+beforeEach(() => new Promise((resolve) => setImmediate(resolve)));
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const KEY = "a1".repeat(32);

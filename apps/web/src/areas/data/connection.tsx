@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Cable, Database, RefreshCw } from "lucide-react";
@@ -159,6 +160,7 @@ export function ConnectionDetail({ sourceId }: { sourceId: string }) {
               { label: "Created", value: formatDate(s.createdAt) },
             ]}
           />
+          <ConnectionSchedule key={s.data.schedule ?? "automatic"} source={s} />
         </Panel>
       </div>
       <Section
@@ -190,5 +192,83 @@ export function ConnectionDetail({ sourceId }: { sourceId: string }) {
         )}
       </Section>
     </Page>
+  );
+}
+
+const schedules = [
+  ["", "Automatic"],
+  ["*/5 * * * *", "Every 5 minutes"],
+  ["*/15 * * * *", "Every 15 minutes"],
+  ["0 * * * *", "Every hour"],
+  ["0 0 * * *", "Daily at midnight UTC"],
+] as const;
+function ConnectionSchedule({ source }: { source: Resource }) {
+  const { id, role } = useWorkspace(),
+    action = useAction(),
+    initial: string = source.data.schedule || "";
+  const [choice, setChoice] = useState(
+      schedules.some(([value]) => value === initial) ? initial : "custom",
+    ),
+    [custom, setCustom] = useState(initial);
+  const value = choice === "custom" ? custom.trim() : choice;
+  return (
+    <section aria-label="Snapshot refresh schedule">
+      <h3>Snapshot refresh schedule</h3>
+      <p className="muted">
+        Choose when this connection refreshes complete snapshots. Live database
+        changes continue independently; this schedule applies when snapshot
+        fallback is used. Automatic restores the connector's default. Saving
+        applies to every table in this connection and keeps its credentials.
+      </p>
+      <label>
+        Refresh cadence
+        <select
+          value={choice}
+          disabled={role !== "owner" || action.pending}
+          onChange={(e) => setChoice(e.target.value)}
+        >
+          {schedules.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+          <option value="custom">Custom UTC cron</option>
+        </select>
+      </label>
+      {choice === "custom" && (
+        <label>
+          UTC cron schedule
+          <input
+            value={custom}
+            disabled={role !== "owner" || action.pending}
+            placeholder="0 9 * * 1-5"
+            onChange={(e) => setCustom(e.target.value)}
+          />
+        </label>
+      )}
+      {role === "owner" && (
+        <Button
+          disabled={
+            action.pending ||
+            value === initial ||
+            (choice === "custom" && !value)
+          }
+          pending={action.pending}
+          onClick={() =>
+            action.run(
+              () =>
+                api(
+                  `/workspaces/${id}/sources/${source.id}/schedule`,
+                  { schedule: value || null },
+                  "PUT",
+                ),
+              "Refresh schedule saved",
+            )
+          }
+        >
+          Save schedule
+        </Button>
+      )}
+    </section>
   );
 }

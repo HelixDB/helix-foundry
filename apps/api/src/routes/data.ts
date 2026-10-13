@@ -1,11 +1,11 @@
+import { connectionSources } from "../source-groups.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { CronExpressionParser } from "cron-parser";
 import {
   SourceSchema,
   DemoSchema,
@@ -15,22 +15,39 @@ import { config } from "../config.js";
 import { assert, seal } from "../security.js";
 import { resource, transaction, type Store } from "../store.js";
 import { discover } from "../connectors.js";
+import { storedDiscovery } from "../source-discovery.js";
 import {
   ingestFile,
   ingestRows,
   queryDatasets,
+  previewDatasetVersion,
+  datasetInputs,
   seedDemo,
 } from "../datasets.js";
-import { sourceSyncDefaults } from "../source-sync.js";
+import { datasetCsv } from "../results.js";
+import {
+  sourceSyncDefaults,
+  nextRefresh,
+  validateRefreshSchedule,
+} from "../source-sync.js";
 import { testedConnection } from "../onboarding.js";
 import { resolveHostedConfig } from "../hosting.js";
 import { datasetPrivacyId, withDatasetPrivacy } from "../dataset-privacy.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
 export const dataSchemas: RequestSchemas = {
+  "POST /api/v1/workspaces/:w/datasets/:id/versions/:version/preview": z.object(
+    {
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(500).default(50),
+    },
+  ),
   "POST /api/v1/workspaces/:w/demo": DemoSchema,
   "POST /api/v1/workspaces/:w/sources": SourceSchema,
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
+  "PUT /api/v1/workspaces/:w/sources/:id/schedule": z.object({
+    schedule: z.string().trim().min(1).max(200).nullable(),
+  }),
   "PUT /api/v1/workspaces/:w/datasets/:id/privacy": z.object({
     additionalColumns: z.array(z.string().min(1)),
   }),
@@ -88,11 +105,21 @@ export function registerDataRoutes(
     await mkdir(resolve(config.dataDir, "incoming", a.scope), {
       recursive: true,
     });
-    await pipeline(
-      part.file,
-      createWriteStream(resolve(config.dataDir, "incoming", a.scope, file)),
-    );
-    assert(!part.file.truncated, "File exceeds 256 MB limit");
+    const target = resolve(config.dataDir, "incoming", a.scope, file),
+      interrupted = () => part.file.destroy(new Error("Upload interrupted"));
+    req.raw.once("aborted", interrupted);
+    try {
+      if (req.raw.aborted) interrupted();
+      await pipeline(part.file, createWriteStream(target));
+      assert(!part.file.truncated, "File exceeds 256 MB limit");
+    } catch (error) {
+      await rm(target, { force: true }).catch((cleanupError) =>
+        req.log.warn({ err: cleanupError }, "Could not remove partial upload"),
+      );
+      throw error;
+    } finally {
+      req.raw.off("aborted", interrupted);
+    }
     return ingestFile(
       store,
       a.scope,
@@ -118,6 +145,25 @@ export function registerDataRoutes(
       b,
     );
   });
+  app.post(
+    "/api/v1/workspaces/:w/datasets/:id/versions/:version/preview",
+    async (req: any) => {
+      const a = await access(req);
+      const b = z
+        .object({
+          offset: z.number().int().min(0).default(0),
+          limit: z.number().int().min(1).max(500).default(50),
+        })
+        .parse(req.body || {});
+      return previewDatasetVersion(
+        store,
+        a.scope,
+        req.params.id,
+        req.params.version,
+        b,
+      );
+    },
+  );
   app.put("/api/v1/workspaces/:w/datasets/:id/privacy", async (req: any) => {
     const a = await access(req, "owner"),
       b = z
@@ -200,6 +246,27 @@ export function registerDataRoutes(
       const a = await access(req),
         ds = await store.get(a.scope, req.params.id);
       assert(ds?.kind === "dataset", "Dataset unavailable", 404);
+      const { format } = z
+        .object({ format: z.enum(["parquet", "csv"]).default("parquet") })
+        .parse(req.query);
+      if (format === "csv") {
+        const inputs = await datasetInputs(store, a.scope, [ds.id]),
+          version = await store.get(a.scope, inputs[0].version);
+        assert(version?.kind === "version", "Snapshot unavailable", 404);
+        const stream = await datasetCsv(
+          {
+            scope: a.scope,
+            inputs,
+            sql: `SELECT * FROM "${datasetTable(ds.id)}"`,
+          },
+          version.data.profile.columns.map((c: any) => c.name),
+        );
+        reply
+          .header("content-disposition", 'attachment; filename="dataset.csv"')
+          .header("x-foundry-version", inputs[0].version)
+          .type("text/csv; charset=utf-8");
+        return stream;
+      }
       reply
         .header("content-disposition", `attachment; filename="dataset.parquet"`)
         .type("application/octet-stream");
@@ -216,7 +283,7 @@ export function registerDataRoutes(
   app.post("/api/v1/workspaces/:w/sources", async (req) => {
     const a = await access(req, "owner"),
       b = SourceSchema.parse(req.body);
-    if (b.schedule) CronExpressionParser.parse(b.schedule, { tz: "UTC" });
+    validateRefreshSchedule(b.schedule);
     const resolved = await resolveHostedConfig(
       store,
       a.scope,
@@ -231,12 +298,40 @@ export function registerDataRoutes(
             kind: b.kind,
             secret: seal(resolved.config),
             hostedProvider: resolved.provider,
-            discovery,
+            discovery: storedDiscovery(b.kind, discovery, resolved.config),
             ...sourceSyncDefaults(b.kind, b.schedule),
           }),
         ),
       ),
     );
+  });
+  app.put("/api/v1/workspaces/:w/sources/:id/schedule", async (req: any) => {
+    const a = await access(req, "owner"),
+      b = z
+        .object({ schedule: z.string().trim().min(1).max(200).nullable() })
+        .parse(req.body);
+    validateRefreshSchedule(b.schedule);
+    return transaction(store, a.scope, async (tx) => {
+      const source = await tx.get(req.params.id);
+      assert(source?.kind === "source", "Source unavailable", 404);
+      const targets = await connectionSources(tx, source);
+      let result = source;
+      for (const target of targets) {
+        const current = (await tx.get(target.id))!;
+        const changed = {
+          ...current,
+          data: { ...current.data, schedule: b.schedule },
+        };
+        const nextRun =
+          current.data.sync?.mode === "cdc" ||
+          current.data.sync?.mode === "auto"
+            ? null
+            : nextRefresh(changed);
+        const updated = tx.update(current, { ...changed.data, nextRun });
+        if (updated.id === source.id) result = updated;
+      }
+      return scrub(result);
+    });
   });
   app.post("/api/v1/workspaces/:w/sources/test", async (req) => {
     const a = await access(req, "owner");

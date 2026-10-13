@@ -54,7 +54,10 @@ export function assert(
 }
 export function redact(message: string) {
   return message
-    .replace(/\b(postgres(?:ql)?|mysql):\/\/[^\s]+/gi, "$1://[redacted]")
+    .replace(
+      /\b(postgres(?:ql)?|mysql|neo4j(?:\+s)?|bolt(?:\+s)?):\/\/[^\s]+/gi,
+      "$1://[redacted]",
+    )
     .replace(
       /(password|api[_-]?key|authorization|token)\s*[:=]\s*[^\s,;]+/gi,
       "$1=[redacted]",

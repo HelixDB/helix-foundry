@@ -115,6 +115,26 @@ GRANT SELECT ON app.* TO 'foundry'@'%';
 GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'foundry'@'%';`}</pre>
     </>
   ),
+  neo4j: () => (
+    <>
+      <p>
+        Use the HTTP URL of your Neo4j server (port 7474), not the bolt URL. If
+        Neo4j runs on this computer and Foundry runs in Docker, use{" "}
+        <code>http://host.docker.internal:7474</code>, because{" "}
+        <code>localhost</code> is Foundry's own container. Foundry needs Neo4j 5
+        or later with the Query API, which Neo4j 5.25 and later turn on by
+        default. On Enterprise Edition, run this as an administrator to create a
+        read-only user:
+      </p>
+      <pre>{`CREATE USER foundry SET PASSWORD 'choose-a-password' CHANGE NOT REQUIRED;
+GRANT ROLE reader TO foundry;`}</pre>
+      <p>
+        Community Edition has no roles, so connect with its user. Each label
+        becomes a dataset of its nodes and each relationship type a dataset of
+        its relationships, with the start and end node ids as columns.
+      </p>
+    </>
+  ),
   s3: () => (
     <>
       <p>

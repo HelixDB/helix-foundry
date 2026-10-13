@@ -899,6 +899,9 @@ td {
 .settings-panel .notice strong {
   font-size: 13px;
 }
+.settings-panel .simple-list {
+  margin-top: var(--hf-space-2);
+}
 .settings-panel .modal-actions {
   flex-wrap: wrap;
 }
@@ -1288,7 +1291,7 @@ td {
   margin-bottom: 22px;
 }
 .provider-options.choice-options {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .choice-card {
   display: grid;
@@ -1528,6 +1531,11 @@ td {
 }
 .dataset-peek span {
   color: #817d74;
+}
+.selection-actions {
+  display: flex;
+  gap: 14px;
+  margin: 2px 0 8px;
 }
 .table-selection {
   max-height: 330px;
