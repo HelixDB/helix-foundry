@@ -9,7 +9,7 @@ import {
   tokensToday,
 } from "./assistant.js";
 import { Provider } from "./providers.js";
-import { AppError, assert, digest, redact } from "./security.js";
+import { AppError, assert, digest, modelError, redact } from "./security.js";
 
 // Hands-free voice with GPT-Live. The browser carries microphone and speaker
 // audio over WebRTC; this server creates the session (the OpenAI key never
@@ -462,7 +462,8 @@ export function createLiveBridge(store: Store) {
         session,
         "commentary",
         delegationId,
-        `Foundry couldn't work on that request: ${task.error.slice(0, 200)} Nothing in the workspace changed. Ask the user whether to try again.`,
+        // Voice never repeats a value an error quotes.
+        `Foundry couldn't work on that request: ${modelError(task.error, false).slice(0, 200)} Nothing in the workspace changed. Ask the user whether to try again.`,
       );
       return task;
     });
@@ -746,7 +747,7 @@ export function resultText(question: string, run: Resource | null) {
   if (d.status === "canceled")
     return `The lookup for "${question}" was stopped before it finished. No result is available.`;
   if (d.status !== "succeeded" || !d.answer)
-    return `The lookup for "${question}" didn't complete${d.error ? `: ${redact(String(d.error)).slice(0, 200)}` : "."} No figures are available; offer to try again or rephrase.`;
+    return `The lookup for "${question}" didn't complete${d.error ? `: ${modelError(String(d.error), false).slice(0, 200)}` : "."} No figures are available; offer to try again or rephrase.`;
   const a = d.answer,
     rows: Record<string, unknown>[] = a.rows || [],
     total = typeof a.total === "number" ? a.total : rows.length,

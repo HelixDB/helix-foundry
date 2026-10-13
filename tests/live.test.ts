@@ -557,6 +557,21 @@ it("says a single answer aloud and gives a table only as a headline", () => {
     expect(text).not.toMatch(/read .* to you|ask the user to read/i);
 });
 
+it("never tells the voice model a value an engine error quotes", () => {
+  const text = resultText("How many people?", {
+    id: "r1",
+    data: {
+      status: "failed",
+      error:
+        "Conversion Error: Could not convert string '987-65-4320' to INT32 when casting from source column ssn",
+    },
+  } as unknown as Resource);
+  expect(text).toContain(
+    "didn't complete: Conversion Error: Could not convert string [value] to INT32",
+  );
+  expect(text).not.toMatch(/987|4320/);
+});
+
 it("shares one run between overlapping requests for the same question", async () => {
   await useProvider("openai");
   model([
