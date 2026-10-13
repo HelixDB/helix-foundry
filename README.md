@@ -43,7 +43,7 @@ Your agent will ask you to approve `git`, `docker` and network commands as it go
 **What you do next**
 
 1. Open the URL (http://localhost:3001 by default). There is no account to create.
-2. Guided setup takes you through **AI → Data → Ontology**. Choose Local, Claude or OpenAI. Connect your data, or choose **Continue with sample data**. Then confirm the suggested ontology.
+2. Guided setup takes you through **AI → Data → Ontology**. Choose Local, Claude, OpenAI, Azure OpenAI, or a custom OpenAI-compatible endpoint. Connect your data, or choose **Continue with sample data**. Then confirm the suggested ontology.
 3. Home opens with your key metrics. Ask anything about your data from the box at the top.
 
 You enter Claude or OpenAI keys and database credentials yourself, in the browser. Your agent never needs them.

@@ -292,6 +292,13 @@ export class FoundryClient {
       {},
     );
   }
+  setDatasetPrivacy(datasetId: string, additionalColumns: string[]) {
+    return this.request<Resource>(
+      "/datasets/" + encodeURIComponent(datasetId) + "/privacy",
+      { additionalColumns },
+      "PUT",
+    );
+  }
   testSource(source: ConnectedSourceInput) {
     return this.request("/sources/test", source);
   }

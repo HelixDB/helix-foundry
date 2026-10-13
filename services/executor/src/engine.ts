@@ -3,7 +3,7 @@ import {
   type DuckDBConnection,
   type Json,
 } from "@duckdb/node-api";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import {
   copyFile,
@@ -38,6 +38,9 @@ export type Execution = {
   persist?: boolean;
   offset?: number;
   limit?: number;
+  // Query only: also profile how each column's values run in the result's
+  // row order (ColumnProfile.order), over every row, not only the sample.
+  order?: boolean;
 };
 export type Executed = {
   profile: DatasetProfile;
@@ -321,6 +324,37 @@ export async function execute(
       )
     ).getRowObjectsJson();
     const columns = [];
+    // How each column's values run in the result's row order, which rowid
+    // follows. A column named rowid hides it, so that column is renamed
+    // while the order is read.
+    const orders = new Map<string, Record<string, Json>>();
+    if (job.mode === "query" && job.order) {
+      const names = schema.map((col) => String(col.column_name));
+      const hiding = names.find((n) => n.toLowerCase() === "rowid"),
+        aside = "foundry_rowid_" + randomUUID().replaceAll("-", "");
+      if (hiding)
+        await c.run(
+          `ALTER TABLE result RENAME COLUMN ${quote(hiding)} TO ${quote(aside)}`,
+        );
+      try {
+        for (const name of names) {
+          const q = quote(name === hiding ? aside : name);
+          // A column whose values cannot be compared (a map) has no order.
+          const o = await c
+            .runAndReadAll(
+              `SELECT count(*) FILTER (WHERE v > p) AS ups, count(*) FILTER (WHERE v < p) AS downs, count(*) FILTER (WHERE v = f) AS firsts FROM (SELECT ${q} AS v, lag(${q}) OVER (ORDER BY rowid) AS p, first_value(${q}) OVER (ORDER BY rowid) AS f FROM result WHERE ${q} IS NOT NULL)`,
+            )
+            .then((r) => r.getRowObjectsJson()[0])
+            .catch(() => null);
+          if (o) orders.set(name, o);
+        }
+      } finally {
+        if (hiding)
+          await c.run(
+            `ALTER TABLE result RENAME COLUMN ${quote(aside)} TO ${quote(hiding)}`,
+          );
+      }
+    }
     for (const col of schema) {
       const name = String(col.column_name),
         q = quote(name);
@@ -332,6 +366,7 @@ export async function execute(
           `SELECT (SELECT count(*)-count(${q}) FROM result) AS null_count, (SELECT count(*) FROM (SELECT DISTINCT hash(${q}) FROM result WHERE ${q} IS NOT NULL)) AS distincts`,
         )
       ).getRowObjectsJson()[0];
+      const o = orders.get(name);
       columns.push({
         name,
         type: String(col.column_type),
@@ -346,6 +381,15 @@ export async function execute(
           rows > 0 &&
           Number(p.null_count) === 0 &&
           Number(p.distincts) === rows,
+        ...(o
+          ? {
+              order: {
+                up: Number(o.ups),
+                down: Number(o.downs),
+                first: Number(o.firsts),
+              },
+            }
+          : {}),
       });
     }
     const fp = (

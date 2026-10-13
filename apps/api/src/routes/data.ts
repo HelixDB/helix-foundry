@@ -32,6 +32,7 @@ import {
 } from "../source-sync.js";
 import { testedConnection } from "../onboarding.js";
 import { resolveHostedConfig } from "../hosting.js";
+import { datasetPrivacyId, withDatasetPrivacy } from "../dataset-privacy.js";
 import type { RequestSchemas, RouteDeps } from "./deps.js";
 
 export const dataSchemas: RequestSchemas = {
@@ -46,6 +47,9 @@ export const dataSchemas: RequestSchemas = {
   "POST /api/v1/workspaces/:w/sources/test": SourceSchema,
   "PUT /api/v1/workspaces/:w/sources/:id/schedule": z.object({
     schedule: z.string().trim().min(1).max(200).nullable(),
+  }),
+  "PUT /api/v1/workspaces/:w/datasets/:id/privacy": z.object({
+    additionalColumns: z.array(z.string().min(1)),
   }),
   "POST /api/v1/workspaces/:w/ingest": z.object({
     name: z.string(),
@@ -160,6 +164,50 @@ export function registerDataRoutes(
       );
     },
   );
+  app.put("/api/v1/workspaces/:w/datasets/:id/privacy", async (req: any) => {
+    const a = await access(req, "owner"),
+      b = z
+        .object({ additionalColumns: z.array(z.string().min(1)) })
+        .parse(req.body);
+    const ds = await transaction(store, a.scope, async (tx) => {
+      const dataset = await tx.get(req.params.id);
+      assert(dataset?.kind === "dataset", "Dataset unavailable", 404);
+      if (dataset.data.generation)
+        assert(
+          dataset.data.generation ===
+            (await tx.get("workspace"))?.data.activeGeneration,
+          "Dataset unavailable",
+          404,
+        );
+      const id = datasetPrivacyId(dataset.id),
+        previous = await tx.get(id);
+      const allowed = new Set([
+        ...dataset.data.profile.columns.map((c: any) => c.name),
+        ...(previous?.data.additionalColumns || []),
+      ]);
+      assert(
+        b.additionalColumns.every((name) => allowed.has(name)),
+        "Unknown privacy column",
+      );
+      const data = {
+        datasetId: dataset.id,
+        additionalColumns: [...new Set(b.additionalColumns)].sort(),
+      };
+      if (previous) tx.update(previous, data);
+      else
+        tx.put(
+          resource(
+            a.scope,
+            "datasetPrivacy",
+            "Privacy for " + dataset.name,
+            data,
+            id,
+          ),
+        );
+      return dataset;
+    });
+    return (await withDatasetPrivacy(store, a.scope, [ds]))[0];
+  });
   app.patch("/api/v1/workspaces/:w/datasets/:id", async (req: any) => {
     const a = await access(req, "editor"),
       b = z.object({ description: z.string().max(4000) }).parse(req.body);

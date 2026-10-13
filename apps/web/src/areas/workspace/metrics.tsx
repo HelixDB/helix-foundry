@@ -369,7 +369,17 @@ function TrendChart({ m, points }: { m: HomeMetric; points: Point[] }) {
   );
 }
 
-function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
+// `rank`, for a ranking (an Analyst answer), numbers the bars in the order
+// given, ties sharing a place, and draws first place at full strength.
+function BreakdownChart({
+  m,
+  points,
+  rank,
+}: {
+  m: HomeMetric;
+  points: Point[];
+  rank?: "desc" | "asc";
+}) {
   const [active, setActive] = useState<number | null>(null),
     [focused, setFocused] = useState(false);
   const lo = Math.min(0, ...points.map((p) => p.value)),
@@ -377,6 +387,15 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
     scale = Math.max(Math.abs(lo), hi) || 1,
     span = hi / scale - lo / scale || 1,
     zero = (-lo / scale / span) * 100;
+  // Places compare exact values: `value` rounds integers beyond 2^53, whose
+  // `text` keeps every digit.
+  const exact = (p: Point) =>
+    p.text ? BigInt(p.text.replace(/[^\d-]/g, "")) : p.value;
+  const place = (p: Point) =>
+    1 +
+    points.filter((q) =>
+      rank === "asc" ? exact(q) < exact(p) : exact(q) > exact(p),
+    ).length;
   const summary = `${m.title}: ${points
     .map((p) => `${p.label} ${formatMetric(p.value, m.format)}`)
     .join(", ")}`;
@@ -384,7 +403,7 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
   return (
     <div className="wk-breakdown">
       <div
-        className="wk-bars wk-chart-focus"
+        className={cx("wk-bars wk-chart-focus", rank && "is-ranked")}
         role="img"
         aria-label={summary}
         tabIndex={0}
@@ -403,14 +422,22 @@ function BreakdownChart({ m, points }: { m: HomeMetric; points: Point[] }) {
       >
         {points.map((p, i) => {
           const pct = (Math.abs(p.value) / scale / span) * 100,
-            left = ((Math.min(0, p.value) / scale - lo / scale) / span) * 100;
+            left = ((Math.min(0, p.value) / scale - lo / scale) / span) * 100,
+            at = rank && place(p);
           return (
             <div
               key={i}
-              className={cx("wk-bar-row", active === i && "is-active")}
+              className={cx(
+                "wk-bar-row",
+                active === i && "is-active",
+                at === 1 && "is-first",
+              )}
               onPointerEnter={() => setActive(i)}
             >
-              <span className="wk-bar-label">{p.label}</span>
+              <span className="wk-bar-label">
+                {at && <span className="wk-bar-rank hf-num">{at}</span>}
+                {p.label}
+              </span>
               <span className="wk-bar-track">
                 {lo < 0 && (
                   <span

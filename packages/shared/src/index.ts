@@ -70,7 +70,7 @@ export type HostedConnection = {
 };
 export const ProviderSchema = z
   .object({
-    provider: z.enum(["local", "claude", "openai", "custom"]),
+    provider: z.enum(["local", "claude", "openai", "azure", "custom"]),
     model: z.string().trim().min(1).max(150),
     baseUrl: z.url().optional(),
     apiFormat: z.enum(["chat-completions", "responses"]).optional(),
@@ -82,12 +82,15 @@ export const ProviderSchema = z
     continuous: z.boolean().default(true),
   })
   .superRefine((settings, ctx) => {
-    if (settings.provider !== "custom") return;
+    if (settings.provider !== "custom" && settings.provider !== "azure") return;
+    const azure = settings.provider === "azure";
     if (!settings.baseUrl) {
       ctx.addIssue({
         code: "custom",
         path: ["baseUrl"],
-        message: "Enter an API base URL.",
+        message: azure
+          ? "Enter your Azure OpenAI endpoint."
+          : "Enter an API base URL.",
       });
       return;
     }
@@ -97,8 +100,10 @@ export const ProviderSchema = z
     } catch {
       return;
     } // z.url() reports malformed URLs.
+    // Azure OpenAI keys travel only over HTTPS. Custom also allows plain HTTP
+    // for a model server on this computer.
     if (
-      !["http:", "https:"].includes(url.protocol) ||
+      !(azure ? ["https:"] : ["http:", "https:"]).includes(url.protocol) ||
       url.username ||
       url.password ||
       url.search ||
@@ -107,8 +112,9 @@ export const ProviderSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["baseUrl"],
-        message:
-          "Use an HTTP(S) API base URL without credentials, a query string or a fragment.",
+        message: azure
+          ? "Use an https:// Azure OpenAI endpoint without credentials, a query string or a fragment."
+          : "Use an HTTP(S) API base URL without credentials, a query string or a fragment.",
       });
   });
 export type ProviderSettings = z.infer<typeof ProviderSchema>;
@@ -124,6 +130,11 @@ export type ColumnProfile = {
   examples: unknown[];
   sensitive: boolean;
   primaryKey: boolean;
+  // Queries that ask for it (an Analyst answer): how the column's values run
+  // in the result's row order, nulls left out. `up` and `down` count values
+  // higher or lower than the one before; `first` counts values equal to the
+  // first.
+  order?: { up: number; down: number; first: number };
 };
 export type DatasetProfile = {
   rows: number;

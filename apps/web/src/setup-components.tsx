@@ -4,6 +4,7 @@ import {
   LoaderCircle,
   Check,
   Monitor,
+  Cloud,
   ArrowRight,
   SlidersHorizontal,
 } from "lucide-react";
@@ -144,12 +145,26 @@ export function ProviderSetup({
     }
   }, [q.data, setup.data, settings]);
   const s = settings || { provider: "local", model: "qwen3:4b" };
+  // A saved key belongs to its endpoint, and for Azure OpenAI also to its
+  // deployment: changing either asks for the key again.
   const update = (k: string, v: any) =>
     setSettings({
       ...s,
       [k]: v,
-      ...(k === "baseUrl" ? { apiKey: "", hasKey: false } : {}),
+      ...(k === "baseUrl" || (k === "model" && s.provider === "azure")
+        ? { apiKey: "", hasKey: false }
+        : {}),
     });
+  // Choosing a card again restores that provider's saved settings: the
+  // pending setup choice first, then the active provider.
+  const savedFor = (provider: string) => {
+    const candidate = setup.data?.providerJob?.data;
+    return candidate?.settings?.provider === provider
+      ? { ...candidate.settings, hasKey: candidate.hasKey }
+      : q.data?.provider === provider
+        ? q.data
+        : undefined;
+  };
   const job = setup.data?.providerJob,
     working = job && ["queued", "running"].includes(job.data.status);
   const owner = role === "owner";
@@ -185,6 +200,11 @@ export function ProviderSetup({
               "Use your OpenAI API key. Your schemas, data samples and answers are sent to OpenAI.",
             ],
             [
+              "azure",
+              "Azure OpenAI",
+              "Use your Azure OpenAI key. Your schemas and data samples are sent to your Azure resource.",
+            ],
+            [
               "custom",
               "Custom",
               "Use your own model endpoint. Data is sent to the endpoint you configure.",
@@ -197,39 +217,37 @@ export function ProviderSetup({
               title={title}
               description={description}
               checked={s.provider === value}
-              onChange={() =>
+              onChange={() => {
+                const saved = savedFor(value),
+                  endpoint = value === "custom" || value === "azure";
                 setSettings({
                   ...s,
                   provider: value,
-                  model:
-                    value === "custom"
-                      ? q.data?.provider === value
-                        ? q.data.model
-                        : ""
-                      : value === "local"
-                        ? "qwen3:4b"
-                        : value === "claude"
-                          ? "claude-sonnet-4-6"
-                          : "gpt-5.4-mini",
-                  baseUrl:
-                    value === "custom"
-                      ? q.data?.provider === value
-                        ? q.data.baseUrl
-                        : ""
-                      : value === "local"
-                        ? q.data?.baseUrl
-                        : undefined,
+                  model: endpoint
+                    ? saved?.model || ""
+                    : value === "local"
+                      ? "qwen3:4b"
+                      : value === "claude"
+                        ? "claude-sonnet-4-6"
+                        : "gpt-5.4-mini",
+                  baseUrl: endpoint
+                    ? saved?.baseUrl || ""
+                    : value === "local"
+                      ? q.data?.baseUrl
+                      : undefined,
                   apiFormat:
                     value === "custom"
-                      ? q.data?.apiFormat || "chat-completions"
+                      ? saved?.apiFormat || "chat-completions"
                       : undefined,
                   apiKey: "",
-                  hasKey: q.data?.provider === value && q.data?.hasKey,
-                })
-              }
+                  hasKey: !!saved?.hasKey,
+                });
+              }}
               icon={
                 value === "local" ? (
                   <Monitor className="provider-logo" aria-hidden="true" />
+                ) : value === "azure" ? (
+                  <Cloud className="provider-logo" aria-hidden="true" />
                 ) : value === "custom" ? (
                   <SlidersHorizontal
                     className="provider-logo"
@@ -264,6 +282,42 @@ export function ProviderSetup({
               </div>
             </div>
           )}
+        {s.provider === "azure" && (
+          <>
+            <label>
+              Endpoint
+              <input
+                type="url"
+                autoComplete="off"
+                required={owner}
+                pattern="https://.+"
+                title="Use the resource's https:// endpoint."
+                placeholder="https://RESOURCE.openai.azure.com"
+                value={s.baseUrl || ""}
+                onChange={(e) =>
+                  update("baseUrl", e.target.value.trim() || undefined)
+                }
+              />
+            </label>
+            <label>
+              Deployment name
+              <input
+                type="text"
+                autoComplete="off"
+                required={owner}
+                maxLength={150}
+                placeholder="gpt-5.4"
+                value={s.model || ""}
+                onChange={(e) => update("model", e.target.value.trim())}
+              />
+            </label>
+            <p className="muted">
+              Find the endpoint under Keys and Endpoint on your Azure OpenAI
+              resource, and the deployment name under Deployments. Hands-free
+              voice is not available with Azure OpenAI.
+            </p>
+          </>
+        )}
         {s.provider === "custom" && (
           <>
             <label>

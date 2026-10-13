@@ -103,12 +103,48 @@ enough to read, so the suggestion appears at least 3.5 seconds after the step
 opens, and never before the server has produced it. Returning to the step, or
 reloading it, shows an existing suggestion at once.
 
+The Analyst shows each reply's progress as a trace (`Trace` in
+[`reply.tsx`](../apps/web/src/areas/analyst/reply.tsx)), between two fine
+rules above the answer:
+
+- A status line ("Analyzing your question", "Analysis complete", "Taking
+  longer than usual", "Connection lost, reconnecting…") with a status dot,
+  the time, "Show steps" and, while it works, "Stop".
+- At most three major steps, each one line: its name in bold, then what it did
+  or is doing in normal weight. Folded, a line is cut short with an ellipsis
+  and its full text in a tooltip; expanded, every step wraps and shows how long
+  it took. The steps come from the run's stages (`runSteps` in `chat-data.ts`):
+  understand the question, analyze the data, check the results and write the
+  answer, or a build's steps. An answer's planned steps show as pending
+  rather than done, and a failed or stopped run keeps what finished.
+- Expanded, a closed "Query used" disclosure and the model calls and tokens.
+  There are no tabs and no raw events or prompts.
+- While it works, the elapsed time, and "About 10–20s" once the server has
+  measured three or more comparable answers that agree (`estimate` on the run,
+  set once when the question is asked). Past that range the status says
+  "Taking longer than usual". A failed refresh is shown as a lost connection,
+  never as a failed analysis.
+- A polite status announces a new step, a long wait, a lost connection and
+  how it ended, but never the clock.
+
+The answer under it leads with the summary's first sentence as a bold heading,
+then the rest of the summary with the quantities its rows back (a value, a
+difference between two values or a row count) and their units in bold. There
+is no tint, card or accent behind the answer. The rows show as a chart when the
+server's check found a ranking, a trend or a small breakdown, with a
+Chart/Table switch; signed breakdowns use bars around a visible zero baseline.
+Lowest-first rankings use "Lowest" labels; highest-first rankings use "Top".
+A chart of only the result's first rows says so
+("Top 10 of 1,000", "First 100 of 1,000 rows"). The table puts the label and
+the measure first and keys last and quieter.
+
 Follow the same principles in new progress UI:
 
 - Take status, completion and failure from server state. Cosmetic sub-steps
   may be paced on the client so each can be read, but the result never
   appears before the server reports it. Show counts that were measured; never
-  invent a percentage or a time estimate.
+  invent a percentage or a time estimate. A time range comes only from
+  measured comparable runs, as the Analyst's does.
 - Name stages in plain words. Setup keeps the business outcome in view and
   infrastructure in disclosures.
 - Keep "Stop" and "Retry" available, except "Stop" once publication has
@@ -197,7 +233,8 @@ Charts do not share one palette yet:
   series color, `--wk-series`: `--hf-accent-strong` in light mode and a fixed
   `#32aa7f` in dark mode (`home.css`).
 - Analyst answers reuse those two charts with `--wk-series` set to
-  `--hf-chart-1` (`analyst.css`).
+  `--hf-chart-1` (`analyst.css`). A ranking numbers its bars and draws first
+  place at full strength and the rest lighter.
 - Chart previews on the Review changes page (`review.tsx`) use Recharts in
   [`charts.tsx`](../apps/web/src/charts.tsx), with hard-coded light colors
   (`#548b72`, `#dfebe4` and `#679780`) that do not follow dark mode.
