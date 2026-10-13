@@ -33,7 +33,14 @@ import {
   type Store,
 } from "./store.js";
 import { queueCleanup } from "./cleanup.js";
-import { digest, assert, unseal, seal, AppError, redact } from "./security.js";
+import {
+  digest,
+  assert,
+  unseal,
+  seal,
+  AppError,
+  modelError,
+} from "./security.js";
 import { queryInputs } from "./query-inputs.js";
 import { Provider } from "./providers.js";
 import { execute } from "./executor.js";
@@ -986,10 +993,15 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         if ((await store.get(scope, id))?.data.status === "canceled") throw e;
         // One repair: the model sees the failing SQL and the error. If that
         // fails too, the saved plans are dropped so Retry asks afresh
-        // instead of re-running the same query.
+        // instead of re-running the same query. Values the error quotes stay
+        // here unless the model may see rows.
         context.repair = {
           sql: plan.sql,
-          error: redact((e as Error).message).slice(0, 800),
+          error: modelError(
+            (e as Error).message,
+            summarizes(settings),
+            plan.sql,
+          ).slice(0, 800),
         };
         try {
           plan = await ask(
@@ -1308,7 +1320,9 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
             /budget|canceled|unavailable|HTTP/i.test(message)
           )
             throw error;
-          context.repair = { error: message };
+          context.repair = {
+            error: modelError(message, summarizes(settings)),
+          };
           await event(
             store,
             scope,
@@ -1474,11 +1488,19 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
           "Draft validation completed",
           { partialBundle: bundle, validation: report },
         );
+        const definitions = Object.fromEntries(
+          group.fields.map((key) => [key, (bundle as any)[key]]),
+        );
         context.repair = {
-          definitions: Object.fromEntries(
-            group.fields.map((key) => [key, (bundle as any)[key]]),
-          ),
-          failures: failures.map((f) => ({ ...f, detail: redact(f.detail) })),
+          definitions,
+          failures: failures.map((f) => ({
+            ...f,
+            detail: modelError(
+              f.detail,
+              summarizes(settings),
+              JSON.stringify(definitions),
+            ),
+          })),
         };
         let repaired;
         try {
