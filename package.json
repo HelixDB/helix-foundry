@@ -50,7 +50,6 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
-    "@helix-foundry/sdk": "workspace:*",
     "@playwright/test": "^1.55.1",
     "@tailwindcss/vite": "^4.1.13",
     "@types/d3-force": "^3",
