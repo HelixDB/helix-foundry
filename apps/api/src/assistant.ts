@@ -98,10 +98,12 @@ async function datasetsMap(store: Store, scope: string) {
     .activeGeneration;
   return new Map(
     (
-      await Promise.all(
-        (await store.list(scope, "dataset"))
-          .filter((d) => !d.data.generation || d.data.generation === generation)
-          .map((d) => withDatasetPrivacy(store, scope, d)),
+      await withDatasetPrivacy(
+        store,
+        scope,
+        (await store.list(scope, "dataset")).filter(
+          (d) => !d.data.generation || d.data.generation === generation,
+        ),
       )
     ).map((d) => [d.id, d]),
   );

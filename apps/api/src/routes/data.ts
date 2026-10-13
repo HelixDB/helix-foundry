@@ -206,7 +206,7 @@ export function registerDataRoutes(
         );
       return dataset;
     });
-    return withDatasetPrivacy(store, a.scope, ds);
+    return (await withDatasetPrivacy(store, a.scope, [ds]))[0];
   });
   app.patch("/api/v1/workspaces/:w/datasets/:id", async (req: any) => {
     const a = await access(req, "editor"),

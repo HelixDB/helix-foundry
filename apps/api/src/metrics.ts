@@ -75,7 +75,9 @@ export async function metricsDatasets(store: Store, scope: string) {
   const w = await store.get(scope, "workspace"),
     generation = w?.data.activeGeneration,
     excluded = new Set<string>(w?.data.onboarding?.excludedIds || []);
-  return Promise.all(
+  return withDatasetPrivacy(
+    store,
+    scope,
     (await store.list(scope, "dataset"))
       .filter(
         (d) =>
@@ -87,8 +89,7 @@ export async function metricsDatasets(store: Store, scope: string) {
           d.data.activeVersion &&
           d.data.profile?.columns?.length,
       )
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .map((d) => withDatasetPrivacy(store, scope, d)),
+      .sort((a, b) => a.id.localeCompare(b.id)),
   );
 }
 const columnsOf = (d: Resource): Column[] => d.data.profile?.columns || [];

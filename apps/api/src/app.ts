@@ -348,16 +348,18 @@ export async function createApp(store: Store) {
         r.data.generation === ws?.data.activeGeneration,
     );
     if (req.params.kind === "dataset")
-      rows = await Promise.all(
-        rows.map(async (r) =>
-          withDatasetPrivacy(store, a.scope, {
+      rows = await withDatasetPrivacy(
+        store,
+        a.scope,
+        await Promise.all(
+          rows.map(async (r) => ({
             ...r,
             data: {
               ...r.data,
               snapshotAt: (await store.get(a.scope, r.data.activeVersion))
                 ?.createdAt,
             },
-          }),
+          })),
         ),
       );
     if (req.query.search)
@@ -395,7 +397,7 @@ export async function createApp(store: Store) {
     return scrub(
       r.kind === "object"
         ? await effectiveObject(store, a.scope, r)
-        : await withDatasetPrivacy(store, a.scope, r),
+        : (await withDatasetPrivacy(store, a.scope, [r]))[0],
     );
   });
   app.get("/api/openapi.json", async () => app.swagger());
