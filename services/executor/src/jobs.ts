@@ -54,18 +54,26 @@ export async function stopJobs() {
 let active = 0;
 const waiters: ((ok: boolean) => void)[] = [];
 // Resolves true when it is the caller's turn, or false after `wait` ms.
-function turn(wait: number) {
+function turn(wait: number, signal?: AbortSignal) {
   return new Promise<boolean>((resolve) => {
     const waiter = (ok: boolean) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
       resolve(ok);
+    };
+    const cancel = () => {
+      const i = waiters.indexOf(waiter);
+      if (i >= 0) waiters.splice(i, 1);
+      waiter(false);
     };
     const timer = setTimeout(() => {
       const i = waiters.indexOf(waiter);
       if (i >= 0) waiters.splice(i, 1);
-      resolve(false);
+      waiter(false);
     }, wait);
     waiters.push(waiter);
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
   });
 }
 // Answers one request to /execute within the job's time limit, counted from
@@ -73,6 +81,7 @@ function turn(wait: number) {
 export async function submit(
   job: unknown,
   root: string,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: unknown }> {
   let limit: TimeLimit;
   try {
@@ -81,22 +90,54 @@ export async function submit(
     return { status: 500, body: { error: (e as Error).message } };
   }
   const deadline = Date.now() + limit.ms;
+  const canceled = () => ({
+    status: 499,
+    body: { error: "Executor request canceled" },
+  });
+  if (signal?.aborted) return canceled();
   if (active >= 2) {
     if (waiters.length >= 50)
       return { status: 429, body: { error: "Executor queue is full" } };
-    if (!(await turn(limit.ms)))
-      return {
-        status: 503,
-        body: {
-          error: `The executor was busy with other jobs for this job's whole time limit (${duration(limit.ms)}, ${limit.setting}). Try again later.`,
-        },
-      };
+    if (!(await turn(limit.ms, signal)))
+      return signal?.aborted
+        ? canceled()
+        : {
+            status: 503,
+            body: {
+              error: `The executor was busy with other jobs for this job's whole time limit (${duration(limit.ms)}, ${limit.setting}). Try again later.`,
+            },
+          };
+  }
+  if (signal?.aborted) {
+    waiters.shift()?.(true);
+    return canceled();
   }
   active++;
   try {
     const r = await runJob(JSON.stringify(job), root, {
       timeout: deadline - Date.now(),
+      signal,
     });
+    if (signal?.aborted) {
+      const execution = job as Execution;
+      if (
+        execution.mode === "query" &&
+        execution.persist &&
+        execution.version &&
+        /^[a-zA-Z0-9_-]{1,100}$/.test(execution.scope) &&
+        /^[a-zA-Z0-9_-]{1,100}$/.test(execution.version)
+      )
+        await rm(
+          resolve(
+            root,
+            "datasets",
+            execution.scope,
+            execution.version + ".parquet",
+          ),
+          { force: true },
+        );
+      return canceled();
+    }
     if (r.failed) return { status: 500, body: { error: r.failed } };
     if (r.code === 0)
       try {
@@ -123,7 +164,12 @@ export async function submit(
 export function runJob(
   body: string,
   root: string,
-  options: { timeout?: number; maxOutput?: number; cwd?: string } = {},
+  options: {
+    timeout?: number;
+    maxOutput?: number;
+    cwd?: string;
+    signal?: AbortSignal;
+  } = {},
 ) {
   const job = run(body, root, options);
   jobs.add(job);
@@ -138,7 +184,13 @@ async function run(
     timeout = timeLimit(JSON.parse(body)).ms,
     maxOutput = 10_000_000,
     cwd,
-  }: { timeout?: number; maxOutput?: number; cwd?: string },
+    signal,
+  }: {
+    timeout?: number;
+    maxOutput?: number;
+    cwd?: string;
+    signal?: AbortSignal;
+  },
 ) {
   await mkdir(scratchRoot(root), { recursive: true });
   const scratch = await mkdtemp(resolve(scratchRoot(root), "job-"));
@@ -171,6 +223,9 @@ async function run(
         stdio: ["pipe", "pipe", "pipe"],
       });
       children.add(child);
+      const cancel = () => child.kill("SIGKILL");
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
       let out = "",
         err = "",
         timedOut = false;
@@ -188,11 +243,13 @@ async function run(
       child.on("error", (e) => {
         if (child.pid !== undefined) return;
         children.delete(child);
+        signal?.removeEventListener("abort", cancel);
         clearTimeout(timer);
         done({ code: null, out, err, failed: e.message });
       });
       child.on("close", (code) => {
         children.delete(child);
+        signal?.removeEventListener("abort", cancel);
         clearTimeout(timer);
         done({ code, out, err, timedOut });
       });

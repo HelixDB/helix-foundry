@@ -245,3 +245,11 @@ From a dataset's details, **Export CSV** downloads every row of the current
 snapshot for spreadsheets or other tools. **Export Parquet** preserves the
 native column types. CSV includes headers even for an empty dataset; nested
 values are represented as JSON, with nulls as empty fields.
+
+### Stop a pipeline build
+
+Data shows active and recent **Pipeline jobs** from the live activity feed. An
+owner or editor can use **Cancel** on a queued or running build. This stops that
+build and keeps its previous published snapshot; it does not interrupt other jobs
+or remove input data. A build that already completed stays published. Canceled
+jobs remain visible for 24 hours, and a later run is independent.

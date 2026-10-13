@@ -1,0 +1,25 @@
+.wk-pipeline-jobs {
+  margin: 24px 0;
+}
+.wk-pipeline-jobs ul {
+  list-style: none;
+  padding: 0;
+}
+.wk-pipeline-jobs li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hf-border);
+}
+.wk-pipeline-jobs li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wk-pipeline-jobs small {
+  display: block;
+  color: var(--hf-muted);
+  margin-top: 4px;
+}

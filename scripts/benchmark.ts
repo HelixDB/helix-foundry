@@ -5,10 +5,12 @@ import { once } from "node:events";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
-import { execute as localExecute } from "../services/executor/src/engine.js";
+import { execute as localExecute, type Execution } from "../services/executor/src/engine.js";
 import { resultFile } from "../services/executor/src/paths.js";
 import { execute as remoteExecute } from "../apps/api/src/executor.js";
-const execute = process.env.BENCH_HTTP === "1" ? remoteExecute : localExecute;
+const execute = process.env.BENCH_HTTP === "1"
+  ? (job: Execution) => remoteExecute(job)
+  : (job: Execution) => localExecute(job);
 import { config } from "../apps/api/src/config.js";
 const scope = "bench-" + randomUUID();
 await mkdir(resolve(config.dataDir, "incoming", scope), { recursive: true });
