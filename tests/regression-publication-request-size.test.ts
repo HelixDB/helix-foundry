@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -66,8 +66,11 @@ beforeAll(async () => {
     });
 });
 
-afterAll(async () => {
+afterEach(() => {
   vi.restoreAllMocks();
+});
+
+afterAll(async () => {
   for (const dir of ["incoming", "datasets"])
     await rm(resolve(config.dataDir, dir, scope), {
       recursive: true,
@@ -132,4 +135,61 @@ it("publishes a catalog whose datasets together pass the database's request limi
     expect(ds?.data.tags).toEqual(tags);
     expect(ds?.data.padding).toHaveLength(padding);
   }
+});
+
+it("stops describing datasets once another publication replaces the generation", async () => {
+  const p = await saveProposal(
+    store,
+    scope,
+    BundleSchema.parse({
+      summary: "Customers and orders, described again",
+      assumptions: [],
+      catalog: [
+        {
+          datasetId: customers.id,
+          description: "Customers, described again",
+          tags: ["again"],
+        },
+        {
+          datasetId: orders.id,
+          description: "Orders, described again",
+          tags: ["again"],
+        },
+      ],
+      pipelines: [],
+      ontology: [
+        {
+          name: "Customer",
+          datasetId: customers.id,
+          primaryKey: "id",
+          properties: ["id", "region"],
+        },
+      ],
+      relationships: [],
+      dashboards: [],
+      actions: [],
+    }),
+  );
+  expect(p.data.validation.valid, JSON.stringify(p.data.validation)).toBe(true);
+  const commit = store.commit.bind(store);
+  // A rollback lands as soon as the first description is written.
+  vi.spyOn(store, "commit").mockImplementation(async (s, v, changes) => {
+    const ok = await commit(s, v, changes);
+    if (ok && changes.some((c) => "put" in c && c.put.id === customers.id)) {
+      const ws = (await store.get(scope, "workspace"))!;
+      await commit(s, await store.version(s), [
+        {
+          put: { ...ws, data: { ...ws.data, activeGeneration: "rolled-back" } },
+        },
+      ]);
+    }
+    return ok;
+  });
+  await publishProposal(store, scope, p.id, p.data.hash, "actor");
+  expect((await store.get(scope, customers.id))?.description).toBe(
+    "Customers, described again",
+  );
+  expect((await store.get(scope, orders.id))?.description).toBe(
+    "An order per row",
+  );
 });

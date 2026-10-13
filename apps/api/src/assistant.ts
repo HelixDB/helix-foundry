@@ -2000,9 +2000,9 @@ export async function publishProposal(
         publishedGeneration: generation,
       });
     });
-    await describeDatasets(store, scope, bundle.catalog);
     // The generation it replaces, and any left by failed attempts, go now.
     await queueCleanup(store, scope).catch(() => {});
+    await describeDatasets(store, scope, generation, bundle.catalog);
     return published;
   }
 }
@@ -2036,14 +2036,19 @@ export async function publishedBundle(store: Store, scope: string) {
 // written one dataset per transaction: together they can pass HelixDB's
 // request limit, which would fail the whole publication. It runs after
 // activation, so a failure here leaves a published workspace without some
-// descriptions rather than an unpublished one.
+// descriptions rather than an unpublished one. It stops once another
+// publication or a rollback replaces the generation, so it never overwrites
+// that one's descriptions.
 async function describeDatasets(
   store: Store,
   scope: string,
+  generation: string,
   catalog: Bundle["catalog"],
 ) {
-  for (const c of catalog)
-    await transaction(store, scope, async (tx) => {
+  for (const c of catalog) {
+    const active = await transaction(store, scope, async (tx) => {
+      if ((await tx.get("workspace"))?.data.activeGeneration !== generation)
+        return false;
       const ds = await tx.get(c.datasetId);
       if (ds && !ds.data.manualDescription)
         tx.put({
@@ -2052,9 +2057,13 @@ async function describeDatasets(
           revision: ds.revision + 1,
           data: { ...ds.data, tags: c.tags },
         });
-    }).catch((e) =>
-      console.error("Dataset description:", e instanceof Error ? e.message : e),
-    );
+      return true;
+    }).catch((e) => {
+      console.error("Dataset description:", e instanceof Error ? e.message : e);
+      return true;
+    });
+    if (!active) return;
+  }
 }
 
 export async function currentBundle(
