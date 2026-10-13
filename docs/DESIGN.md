@@ -128,7 +128,7 @@ rules above the answer:
   how it ended, but never the clock.
 
 The answer under it leads with the summary's first sentence as a bold heading,
-then the rest of the summary with the quantities its rows back (a value, a
+then the rest of the summary with the quantities its rows give back (a value, a
 difference between two values or a row count) and their units in bold. There
 is no tint, card or accent behind the answer. The rows show as a chart when the
 server's check found a ranking, a trend or a small breakdown, with a
