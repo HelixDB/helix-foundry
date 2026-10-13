@@ -35,6 +35,7 @@ import {
 import { queueCleanup } from "./cleanup.js";
 import { digest, assert, unseal, seal, AppError, redact } from "./security.js";
 import { queryInputs } from "./query-inputs.js";
+import { focusDatasets } from "./answer-context.js";
 import { Provider } from "./providers.js";
 import { execute } from "./executor.js";
 import { resultBatches } from "./results.js";
@@ -666,15 +667,14 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
     const out = Object.fromEntries(
       Object.entries(value).map(([k, v]) => [k, groundedSchema(v)]),
     ) as any;
+    // The datasets the model is shown, which a question may narrow.
+    const shown = context.datasets.map((d: any) => d.id);
     if (out.properties?.datasetId)
-      out.properties.datasetId = {
-        type: "string",
-        enum: datasets.map((d) => d.id),
-      };
+      out.properties.datasetId = { type: "string", enum: shown };
     if (out.properties?.inputs && !out.properties?.datasetId)
       out.properties.inputs = {
         ...out.properties.inputs,
-        items: { type: "string", enum: datasets.map((d) => d.id) },
+        items: { type: "string", enum: shown },
       };
     const names = context.ontology?.ontology?.map((t: any) => t.name) || [];
     if (out.properties?.objectType && names.length)
@@ -736,9 +736,10 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
           prompt,
         {
           goal: context.goal,
-          // A summary reads the result rows, not the schema.
+          // A summary reads the result rows, not the schema, and routing
+          // reads only the request.
           datasets:
-            describing || stage === "summary"
+            describing || stage === "summary" || stage === "routing"
               ? undefined
               : picking
                 ? context.metrics
@@ -915,6 +916,27 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       );
     }
     if (intent === "answer") {
+      // A question needs the datasets it is about, not every schema in the
+      // workspace; see focusDatasets.
+      const published = (await currentBundle(store, scope)).ontology,
+        resource = context.resource || {};
+      context.datasets = focusDatasets(context.datasets, {
+        text: [
+          context.goal,
+          resource.previousQuestion,
+          ...(resource.history || []).map((h: any) => h.question),
+          resource.type,
+          resource.name,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        pinned: [
+          resource.datasetId,
+          published.find((t) => t.name === resource.type)?.datasetId,
+          ...(resource.answer?.inputs || []),
+        ].filter(Boolean),
+        preferred: published.map((t) => t.datasetId),
+      });
       // Tables by readable name (orders, order_items): models miscopy long
       // hashed names, joining a lookalike or a table that doesn't exist. The
       // executor serves each input under these names too.
