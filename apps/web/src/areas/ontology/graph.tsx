@@ -371,9 +371,11 @@ export function ObjectGraph({
     nodes.current = list;
     links.current = edges;
     sim.current = s;
-    following.current = changed;
+    // With motion reduced the view is fitted once, not moved as it settles.
+    following.current = changed && !still;
     if (changed) fit();
-    s.alpha(Math.max(s.alpha(), 0.12))
+    // A later layout settles gently from where its records already were.
+    s.alpha(previous.size || still ? 0.12 : s.alpha())
       .on("tick", () => (following.current ? fit() : redraw()))
       .restart();
     return () => {

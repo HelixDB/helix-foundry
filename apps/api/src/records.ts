@@ -279,12 +279,12 @@ export async function listRecords(
   // publication linked them. HelixDB walks every link of a record to count
   // them, which takes a second for one with tens of thousands. Records whose
   // links were edited no longer follow the joins, so HelixDB counts those.
-  const snapshotLinks =
-    query.sort === "links"
-      ? new Map(rows.map((r) => [idOf(r), Number(r.__links) || 0]))
-      : new Map<string, number>();
-  for (const id of await relationEditedIds(store, scope, generation))
-    snapshotLinks.delete(id);
+  const snapshotLinks = new Map<string, number>();
+  if (query.sort === "links") {
+    for (const r of rows) snapshotLinks.set(idOf(r), Number(r.__links) || 0);
+    for (const id of await relationEditedIds(store, scope, generation))
+      snapshotLinks.delete(id);
+  }
   const links = await store.linkCounts(
     scope,
     page.map((o) => o.id).filter((id) => !snapshotLinks.has(id)),
