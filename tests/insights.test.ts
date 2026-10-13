@@ -5,12 +5,14 @@ import { execute as localExecute } from "../services/executor/src/engine.js";
 // Records the queries a scan runs, and can make them fail.
 const executor = vi.hoisted(() => ({
   queries: [] as any[],
+  onQuery: undefined as undefined | ((job: any) => Promise<void>),
   fail: undefined as undefined | ((job: any) => boolean),
 }));
 vi.mock("../apps/api/src/executor.js", () => ({
   execute: async (job: any) => {
     if (job.mode === "query") {
       executor.queries.push(job);
+      await executor.onQuery?.(job);
       if (executor.fail?.(job)) throw new Error("Executor unavailable");
     }
     return localExecute(job);
@@ -24,11 +26,16 @@ import {
   saveProposal,
 } from "../apps/api/src/assistant.js";
 import { ingestRows, queryDatasets } from "../apps/api/src/datasets.js";
-import { rankCandidates, runInsightsScan } from "../apps/api/src/insights.js";
+import {
+  AUTO_SCAN_INTERVAL,
+  rankCandidates,
+  runInsightsScan,
+} from "../apps/api/src/insights.js";
 import {
   chooseWindow,
   DEFAULT_THRESHOLDS,
   driverQuery,
+  evaluate,
 } from "../apps/api/src/insights-checks.js";
 import {
   acceptedOntology,
@@ -61,6 +68,7 @@ const request = (method: any, path: string, payload?: unknown) =>
 beforeEach(async () => {
   executor.queries = [];
   executor.fail = undefined;
+  executor.onQuery = undefined;
   store = new MemoryStore();
   app = await createApp(store);
   await app.ready();
@@ -117,7 +125,7 @@ async function runQueued() {
   }
 }
 async function scan() {
-  await insights();
+  await request("POST", "/home/insights/scan", {});
   executor.queries = [];
   const error = await runQueued();
   expect(error).toBeUndefined();
@@ -456,7 +464,7 @@ describe("a shop whose totals hold steady", () => {
     expect(executor.queries).toHaveLength(0);
   });
 
-  it("analyses only the three selected drivers and keeps three findings across them", async () => {
+  it("analyses only the three selected drivers and defers regular-cohort alerts", async () => {
     await publish(commerce());
     const r = await scan();
     wellFormed(r);
@@ -476,9 +484,9 @@ describe("a shop whose totals hold steady", () => {
     expect(executor.queries).toHaveLength(checks.length + probes.length);
     for (const q of checks) expect(q.inputs.length).toBe(1);
     expect(checks.every((q) => q.limit === 1000)).toBe(true);
-    expect(r.findings).toHaveLength(3);
+    expect(r.findings).toHaveLength(2);
     expect(r.findings.map((f) => f.driver.label).sort()).toEqual(
-      ["Customer engagement", "Revenue", "Traffic"].sort(),
+      ["Revenue", "Traffic"].sort(),
     );
     expect(r.checkedAt).toBeDefined();
     expect(r.stale).toBe(false);
@@ -498,7 +506,7 @@ describe("a shop whose totals hold steady", () => {
     ).toHaveLength(1);
   });
 
-  it("reveals a source-mix shift, a fixed-cohort decline and buyer concentration with their figures", async () => {
+  it("reveals source mix and buyer concentration with their figures", async () => {
     await publish(commerce());
     const r = await scan();
     const referral = finding(r, "mix", /^Referral sessions grew 150%/)!;
@@ -531,28 +539,12 @@ describe("a shop whose totals hold steady", () => {
       "Referral added 300 sessions, going from 10% to 25% of the total. Sessions overall were unchanged.",
     );
 
-    const cohort = finding(r, "cohort", /^Regular customers have fewer/)!;
-    expect(cohort.severity).toBe("issue");
-    expect(cohort.support).toEqual({
-      text: "Regular sessions",
-      figure: "↓30.0%",
-    });
-    expect(cohort.values).toMatchObject({
-      baseline: 600,
-      current: 420,
-      absolute: -180,
-      unit: "number",
-    });
-    expect(cohort.values.relative).toBeCloseTo(-0.3, 6);
-    expect(cohort.details.table.rows).toEqual([
-      ["Regular customers (120, fixed)", "600", "420", "−30.0%"],
-      ["Everyone else", "1,400", "1,580", "+12.9%"],
-      ["Total", "2,000", "2,000", "0%"],
-    ]);
-    expect(cohort.periods.cohort).toBeDefined();
-    expect(cohort.details.definition).toMatch(
-      /Membership stays fixed across both periods\. “Everyone else” covers other customers and sessions with no customer; it does not mean new customers\./,
-    );
+    expect(r.findings.some((f) => f.check === "cohort")).toBe(false);
+    expect(
+      r.coverage.every(
+        (c) => c.checks.find((x) => x.check === "cohort")?.state === "skipped",
+      ),
+    ).toBe(true);
 
     const top = finding(r, "mix", /depends more on a few customers/)!;
     expect(top.severity).toBe("warning");
@@ -583,7 +575,7 @@ describe("a shop whose totals hold steady", () => {
       r.coverage
         .find((c) => c.label === "Traffic")!
         .checks.find((c) => c.check === "cohort")!.note,
-    ).toBe("Checked under Customer engagement.");
+    ).toMatch(/matched historical cohorts/);
   });
 
   it("dismisses a finding for this person, keeps it hidden while unchanged, and undoes", async () => {
@@ -621,36 +613,36 @@ describe("a shop whose totals hold steady", () => {
   it("brings a dismissed finding back when it becomes more severe or grows, saying why", async () => {
     await publish(commerce());
     const r = await scan();
-    const cohort = finding(r, "cohort", /^Regular/)!;
-    await request("POST", `/home/insights/${cohort.id}/dismiss`, {
-      version: cohort.version,
+    const referral = finding(r, "mix", /^Referral/)!;
+    await request("POST", `/home/insights/${referral.id}/dismiss`, {
+      version: referral.version,
     });
-    const change = (patch: Record<string, unknown>) =>
+    const change = (magnitude: number) =>
       transaction(store, scope, async (tx) => {
-        const s = (await tx.get("home_insights"))!;
-        tx.update(s, {
-          ...s.data,
-          findings: s.data.findings.map((f: any) =>
-            f.id === cohort.id ? { ...f, ...patch } : f,
+        const st = (await tx.get("home_insights"))!;
+        tx.update(st, {
+          ...st.data,
+          findings: st.data.findings.map((f: any) =>
+            f.id === referral.id ? { ...f, magnitude } : f,
           ),
         });
       });
-    // Dismissed as an issue of −30%: a −35% issue stays hidden.
-    await change({ magnitude: -0.35 });
+    await change(0.16);
     expect((await insights()).findings.map((f) => f.id)).not.toContain(
-      cohort.id,
+      referral.id,
     );
-    await change({ magnitude: -0.5 });
-    const grown = (await insights()).findings.find((f) => f.id === cohort.id)!;
+    await change(0.25);
+    const grown = (await insights()).findings.find(
+      (f) => f.id === referral.id,
+    )!;
     expect(grown.returned).toBe(
-      "Back because it grew: −30.0% when you dismissed it, −50.0% now.",
+      "Back because it grew: +15.0 pts when you dismissed it, +25.0 pts now.",
     );
-    // Dismissing again records the new size.
-    await request("POST", `/home/insights/${cohort.id}/dismiss`, {
+    await request("POST", `/home/insights/${referral.id}/dismiss`, {
       version: grown.version,
     });
     expect((await insights()).findings.map((f) => f.id)).not.toContain(
-      cohort.id,
+      referral.id,
     );
     const top = finding(r, "mix", /depends more/)!;
     await request("POST", `/home/insights/${top.id}/dismiss`, {
@@ -687,10 +679,10 @@ describe("a shop whose totals hold steady", () => {
       undefined,
       sessions.id,
     );
-    const queued = await insights();
+    const queued = (await request("POST", "/home/insights/scan", {})).json();
     expect(queued.stale).toBe(true);
     expect(queued.scan.state).toBe("queued");
-    expect(queued.findings.map((f) => f.id)).toEqual(
+    expect(queued.findings.map((f: HomeInsight) => f.id)).toEqual(
       before.findings.map((f) => f.id),
     );
     executor.fail = (job) => /^WITH a AS/.test(job.sql);
@@ -733,7 +725,7 @@ describe("a shop whose totals hold steady", () => {
       BundleSchema.parse(current.data.bundle),
     );
     await publishProposal(store, scope, draft.id, draft.data.hash, actor);
-    const queued = await insights();
+    const queued = (await request("POST", "/home/insights/scan", {})).json();
     expect(queued).toMatchObject({ stale: true, scan: { state: "queued" } });
     expect(queued.findings).toHaveLength(before.findings.length);
     expect(await runQueued()).toBeUndefined();
@@ -801,7 +793,7 @@ describe("a shop whose totals hold steady", () => {
       after.coverage
         .find((c) => c.label === "Customer engagement")!
         .checks.find((c) => c.check === "cohort")!.note,
-    ).toMatch(/moved −30\.0%, within ±40\.0%/);
+    ).toMatch(/matched historical cohorts/);
   });
 });
 
@@ -818,16 +810,14 @@ describe("constant totals that hide offsetting changes", () => {
       ["Value per order", "50", "62.50", "+25.0%"],
       ["Revenue", "40,000", "40,000", "0%"],
     ]);
-    const conversion = finding(r, "conversion", /^Paid sessions convert less/)!;
-    expect(conversion).toBeDefined();
-    expect(conversion.severity).toBe("warning");
-    expect(conversion.values.relative!).toBeLessThan(-0.2);
-    expect(conversion.details.contribution).toMatch(
-      /overall conversion stayed at 15%, so the overall rate hides it\.$/,
-    );
-    expect(conversion.details.definition).toMatch(
-      /^A session counts as converted when an order links to it .*Only sessions from the first 6 days of each period count, so each had at least 1 day to convert\.$/,
-    );
+    expect(
+      finding(r, "conversion", /^Paid sessions convert less/),
+    ).toBeUndefined();
+    expect(
+      r.coverage
+        .find((c) => c.label === "Traffic")
+        ?.checks.find((c) => c.check === "conversion")?.state,
+    ).toBe("steady");
     // The funnel is checked once, under Traffic.
     expect(
       r.coverage
@@ -856,14 +846,8 @@ describe("a clinic, nothing like a shop", () => {
         note: "No recorded link between appointments and a later outcome.",
       });
     }
-    expect(r.findings).toHaveLength(2);
-    const cohort = finding(r, "cohort", /^Regular patients have fewer/)!;
-    expect(cohort.details.table.rows[0]).toEqual([
-      "Regular patients (80, fixed)",
-      "240",
-      "168",
-      "−30.0%",
-    ]);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings.some((f) => f.check === "cohort")).toBe(false);
     expect(finding(r, "mix", /^Online appointments grew 100%/)).toBeDefined();
   });
 });
@@ -930,14 +914,16 @@ describe("data that cannot support a finding", () => {
       (c) => c.label === "Customer engagement",
     )!;
     expect(engagement.checks.find((c) => c.check === "cohort")).toMatchObject({
-      state: "set_aside",
-      note: expect.stringMatching(/looks like a tracking change/),
+      state: "skipped",
+      note: expect.stringMatching(/matched historical cohorts/),
     });
     expect(
       finding(r, "cohort", /Regular customers have fewer sessions/),
     ).toBeUndefined();
     const revenue = r.coverage.find((c) => c.label === "Revenue")!;
-    for (const check of revenue.checks.filter((c) => c.check !== "conversion"))
+    for (const check of revenue.checks.filter(
+      (c) => c.check === "mix" || c.check === "unit",
+    ))
       expect(check).toMatchObject({
         state: "set_aside",
         note: "The latest period has orders on only 3 of 7 days, which looks like a gap in the data rather than a business change.",
@@ -1127,4 +1113,333 @@ describe("activity", () => {
     expect(folded).toHaveLength(1);
     expect(folded[0].repeats).toBe(2);
   });
+});
+
+describe("maintainer follow-up regressions", () => {
+  const updateSessions = async (remove: number) => {
+    const d = (await store.list(scope, "dataset")).find(
+      (d) => d.name === "sessions",
+    )!;
+    await ingestRows(
+      store,
+      scope,
+      "sessions",
+      commerce().sessions.slice(0, -remove),
+      undefined,
+      d.id,
+    );
+  };
+  it("defers unmatched regular cohorts and never queries their aggregates", async () => {
+    await publish(commerce());
+    const r = await scan();
+    expect(r.findings.some((f) => f.check === "cohort")).toBe(false);
+    expect(
+      r.coverage
+        .find((c) => c.label === "Customer engagement")!
+        .checks.find((c) => c.check === "cohort"),
+    ).toMatchObject({
+      state: "skipped",
+      note: expect.stringMatching(/normal churn/),
+    });
+    expect(executor.queries.some((q) => /'cohort' AS part/.test(q.sql))).toBe(
+      false,
+    );
+  });
+  it("lets readers see findings but reserves manual scans for editors", async () => {
+    await publish(commerce());
+    await scan();
+    const token = (
+      await request("POST", "/tokens", { name: "Reader", readOnly: true })
+    ).json().token;
+    const headers = { authorization: "Bearer " + token };
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/api/v1/workspaces/${scope}/home/insights`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/v1/workspaces/${scope}/home/insights/scan`,
+          headers,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect((await request("POST", "/home/insights/scan", {})).statusCode).toBe(
+      200,
+    );
+  });
+  it("ignores unrelated dataset versions without querying Home", async () => {
+    await publish(commerce());
+    await scan();
+    const id = (await stored())!.jobId;
+    const other = await ingestRows(store, scope, "inventory", [
+      { sku: "one", stock: 20 },
+    ]);
+    await ingestRows(
+      store,
+      scope,
+      "inventory",
+      [{ sku: "one", stock: 19 }],
+      undefined,
+      other.id,
+    );
+    executor.queries = [];
+    expect(await insights()).toMatchObject({
+      stale: false,
+      scan: { state: "idle" },
+    });
+    expect((await stored())!.jobId).toBe(id);
+    expect(executor.queries).toHaveLength(0);
+  });
+  it("debounces repeated relevant updates for 15 minutes and coalesces active jobs", async () => {
+    await publish(commerce());
+    await scan();
+    const before = (await stored())!;
+    executor.queries = [];
+    for (const removed of [1, 2, 3]) {
+      await updateSessions(removed);
+      expect(await insights()).toMatchObject({
+        stale: true,
+        scan: { state: "idle" },
+      });
+      expect((await stored())!.jobId).toBe(before.jobId);
+    }
+    expect(executor.queries).toHaveLength(0);
+    await transaction(store, scope, async (tx) => {
+      const s = (await tx.get("home_insights"))!;
+      tx.update(s, {
+        ...s.data,
+        lastQueuedAt: new Date(
+          Date.now() - AUTO_SCAN_INTERVAL - 1000,
+        ).toISOString(),
+      });
+    });
+    expect(await insights()).toMatchObject({ scan: { state: "queued" } });
+    const activeId = (await stored())!.jobId;
+    await updateSessions(4);
+    await insights();
+    expect((await stored())!.jobId).toBe(activeId);
+    await transaction(store, scope, async (tx) => {
+      const j = (await tx.get(activeId))!;
+      tx.update(j, { ...j.data, status: "running" });
+    });
+    await updateSessions(5);
+    await insights();
+    expect((await stored())!.jobId).toBe(activeId);
+    expect(
+      (await store.list(scope, "job")).filter(
+        (j) =>
+          j.data.type === "home_insights" &&
+          ["queued", "running"].includes(j.data.status),
+      ),
+    ).toHaveLength(1);
+    expect(await runQueued()).toBeUndefined();
+    expect(await insights()).toMatchObject({
+      stale: false,
+      scan: { state: "idle" },
+    });
+  });
+  it("honours manual overrides without leaking a pending override into future automatic updates", async () => {
+    await publish(commerce());
+    await scan();
+    await updateSessions(1);
+    expect(
+      (await request("POST", "/home/insights/scan", {})).json().scan.state,
+    ).toBe("queued");
+    const activeId = (await stored())!.jobId;
+    await updateSessions(2);
+    await request("POST", "/home/insights/scan", {});
+    expect((await stored())!.jobId).toBe(activeId);
+    expect((await stored())!.pendingManual).toBe(true);
+    expect(await runQueued()).toBeUndefined();
+    expect((await stored())!.pendingManual).toBe(false);
+    await updateSessions(3);
+    expect(await insights()).toMatchObject({
+      stale: true,
+      scan: { state: "idle" },
+    });
+  });
+  it("remembers a manual request for inputs that change during a running scan", async () => {
+    await publish(commerce());
+    await scan();
+    await updateSessions(1);
+    await request("POST", "/home/insights/scan", {});
+    let changed = false;
+    executor.onQuery = async (job) => {
+      if (changed || !/^WITH a AS/.test(job.sql)) return;
+      changed = true;
+      await updateSessions(2);
+      await request("POST", "/home/insights/scan", {});
+    };
+    expect(await runQueued()).toBeUndefined();
+    executor.onQuery = undefined;
+    expect((await stored())!.pendingManual).toBe(true);
+    expect(await insights()).toMatchObject({
+      stale: true,
+      scan: { state: "queued" },
+    });
+    expect(await runQueued()).toBeUndefined();
+    expect((await stored())!.pendingManual).toBe(false);
+    expect(await insights()).toMatchObject({
+      stale: false,
+      scan: { state: "idle" },
+    });
+  });
+  it("probes only confirmed drivers and necessary conversion dependencies", async () => {
+    await publish(commerce());
+    const initial = await scan();
+    const traffic = initial.priorities.candidates.find(
+      (c) => c.label === "Traffic",
+    )!;
+    await request("PUT", "/home/insights/priorities", {
+      drivers: [traffic.id],
+    });
+    await transaction(store, scope, async (tx) => {
+      const s = (await tx.get("home_insights"))!;
+      tx.update(s, { ...s.data, probes: {} });
+    });
+    executor.queries = [];
+    expect(await runQueued()).toBeUndefined();
+    const r = await insights();
+    expect(r.priorities.selected.map((d) => d.id)).toEqual([traffic.id]);
+    expect(r.priorities.candidates.length).toBeGreaterThan(1);
+    const probes = executor.queries.filter((q) =>
+      /'probe' AS part/.test(q.sql),
+    );
+    expect(probes).toHaveLength(1);
+    expect(probes[0].sql).toContain('"started_at"');
+    expect(
+      executor.queries.filter((q) => /^WITH a AS/.test(q.sql)),
+    ).toHaveLength(1);
+  });
+  it.each(["coverage", "sync"] as const)(
+    "ends conversion comparisons at the earlier linked source %s",
+    async (source) => {
+      const data = commerce({ sessionLinks: true });
+      const end = Math.floor(Date.now() / DAY) * DAY - 3 * DAY;
+      if (source === "coverage")
+        data.orders = data.orders.filter(
+          (o) => Date.parse(String(o.ordered_at)) < end,
+        );
+      await publish(data);
+      if (source === "sync")
+        await transaction(store, scope, async (tx) => {
+          const d = (await tx.list("dataset")).find(
+            (d) => d.name === "orders",
+          )!;
+          tx.update(d, { ...d.data, lastSync: new Date(end).toISOString() });
+        });
+      const r = await scan();
+      const query = executor.queries.find(
+        (q) => /^WITH a AS/.test(q.sql) && q.inputs.length === 2,
+      )!;
+      expect(query).toBeDefined();
+      const iso = new Date(end).toISOString().slice(0, 19).replace("T", " ");
+      expect(query.sql).toContain("TIMESTAMP '" + iso + "'");
+      const newer = new Date(end + DAY)
+        .toISOString()
+        .slice(0, 19)
+        .replace("T", " ");
+      expect(query.sql).not.toContain("TIMESTAMP '" + newer + "'");
+      for (const f of r.findings.filter((f) => f.check === "conversion"))
+        expect(
+          f.periods.current.end <= new Date(end).toISOString().slice(0, 10),
+        ).toBe(true);
+    },
+  );
+  it("does not claim an offset when larger orders accompany materially lower revenue", async () => {
+    const data = commerce();
+    data.orders = data.orders.filter(
+      (o, i) => Date.parse(String(o.ordered_at)) < weekStart(0) || i % 5 < 3,
+    );
+    for (const o of data.orders)
+      o.net_amount =
+        Date.parse(String(o.ordered_at)) >= weekStart(0) ? 116 : 100;
+    await publish(data);
+    const r = await scan();
+    const unit = finding(r, "unit", /^Fewer orders, each larger/)!;
+    expect(unit).toBeDefined();
+    expect(unit.severity).toBe("issue");
+    expect(unit.details.contribution).toMatch(/−40.0%.*\+16.0%.*−30.4%/);
+    expect(unit.details.why).not.toMatch(/made up|offset/);
+  });
+  it.each(["mix", "conversion"] as const)(
+    "suppresses weaker %s segment comparisons but keeps stronger evidence",
+    async (check) => {
+      await publish(commerce({ sessionLinks: true }));
+      const workspace = (await store.get(scope, "workspace"))!;
+      const datasets = await store.list(scope, "dataset");
+      const bundle = await publishedBundle(
+        (k) => store.list(scope, k),
+        workspace.data.activeGeneration,
+      );
+      const activities = findActivities(
+        acceptedOntology(workspace, bundle, datasets),
+      );
+      const driver = proposeDrivers(activities, datasets, "").find(
+        (d) => d.label === "Traffic",
+      )!;
+      driver.checks = {
+        mix: check === "mix" ? null : "skip",
+        conversion: check === "conversion" ? null : "skip",
+        cohort: "skip",
+        unit: "skip",
+      };
+      const win = chooseWindow(
+        { lo: weekStart(8), hi: Date.now() - DAY, rows: 16000 },
+        Date.now(),
+        DEFAULT_THRESHOLDS,
+        "sessions",
+      );
+      if ("reason" in win) throw new Error(win.reason);
+      const run = (scale: number) => {
+        const rows: Record<string, unknown>[] = [];
+        const add = (
+          part: string,
+          w: string,
+          g: string | null,
+          n: number,
+          v = n,
+        ) =>
+          rows.push({
+            part,
+            w,
+            g,
+            n: n * scale,
+            v: v * scale,
+            s2: v * scale,
+            k: n * scale,
+            days: 7,
+            np: n * scale,
+          });
+        for (const w of ["base", "cur"]) {
+          add("total", w, null, 1000);
+          if (check === "mix") {
+            add("d0", w, "paid", w === "base" ? 200 : 265);
+            add("d0", w, "organic", w === "base" ? 800 : 735);
+          } else {
+            add("conv_total", w, null, 10000, 2000);
+            add("conv", w, "paid", 1000, w === "base" ? 200 : 265);
+            add("conv", w, "organic", 9000, w === "base" ? 1800 : 1735);
+          }
+        }
+        return evaluate(
+          driver,
+          win,
+          DEFAULT_THRESHOLDS,
+          rows,
+          new Map(activities.map((a) => [a.id, a])),
+        ).candidates;
+      };
+      expect(run(1)).toHaveLength(0);
+      expect(run(3).some((c) => c.check === check)).toBe(true);
+    },
+  );
 });

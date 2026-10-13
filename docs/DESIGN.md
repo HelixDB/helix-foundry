@@ -235,7 +235,11 @@ text is 11px, three or four words, with its figure bold. Evidence sits in a
 quiet native `Details` disclosure (11px muted text and a small chevron, no
 separator). Cards sit three across, or one at a time with manual previous
 and next buttons when the section is narrower than 640px; nothing rotates on
-its own.
+its own. The section never pads the result to three cards. Regular-cohort
+alerts are deferred until a matched historical reference can separate excess
+decline from normal churn. “Offset” wording requires the total to stay within
+the configured relative-change threshold; otherwise the headline describes
+both changes without implying that they cancel.
 
 Charts do not share one palette yet:
 

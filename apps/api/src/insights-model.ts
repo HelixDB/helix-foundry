@@ -551,7 +551,7 @@ export function proposeDrivers(
         : a.dimensions;
     const checks: Driver["checks"] = {
       cohort: actor
-        ? null
+        ? "Regular-cohort alerts need matched historical cohorts to distinguish a decline from normal churn; this check is deferred."
         : `No link from ${a.many} to a customer, account or other participant.`,
       mix:
         dimensions.length || contributor

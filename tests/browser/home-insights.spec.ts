@@ -4,7 +4,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { api, openApp } from "./support/workspace";
 import { artifact } from "./support/ports";
-import { clinic, commerce } from "../fixtures/business";
+import { clinic, commerce, weekStart } from "../fixtures/business";
 
 // A published workspace from fixture tables, once the background scan has
 // found `findings` shifts; selected in the browser.
@@ -54,15 +54,21 @@ test("shows three findings on a desktop and one at a time on a phone", async ({
   page,
 }) => {
   await openApp(page);
-  await fixtureWorkspace(page, "Meridian shop", commerce({ weeks: 5 }), 3);
+  const shop = commerce({ weeks: 5 });
+  for (const order of shop.orders)
+    if (Date.parse(String(order.ordered_at)) >= weekStart(0))
+      order.net_amount = Number(order.net_amount) * 1.5;
+  await fixtureWorkspace(page, "Meridian shop", shop, 3);
   await page.goto("/");
   const section = noticed(page);
   await expect(section).toBeVisible();
   await expect(cards(page)).toHaveCount(3);
   for (let i = 0; i < 3; i++) await expect(cards(page).nth(i)).toBeVisible();
   // Labelled status, three or four words beneath, no Important control.
-  for (const label of ["Positive", "Warning", "Issue"])
-    await expect(section.getByText(label, { exact: true })).toBeVisible();
+  for (const label of ["Positive", "Warning"])
+    await expect(
+      section.getByText(label, { exact: true }).first(),
+    ).toBeVisible();
   await expect(section.getByText("Important")).toHaveCount(0);
   await expect(
     section.getByRole("heading", { name: "Referral sessions grew 150%." }),
@@ -148,9 +154,9 @@ test("shows fewer cards when fewer findings are meaningful", async ({
   page,
 }) => {
   await openApp(page);
-  await fixtureWorkspace(page, "Riverside clinic", clinic(5), 2);
+  await fixtureWorkspace(page, "Riverside clinic", clinic(5), 1);
   await page.goto("/");
-  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page)).toHaveCount(1);
   await expect(
     noticed(page).getByRole("heading", {
       name: "Online appointments grew 100%.",
@@ -163,7 +169,9 @@ test("shows fewer cards when fewer findings are meaningful", async ({
       .first(),
   ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(noticed(page).getByText("1 of 2")).toBeVisible();
+  await expect(
+    noticed(page).getByRole("button", { name: "Next finding" }),
+  ).toHaveCount(0);
   await expect(cards(page).locator("visible=true")).toHaveCount(1);
   expect(await noOverflow(page)).toBe(true);
 });

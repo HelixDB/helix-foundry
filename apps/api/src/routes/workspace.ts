@@ -114,7 +114,7 @@ export function registerWorkspaceRoutes(
     return homeInsights(store, a.scope, a.user.id);
   });
   app.post("/api/v1/workspaces/:w/home/insights/scan", async (req) => {
-    const a = await access(req);
+    const a = await access(req, "editor");
     return rescanInsights(store, a.scope, a.user.id);
   });
   // Dismissals belong to the person, so viewers may dismiss too.

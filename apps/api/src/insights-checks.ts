@@ -167,7 +167,7 @@ export function driverQuery(
     contributor =
       d.contributor === d.actor ? actor : str(`a.${q(d.contributor.column)}`);
   const dims = d.dimensions.slice(0, 3);
-  const cohort = !!d.actor && w.cohortReady;
+  const cohort = !!d.actor && w.cohortReady && d.checks.cohort === null;
   const from = cohort ? w.cohort[0] : w.baseline[0];
   const time = ts(a, "a");
   const ctes = [
@@ -488,6 +488,9 @@ export function evaluate(
     Math.abs(r) >= t.relativeChange &&
     Math.abs(z) >= t.minZ &&
     impact >= t.minImpact;
+  // A scan looks at many segments. Use a stricter gate for selected segment
+  // comparisons so a quiet week doesn't turn sampling noise into findings.
+  const segmentMinZ = Math.max(t.minZ, 4);
   const steadyText = (what: string, r: number | null, z: number) =>
     r === null
       ? `${what}: nothing to compare.`
@@ -671,7 +674,7 @@ export function evaluate(
         impact = Math.abs(g1.v - g0.v) / T0.v;
       if (
         Math.abs(best.ds) < t.shareChange ||
-        Math.abs(best.z) < t.minZ ||
+        Math.abs(best.z) < segmentMinZ ||
         impact < t.minImpact
       ) {
         steady.push(
@@ -897,7 +900,8 @@ export function evaluate(
         const change = rA!,
           offset =
             Math.sign(rN) !== Math.sign(change) &&
-            Math.abs(rN) >= t.relativeChange / 2;
+            Math.abs(rN) >= t.relativeChange / 2 &&
+            Math.abs(totalRel) < t.relativeChange;
         const sev: InsightSeverity =
           d.measure.direction === "up"
             ? change < 0
@@ -905,9 +909,13 @@ export function evaluate(
                 Math.abs(change) >= t.issueRelative
                 ? "issue"
                 : "warning"
-              : offset
-                ? "warning"
-                : "positive"
+              : rN <= -t.relativeChange / 2 && totalRel <= -t.relativeChange
+                ? Math.abs(totalRel) >= t.issueRelative
+                  ? "issue"
+                  : "warning"
+                : offset
+                  ? "warning"
+                  : "positive"
             : change > 0
               ? "warning"
               : "positive";
@@ -921,7 +929,9 @@ export function evaluate(
                 ? `${capital(a.many)} held up, but value per ${a.one} fell ${pctOf(change)}.`
                 : `Value per ${a.one} fell ${pctOf(change)}.`
               : rN <= -t.relativeChange / 2
-                ? `Fewer ${a.many} were offset by larger ${a.many}.`
+                ? offset
+                  ? `Fewer ${a.many} were offset by larger ${a.many}.`
+                  : `Fewer ${a.many}, each larger.`
                 : `Value per ${a.one} rose ${pctOf(change)}.`,
           support: brief([
             { text: value, figure: arrow(change) + pctOf(change) },
@@ -1021,7 +1031,7 @@ export function evaluate(
           if (
             Math.abs(rr) >= t.rateChange &&
             Math.abs(a1 - a0) >= 0.005 &&
-            Math.abs(z) >= t.minZ
+            Math.abs(z) >= (g === null ? t.minZ : segmentMinZ)
           )
             options.push({ g, rel: rr, z, weight });
         };

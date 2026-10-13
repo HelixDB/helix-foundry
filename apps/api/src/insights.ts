@@ -51,7 +51,8 @@ import { now, resource, transaction, type Store } from "./store.js";
 
 export const INSIGHTS_ID = "home_insights";
 // Bumped when the checks change, so every workspace scans again.
-export const INSIGHTS_VERSION = 2;
+export const INSIGHTS_VERSION = 3;
+export const AUTO_SCAN_INTERVAL = 15 * 60_000;
 const MAX_DRIVERS = 3,
   MAX_FINDINGS = 3,
   // Candidate activities whose coverage is probed before choosing drivers.
@@ -71,6 +72,10 @@ type Stored = {
   stage?: InsightStage;
   stageDetail?: Partial<Record<InsightStage, string>>;
   checkedAt?: string;
+  // Persisted request time bounds automatic scans across worker restarts.
+  lastQueuedAt?: string;
+  pendingManual?: boolean;
+  pendingManualKey?: string;
   // Coverage of activities, by dataset version and time column.
   probes?: Record<string, Coverage | null>;
   candidates?: InsightDriver[];
@@ -94,9 +99,8 @@ const stageLabels: Record<InsightStage, string> = {
 const stageDetails: Record<InsightStage, string> = {
   understand:
     "Connect activity, participants and outcomes in your ontology, and choose up to three priorities.",
-  fundamentals: "Compare complete periods and fix the cohorts.",
-  shifts:
-    "Check cohorts, mix, value per activity and conversion beneath the totals.",
+  fundamentals: "Compare complete periods shared by the relevant sources.",
+  shifts: "Check mix, value per activity and conversion beneath the totals.",
 };
 
 export const thresholdsOf = (s?: Stored): InsightThresholds => ({
@@ -117,15 +121,50 @@ function inputsKey(
       INSIGHTS_VERSION,
       workspace.data.activeGeneration,
       workspace.data.onboarding?.ontology?.hash || "",
-      datasets.map((d) => [
-        d.id,
-        d.data.activeVersion,
-        new Date(syncedAt(d)).toISOString().slice(0, 10),
-      ]),
+      [...datasets]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((d) => [
+          d.id,
+          d.data.activeVersion,
+          new Date(syncedAt(d)).toISOString().slice(0, 10),
+        ]),
       stored?.settings || {},
       stored?.priorities?.drivers || [],
     ]),
   );
+}
+
+// Only the chosen drivers' actual dependencies invalidate cached findings.
+// Before the first scan, the metadata-ranked shortlist stands in for the
+// selection. Publication/ontology/settings changes remain part of the key.
+function watchedDatasets(
+  drivers: Driver[],
+  datasets: Resource[],
+  stored: Stored | undefined,
+  activities: Activity[],
+) {
+  const desired = new Set(
+    stored?.priorities?.drivers || stored?.selected || [],
+  );
+  let picked = drivers.filter((d) => desired.has(d.id));
+  if (!picked.length)
+    picked = [...drivers]
+      .sort((a, b) => b.prior - a.prior || a.id.localeCompare(b.id))
+      .slice(0, MAX_DRIVERS);
+  const ids = new Set<string>();
+  for (const d of picked) {
+    ids.add(d.activity.datasetId);
+    for (const p of [d.actor, d.contributor]) {
+      if (p?.via) ids.add(p.via.datasetId);
+      if (p) ids.add(p.datasetId);
+    }
+    if (d.funnel && d.funnel.link.side !== "flag")
+      for (const id of [d.funnel.upstream, d.funnel.downstream]) {
+        const a = activities.find((x) => x.id === id);
+        if (a) ids.add(a.datasetId);
+      }
+  }
+  return datasets.filter((d) => ids.has(d.id));
 }
 const probeKey = (a: Activity, d: Resource | undefined) =>
   `${a.datasetId}@${d?.data.activeVersion || ""}:${a.time.column}`;
@@ -152,9 +191,40 @@ async function saveStored(
 
 // Queues a scan of the current inputs, reusing its job; `force` also restarts
 // a failed one.
-async function queueScan(store: Store, scope: string, key: string) {
+async function queueScan(
+  store: Store,
+  scope: string,
+  key: string,
+  force = false,
+) {
   const id = "insights_" + digest(scope + ":" + key).slice(0, 24);
   return transaction(store, scope, async (tx) => {
+    const previous = (await tx.get(INSIGHTS_ID))?.data as Stored | undefined;
+    const active = previous?.jobId ? await tx.get(previous.jobId) : undefined;
+    // Coalesce input changes during a run. Automatic scans use the latest
+    // inputs on the next eligible request, never a second concurrent job.
+    if (busy(active)) {
+      if (force && previous?.requestedKey !== key) {
+        const r = (await tx.get(INSIGHTS_ID))!;
+        const updated = tx.update(r, {
+          ...previous,
+          pendingManual: true,
+          pendingManualKey: key,
+        });
+        return { stored: updated.data as Stored, job: active! };
+      }
+      return { stored: previous!, job: active! };
+    }
+    const queuedAt = Date.parse(
+      previous?.lastQueuedAt || active?.createdAt || previous?.checkedAt || "",
+    );
+    if (
+      !force &&
+      !previous?.pendingManual &&
+      Number.isFinite(queuedAt) &&
+      Date.now() - queuedAt < AUTO_SCAN_INTERVAL
+    )
+      return { stored: previous!, job: active };
     let job = await tx.get(id);
     if (!job)
       job = tx.put(
@@ -184,6 +254,9 @@ async function queueScan(store: Store, scope: string, key: string) {
         ...(r?.data as Stored | undefined),
         requestedKey: key,
         jobId: id,
+        lastQueuedAt: now(),
+        pendingManual: false,
+        pendingManualKey: undefined,
       };
     const stored = (
       r
@@ -201,6 +274,8 @@ type Context = {
   datasets: Resource[];
   stored?: Stored;
   key: string;
+  activities: Activity[];
+  drivers: Driver[];
 };
 async function context(store: Store, scope: string): Promise<Context | null> {
   const workspace = await store.get(scope, "workspace");
@@ -210,11 +285,29 @@ async function context(store: Store, scope: string): Promise<Context | null> {
   const stored = (await store.get(scope, INSIGHTS_ID))?.data as
     | Stored
     | undefined;
+  const bundle = await publishedBundle(
+    (kind) => store.list(scope, kind),
+    workspace.data.activeGeneration,
+  );
+  const activities = findActivities(
+    acceptedOntology(workspace, bundle, datasets),
+  );
+  const drivers = proposeDrivers(
+    activities,
+    datasets,
+    businessContext(workspace),
+  );
   return {
     workspace,
     datasets,
     stored,
-    key: inputsKey(workspace, datasets, stored),
+    key: inputsKey(
+      workspace,
+      watchedDatasets(drivers, datasets, stored, activities),
+      stored,
+    ),
+    activities,
+    drivers,
   };
 }
 
@@ -363,7 +456,7 @@ export async function rescanInsights(
 ) {
   const ctx = await context(store, scope);
   assert(ctx, "Publish a workspace first", 409);
-  await queueScan(store, scope, ctx.key);
+  await queueScan(store, scope, ctx.key, true);
   return homeInsights(store, scope, userId);
 }
 
@@ -438,7 +531,7 @@ export async function confirmPriorities(
         : undefined,
     };
   });
-  return homeInsights(store, scope, userId);
+  return rescanInsights(store, scope, userId);
 }
 export async function updateInsightSettings(
   store: Store,
@@ -447,7 +540,7 @@ export async function updateInsightSettings(
   settings: Partial<InsightThresholds>,
 ) {
   await saveStored(store, scope, (s) => ({ ...s, settings }));
-  return homeInsights(store, scope, userId);
+  return rescanInsights(store, scope, userId);
 }
 
 // Coverage of an activity: its earliest and latest event and row count, from
@@ -496,16 +589,25 @@ async function selectDrivers(
   datasets: Resource[],
   stored: Stored | undefined,
   t: InsightThresholds,
+  activities: Activity[],
 ): Promise<Selection> {
   const byId = new Map(datasets.map((d) => [d.id, d]));
   const chosen = new Set(stored?.priorities?.drivers || []);
+  const eligible = chosen.size
+    ? drivers.filter((d) => chosen.has(d.id))
+    : drivers;
+  const byActivity = new Map(activities.map((a) => [a.id, a]));
   const targets: Activity[] = [];
-  for (const d of drivers)
-    if (
-      !targets.some((a) => a.id === d.activity.id) &&
-      (targets.length < MAX_PROBES || chosen.has(d.id))
-    )
-      targets.push(d.activity);
+  for (const d of eligible) {
+    const needed = [d.activity];
+    if (d.funnel && d.checks.conversion === null)
+      for (const id of [d.funnel.upstream, d.funnel.downstream]) {
+        const a = byActivity.get(id);
+        if (a && !needed.some((n) => n.id === a.id)) needed.push(a);
+      }
+    const missing = needed.filter((a) => !targets.some((x) => x.id === a.id));
+    if (targets.length + missing.length <= MAX_PROBES) targets.push(...missing);
+  }
   const probes: Record<string, Coverage | null> = {};
   for (const a of targets) {
     const k = probeKey(a, byId.get(a.datasetId));
@@ -517,17 +619,35 @@ async function selectDrivers(
   const windows = new Map<string, Window>(),
     scored: { d: Driver; score: number }[] = [],
     unavailable: Selection["unavailable"] = [];
-  for (const d of drivers) {
+  for (const d of eligible) {
     const k = probeKey(d.activity, byId.get(d.activity.datasetId));
     if (!(k in probes)) continue;
     const cov = probes[k];
-    const w = cov
-      ? chooseWindow(
-          cov,
-          syncedAt(byId.get(d.activity.datasetId)!),
-          t,
-          d.activity.many,
-        )
+    let coverage = cov,
+      sync = syncedAt(byId.get(d.activity.datasetId)!);
+    if (cov && d.funnel && d.checks.conversion === null) {
+      const endpoints = [d.funnel.upstream, d.funnel.downstream].map((id) =>
+        byActivity.get(id),
+      );
+      const linked = endpoints.map(
+        (a) => a && probes[probeKey(a, byId.get(a.datasetId))],
+      );
+      if (linked.every((c) => !!c)) {
+        coverage = {
+          lo: Math.max(cov.lo, ...linked.map((c) => c!.lo)),
+          hi: Math.min(cov.hi, ...linked.map((c) => c!.hi)),
+          rows: cov.rows,
+        };
+        sync = Math.min(
+          sync,
+          ...endpoints.map((a) => syncedAt(byId.get(a!.datasetId)!)),
+        );
+      } else
+        d.checks.conversion =
+          "Both linked activities need dated coverage before conversion can be compared.";
+    }
+    const w = coverage
+      ? chooseWindow(coverage, sync, t, d.activity.many)
       : { reason: `No ${d.activity.many} have a date.` };
     if ("reason" in w) {
       unavailable.push({
@@ -541,10 +661,7 @@ async function selectDrivers(
     windows.set(d.id, w);
     scored.push({
       d,
-      score:
-        d.prior *
-        (w.days === 7 ? 1 : 0.85) *
-        (d.actor && !w.cohortReady ? 0.9 : 1),
+      score: d.prior * (w.days === 7 ? 1 : 0.85),
     });
   }
   scored.sort((a, b) => b.score - a.score || a.d.id.localeCompare(b.d.id));
@@ -559,7 +676,9 @@ async function selectDrivers(
   return {
     drivers: picked.map((s) => s.d),
     windows,
-    candidates: scored.map((s) => driverSummary(s.d)),
+    candidates: chosen.size
+      ? drivers.map(driverSummary)
+      : scored.map((s) => driverSummary(s.d)),
     unavailable: unavailable.slice(0, 6),
     ambiguous,
     ownerConfirmed: confirmed.length > 0,
@@ -635,21 +754,11 @@ export async function runInsightsScan(
       }));
       return;
     }
-    const { workspace, datasets, stored, key } = ctx;
+    const { workspace, datasets, stored } = ctx;
     const t = thresholdsOf(stored);
-    const bundle = await publishedBundle(
-      (k) => store.list(scope, k),
-      workspace.data.activeGeneration,
-    );
-    const activities = findActivities(
-      acceptedOntology(workspace, bundle, datasets),
-    );
+    const activities = ctx.activities;
     const byActivity = new Map(activities.map((a) => [a.id, a]));
-    const proposed = proposeDrivers(
-      activities,
-      datasets,
-      businessContext(workspace),
-    );
+    const proposed = ctx.drivers;
     const sel = await selectDrivers(
       store,
       scope,
@@ -657,6 +766,7 @@ export async function runInsightsScan(
       datasets,
       stored,
       t,
+      activities,
     );
     const names = sel.drivers.map((d) => d.label);
     const list = (xs: string[]) =>
@@ -673,7 +783,7 @@ export async function runInsightsScan(
     await stage(
       "fundamentals",
       first
-        ? `Complete ${first.days === 7 ? "weeks" : "four-week periods"}: ${periodLabel(...first.current)} against ${periodLabel(...first.baseline)}, in UTC${first.cohortReady && sel.drivers.some((d) => d.actor) ? `; cohorts fixed from ${periodLabel(...first.cohort)}` : ""}.`
+        ? `Complete ${first.days === 7 ? "weeks" : "four-week periods"}: ${periodLabel(...first.current)} against ${periodLabel(...first.baseline)}, in UTC.`
         : undefined,
     );
     await stage("shifts");
@@ -782,12 +892,31 @@ export async function runInsightsScan(
     await saveStored(store, scope, (x) => ({
       ...x,
       version: INSIGHTS_VERSION,
+      pendingManual: !!x.pendingManual && x.pendingManualKey !== ctx.key,
+      pendingManualKey:
+        x.pendingManualKey !== ctx.key ? x.pendingManualKey : undefined,
       key:
-        !sel.ownerConfirmed &&
-        stored?.priorities &&
-        JSON.stringify(x.priorities) === JSON.stringify(stored.priorities)
-          ? inputsKey(workspace, datasets, { ...stored, priorities: undefined })
-          : key,
+        stored?.priorities && !sel.ownerConfirmed
+          ? ctx.key
+          : inputsKey(
+              workspace,
+              watchedDatasets(
+                proposed,
+                datasets,
+                {
+                  ...stored,
+                  selected: sel.drivers.map((d) => d.id),
+                  priorities: sel.ownerConfirmed
+                    ? stored?.priorities
+                    : undefined,
+                },
+                activities,
+              ),
+              {
+                ...stored,
+                priorities: sel.ownerConfirmed ? stored?.priorities : undefined,
+              },
+            ),
       stage: undefined,
       stageDetail: {
         ...x.stageDetail,
