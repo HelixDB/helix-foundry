@@ -28,6 +28,7 @@ import {
   saveProposal,
 } from "../apps/api/src/assistant.js";
 import { onboardingState } from "../apps/api/src/onboarding-state.js";
+import { seal } from "../apps/api/src/security.js";
 import { datasetTable } from "../packages/shared/src/index.js";
 import { connectionGroups } from "../apps/web/src/connection-groups.js";
 import { Provider } from "../apps/api/src/providers.js";
@@ -208,6 +209,58 @@ it("redacts a credential the engine quotes from the data before a dashboard repa
   const details = repairs[0].failures.map((f: any) => f.detail).join("\n");
   expect(details).not.toContain("0123456789abcdefghij");
   expect(details).toContain("Could not convert string 'Bearer [redacted]'");
+});
+it("keeps values the engine quotes from a hosted model before a dashboard repair", async () => {
+  await inputs();
+  await transaction(store, scope, async (tx) =>
+    tx.put(
+      resource(
+        scope,
+        "provider",
+        "AI",
+        {
+          settings: { provider: "claude", model: "claude-sonnet-4-6" },
+          secret: seal("sk-test-key"),
+        },
+        "provider",
+      ),
+    ),
+  );
+  const people = await ingestRows(store, scope, "People", [
+    { id: 1, ssn: "987-65-4320" },
+  ]);
+  const repairs: any[] = [];
+  vi.spyOn(Provider.prototype, "generate").mockImplementation(
+    async (system, context: any) => {
+      if (system.includes("Correct these definitions")) {
+        repairs.push(context.repair);
+        return {
+          value: referenceReply("focused dashboard", context),
+          tokens: 12,
+        };
+      }
+      const value: any = referenceReply(system, context);
+      if (system.includes("focused dashboard"))
+        value.dashboards[0].widgets[0] = {
+          title: "People",
+          type: "metric",
+          inputs: [people.id],
+          sql: `SELECT CAST(ssn AS INTEGER) AS n FROM ${datasetTable(people.id)}`,
+        };
+      return { value, tokens: 12 };
+    },
+  );
+  const r = await request("POST", "/onboarding/recommendations", {});
+  await buildWorkspace(store, scope, r.json().id);
+  const goal = (await onboardingState(store, scope)).recommendations!
+    .outcomes[0].goal;
+  const run = (await request("POST", "/onboarding/build", { goal })).json();
+  await buildWorkspace(store, scope, run.id);
+  const details = repairs[0].failures.map((f: any) => f.detail).join("\n");
+  expect(details).toContain(
+    "Conversion Error: Could not convert string [value] to INT32 when casting from source column ssn",
+  );
+  expect(JSON.stringify(repairs)).not.toMatch(/987|4320/);
 });
 it("recommends from full snapshots, resumes, tests one view and atomically completes on publication", async () => {
   await inputs();
