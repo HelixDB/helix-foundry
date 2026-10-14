@@ -1365,6 +1365,28 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         "ontology",
         "Building records from the confirmed ontology",
       );
+    else {
+      // A build needs the datasets its earlier definitions use and those the
+      // goal is about, not every schema in the workspace; see focusDatasets.
+      const previous = context.previous || {},
+        resource = context.resource || {};
+      context.datasets = focusDatasets(context.datasets, {
+        text: [context.goal, resource.type, resource.name]
+          .filter(Boolean)
+          .join(" "),
+        pinned: [
+          resource.datasetId,
+          ...(previous.ontology || []).map((t: any) => t.datasetId),
+          ...(previous.pipelines || []).flatMap((p: any) => p.inputs),
+          ...(previous.dashboards || []).flatMap((d: any) =>
+            d.widgets.flatMap((w: any) => w.inputs),
+          ),
+        ].filter(Boolean),
+        preferred: (await currentBundle(store, scope)).ontology.map(
+          (t) => t.datasetId,
+        ),
+      });
+    }
     const catalog = plan
       ? {
           summary: plan.summary,

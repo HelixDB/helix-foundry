@@ -7,13 +7,19 @@ vi.mock("../apps/api/src/executor.js", () => ({
 }));
 import { createApp } from "../apps/api/src/app.js";
 import { MemoryStore } from "../apps/api/src/store.js";
-import { buildWorkspace } from "../apps/api/src/assistant.js";
+import { buildWorkspace, enqueue } from "../apps/api/src/assistant.js";
 import { Provider } from "../apps/api/src/providers.js";
 import { config } from "../apps/api/src/config.js";
 import { ANSWER_CONTEXT_CHARS } from "../apps/api/src/answer-context.js";
+import { datasetTable } from "../packages/shared/src/index.js";
 
 // A question sends the model the datasets it needs: none to route it, and on
 // a workspace too large to send whole, the ones it is about.
+// Wide tables whose schemas together are past the budget. DuckDB reads an
+// object of more than 200 keys as one map column, so each stays under it.
+const wide = Object.fromEntries(
+  Array.from({ length: 190 }, (_, i) => [`field_${i}`, "x".repeat(60)]),
+);
 let store: MemoryStore,
   app: Awaited<ReturnType<typeof createApp>>,
   scope: string;
@@ -42,31 +48,66 @@ afterEach(async () => {
     });
 });
 
-// Answers with a total over orders, recording what each call was sent.
+// Answers with a total over orders, or builds definitions over orders,
+// recording what each call was sent.
 function model(orders: string) {
   const calls: { stage: string; context: any; schema: any }[] = [];
+  const table = datasetTable(orders),
+    total = `SELECT sum("amount") AS total FROM ${table}`;
+  const replies: Record<string, unknown> = {
+    routing: { intent: "answer" },
+    analysis: {
+      title: "Order total",
+      sql: 'SELECT sum("amount") AS total FROM orders',
+      inputs: [orders],
+      assumptions: [],
+    },
+    summary: { summary: "Orders total 30.", highlights: [] },
+    catalog: {
+      summary: "Orders",
+      assumptions: [],
+      catalog: [{ datasetId: orders, description: "One order", tags: [] }],
+    },
+    pipelines: {
+      pipelines: [{ name: "Order total", inputs: [orders], sql: total }],
+    },
+    ontology: {
+      ontology: [
+        {
+          name: "Order",
+          datasetId: orders,
+          primaryKey: "id",
+          properties: ["id", "amount"],
+        },
+      ],
+      relationships: [],
+    },
+    dashboards: {
+      dashboards: [
+        {
+          name: "Orders",
+          widgets: [
+            { title: "Total", type: "metric", inputs: [orders], sql: total },
+          ],
+        },
+      ],
+      actions: [],
+    },
+  };
+  const stages: [string, string][] = [
+    ["Choose answer", "routing"],
+    ["Answer the question", "analysis"],
+    ["Describe the datasets", "catalog"],
+    ["one useful simple pipeline", "pipelines"],
+    ["Suggest ontology", "ontology"],
+    ["focused dashboard", "dashboards"],
+  ];
   vi.spyOn(Provider.prototype, "generate").mockImplementation(
     async (system: string, context: any, schema: any) => {
-      const stage = system.includes("Choose answer")
-        ? "routing"
-        : system.includes("Answer the question")
-          ? "analysis"
-          : "summary";
+      const stage =
+        stages.find(([prompt]) => system.includes(prompt))?.[1] || "summary";
       calls.push({ stage, context, schema });
-      return {
-        value:
-          stage === "routing"
-            ? { intent: "answer" }
-            : stage === "analysis"
-              ? {
-                  title: "Order total",
-                  sql: 'SELECT sum("amount") AS total FROM orders',
-                  inputs: [orders],
-                  assumptions: [],
-                }
-              : { summary: "Orders total 30.", highlights: [] },
-        tokens: 1,
-      };
+      return { value: replies[stage], tokens: 1 };
     },
   );
   return calls;
@@ -78,6 +119,14 @@ async function ask(goal: string) {
   await buildWorkspace(store, scope, run.id);
   const done = (await store.get(scope, run.id))!;
   expect(done.data.status, done.data.error).toBe("succeeded");
+  return done;
+}
+// A background build, as the continuous review starts one.
+async function build(goal: string, parentId?: string) {
+  const run = await enqueue(store, scope, goal, parentId, undefined, true);
+  await buildWorkspace(store, scope, run.id);
+  const done = (await store.get(scope, run.id))!;
+  expect(done.data.status, done.data.error).toBe("awaiting_review");
   return done;
 }
 
@@ -100,11 +149,6 @@ it("on a workspace too large to send whole, answers from the datasets the questi
     { id: 1, amount: 10 },
     { id: 2, amount: 20 },
   ]);
-  // Wide tables whose schemas together are past the budget. DuckDB reads an
-  // object of more than 200 keys as one map column, so each stays under it.
-  const wide = Object.fromEntries(
-    Array.from({ length: 190 }, (_, i) => [`field_${i}`, "x".repeat(60)]),
-  );
   for (let i = 0; i < 10; i++) await ingest(`ledger_${i}`, [wide]);
   const calls = model(orders);
   const done = await ask("What is the total amount of our orders?");
@@ -120,4 +164,44 @@ it("on a workspace too large to send whole, answers from the datasets the questi
   expect([...analysis.schema.properties.inputs.items.enum].sort()).toEqual(
     analysis.context.datasets.map((d: any) => d.id).sort(),
   );
+});
+
+it("on a workspace too large to send whole, builds from the datasets the goal and earlier definitions use", async () => {
+  const orders = await ingest("orders", [
+    { id: 1, amount: 10 },
+    { id: 2, amount: 20 },
+  ]);
+  const names = ["branches", "tellers", "vaults", "cards", "checks"];
+  for (const name of [...names, "wires", "fees", "rates", "loans", "notes"])
+    await ingest(name, [wide]);
+  const calls = model(orders);
+  const first = await build("Show the total amount of our orders");
+  // A repair names the changed data, not the datasets its definitions read.
+  calls.length = 0;
+  await build(
+    "Review changed data and repair affected definitions. Findings: Data refreshed: wires",
+    first.data.proposalId,
+  );
+  expect(calls.map((c) => c.stage)).toEqual([
+    "catalog",
+    "pipelines",
+    "ontology",
+    "dashboards",
+  ]);
+  for (const call of calls) {
+    const shown = call.context.datasets.map((d: any) => d.name);
+    expect(shown).toEqual(expect.arrayContaining(["orders", "wires"]));
+    expect(shown.length).toBeLessThan(11);
+    expect(JSON.stringify(call.context.datasets).length).toBeLessThanOrEqual(
+      ANSWER_CONTEXT_CHARS,
+    );
+  }
+  // The model may only cite the datasets it was shown.
+  const pipelines = calls.find((c) => c.stage === "pipelines")!;
+  expect(
+    [
+      ...pipelines.schema.properties.pipelines.items.properties.inputs.items
+        .enum,
+    ].sort(),
+  ).toEqual(pipelines.context.datasets.map((d: any) => d.id).sort());
 });
