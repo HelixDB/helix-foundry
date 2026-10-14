@@ -746,7 +746,13 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
                 : context.datasets,
           page: context.page,
           resource: context.resource,
-          previous: context.previous,
+          // Descriptions of datasets the model isn't shown can't be used.
+          previous: context.previous && {
+            ...context.previous,
+            catalog: context.previous.catalog?.filter((c: any) =>
+              context.datasets.some((d: any) => d.id === c.datasetId),
+            ),
+          },
           assumptions: context.catalog?.assumptions,
           ontology:
             stage.startsWith("dashboards") || describing

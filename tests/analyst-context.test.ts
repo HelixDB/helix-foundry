@@ -50,7 +50,7 @@ afterEach(async () => {
 
 // Answers with a total over orders, or builds definitions over orders,
 // recording what each call was sent.
-function model(orders: string) {
+function model(orders: string, described = [orders]) {
   const calls: { stage: string; context: any; schema: any }[] = [];
   const table = datasetTable(orders),
     total = `SELECT sum("amount") AS total FROM ${table}`;
@@ -66,7 +66,11 @@ function model(orders: string) {
     catalog: {
       summary: "Orders",
       assumptions: [],
-      catalog: [{ datasetId: orders, description: "One order", tags: [] }],
+      catalog: described.map((datasetId) => ({
+        datasetId,
+        description: "One row",
+        tags: [],
+      })),
     },
     pipelines: {
       pipelines: [{ name: "Order total", inputs: [orders], sql: total }],
@@ -172,9 +176,11 @@ it("on a workspace too large to send whole, builds from the datasets the goal an
     { id: 2, amount: 20 },
   ]);
   const names = ["branches", "tellers", "vaults", "cards", "checks"];
+  const ids = [orders];
   for (const name of [...names, "wires", "fees", "rates", "loans", "notes"])
-    await ingest(name, [wide]);
-  const calls = model(orders);
+    ids.push(await ingest(name, [wide]));
+  // The first build describes every dataset.
+  const calls = model(orders, ids);
   const first = await build("Show the total amount of our orders");
   // A repair names the changed data, not the datasets its definitions read.
   calls.length = 0;
@@ -195,6 +201,10 @@ it("on a workspace too large to send whole, builds from the datasets the goal an
     expect(JSON.stringify(call.context.datasets).length).toBeLessThanOrEqual(
       ANSWER_CONTEXT_CHARS,
     );
+    // Earlier descriptions only of the datasets shown.
+    expect(
+      call.context.previous.catalog.map((c: any) => c.datasetId).sort(),
+    ).toEqual(call.context.datasets.map((d: any) => d.id).sort());
   }
   // The model may only cite the datasets it was shown.
   const pipelines = calls.find((c) => c.stage === "pipelines")!;
