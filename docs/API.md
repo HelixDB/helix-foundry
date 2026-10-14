@@ -80,7 +80,7 @@ These routes require owner permissions and a writable credential or the local br
 | Method / path                                       | Input / result                                                                                            |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | POST `/assistant/runs`                              | `{ goal, intent?: 'build' \| 'answer' \| 'auto', parentId?, context?: {page?,resourceId?} }`; durable run |
-| POST `/assistant/runs/:id/cancel`                   | `{}`; cancel a run                                                                                        |
+| POST `/assistant/runs/:id/cancel`                   | `{}`; cancel a run; 409 once it succeeded                                                                 |
 | POST `/assistant/runs/:id/resume`                   | `{}`; resume an interrupted run from saved stages                                                         |
 | POST `/assistant/runs/:id/save-analysis`            | `{}`; create a dashboard proposal from an executed answer                                                 |
 | GET `/live`                                         | `{ available, reason? }`; hands-free voice needs the OpenAI provider with GPT-Live (`gpt-live-1`) access  |
