@@ -1,5 +1,5 @@
 import { it, expect, vi, afterEach } from "vitest";
-import { FoundryClient } from "../packages/sdk/src/index.js";
+import { FoundryClient, FoundryError } from "../packages/sdk/src/index.js";
 const client = () =>
   new FoundryClient({
     baseUrl: "https://foundry.invalid",
@@ -43,4 +43,46 @@ it("sends every connector the source routes accept", async () => {
   ]);
   // @ts-expect-error files are uploaded, not connected
   await client().createSource({ name: "File", kind: "upload", config: {} });
+});
+it("reports the status of an error response that is not the API's JSON", async () => {
+  const f = vi.fn(
+    async (..._: any[]) =>
+      new Response("<html>502 Bad Gateway</html>", {
+        status: 502,
+        headers: { "content-type": "text/html" },
+      }),
+  );
+  vi.stubGlobal("fetch", f);
+  const failed = await client()
+    .provider()
+    .catch((e) => e);
+  expect(failed).toBeInstanceOf(FoundryError);
+  expect(failed.status).toBe(502);
+  expect(failed.message).toBe("Request failed with HTTP 502");
+  const upload = await client()
+    .uploadForSetup(new Blob(["a,b"]), "a.csv", "op-1")
+    .catch((e) => e);
+  expect(upload).toBeInstanceOf(FoundryError);
+  expect(upload.status).toBe(502);
+  // An empty body and a JSON body without an error keep their status too.
+  f.mockResolvedValueOnce(new Response("", { status: 504 }));
+  expect(
+    await client()
+      .provider()
+      .catch((e) => e),
+  ).toMatchObject({
+    status: 504,
+    message: "Request failed with HTTP 504",
+  });
+  f.mockResolvedValueOnce(
+    new Response(JSON.stringify({ error: "Not allowed" }), { status: 403 }),
+  );
+  expect(
+    await client()
+      .provider()
+      .catch((e) => e),
+  ).toMatchObject({
+    status: 403,
+    message: "Not allowed",
+  });
 });
