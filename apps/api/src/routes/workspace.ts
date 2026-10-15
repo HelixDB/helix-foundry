@@ -26,6 +26,11 @@ import { testProvider, canReuseProviderKey } from "../providers.js";
 import { localAiMemory } from "../memory.js";
 import { homeMetrics, regenerateMetrics } from "../metrics.js";
 import {
+  industryPlaybook,
+  rescanIndustry,
+  queueIndustryChecks,
+} from "../industry-checks.js";
+import {
   generationKinds,
   type RequestSchemas,
   type RouteDeps,
@@ -92,6 +97,14 @@ export function registerWorkspaceRoutes(
     const a = await access(req, "editor");
     await regenerateMetrics(store, a.scope, a.user.id);
     return homeMetrics(store, a.scope, a.user.id);
+  });
+  app.get("/api/v1/workspaces/:w/industry", async (req) => {
+    const a = await access(req);
+    return industryPlaybook(store, a.scope);
+  });
+  app.post("/api/v1/workspaces/:w/industry/check", async (req) => {
+    const a = await access(req, "editor");
+    return rescanIndustry(store, a.scope);
   });
   app.get("/api/v1/workspaces/:w/home", async (req) => {
     const a = await access(req);
@@ -512,7 +525,15 @@ export function registerWorkspaceRoutes(
   app.post("/api/v1/workspaces/:w/proposals/:id/publish", async (req: any) => {
     const a = await access(req, "editor"),
       b = z.object({ hash: z.string() }).parse(req.body);
-    return publishProposal(store, a.scope, req.params.id, b.hash, a.user.id);
+    const result = await publishProposal(
+      store,
+      a.scope,
+      req.params.id,
+      b.hash,
+      a.user.id,
+    );
+    await queueIndustryChecks(store, a.scope).catch((e) => req.log.warn(e));
+    return result;
   });
   app.post("/api/v1/workspaces/:w/proposals/:id/reject", async (req: any) => {
     const a = await access(req, "editor");
@@ -560,6 +581,7 @@ export function registerWorkspaceRoutes(
         }),
       ),
     );
+    await queueIndustryChecks(store, a.scope).catch((e) => req.log.warn(e));
     return result;
   });
   app.get("/api/v1/workspaces/:w/tokens", async (req) => {

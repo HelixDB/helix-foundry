@@ -15,6 +15,7 @@ import { queueCleanup, runCleanupJob } from "./cleanup.js";
 import { sweepResults } from "./results.js";
 import { reduceStoredDiscovery } from "./source-discovery.js";
 import { compactStoredSamples } from "./dataset-samples.js";
+import { queueIndustryChecks, runIndustryChecks } from "./industry-checks.js";
 // A job gets three attempts, whether it throws or its worker dies mid-run.
 const MAX_ATTEMPTS = 3;
 // Queue, leases and retries live here; each job type's work lives with its area.
@@ -27,6 +28,7 @@ const jobHandlers: Record<
   sync: runSyncJob,
   pipeline: runPipelineJob,
   cleanup: runCleanupJob,
+  industry_checks: runIndustryChecks,
 };
 // Setup's build from a confirmed ontology publishes the active versions it
 // validated, so a sync of one of its inputs meanwhile fails it with "Inputs
@@ -92,6 +94,7 @@ export function startWorker(store: Store) {
             !(await store.get(scope, "cleanup_state"))?.data.swept
           )
             await queueCleanup(store, scope);
+          await queueIndustryChecks(store, scope);
         }
         for (const source of await store.list(scope, "source"))
           if (scheduledRefresh(source) || needsChangeRefresh(source)) {
@@ -167,7 +170,7 @@ export function startWorker(store: Store) {
             ) {
               const error = `Lease expired ${r.data.attempts} times without finishing`;
               tx.update(r, { ...r.data, status: "failed", error });
-              if (r.kind === "job")
+              if (r.kind === "job" && r.data.type !== "industry_checks")
                 tx.put(
                   resource(
                     scope,
@@ -268,7 +271,11 @@ export function startWorker(store: Store) {
                     Date.now() +
                     Math.min(60000, 1000 * 2 ** (r.data.attempts || 1)),
                 });
-                if (r.kind === "job" && (r.data.attempts || 0) >= MAX_ATTEMPTS)
+                if (
+                  r.kind === "job" &&
+                  r.data.type !== "industry_checks" &&
+                  (r.data.attempts || 0) >= MAX_ATTEMPTS
+                )
                   tx.put(
                     resource(
                       scope,
@@ -292,6 +299,15 @@ export function startWorker(store: Store) {
           } finally {
             clearInterval(heartbeat);
           }
+          // Publication and source refresh invalidate the saved retail checks;
+          // the helper coalesces one job and preserves its cooldown on restart.
+          if (
+            candidate.kind === "run" ||
+            ["sync", "upload", "pipeline", "industry_checks"].includes(
+              candidate.data.type,
+            )
+          )
+            await queueIndustryChecks(store, scope);
           break;
         }
         const settings = await providerSettings(store, scope);
