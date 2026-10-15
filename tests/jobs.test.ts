@@ -21,6 +21,18 @@ vi.mock("../apps/api/src/datasets.js", () => ({
   ) => resource(scope, "dataset", name, { activeVersion: version }, id),
   queryDatasets: vi.fn(),
 }));
+vi.mock("../apps/api/src/insights.js", () => ({
+  runInsightsScan: async () => {
+    throw new Error("Insights executor unavailable");
+  },
+}));
+// These worker tests exercise snapshot scheduling and recovery. Replication
+// discovery is covered separately and must not contact a real database here.
+const snapshotSync = () => ({
+  mode: "snapshot",
+  status: "ready",
+  recheckAt: Date.now() + 60_000,
+});
 it("coalesces scheduled imports with queued work and completes a durable job", async () => {
   const store = new MemoryStore(),
     scope = "jobs";
@@ -38,6 +50,7 @@ it("coalesces scheduled imports with queued work and completes a durable job", a
           secret: seal({ database: "fixture" }),
           schedule: "* * * * *",
           nextRun: 0,
+          sync: snapshotSync(),
         },
         "source",
       ),
@@ -70,7 +83,7 @@ it("coalesces scheduled imports with queued work and completes a durable job", a
       started,
     );
   } finally {
-    stop();
+    await stop();
   }
 });
 it("recovers an interrupted import lease without creating another operation", async () => {
@@ -85,7 +98,11 @@ it("recovers an interrupted import lease without creating another operation", as
         scope,
         "source",
         "Orders",
-        { kind: "mysql", secret: seal({ database: "fixture" }) },
+        {
+          kind: "mysql",
+          secret: seal({ database: "fixture" }),
+          sync: snapshotSync(),
+        },
         "source",
       ),
     );
@@ -120,9 +137,50 @@ it("recovers an interrupted import lease without creating another operation", as
     expect((await store.get(scope, "interrupted"))?.data.attempts).toBe(2);
     expect(await store.list(scope, "job")).toHaveLength(1);
   } finally {
-    stop();
+    await stop();
   }
 });
+it.each(["handler", "lease"] as const)(
+  "keeps an insight %s failure out of Data health and AI repair",
+  async (failure) => {
+    const store = new MemoryStore(),
+      scope = "insight_failure_" + failure;
+    await transaction(store, "global", async (tx) =>
+      tx.put(resource("global", "workspaceRef", "Insights", {}, scope)),
+    );
+    await transaction(store, scope, async (tx) =>
+      tx.put(
+        resource(
+          scope,
+          "job",
+          "Check for business shifts",
+          {
+            type: "home_insights",
+            status: failure === "lease" ? "running" : "queued",
+            attempts: failure === "lease" ? 3 : 2,
+            leaseUntil: Date.now() - 1,
+          },
+          "insight_job",
+        ),
+      ),
+    );
+    const stop = startWorker(store);
+    try {
+      await expect
+        .poll(async () => (await store.get(scope, "insight_job"))?.data.status)
+        .toBe("failed");
+      expect((await store.get(scope, "insight_job"))?.data.error).toBe(
+        failure === "lease"
+          ? "Lease expired 3 times without finishing"
+          : "Insights executor unavailable",
+      );
+      expect(await store.list(scope, "finding")).toHaveLength(0);
+      expect(await store.list(scope, "run")).toHaveLength(0);
+    } finally {
+      await stop();
+    }
+  },
+);
 it.each(["missing_handler", "toString"])(
   "records an unsupported %s job as failed instead of succeeded",
   async (type) => {

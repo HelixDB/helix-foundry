@@ -175,3 +175,35 @@ test("shows fewer cards when fewer findings are meaningful", async ({
   await expect(cards(page).locator("visible=true")).toHaveCount(1);
   expect(await noOverflow(page)).toBe(true);
 });
+
+test("supports keyboard evidence and dismiss/undo in dark mode with reduced motion", async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem("foundry.theme", "dark"));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openApp(page);
+  await fixtureWorkspace(page, "Riverside keyboard", clinic(5), 1);
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  const card = cards(page).first();
+  const details = card.locator(".wk-finding-details > summary");
+  await details.focus();
+  await page.keyboard.press("Enter");
+  await expect(card.getByRole("table")).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(card.getByRole("table")).toBeHidden();
+  await card.getByRole("button", { name: /^Dismiss:/ }).focus();
+  await page.keyboard.press("Enter");
+  await expect(cards(page)).toHaveCount(0);
+  await expect(
+    noticed(page).getByRole("button", { name: "Undo" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(cards(page)).toHaveCount(1);
+  await expect(cards(page).first()).toBeFocused();
+  expect(await noOverflow(page)).toBe(true);
+  await page.screenshot({
+    path: artifact("home-insights-dark.png"),
+    fullPage: true,
+  });
+});
