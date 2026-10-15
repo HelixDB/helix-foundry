@@ -13,6 +13,7 @@ import { runSyncJob, runUploadJob } from "./data-jobs.js";
 import { runPipelineJob } from "./pipeline-jobs.js";
 import { queueCleanup, runCleanupJob } from "./cleanup.js";
 import { sweepResults } from "./results.js";
+import { runInsightsScan } from "./insights.js";
 import { reduceStoredDiscovery } from "./source-discovery.js";
 import { compactStoredSamples } from "./dataset-samples.js";
 // A job gets three attempts, whether it throws or its worker dies mid-run.
@@ -26,8 +27,14 @@ const jobHandlers: Record<
   upload: runUploadJob,
   sync: runSyncJob,
   pipeline: runPipelineJob,
+  home_insights: runInsightsScan,
   cleanup: runCleanupJob,
 };
+// Job types whose failure Home reports itself. They raise no Data health
+// finding, which would also queue an AI repair run for a read-only check.
+const quietFailures = new Set(["home_insights"]);
+const reportsFailure = (r: Resource) =>
+  r.kind === "job" && !quietFailures.has(r.data.type);
 // Setup's build from a confirmed ontology publishes the active versions it
 // validated, so a sync of one of its inputs meanwhile fails it with "Inputs
 // changed during publication". A scheduled or CDC sync of such a source stays
@@ -167,7 +174,7 @@ export function startWorker(store: Store) {
             ) {
               const error = `Lease expired ${r.data.attempts} times without finishing`;
               tx.update(r, { ...r.data, status: "failed", error });
-              if (r.kind === "job")
+              if (reportsFailure(r))
                 tx.put(
                   resource(
                     scope,
@@ -268,7 +275,7 @@ export function startWorker(store: Store) {
                     Date.now() +
                     Math.min(60000, 1000 * 2 ** (r.data.attempts || 1)),
                 });
-                if (r.kind === "job" && (r.data.attempts || 0) >= MAX_ATTEMPTS)
+                if (reportsFailure(r) && (r.data.attempts || 0) >= MAX_ATTEMPTS)
                   tx.put(
                     resource(
                       scope,

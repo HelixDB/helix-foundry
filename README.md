@@ -106,7 +106,7 @@ Helix Foundry is developed and validated on macOS with Apple Silicon, and CI run
 - **Automatic sync** through native PostgreSQL and MySQL change capture where the database allows it, and scheduled snapshot refreshes otherwise.
 - **A suggested ontology** that matches the same customers and records across sources, stored as real objects and relationships in HelixDB.
 - **Versioned data:** immutable Parquet snapshots with profiles, schema-drift review and history, queried by isolated DuckDB processes.
-- **Home and Analyst:** key metrics, and answers to your questions backed by executed SQL with snapshot citations.
+- **Home and Analyst:** key metrics, the shifts that headline totals can hide, and answers to your questions backed by executed SQL with snapshot citations. With OpenAI, you can also talk with your data hands-free.
 - **Your choice of AI:** local `qwen3:4b` through Ollama by default, or Claude or OpenAI. AI-proposed changes are tested and wait for your review.
 - **Developer access:** OpenAPI at `/api/docs`, a TypeScript SDK, scoped API tokens, and backup, restore and upgrade scripts.
 

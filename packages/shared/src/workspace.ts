@@ -197,6 +197,19 @@ export function describeActivity(r: Describable): ActivityItem {
             ? "Couldn’t remove old workspace builds"
             : "Removed old workspace builds",
       };
+    // Home's background check for business shifts.
+    case "home_insights":
+      return {
+        ...base,
+        ref,
+        kind: "job",
+        label: "Home",
+        title: active
+          ? "Looking for business shifts"
+          : d.status === "failed"
+            ? "Couldn’t check for business shifts"
+            : "Checked for business shifts",
+      };
     default:
       return { ...base, ref, kind: "job", label: "Job", title: r.name };
   }
@@ -206,9 +219,12 @@ const repeatKey = (a: ActivityItem) =>
     ? "pipeline:" + a.title
     : a.kind === "sync"
       ? "sync:" + (a.ref.sourceId || a.title)
-      : null;
-// Folds repeated builds of one pipeline (by name: ids change on publish) or
-// syncs of one source into the newest entry. Items must be newest first.
+      : a.kind === "job" && a.label === "Home"
+        ? "home"
+        : null;
+// Folds repeated builds of one pipeline (by name: ids change on publish),
+// syncs of one source or Home's checks into the newest entry. Items must be
+// newest first.
 // "adjacent" only folds back-to-back repeats, keeping a timeline's history.
 export function collapseActivity(
   items: ActivityItem[],
@@ -395,6 +411,172 @@ export type HomeMetrics = {
   metrics: HomeMetric[];
 };
 
+// Home's "Some things we noticed": business shifts beneath headline totals.
+// Code picks at most three business drivers from the accepted ontology, runs
+// up to four checks within them off the request path, and keeps at most three
+// findings across all drivers. Everything shown is computed; nothing is
+// written by a model.
+export const insightChecks = ["cohort", "mix", "unit", "conversion"] as const;
+export type InsightCheck = (typeof insightChecks)[number];
+export type InsightSeverity = "positive" | "warning" | "issue";
+// The scan's major steps, in order.
+export const insightStages = ["understand", "fundamentals", "shifts"] as const;
+export type InsightStage = (typeof insightStages)[number];
+export type InsightDriverKind =
+  | "revenue"
+  | "customers"
+  | "acquisition"
+  | "experience"
+  | "activity";
+// A candidate business priority: one activity of the ontology seen through
+// one lens (revenue, customer engagement, acquisition, experience, volume).
+export type InsightDriver = {
+  id: string;
+  kind: InsightDriverKind;
+  label: string;
+  // The ontology type whose records are the activity ("Order").
+  activity: string;
+  // What is measured: "Revenue (net_amount)", "Sessions".
+  measure: string;
+  // Why it was proposed, in plain words.
+  reasons: string[];
+};
+// Whole UTC days; end is exclusive.
+export type InsightPeriod = { start: string; end: string; label: string };
+export type HomeInsight = {
+  // Stable across scans for the same shift; version changes when its
+  // severity or size materially changes.
+  id: string;
+  version: string;
+  severity: InsightSeverity;
+  check: InsightCheck;
+  driver: { id: string; label: string };
+  headline: string;
+  // Three or four words, the figure set apart so it can be bold; it leads
+  // ("12,500 referral sessions") or follows ("Regular sessions ↓25.3%").
+  support: { text: string; figure: string; figureFirst?: boolean };
+  values: {
+    current: number;
+    baseline: number;
+    absolute: number;
+    relative: number | null;
+    unit: "number" | "currency" | "share" | "rate";
+  };
+  periods: {
+    current: InsightPeriod;
+    baseline: InsightPeriod;
+    cohort?: InsightPeriod;
+  };
+  details: {
+    why: string;
+    contribution: string;
+    comparison: string;
+    definition: string;
+    evidence: string;
+    limitations: string[];
+    // Previous and latest share, when the finding is about a share.
+    bars?: { label: string; share: number; text: string; previous: boolean }[];
+    table: { caption: string; columns: string[]; rows: string[][] };
+    // The bounded aggregate the figures came from.
+    query: string;
+    sources: { datasetId: string; name: string }[];
+  };
+  // A follow-up question for the Analyst, built from the computed figures.
+  ask: string;
+  observedAt: string;
+  // Set when a finding this person dismissed is back, saying why.
+  returned?: string;
+  impact: number;
+  strength: number;
+};
+export type InsightCoverage = {
+  driver: string;
+  label: string;
+  checks: {
+    check: InsightCheck;
+    label: string;
+    // found: a shift is among the findings or was outranked; steady: checked
+    // and nothing material; skipped: the data cannot support it; set_aside:
+    // the change looks like a data-quality change, not a business one.
+    state: "found" | "steady" | "skipped" | "set_aside";
+    note: string;
+  }[];
+};
+export type HomeInsights = {
+  // unsupported: no accepted ontology, or no activity with dates to check.
+  status: "unsupported" | "ready";
+  scan: {
+    state: "idle" | "queued" | "running" | "failed";
+    stage?: InsightStage;
+    steps: {
+      id: InsightStage;
+      label: string;
+      detail: string;
+      state: "done" | "active" | "waiting";
+    }[];
+    error?: string;
+  };
+  // When the shown findings were last computed successfully.
+  checkedAt?: string;
+  // The data, ontology or settings changed since checkedAt.
+  stale: boolean;
+  period?: { current: InsightPeriod; baseline: InsightPeriod };
+  priorities: {
+    selected: InsightDriver[];
+    candidates: InsightDriver[];
+    // Several drivers are about as well supported; an owner may confirm.
+    ambiguous: boolean;
+    confirmed: boolean;
+    // Drivers the ontology suggests but the data cannot support yet, and why.
+    unavailable: { id: string; label: string; reason: string }[];
+  };
+  coverage: InsightCoverage[];
+  // At most three, minus the ones this person dismissed.
+  findings: HomeInsight[];
+  dismissed: number;
+};
+// PUT /home/insights/priorities: up to three candidate driver ids, or none to
+// go back to the automatic choice.
+export const InsightPrioritiesSchema = z.object({
+  drivers: z.array(z.string().min(1).max(200)).max(3),
+});
+// POST /home/insights/:id/dismiss
+export const InsightDismissSchema = z.object({
+  version: z.string().min(1).max(100),
+});
+// PUT /home/insights/settings: thresholds; anything left out keeps its default.
+export const InsightThresholdsSchema = z
+  .object({
+    // Activities each compared period needs.
+    minPeriodEvents: z.number().int().min(5).max(1_000_000),
+    // Participants a fixed cohort needs, and the activities in the cohort
+    // window that make a participant part of it.
+    minCohortSize: z.number().int().min(3).max(1_000_000),
+    cohortMinActivities: z.number().int().min(1).max(1000),
+    // Activities a segment needs, across both periods, to be compared.
+    minSegmentEvents: z.number().int().min(5).max(1_000_000),
+    // Smallest relative change, share change (fraction), concentration
+    // change (fraction) and conversion change (relative) that count.
+    relativeChange: z.number().min(0.01).max(5),
+    shareChange: z.number().min(0.005).max(1),
+    concentrationChange: z.number().min(0.005).max(1),
+    rateChange: z.number().min(0.01).max(5),
+    // Smallest effect on the driver's total, as a fraction of it.
+    minImpact: z.number().min(0).max(1),
+    // Smallest test statistic (|z|) that counts as evidence.
+    minZ: z.number().min(0).max(10),
+    // A decline at least this large (relative) is an Issue, not a Warning.
+    issueRelative: z.number().min(0.01).max(5),
+    concentrationTop: z.number().int().min(1).max(100),
+    // Days at the end of each period left out of conversion, so every
+    // counted activity had time to convert.
+    conversionLagDays: z.number().int().min(0).max(6),
+  })
+  .partial()
+  .strict();
+export type InsightThresholds = Required<
+  z.infer<typeof InsightThresholdsSchema>
+>;
 // GET /workspaces/:w/tokens: one workspace API token, without its secret.
 export type ApiTokenMetadata = {
   id: string;
