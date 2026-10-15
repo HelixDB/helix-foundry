@@ -395,6 +395,22 @@ export type HomeMetrics = {
   metrics: HomeMetric[];
 };
 
+// Saved aggregate checks for the first built-in industry playbook.
+export type IndustryPlaybook = {
+  playbook?: { id: string; title: string };
+  scan: "unsupported" | "idle" | "queued" | "running" | "failed";
+  stale: boolean;
+  checkedAt?: string;
+  checks: {
+    id: string;
+    state: "passed" | "attention" | "skipped";
+    text: string;
+    total?: number;
+    matched?: number;
+  }[];
+  suggestions: { id: string; kind: "connect" | "change"; text: string }[];
+};
+
 // GET /workspaces/:w/tokens: one workspace API token, without its secret.
 export type ApiTokenMetadata = {
   id: string;

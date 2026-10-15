@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import {
   ArrowLeft,
@@ -737,6 +738,7 @@ export function SuggestedOntologyView({
   onBack,
   readOnly = false,
   entityHref,
+  additionalNotes,
 }: {
   ontology: SuggestedOntology;
   datasets: Resource[];
@@ -756,6 +758,7 @@ export function SuggestedOntologyView({
   // and the canvas fits its container instead of breaking out to the window.
   readOnly?: boolean;
   entityHref?: (e: SuggestedEntity) => string | undefined;
+  additionalNotes?: ReactNode;
 }) {
   describing = describing ?? false;
   busy = busy ?? false;
@@ -1404,8 +1407,12 @@ export function SuggestedOntologyView({
         </section>
       )}
 
-      {(merged.length > 0 || checks.length > 0 || unplaced.length > 0) && (
+      {(merged.length > 0 ||
+        checks.length > 0 ||
+        unplaced.length > 0 ||
+        additionalNotes) && (
         <div className="so-notes">
+          {additionalNotes}
           {merged.length > 0 && (
             <section aria-labelledby={`${uid}-merged`}>
               <h2 id={`${uid}-merged`}>What we merged</h2>
