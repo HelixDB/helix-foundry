@@ -76,7 +76,7 @@ export function openapiTransform({ schema, url, route }: any) {
       ...(url.endsWith("/sources/sqlite")
         ? {
             description:
-              "Stage one SQLite database file (.db, .sqlite or .sqlite3, 256 MB max) for this workspace. Returns its file name; pass it as config.file with kind sqlite to test a source, list its tables and import them. Uploading the same file again returns the same name.",
+              "Stage one SQLite database file (.db, .sqlite, .sqlite3 or .db3, 256 MB max) for this workspace. Returns its file name; pass it as config.file with kind sqlite to test a source, list its tables and import them. Uploading the same file again returns the same name.",
             consumes: ["multipart/form-data"],
             body: {
               type: "object",

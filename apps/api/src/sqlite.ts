@@ -317,7 +317,7 @@ export async function stageSqlite(
       const { bytesRead } = await handle.read(header, 0, 100, 0);
       assert(
         bytesRead === 100 && header.subarray(0, 16).equals(MAGIC),
-        "Choose a SQLite database file (.db, .sqlite or .sqlite3). Encrypted databases are not supported.",
+        "Choose a SQLite database file (.db, .sqlite, .sqlite3 or .db3). Encrypted databases are not supported.",
       );
       if (header[18] === 2 || header[19] === 2)
         await handle.write(Buffer.from([1, 1]), 0, 2, 18);

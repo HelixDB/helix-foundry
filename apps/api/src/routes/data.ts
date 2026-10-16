@@ -353,7 +353,7 @@ export function registerDataRoutes(
       [".db", ".sqlite", ".sqlite3", ".db3"].includes(
         extname(part.filename).toLowerCase(),
       ),
-      "Choose a SQLite database file (.db, .sqlite or .sqlite3)",
+      "Choose a SQLite database file (.db, .sqlite, .sqlite3 or .db3)",
     );
     return stageSqlite(a.scope, part.file);
   });
