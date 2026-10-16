@@ -28,6 +28,8 @@ export function ConnectionForm({
     [preview, setPreview] = useState<any>(null),
     [apiToken, setApiToken] = useState("");
   const [manualPostgres, setManualPostgres] = useState(false);
+  // A SQLite database is a file: it is uploaded when the connection is tested.
+  const [sqliteFile, setSqliteFile] = useState<File | null>(null);
   // Only REST asks for a name; it has no table or object to name its data.
   const stripeMode = /_(live|test)_/.exec(form.apiKey || "")?.[1];
   let suggestedName =
@@ -35,6 +37,7 @@ export function ConnectionForm({
       postgres: form.database || "PostgreSQL",
       mysql: form.database || "MySQL",
       neo4j: form.database || "Neo4j",
+      sqlite: sqliteFile?.name.replace(/\.[^.]+$/, "") || "SQLite",
       s3: form.bucket || "Blob storage",
       stripe: stripeMode ? `Stripe (${stripeMode})` : "Stripe",
       workos: "WorkOS",
@@ -53,13 +56,15 @@ export function ConnectionForm({
   const { connectionString, ...individualConfig } = form;
   const connectionConfig = initialConnection
     ? initialConnection.config
-    : kind === "postgres" && !manualPostgres
-      ? {
-          connectionString: (connectionString || "").trim(),
-          tls: form.tls,
-          ca: form.ca,
-        }
-      : individualConfig;
+    : kind === "sqlite"
+      ? { file: form.file }
+      : kind === "postgres" && !manualPostgres
+        ? {
+            connectionString: (connectionString || "").trim(),
+            tls: form.tls,
+            ca: form.ca,
+          }
+        : individualConfig;
   const operation = useRef(crypto.randomUUID());
   const uploadKeys = useRef(new Map<string, string>());
   const update = (key: string, value: any) => {
@@ -304,6 +309,20 @@ Content-Type: application/json
                 )}
               </>
             )}
+          {!initialConnection && kind === "sqlite" && (
+            <label className="span2">
+              SQLite database file
+              <input
+                type="file"
+                required
+                accept=".db,.sqlite,.sqlite3,.db3"
+                onChange={(e) => {
+                  setSqliteFile(e.target.files?.[0] || null);
+                  update("file", undefined);
+                }}
+              />
+            </label>
+          )}
           {!initialConnection && kind === "neo4j" && (
             <>
               {[
@@ -554,14 +573,27 @@ Content-Type: application/json
                   !connectionName ||
                   (kind === "postgres" &&
                     !manualPostgres &&
-                    !form.connectionString?.trim())
+                    !form.connectionString?.trim()) ||
+                  (kind === "sqlite" && !sqliteFile)
                 }
                 onClick={() =>
                   action.run(async () => {
+                    let config = connectionConfig;
+                    if (kind === "sqlite" && sqliteFile) {
+                      const body = new FormData();
+                      body.set("file", sqliteFile);
+                      const { file } = await api(
+                        `/workspaces/${id}/sources/sqlite`,
+                        body,
+                        "POST",
+                      );
+                      config = { file };
+                      setForm((f) => ({ ...f, file }));
+                    }
                     const result = await api(`/workspaces/${id}/sources/test`, {
                       kind,
                       name: connectionName,
-                      config: connectionConfig,
+                      config,
                     });
                     // Pin imports to the project that was tested.
                     if (result.projectId)
@@ -571,7 +603,13 @@ Content-Type: application/json
                   })
                 }
               >
-                {action.pending ? "Testing connection…" : "Test connection"}
+                {kind === "sqlite"
+                  ? action.pending
+                    ? "Reading file…"
+                    : "Read file"
+                  : action.pending
+                    ? "Testing connection…"
+                    : "Test connection"}
               </button>
             </div>
           )}

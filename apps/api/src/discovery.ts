@@ -68,6 +68,7 @@ const labels: Record<string, string> = {
   postgres: "PostgreSQL",
   mysql: "MySQL",
   neo4j: "Neo4j",
+  sqlite: "SQLite",
   rest: "REST",
   upload: "Upload",
 };
@@ -145,7 +146,7 @@ const list = (items: string[]) =>
 export const sourceLabel = (source: string) =>
   labels[source] || source.charAt(0).toUpperCase() + source.slice(1);
 const databases = new Set(
-  "planetscale postgres postgresql mysql neon supabase".split(" "),
+  "planetscale postgres postgresql mysql neon supabase sqlite".split(" "),
 );
 // "S3 · exports/2024/orders.csv" -> orders. Database tables may be schema-qualified
 // (public.orders); in a file name the later dots are part of the name.
@@ -516,7 +517,7 @@ export async function suggestOntology(
     unplaced: string[] = [],
     entityOf = new Map<Info, Draft>();
   const appDb = (x: Info) =>
-    ["planetscale", "postgres", "mysql"].includes(x.source) ? 1 : 0;
+    ["planetscale", "postgres", "mysql", "sqlite"].includes(x.source) ? 1 : 0;
   for (const group of groups.values()) {
     const anchor = group
       .filter((x) => x.key || x.alt.size)
