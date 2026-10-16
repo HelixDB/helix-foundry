@@ -45,7 +45,7 @@ These routes require owner permissions and a writable credential or the local br
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | POST `/ingest`                                 | `{ name, rows: object[], datasetId? }`; maximum 10,000 rows per request                                             |
 | POST `/upload`                                 | Multipart file; CSV, JSON, JSONL, Parquet; maximum 256 MB                                                           |
-| POST `/sources/sqlite`                         | Owner only; multipart SQLite file (`.db`, `.sqlite`, `.sqlite3`), maximum 256 MB; `{ file, bytes }`                 |
+| POST `/sources/sqlite`                         | Owner only; multipart SQLite file (`.db`, `.sqlite`, `.sqlite3`, `.db3`), maximum 256 MB; `{ file, bytes }`         |
 | POST `/sources/test`                           | `{ name, kind, config }`; discovery and key information                                                             |
 | POST `/sources`                                | `{ name, kind, config, schedule? }`; encrypted source definition                                                    |
 | PUT `/sources/:id/schedule`                    | `{ schedule: string \| null }`; owner-only UTC cadence for every table in this connection                           |
