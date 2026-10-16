@@ -457,6 +457,68 @@ it("publishes a computed overview without calling the model", async () => {
   ).toBe(60);
 });
 
+it("updates the published ontology after setup with data added since", async () => {
+  await provider();
+  await request("POST", "/ingest", {
+    name: "customers",
+    rows: [1, 2, 3].map((i) => ({
+      customer_id: `c${i}`,
+      name: `Customer ${i}`,
+    })),
+  });
+  const first = (await request("POST", "/onboarding/ontology", {})).json()
+    .ontology;
+  const setup = (
+    await request("POST", "/onboarding/ontology/confirm", { hash: first.hash })
+  ).json();
+  await buildWorkspace(store, scope, setup.buildRun.id);
+  expect((await onboardingState(store, scope)).complete).toBe(true);
+  const published = async () => {
+    const w = (await store.get(scope, "workspace"))!;
+    return (await store.list(scope, "objectType"))
+      .filter((t) => t.data.generation === w.data.activeGeneration)
+      .map((t) => t.name)
+      .sort();
+  };
+  const before = await published();
+
+  // A dataset added from the Data tab once setup is complete.
+  await request("POST", "/ingest", {
+    name: "orders",
+    rows: [1, 2, 3, 4].map((i) => ({
+      order_id: `o${i}`,
+      customer_id: `c${(i % 3) + 1}`,
+      total: i * 10,
+    })),
+  });
+  const recomputed = (await request("POST", "/onboarding/ontology", {})).json();
+  expect(recomputed.complete).toBe(true);
+  expect(recomputed.ontology.hash).not.toBe(first.hash);
+  const added = recomputed.ontology.entities.filter(
+    (e: any) => !first.entities.some((f: any) => f.id === e.id),
+  );
+  expect(added.length).toBeGreaterThan(0);
+  const ai = vi.spyOn(Provider.prototype, "generate");
+  const update = await request("POST", "/onboarding/ontology/confirm", {
+    hash: recomputed.ontology.hash,
+  });
+  expect(update.statusCode, update.body).toBe(200);
+  // The published workspace stays open while the update builds.
+  expect(update.json().complete).toBe(true);
+  expect(update.json().buildRun.id).not.toBe(setup.buildRun.id);
+  await buildWorkspace(store, scope, update.json().buildRun.id);
+  expect(ai).not.toHaveBeenCalled();
+  const after = await onboardingState(store, scope);
+  expect(after.buildRun?.data.status, after.buildRun?.data.error).toBe(
+    "succeeded",
+  );
+  expect(after.complete).toBe(true);
+  const types = await published();
+  for (const name of before) expect(types).toContain(name);
+  for (const e of added) expect(types).toContain(e.name);
+  expect(types.length).toBeGreaterThan(before.length);
+});
+
 it("queues a build left waiting for the former review page again on confirm", async () => {
   await samples();
   const suggested = (await request("POST", "/onboarding/ontology", {})).json()

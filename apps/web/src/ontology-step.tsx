@@ -69,6 +69,9 @@ export function OntologyStep({
   onConfirmed,
   onBack,
   onReviewData,
+  confirmLabel,
+  backLabel,
+  fit,
 }: {
   workspaceId: string;
   state: OnboardingState;
@@ -77,6 +80,9 @@ export function OntologyStep({
   onConfirmed: (next: OnboardingState) => Promise<void>;
   onBack: () => void;
   onReviewData: () => void;
+  confirmLabel?: string;
+  backLabel?: string;
+  fit?: boolean;
 }) {
   const qc = useQueryClient();
   const { ontology, sampleProgress, signature } = state;
@@ -228,6 +234,9 @@ export function OntologyStep({
         focusHeading={arrived}
         onConfirm={confirm}
         onBack={onBack}
+        confirmLabel={confirmLabel}
+        backLabel={backLabel}
+        fit={fit}
       />
     );
 
