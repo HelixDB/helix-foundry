@@ -150,8 +150,14 @@ export function ConnectionDetail({ sourceId }: { sourceId: string }) {
               },
               {
                 label: "Schedule",
-                value: s.data.schedule ? `${s.data.schedule} UTC` : "Automatic",
-                mono: !!s.data.schedule,
+                // An uploaded SQLite file does not change on its own.
+                value:
+                  s.data.kind === "sqlite"
+                    ? "None"
+                    : s.data.schedule
+                      ? `${s.data.schedule} UTC`
+                      : "Automatic",
+                mono: !!s.data.schedule && s.data.kind !== "sqlite",
               },
               {
                 label: "Next refresh",
@@ -160,7 +166,12 @@ export function ConnectionDetail({ sourceId }: { sourceId: string }) {
               { label: "Created", value: formatDate(s.createdAt) },
             ]}
           />
-          <ConnectionSchedule key={s.data.schedule ?? "automatic"} source={s} />
+          {s.data.kind !== "sqlite" && (
+            <ConnectionSchedule
+              key={s.data.schedule ?? "automatic"}
+              source={s}
+            />
+          )}
         </Panel>
       </div>
       <Section

@@ -137,6 +137,20 @@ export class FoundryClient {
       "PUT",
     );
   }
+  // Stages a SQLite database file. Its returned name is the config.file of
+  // testSource and importSources with kind "sqlite", one table per selection.
+  async uploadSqlite(file: Blob, name: string) {
+    const body = new FormData();
+    body.set("file", file, name);
+    const response = await fetch(this.base + "/sources/sqlite", {
+      method: "POST",
+      headers: { authorization: this.headers.authorization },
+      body,
+    });
+    const result = await response.json();
+    if (!response.ok) throw new FoundryError(response.status, result.error);
+    return result as { file: string; bytes: number };
+  }
   async uploadForSetup(file: Blob, name: string, operationId: string) {
     const body = new FormData();
     body.set("file", file, name);

@@ -1,9 +1,19 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { api } from "./api";
 import { useWorkspace, DataTable } from "./ui";
 import { useSetupAction } from "./setup-components";
 import { ConnectionGuide } from "./connection-guides";
 import type { Resource, HostedConnection } from "../../../packages/shared/src";
+// The tables of one tested connection, or of one SQLite file: its name, the
+// label it is shown under, and its staged file, tables or error.
+type TableGroup = {
+  name: string;
+  label: string;
+  file?: string;
+  discovered?: any;
+  error?: string;
+};
+const withoutExtension = (name: string) => name.replace(/\.[^.]+$/, "") || name;
 export function ConnectionForm({
   kind,
   onImported,
@@ -28,6 +38,10 @@ export function ConnectionForm({
     [preview, setPreview] = useState<any>(null),
     [apiToken, setApiToken] = useState("");
   const [manualPostgres, setManualPostgres] = useState(false);
+  // A SQLite database is a file: each chosen file is uploaded and read when
+  // the connection is tested, and stays its own connection.
+  const [sqliteFiles, setSqliteFiles] = useState<File[]>([]),
+    [sqliteReads, setSqliteReads] = useState<TableGroup[]>([]);
   // Only REST asks for a name; it has no table or object to name its data.
   const stripeMode = /_(live|test)_/.exec(form.apiKey || "")?.[1];
   let suggestedName =
@@ -35,6 +49,7 @@ export function ConnectionForm({
       postgres: form.database || "PostgreSQL",
       mysql: form.database || "MySQL",
       neo4j: form.database || "Neo4j",
+      sqlite: sqliteFiles[0] ? withoutExtension(sqliteFiles[0].name) : "SQLite",
       s3: form.bucket || "Blob storage",
       stripe: stripeMode ? `Stripe (${stripeMode})` : "Stripe",
       workos: "WorkOS",
@@ -53,14 +68,27 @@ export function ConnectionForm({
   const { connectionString, ...individualConfig } = form;
   const connectionConfig = initialConnection
     ? initialConnection.config
-    : kind === "postgres" && !manualPostgres
-      ? {
-          connectionString: (connectionString || "").trim(),
-          tls: form.tls,
-          ca: form.ca,
-        }
-      : individualConfig;
+    : kind === "sqlite"
+      ? {} // Each file's selections carry it.
+      : kind === "postgres" && !manualPostgres
+        ? {
+            connectionString: (connectionString || "").trim(),
+            tls: form.tls,
+            ca: form.ca,
+          }
+        : individualConfig;
   const operation = useRef(crypto.randomUUID());
+  // SQLite files import separately, each under its own operation.
+  const fileOperations = useRef(new Map<string, string>());
+  const operationFor = (file: string) => {
+    if (!fileOperations.current.has(file))
+      fileOperations.current.set(file, crypto.randomUUID());
+    return fileOperations.current.get(file)!;
+  };
+  const renew = (file?: string) => {
+    operation.current = crypto.randomUUID();
+    if (file) fileOperations.current.delete(file);
+  };
   const uploadKeys = useRef(new Map<string, string>());
   const update = (key: string, value: any) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -76,21 +104,38 @@ export function ConnectionForm({
     kind === "s3"
       ? { key: t.name }
       : { table: t.name, ...(t.schema ? { schema: t.schema } : {}) };
-  const keyFor = (t: any) => JSON.stringify(selection(t));
-  const related = new Set<string>();
-  for (const k of discovered?.foreignKeys || discovered?.keys || []) {
-    const from = keyFor({
-        name: k.tableName || k.table_name,
-        schema: k.table_schema,
-      }),
-      to = keyFor({
-        name: k.referencedTable || k.referenced_table,
-        schema: k.referenced_schema,
-      });
-    if (!(k.referencedTable || k.referenced_table)) continue;
-    if (selected.includes(from)) related.add(to);
-    if (selected.includes(to)) related.add(from);
-  }
+  // A SQLite table's key names its file, so tables of two files never clash.
+  const keyFor = (t: any, file?: string) =>
+    JSON.stringify({ ...selection(t), ...(file ? { file } : {}) });
+  const groups: TableGroup[] =
+    kind === "sqlite"
+      ? sqliteReads
+      : discovered
+        ? [{ name: connectionName, label: connectionName, discovered }]
+        : [];
+  const read = groups.length > 0;
+  const configOf = (g: TableGroup) =>
+    kind === "sqlite" ? { file: g.file } : connectionConfig;
+  const relatedIn = (g: TableGroup) => {
+    const related = new Set<string>();
+    for (const k of g.discovered?.foreignKeys || g.discovered?.keys || []) {
+      const from = keyFor(
+          { name: k.tableName || k.table_name, schema: k.table_schema },
+          g.file,
+        ),
+        to = keyFor(
+          {
+            name: k.referencedTable || k.referenced_table,
+            schema: k.referenced_schema,
+          },
+          g.file,
+        );
+      if (!(k.referencedTable || k.referenced_table)) continue;
+      if (selected.includes(from)) related.add(to);
+      if (selected.includes(to)) related.add(from);
+    }
+    return related;
+  };
   if (role === "viewer")
     return <p>An editor can add data to this workspace.</p>;
   return (
@@ -213,6 +258,23 @@ Content-Type: application/json
                   },
                   "PUT",
                 );
+              } else if (kind === "sqlite") {
+                // A failed file's import can be retried: an operation sent
+                // again with the same inputs returns its first result.
+                for (const g of sqliteReads) {
+                  const own = selections
+                    .filter((s) => s.file === g.file)
+                    .map(({ file, ...s }) => s);
+                  if (own.length)
+                    await api(`/workspaces/${id}/onboarding/sources`, {
+                      kind,
+                      name: g.name,
+                      config: { file: g.file },
+                      selections: own,
+                      schedule: form.schedule || null,
+                      operationId: operationFor(g.file!),
+                    });
+                }
               } else {
                 await api(`/workspaces/${id}/onboarding/sources`, {
                   kind,
@@ -304,6 +366,24 @@ Content-Type: application/json
                 )}
               </>
             )}
+          {!initialConnection && kind === "sqlite" && (
+            <label className="span2">
+              {correctSource ? "SQLite database file" : "SQLite database files"}
+              <input
+                type="file"
+                required
+                multiple={!correctSource}
+                accept=".db,.sqlite,.sqlite3,.db3"
+                onChange={(e) => {
+                  setSqliteFiles(Array.from(e.target.files || []));
+                  setSqliteReads([]);
+                  setSelected([]);
+                  setPreview(null);
+                  renew();
+                }}
+              />
+            </label>
+          )}
           {!initialConnection && kind === "neo4j" && (
             <>
               {[
@@ -547,17 +627,58 @@ Content-Type: application/json
           {!initialConnection && (
             <div className="span2">
               <button
-                className={discovered ? "button" : "button primary"}
+                className={read ? "button" : "button primary"}
                 type="button"
                 disabled={
                   action.pending ||
                   !connectionName ||
                   (kind === "postgres" &&
                     !manualPostgres &&
-                    !form.connectionString?.trim())
+                    !form.connectionString?.trim()) ||
+                  (kind === "sqlite" && !sqliteFiles.length)
                 }
                 onClick={() =>
                   action.run(async () => {
+                    if (kind === "sqlite") {
+                      // One file that is not SQLite, or is damaged, shows its
+                      // error and does not stop the others.
+                      const reads: TableGroup[] = [];
+                      for (const f of sqliteFiles) {
+                        const g: TableGroup = {
+                          name: withoutExtension(f.name),
+                          label: f.name,
+                        };
+                        try {
+                          const body = new FormData();
+                          body.set("file", f);
+                          const { file } = await api(
+                            `/workspaces/${id}/sources/sqlite`,
+                            body,
+                            "POST",
+                          );
+                          const same = reads.find((r) => r.file === file);
+                          if (same)
+                            g.error = `This is the same database as ${same.label}.`;
+                          else {
+                            g.discovered = await api(
+                              `/workspaces/${id}/sources/test`,
+                              { kind, name: g.name, config: { file } },
+                            );
+                            g.file = file;
+                          }
+                        } catch (error) {
+                          g.error =
+                            error instanceof Error
+                              ? error.message
+                              : "This file could not be read.";
+                        }
+                        reads.push(g);
+                      }
+                      setSqliteReads(reads);
+                      setSelected([]);
+                      setPreview(null);
+                      return;
+                    }
                     const result = await api(`/workspaces/${id}/sources/test`, {
                       kind,
                       name: connectionName,
@@ -571,11 +692,21 @@ Content-Type: application/json
                   })
                 }
               >
-                {action.pending ? "Testing connection…" : "Test connection"}
+                {kind === "sqlite"
+                  ? action.pending
+                    ? sqliteFiles.length > 1
+                      ? "Reading files…"
+                      : "Reading file…"
+                    : sqliteFiles.length > 1
+                      ? "Read files"
+                      : "Read file"
+                  : action.pending
+                    ? "Testing connection…"
+                    : "Test connection"}
               </button>
             </div>
           )}
-          {discovered && kind !== "rest" && (
+          {read && kind !== "rest" && (
             <fieldset className="span2 plain-fieldset">
               <legend>
                 {kind === "s3"
@@ -588,98 +719,131 @@ Content-Type: application/json
                         ? "Choose labels and relationship types to import"
                         : "Choose tables to import"}
               </legend>
-              {!correctSource && discovered.tables.length > 1 && (
-                <div className="selection-actions">
-                  <button
-                    type="button"
-                    className="text-button"
-                    disabled={
-                      selected.length >= Math.min(discovered.tables.length, 100)
-                    }
-                    onClick={() => {
-                      operation.current = crypto.randomUUID();
-                      setSelected(discovered.tables.slice(0, 100).map(keyFor));
-                    }}
-                  >
-                    {discovered.tables.length > 100
-                      ? "Select the first 100"
-                      : "Select all"}
-                  </button>
-                  <button
-                    type="button"
-                    className="text-button"
-                    disabled={selected.length === 0}
-                    onClick={() => {
-                      operation.current = crypto.randomUUID();
-                      setSelected([]);
-                    }}
-                  >
-                    Clear
-                  </button>
-                </div>
-              )}
-              <div className="table-selection">
-                {discovered.tables.map((t: any) => {
-                  const key = keyFor(t);
-                  return (
-                    <div className="selection-row" key={key}>
-                      <label className="checkbox">
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(key)}
-                          onChange={(e) => {
-                            operation.current = crypto.randomUUID();
-                            setSelected((s) =>
-                              e.target.checked
-                                ? correctSource
-                                  ? [key]
-                                  : [...s, key]
-                                : s.filter((k) => k !== key),
-                            );
-                          }}
-                        />
-                        <span>
-                          {kind === "neo4j"
-                            ? t.name
-                            : (t.schema ? t.schema + "." : "") + t.name}
-                          {kind === "neo4j" && (
-                            <small>
-                              {t.schema === "relationship"
-                                ? `relationship type${t.from && t.to ? `, ${t.from} to ${t.to}` : ""}`
-                                : "label"}
-                            </small>
-                          )}
-                          {related.has(key) && !selected.includes(key) && (
-                            <small>Related to your selection</small>
-                          )}
-                        </span>
-                      </label>
-                      {kind !== "s3" && (
+              {groups.map((g, i) => {
+                const tables: any[] = g.discovered?.tables || [];
+                const keys = tables.map((t) => keyFor(t, g.file));
+                const chosen = selected.filter((k) => keys.includes(k));
+                const related = relatedIn(g);
+                const picker = (
+                  <>
+                    {!correctSource && tables.length > 1 && (
+                      <div className="selection-actions">
                         <button
                           type="button"
                           className="text-button"
-                          onClick={() =>
-                            action.run(async () =>
-                              setPreview(
-                                await api(`/workspaces/${id}/sources/test`, {
-                                  kind,
-                                  name: connectionName,
-                                  config: {
-                                    ...connectionConfig,
-                                    ...selection(t),
-                                  },
-                                }),
-                              ),
-                            )
+                          disabled={
+                            chosen.length >= Math.min(tables.length, 100)
                           }
+                          onClick={() => {
+                            renew(g.file);
+                            setSelected((s) => [
+                              ...s.filter((k) => !keys.includes(k)),
+                              ...keys.slice(0, 100),
+                            ]);
+                          }}
                         >
-                          Preview
+                          {tables.length > 100
+                            ? "Select the first 100"
+                            : "Select all"}
                         </button>
-                      )}
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={chosen.length === 0}
+                          onClick={() => {
+                            renew(g.file);
+                            setSelected((s) =>
+                              s.filter((k) => !keys.includes(k)),
+                            );
+                          }}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    )}
+                    <div className="table-selection">
+                      {tables.map((t: any, j) => {
+                        const key = keys[j];
+                        return (
+                          <div className="selection-row" key={key}>
+                            <label className="checkbox">
+                              <input
+                                type="checkbox"
+                                checked={selected.includes(key)}
+                                onChange={(e) => {
+                                  renew(g.file);
+                                  setSelected((s) =>
+                                    e.target.checked
+                                      ? correctSource
+                                        ? [key]
+                                        : [...s, key]
+                                      : s.filter((k) => k !== key),
+                                  );
+                                }}
+                              />
+                              <span>
+                                {kind === "neo4j"
+                                  ? t.name
+                                  : (t.schema ? t.schema + "." : "") + t.name}
+                                {kind === "neo4j" && (
+                                  <small>
+                                    {t.schema === "relationship"
+                                      ? `relationship type${t.from && t.to ? `, ${t.from} to ${t.to}` : ""}`
+                                      : "label"}
+                                  </small>
+                                )}
+                                {related.has(key) &&
+                                  !selected.includes(key) && (
+                                    <small>Related to your selection</small>
+                                  )}
+                              </span>
+                            </label>
+                            {kind !== "s3" && (
+                              <button
+                                type="button"
+                                className="text-button"
+                                onClick={() =>
+                                  action.run(async () =>
+                                    setPreview(
+                                      await api(
+                                        `/workspaces/${id}/sources/test`,
+                                        {
+                                          kind,
+                                          name: g.name,
+                                          config: {
+                                            ...configOf(g),
+                                            ...selection(t),
+                                          },
+                                        },
+                                      ),
+                                    ),
+                                  )
+                                }
+                              >
+                                Preview
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
-              </div>
+                  </>
+                );
+                return kind === "sqlite" ? (
+                  <fieldset key={i} className="plain-fieldset sqlite-file">
+                    <legend>{g.label}</legend>
+                    {g.error ? (
+                      <p className="error-text" role="alert">
+                        {g.error}
+                      </p>
+                    ) : (
+                      picker
+                    )}
+                  </fieldset>
+                ) : (
+                  <Fragment key={i}>{picker}</Fragment>
+                );
+              })}
               <p className="muted small">
                 Only selected{" "}
                 {kind === "s3"
@@ -690,7 +854,7 @@ Content-Type: application/json
                       ? "labels and relationship types"
                       : "tables"}{" "}
                 will be imported.
-                {discovered.unavailable?.length > 0 &&
+                {discovered?.unavailable?.length > 0 &&
                   ` This key cannot read: ${discovered.unavailable.join(", ")}.`}
               </p>
             </fieldset>
@@ -707,7 +871,7 @@ Content-Type: application/json
               <pre>{JSON.stringify(preview.columns, null, 2)}</pre>
             </details>
           )}
-          {discovered && (
+          {read && (
             <button
               className="button primary"
               disabled={action.pending || (kind !== "rest" && !selected.length)}

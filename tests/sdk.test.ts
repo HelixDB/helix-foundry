@@ -44,3 +44,21 @@ it("sends every connector the source routes accept", async () => {
   // @ts-expect-error files are uploaded, not connected
   await client().createSource({ name: "File", kind: "upload", config: {} });
 });
+it("stages a SQLite file for a sqlite source", async () => {
+  const f = vi.fn(
+    async (..._: any[]) =>
+      new Response(JSON.stringify({ file: "a".repeat(64) + ".sqlite" })),
+  );
+  vi.stubGlobal("fetch", f);
+  const staged = await client().uploadSqlite(new Blob(["SQLite"]), "claims.db");
+  expect(staged.file).toMatch(/\.sqlite$/);
+  const [url, init] = f.mock.calls[0];
+  expect(new URL(url).pathname).toBe("/api/v1/workspaces/w/sources/sqlite");
+  expect(init.headers).toEqual({ authorization: "Bearer fixture" });
+  expect((init.body as FormData).get("file")).toBeInstanceOf(Blob);
+  await client().testSource({
+    name: "claims",
+    kind: "sqlite",
+    config: { file: staged.file },
+  });
+});

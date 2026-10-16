@@ -31,6 +31,7 @@ const labels: Record<string, string> = {
   postgres: "PostgreSQL",
   mysql: "MySQL",
   neo4j: "Neo4j",
+  sqlite: "SQLite",
   neon: "Neon",
   supabase: "Supabase",
   upload: "Files",
