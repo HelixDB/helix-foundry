@@ -4,6 +4,7 @@ import { Network, Plus, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useWorkspace, useResources, PageHeader, Empty, Modal } from "./ui";
 import { PublishedSchema } from "./areas/ontology/schema";
+import { OntologyUpdate } from "./ontology-update";
 import type { Resource } from "../../../packages/shared/src";
 export function OntologyPage() {
   const { role } = useWorkspace(),
@@ -24,21 +25,25 @@ export function OntologyPage() {
         : 0,
   );
   return (
-    <>
-      <PageHeader
-        eyebrow="THE SHAPE OF YOUR BUSINESS"
-        title="Ontology"
-        description="Real-world objects and relationships, grounded in your data."
-      >
-        {role !== "viewer" && types.data?.items.length > 0 && (
-          <button className="button" onClick={() => setCreating(true)}>
-            <Plus size={15} /> Workspace action
-          </button>
-        )}
-        <Link className="button" to="/proposals">
-          <Sparkles size={16} /> Review suggestions
-        </Link>
-      </PageHeader>
+    <OntologyUpdate
+      published={proposal}
+      header={
+        <PageHeader
+          eyebrow="THE SHAPE OF YOUR BUSINESS"
+          title="Ontology"
+          description="Real-world objects and relationships, grounded in your data."
+        >
+          {role !== "viewer" && types.data?.items.length > 0 && (
+            <button className="button" onClick={() => setCreating(true)}>
+              <Plus size={15} /> Workspace action
+            </button>
+          )}
+          <Link className="button" to="/proposals">
+            <Sparkles size={16} /> Review suggestions
+          </Link>
+        </PageHeader>
+      }
+    >
       {list.length ? (
         // The data model: types and how they relate. Records themselves are
         // in the Explorer.
@@ -64,6 +69,6 @@ export function OntologyPage() {
           <ObjectActionForm types={list} onDone={() => setCreating(false)} />
         </Modal>
       )}
-    </>
+    </OntologyUpdate>
   );
 }

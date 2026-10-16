@@ -737,6 +737,9 @@ export function SuggestedOntologyView({
   onBack,
   readOnly = false,
   entityHref,
+  confirmLabel = "Looks right — build my workspace",
+  backLabel = "Back to data",
+  fit = readOnly,
 }: {
   ontology: SuggestedOntology;
   datasets: Resource[];
@@ -756,6 +759,11 @@ export function SuggestedOntologyView({
   // and the canvas fits its container instead of breaking out to the window.
   readOnly?: boolean;
   entityHref?: (e: SuggestedEntity) => string | undefined;
+  // Updating a published ontology says so instead of building a workspace.
+  confirmLabel?: string;
+  backLabel?: string;
+  // Fits its container, beside the workspace sidebar, instead of the window.
+  fit?: boolean;
 }) {
   describing = describing ?? false;
   busy = busy ?? false;
@@ -790,7 +798,7 @@ export function SuggestedOntologyView({
   const [short, setShort] = useState(isShort);
   useLayoutEffect(() => {
     const measure = () => {
-      const room = readOnly ? root.current?.clientWidth : undefined;
+      const room = fit ? root.current?.clientWidth : undefined;
       setCanvasPx(
         room ? Math.min(wide ? 1320 : 1120, room) : canvasWidth(wide),
       );
@@ -799,13 +807,13 @@ export function SuggestedOntologyView({
     measure();
     window.addEventListener("resize", measure);
     const observer =
-      readOnly && root.current ? new ResizeObserver(measure) : undefined;
+      fit && root.current ? new ResizeObserver(measure) : undefined;
     if (observer && root.current) observer.observe(root.current);
     return () => {
       window.removeEventListener("resize", measure);
       observer?.disconnect();
     };
-  }, [wide, readOnly]);
+  }, [wide, fit]);
   const fitted = useMemo(
     () =>
       arrangement &&
@@ -823,7 +831,7 @@ export function SuggestedOntologyView({
   // The workspace page sits beside the sidebar, so its cards may be a little
   // narrower before falling back to the stacked list.
   const layout =
-    fitted && fitted.cardPx >= (readOnly ? MIN_CARD_READONLY : MIN_CARD)
+    fitted && fitted.cardPx >= (fit ? MIN_CARD_READONLY : MIN_CARD)
       ? fitted
       : null;
   // Hub first, then outward: the order cards are revealed, read and stacked.
@@ -957,7 +965,7 @@ export function SuggestedOntologyView({
   return (
     <div
       ref={root}
-      className={`so-view${describing ? " is-describing" : ""}${wide ? " is-wide" : ""}${readOnly ? " is-readonly" : ""}`}
+      className={`so-view${describing ? " is-describing" : ""}${wide ? " is-wide" : ""}${readOnly ? " is-readonly" : ""}${fit ? " is-fitted" : ""}`}
     >
       {readOnly ? (
         <div className="so-stats">
@@ -1454,7 +1462,7 @@ export function SuggestedOntologyView({
           onClick={onBack}
           disabled={busy}
         >
-          ← Back to data
+          ← {backLabel}
         </button>
       )}
       {!readOnly && (
@@ -1491,7 +1499,7 @@ export function SuggestedOntologyView({
               {busy && (
                 <LoaderCircle size={15} className="so-spin" aria-hidden />
               )}
-              Looks right — build my workspace
+              {confirmLabel}
               {!busy && <ArrowRight size={15} aria-hidden />}
             </button>
           </div>
