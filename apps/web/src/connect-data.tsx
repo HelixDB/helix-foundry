@@ -2,7 +2,14 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { paths } from "./paths";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileUp, Globe2, Braces, Plus, Waypoints } from "lucide-react";
+import {
+  FileUp,
+  Globe2,
+  Braces,
+  Database,
+  Plus,
+  Waypoints,
+} from "lucide-react";
 import { api, number } from "./api";
 import { useWorkspace, Modal, DataTable } from "./ui";
 import {
@@ -25,6 +32,7 @@ const choices = [
   ["postgres", "PostgreSQL", "Import tables from your database."],
   ["mysql", "MySQL", "Import tables from your database."],
   ["neo4j", "Neo4j", "Import nodes and relationships from your graph."],
+  ["sqlite", "SQLite", "Import tables from a .db or .sqlite file."],
   ["rest", "REST API", "Pull records from another service."],
   ["s3", "Blob storage", "S3 compatible storage"],
   ["api", "Ingestion API", "Send records from your application."],
@@ -40,6 +48,7 @@ const sourceIcons: Record<string, typeof FileUp> = {
   rest: Globe2,
   api: Braces,
   neo4j: Waypoints,
+  sqlite: Database,
 };
 
 export function ConnectData({
@@ -330,19 +339,21 @@ export function ConnectData({
                       </div>
                       {group.sources.some((s) => s.data.sync) && (
                         <p className="muted small" role="status">
-                          {group.sources.every(
-                            (s) => s.data.sync?.mode === "cdc",
-                          )
-                            ? group.sources.some(
-                                (s) => s.data.sync?.status === "retrying",
-                              )
-                              ? "Reconnecting live sync. Your imported data is still available."
-                              : "Database changes sync automatically."
-                            : group.sources.some(
-                                  (s) => s.data.sync?.mode === "snapshot",
+                          {group.kind === "sqlite"
+                            ? "Imported from the uploaded file. Upload a new copy to refresh it."
+                            : group.sources.every(
+                                  (s) => s.data.sync?.mode === "cdc",
                                 )
-                              ? "Data refreshes automatically."
-                              : "Checking live sync support…"}
+                              ? group.sources.some(
+                                  (s) => s.data.sync?.status === "retrying",
+                                )
+                                ? "Reconnecting live sync. Your imported data is still available."
+                                : "Database changes sync automatically."
+                              : group.sources.some(
+                                    (s) => s.data.sync?.mode === "snapshot",
+                                  )
+                                ? "Data refreshes automatically."
+                                : "Checking live sync support…"}
                         </p>
                       )}
                       {group.sources.some((s) => s.data.sync?.reason) && (

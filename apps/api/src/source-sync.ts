@@ -68,16 +68,24 @@ const mysqlConfig = (c: Record<string, any>) => ({
 });
 
 // Legacy schedules remain a fallback; they never override a working change stream.
+// An uploaded SQLite file never changes, so reading it again on a schedule
+// only repeats the same snapshot. A new copy is uploaded to refresh it.
+const fixedFile = (kind: string) => kind === "sqlite";
 export function sourceSyncDefaults(kind: string, schedule?: string | null) {
   return {
     schedule: schedule || null,
-    nextRun: database(kind) ? null : nextRun(schedule || fallback(kind)),
+    nextRun:
+      database(kind) || fixedFile(kind)
+        ? null
+        : nextRun(schedule || fallback(kind)),
     sync: database(kind)
       ? { mode: "auto", status: "checking" }
       : {
           mode: "snapshot",
           status: "ready",
-          reason: "This source does not expose a database change stream.",
+          reason: fixedFile(kind)
+            ? "An uploaded SQLite file does not change. Upload a new copy to refresh it."
+            : "This source does not expose a database change stream.",
         },
   };
 }
@@ -85,12 +93,14 @@ export function sourceSyncDefaults(kind: string, schedule?: string | null) {
 export function scheduledRefresh(source: Resource) {
   if (source.data.sync?.mode === "cdc" || source.data.sync?.mode === "auto")
     return false;
+  if (fixedFile(source.data.kind)) return false;
   return (
     !!(source.data.schedule || source.data.sync?.mode === "snapshot") &&
     source.data.nextRun <= Date.now()
   );
 }
 export function nextRefresh(source: Resource) {
+  if (fixedFile(source.data.kind)) return null;
   return nextRun(source.data.schedule || fallback(source.data.kind));
 }
 

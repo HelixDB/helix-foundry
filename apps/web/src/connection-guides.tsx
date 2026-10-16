@@ -135,6 +135,20 @@ GRANT ROLE reader TO foundry;`}</pre>
       </p>
     </>
   ),
+  sqlite: () => (
+    <>
+      <p>
+        Choose a copy of the database file, up to 256 MB. Close the application
+        that writes it first, so the copy includes its latest changes. Encrypted
+        databases are not supported.
+      </p>
+      <p>
+        Each table you choose becomes a dataset, and the file's primary and
+        foreign keys link them. Views are not imported. Foundry reads the copy
+        once; to refresh, upload a new copy.
+      </p>
+    </>
+  ),
   s3: () => (
     <>
       <p>

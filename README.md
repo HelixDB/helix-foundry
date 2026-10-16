@@ -102,7 +102,7 @@ Helix Foundry is developed and validated on macOS with Apple Silicon, and CI run
 
 ## What you get
 
-- **Connectors** for Neon, Supabase, PlanetScale, PostgreSQL, MySQL, Neo4j, Stripe, WorkOS, PostHog, REST APIs, S3-compatible storage, file uploads (CSV, JSON, JSONL, Parquet) and an ingestion API.
+- **Connectors** for Neon, Supabase, PlanetScale, PostgreSQL, MySQL, Neo4j, SQLite files, Stripe, WorkOS, PostHog, REST APIs, S3-compatible storage, file uploads (CSV, JSON, JSONL, Parquet) and an ingestion API.
 - **Automatic sync** through native PostgreSQL and MySQL change capture where the database allows it, and scheduled snapshot refreshes otherwise.
 - **A suggested ontology** that matches the same customers and records across sources, stored as real objects and relationships in HelixDB.
 - **Versioned data:** immutable Parquet snapshots with profiles, schema-drift review and history, queried by isolated DuckDB processes.
