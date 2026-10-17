@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { discover, importSource } from "../apps/api/src/connectors.js";
-import { neo4jPaging } from "../apps/api/src/neo4j.js";
+import { neo4jCdcChanges, neo4jCdcCursor, neo4jPaging } from "../apps/api/src/neo4j.js";
 import { config } from "../apps/api/src/config.js";
 import { sourceSyncDefaults } from "../apps/api/src/source-sync.js";
 afterEach(() => {
@@ -19,8 +19,10 @@ const rowsOf = async (scope: string, file: string) =>
     .map((l) => JSON.parse(l));
 
 // A Neo4j Query API stand-in with two Customer nodes, one Order and a PLACED
-// relationship between them.
-function fakeNeo4j() {
+// relationship between them. `procedures` is what SHOW PROCEDURES reports.
+function fakeNeo4j(
+  procedures = ["apoc.help", "gds.pageRank", "db.cdc.query"],
+) {
   const customers = ["4:db:0", "4:db:1"];
   const node = (i: number) => [
     T("String", customers[i]),
@@ -52,6 +54,11 @@ function fakeNeo4j() {
     if (url.includes("/db/missing/")) return new Response("", { status: 404 });
     const reply = (fields: string[], values: unknown[][]) =>
       Response.json({ data: { fields, values } });
+    if (s.startsWith("SHOW PROCEDURES"))
+      return reply(["name"], procedures.map((n) => [n]));
+    if (s.includes("db.cdc.current")) return reply(["id"], [["c1"]]);
+    if (s.includes("db.cdc.query"))
+      return reply(["id"], p.from === "c1" ? [] : [["c1"]]);
     if (s.includes("db.labels"))
       return reply(["label"], [["Customer"], ["Order"]]);
     if (s.includes("db.relationshipTypes"))
@@ -190,6 +197,30 @@ it("discovers labels and relationship types with keys that link them", async () 
     name: "東京 café",
     big: "9007199254740993",
     since: "2024-01-02",
+  });
+  expect(d.extensions).toEqual({ apoc: true, gds: true, cdc: true });
+});
+
+it("reports the extensions the server has, and none when it hides them", async () => {
+  fakeNeo4j(["apoc.help", "db.labels"]);
+  const some: any = await discover("neo4j", connection);
+  expect(some.extensions).toEqual({ apoc: true, gds: false, cdc: false });
+  vi.unstubAllGlobals();
+  fakeNeo4j([]);
+  const none: any = await discover("neo4j", connection);
+  expect(none.extensions).toEqual({ apoc: false, gds: false, cdc: false });
+});
+
+it("reads a CDC cursor and reports pending changes", async () => {
+  fakeNeo4j();
+  expect(await neo4jCdcCursor(connection)).toBe("c1");
+  expect(await neo4jCdcChanges(connection, "c1")).toEqual({
+    cursor: "c1",
+    changed: false,
+  });
+  expect(await neo4jCdcChanges(connection, "")).toEqual({
+    cursor: "c1",
+    changed: true,
   });
 });
 

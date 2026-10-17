@@ -107,6 +107,7 @@ Helix Foundry is developed and validated on macOS with Apple Silicon, and CI run
 - **A suggested ontology** that matches the same customers and records across sources, stored as real objects and relationships in HelixDB.
 - **Versioned data:** immutable Parquet snapshots with profiles, schema-drift review and history, queried by isolated DuckDB processes.
 - **Home and Analyst:** key metrics, and answers to your questions backed by executed SQL with snapshot citations.
+- **Graph compute:** graph algorithms (PageRank, communities, similarity, paths), fraud detection recipes (money-flow rings, structuring, cash-out trails) and pathfinding over any edge dataset, with scores saved as datasets.
 - **Your choice of AI:** local `qwen3:4b` through Ollama by default, or Claude or OpenAI. AI-proposed changes are tested and wait for your review.
 - **Developer access:** OpenAPI at `/api/docs`, a TypeScript SDK, scoped API tokens, and backup, restore and upgrade scripts.
 

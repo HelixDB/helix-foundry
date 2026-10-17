@@ -465,3 +465,4 @@ export * from "./pipelines.js";
 export * from "./ontology.js";
 export * from "./analyst.js";
 export * from "./workspace.js";
+export * from "./graph.js";

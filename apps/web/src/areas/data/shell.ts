@@ -5,7 +5,10 @@ import { relative } from "../../api";
 
 // Sidebar children and command palette groups for Data Connection.
 export const dataShell: AreaShell = {
-  // One Data page (connections and their tables), so no sub-pages.
+  // The Data page (connections and their tables), plus Graph compute.
+  subnav: {
+    data: [{ to: paths.graphCompute(), label: "Graph compute", match: ["/data/graph"] }],
+  },
   palette: [
     {
       id: "datasets",

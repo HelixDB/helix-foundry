@@ -12,6 +12,7 @@ import type { Resource } from "../../../packages/shared/src/index.js";
 import { now, transaction, type Store } from "./store.js";
 import { postgresPoolConfig } from "./postgres-config.js";
 import { AppError, unseal } from "./security.js";
+import { neo4jCdcChanges, neo4jCdcCursor } from "./neo4j.js";
 
 const FALLBACK = "*/5 * * * *";
 // Hourly keeps full SaaS API snapshots well within their rate limits, and
@@ -99,7 +100,8 @@ export async function prepareSourceSync(
   scope: string,
   source: Resource,
 ) {
-  if (!database(source.data.kind)) return source;
+  if (!database(source.data.kind) && source.data.kind !== "neo4j")
+    return source;
   if (
     source.data.sync?.mode === "snapshot" &&
     source.data.sync.recheckAt > Date.now()
@@ -112,7 +114,28 @@ export async function prepareSourceSync(
       "hf_" +
       hash(scope + ":" + source.id + ":" + source.data.secret).slice(0, 36);
   let sync: Record<string, any>;
-  if (source.data.kind === "postgres") {
+  if (source.data.kind === "neo4j") {
+    // Change Data Capture exists on Neo4j 5.13 or later, Enterprise. Without
+    // it the connection stays on scheduled snapshot refreshes.
+    try {
+      sync = {
+        mode: "cdc",
+        status: "starting",
+        cursor: await neo4jCdcCursor(c),
+        changes: 0,
+        applied: 0,
+        reason: null,
+      };
+    } catch {
+      sync = {
+        mode: "snapshot",
+        status: "ready",
+        reason:
+          "This Neo4j server does not expose Change Data Capture (Neo4j 5.13 or later, Enterprise). Using scheduled refreshes.",
+        recheckAt: Date.now() + 3600000,
+      };
+    }
+  } else if (source.data.kind === "postgres") {
     const client = new pg.Client({
       ...postgresPoolConfig(c),
       statement_timeout: 10000,
@@ -455,6 +478,44 @@ export function startChangeStreams(store: Store) {
         )
         .catch(fail)
         .catch(() => {});
+    } else if (source.data.kind === "neo4j") {
+      // Poll Change Data Capture. The events are not applied one by one: each
+      // poll marks the source dirty and advances the change identifier, and
+      // the import that follows re-reads the selected labels whole.
+      let timer: ReturnType<typeof setInterval> | undefined;
+      let chain = Promise.resolve();
+      let cursor = source.data.sync.cursor;
+      streams.set(key, {
+        scope,
+        id,
+        owner,
+        secret: source.data.secret,
+        stop: async () => {
+          closed = true;
+          if (timer) clearInterval(timer);
+        },
+      });
+      const poll = async () => {
+        if (closed) return;
+        try {
+          const changes = await neo4jCdcChanges(c, cursor);
+          cursor = changes.cursor;
+          await checkpointSource(
+            store,
+            scope,
+            id,
+            owner,
+            cursor,
+            changes.changed,
+          );
+        } catch {
+          await fail();
+        }
+      };
+      timer = setInterval(() => {
+        chain = chain.then(poll).catch(() => {});
+      }, 15000);
+      void poll();
     } else {
       const zongji = new ZongJi(mysqlConfig(c));
       let file = source.data.sync.cursor.file,

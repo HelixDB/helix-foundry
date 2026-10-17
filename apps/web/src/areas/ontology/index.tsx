@@ -7,6 +7,7 @@ import RecordsPage, { RecordDetail } from "../../records";
 import { Page, PageHeader } from "../../kit";
 import { useResources } from "../../ui";
 import { ObjectGraph } from "./graph";
+import { ExplorePanel } from "./explore-panel";
 import { ExplorerSwitch, useExplorerView } from "./views";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { ObjectTypeDetail } from "./object-type";
@@ -47,7 +48,14 @@ function GraphExplorer() {
         subtitle="Your records and how they connect."
         actions={<ExplorerSwitch />}
       />
-      <ObjectGraph onOpen={setOpen} />
+      <div className="explorer-layout">
+        <div className="explorer-graph">
+          <ObjectGraph onOpen={setOpen} />
+        </div>
+        <aside className="explorer-sidebar">
+          <ExplorePanel />
+        </aside>
+      </div>
       {open && (
         <RecordDetail
           key={open}

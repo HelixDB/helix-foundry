@@ -25,7 +25,7 @@ export const quote = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 const lit = (v: string) => "'" + v.replaceAll("'", "''") + "'";
 const safePart = (s: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(s);
 export type Execution = {
-  mode: "ingest" | "query" | "export" | "materialize";
+  mode: "ingest" | "query" | "export" | "materialize" | "graph";
   scope: string;
   version?: string;
   file?: string;
@@ -44,6 +44,42 @@ export type Execution = {
   // Query only: also profile how each column's values run in the result's
   // row order (ColumnProfile.order), over every row, not only the sample.
   order?: boolean;
+  // Graph mode: which algorithm to run and its parameters.
+  graph?: {
+    algorithm:
+      | "degree"
+      | "wcc"
+      | "pagerank"
+      | "louvain"
+      | "node_similarity"
+      | "knn"
+      | "betweenness"
+      | "shortest_path"
+      | "all_paths"
+      | "node_embeddings"
+      | "link_prediction"
+      | "vector_search"
+      | "fraud_rings"
+      | "structuring"
+      | "cashout_trails"
+      | "account_takeover"
+      | "collusion";
+    srcColumn?: string;
+    dstColumn?: string;
+    weightColumn?: string;
+    amountColumn?: string;
+    threshold?: number;
+    maxDepth?: number;
+    minRingSize?: number;
+    topN?: number;
+    sourceId?: string;
+    targetId?: string;
+    damping?: number;
+    maxIterations?: number;
+    tolerance?: number;
+    topK?: number;
+    sampleSize?: number;
+  };
 };
 export type Executed = {
   profile: DatasetProfile;
@@ -257,15 +293,26 @@ export async function execute(
           }
         }
       const sql = job.sql?.trim().replace(/;\s*$/, "");
-      if (!sql || !/^\s*(select|with)\b/i.test(sql))
-        throw new Error("Only a single SELECT query is allowed");
-      const extracted = await c.extractStatements(sql);
-      if (extracted.count !== 1)
-        throw new Error("Only a single SELECT query is allowed");
+      if (job.mode !== "graph") {
+        if (!sql || !/^\s*(select|with)\b/i.test(sql))
+          throw new Error("Only a single SELECT query is allowed");
+        const extracted = await c.extractStatements(sql);
+        if (extracted.count !== 1)
+          throw new Error("Only a single SELECT query is allowed");
+      }
       await c.run(`SET allowed_paths = [${lit(out)}]`);
       await c.run("SET enable_external_access = false");
       await c.run("SET lock_configuration = true");
-      if (job.mode === "materialize") {
+      if (job.mode === "graph") {
+        const { runGraphAlgorithm } = await import("./graph.js");
+        // The first input is the edge list; rename it for the algorithm.
+        const edgeInput = (job.inputs || [])[0];
+        if (!edgeInput) throw new Error("Graph mode needs an edge dataset input");
+        await c.run(
+          `CREATE OR REPLACE VIEW input_edges AS SELECT * FROM ${quote(edgeInput.table)}`,
+        );
+        await runGraphAlgorithm(c, job.graph!);
+      } else if (job.mode === "materialize") {
         // One pass and no profile. Rows convert exactly as a query's rows do.
         // The file is written in scratch and moved into place once complete.
         // Its size is capped, since no other limit applies to it: a join
@@ -302,16 +349,21 @@ export async function execute(
           e.code === "EXDEV" ? copyFile(partial, file) : Promise.reject(e),
         );
         return { version: job.version!, count };
+      } else {
+        await c.run(
+          `CREATE TABLE result AS SELECT * FROM (${sql}) AS foundry_result`,
+        );
       }
-      await c.run(
-        `CREATE TABLE result AS SELECT * FROM (${sql}) AS foundry_result`,
-      );
     }
     if (job.mode === "export") {
       const path = out.replace(/\.parquet$/, ".csv");
       throw new Error("Use dataset Parquet export or paginated CSV export");
     }
-    if ((job.mode === "ingest" && !streamed) || job.persist)
+    if (
+      (job.mode === "ingest" && !streamed) ||
+      job.persist ||
+      job.mode === "graph"
+    )
       await c.run(`COPY result TO ${lit(out)} (FORMAT PARQUET)`);
     const rows = Number(
       (

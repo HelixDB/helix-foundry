@@ -13,6 +13,7 @@ import { NotFound } from "../../shell/ErrorBoundary";
 import { paths } from "../../paths";
 import { ConnectionDetail } from "./connection";
 import { DataOverview } from "./connections";
+import GraphComputePage from "./graph-compute";
 
 // /data (?add=1 opens the connector picker): connections and their tables
 export function DataHome() {
@@ -44,6 +45,7 @@ export function DataRoutes() {
       <Route index element={<DataHome />} />
       <Route path="connections" element={<ConnectionsPage />} />
       <Route path="connections/:sourceId" element={<ConnectionPage />} />
+      <Route path="graph" element={<GraphComputePage />} />
       <Route path="datasets/:datasetId" element={<DatasetPage />} />
       <Route path=":datasetId" element={<LegacyDataset />} />
       <Route path="*" element={<NotFound />} />

@@ -1,4 +1,5 @@
-node_modules
+**/node_modules
+**/dist
 .git
 .env
 .env.*
@@ -6,7 +7,6 @@ node_modules
 test-results
 playwright-report
 apps/web/dist
-packages/*/dist
 *.tgz
 *.log
 backups

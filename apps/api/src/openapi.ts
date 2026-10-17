@@ -15,6 +15,7 @@ import type { RequestSchemas } from "./routes/deps.js";
 import { dataSchemas } from "./routes/data.js";
 import { pipelinesSchemas } from "./routes/pipelines.js";
 import { ontologySchemas } from "./routes/ontology.js";
+import { graphSchemas } from "./routes/graph.js";
 import { analystSchemas } from "./routes/analyst.js";
 import { workspaceSchemas } from "./routes/workspace.js";
 // Request bodies for the docs, keyed "METHOD /path". Area route modules export
@@ -40,6 +41,7 @@ const schemas: RequestSchemas = {
   ...dataSchemas,
   ...pipelinesSchemas,
   ...ontologySchemas,
+  ...graphSchemas,
   ...analystSchemas,
   ...workspaceSchemas,
 };

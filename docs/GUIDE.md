@@ -16,6 +16,7 @@ This guide is the detailed companion to the [README](../README.md). It covers wh
   - [PostHog](#posthog)
   - [REST APIs, files, S3 and the ingestion API](#rest-apis-files-s3-and-the-ingestion-api)
   - [Sync and change capture](#sync-and-change-capture)
+- [Graph compute](#graph-compute)
 - [AI and review](#ai-and-review)
 - [Architecture](#architecture)
 - [Security](#security)
@@ -31,6 +32,7 @@ Helix Foundry is an AI-assisted data workspace that runs on your own computer, b
 - **Data:** immutable Parquet snapshots, profiles, key candidates, sensitivity hints, schema-drift review, version history and exports.
 - **AI assistance:** generated catalog descriptions, executable pipeline SQL, ontology mappings and relationships, Home key metrics and action suggestions.
 - **Pipelines and questions:** pipelines defined as node graphs (DAGs) that compile to SQL, or as editable SQL, with before and after previews. Read-only AI questions return executed results with snapshot citations.
+- **Graph compute:** GDS-like algorithms (degree, components, PageRank, Louvain, similarity, paths), fraud recipes (money-flow rings, structuring, cash-out trails) and pathfinding over any edge dataset, with the scores kept as datasets.
 - **Review:** evidence and query previews, bounded model repair, stale-proposal detection, atomic generation publication and definition rollback.
 - **Ontology:** real ontology objects and native relationships in HelixDB, with audited edit overlays that survive rematerialisation.
 - **Security:** workspace-scoped, optionally read-only, revocable API tokens, encrypted connector and model credentials, loopback host checks, and origin checks for browser changes.
@@ -78,7 +80,7 @@ Start by choosing where your database is hosted. Provider sign-in requires regis
 
 ### Neo4j
 
-Neo4j connects over the HTTP Query API of Neo4j 5 or later: the server's HTTP URL on port 7474, a database name, and a username and password. Queries are sent in read mode. From the Docker install, `localhost` is the app's own container, so a Neo4j server running on this computer is reached as `http://host.docker.internal:7474`; this name comes from Docker Desktop. With `pnpm dev`, use `http://localhost:7474`. **Test connection** lists every label and relationship type with its count. Each selected label becomes a dataset of its nodes, keyed by Neo4j's element id in a column named for the label (`customer_id` for `Customer`), and each selected relationship type becomes a dataset of its relationships, with the start and end node ids in columns named for their labels, so the suggested ontology links them. A property with the same name as one of those columns is kept with a `_property` suffix. Integers beyond JavaScript's safe range, and dates, times and durations, are preserved as strings. Neo4j exposes no change stream, so imports are complete snapshots that refresh hourly by default.
+Neo4j connects over the HTTP Query API of Neo4j 5 or later: the server's HTTP URL on port 7474, a database name, and a username and password. Queries are sent in read mode. From the Docker install, `localhost` is the app's own container, so a Neo4j server running on this computer is reached as `http://host.docker.internal:7474`; this name comes from Docker Desktop. With `pnpm dev`, use `http://localhost:7474`. **Test connection** lists every label and relationship type with its count. Each selected label becomes a dataset of its nodes, keyed by Neo4j's element id in a column named for the label (`customer_id` for `Customer`), and each selected relationship type becomes a dataset of its relationships, with the start and end node ids in columns named for their labels, so the suggested ontology links them. A property with the same name as one of those columns is kept with a `_property` suffix. Integers beyond JavaScript's safe range, and dates, times and durations, are preserved as strings. Imports are complete snapshots. A server that exposes Change Data Capture (Neo4j 5.13 or later, Enterprise) gets the same live sync as PostgreSQL and MySQL: committed changes mark the connection dirty and a snapshot import follows within seconds. Without it, snapshots refresh hourly by default. **Test connection** also reports which extensions the server has: APOC, the Graph Data Science library and Change Data Capture (Enterprise). The repository can start its own Neo4j 5 with APOC and GDS as an optional graph engine: `docker compose --profile graph up` publishes it on `http://localhost:7474` (from the app's container, `http://neo4j:7474`, user `neo4j`, password from `NEO4J_GRAPH_PASSWORD` in `.env`, `helix-foundry` by default), so graph algorithms can run on data brought in from any source.
 
 ### Stripe
 
@@ -112,6 +114,16 @@ Database imports automatically try PostgreSQL logical replication or MySQL row-b
 If replication is unavailable, snapshots refresh every five minutes (or on a UTC schedule chosen by an owner in **Data → connection → Details**, or through the API), with a visible reason and automatic retries. REST and S3 sources also use snapshot refreshes; uploads stay explicit. Owners can change snapshot cadence without re-entering credentials, using preset intervals or a custom UTC cron expression that runs at most once a minute; Automatic restores the connector default. The change applies to every table in the connection. Working CDC continues independently, while the saved cadence applies if snapshot fallback is needed. Existing queued/running imports finish normally, and you can still refresh by hand with **Refresh** on the Data page or **Sync now** on the connection's page. Automatic refreshes of the sources that setup's workspace build reads wait until the build finishes, for up to 15 minutes. Schema changes are staged for review. Business record overrides and publication protections remain separate. Writing back to sources, per-row AI enrichment and distributed compute are not supported yet.
 
 [Operations](OPERATIONS.md) lists the database permissions change capture needs and how to manage WAL and binlog retention.
+
+## Graph compute
+
+**Data → Graph compute** runs graph algorithms, fraud recipes and pathfinding over any dataset that holds edges (a source and a target id column in each row), such as a Neo4j relationship dataset or any join table. The projection names the edge dataset and its columns. Results come back as score tables and can be kept as datasets for the Analyst, pipelines and Home.
+
+- **Algorithms:** degree, weakly connected components, PageRank (damping, iterations, tolerance), Louvain communities, node similarity (top-k Jaccard pairs) and bounded shortest paths.
+- **Fraud recipes:** money-flow rings (circular fund movements), structuring (many small transfers near a threshold) and cash-out trails (flows ending at high-fan-in sinks). Each finding carries a severity, a score, the involved node ids and an explanation.
+- **Pathfinding:** the shortest path between two node ids.
+
+The algorithms run in the DuckDB executor over the projected edge list, in the same isolated, budgeted process as every other query, so they work on any source without needing a graph database. The same compute is available through the API: the catalog at `GET /api/v1/workspaces/:w/graph/schema`, then `POST /api/v1/workspaces/:w/graph/algorithms`, `/graph/fraud/scan` and `/graph/paths`. In pipelines, the `graph-filter` and `graph-score` nodes filter on a score column or join a score dataset back onto the rows it came from.
 
 ## AI and review
 

@@ -80,7 +80,7 @@ grep -Eq '^ENCRYPTION_KEY=.{32,}$' .env && grep -Eq '^INTERNAL_KEY=.{32,}$' .env
 
 ### Ports
 
-Compose publishes only the app, on `127.0.0.1`, port 3001 by default (or `PUBLIC_PORT` from `.env`). HelixDB, the executor and Ollama publish no ports, so other services on 6996, 3002 or 11434 do not matter for the Docker install.
+Compose publishes only the app, on `127.0.0.1`, port 3001 by default (or `PUBLIC_PORT` from `.env`). HelixDB, the executor and Ollama publish no ports, so other services on 6996, 3002 or 11434 do not matter for the Docker install. The optional graph profile (`docker compose --profile graph`) also publishes Neo4j on `127.0.0.1:7474`; nothing starts it unless asked.
 
 Skip this check if Helix Foundry is already running from this folder (see above). Otherwise run this block as one command. It tests the configured port first, then a few alternatives, and also looks at ports held by other containers, which `lsof` cannot see on Linux without root:
 

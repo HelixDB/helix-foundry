@@ -14,6 +14,11 @@ export const ObjectActionSchema = z.discriminatedUnion("operation", [
     from: z.string(),
     to: z.string(),
   }),
+  z.object({
+    operation: z.literal("merge"),
+    primaryId: z.string(),
+    secondaryId: z.string(),
+  }),
 ]);
 export type ObjectAction = z.infer<typeof ObjectActionSchema>;
 async function resolveAction(
@@ -51,6 +56,39 @@ async function resolveAction(
       key: String(key),
       before: null,
       after: action.values,
+    };
+  }
+  if (action.operation === "merge") {
+    const primary = await store.get(scope, action.primaryId),
+      secondary = await store.get(scope, action.secondaryId);
+    assert(
+      primary?.kind === "object" &&
+        secondary?.kind === "object" &&
+        primary.data.generation === generation &&
+        secondary.data.generation === generation,
+      "Objects unavailable",
+      404,
+    );
+    assert(primary.id !== secondary.id, "Cannot merge an object with itself");
+    // Count relations that will be rewired.
+    const secondaryRelations = (
+      await store.list(scope, "relation")
+    ).filter(
+      (r) =>
+        r.data.generation === generation &&
+        (r.data.from === secondary.id || r.data.to === secondary.id),
+    );
+    return {
+      generation,
+      primaryId: primary.id,
+      secondaryId: secondary.id,
+      primaryLogicalId: primary.data.logicalId,
+      secondaryLogicalId: secondary.data.logicalId,
+      primaryName: primary.name,
+      secondaryName: secondary.name,
+      rewiredRelations: secondaryRelations.length,
+      before: { primary: primary.data.key, secondary: secondary.data.key },
+      after: { merged: true, key: primary.data.key },
     };
   }
   const from = await store.get(scope, action.from),
@@ -175,6 +213,29 @@ export async function executeObjectAction(
           evidence.generation + "_" + evidence.logicalId,
         ),
       );
+    } else if (action.operation === "merge") {
+      // Rewire all relations from secondary to primary, then mark secondary
+      // as merged (overlay) so it disappears from the explorer.
+      const allRelations = (await tx.list("relation")).filter(
+        (r: any) =>
+          r.data.generation === evidence.generation &&
+          (r.data.from === action.secondaryId || r.data.to === action.secondaryId),
+      );
+      for (const rel of allRelations) {
+        tx.update(rel, {
+          ...rel.data,
+          from: rel.data.from === action.secondaryId ? action.primaryId : rel.data.from,
+          to: rel.data.to === action.secondaryId ? action.primaryId : rel.data.to,
+        });
+      }
+      // Mark the secondary object as merged into the primary.
+      const secondary = await tx.get(action.secondaryId);
+      if (secondary)
+        tx.update(secondary, {
+          ...secondary.data,
+          mergedInto: action.primaryId,
+          merged: true,
+        });
     } else {
       const old = await tx.get(evidence.editId);
       tx.put({
@@ -218,7 +279,9 @@ export async function executeObjectAction(
         "audit",
         action.operation === "create"
           ? "Created " + action.objectType
-          : "Relationship " + action.operation,
+          : action.operation === "merge"
+            ? "Merged objects"
+            : "Relationship " + action.operation,
         { actor, action, evidence, requestHash },
         auditId,
       ),

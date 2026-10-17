@@ -104,6 +104,28 @@ services:
     mem_reservation: ${HELIX_MEMORY_RESERVATION:-2g}
     volumes:
       - helix-data:/var/lib/helix
+  neo4j:
+    # Optional graph engine, started with `docker compose --profile graph up`:
+    # a Neo4j 5 with the APOC and Graph Data Science plugins, for running graph
+    # algorithms on the workspace's data (docs/INTEGRATIONS.md). Connect it in
+    # Helix Foundry as a Neo4j source at http://neo4j:7474, database neo4j.
+    image: neo4j:5-community
+    profiles: [graph]
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_GRAPH_PASSWORD:-helix-foundry}
+      # The image downloads the plugins on first start. GDS Community runs
+      # every algorithm on this one instance.
+      NEO4J_PLUGINS: '["apoc","graph-data-science"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*,gds.*
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512m
+    volumes:
+      - neo4j-data:/data
+    # Published on loopback for Neo4j Browser. No port means the app still
+    # reaches it on the container network.
+    ports:
+      - "127.0.0.1:7474:7474"
   ollama:
     image: ollama/ollama:0.17.7
     profiles: [local]
@@ -143,4 +165,5 @@ networks:
 volumes:
   foundry-data:
   helix-data:
+  neo4j-data:
   model-data:

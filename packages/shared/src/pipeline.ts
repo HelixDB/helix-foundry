@@ -4,6 +4,7 @@ import { z } from "zod";
 export class PipelineValidationError extends Error {}
 export type PipelineNode = z.infer<typeof PipelineNodeSchema>;
 const q = (v: string) => '"' + v.replaceAll('"', '""') + '"';
+const lit = (v: string) => "'" + v.replaceAll("'", "''") + "'";
 export function compilePipeline(nodes: PipelineNode[]) {
   if (!nodes.length) throw new PipelineValidationError("Add at least one node");
   const map = new Map(nodes.map((n) => [n.id, n]));
@@ -82,6 +83,56 @@ export function compilePipeline(nodes: PipelineNode[]) {
               z.record(z.string(), z.string()).parse(c.metrics),
             ).map(([name, expr]) => `${expr} AS ${q(name)}`);
           sql = `SELECT ${[...group.map(q), ...metrics].join(", ")} FROM ${source}${group.length ? " GROUP BY " + columns(group) : ""}`;
+          break;
+        }
+        case "graph-filter": {
+          // Filter rows by a score column threshold (e.g. pagerank > 0.01).
+          const column = z.string().min(1).parse(c.column),
+            op = z.enum([">", ">=", "<", "<=", "=", "!="]).parse(c.op || ">"),
+            value = z.union([z.string(), z.number()]).parse(c.value);
+          const v = typeof value === "number" ? String(value) : lit(value);
+          sql = `SELECT * FROM ${source} WHERE ${q(column)} ${op} ${v}`;
+          break;
+        }
+        case "graph-score": {
+          // Join with a pre-computed score dataset (algorithm output).
+          const scoreDatasetId = z.string().min(1).parse(c.scoreDatasetId),
+            scoreKey = z.string().min(1).parse(c.scoreKey || "node_id"),
+            inputKey = z.string().min(1).parse(c.inputKey || "id"),
+            select = z.string().optional().parse(c.select);
+          inputs.add(scoreDatasetId);
+          sql = `SELECT ${select || "a.*, b.*"} FROM ${source} a INNER JOIN ${q(datasetTable(scoreDatasetId))} b ON a.${q(inputKey)} = b.${q(scoreKey)}`;
+          break;
+        }
+        case "graph-embeddings": {
+          // Join with a pre-computed embeddings dataset.
+          const embedDatasetId = z.string().min(1).parse(c.embedDatasetId),
+            embedKey = z.string().min(1).parse(c.embedKey || "node_id"),
+            inputKey = z.string().min(1).parse(c.inputKey || "id"),
+            dimensions = Number(z.number().int().min(2).max(64).default(8).parse(c.dimensions));
+          inputs.add(embedDatasetId);
+          const dims = Array.from({ length: dimensions }, (_, d) => `b.dim_${d}`);
+          sql = `SELECT a.*, ${dims.join(", ")} FROM ${source} a INNER JOIN ${q(datasetTable(embedDatasetId))} b ON a.${q(inputKey)} = b.${q(embedKey)}`;
+          break;
+        }
+        case "graph-similarity": {
+          // Self-join to compute pairwise similarity (Jaccard on neighbour sets).
+          const keyCol = z.string().min(1).parse(c.keyCol || "id"),
+            neighbourCol = z.string().min(1).parse(c.neighbourCol || "neighbour"),
+            topK = Number(z.number().int().min(1).max(100).default(10).parse(c.topK));
+          sql = `WITH neighbours AS (SELECT ${q(keyCol)} AS id, ${q(neighbourCol)} AS nb FROM ${source}),
+            pairs AS (
+              SELECT a.id AS node_a, b.id AS node_b,
+                CAST(count(*) AS DOUBLE) / CAST(
+                  (SELECT count(*) FROM neighbours x WHERE x.id = a.id) +
+                  (SELECT count(*) FROM neighbours y WHERE y.id = b.id) - count(*)
+                AS DOUBLE) AS score
+              FROM neighbours a
+              JOIN neighbours b ON a.nb = b.nb AND a.id < b.id
+              GROUP BY a.id, b.id
+            )
+            SELECT node_a, node_b, score FROM pairs
+            QUALIFY row_number() OVER (PARTITION BY node_a ORDER BY score DESC) <= ${topK}`;
           break;
         }
         case "sql":

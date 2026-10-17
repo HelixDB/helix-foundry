@@ -959,6 +959,17 @@
 .hf-field small {
   color: var(--hf-muted);
 }
+.hf-field input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+}
+/* Side-by-side fields of a form. */
+.hf-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--hf-space-3);
+  align-items: end;
+}
 
 /* Dialog */
 .hf-dialog {

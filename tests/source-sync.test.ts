@@ -62,6 +62,57 @@ it("prefers CDC over even an expired legacy schedule and fences checkpoint write
   expect(sourceSyncDefaults("rest").sync.mode).toBe("snapshot");
 });
 
+it("turns a Neo4j source live when the server has CDC, and keeps scheduled refreshes without it", async () => {
+  const store = new MemoryStore(),
+    scope = "a",
+    connection = {
+      url: "http://neo4j.test:7474/",
+      database: "neo4j",
+      user: "neo4j",
+      password: "secret",
+      table: "Customer",
+      schema: "node",
+    };
+  const make = (id: string) =>
+    resource(
+      scope,
+      "source",
+      id,
+      { kind: "neo4j", secret: seal(connection), datasetId: id },
+      id,
+    );
+  const withCdc = make("with-cdc"),
+    withoutCdc = make("without-cdc");
+  await transaction(store, scope, async (tx) => {
+    tx.put(withCdc);
+    tx.put(withoutCdc);
+  });
+  // A server that answers db.cdc.current goes live from that identifier.
+  vi.stubGlobal(
+    "fetch",
+    async () => Response.json({ data: { fields: ["id"], values: [["c1"]] } }),
+  );
+  await prepareSourceSync(store, scope, withCdc);
+  expect((await store.get(scope, "with-cdc"))?.data.sync).toMatchObject({
+    mode: "cdc",
+    cursor: "c1",
+    changes: 0,
+    applied: 0,
+  });
+  vi.unstubAllGlobals();
+  // One that returns no identifier keeps its scheduled snapshot refreshes.
+  vi.stubGlobal(
+    "fetch",
+    async () => Response.json({ data: { fields: [], values: [] } }),
+  );
+  await prepareSourceSync(store, scope, withoutCdc);
+  expect((await store.get(scope, "without-cdc"))?.data.sync).toMatchObject({
+    mode: "snapshot",
+    reason: expect.stringContaining("Change Data Capture"),
+  });
+  vi.unstubAllGlobals();
+});
+
 it.skipIf(process.env.TEST_CDC_DATABASES !== "1").each(["postgres", "mysql"])(
   "captures %s commits and resumes while retaining complete snapshots",
   async (kind) => {

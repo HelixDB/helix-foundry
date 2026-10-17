@@ -277,6 +277,59 @@ async function allColumns(
   return columns;
 }
 
+// Which extra procedures the server has: APOC, the Graph Data Science
+// library and Change Data Capture (Neo4j 5.13 or later, Enterprise). Test
+// connection reports them, so the app can say what the source can do. A server
+// that hides its procedure list is reported as having none.
+export type Neo4jExtensions = {
+  apoc: boolean;
+  gds: boolean;
+  cdc: boolean;
+};
+
+export async function neo4jExtensions(
+  c: ConnectorConfig,
+): Promise<Neo4jExtensions> {
+  try {
+    const rows = await neo4jQuery(c, "SHOW PROCEDURES YIELD name RETURN name");
+    const names = rows.map((r) => String(r.name));
+    return {
+      apoc: names.some((n) => n.startsWith("apoc.")),
+      gds: names.some((n) => n.startsWith("gds.")),
+      cdc: names.some((n) => n.startsWith("db.cdc.")),
+    };
+  } catch {
+    return { apoc: false, gds: false, cdc: false };
+  }
+}
+
+// Change Data Capture (Neo4j 5.13 or later, Enterprise) reads committed
+// changes after a change identifier. Foundry never applies the events one by
+// one: they mark the source dirty, and the import that follows re-reads the
+// selected labels whole, the way PostgreSQL and MySQL change streams coalesce
+// into complete imports. The identifier is exclusive, so a poll starts from
+// the last one it saw.
+export async function neo4jCdcCursor(c: ConnectorConfig) {
+  const [row] = await neo4jQuery(c, "CALL db.cdc.current() YIELD id RETURN id");
+  assert(row?.id, "Neo4j CDC returned no change identifier");
+  return String(row.id);
+}
+
+export async function neo4jCdcChanges(c: ConnectorConfig, from: string) {
+  // One page is enough to mark the source dirty; a later poll picks up the
+  // rest. Only the change identifier is kept, never the events themselves.
+  const rows = await neo4jQuery(
+    c,
+    "CALL db.cdc.query($from) YIELD id RETURN id LIMIT 500",
+    { from },
+    { timeoutMs: 30000 },
+  );
+  return {
+    cursor: rows.length ? String(rows.at(-1)!.id) : from,
+    changed: rows.length > 0,
+  };
+}
+
 export async function discoverNeo4j(c: ConnectorConfig) {
   const labels = (
     await neo4jQuery(
@@ -342,7 +395,10 @@ export async function discoverNeo4j(c: ConnectorConfig) {
         referencedColumn: idColumn(label),
       });
   }
-  const columns = await allColumns(c, labels, types, shapes);
+  const [columns, extensions] = await Promise.all([
+    allColumns(c, labels, types, shapes),
+    neo4jExtensions(c),
+  ]);
   const sample = c.table
     ? (
         await page(
@@ -355,7 +411,7 @@ export async function discoverNeo4j(c: ConnectorConfig) {
         )
       ).rows
     : [];
-  return { tables, keys, foreignKeys, columns, sample };
+  return { tables, keys, foreignKeys, columns, sample, extensions };
 }
 
 export async function importNeo4j(

@@ -8,4 +8,6 @@ export const dataPaths = {
   connection: (sourceId: string) => "/data/connections/" + enc(sourceId),
   dataset: (datasetId: string, tab?: string) =>
     "/data/datasets/" + enc(datasetId) + (tab ? "?tab=" + enc(tab) : ""),
+  // Graph compute: algorithms, fraud recipes and pathfinding.
+  graphCompute: () => "/data/graph",
 };

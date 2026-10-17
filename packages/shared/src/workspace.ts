@@ -11,11 +11,14 @@ export const DashboardSchema = z.object({
     .array(
       z.object({
         title: z.string(),
-        type: z.enum(["metric", "bar", "line", "table"]),
+        type: z.enum(["metric", "bar", "line", "table", "graph"]),
         sql: z.string(),
         inputs: z.array(z.string()).min(1),
         x: z.string().optional(),
         y: z.string().optional(),
+        // Graph widgets: optional focus node and depth.
+        focus: z.string().optional(),
+        depth: z.number().int().min(1).max(3).optional(),
       }),
     )
     .min(1)

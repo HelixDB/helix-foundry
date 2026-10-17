@@ -29,6 +29,8 @@ export function ResultPreview({ widget, rows }: { widget: any; rows: any[] }) {
         </div>
       ) : widget.type === "table" ? (
         <DataTable rows={rows} />
+      ) : widget.type === "graph" ? (
+        <GraphMiniView rows={rows} focus={widget.focus} />
       ) : (
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={240}>
@@ -58,5 +60,28 @@ export function ResultPreview({ widget, rows }: { widget: any; rows: any[] }) {
         </div>
       )}
     </>
+  );
+}
+
+// Compact graph view for dashboard tiles: shows node/edge counts and a
+// simple link table when a full force graph would be too heavy.
+function GraphMiniView({ rows, focus }: { rows: any[]; focus?: string }) {
+  const nodeCount = rows.length,
+    // Infer edges from a from/to or src/dst pair if present.
+    first = rows[0] || {},
+    fromKey = ["from_id", "from", "src", "node_a"].find((k) => k in first),
+    toKey = ["to_id", "to", "dst", "node_b"].find((k) => k in first),
+    edges = fromKey && toKey ? rows.length : 0;
+  return (
+    <div className="graph-mini">
+      <div className="graph-mini-stats">
+        <span>{nodeCount} rows</span>
+        {edges > 0 && <span>{edges} edges</span>}
+        {focus && <span>focus: {focus}</span>}
+      </div>
+      {rows.length > 0 && (
+        <DataTable rows={rows.slice(0, 8)} />
+      )}
+    </div>
   );
 }
