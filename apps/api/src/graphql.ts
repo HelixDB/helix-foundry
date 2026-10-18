@@ -164,21 +164,57 @@ export async function executeOntologyQuery(
       datasetId: t.data.datasetId as string,
       generation,
     }));
-  const relations = (await store.list(scope, "relation"))
-    .filter((r) => r.data.generation === generation)
-    .map((r) => ({
-      name: r.data.name as string,
-      fromType: r.data.fromType as string,
-      toType: r.data.toType as string,
-      fromColumn: r.data.fromColumn as string,
-      toColumn: r.data.toColumn as string,
-    }));
+  // Relation records carry only their two ends (object ids) and the
+  // generation; the relation's name rides on the resource and the types on
+  // each end come from the objects. Dedupe per name and source type, since
+  // every published pair is its own relation record.
+  const typeById = new Map(
+    (await store.list(scope, "object"))
+      .filter((o) => o.data.generation === generation)
+      .map((o) => [o.id, String(o.data.type)]),
+  );
+  const rawRelations = (await store.list(scope, "relation")).filter(
+    (r) => r.data.generation === generation,
+  );
+  const relationByKey = new Map<string, RelationInfo>();
+  for (const r of rawRelations) {
+    const fromType = typeById.get(r.data.from as string),
+      toType = typeById.get(r.data.to as string);
+    if (fromType && toType)
+      relationByKey.set(`${r.name}|${fromType}`, {
+        name: String(r.name ?? "related"),
+        fromType,
+        toType,
+        fromColumn: "",
+        toColumn: "",
+      });
+  }
+  const relations = [...relationByKey.values()];
 
   if (!types.length) return { errors: [{ message: "No object types published" }] };
 
   const schema = buildOntologySchema(types, relations);
 
   // Pre-load all objects per type (bounded) and their relation links.
+  // Links live on the relation records, like everywhere else in the ontology:
+  // an object carries them out under each relation name it starts.
+  const keyById = new Map(
+    (await store.list(scope, "object"))
+      .filter((o) => o.data.generation === generation)
+      .map((o) => [o.id, o.data.key]),
+  ) as Map<string, string>;
+  const linksByObjectId = new Map<string, Map<string, string[]>>();
+  for (const r of rawRelations) {
+    const fromKey = keyById.get(r.data.from as string),
+      toKey = keyById.get(r.data.to as string);
+    if (!fromKey || !toKey) continue;
+    const m = linksByObjectId.get(r.data.from as string) ?? new Map();
+    m.set(String(r.name ?? "related"), [
+      ...(m.get(String(r.name ?? "related")) ?? []),
+      toKey,
+    ]);
+    linksByObjectId.set(r.data.from as string, m);
+  }
   const objectsByType = new Map<string, any[]>();
   for (const t of types) {
     const objects = (await store.list(scope, "object"))
@@ -192,7 +228,7 @@ export async function executeOntologyQuery(
         __key: o.data.key,
         __type: t.name,
         ...(o.data.base || {}),
-        __links: o.data.links ?? {},
+        __links: Object.fromEntries(linksByObjectId.get(o.id) ?? []),
       })),
     );
   }

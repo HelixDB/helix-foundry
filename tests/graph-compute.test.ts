@@ -336,3 +336,26 @@ it("finds a shortest path between two node ids, or none", async () => {
   ) as any;
   expect(none).toBeNull();
 });
+
+it("answers GraphQL over the published ontology, with relation links", async () => {
+  await fixture();
+  const r = (
+    await (
+      await request("POST", "/graphql", {
+        query: '{ Person(key: "A") { name friend Knows } }',
+      })
+    ).json()
+  ) as any;
+  expect(r.errors).toBeUndefined();
+  expect(r.data.Person.name).toBe("Ann");
+  expect(r.data.Person.Knows).toEqual(["B"]);
+  expect(r.data.Person.friend).toBe("B");
+  const list = (
+    await (
+      await request("POST", "/graphql", {
+        query: "{ PersonList(limit: 2) { _key } }",
+      })
+    ).json()
+  ) as any;
+  expect(list.data.PersonList).toHaveLength(2);
+});
