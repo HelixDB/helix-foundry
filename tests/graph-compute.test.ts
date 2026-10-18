@@ -306,3 +306,33 @@ it("merges two records and marks the secondary as merged", async () => {
   expect(after?.data.merged).toBe(true);
   expect(after?.data.mergedInto).toBe(primary.id);
 });
+
+it("finds a shortest path between two node ids, or none", async () => {
+  const { flows } = await fixture();
+  const found = (
+    await (
+      await request("POST", "/graph/paths", {
+        projection: projection(flows.id),
+        sourceId: "D",
+        targetId: "A",
+        maxDepth: 6,
+      })
+    ).json()
+  ) as any;
+  // The edge list is walked undirected, so D and A are adjacent: one hop.
+  expect(found.nodeIds[0]).toBe("D");
+  expect(found.nodeIds.at(-1)).toBe("A");
+  expect(found.length).toBe(1);
+  // An unknown node id finds no path at all.
+  const none = (
+    await (
+      await request("POST", "/graph/paths", {
+        projection: projection(flows.id),
+        sourceId: "Z",
+        targetId: "A",
+        maxDepth: 4,
+      })
+    ).json()
+  ) as any;
+  expect(none).toBeNull();
+});
