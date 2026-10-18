@@ -128,7 +128,10 @@ Postgres…) — c'est l'équivalent des graph analytics de Foundry.
 
 1. [fait] Profil `graph` dans `compose.yaml` (image `neo4j:5-community`, plugins
    `apoc`, `gds`, volume dédié), et page **Data → Graph compute** (`/data/graph`):
-   algorithmes, recettes anti-fraude et pathfinding sur tout dataset d'arêtes.
+   algorithmes, recettes anti-fraude et pathfinding sur tout dataset d'arêtes,
+   onglet **Pipelines** pour composer les scores persistés en pipelines
+   (`graph-score` → `graph-filter` → `graph-embeddings`), et export de l'ontologie
+   publiée en GraphML / JSON-LD / DOT depuis l'Explorer.
 2. [partiel] `apps/api/src/neo4j.ts` : la discovery (`Test connection`) rapporte
    désormais les extensions du serveur (`extensions: { apoc, gds, cdc }`).
    Reste : driver Bolt en option, fidélité des types temporels, export de masse APOC.
@@ -137,4 +140,7 @@ Postgres…) — c'est l'équivalent des graph analytics de Foundry.
    les changements marquent la source sale et déclenchent un import snapshot ;
    sans CDC (Community), retour aux rafraîchissements horaires.
 4. Prototype GraphRAG : embeddings des objets de l'ontologie (Ollama local) + recherche
-   hybride dans l'Analyst.
+   hybride dans l'Analyst. [en cours] L'onglet Algorithms expose déjà `node_embeddings`
+   et `vector_search` (auto-embeddings du projet d'arêtes), et le node pipeline
+   `graph-embeddings` joint les embeddings aux lignes ; la recherche hybride
+   dans l'Analyst reste à construire.
