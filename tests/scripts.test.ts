@@ -24,6 +24,19 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { SCHEMA_VERSION } from "../apps/api/src/store.js";
 
+// On Windows, "bash" resolves to the WSL stub in System32, which fails with
+// "execvpe(/bin/bash) failed" when no distro is installed. Prefer a real
+// Git Bash when one is present; elsewhere plain bash is fine.
+const BASH =
+  process.platform === "win32"
+    ? [
+        "C:/Program Files/Git/bin/bash.exe",
+        "C:/Program Files/Git/usr/bin/bash.exe",
+        "C:/Program Files (x86)/Git/bin/bash.exe",
+        `${process.env.LocalAppData || ""}/Programs/Git/bin/bash.exe`,
+      ].find((p) => p && existsSync(p)) || "bash"
+    : "bash";
+
 // These tests run their scripts synchronously, and a synchronous test lets
 // the worker's event loop run only when it ends. Without a turn between
 // tests, vitest's own messages wait for the whole file, over a minute on a
@@ -125,7 +138,7 @@ function fixture() {
       extra = {},
       flags: string[] = [],
     ) =>
-      spawnSync("bash", [...flags, join(root, "scripts", script), ...args], {
+      spawnSync(BASH, [...flags, join(root, "scripts", script), ...args], {
         cwd: base,
         env: { ...env, ...extra },
         encoding: "utf8",
@@ -133,7 +146,7 @@ function fixture() {
       }),
     // Runs a bash command line, for process substitution; $1... are args.
     shell: (command: string, args: string[] = [], extra = {}) =>
-      spawnSync("bash", ["-c", command, "bash", ...args], {
+      spawnSync(BASH, ["-c", command, "bash", ...args], {
         cwd: base,
         env: { ...env, ...extra },
         encoding: "utf8",
@@ -186,7 +199,7 @@ const contents = (dir: string) =>
 it.each(["backup.sh", "backup-lib.sh", "restore.sh", "upgrade.sh"])(
   "%s parses",
   (script) => {
-    const r = spawnSync("bash", ["-n", join(repo, "scripts", script)], {
+    const r = spawnSync(BASH, ["-n", join(repo, "scripts", script)], {
       encoding: "utf8",
     });
     expect(r.status, r.stderr).toBe(0);
@@ -1294,7 +1307,7 @@ describe("upgrade.sh", () => {
   it("keeps BACKUP_PASSPHRASE from docker and git", () => {
     const f = fixture();
     release(f);
-    const git = spawnSync("sh", ["-c", "command -v git"], {
+    const git = spawnSync(BASH, ["-c", "command -v git"], {
       encoding: "utf8",
     }).stdout.trim();
     const wrapper = join(f.base, "bin", "git");
