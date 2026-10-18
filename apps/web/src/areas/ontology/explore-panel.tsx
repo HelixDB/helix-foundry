@@ -1,19 +1,16 @@
 // Explore panel: run graph algorithms and fraud recipes on a chosen edge
-// dataset, show results, and save the current view as a named perspective.
+// dataset, show results, and copy the run's definition so it can be re-run.
 import { useState, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
-  Bookmark,
-  Filter,
-  GitBranch,
+  Copy,
   Loader2,
   Network,
   Play,
   Search,
   Shield,
-  Target,
 } from "lucide-react";
 import { api } from "../../api";
 import { useWorkspace, useResources } from "../../ui";
@@ -24,6 +21,8 @@ type AlgoResult = {
   name: string;
   columns: string[];
   rows: Record<string, unknown>[];
+  datasetId?: string;
+  durationMs?: number;
 };
 
 type FraudResult = {
@@ -38,23 +37,9 @@ type FraudResult = {
   }[];
   scannedNodes: number;
   scannedEdges: number;
+  datasetId?: string;
   durationMs: number;
 };
-
-const algorithms = [
-  { kind: "degree", label: "Degree", icon: GitBranch },
-  { kind: "pagerank", label: "PageRank", icon: Activity },
-  { kind: "wcc", label: "Communities (WCC)", icon: Network },
-  { kind: "betweenness", label: "Betweenness", icon: Target },
-  { kind: "knn", label: "k-NN Similarity", icon: Network },
-  { kind: "node_similarity", label: "Node Similarity", icon: Network },
-];
-
-const fraudRecipes = [
-  { kind: "money_flow_rings", label: "Money-flow rings" },
-  { kind: "structuring", label: "Structuring" },
-  { kind: "cashout_trails", label: "Cash-out trails" },
-];
 
 const severityColor: Record<string, string> = {
   critical: "text-red-500",
@@ -68,8 +53,14 @@ export function ExplorePanel({
 }: {
   onHighlight?: (nodeIds: string[]) => void;
 }) {
-  const { id: workspaceId, role } = useWorkspace();
+  const { id: workspaceId } = useWorkspace();
   const datasets = useResources("dataset");
+  const schema = useQuery({
+    queryKey: [workspaceId, "graph-schema"],
+    queryFn: () => api<{ algorithms: { kind: string }[]; fraudRecipes: { kind: string }[] }>(
+      `/workspaces/${workspaceId}/graph/schema`,
+    ),
+  });
   const [tab, setTab] = useState<"algorithm" | "fraud">("algorithm");
   const [searchTerm, setSearchTerm] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
@@ -81,19 +72,25 @@ export function ExplorePanel({
   const [amountColumn, setAmountColumn] = useState("amount");
   const [result, setResult] = useState<AlgoResult | null>(null);
   const [fraudResult, setFraudResult] = useState<FraudResult | null>(null);
-  const [perspectiveName, setPerspectiveName] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const edgeDatasets = (datasets.data?.items || []).filter((d: any) => {
     const cols = d.data?.profile?.columns?.map((c: any) => c.name) || [];
     return cols.includes(srcColumn) && cols.includes(dstColumn);
   });
 
+  // Algorithms that take two node ids from the user (or an embedding build)
+  // belong to the Graph compute page; the panel keeps the one-argument ones.
+  const standalone = ["shortest_path", "all_paths", "vector_search"];
+  const algorithms = (schema.data?.algorithms || [])
+    .map((a) => a.kind)
+    .filter((k) => !standalone.includes(k));
+
   const runAlgo = useMutation({
     mutationFn: async () => {
-      const r = await api<AlgoResult>(`/workspaces/${workspaceId}/graph/algorithms`, {
-        method: "POST",
-        body: JSON.stringify({
+      const r = await api<AlgoResult>(
+        `/workspaces/${workspaceId}/graph/algorithms`,
+        {
           kind: algorithm,
           name: algorithm,
           projection: {
@@ -103,10 +100,10 @@ export function ExplorePanel({
             dstColumn,
             edgeTypes: [],
           },
-          params: { topK: 10, sampleSize: 100, maxDepth: 6 },
+          params: { topK: 10, sampleSize: 200, maxDepth: 6 },
           persist: false,
-        }),
-      });
+        },
+      );
       setResult(r);
       setFraudResult(null);
       return r;
@@ -115,46 +112,45 @@ export function ExplorePanel({
 
   const runFraud = useMutation({
     mutationFn: async () => {
-      const r = await api<FraudResult>(
-        `/workspaces/${workspaceId}/graph/fraud/scan`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            recipe,
-            name: recipe,
-            projection: {
-              name: recipe,
-              edgeDatasetId,
-              srcColumn,
-              dstColumn,
-              edgeTypes: [],
-            },
-            params: {
-              amountColumn,
-              maxDepth: 5,
-              topN: 20,
-            },
-            persist: false,
-          }),
+      const r = await api<FraudResult>(`/workspaces/${workspaceId}/graph/fraud/scan`, {
+        recipe,
+        name: recipe,
+        projection: {
+          name: recipe,
+          edgeDatasetId,
+          srcColumn,
+          dstColumn,
+          edgeTypes: [],
         },
-      );
+        params: { amountColumn, maxDepth: 5, topN: 20 },
+        persist: false,
+      });
       setFraudResult(r);
       setResult(null);
       return r;
     },
   });
 
-  const savePerspective = () => {
-    if (!perspectiveName.trim()) return;
-    // Save as a query resource with the current view settings.
-    api(`/workspaces/${workspaceId}/queries`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: `Perspective: ${perspectiveName}`,
-        inputs: edgeDatasetId ? [edgeDatasetId] : [],
-        sql: `-- Perspective saved from Explore\n-- algorithm=${algorithm} recipe=${recipe} src=${srcColumn} dst=${dstColumn}`,
-      }),
-    }).then(() => setSaved(true));
+  // The panel has no server home for a saved view, and a query resource
+  // cannot hold one, so the run's definition goes to the clipboard instead.
+  const copyDefinition = () => {
+    const definition =
+      tab === "fraud"
+        ? {
+            kind: "fraud_scan" as const,
+            recipe,
+            name: recipe,
+            projection: { edgeDatasetId, srcColumn, dstColumn, amountColumn },
+          }
+        : {
+            kind: "algorithm" as const,
+            algorithm,
+            name: algorithm,
+            projection: { edgeDatasetId, srcColumn, dstColumn },
+          };
+    navigator.clipboard
+      .writeText(JSON.stringify(definition, null, 2))
+      .then(() => setCopied(true));
   };
 
   const filteredRows = useMemo(() => {
@@ -273,9 +269,9 @@ export function ExplorePanel({
               value={algorithm}
               onChange={(e: any) => setAlgorithm(e.target.value)}
             >
-              {algorithms.map((a) => (
-                <option key={a.kind} value={a.kind}>
-                  {a.label}
+              {algorithms.map((k) => (
+                <option key={k} value={k}>
+                  {k}
                 </option>
               ))}
             </select>
@@ -300,9 +296,9 @@ export function ExplorePanel({
               value={recipe}
               onChange={(e: any) => setRecipe(e.target.value)}
             >
-              {fraudRecipes.map((r) => (
+              {(schema.data?.fraudRecipes || []).map((r) => (
                 <option key={r.kind} value={r.kind}>
-                  {r.label}
+                  {r.kind}
                 </option>
               ))}
             </select>
@@ -382,24 +378,12 @@ export function ExplorePanel({
         </div>
       )}
 
-      {/* Save perspective */}
+      {/* Copy the run's definition (see copyDefinition above). */}
       <div className="explore-perspective">
-        <Bookmark size={14} />
-        <input
-          value={perspectiveName}
-          onChange={(e: any) => {
-            setPerspectiveName(e.target.value);
-            setSaved(false);
-          }}
-          placeholder="Perspective name…"
-          className="input"
-        />
-        <Button
-          onClick={savePerspective}
-          disabled={!perspectiveName.trim() || saved}
-          variant="ghost"
-        >
-          {saved ? "Saved" : "Save"}
+        <Copy size={14} />
+        <span className="explore-perspective-hint">Copy run definition</span>
+        <Button onClick={copyDefinition} disabled={copied} variant="ghost">
+          {copied ? "Copied" : "Copy"}
         </Button>
       </div>
     </div>

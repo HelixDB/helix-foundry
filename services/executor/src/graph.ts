@@ -37,7 +37,11 @@ export async function materializeEdges(
   dstColumn = "to_id",
   weightColumn?: string,
 ) {
-  const w = weightColumn ? `CAST(${q(weightColumn)} AS DOUBLE)` : "1.0";
+  // A weight column that holds nonnumeric values counts its rows as
+  // unweighted (w = 1.0) rather than failing the whole job.
+  const w = weightColumn
+    ? `COALESCE(TRY_CAST(${q(weightColumn)} AS DOUBLE), 1.0)`
+    : "1.0";
   await c.run(
     `CREATE OR REPLACE TABLE _edges AS SELECT CAST(${q(srcColumn)} AS VARCHAR) AS src, CAST(${q(dstColumn)} AS VARCHAR) AS dst, ${w} AS w FROM input_edges WHERE ${q(srcColumn)} IS NOT NULL AND ${q(dstColumn)} IS NOT NULL`,
   );
@@ -377,8 +381,7 @@ export async function runAllPaths(
       SELECT w.path || ',' || e.b AS path, e.b AS current, ${d} AS depth
       FROM _walk w
       JOIN _adj e ON e.a = w.current
-      WHERE e.b NOT IN (SELECT CAST(string_split(w2.path, ',')[1] AS VARCHAR) FROM _walk w2 LIMIT 0)
-        AND strpos(w.path, e.b) = 0
+      WHERE NOT list_contains(string_to_array(w.path, ','), e.b)
     `);
     const hits = await c.runAndReadAll(
       `SELECT path, depth FROM _walk_next WHERE current = ${lit(targetId)} LIMIT ${topN}`,
@@ -458,13 +461,18 @@ export async function runNodeEmbeddings(
   walkLength = 10,
   numWalks = 5,
   windowSize = 3,
+  maxNodes = 500,
 ) {
   // Build undirected adjacency for random walks.
   await c.run(`CREATE OR REPLACE TABLE _adj AS SELECT src AS a, dst AS b FROM _edges UNION ALL SELECT dst AS a, src AS b FROM _edges`);
   await c.run(`CREATE OR REPLACE TABLE _cooc (node_a VARCHAR, node_b VARCHAR, weight DOUBLE)`);
 
+  // The walks and power iteration query one node at a time, so only the most
+  // connected nodes get embeddings rather than letting big graphs time out.
   const allNodes = (
-    await c.runAndReadAll("SELECT id FROM _nodes ORDER BY id LIMIT 500")
+    await c.runAndReadAll(
+      `SELECT id FROM _nodes ORDER BY id LIMIT ${maxNodes}`,
+    )
   ).getRowObjectsJson();
 
   // Generate random walks and accumulate co-occurrence.
@@ -709,19 +717,40 @@ export async function runMoneyFlowRings(
 }
 
 /**
- * Structuring: _nodes whose aggregate flow is near a threshold (many small
+ * Structuring: nodes whose aggregate flow is near a threshold (many small
  * transactions just under a reporting limit). Uses amount column when present.
+ * Works on the raw edge rows (the columns it groups by are the projection's
+ * own), so it never depends on the network tables other algorithms build.
  */
 export async function runStructuring(
   c: DuckDBConnection,
   amountColumn = "amount",
   threshold = 10000,
   topN = 50,
+  srcColumn = "from_id",
+  dstColumn = "to_id",
 ) {
-  const hasAmount = await c
-    .runAndReadAll(`SELECT count(*) AS n FROM input_edges WHERE ${q(amountColumn)} IS NOT NULL`)
-    .then((r) => Number(r.getRowObjectsJson()[0].n) > 0)
-    .catch(() => false);
+  // The projection's own columns, as src/dst, with the amount as a number.
+  // An amount column the edge dataset does not carry reads as NULL.
+  const cols = (
+    await c.runAndReadAll("DESCRIBE input_edges")
+  ).getRowObjectsJson().map((row) => String((row as any).column_name).toLowerCase());
+  const amount = cols.includes(amountColumn.toLowerCase()) ? q(amountColumn) : "NULL";
+  await c.run(`
+    CREATE OR REPLACE TABLE _rows AS SELECT
+      CAST(${q(srcColumn)} AS VARCHAR) AS src,
+      CAST(${q(dstColumn)} AS VARCHAR) AS dst,
+      TRY_CAST(${amount} AS DOUBLE) AS amount
+    FROM input_edges
+    WHERE ${q(srcColumn)} IS NOT NULL AND ${q(dstColumn)} IS NOT NULL
+  `);
+  const hasAmount = Number(
+    (
+      await c.runAndReadAll(
+        `SELECT count(*) AS n FROM _rows WHERE amount IS NOT NULL`,
+      )
+    ).getRowObjectsJson()[0].n,
+  ) > 0;
   if (hasAmount) {
     await c.run(`
       CREATE OR REPLACE TABLE result AS
@@ -729,22 +758,21 @@ export async function runStructuring(
         'struct_' || src AS finding_id,
         src AS node_ids,
         count(*) AS txn_count,
-        sum(CAST(${q(amountColumn)} AS DOUBLE)) AS total_amount,
+        sum(amount) AS total_amount,
         'high' AS severity,
         count(*) * 1.0 AS score,
         'Node ' || src || ' has ' || count(*) || ' transactions totalling ' ||
-          CAST(sum(CAST(${q(amountColumn)} AS DOUBLE)) AS VARCHAR) ||
+          CAST(sum(amount) AS VARCHAR) ||
           ' across ' || count(DISTINCT dst) || ' counterparties (structuring pattern)' AS explanation
-      FROM input_edges
-      WHERE CAST(${q(amountColumn)} AS DOUBLE) > 0
-        AND CAST(${q(amountColumn)} AS DOUBLE) < ${threshold}
+      FROM _rows
+      WHERE amount > 0 AND amount < ${threshold}
       GROUP BY src
       HAVING count(*) >= 3 AND count(DISTINCT dst) >= 2
       ORDER BY score DESC
       LIMIT ${topN}
     `);
   } else {
-    // No amount column: fall back to high-degree fan-in/fan-out.
+    // No usable amount column: fall back to a high-degree fan-out pattern.
     await c.run(`
       CREATE OR REPLACE TABLE result AS
       SELECT
@@ -756,7 +784,7 @@ export async function runStructuring(
         count(*) * 1.0 AS score,
         'Node ' || src || ' has ' || count(*) || ' edges to ' || count(DISTINCT dst) ||
           ' counterparties (fan-out pattern)' AS explanation
-      FROM _edges
+      FROM _rows
       GROUP BY src
       HAVING count(*) >= 5 AND count(DISTINCT dst) >= 3
       ORDER BY score DESC
@@ -862,9 +890,21 @@ export async function runGraphAlgorithm(c: DuckDBConnection, job: GraphJob) {
         3, // windowSize
       );
     case "link_prediction":
-      return runLinkPrediction(c, job.topN ?? 50, false);
-    case "vector_search":
-      return runVectorSearch(c, job.sourceId, job.topN ?? 10, 8);
+      return runLinkPrediction(c, job.topK ?? 50, false);
+    case "vector_search": {
+      // Vector search reads `_embed`, which only node_embeddings builds. A
+      // standalone vector_search job starts from an empty connection, so
+      // compute the embeddings in the same job (with a reduced budget) first.
+      const has = Number(
+        (
+          await c.runAndReadAll(
+            "SELECT count(*) AS n FROM information_schema.tables WHERE table_schema = 'main' AND table_name = '_embed'",
+          )
+        ).getRowObjectsJson()[0].n,
+      );
+      if (!has) await runNodeEmbeddings(c, 8, 6, 2, 3, 150);
+      return runVectorSearch(c, job.sourceId, job.topK ?? 10, 8);
+    }
     case "fraud_rings":
       return runMoneyFlowRings(
         c,
@@ -873,13 +913,20 @@ export async function runGraphAlgorithm(c: DuckDBConnection, job: GraphJob) {
         job.topN ?? 50,
       );
     case "structuring":
-      return runStructuring(c, job.amountColumn ?? "amount", job.threshold ?? 10000, job.topN ?? 50);
+      return runStructuring(
+        c,
+        job.amountColumn ?? "amount",
+        job.threshold ?? 10000,
+        job.topN ?? 50,
+        src,
+        dst,
+      );
     case "cashout_trails":
       return runCashoutTrails(c, job.maxDepth ?? 5, job.topN ?? 50);
     case "account_takeover":
       return runAccountTakeover(c, job.topN ?? 50);
     case "collusion":
-      return runCollusion(c, job.maxDepth ?? 4, job.topN ?? 50);
+      return runCollusion(c, job.topN ?? 50);
     default:
       throw new Error(`Unknown graph algorithm: ${job.algorithm}`);
   }
@@ -917,9 +964,9 @@ export async function runAccountTakeover(c: DuckDBConnection, topN = 50) {
 
 /**
  * Collusion: detect dense clusters of nodes that all connect to each other
- * (clique-like subgraphs), a sign of coordinated fraud rings.
+ * (triangle motifs), a sign of coordinated fraud rings.
  */
-export async function runCollusion(c: DuckDBConnection, maxDepth = 4, topN = 50) {
+export async function runCollusion(c: DuckDBConnection, topN = 50) {
   await c.run(`CREATE OR REPLACE TABLE _adj AS SELECT src AS a, dst AS b FROM _edges UNION ALL SELECT dst AS a, src AS b FROM _edges`);
   // Find triangles: A-B, B-C, A-C all connected.
   await c.run(`

@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto";
 import { execute } from "./executor.js";
 import { datasetInputs, queryDatasets } from "./datasets.js";
 import { assert } from "./security.js";
-import type { Store } from "./store.js";
+import { resource, transaction, now, type Store } from "./store.js";
+import {
+  datasetTable,
+  type DatasetProfile,
+} from "../../../packages/shared/src/index.js";
 import type {
   AlgorithmSpec,
   FraudScan,
@@ -48,12 +52,12 @@ export async function runAlgorithm(
   spec: AlgorithmSpec,
 ): Promise<ScoreTable> {
   const [input] = await datasetInputs(store, scope, [spec.projection.edgeDatasetId]);
-  const version = randomUUID();
+  const started = Date.now();
   const result = await execute({
     mode: "graph",
     scope,
     inputs: [input],
-    version,
+    version: randomUUID(),
     persist: spec.persist,
     graph: {
       algorithm: spec.kind as GraphAlgo,
@@ -70,13 +74,59 @@ export async function runAlgorithm(
       sampleSize: spec.params.sampleSize,
     },
   });
-  return {
+  const table: ScoreTable = {
     algorithm: spec.kind,
     name: spec.name,
     columns: result.profile.columns.map((c) => c.name),
     rows: result.rows,
-    durationMs: undefined,
+    durationMs: Date.now() - started,
   };
+  if (spec.persist) {
+    const ds = await persistScoreDataset(
+      store,
+      scope,
+      spec.name,
+      result.version,
+      result.profile,
+    );
+    table.datasetId = ds.id;
+  }
+  return table;
+}
+
+// Keep the scores under the run's name: the first run creates the dataset
+// from the executor's result file, a later run with the same name adds a new
+// snapshot to it. Like an import's refresh, never through the worker.
+export async function persistScoreDataset(
+  store: Store,
+  scope: string,
+  name: string,
+  version: string,
+  profile: DatasetProfile,
+) {
+  const existing = (await store.list(scope, "dataset")).find(
+    (d) => d.name === name,
+  );
+  return transaction(store, scope, async (tx) => {
+    const ds = existing || resource(scope, "dataset", name, { versions: [] });
+    tx.put(
+      resource(scope, "version", name, { datasetId: ds.id, profile, file: version + ".parquet" }, version),
+    );
+    return tx.put({
+      ...ds,
+      revision: ds.revision + 1,
+      updatedAt: now(),
+      data: {
+        ...ds.data,
+        profile,
+        activeVersion: version,
+        pendingVersion: null,
+        versions: [version, ...ds.data.versions],
+        table: datasetTable(ds.id),
+        lastSync: now(),
+      },
+    });
+  });
 }
 
 export async function runFraudScan(
@@ -117,7 +167,7 @@ export async function runFraudScan(
     explanation: String(row.explanation ?? ""),
     detail: row,
   }));
-  return {
+  const out: FraudScanResult = {
     recipe: scan.recipe,
     name: scan.name,
     findings,
@@ -125,6 +175,17 @@ export async function runFraudScan(
     scannedEdges: result.profile.rows,
     durationMs: Date.now() - started,
   };
+  if (scan.persist) {
+    const ds = await persistScoreDataset(
+      store,
+      scope,
+      scan.name,
+      result.version,
+      result.profile,
+    );
+    out.datasetId = ds.id;
+  }
+  return out;
 }
 
 export async function findPath(

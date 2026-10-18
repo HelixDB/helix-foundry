@@ -361,8 +361,7 @@ export async function execute(
     }
     if (
       (job.mode === "ingest" && !streamed) ||
-      job.persist ||
-      job.mode === "graph"
+      job.persist
     )
       await c.run(`COPY result TO ${lit(out)} (FORMAT PARQUET)`);
     const rows = Number(

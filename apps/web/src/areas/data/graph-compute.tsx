@@ -485,7 +485,7 @@ function FraudTab({ projection, schema }: { projection: Projection; schema: any 
       {result ? (
         <Panel
           title="Findings"
-          subtitle={`${result.findings.length} findings · ${result.scannedEdges} edges scanned`}
+          subtitle={`${result.findings.length} findings · ${result.scannedEdges} edges scanned${result.datasetId ? ` · saved as dataset ${result.datasetId}` : ""}`}
         >
           {result.findings.length ? (
             <DataGrid

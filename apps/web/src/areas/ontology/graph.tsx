@@ -48,11 +48,14 @@ const SEARCH_DELAY_MS = 300;
 
 // Records as dots coloured by type and their links as lines. Hover shows a
 // record's connections, click selects it, double-click shows only the records
-// around it.
+// around it. A highlight set (from the explore panel's findings) rings those
+// records.
 export function ObjectGraph({
   onOpen,
+  highlight,
 }: {
   onOpen: (logicalId: string, type: string) => void;
+  highlight?: Set<string>;
 }) {
   const { id } = useWorkspace();
   const [focus, setFocus] = useState<GraphNode | null>(null);
@@ -109,11 +112,22 @@ export function ObjectGraph({
       hidden,
       selected,
       hover: null as string | null,
+      highlight: new Set<string>([]),
       types: [] as string[],
     });
   const data = graph.data;
   // The canvas only exists once there is a graph to draw.
   const ready = !!data?.nodes.length;
+  const byIdNow = useMemo(
+    () => new Map((data?.nodes || []).map((n) => [n.id, n])),
+    [data],
+  );
+  // Findings may name records this sample does not show; only those present
+  // light up.
+  const highlightNow = useMemo(
+    () => new Set([...(highlight || [])].filter((h) => byIdNow.has(h))),
+    [highlight, byIdNow],
+  );
   const types = useMemo(
     () => [...new Set((data?.nodes || []).map((n) => n.type))].sort(),
     [data],
@@ -123,6 +137,7 @@ export function ObjectGraph({
   state.current.hidden = hidden;
   state.current.selected = selected;
   state.current.hover = hover?.id ?? null;
+  state.current.highlight = highlightNow;
   state.current.types = types;
   const counts = useMemo(() => {
     const c = new Map<string, number>();
@@ -158,7 +173,7 @@ export function ObjectGraph({
       { x, y, k } = view.current,
       style = getComputedStyle(c),
       token = (name: string) => style.getPropertyValue(name).trim(),
-      { hidden, selected, hover } = state.current,
+      { hidden, selected, hover, highlight } = state.current,
       active = hover || selected,
       near = new Set<string>(active ? [active] : []);
     if (active)
@@ -209,6 +224,13 @@ export function ObjectGraph({
         ctx.strokeStyle = token("--hf-ink");
         ctx.stroke();
       }
+      if (highlight.has(n.id)) {
+        ctx.beginPath();
+        ctx.arc(n.x!, n.y!, n.r + 5 / k, 0, Math.PI * 2);
+        ctx.lineWidth = 2 / k;
+        ctx.strokeStyle = token("--hf-text-2");
+        ctx.stroke();
+      }
     }
     // Labels in text ink with a surface halo, for the records in play or, once
     // zoomed in, for every record. The most important go first, and a label
@@ -226,7 +248,10 @@ export function ObjectGraph({
     const labelled = nodes.current
       .filter(
         (n) =>
-          shown(n) && (n.id === selected || (active ? near.has(n.id) : all)),
+          shown(n) &&
+          (n.id === selected ||
+            highlight.has(n.id) ||
+            (active ? near.has(n.id) : all)),
       )
       .sort((a, b) => rank(b) - rank(a));
     const placed: number[][] = [];

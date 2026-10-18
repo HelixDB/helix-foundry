@@ -98,14 +98,11 @@ export const FraudScanSchema = z.object({
       maxDepth: z.number().int().min(2).max(8).default(5),
       amountColumn: z.string().optional(),
       threshold: z.number().min(0).optional(),
-      timeColumn: z.string().optional(),
-      windowHours: z.number().int().min(1).max(24 * 30).default(24),
       minRingSize: z.number().int().min(2).max(10).default(3),
       topN: z.number().int().min(1).max(500).default(50),
     })
     .default({
       maxDepth: 5,
-      windowHours: 24,
       minRingSize: 3,
       topN: 50,
     }),

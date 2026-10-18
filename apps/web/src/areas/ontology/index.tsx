@@ -1,6 +1,6 @@
 // Ontology area: route components lazy-loaded by main.tsx.
 import "./ontology.css";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Route, Routes, useParams } from "react-router-dom";
 import { OntologyPage } from "../../graphs";
 import RecordsPage, { RecordDetail } from "../../records";
@@ -41,6 +41,10 @@ export function ObjectExplorer() {
 function GraphExplorer() {
   const types = useResources("objectType"),
     [open, setOpen] = useState<string | null>(null);
+  // Findings the explore panel highlights: the records its ids look up are
+  // ringed and labelled on the graph.
+  const [highlighted, setHighlighted] = useState<string[]>([]);
+  const highlight = useMemo(() => new Set(highlighted), [highlighted]);
   return (
     <>
       <PageHeader
@@ -50,10 +54,10 @@ function GraphExplorer() {
       />
       <div className="explorer-layout">
         <div className="explorer-graph">
-          <ObjectGraph onOpen={setOpen} />
+          <ObjectGraph onOpen={setOpen} highlight={highlight} />
         </div>
         <aside className="explorer-sidebar">
-          <ExplorePanel />
+          <ExplorePanel onHighlight={setHighlighted} />
         </aside>
       </div>
       {open && (

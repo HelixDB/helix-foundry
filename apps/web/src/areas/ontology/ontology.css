@@ -514,8 +514,10 @@
   border-top: 1px solid var(--hf-border, #333);
   padding-top: 12px;
 }
-.explore-perspective .input {
+.explore-perspective-hint {
   flex: 1;
+  font-size: 12px;
+  color: var(--hf-muted, #888);
 }
 
 /* Explorer layout: graph + analysis sidebar */
