@@ -1374,7 +1374,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
       : await ask(
           "pipelines",
           z.object({ pipelines: z.array(PipelineSchema).max(3) }),
-          "Create one useful simple pipeline. Use nodes: [] if using SQL directly. Inputs must be the supplied dataset IDs. Each pipeline must contain executable SELECT SQL. Checks may be an empty array.",
+          "Create one useful simple pipeline. Use nodes: [] if using SQL directly. Inputs must be the supplied dataset IDs. Each pipeline must contain executable SELECT SQL. Nodes give typed visual steps: source, select, rename, cast, filter (condition SQL), derive, deduplicate, join, aggregate and sql (its own SQL) read and shape rows; a score dataset from a graph algorithm joins onto them with graph-score (config: scoreDatasetId, optional scoreKey node_id and inputKey), the joined rows then narrow with graph-filter (config: column, op, value), and graph-embeddings (config: embedDatasetId, optional inputKey, dimensions 2-64) or graph-similarity (config: neighbourCol, optional keyCol and topK 1-100) add similarity and embedding columns. Chain them inputs -> outputs and end at one leaf. Checks may be an empty array.",
         );
     context.pipelines = pipelineResult;
     const ontologyResult = plan

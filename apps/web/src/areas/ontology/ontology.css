@@ -1,4 +1,44 @@
 /* Ontology area styles (prefix on-). */
+/* Explorer export: download the published graph in an interchange format. */
+.export-menu {
+  position: relative;
+  display: inline-flex;
+}
+.export-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 8;
+  min-width: 210px;
+  display: grid;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+}
+.export-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.export-menu-item:hover:not(:disabled) {
+  background: var(--hf-hover);
+}
+.export-menu-item span {
+  font-size: var(--hf-text-sm);
+  color: var(--hf-text-2);
+}
 .on-type-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);

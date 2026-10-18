@@ -25,7 +25,9 @@ export default function ObjectActionForm({
     change =
       operation === "create"
         ? { operation, objectType: type?.name, values }
-        : { operation, name, from, to };
+        : operation === "merge"
+          ? { operation: "merge" as const, primaryId: from, secondaryId: to }
+          : { operation, name, from, to };
   const invalidate = () => setPreview(null);
   return (
     <div className="pad">
@@ -41,6 +43,7 @@ export default function ObjectActionForm({
           <option value="create">Create a record</option>
           <option value="link">Create a relationship</option>
           <option value="unlink">Remove a relationship</option>
+          <option value="merge">Merge a record into another</option>
         </select>
       </label>
       {operation === "create" ? (
@@ -77,6 +80,32 @@ export default function ObjectActionForm({
               </label>
             ))}
           </div>
+        </>
+      ) : operation === "merge" ? (
+        <>
+          <div className="form-grid">
+            <RecordPicker
+              label="Kept record"
+              value={from}
+              initial={initialRecord}
+              onChange={(v) => {
+                setFrom(v);
+                invalidate();
+              }}
+            />
+            <RecordPicker
+              label="Merged record"
+              value={to}
+              onChange={(v) => {
+                setTo(v);
+                invalidate();
+              }}
+            />
+          </div>
+          <p>
+            The merged record's relationships move to the kept one, which keeps
+            its values; the merged record disappears from the explorer.
+          </p>
         </>
       ) : (
         <>
@@ -115,6 +144,18 @@ export default function ObjectActionForm({
             <strong>Review the affected records</strong>
             {operation === "create" ? (
               <DataTable rows={[preview.evidence.after]} />
+            ) : operation === "merge" ? (
+              <p>
+                {preview.evidence.primaryName} keeps its values
+                {preview.evidence.rewiredRelations > 0
+                  ? `, along with ${preview.evidence.rewiredRelations} ${
+                      preview.evidence.rewiredRelations === 1
+                        ? "relationship"
+                        : "relationships"
+                    } moved from ${preview.evidence.secondaryName}`
+                  : ""}
+                ; {preview.evidence.secondaryName} disappears from the explorer.
+              </p>
             ) : (
               <p>
                 {preview.evidence.fromName} → {preview.evidence.toName}

@@ -8,6 +8,7 @@ import { Page, PageHeader } from "../../kit";
 import { useResources } from "../../ui";
 import { ObjectGraph } from "./graph";
 import { ExplorePanel } from "./explore-panel";
+import ExportMenu from "./export-menu";
 import { ExplorerSwitch, useExplorerView } from "./views";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { ObjectTypeDetail } from "./object-type";
@@ -50,7 +51,12 @@ function GraphExplorer() {
       <PageHeader
         title="Explorer"
         subtitle="Your records and how they connect."
-        actions={<ExplorerSwitch />}
+        actions={
+          <>
+            <ExportMenu />
+            <ExplorerSwitch />
+          </>
+        }
       />
       <div className="explorer-layout">
         <div className="explorer-graph">

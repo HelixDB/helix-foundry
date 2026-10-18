@@ -123,7 +123,9 @@ If replication is unavailable, snapshots refresh every five minutes (or on a UTC
 - **Fraud recipes:** money-flow rings (circular fund movements), structuring (many small transfers near a threshold) and cash-out trails (flows ending at high-fan-in sinks). Each finding carries a severity, a score, the involved node ids and an explanation.
 - **Pathfinding:** the shortest path between two node ids.
 
-The algorithms run in the DuckDB executor over the projected edge list, in the same isolated, budgeted process as every other query, so they work on any source without needing a graph database. The same compute is available through the API: the catalog at `GET /api/v1/workspaces/:w/graph/schema`, then `POST /api/v1/workspaces/:w/graph/algorithms`, `/graph/fraud/scan` and `/graph/paths`. In pipelines, the `graph-filter` and `graph-score` nodes filter on a score column or join a score dataset back onto the rows it came from.
+The algorithms run in the DuckDB executor over the projected edge list, in the same isolated, budgeted process as every other query, so they work on any source without needing a graph database. The same compute is available through the API: the catalog at `GET /api/v1/workspaces/:w/graph/schema`, then `POST /api/v1/workspaces/:w/graph/algorithms`, `/graph/fraud/scan` and `/graph/paths`. Pipelines reuse these results with the four graph nodes: `graph-score` joins a score dataset back onto the rows it came from (by node id), `graph-filter` keeps the rows whose score passes a threshold, `graph-embeddings` attaches the embedding columns of an embeddings dataset, and `graph-similarity` self-joins a row set into its most similar pairs. The Data → Graph compute → Pipelines tab drafts such a pipeline; drafts go through the usual proposal review before publishing.
+
+The published graph exports from the Explorer (Export → GraphML, JSON-LD or Graphviz DOT), with the file's type and a matching filename — the same endpoint is `GET /api/v1/workspaces/:w/graph/export/:format`.
 
 ## AI and review
 

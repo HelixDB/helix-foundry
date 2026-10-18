@@ -2,9 +2,11 @@
 // pathfinding over any edge dataset (two id columns), and keep the scores as
 // datasets for the Analyst and pipelines.
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Network, ShieldAlert, Signpost, Waypoints } from "lucide-react";
+import { Network, ShieldAlert, Signpost, Waypoints, Workflow } from "lucide-react";
 import { api } from "../../api";
+import { paths } from "../../paths";
 import {
   Button,
   DataGrid,
@@ -34,7 +36,7 @@ const emptyProjection: Projection = {
 
 export default function GraphComputePage() {
   const { id } = useWorkspace();
-  const [tab, setTab] = useTabParam(["algorithms", "fraud", "paths"]);
+  const [tab, setTab] = useTabParam(["algorithms", "fraud", "paths", "pipelines"]);
   const datasets = useResources("dataset", { limit: 500 });
   const schema = useQuery({
     queryKey: [id, "graph-schema"],
@@ -106,6 +108,7 @@ export default function GraphComputePage() {
           { id: "algorithms", label: "Algorithms", icon: Network },
           { id: "fraud", label: "Fraud recipes", icon: ShieldAlert },
           { id: "paths", label: "Pathfinding", icon: Waypoints },
+          { id: "pipelines", label: "Pipelines", icon: Workflow },
         ]}
       />
       <TabPanel id="algorithms" value={tab}>
@@ -116,6 +119,9 @@ export default function GraphComputePage() {
       </TabPanel>
       <TabPanel id="paths" value={tab}>
         <PathsTab projection={projection} />
+      </TabPanel>
+      <TabPanel id="pipelines" value={tab}>
+        <PipelinesTab projection={projection} datasets={items} />
       </TabPanel>
     </Page>
   );
@@ -593,6 +599,231 @@ function PathsTab({ projection }: { projection: Projection }) {
           icon={Signpost}
           title="No path yet"
           text="Give a source and a target node id to trace how they connect."
+        />
+      )}
+    </Section>
+  );
+}
+
+// A persisted algorithm output feeds back into the workspace as a pipeline:
+// the projection's rows joined with their score (graph-score), the rows above
+// a threshold kept (graph-filter) and, optionally, embeddings attached
+// (graph-embeddings). The draft goes to the proposals flow like every
+// pipeline change: it is reviewed before it publishes.
+const SCORE_KEYS = ["score", "pagerank", "degree", "centrality"];
+function PipelinesTab({
+  projection,
+  datasets,
+}: {
+  projection: Projection;
+  datasets: any[];
+}) {
+  const { id } = useWorkspace(),
+    action = useAction(),
+    [name, setName] = useState(""),
+    [scoreDatasetId, setScoreDatasetId] = useState(""),
+    [scoreColumn, setScoreColumn] = useState("score"),
+    [op, setOp] = useState(">"),
+    [threshold, setThreshold] = useState("0.01"),
+    [inputKey, setInputKey] = useState("id"),
+    [embedDatasetId, setEmbedDatasetId] = useState(""),
+    [dimensions, setDimensions] = useState("8"),
+    [draft, setDraft] = useState<any>(null);
+  const pickScore = (value: string) => {
+    setScoreDatasetId(value);
+    setDraft(null);
+    const cols = value
+      ? (datasets.find((d) => d.id === value)?.data?.profile?.columns || []).map(
+          (c: any) => String(c.name),
+        )
+      : [];
+    setScoreColumn(SCORE_KEYS.find((k) => cols.includes(k)) || "score");
+  };
+  const nodes: any[] = [
+    {
+      id: "rows",
+      type: "source",
+      inputs: [],
+      datasetId: projection.edgeDatasetId,
+    },
+    {
+      id: "scores",
+      type: "graph-score",
+      inputs: ["rows"],
+      config: { scoreDatasetId, scoreKey: "node_id", inputKey },
+    },
+    {
+      id: "kept",
+      type: "graph-filter",
+      inputs: ["scores"],
+      config: { column: scoreColumn, op, value: Number(threshold) },
+    },
+    ...(embedDatasetId
+      ? [
+          {
+            id: "embeds",
+            type: "graph-embeddings",
+            inputs: ["kept"],
+            config: {
+              embedDatasetId,
+              inputKey,
+              dimensions: Number(dimensions),
+            },
+          },
+        ]
+      : []),
+  ];
+  const draftIt = () =>
+    action.run(async () => {
+      const r = await api(`/workspaces/${id}/pipelines/draft`, {
+        name: name || "Graph scores",
+        description:
+          "Scores the projection's edges with a graph algorithm dataset and keeps the rows above the threshold.",
+        inputs: [
+          projection.edgeDatasetId,
+          scoreDatasetId,
+          ...(embedDatasetId ? [embedDatasetId] : []),
+        ],
+        // The route compiles the nodes over this placeholder.
+        sql: "nodes",
+        nodes,
+        checks: [],
+      });
+      setDraft(r);
+      return "Draft saved";
+    }, "Draft saved. Review it before publishing.");
+  return (
+    <Section
+      title="Pipelines"
+      description="Turn a persisted graph algorithm's scores into a repeating pipeline: join the scores onto the edge rows, keep the ones above a threshold, and attach embeddings. The draft lands in Proposals, reviewed like every change."
+      actions={
+        <Button
+          variant="primary"
+          onClick={draftIt}
+          disabled={
+            !projection.edgeDatasetId || !scoreDatasetId || action.pending
+          }
+        >
+          {action.pending ? "Drafting…" : "Draft pipeline"}
+        </Button>
+      }
+    >
+      <Panel>
+        <div className="hf-field-row">
+          <label className="hf-field">
+            <span>Name</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Graph scores"
+            />
+          </label>
+          <label className="hf-field">
+            <span>Scores dataset</span>
+            <select value={scoreDatasetId} onChange={(e) => pickScore(e.target.value)}>
+              <option value="">Choose a scores dataset…</option>
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name || d.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <ColumnField
+            label="Score column"
+            value={scoreColumn}
+            options={[scoreColumn, ...SCORE_KEYS]}
+            onChange={(v) => {
+              setScoreColumn(v);
+              setDraft(null);
+            }}
+          />
+          <label className="hf-field">
+            <span>Keep rows whose score is</span>
+            <select value={op} onChange={(e) => setOp(e.target.value)}>
+              {[">", ">=", "<", "<=", "=", "!="].map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="hf-field">
+            <span>Value</span>
+            <input
+              type="number"
+              step="any"
+              value={threshold}
+              onChange={(e) => {
+                setThreshold(e.target.value);
+                setDraft(null);
+              }}
+            />
+          </label>
+          <ColumnField
+            label="Join key in the edge rows"
+            value={inputKey}
+            options={
+              [
+                "id",
+                "node_id",
+                ...(datasets.find((d) => d.id === projection.edgeDatasetId)?.data?.profile?.columns || []).map((c: any) => String(c.name)),
+              ]
+            }
+            onChange={(v) => setInputKey(v)}
+          />
+          <label className="hf-field">
+            <span>Embeddings dataset (optional)</span>
+            <select
+              value={embedDatasetId}
+              onChange={(e) => {
+                setEmbedDatasetId(e.target.value);
+                setDraft(null);
+              }}
+            >
+              <option value="">None</option>
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name || d.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          {embedDatasetId && (
+            <label className="hf-field">
+              <span>Embedding dimensions</span>
+              <input
+                type="number"
+                min="2"
+                max="64"
+                value={dimensions}
+                onChange={(e) => setDimensions(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+      </Panel>
+      {draft ? (
+        <Panel
+          title="Draft pipeline"
+          subtitle={
+            draft.data.status === "ready"
+              ? "Ready to publish"
+              : "Needs attention before publishing"
+          }
+          actions={
+            <Link to={paths.proposals(draft.id)} className="button">
+              Review
+            </Link>
+          }
+        >
+          <p className="hf-mono">{draft.data.bundle.sql}</p>
+        </Panel>
+      ) : (
+        <EmptyState
+          icon={Workflow}
+          title="No draft yet"
+          text="Run an algorithm with scores kept as a dataset, then draft the pipeline from here."
         />
       )}
     </Section>

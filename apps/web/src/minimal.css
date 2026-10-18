@@ -725,6 +725,53 @@ button.simple-row:hover {
   font-size: 32px;
   color: #454e37;
 }
+/* The dashboard graph widget: stats band, top scores as bars, or a table. */
+.graph-mini-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+  color: #6b7161;
+  margin-bottom: 12px;
+}
+.graph-mini-link {
+  margin-left: auto;
+}
+.graph-mini-bars {
+  display: grid;
+  gap: 6px;
+}
+.graph-mini-bars > div {
+  display: grid;
+  grid-template-columns: minmax(72px, 140px) minmax(0, 1fr) 56px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.graph-mini-bars span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-mini-bars > div > div {
+  height: 8px;
+  border-radius: 4px;
+  background: #e8e6dd;
+  overflow: hidden;
+}
+.graph-mini-bars > div > div > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: #679780;
+}
+.graph-mini-bars em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #454e37;
+}
 .review-footer {
   display: flex;
   align-items: center;
