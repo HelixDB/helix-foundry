@@ -1,0 +1,12 @@
+{
+  "name": "helix-foundry-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "helix-foundry-mcp": "server.mjs" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "zod": "^3.23.8"
+  }
+}
