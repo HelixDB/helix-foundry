@@ -135,6 +135,29 @@ func TestWorkOSSync(t *testing.T) {
 			t.Fatalf("rows = %v", sink.rows)
 		}
 	})
+	// A change read fetches a membership by id whatever its status, so the full
+	// read must list pending and inactive ones too, or the two reads disagree.
+	t.Run("lists memberships of every status", func(t *testing.T) {
+		url := routeServer(t, map[string]func(*http.Request) (int, string){
+			"/organizations": func(*http.Request) (int, string) {
+				return http.StatusOK, `{"data":[{"id":"org_1"}],"list_metadata":{}}`
+			},
+			"/user_management/organization_memberships": func(r *http.Request) (int, string) {
+				q := r.URL.Query()
+				if q.Get("organization_id") != "org_1" || q.Get("statuses") != "active,inactive,pending" {
+					t.Errorf("memberships listed as %s", r.URL.RawQuery)
+				}
+				return http.StatusOK, `{"data":[{"id":"om_1","status":"pending"}],"list_metadata":{}}`
+			},
+		})
+		sink := &rowSink{}
+		if _, err := kindOf(t, catalogFor(url), "workos").Sync(context.Background(), Source{Secret: "sk_test_abc"}, Table{Name: "organization_memberships"}, sink); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.rows) != 1 || sink.rows[0]["status"] != "pending" || sink.rows[0]["organization_id"] != "org_1" {
+			t.Fatalf("rows = %v", sink.rows)
+		}
+	})
 	// Group membership rows are listed per group of each directory and reduced to the (group, user) pair.
 	t.Run("lists members per group of each directory", func(t *testing.T) {
 		url := routeServer(t, map[string]func(*http.Request) (int, string){
