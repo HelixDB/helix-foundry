@@ -160,7 +160,11 @@ export function registerOnboarding(
       body.kind,
       body.config,
     );
-    const discovery: any = await testedConnection(body.kind, resolved.config);
+    const discovery: any = await testedConnection(
+      body.kind,
+      resolved.config,
+      a.scope,
+    );
     const selections = [
       ...new Map(body.selections.map((s) => [JSON.stringify(s), s])).values(),
     ];
@@ -186,6 +190,11 @@ export function registerOnboarding(
         assert(
           discovery.tables?.some((t: any) => t.name === s.table),
           "Choose objects the API key can read",
+        );
+      if (body.kind === "sqlite")
+        assert(
+          discovery.tables?.some((t: any) => t.name === s.table),
+          "Choose tables from the uploaded SQLite file",
         );
       if (body.kind === "s3")
         assert(
@@ -258,13 +267,24 @@ export function registerOnboarding(
     assert(old?.kind === "source", "Source not found", 404);
     assert(old.data.kind === body.kind, "Keep the existing connector type");
     validateRefreshSchedule(body.schedule);
+    // A SQLite file is refreshed by replacing it: given only the new file, a
+    // source keeps the table it imports, so its dataset is updated in place.
+    const settings =
+      body.kind === "sqlite"
+        ? { table: unseal(old.data.secret).table, ...body.config }
+        : body.config;
     const resolved = await resolveHostedConfig(
       store,
       a.scope,
       body.kind,
-      body.config,
+      settings,
     );
-    const discovery = await testedConnection(body.kind, resolved.config);
+    // A SQLite file without the source's table is refused here.
+    const discovery = await testedConnection(
+      body.kind,
+      resolved.config,
+      a.scope,
+    );
     return transaction(store, a.scope, async (tx) => {
       const source = (await tx.get(old.id))!;
       for (const job of await tx.list("job"))
@@ -661,9 +681,10 @@ async function setupRun(
 export async function testedConnection(
   kind: string,
   config: Record<string, any>,
+  scope: string,
 ) {
   try {
-    return await discover(kind, config);
+    return await discover(kind, config, scope);
   } catch (error) {
     if (error instanceof AppError) throw error;
     const message = error instanceof Error ? error.message : "";

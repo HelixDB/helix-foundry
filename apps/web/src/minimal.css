@@ -1282,6 +1282,15 @@ td {
   margin-bottom: 12px;
   font-weight: 500;
 }
+/* Each SQLite file's tables, under its file name. */
+.sqlite-file + .sqlite-file {
+  margin-top: 18px;
+}
+.sqlite-file legend {
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: #5f5b52;
+}
 .choice-options {
   display: grid;
   grid-template-columns: 1fr;
@@ -1476,6 +1485,8 @@ td {
 }
 .connection-entry-heading strong {
   overflow-wrap: anywhere;
+  /* Its actions, Replace file and Remove, sit together at the end. */
+  margin-right: auto;
 }
 .connection-dialog .form-grid {
   margin-top: 0;

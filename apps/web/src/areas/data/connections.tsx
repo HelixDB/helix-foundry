@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Plus, RefreshCw } from "lucide-react";
+import { ArrowRight, FileUp, Plus, RefreshCw } from "lucide-react";
 import { api, number, relative } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace, useResources, useAction } from "../../ui";
 import { ConnectData } from "../../connect-data";
+import { ReplaceSqliteFile } from "../../replace-sqlite";
 import {
   Button,
   ButtonLink,
@@ -40,6 +41,7 @@ function syncText(c: Card) {
   const s = c.source.data;
   if (s.paused) return "Paused";
   if (s.sync?.mode === "cdc") return "Live changes";
+  if (s.kind === "sqlite") return "Uploaded file · replace the file to refresh";
   return s.schedule
     ? `Scheduled refresh (${s.schedule} UTC)`
     : "Automatic refresh";
@@ -278,26 +280,50 @@ export function DataOverview() {
                     {number(records)} records
                     {refreshed && ` · refreshed ${relative(refreshed)}`}
                   </span>
-                  {c.source && role !== "viewer" && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      icon={RefreshCw}
-                      disabled={action.pending}
-                      onClick={() =>
-                        action.run(
-                          () =>
-                            api(
-                              `/workspaces/${id}/sources/${c.source!.id}/sync`,
-                              {},
-                            ),
-                          "Refresh queued",
-                        )
-                      }
-                    >
-                      Refresh
-                    </Button>
-                  )}
+                  {c.source?.data.kind === "sqlite"
+                    ? // The file does not change; refreshing means replacing it.
+                      role === "owner" && (
+                        <ReplaceSqliteFile
+                          sources={(sources.data?.items || []).filter(
+                            (s: Resource) =>
+                              (s.data.connectionId || s.id) === c.key,
+                          )}
+                        >
+                          {(choose, pending) => (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              icon={FileUp}
+                              pending={pending}
+                              disabled={action.pending}
+                              onClick={choose}
+                            >
+                              Replace file
+                            </Button>
+                          )}
+                        </ReplaceSqliteFile>
+                      )
+                    : c.source &&
+                      role !== "viewer" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={RefreshCw}
+                          disabled={action.pending}
+                          onClick={() =>
+                            action.run(
+                              () =>
+                                api(
+                                  `/workspaces/${id}/sources/${c.source!.id}/sync`,
+                                  {},
+                                ),
+                              "Refresh queued",
+                            )
+                          }
+                        >
+                          Refresh
+                        </Button>
+                      )}
                   {c.source && (
                     <ButtonLink
                       size="sm"

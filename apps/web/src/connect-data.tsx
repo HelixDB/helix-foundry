@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { paths } from "./paths";
 import { useQueryClient } from "@tanstack/react-query";
-import { FileUp, Globe2, Braces, Plus, Waypoints } from "lucide-react";
+import {
+  FileUp,
+  Globe2,
+  Braces,
+  Database,
+  Plus,
+  Waypoints,
+} from "lucide-react";
 import { api, number } from "./api";
 import { useWorkspace, Modal, DataTable } from "./ui";
 import {
@@ -19,12 +26,14 @@ import {
   type HostingProvider,
 } from "../../../packages/shared/src";
 import { HostingConnect, providerNames } from "./hosting-connect";
+import { ReplaceSqliteFile } from "./replace-sqlite";
 
 const choices = [
   ["upload", "Upload files", "CSV, JSON, JSONL, or Parquet"],
   ["postgres", "PostgreSQL", "Import tables from your database."],
   ["mysql", "MySQL", "Import tables from your database."],
   ["neo4j", "Neo4j", "Import nodes and relationships from your graph."],
+  ["sqlite", "SQLite", "Import tables from a .db or .sqlite file."],
   ["rest", "REST API", "Pull records from another service."],
   ["s3", "Blob storage", "S3 compatible storage"],
   ["api", "Ingestion API", "Send records from your application."],
@@ -40,6 +49,7 @@ const sourceIcons: Record<string, typeof FileUp> = {
   rest: Globe2,
   api: Braces,
   neo4j: Waypoints,
+  sqlite: Database,
 };
 
 export function ConnectData({
@@ -116,6 +126,19 @@ export function ConnectData({
         "PATCH",
       ),
     );
+  const heading = (group: ConnectionGroup, replace?: ReactNode) => (
+    <div className="connection-entry-heading">
+      <strong>{group.name}</strong>
+      {replace}
+      <button
+        className="text-button"
+        disabled={action.pending}
+        onClick={() => remove(group)}
+      >
+        Remove
+      </button>
+    </div>
+  );
   const importAction = (job: Resource, verb: string) =>
     action.run(() =>
       api(`/workspaces/${id}/onboarding/imports/${job.id}/${verb}`, {}),
@@ -318,31 +341,43 @@ export function ConnectData({
                 <div className="connection-list">
                   {current.map((group) => (
                     <section className="connection-entry" key={group.id}>
-                      <div className="connection-entry-heading">
-                        <strong>{group.name}</strong>
-                        <button
-                          className="text-button"
-                          disabled={action.pending}
-                          onClick={() => remove(group)}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      {group.kind === "sqlite" &&
+                      role === "owner" &&
+                      group.sources.length > 0 ? (
+                        <ReplaceSqliteFile sources={group.sources} inDialog>
+                          {(choose, pending) =>
+                            heading(
+                              group,
+                              <button
+                                className="text-button"
+                                disabled={action.pending || pending}
+                                onClick={choose}
+                              >
+                                {pending ? "Replacing file…" : "Replace file"}
+                              </button>,
+                            )
+                          }
+                        </ReplaceSqliteFile>
+                      ) : (
+                        heading(group)
+                      )}
                       {group.sources.some((s) => s.data.sync) && (
                         <p className="muted small" role="status">
-                          {group.sources.every(
-                            (s) => s.data.sync?.mode === "cdc",
-                          )
-                            ? group.sources.some(
-                                (s) => s.data.sync?.status === "retrying",
-                              )
-                              ? "Reconnecting live sync. Your imported data is still available."
-                              : "Database changes sync automatically."
-                            : group.sources.some(
-                                  (s) => s.data.sync?.mode === "snapshot",
+                          {group.kind === "sqlite"
+                            ? "Imported from the uploaded file. Replace the file to refresh it."
+                            : group.sources.every(
+                                  (s) => s.data.sync?.mode === "cdc",
                                 )
-                              ? "Data refreshes automatically."
-                              : "Checking live sync support…"}
+                              ? group.sources.some(
+                                  (s) => s.data.sync?.status === "retrying",
+                                )
+                                ? "Reconnecting live sync. Your imported data is still available."
+                                : "Database changes sync automatically."
+                              : group.sources.some(
+                                    (s) => s.data.sync?.mode === "snapshot",
+                                  )
+                                ? "Data refreshes automatically."
+                                : "Checking live sync support…"}
                         </p>
                       )}
                       {group.sources.some((s) => s.data.sync?.reason) && (

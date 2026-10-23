@@ -4,7 +4,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
   SourceSchema,
@@ -15,6 +15,7 @@ import { config } from "../config.js";
 import { assert, seal } from "../security.js";
 import { resource, transaction, type Store } from "../store.js";
 import { discover } from "../connectors.js";
+import { stageSqlite } from "../sqlite.js";
 import { storedDiscovery } from "../source-discovery.js";
 import {
   ingestFile,
@@ -290,7 +291,7 @@ export function registerDataRoutes(
       b.kind,
       b.config,
     );
-    const discovery = await discover(b.kind, resolved.config);
+    const discovery = await discover(b.kind, resolved.config, a.scope);
     return transaction(store, a.scope, async (tx) =>
       scrub(
         tx.put(
@@ -339,7 +340,22 @@ export function registerDataRoutes(
     return testedConnection(
       b.kind,
       (await resolveHostedConfig(store, a.scope, b.kind, b.config)).config,
+      a.scope,
     );
+  });
+  // A SQLite database is a file, so it is uploaded before it is tested and
+  // its tables are chosen; sources then name it by the returned file.
+  app.post("/api/v1/workspaces/:w/sources/sqlite", async (req: any) => {
+    const a = await access(req, "owner");
+    const part = await req.file();
+    assert(part, "Choose a file");
+    assert(
+      [".db", ".sqlite", ".sqlite3", ".db3"].includes(
+        extname(part.filename).toLowerCase(),
+      ),
+      "Choose a SQLite database file (.db, .sqlite, .sqlite3 or .db3)",
+    );
+    return stageSqlite(a.scope, part.file);
   });
   app.post("/api/v1/workspaces/:w/sources/:id/sync", async (req: any) => {
     const a = await access(req, "editor"),
