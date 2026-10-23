@@ -47,6 +47,7 @@ import { readRecents, sectionIcon } from "../../shell/recents";
 import { useAskAnalyst } from "../analyst/launcher";
 import { VoiceOrb, useVoice, voiceHint } from "../analyst/voice";
 import { KeyMetrics } from "./metrics";
+import { Noticed } from "./insights";
 
 type Connection = HomeSummary["connections"][number];
 // Sample data stands in for real apps, so each sample source counts as a connection.
@@ -560,6 +561,7 @@ export function HomePage() {
         </p>
         <AskBox summary={s} />
       </header>
+      <Noticed />
       <KeyMetrics />
       {home.error ? (
         <div role="alert" className="wk-error">

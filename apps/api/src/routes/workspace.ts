@@ -4,6 +4,9 @@ import { z } from "zod";
 import { Readable } from "node:stream";
 import {
   BundleSchema,
+  InsightDismissSchema,
+  InsightPrioritiesSchema,
+  InsightThresholdsSchema,
   ProviderSchema,
   ActivityKindSchema,
   collapseActivity,
@@ -26,6 +29,14 @@ import { testProvider, canReuseProviderKey } from "../providers.js";
 import { localAiMemory } from "../memory.js";
 import { homeMetrics, regenerateMetrics } from "../metrics.js";
 import {
+  confirmPriorities,
+  dismissInsight,
+  homeInsights,
+  rescanInsights,
+  restoreInsight,
+  updateInsightSettings,
+} from "../insights.js";
+import {
   generationKinds,
   type RequestSchemas,
   type RouteDeps,
@@ -41,6 +52,9 @@ export const workspaceSchemas: RequestSchemas = {
     version: z.literal(1),
     proposals: z.array(BundleSchema),
   }),
+  "POST /api/v1/workspaces/:w/home/insights/:id/dismiss": InsightDismissSchema,
+  "PUT /api/v1/workspaces/:w/home/insights/priorities": InsightPrioritiesSchema,
+  "PUT /api/v1/workspaces/:w/home/insights/settings": InsightThresholdsSchema,
   "POST /api/v1/workspaces/:w/tokens": z.object({
     name: z.string(),
     readOnly: z.boolean(),
@@ -92,6 +106,52 @@ export function registerWorkspaceRoutes(
     const a = await access(req, "editor");
     await regenerateMetrics(store, a.scope, a.user.id);
     return homeMetrics(store, a.scope, a.user.id);
+  });
+  // "Some things we noticed": stored findings at once; a changed input queues
+  // a background scan, so this never runs the analysis itself.
+  app.get("/api/v1/workspaces/:w/home/insights", async (req) => {
+    const a = await access(req);
+    return homeInsights(store, a.scope, a.user.id);
+  });
+  app.post("/api/v1/workspaces/:w/home/insights/scan", async (req) => {
+    const a = await access(req, "editor");
+    return rescanInsights(store, a.scope, a.user.id);
+  });
+  // Dismissals belong to the person, so viewers may dismiss too.
+  app.post(
+    "/api/v1/workspaces/:w/home/insights/:id/dismiss",
+    async (req: any) => {
+      const a = await access(req),
+        b = InsightDismissSchema.parse(req.body);
+      return dismissInsight(
+        store,
+        a.scope,
+        a.user.id,
+        req.params.id,
+        b.version,
+      );
+    },
+  );
+  app.delete(
+    "/api/v1/workspaces/:w/home/insights/:id/dismiss",
+    async (req: any) => {
+      const a = await access(req);
+      return restoreInsight(store, a.scope, a.user.id, req.params.id);
+    },
+  );
+  app.put("/api/v1/workspaces/:w/home/insights/priorities", async (req) => {
+    const a = await access(req, "owner"),
+      b = InsightPrioritiesSchema.parse(req.body);
+    return confirmPriorities(store, a.scope, a.user.id, b.drivers);
+  });
+  app.put("/api/v1/workspaces/:w/home/insights/settings", async (req) => {
+    const a = await access(req, "owner");
+    return updateInsightSettings(
+      store,
+      a.scope,
+      a.user.id,
+      InsightThresholdsSchema.parse(req.body),
+    );
   });
   app.get("/api/v1/workspaces/:w/home", async (req) => {
     const a = await access(req);
