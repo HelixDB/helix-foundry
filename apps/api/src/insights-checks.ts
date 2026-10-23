@@ -149,6 +149,7 @@ export function driverQuery(
   w: Window,
   t: InsightThresholds,
   activities: Map<string, Activity>,
+  conversionWindow: Window = w,
 ) {
   const a = d.activity,
     inputs = new Set([a.datasetId]);
@@ -231,14 +232,14 @@ export function driverQuery(
       // downstream: a downstream row names the upstream key; upstream: the
       // upstream row names a downstream key.
       const dt = ts(down, "d"),
-        end = `CASE WHEN ${ut} >= ${at(w.current[0])} THEN ${at(w.current[1])} ELSE ${at(w.baseline[1])} END`;
+        end = `CASE WHEN ${ut} >= ${at(conversionWindow.current[0])} THEN ${at(conversionWindow.current[1])} ELSE ${at(conversionWindow.baseline[1])} END`;
       // Count each upstream row once, and observe outcomes only within its
       // comparison period, after the upstream event. Later snapshots cannot
       // give baseline rows more follow-up time than current rows.
       converted = `CASE WHEN EXISTS (SELECT 1 FROM ${q(datasetTable(down.datasetId))} d WHERE ${str(`d.${q(col)}`)} = ${str(`u.${q(key)}`)} AND ${dt} >= ${ut} AND ${dt} < ${end}) THEN 1.0 ELSE 0.0 END`;
     }
     ctes.push(
-      `u AS (SELECT CASE WHEN ${ut} >= ${at(w.current[0])} THEN 'cur' ELSE 'base' END AS __w, ${seg ? str(`u.${q(seg.column)}`) : "CAST(NULL AS VARCHAR)"} AS __s, ${converted} AS __x FROM ${q(datasetTable(up.datasetId))} u WHERE u.${q(up.time.column)} IS NOT NULL AND ((${ut} >= ${at(w.baseline[0])} AND ${ut} < ${at(w.baseline[1] - lag)}) OR (${ut} >= ${at(w.current[0])} AND ${ut} < ${at(w.end - lag)})))`,
+      `u AS (SELECT CASE WHEN ${ut} >= ${at(conversionWindow.current[0])} THEN 'cur' ELSE 'base' END AS __w, ${seg ? str(`u.${q(seg.column)}`) : "CAST(NULL AS VARCHAR)"} AS __s, ${converted} AS __x FROM ${q(datasetTable(up.datasetId))} u WHERE u.${q(up.time.column)} IS NOT NULL AND ((${ut} >= ${at(conversionWindow.baseline[0])} AND ${ut} < ${at(conversionWindow.baseline[1] - lag)}) OR (${ut} >= ${at(conversionWindow.current[0])} AND ${ut} < ${at(conversionWindow.end - lag)})))`,
     );
     parts.push(
       `${row("conv_total", "__w", "''", { n: "count(*)", v: "sum(__x)" })} FROM u GROUP BY __w`,
@@ -415,12 +416,11 @@ export type Note = {
 };
 
 // The driver's checks, from its query's rows.
-export function evaluate(
+function evaluateDriver(
   d: Driver,
   w: Window,
   t: InsightThresholds,
   rows: Record<string, unknown>[],
-  activities: Map<string, Activity>,
 ): { candidates: Candidate[]; notes: Note[] } {
   const R = parseRows(rows),
     a = d.activity,
@@ -443,7 +443,7 @@ export function evaluate(
   for (const [c, reason] of Object.entries(d.checks))
     if (reason) note(c as InsightCheck, "skipped", reason);
   const all = (state: Note["state"], text: string) => {
-    for (const c of ["cohort", "mix", "unit", "conversion"] as const)
+    for (const c of ["cohort", "mix", "unit"] as const)
       if (d.checks[c] === null) note(c, state, text);
   };
   if (!T0 || !T1 || T0.n < t.minPeriodEvents || T1.n < t.minPeriodEvents) {
@@ -982,6 +982,31 @@ export function evaluate(
     }
   }
 
+  return { candidates, notes };
+}
+
+// Conversion has its own coverage, sample counts and observation horizon.
+function evaluateConversion(
+  d: Driver,
+  w: Window,
+  t: InsightThresholds,
+  rows: Record<string, unknown>[],
+  activities: Map<string, Activity>,
+): { candidates: Candidate[]; notes: Note[] } {
+  const R = parseRows(rows),
+    candidates: Candidate[] = [],
+    notes: Note[] = [];
+  const note = (check: InsightCheck, state: Note["state"], text: string) =>
+    notes.push({ check, state, note: text });
+  const base = periodLabel(...w.baseline),
+    cur = periodLabel(...w.current),
+    segmentMinZ = Math.max(t.minZ, 4);
+  const steadyText = (what: string, r: number | null, z: number) =>
+    r === null
+      ? `${what}: nothing to compare.`
+      : Math.abs(r) < t.relativeChange
+        ? `${what} moved ${signed(r)}, within ±${pctOf(t.relativeChange)}.`
+        : `${what} moved ${signed(r)}, but the evidence is weak (|z| ${dec1.format(Math.abs(z))}).`;
   // 4. Progression and conversion along a recorded link.
   const f = d.funnel,
     up = f && activities.get(f.upstream),
@@ -1159,4 +1184,26 @@ export function evaluate(
     }
   }
   return { candidates, notes };
+}
+
+export function evaluate(
+  d: Driver,
+  w: Window,
+  t: InsightThresholds,
+  rows: Record<string, unknown>[],
+  activities: Map<string, Activity>,
+  conversionWindow: Window = w,
+): { candidates: Candidate[]; notes: Note[] } {
+  const driver = evaluateDriver(d, w, t, rows);
+  const conversion = evaluateConversion(
+    d,
+    conversionWindow,
+    t,
+    rows,
+    activities,
+  );
+  return {
+    candidates: [...driver.candidates, ...conversion.candidates],
+    notes: [...driver.notes, ...conversion.notes],
+  };
 }

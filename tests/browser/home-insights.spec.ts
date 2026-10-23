@@ -207,3 +207,51 @@ test("supports keyboard evidence and dismiss/undo in dark mode with reduced moti
     fullPage: true,
   });
 });
+
+for (const role of ["viewer", "editor", "owner"]) {
+  test(`failed scan Retry respects the ${role} role`, async ({ page }) => {
+    await openApp(page);
+    const base = await fixtureWorkspace(page, `Retry ${role}`, clinic(5), 1);
+    const result = await api(page, base + "/home/insights");
+    let scanRequests = 0;
+    await page.route("**/api/v1/me", async (route) => {
+      const response = await route.fetch();
+      const me = await response.json();
+      me.workspaces = me.workspaces.map((w: any) => ({ ...w, role }));
+      await route.fulfill({ response, json: me });
+    });
+    await page.route(`**/api/v1${base}/home/insights`, (route) =>
+      route.fulfill({
+        json: {
+          ...result,
+          scan: {
+            ...result.scan,
+            state: "failed",
+            error: "Test executor unavailable",
+          },
+        },
+      }),
+    );
+    await page.route(`**/api/v1${base}/home/insights/scan`, async (route) => {
+      scanRequests++;
+      await route.fulfill({
+        json: { ...result, scan: { ...result.scan, state: "queued" } },
+      });
+    });
+    await page.goto("/");
+    const section = noticed(page);
+    await expect(section.getByRole("alert")).toContainText(
+      "Test executor unavailable",
+    );
+    const retry = section.getByRole("button", { name: "Retry", exact: true });
+    if (role === "viewer") {
+      await expect(retry).toHaveCount(0);
+      expect(scanRequests).toBe(0);
+    } else {
+      await expect(retry).toBeVisible();
+      await retry.click();
+      await expect(section.getByRole("alert")).toHaveCount(0);
+      expect(scanRequests).toBe(1);
+    }
+  });
+}

@@ -321,7 +321,7 @@ export function findActivities(
     for (const l of outgoing) {
       const c = col(l.fromColumn);
       if (small(l.to, c)) {
-        if (!dimensions.some((d) => d.column === l.fromColumn))
+        if (!c?.sensitive && !dimensions.some((d) => d.column === l.fromColumn))
           dimensions.push({
             column: l.fromColumn,
             label: l.to.name,

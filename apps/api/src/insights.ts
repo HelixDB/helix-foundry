@@ -51,7 +51,7 @@ import { now, resource, transaction, type Store } from "./store.js";
 
 export const INSIGHTS_ID = "home_insights";
 // Bumped when the checks change, so every workspace scans again.
-export const INSIGHTS_VERSION = 3;
+export const INSIGHTS_VERSION = 4;
 export const AUTO_SCAN_INTERVAL = 15 * 60_000;
 const MAX_DRIVERS = 3,
   MAX_FINDINGS = 3,
@@ -539,7 +539,10 @@ export async function updateInsightSettings(
   userId: string,
   settings: Partial<InsightThresholds>,
 ) {
-  await saveStored(store, scope, (s) => ({ ...s, settings }));
+  await saveStored(store, scope, (s) => ({
+    ...s,
+    settings: { ...s.settings, ...settings },
+  }));
   return rescanInsights(store, scope, userId);
 }
 
@@ -574,6 +577,7 @@ async function probe(
 type Selection = {
   drivers: Driver[];
   windows: Map<string, Window>;
+  conversionWindows: Map<string, Window>;
   candidates: InsightDriver[];
   unavailable: { id: string; label: string; reason: string }[];
   ambiguous: boolean;
@@ -617,15 +621,18 @@ async function selectDrivers(
         : await probe(store, scope, a);
   }
   const windows = new Map<string, Window>(),
+    conversionWindows = new Map<string, Window>(),
     scored: { d: Driver; score: number }[] = [],
     unavailable: Selection["unavailable"] = [];
   for (const d of eligible) {
     const k = probeKey(d.activity, byId.get(d.activity.datasetId));
     if (!(k in probes)) continue;
     const cov = probes[k];
-    let coverage = cov,
-      sync = syncedAt(byId.get(d.activity.datasetId)!);
-    if (cov && d.funnel && d.checks.conversion === null) {
+    const sync = syncedAt(byId.get(d.activity.datasetId)!);
+    const w = cov
+      ? chooseWindow(cov, sync, t, d.activity.many)
+      : { reason: `No ${d.activity.many} have a date.` };
+    if (d.funnel && d.checks.conversion === null) {
       const endpoints = [d.funnel.upstream, d.funnel.downstream].map((id) =>
         byActivity.get(id),
       );
@@ -633,22 +640,22 @@ async function selectDrivers(
         (a) => a && probes[probeKey(a, byId.get(a.datasetId))],
       );
       if (linked.every((c) => !!c)) {
-        coverage = {
-          lo: Math.max(cov.lo, ...linked.map((c) => c!.lo)),
-          hi: Math.min(cov.hi, ...linked.map((c) => c!.hi)),
-          rows: cov.rows,
-        };
-        sync = Math.min(
-          sync,
-          ...endpoints.map((a) => syncedAt(byId.get(a!.datasetId)!)),
+        const conversion = chooseWindow(
+          {
+            lo: Math.max(...linked.map((c) => c!.lo)),
+            hi: Math.min(...linked.map((c) => c!.hi)),
+            rows: linked[0]!.rows,
+          },
+          Math.min(...endpoints.map((a) => syncedAt(byId.get(a!.datasetId)!))),
+          t,
+          endpoints[0]!.many,
         );
+        if ("reason" in conversion) d.checks.conversion = conversion.reason;
+        else conversionWindows.set(d.id, conversion);
       } else
         d.checks.conversion =
           "Both linked activities need dated coverage before conversion can be compared.";
     }
-    const w = coverage
-      ? chooseWindow(coverage, sync, t, d.activity.many)
-      : { reason: `No ${d.activity.many} have a date.` };
     if ("reason" in w) {
       unavailable.push({
         id: d.id,
@@ -676,6 +683,7 @@ async function selectDrivers(
   return {
     drivers: picked.map((s) => s.d),
     windows,
+    conversionWindows,
     candidates: chosen.size
       ? drivers.map(driverSummary)
       : scored.map((s) => driverSummary(s.d)),
@@ -794,7 +802,14 @@ export async function runInsightsScan(
       setAside = 0;
     for (const d of shareChecks(sel.drivers)) {
       const w = sel.windows.get(d.id)!;
-      const { sql, inputs } = driverQuery(d, w, t, byActivity);
+      const conversionWindow = sel.conversionWindows.get(d.id);
+      const { sql, inputs } = driverQuery(
+        d,
+        w,
+        t,
+        byActivity,
+        conversionWindow,
+      );
       const r = await queryDatasets(store, scope, inputs, sql, { limit: 1000 });
       const { candidates, notes } = evaluate(
         d,
@@ -802,13 +817,15 @@ export async function runInsightsScan(
         t,
         r.rows as Record<string, unknown>[],
         byActivity,
+        conversionWindow,
       );
-      const stale = Date.now() - w.end > 14 * DAY;
       const sources = inputs.map((id) => ({
         datasetId: id,
         name: byId.get(id)?.name || id,
       }));
       for (const c of candidates) {
+        const findingWindow = c.check === "conversion" ? conversionWindow! : w;
+        const stale = Date.now() - findingWindow.end > 14 * DAY;
         c.details.limitations.push(
           ...(d.measure && !d.measure.currency
             ? [
@@ -817,12 +834,12 @@ export async function runInsightsScan(
             : []),
           ...(stale
             ? [
-                `The data ends on ${new Date(w.end - DAY).toLocaleDateString("en-US", { timeZone: "UTC", dateStyle: "medium" })}; nothing newer was imported.`,
+                `The data ends on ${new Date(findingWindow.end - DAY).toLocaleDateString("en-US", { timeZone: "UTC", dateStyle: "medium" })}; nothing newer was imported.`,
               ]
             : []),
           "Two periods cannot establish long-term seasonality.",
         );
-        found.push({ c, d, w, sql, sources });
+        found.push({ c, d, w: findingWindow, sql, sources });
       }
       const order: Note["state"][] = [
         "found",

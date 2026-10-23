@@ -782,10 +782,20 @@ describe("a shop whose totals hold steady", () => {
         })
       ).statusCode,
     ).toBe(400);
+    await request("PUT", "/home/insights/settings", { minZ: 5 });
     const r = (
       await request("PUT", "/home/insights/settings", { relativeChange: 0.4 })
     ).json();
     expect(r.scan.state).toBe("queued");
+    expect((await stored())?.settings).toEqual({
+      minZ: 5,
+      relativeChange: 0.4,
+    });
+    await request("PUT", "/home/insights/settings", {});
+    expect((await stored())?.settings).toEqual({
+      minZ: 5,
+      relativeChange: 0.4,
+    });
     await runQueued();
     const after = await insights();
     expect(finding(after, "cohort", /^Regular/)).toBeUndefined();
@@ -1354,6 +1364,156 @@ describe("maintainer follow-up regressions", () => {
         ).toBe(true);
     },
   );
+  it.each(["coverage", "sync", "short", "missing"] as const)(
+    "keeps Revenue current when conversion has %s linked history",
+    async (mode) => {
+      const data = commerce({ sessionLinks: true });
+      const today = Math.floor(Date.now() / DAY) * DAY;
+      const end = today - 21 * DAY;
+      if (mode === "short")
+        data.sessions = data.sessions.filter(
+          (s) => Date.parse(String(s.started_at)) >= today - 10 * DAY,
+        );
+      if (mode === "missing")
+        for (const session of data.sessions) session.started_at = null;
+      for (const o of data.orders)
+        if (Date.parse(String(o.ordered_at)) >= weekStart(0))
+          o.net_amount = Number(o.net_amount) * 1.5;
+      await publish(data);
+      if (mode === "coverage") {
+        const sessions = (await store.list(scope, "dataset")).find(
+          (d) => d.name === "sessions",
+        )!;
+        await ingestRows(
+          store,
+          scope,
+          sessions.name,
+          data.sessions.filter((s) => Date.parse(String(s.started_at)) < end),
+          undefined,
+          sessions.id,
+        );
+      }
+      if (mode === "sync")
+        await transaction(store, scope, async (tx) => {
+          const d = (await tx.list("dataset")).find(
+            (d) => d.name === "sessions",
+          )!;
+          tx.update(d, { ...d.data, lastSync: new Date(end).toISOString() });
+        });
+      const r = await scan();
+      const unit = r.findings.find(
+        (f) => f.driver.label === "Revenue" && f.check === "unit",
+      )!;
+      expect(unit).toBeDefined();
+      expect(unit.values.relative).toBeCloseTo(0.5);
+      expect(unit.periods.current.end).toBe(
+        new Date(today).toISOString().slice(0, 10),
+      );
+      expect(unit.details.limitations.join(" ")).not.toContain("nothing newer");
+      expect(r.priorities.selected.some((d) => d.label === "Revenue")).toBe(
+        true,
+      );
+      const revenue = r.coverage.find((c) => c.label === "Revenue")!;
+      expect(revenue.checks.find((c) => c.check === "mix")?.state).toBe(
+        "found",
+      );
+      const conversions = r.coverage.flatMap((c) =>
+        c.checks.filter((x) => x.check === "conversion"),
+      );
+      if (mode === "short" || mode === "missing") {
+        expect(conversions.every((c) => c.state === "skipped")).toBe(true);
+        expect(executor.queries.some((q) => q.sql.includes("conv_total"))).toBe(
+          false,
+        );
+      } else {
+        const query = executor.queries.find((q) =>
+          q.sql.includes("conv_total"),
+        )!;
+        expect(query).toBeDefined();
+        const conversionSQL = query.sql.slice(query.sql.indexOf("u AS ("));
+        expect(conversionSQL).toContain(
+          new Date(end).toISOString().slice(0, 19).replace("T", " "),
+        );
+        expect(conversionSQL).not.toContain(
+          new Date(today).toISOString().slice(0, 19).replace("T", " "),
+        );
+      }
+    },
+  );
+
+  it("never queries sensitive linked segments or includes their values in findings", async () => {
+    await publish(commerce({ sessionLinks: true }));
+    const datasets = await store.list(scope, "dataset");
+    const ws = (await store.get(scope, "workspace"))!;
+    const bundle = await publishedBundle(
+      (k) => store.list(scope, k),
+      ws.data.activeGeneration,
+    );
+    const onto = acceptedOntology(ws, bundle, datasets);
+    const orderEntity = onto.entities.find((e) =>
+      e.dataset.data.profile.columns.some((c: any) => c.name === "net_amount"),
+    )!;
+    const link = onto.links.find(
+      (l) => l.from === orderEntity && l.fromColumn === "customer_id",
+    )!;
+    expect(link).toBeDefined();
+    const orders = orderEntity.dataset;
+    const customers = link.to.dataset;
+    // The existing customer link becomes a small lookup table. Its source
+    // key is marked sensitive just as an owner_email field would be.
+    const marked = datasets.map((d) =>
+      d.id === orders.id
+        ? {
+            ...d,
+            data: {
+              ...d.data,
+              profile: {
+                ...d.data.profile,
+                columns: d.data.profile.columns.map((c: any) =>
+                  c.name === "customer_id" ? { ...c, sensitive: true } : c,
+                ),
+              },
+            },
+          }
+        : d.id === customers.id
+          ? {
+              ...d,
+              data: { ...d.data, profile: { ...d.data.profile, rows: 5 } },
+            }
+          : d,
+    );
+    const activities = findActivities(acceptedOntology(ws, bundle, marked));
+    const activity = activities.find((a) => a.datasetId === orders.id)!;
+    expect(activity.dimensions.some((d) => d.column === "customer_id")).toBe(
+      false,
+    );
+    const unmarked = findActivities(
+      acceptedOntology(
+        ws,
+        bundle,
+        marked.map((d) => (d.id === orders.id ? orders : d)),
+      ),
+    );
+    expect(
+      unmarked
+        .find((a) => a.datasetId === orders.id)!
+        .dimensions.some((d) => d.column === "customer_id"),
+    ).toBe(true);
+    await transaction(store, scope, async (tx) => {
+      for (const d of marked.filter(
+        (d) => d.id === orders.id || d.id === customers.id,
+      ))
+        tx.put(d);
+    });
+    const r = await scan();
+    const orderQueries = executor.queries.filter(
+      (q) => /^WITH a AS/.test(q.sql) && q.sql.includes('"net_amount"'),
+    );
+    expect(orderQueries.length).toBeGreaterThan(0);
+    for (const q of orderQueries) expect(q.sql).not.toMatch(/a\."customer_id"/);
+    expect(JSON.stringify(r.findings)).not.toMatch(/c000[1-5]/);
+  });
+
   it("does not claim an offset when larger orders accompany materially lower revenue", async () => {
     const data = commerce();
     data.orders = data.orders.filter(

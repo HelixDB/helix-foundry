@@ -486,7 +486,7 @@ function NoticedSkeleton() {
 // headline totals, side by side, or one at a time on a narrow screen. The
 // server checks in the background; this only shows what it found.
 export function Noticed() {
-  const { id, notify } = useWorkspace();
+  const { id, notify, role } = useWorkspace();
   const qc = useQueryClient(),
     key = [id, "home-insights"];
   const query = useQuery({
@@ -601,14 +601,16 @@ export function Noticed() {
                 {data.checkedAt &&
                   ` Showing what was found ${formatRelative(data.checkedAt)}.`}
               </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                pending={retrying}
-                onClick={() => void retry()}
-              >
-                Retry
-              </Button>
+              {(role === "owner" || role === "editor") && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  pending={retrying}
+                  onClick={() => void retry()}
+                >
+                  Retry
+                </Button>
+              )}
             </div>
           )}
           {!count && busy(data) && !data.checkedAt && <NoticedSkeleton />}
