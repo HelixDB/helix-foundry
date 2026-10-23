@@ -607,3 +607,30 @@ it("adds a plain-language summary from the result rows, and still answers if it 
   expect(plain.data.answer.rows).toEqual([{ revenue: "65" }]);
   expect(plain.data.answer.summary).toBeUndefined();
 });
+
+it("does not turn an answered question into a canceled one", async () => {
+  model();
+  const asked = await ask("What is the total revenue?");
+  const done = await answer(asked.id);
+  const answered = done.data.answer;
+  expect(answered).toBeTruthy();
+
+  // Stop pressed just as the answer arrived.
+  const late = await request("POST", `/assistant/runs/${asked.id}/cancel`);
+  expect(late.statusCode, late.body).toBe(409);
+  expect(late.json().error).toBe("This run has already finished.");
+  const kept = (await store.get(scope, asked.id))!;
+  expect(kept.data.status).toBe("succeeded");
+  expect(kept.data.answer).toEqual(answered);
+  expect((await threads())[0].status).toBe("succeeded");
+
+  // A question still waiting can be stopped, and stopping it twice is fine.
+  const waiting = await ask("How many orders were there?");
+  expect(
+    (await request("POST", `/assistant/runs/${waiting.id}/cancel`)).statusCode,
+  ).toBe(200);
+  expect((await store.get(scope, waiting.id))!.data.status).toBe("canceled");
+  expect(
+    (await request("POST", `/assistant/runs/${waiting.id}/cancel`)).statusCode,
+  ).toBe(200);
+});
