@@ -370,9 +370,11 @@ function boundedLists(schema: any): any {
 function strictSchema(schema: any): any {
   if (Array.isArray(schema)) return schema.map(strictSchema);
   if (!schema || typeof schema !== "object") return schema;
+  // Strict mode rejects propertyNames, which a record's schema carries; the
+  // object is closed below anyway.
   const o = Object.fromEntries(
     Object.entries(schema)
-      .filter(([k]) => !["$schema", "default"].includes(k))
+      .filter(([k]) => !["$schema", "default", "propertyNames"].includes(k))
       .map(([k, v]) => [k, strictSchema(v)]),
   ) as any;
   if (o.type === "object" && !o.properties) {
