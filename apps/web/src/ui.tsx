@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "./api";
 import { useTitle } from "./kit/util";
+import { formatInterval, isInterval } from "../../../packages/shared/src";
 export type AskContext = {
   resourceId?: string;
   title?: string;
@@ -146,6 +147,8 @@ export function DataTable({ rows }: { rows: Record<string, any>[] }) {
                 <td key={k}>
                   {r[k] === null ? (
                     <span className="muted">null</span>
+                  ) : isInterval(r[k]) ? (
+                    formatInterval(r[k])
                   ) : typeof r[k] === "object" ? (
                     JSON.stringify(r[k])
                   ) : (

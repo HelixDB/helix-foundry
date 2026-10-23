@@ -14,6 +14,7 @@ import {
   Calendar,
   Clock,
   Hash,
+  Timer,
   ToggleLeft,
   Type,
 } from "lucide-react";
@@ -49,6 +50,7 @@ const kinds: ColumnKind[] = [
   "boolean",
   "date",
   "timestamp",
+  "interval",
   "json",
 ];
 const kindOf = (type: string | undefined, values: unknown[]): ColumnKind =>
@@ -64,6 +66,7 @@ const widths: Record<ColumnKind, number> = {
   boolean: 90,
   date: 130,
   timestamp: 180,
+  interval: 160,
   json: 240,
 };
 const icons = {
@@ -73,6 +76,7 @@ const icons = {
   boolean: ToggleLeft,
   date: Calendar,
   timestamp: Clock,
+  interval: Timer,
   json: Braces,
 };
 
