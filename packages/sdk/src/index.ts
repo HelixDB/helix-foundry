@@ -40,6 +40,18 @@ export class FoundryError extends Error {
     super(message);
   }
 }
+// The error of a failed response. The API answers {"error": "..."}, but a
+// proxy or load balancer in front of it answers a 502 or 504 with HTML or
+// nothing; the caller still needs the status, not a JSON syntax error.
+async function failure(r: Response) {
+  const data: any = await r.json().catch(() => undefined);
+  return new FoundryError(
+    r.status,
+    typeof data?.error === "string"
+      ? data.error
+      : `Request failed with HTTP ${r.status}`,
+  );
+}
 export class FoundryClient {
   tokens() {
     return this.request<{ items: ApiTokenMetadata[] }>("/tokens");
@@ -111,9 +123,8 @@ export class FoundryClient {
       headers: this.headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const data = (await r.json()) as any;
-    if (!r.ok) throw new FoundryError(r.status, data.error);
-    return data;
+    if (!r.ok) throw await failure(r);
+    return (await r.json()) as T;
   }
   onboarding() {
     return this.request<OnboardingState>("/onboarding");
@@ -147,9 +158,8 @@ export class FoundryClient {
       headers: { authorization: this.headers.authorization },
       body,
     });
-    const result = await response.json();
-    if (!response.ok) throw new FoundryError(response.status, result.error);
-    return result as { file: string; bytes: number };
+    if (!response.ok) throw await failure(response);
+    return (await response.json()) as { file: string; bytes: number };
   }
   async uploadForSetup(file: Blob, name: string, operationId: string) {
     const body = new FormData();
@@ -162,9 +172,8 @@ export class FoundryClient {
       },
       body,
     });
-    const result = await response.json();
-    if (!response.ok) throw new FoundryError(response.status, result.error);
-    return result as Resource;
+    if (!response.ok) throw await failure(response);
+    return (await response.json()) as Resource;
   }
   recommendOutcomes() {
     return this.request<Resource>("/onboarding/recommendations", {});

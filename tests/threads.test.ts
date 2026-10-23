@@ -10,6 +10,7 @@ import { MemoryStore, resource, transaction } from "../apps/api/src/store.js";
 import { buildWorkspace } from "../apps/api/src/assistant.js";
 import { Provider } from "../apps/api/src/providers.js";
 import { config } from "../apps/api/src/config.js";
+import { seal } from "../apps/api/src/security.js";
 import { datasetTable, type Resource } from "../packages/shared/src/index.js";
 
 // Chats: a question and its follow-ups, listed, opened and deleted as one.
@@ -524,6 +525,52 @@ it("redacts a credential the engine quotes from the data before the repair sees 
   );
 });
 
+it("keeps values the engine quotes from a hosted model that may not see rows", async () => {
+  await transaction(store, scope, async (tx) =>
+    tx.put(
+      resource(
+        scope,
+        "provider",
+        "AI provider",
+        {
+          settings: { provider: "claude", model: "claude-sonnet-4-6" },
+          secret: seal("sk-test-key"),
+        },
+        "provider",
+      ),
+    ),
+  );
+  const people = (
+    await request("POST", "/ingest", {
+      name: "People",
+      rows: [{ id: 1, ssn: "987-65-4320", email: "alice@example.com" }],
+    })
+  ).json().id;
+  // An ordinary mistake: comparing a text column with a number.
+  const failing = {
+    ...plan,
+    inputs: [people],
+    sql: `SELECT count(*) AS n FROM ${datasetTable(people)} WHERE ssn = 123456789`,
+  };
+  const replies = [failing, plan];
+  const contexts: any[] = [];
+  vi.spyOn(Provider.prototype, "generate").mockImplementation(
+    async (system: string, context: any) => {
+      if (system.includes("Choose answer"))
+        return { value: { intent: "answer" }, tokens: 1 };
+      contexts.push(context);
+      return { value: replies.shift()!, tokens: 1 };
+    },
+  );
+  const run = await answer((await ask("How many people?")).id);
+  expect(run.data.status, run.data.error).toBe("succeeded");
+  expect(contexts[1].repair.error).toBe(
+    "Conversion Error: Could not convert string [value] to INT32 when casting from source column ssn",
+  );
+  expect(JSON.stringify(contexts)).not.toContain("987-65-4320");
+  expect(JSON.stringify(contexts[1].repair)).not.toMatch(/987|4320/);
+});
+
 it("adds a plain-language summary from the result rows, and still answers if it fails", async () => {
   const contexts: Record<string, any> = {};
   let summary: any = {
@@ -559,4 +606,31 @@ it("adds a plain-language summary from the result rows, and still answers if it 
   const plain = await answer((await ask("Total revenue again?")).id);
   expect(plain.data.answer.rows).toEqual([{ revenue: "65" }]);
   expect(plain.data.answer.summary).toBeUndefined();
+});
+
+it("does not turn an answered question into a canceled one", async () => {
+  model();
+  const asked = await ask("What is the total revenue?");
+  const done = await answer(asked.id);
+  const answered = done.data.answer;
+  expect(answered).toBeTruthy();
+
+  // Stop pressed just as the answer arrived.
+  const late = await request("POST", `/assistant/runs/${asked.id}/cancel`);
+  expect(late.statusCode, late.body).toBe(409);
+  expect(late.json().error).toBe("This run has already finished.");
+  const kept = (await store.get(scope, asked.id))!;
+  expect(kept.data.status).toBe("succeeded");
+  expect(kept.data.answer).toEqual(answered);
+  expect((await threads())[0].status).toBe("succeeded");
+
+  // A question still waiting can be stopped, and stopping it twice is fine.
+  const waiting = await ask("How many orders were there?");
+  expect(
+    (await request("POST", `/assistant/runs/${waiting.id}/cancel`)).statusCode,
+  ).toBe(200);
+  expect((await store.get(scope, waiting.id))!.data.status).toBe("canceled");
+  expect(
+    (await request("POST", `/assistant/runs/${waiting.id}/cancel`)).statusCode,
+  ).toBe(200);
 });

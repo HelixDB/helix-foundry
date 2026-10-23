@@ -185,6 +185,12 @@ export function registerAnalystRoutes(
           403,
         );
         assert(r?.kind === "run", "Run unavailable", 404);
+        // A run that finished while Stop was on its way keeps its result.
+        assert(
+          r.data.status !== "succeeded",
+          "This run has already finished.",
+          409,
+        );
         // Publication commits as a unit, so it finishes once started.
         assert(
           r.data.stage !== "publishing",

@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { Resource } from "../../../packages/shared/src/index.js";
+import {
+  formatInterval,
+  isInterval,
+  type Resource,
+} from "../../../packages/shared/src/index.js";
 import type { Store } from "./store.js";
 import {
   enqueue,
@@ -9,7 +13,7 @@ import {
   tokensToday,
 } from "./assistant.js";
 import { Provider } from "./providers.js";
-import { AppError, assert, digest, redact } from "./security.js";
+import { AppError, assert, digest, modelError, redact } from "./security.js";
 
 // Hands-free voice with GPT-Live. The browser carries microphone and speaker
 // audio over WebRTC; this server creates the session (the OpenAI key never
@@ -462,7 +466,8 @@ export function createLiveBridge(store: Store) {
         session,
         "commentary",
         delegationId,
-        `Foundry couldn't work on that request: ${task.error.slice(0, 200)} Nothing in the workspace changed. Ask the user whether to try again.`,
+        // Voice never repeats a value an error quotes.
+        `Foundry couldn't work on that request: ${modelError(task.error, false).slice(0, 200)} Nothing in the workspace changed. Ask the user whether to try again.`,
       );
       return task;
     });
@@ -746,17 +751,24 @@ export function resultText(question: string, run: Resource | null) {
   if (d.status === "canceled")
     return `The lookup for "${question}" was stopped before it finished. No result is available.`;
   if (d.status !== "succeeded" || !d.answer)
-    return `The lookup for "${question}" didn't complete${d.error ? `: ${redact(String(d.error)).slice(0, 200)}` : "."} No figures are available; offer to try again or rephrase.`;
+    return `The lookup for "${question}" didn't complete${d.error ? `: ${modelError(String(d.error), false).slice(0, 200)}` : "."} No figures are available; offer to try again or rephrase.`;
   const a = d.answer,
     rows: Record<string, unknown>[] = a.rows || [],
     total = typeof a.total === "number" ? a.total : rows.length,
     sources = (a.citations || []).map((c: any) => c.name).join(", "),
     lines = [`Result for "${question}": ${a.title}.`];
-  // "region_name: North America, order_count: 8473" in plain words.
+  // "region_name: North America, order_count: 8473" in plain words; an
+  // interval reads as "2 days 01:30:00" and other nested values as JSON.
+  const text = (v: unknown) =>
+    isInterval(v)
+      ? formatInterval(v)
+      : v && typeof v === "object"
+        ? JSON.stringify(v)
+        : String(v);
   const row = (r: Record<string, unknown>) =>
     Object.entries(r)
       .slice(0, 8)
-      .map(([k, v]) => `${k.replace(/_/g, " ")}: ${String(v).slice(0, 80)}`)
+      .map(([k, v]) => `${k.replace(/_/g, " ")}: ${text(v).slice(0, 80)}`)
       .join(", ");
   if (total === 0 || !rows.length)
     lines.push(

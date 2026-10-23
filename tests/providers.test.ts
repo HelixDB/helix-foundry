@@ -2,7 +2,11 @@ import { it, expect, vi, afterEach } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { Provider } from "../apps/api/src/providers.js";
-import { ProviderSchema } from "../packages/shared/src/index.js";
+import { z } from "zod";
+import {
+  PipelineSchema,
+  ProviderSchema,
+} from "../packages/shared/src/index.js";
 afterEach(() => vi.unstubAllGlobals());
 for (const provider of ["local", "claude", "openai"] as const)
   it(`uses the native ${provider} protocol without fallbacks`, async () => {
@@ -229,4 +233,34 @@ it("sends Azure OpenAI requests to the resource's v1 endpoint with the deploymen
   const [plainUrl, plainInit] = fetchMock.mock.calls[0] as any;
   expect(plainUrl).toBe("https://api.openai.com/v1/responses");
   expect(plainInit.headers["api-key"]).toBeUndefined();
+});
+it("sends OpenAI's strict mode a pipeline schema it accepts", async () => {
+  const fetchMock = vi.fn(async () =>
+    Response.json({
+      output: [
+        { content: [{ type: "output_text", text: '{"pipelines":[]}' }] },
+      ],
+      usage: { total_tokens: 5 },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await new Provider(
+    ProviderSchema.parse({
+      provider: "openai",
+      model: "test",
+      apiKey: "test-only",
+    }),
+  ).generate(
+    "",
+    {},
+    z.toJSONSchema(z.object({ pipelines: z.array(PipelineSchema) })),
+  );
+  const [, init] = fetchMock.mock.calls[0] as any;
+  const schema = JSON.parse(init.body).text.format.schema;
+  // A node's config is a record, whose propertyNames strict mode answers
+  // with HTTP 400.
+  expect(JSON.stringify(schema)).not.toContain("propertyNames");
+  expect(
+    schema.properties.pipelines.items.properties.nodes.items.properties.config,
+  ).toMatchObject({ type: "object", additionalProperties: false });
 });

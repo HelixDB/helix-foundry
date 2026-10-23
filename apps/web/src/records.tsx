@@ -34,13 +34,23 @@ import {
   type GridSort,
 } from "./kit";
 import { typeHue } from "./areas/ontology/colors";
-import type { Resource } from "../../../packages/shared/src";
+import {
+  formatInterval,
+  isInterval,
+  type Resource,
+} from "../../../packages/shared/src";
 import { ExplorerSwitch } from "./areas/ontology/views";
 const ObjectActionForm = lazy(() => import("./object-action-form"));
 const blank = (v: unknown) =>
   v == null || ["", "None", "null", "NaN"].includes(String(v).trim());
 const display = (v: any) =>
-  blank(v) ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v);
+  blank(v)
+    ? "—"
+    : isInterval(v)
+      ? formatInterval(v)
+      : typeof v === "object"
+        ? JSON.stringify(v)
+        : String(v);
 const PAGE = 50;
 // Columns worth showing first: not keys, IDs or names, which the record's
 // name and links already stand for.

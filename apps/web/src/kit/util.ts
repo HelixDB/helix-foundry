@@ -1,4 +1,9 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import {
+  compareIntervals,
+  formatInterval,
+  isInterval,
+} from "../../../../packages/shared/src";
 
 export const cx = (...names: (string | false | null | undefined)[]) =>
   names.filter(Boolean).join(" ");
@@ -11,16 +16,17 @@ export type ColumnKind =
   | "boolean"
   | "date"
   | "timestamp"
+  | "interval"
   | "json";
 // A type is read by its name, not its parameters: ENUM('REAL') holds text
-// and DECIMAL(18,3) is a DECIMAL. Arrays such as INTEGER[2], and INTERVAL,
-// whose values arrive as {months, days, micros} objects, show as JSON.
+// and DECIMAL(18,3) is a DECIMAL. Arrays such as INTEGER[2] show as JSON.
 export function columnKind(type?: string): ColumnKind {
   const t = (type || "").toUpperCase();
   if (!t) return "string";
-  if (/\[\d*\]$/.test(t) || /^(STRUCT|MAP|LIST|UNION|JSON|INTERVAL)\b/.test(t))
+  if (/\[\d*\]$/.test(t) || /^(STRUCT|MAP|LIST|UNION|JSON)\b/.test(t))
     return "json";
   const name = t.split("(")[0];
+  if (name === "INTERVAL") return "interval";
   if (/^U?((TINY|SMALL|BIG|HUGE)?INT(EGER)?|INT\d+)$/.test(name))
     return "integer";
   if (/^(DOUBLE|FLOAT\d*|DECIMAL|NUMERIC|REAL)\b/.test(name)) return "number";
@@ -39,6 +45,7 @@ export function inferKind(values: unknown[]): ColumnKind {
     return present.every((v) => Number.isInteger(Number(v)))
       ? "integer"
       : "number";
+  if (present.every(isInterval)) return "interval";
   if (present.every((v) => typeof v === "object")) return "json";
   if (present.every((v) => typeof v === "string" && isoDate.test(v)))
     return present.some((v) => (v as string).length > 10)
@@ -128,6 +135,9 @@ export function formatValue(value: unknown, kind: ColumnKind): string | null {
       return formatDate(value, false);
     case "timestamp":
       return formatDate(value, true);
+    case "interval":
+      if (isInterval(value)) return formatInterval(value);
+      return typeof value === "object" ? JSON.stringify(value) : String(value);
     case "json":
       return typeof value === "string" ? value : JSON.stringify(value);
     default:
@@ -173,6 +183,8 @@ export function compareValues(a: unknown, b: unknown, kind: ColumnKind) {
   if (kind === "date" || kind === "timestamp")
     return Date.parse(String(a)) - Date.parse(String(b));
   if (kind === "boolean") return Number(a) - Number(b);
+  if (kind === "interval" && isInterval(a) && isInterval(b))
+    return compareIntervals(a, b);
   const sa = typeof a === "object" ? JSON.stringify(a) : String(a),
     sb = typeof b === "object" ? JSON.stringify(b) : String(b);
   return sa.localeCompare(sb, undefined, { numeric: true });
