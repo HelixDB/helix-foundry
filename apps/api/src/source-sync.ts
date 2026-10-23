@@ -69,7 +69,7 @@ const mysqlConfig = (c: Record<string, any>) => ({
 
 // Legacy schedules remain a fallback; they never override a working change stream.
 // An uploaded SQLite file never changes, so reading it again on a schedule
-// only repeats the same snapshot. A new copy is uploaded to refresh it.
+// only repeats the same snapshot. Replacing the file refreshes it.
 const fixedFile = (kind: string) => kind === "sqlite";
 export function sourceSyncDefaults(kind: string, schedule?: string | null) {
   return {
@@ -84,7 +84,7 @@ export function sourceSyncDefaults(kind: string, schedule?: string | null) {
           mode: "snapshot",
           status: "ready",
           reason: fixedFile(kind)
-            ? "An uploaded SQLite file does not change. Upload a new copy to refresh it."
+            ? "An uploaded SQLite file does not change. Replace the file to refresh it."
             : "This source does not expose a database change stream.",
         },
   };

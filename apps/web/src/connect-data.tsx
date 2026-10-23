@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { paths } from "./paths";
 import { useQueryClient } from "@tanstack/react-query";
@@ -26,6 +26,7 @@ import {
   type HostingProvider,
 } from "../../../packages/shared/src";
 import { HostingConnect, providerNames } from "./hosting-connect";
+import { ReplaceSqliteFile } from "./replace-sqlite";
 
 const choices = [
   ["upload", "Upload files", "CSV, JSON, JSONL, or Parquet"],
@@ -125,6 +126,19 @@ export function ConnectData({
         "PATCH",
       ),
     );
+  const heading = (group: ConnectionGroup, replace?: ReactNode) => (
+    <div className="connection-entry-heading">
+      <strong>{group.name}</strong>
+      {replace}
+      <button
+        className="text-button"
+        disabled={action.pending}
+        onClick={() => remove(group)}
+      >
+        Remove
+      </button>
+    </div>
+  );
   const importAction = (job: Resource, verb: string) =>
     action.run(() =>
       api(`/workspaces/${id}/onboarding/imports/${job.id}/${verb}`, {}),
@@ -327,20 +341,30 @@ export function ConnectData({
                 <div className="connection-list">
                   {current.map((group) => (
                     <section className="connection-entry" key={group.id}>
-                      <div className="connection-entry-heading">
-                        <strong>{group.name}</strong>
-                        <button
-                          className="text-button"
-                          disabled={action.pending}
-                          onClick={() => remove(group)}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      {group.kind === "sqlite" &&
+                      role === "owner" &&
+                      group.sources.length > 0 ? (
+                        <ReplaceSqliteFile sources={group.sources} inDialog>
+                          {(choose, pending) =>
+                            heading(
+                              group,
+                              <button
+                                className="text-button"
+                                disabled={action.pending || pending}
+                                onClick={choose}
+                              >
+                                {pending ? "Replacing file…" : "Replace file"}
+                              </button>,
+                            )
+                          }
+                        </ReplaceSqliteFile>
+                      ) : (
+                        heading(group)
+                      )}
                       {group.sources.some((s) => s.data.sync) && (
                         <p className="muted small" role="status">
                           {group.kind === "sqlite"
-                            ? "Imported from the uploaded file. Upload a new copy to refresh it."
+                            ? "Imported from the uploaded file. Replace the file to refresh it."
                             : group.sources.every(
                                   (s) => s.data.sync?.mode === "cdc",
                                 )

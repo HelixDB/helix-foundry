@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { artifact } from "./support/ports";
-import { api, openApp } from "./support/workspace";
+import { api, openApp, sampleWorkspace } from "./support/workspace";
 
 async function sqliteFile(name: string, sql: string) {
   const dir = await mkdtemp(resolve(tmpdir(), "foundry-sqlite-spec-"));
@@ -24,7 +24,8 @@ async function sqliteFile(name: string, sql: string) {
 
 // A small claims database: claims reference beneficiaries, and claim lines
 // reference claims, through declared foreign keys.
-const claimsDatabase = () =>
+// Later statements change a copy, as the application would.
+const claimsDatabase = (later = "") =>
   sqliteFile(
     "claims.db",
     `
@@ -35,6 +36,7 @@ const claimsDatabase = () =>
       INSERT INTO beneficiaries VALUES ('1EG4TE5MK73', 'Zoë Tanaka'), ('2FH5UF6NL84', 'Sam Okafor');
       INSERT INTO claims VALUES (1, '1EG4TE5MK73', 120.5), (2, '2FH5UF6NL84', 0), (3, '1EG4TE5MK73', 75.25);
       INSERT INTO claim_lines (claim_id, amount) VALUES (1, 100.5), (1, 20), (2, 0), (3, 75.25);
+      ${later}
     `,
   );
 
@@ -118,7 +120,7 @@ test("reads a SQLite file's tables and imports the selected ones in setup", asyn
   await page.getByRole("button", { name: "SQLite", exact: true }).click();
   await expect(
     page.getByText(
-      "Imported from the uploaded file. Upload a new copy to refresh it.",
+      "Imported from the uploaded file. Replace the file to refresh it.",
     ),
   ).toBeVisible();
   for (const [name, rows] of [
@@ -131,6 +133,46 @@ test("reads a SQLite file's tables and imports the selected ones in setup", asyn
     ).toBeVisible({ timeout: 30000 });
   await page.screenshot({
     path: artifact("sqlite-imported.png"),
+    fullPage: true,
+  });
+
+  // A copy without one of the connection's tables changes nothing.
+  const replaceFile = async (file: Awaited<ReturnType<typeof sqliteFile>>) => {
+    const chooser = page.waitForEvent("filechooser");
+    await page
+      .getByRole("button", { name: "Replace file", exact: true })
+      .click();
+    await (await chooser).setFiles(file);
+  };
+  await replaceFile(await claimsDatabase("DROP TABLE claim_lines;"));
+  await expect(page.getByRole("alert")).toContainText(
+    "claims.db has no table named claim_lines. Choose a copy of the same database.",
+  );
+  await expect(
+    page.getByText("claim_lines · 4 records", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: artifact("sqlite-replace-refused.png"),
+    fullPage: true,
+  });
+
+  // Replacing the file updates the connection's datasets in place.
+  await replaceFile(
+    await claimsDatabase(
+      "INSERT INTO beneficiaries VALUES ('3GJ6VG7PM95', 'Ana Ruiz');",
+    ),
+  );
+  await expect(
+    page.getByText("beneficiaries · 3 records", { exact: true }),
+  ).toBeVisible({ timeout: 30000 });
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".connection-entry")).toHaveCount(1);
+  for (const name of ["beneficiaries", "claims", "claim_lines"])
+    await expect(
+      page.getByText(new RegExp(`^${name} · \\d+ records$`)),
+    ).toHaveCount(1);
+  await page.screenshot({
+    path: artifact("sqlite-replaced.png"),
     fullPage: true,
   });
 });
@@ -215,4 +257,67 @@ test("reads several SQLite files at once and imports each as its own connection"
     await expect(
       page.getByText(`${name} · ${rows} records`, { exact: true }),
     ).toBeVisible({ timeout: 30000 });
+});
+
+test("replaces a SQLite connection's file from the Data page", async ({
+  page,
+}) => {
+  await openApp(page);
+  const { base } = await sampleWorkspace(page, "SQLite replace on Data");
+  const original = await claimsDatabase();
+  const staged = await page.request.post(`/api/v1${base}/sources/sqlite`, {
+    multipart: { file: original },
+  });
+  expect(staged.ok(), await staged.text()).toBeTruthy();
+  await api(page, base + "/onboarding/sources", {
+    name: "claims",
+    kind: "sqlite",
+    config: { file: (await staged.json()).file },
+    selections: [
+      { table: "beneficiaries" },
+      { table: "claims" },
+      { table: "claim_lines" },
+    ],
+    operationId: "sqlite-replace-on-data",
+  });
+  await page.goto("/data");
+  const card = page.locator(".cn-card", {
+    has: page.getByRole("heading", { name: "claims", exact: true }),
+  });
+  const rows = (table: string) =>
+    card.getByRole("link", { name: new RegExp(`^${table}`) });
+  await expect(
+    card.getByText("Uploaded file · replace the file to refresh"),
+  ).toBeVisible();
+  // Re-reading an unchanged file is not offered as a refresh.
+  await expect(card.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await expect(async () => {
+    await page.reload();
+    await expect(rows("beneficiaries")).toContainText("2", { timeout: 1000 });
+  }).toPass({ timeout: 30000 });
+
+  const chooser = page.waitForEvent("filechooser");
+  await card.getByRole("button", { name: "Replace file", exact: true }).click();
+  await (
+    await chooser
+  ).setFiles(
+    await claimsDatabase(
+      "INSERT INTO beneficiaries VALUES ('3GJ6VG7PM95', 'Ana Ruiz');",
+    ),
+  );
+  await expect(page.locator(".hf-toast")).toContainText(
+    "File replaced. Importing its tables…",
+  );
+  await expect(async () => {
+    await page.reload();
+    await expect(rows("beneficiaries")).toContainText("3", { timeout: 1000 });
+  }).toPass({ timeout: 30000 });
+  // Still one connection with each table once.
+  await expect(card).toHaveCount(1);
+  for (const table of ["beneficiaries", "claims", "claim_lines"])
+    await expect(rows(table)).toHaveCount(1);
+  await page.screenshot({
+    path: artifact("sqlite-replaced-data-page.png"),
+    fullPage: true,
+  });
 });

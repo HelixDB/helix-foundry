@@ -409,6 +409,76 @@ it("uploads a SQLite file, imports the selected tables and suggests their declar
       .map((l) => `${l.fromColumn} ${l.toColumn}`)
       .sort();
     expect(declared).toEqual(["claim_id claim_id", "mbi mbi"]);
+
+    // Replacing the file re-imports each table into the dataset it has, so
+    // nothing is duplicated. Given only the new file, a source keeps its table.
+    const copy = async (name: string, sql: string) => {
+      const path = resolve(dir, name);
+      await writeFile(path, fixture);
+      const db = new DatabaseSync(path);
+      db.exec(sql);
+      db.close();
+      return readFile(path);
+    };
+    const put = (id: string, payload: unknown) =>
+      app.inject({
+        method: "PUT",
+        url: `/api/v1/workspaces/${scope}/onboarding/sources/${id}`,
+        payload: payload as any,
+      });
+    const replaced = await upload(
+      "claims.db",
+      await copy(
+        "claims-new.db",
+        "INSERT INTO beneficiaries VALUES ('3GJ6VG7PM95', 'Ana Ruiz', '1960-03-02')",
+      ),
+    );
+    expect(replaced.statusCode, replaced.body).toBe(200);
+    expect(replaced.json().file).not.toBe(file);
+    for (const source of state.sources) {
+      const r = await put(source.id, {
+        name: source.name,
+        kind: "sqlite",
+        config: { file: replaced.json().file },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+    }
+    await expect
+      .poll(
+        async () =>
+          (await onboardingState(store, scope)).datasets.find(
+            (d) => d.name === "beneficiaries",
+          )?.data.profile.rows,
+        { timeout: 30000, interval: 250 },
+      )
+      .toBe(3);
+    const after = await onboardingState(store, scope);
+    expect(after.sources.map((s) => s.id).sort()).toEqual(
+      state.sources.map((s) => s.id).sort(),
+    );
+    expect(after.datasets.map((d) => d.id).sort()).toEqual(
+      state.datasets.map((d) => d.id).sort(),
+    );
+
+    // A copy without the source's table is refused and changes nothing.
+    const partial = await upload(
+      "claims.db",
+      await copy("claims-partial.db", "DROP TABLE claim_lines"),
+    );
+    expect(partial.statusCode, partial.body).toBe(200);
+    const lines = after.sources.find((s) => s.name === "claim_lines")!;
+    const refused = await put(lines.id, {
+      name: lines.name,
+      kind: "sqlite",
+      config: { file: partial.json().file },
+    });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toBe("Choose a table from the SQLite file");
+    expect(
+      (await onboardingState(store, scope)).datasets.find(
+        (d) => d.name === "claim_lines",
+      )?.data.profile.rows,
+    ).toBe(4);
   } finally {
     stop();
     await app.close();

@@ -145,7 +145,7 @@ GRANT ROLE reader TO foundry;`}</pre>
       <p>
         Each table you choose becomes a dataset, and the file's primary and
         foreign keys link them. Views are not imported. Foundry reads the copy
-        once; to refresh, upload a new copy.
+        once; to refresh, choose Replace file on the connection.
       </p>
     </>
   ),

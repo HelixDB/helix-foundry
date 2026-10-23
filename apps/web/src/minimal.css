@@ -1485,6 +1485,8 @@ td {
 }
 .connection-entry-heading strong {
   overflow-wrap: anywhere;
+  /* Its actions, Replace file and Remove, sit together at the end. */
+  margin-right: auto;
 }
 .connection-dialog .form-grid {
   margin-top: 0;

@@ -267,12 +267,19 @@ export function registerOnboarding(
     assert(old?.kind === "source", "Source not found", 404);
     assert(old.data.kind === body.kind, "Keep the existing connector type");
     validateRefreshSchedule(body.schedule);
+    // A SQLite file is refreshed by replacing it: given only the new file, a
+    // source keeps the table it imports, so its dataset is updated in place.
+    const settings =
+      body.kind === "sqlite"
+        ? { table: unseal(old.data.secret).table, ...body.config }
+        : body.config;
     const resolved = await resolveHostedConfig(
       store,
       a.scope,
       body.kind,
-      body.config,
+      settings,
     );
+    // A SQLite file without the source's table is refused here.
     const discovery = await testedConnection(
       body.kind,
       resolved.config,
