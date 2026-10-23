@@ -561,3 +561,15 @@ html.hf-root {
 :where(.hf-page) .record-actions {
   flex-wrap: wrap;
 }
+/* Datasets added after setup, and the build that adds them to the ontology. */
+:where(.hf-app) .ontology-update {
+  margin-bottom: 18px;
+}
+:where(.hf-app) .notice.ontology-update p {
+  margin: 0;
+  font-size: 14px;
+}
+:where(.hf-app) section.ontology-update h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}

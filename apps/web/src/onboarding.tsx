@@ -5,12 +5,8 @@ import { ArrowRight } from "lucide-react";
 import { api } from "./api";
 import { paths } from "./paths";
 import { useWorkspace, Loading } from "./ui";
-import {
-  ProviderSetup,
-  OperationProgress,
-  useSetup,
-  useSetupAction,
-} from "./setup-components";
+import { ProviderSetup, useSetup, useSetupAction } from "./setup-components";
+import { BuildProgress } from "./build-progress";
 import { ConnectData } from "./connect-data";
 import { OntologyStep, datasetSource, entityNames } from "./ontology-step";
 import { AiWorkingScene } from "./ontology-scene";
@@ -26,29 +22,6 @@ const steps = [
   ["data", "Data"],
   ["outcome", "Ontology"],
 ] as const;
-// Plain words for the build's stages: a short label and what is happening.
-const buildStage = (stage = ""): [string, string] | undefined =>
-  stage.startsWith("dashboards_repair")
-    ? ["Fixing analytics", "AI is fixing charts whose queries failed"]
-    : (
-        {
-          queued: ["Waiting to start", "Your build starts in a moment"],
-          ontology: [
-            "Building records",
-            "Turning the confirmed ontology into records and relationships",
-          ],
-          dashboards: [
-            "Preparing analytics",
-            "AI is choosing charts for your data",
-          ],
-          validation: [
-            "Checking queries",
-            "Running every query against your data",
-          ],
-          publishing: ["Publishing", "Saving records and relationships"],
-          failed: ["Couldn’t finish", ""],
-        } as Record<string, [string, string]>
-      )[stage];
 export default function Onboarding() {
   const { id, role } = useWorkspace(),
     q = useSetup(),
@@ -153,7 +126,6 @@ export default function Onboarding() {
     state.ontologyConfirmed &&
     !!run?.data.ontology &&
     run.data.status !== "awaiting_review";
-  const stage = buildStage(run?.data.stage);
   const importAction = (operation: Resource, verb: string) =>
     action.run(() =>
       api(`/workspaces/${id}/onboarding/imports/${operation.id}/${verb}`, {}),
@@ -306,44 +278,7 @@ export default function Onboarding() {
                 />
               </div>
             )}
-            <OperationProgress
-              operation={{
-                ...run,
-                name: "Records",
-                data: {
-                  ...run.data,
-                  stage: stage?.[0] || run.data.stage,
-                  // Publishing also counts the records and relationships it
-                  // has read.
-                  progress: stage?.[1]
-                    ? {
-                        message: stage[1],
-                        ...(run.data.stage === "publishing" && {
-                          records: run.data.progress?.records,
-                          relationships: run.data.progress?.relationships,
-                        }),
-                      }
-                    : undefined,
-                },
-              }}
-              onRetry={() =>
-                action.run(() =>
-                  api(`/workspaces/${id}/assistant/runs/${run.id}/resume`, {}),
-                )
-              }
-              // Publication finishes once it starts.
-              onCancel={
-                run.data.stage === "publishing"
-                  ? undefined
-                  : () =>
-                      action.run(() =>
-                        api(
-                          `/workspaces/${id}/assistant/runs/${run.id}/cancel`,
-                          {},
-                        ),
-                      )
-              }
-            />
+            <BuildProgress workspaceId={id} run={run} action={action} />
             {!building && (
               <button
                 className="text-button setup-back"

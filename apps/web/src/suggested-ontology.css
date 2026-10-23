@@ -1097,10 +1097,14 @@
   }
 }
 
-/* Read-only inside the workspace: the canvas fits the page, not the window. */
-.so-view.is-readonly .so-canvas {
+/* Inside the workspace: the canvas fits the page, not the window. */
+.so-view.is-fitted .so-canvas {
   width: 100%;
   margin: 12px 0 0;
+}
+.so-view.is-fitted .so-confirm {
+  width: 100%;
+  margin-inline: 0;
 }
 .so-view.is-readonly .so-stats {
   margin: 0;
