@@ -69,7 +69,32 @@ export default function GraphComputePage() {
               <span>Edge dataset</span>
               <select
                 value={projection.edgeDatasetId}
-                onChange={(e) => set({ edgeDatasetId: e.target.value })}
+                onChange={(e) => {
+                  const ds = items.find((d: any) => d.id === e.target.value);
+                  const cols: string[] = (ds?.data?.profile?.columns || []).map(
+                    (c: any) => String(c.name),
+                  );
+                  let { srcColumn, dstColumn } = projection;
+                  // Reset the edge columns when the new dataset does not have
+                  // them: prefer its own src/dst names, then common edge names.
+                  if (!cols.includes(srcColumn) || !cols.includes(dstColumn)) {
+                    const pick = (...names: string[]) =>
+                      names.find((n) => cols.includes(n));
+                    srcColumn =
+                      pick("src", "from_id", "source") || cols[0] || srcColumn;
+                    dstColumn =
+                      pick("dst", "to_id", "target") || cols[1] || dstColumn;
+                  }
+                  set({
+                    edgeDatasetId: e.target.value,
+                    srcColumn,
+                    dstColumn,
+                    // A weight column the new dataset does not carry is dropped.
+                    weightColumn: cols.includes(projection.weightColumn)
+                      ? projection.weightColumn
+                      : "",
+                  });
+                }}
               >
                 <option value="">Choose a dataset…</option>
                 {items.map((d) => (

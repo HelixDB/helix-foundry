@@ -104,6 +104,14 @@ async function fixture() {
         fromColumn: "friend",
         toColumn: "id",
       },
+      {
+        // Real ontologies carry names that are not valid GraphQL identifiers.
+        name: "billed to",
+        fromType: "Person",
+        toType: "Person",
+        fromColumn: "friend",
+        toColumn: "id",
+      },
     ],
     dashboards: [],
     actions: [],
@@ -358,4 +366,14 @@ it("answers GraphQL over the published ontology, with relation links", async () 
     ).json()
   ) as any;
   expect(list.data.PersonList).toHaveLength(2);
+  // A relationship named "billed to" is exposed under its sanitized field.
+  const bad = (
+    await (
+      await request("POST", "/graphql", {
+        query: '{ Person(key: "A") { billed_to } }',
+      })
+    ).json()
+  ) as any;
+  expect(bad.errors).toBeUndefined();
+  expect(bad.data.Person.billed_to).toEqual(["B"]);
 });

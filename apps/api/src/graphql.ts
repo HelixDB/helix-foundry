@@ -55,30 +55,20 @@ import type { GraphQLScalarType } from "graphql";
  * `typeNameList(limit: Int, offset: Int)`. Each type exposes its properties
  * plus relation fields (one per relationship that originates from it).
  */
+// All GraphQL names must match /^[_A-Za-z][_0-9A-Za-z]*$/; real ontology
+// names ("billed to", a property "Account name") often do not. The field
+// rides on the sanitized name while the resolver reads the original one.
+function graphqlName(name: string): string {
+  const cleaned = String(name).replace(/[^A-Za-z0-9_]/g, "_");
+  return /^[A-Za-z_]/.test(cleaned) ? cleaned : `_${cleaned}`;
+}
+
 export function buildOntologySchema(
   types: TypeInfo[],
   relations: RelationInfo[],
 ): GraphQLSchema {
-  const typeMap = new Map<string, GraphQLObjectType>();
-  const relationFields = new Map<string, GraphQLFieldConfig<any, any>[]>();
-
-  // Pre-compute relation fields per source type.
-  for (const rel of relations) {
-    const field: GraphQLFieldConfig<any, any> = {
-      type: new GraphQLList(new GraphQLNonNull(GraphQLString)),
-      description: `Related ${rel.toType} keys via ${rel.name}`,
-      resolve: async (parent: any) => {
-        // The parent's link keys are pre-loaded by the list resolver.
-        return parent.__links?.[rel.name] ?? [];
-      },
-    };
-    const list = relationFields.get(rel.fromType) ?? [];
-    list.push({ ...field, [rel.name]: field } as any);
-    // Actually assign by name.
-    relationFields.set(rel.fromType, list);
-  }
-
   // Build each object type.
+  const typeMap = new Map<string, GraphQLObjectType>();
   for (const t of types) {
     const fields: Record<string, GraphQLFieldConfig<any, any>> = {
       _key: { type: new GraphQLNonNull(GraphQLID), resolve: (p) => p.__key },
@@ -86,7 +76,9 @@ export function buildOntologySchema(
     };
     for (const prop of t.properties) {
       if (prop === t.primaryKey) continue;
-      fields[prop] = {
+      const safeProp = graphqlName(prop);
+      if (safeProp in fields) continue;
+      fields[safeProp] = {
         type: scalarFor(prop),
         resolve: (p: any) => p[prop] ?? null,
       };
@@ -94,7 +86,9 @@ export function buildOntologySchema(
     // Add relation fields.
     for (const rel of relations) {
       if (rel.fromType !== t.name) continue;
-      fields[rel.name] = {
+      const safeRel = graphqlName(rel.name);
+      if (safeRel in fields) continue;
+      fields[safeRel] = {
         type: new GraphQLList(new GraphQLNonNull(GraphQLString)),
         description: `Related ${rel.toType} keys via ${rel.name}`,
         resolve: (p: any) => p.__links?.[rel.name] ?? [],
@@ -267,14 +261,18 @@ function buildSchemaWithResolvers(
     };
     for (const prop of t.properties) {
       if (prop === t.primaryKey) continue;
-      fields[prop] = {
+      const safeProp = graphqlName(prop);
+      if (safeProp in fields) continue;
+      fields[safeProp] = {
         type: scalarFor(prop),
         resolve: (p: any) => p[prop] ?? null,
       };
     }
     for (const rel of relations) {
       if (rel.fromType !== t.name) continue;
-      fields[rel.name] = {
+      const safeRel = graphqlName(rel.name);
+      if (safeRel in fields) continue;
+      fields[safeRel] = {
         type: new GraphQLList(new GraphQLNonNull(GraphQLString)),
         resolve: (p: any) => p.__links?.[rel.name] ?? [],
       };
