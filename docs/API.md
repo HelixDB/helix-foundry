@@ -147,3 +147,19 @@ Owners can use `FoundryClient.setDatasetPrivacy(datasetId, additionalColumns)` o
 Owners can change snapshot cadence in **Data → connection → Details**, through `PUT /sources/:id/schedule`, or with `FoundryClient.setConnectionSchedule(sourceId, schedule)`. A cron expression uses UTC; `null` restores the connector's Automatic default. The change applies atomically to every source table sharing that connection, including older groups recorded by import operations, and preserves credentials, source identities, existing dataset snapshots, jobs and live-capture state. It does not retest or reconnect the source.
 
 For snapshot mode, the next refresh is recalculated from the saved cadence. You can still refresh by hand: **Refresh** on the Data page, **Sync now** on the connection's page, or `POST /sources/:id/sync`. A refresh already running or queued can finish on its existing lifecycle. Live CDC and capability checks remain independent of cron; their next scheduled snapshot stays unset until snapshot fallback is used. The saved expression then governs fallback refreshes. Automatic uses five minutes for ordinary REST/S3/database fallback, one hour for Stripe, WorkOS and Neo4j, and six hours for PostHog. A schedule runs at most once a minute: a six-field expression's leading seconds field may name only one second. Invalid or more frequent expressions return 400 without changing the connection; non-owners cannot save a schedule.
+
+### Cancel pipeline jobs
+
+`POST /pipeline-jobs/:id/cancel` cancels a queued or running pipeline job for an
+editor. It is idempotent for an already canceled job; completed/failed jobs return
+409 and other job kinds or workspace scopes return 404. `client.cancelPipelineJob(jobId)`
+returns the updated job. Read-only tokens cannot cancel.
+
+Queued jobs never start. Running jobs poll cancellation every 1 second, abort their own
+executor request, and stop only its waiting queue entry or disposable child; owned
+scratch and unpromoted output are removed. The previous dataset snapshot remains
+active. Output promotion and the job's completed status commit together, so a
+cancel that loses that race returns 409 rather than claiming to undo publication.
+A later `runPipeline` is independent and can rebuild normally.
+
+A dropped client connection stops any executor job, including imports and queries, not only pipeline builds.

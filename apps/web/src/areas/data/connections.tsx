@@ -1,3 +1,4 @@
+import { PipelineJobs } from "../../pipeline-jobs";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -151,6 +152,7 @@ export function DataOverview() {
           )
         }
       />
+      <PipelineJobs />
       {issues.length > 0 && (
         <details className="disclosure data-issues">
           <summary>

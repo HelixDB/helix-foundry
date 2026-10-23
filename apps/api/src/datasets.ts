@@ -260,6 +260,8 @@ export async function queryDatasets(
     limit?: number;
     offset?: number;
     persist?: boolean;
+    version?: string;
+    signal?: AbortSignal;
     filters?: {
       datasetId: string;
       column: string;
@@ -282,16 +284,19 @@ export async function queryDatasets(
       (f) => datasetTable(f.datasetId) === input.table,
     ),
   }));
-  const result = await execute({
-    mode: "query",
-    scope,
-    inputs: filtered,
-    sql,
-    version: randomUUID(),
-    limit: opts.limit,
-    offset: opts.offset,
-    persist: opts.persist,
-  });
+  const result = await execute(
+    {
+      mode: "query",
+      scope,
+      inputs: filtered,
+      sql,
+      version: opts.version || randomUUID(),
+      limit: opts.limit,
+      offset: opts.offset,
+      persist: opts.persist,
+    },
+    opts.signal,
+  );
   return {
     ...result,
     citations: inputs.map((input, i) => ({
