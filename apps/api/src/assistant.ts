@@ -1147,7 +1147,7 @@ export async function buildWorkspace(store: Store, scope: string, id: string) {
         fill = (
           await validateSpecs(store, scope, computedSpecs(current), current)
         ).kept,
-        picked = mergePicks(ai, fill);
+        picked = mergePicks(ai, fill, current);
       const saved =
         ai.kept.length > 0 && signature === run.data.metricsSignature;
       if (saved)

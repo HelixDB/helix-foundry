@@ -3,6 +3,7 @@ import { api } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { SuggestedOntologyView } from "../../suggested-ontology";
+import { IndustryNotes } from "./industry";
 import type {
   OnboardingState,
   Resource,
@@ -146,6 +147,7 @@ export function PublishedSchema({
       readOnly
       ontology={ontology}
       datasets={datasets}
+      additionalNotes={<IndustryNotes />}
       entityHref={(e) =>
         typeIds.has(e.id)
           ? paths.objectType(e.id)

@@ -21,6 +21,13 @@ vi.mock("../apps/api/src/datasets.js", () => ({
   ) => resource(scope, "dataset", name, { activeVersion: version }, id),
   queryDatasets: vi.fn(),
 }));
+// These fixtures test snapshot scheduling, without replication discovery
+// attempting to contact a database that is not part of this test.
+const snapshotSync = () => ({
+  mode: "snapshot",
+  status: "ready",
+  recheckAt: Date.now() + 60_000,
+});
 it("coalesces scheduled imports with queued work and completes a durable job", async () => {
   const store = new MemoryStore(),
     scope = "jobs";
@@ -38,6 +45,7 @@ it("coalesces scheduled imports with queued work and completes a durable job", a
           secret: seal({ database: "fixture" }),
           schedule: "* * * * *",
           nextRun: 0,
+          sync: snapshotSync(),
         },
         "source",
       ),
@@ -70,7 +78,7 @@ it("coalesces scheduled imports with queued work and completes a durable job", a
       started,
     );
   } finally {
-    stop();
+    await stop();
   }
 });
 it("recovers an interrupted import lease without creating another operation", async () => {
@@ -85,7 +93,11 @@ it("recovers an interrupted import lease without creating another operation", as
         scope,
         "source",
         "Orders",
-        { kind: "mysql", secret: seal({ database: "fixture" }) },
+        {
+          kind: "mysql",
+          secret: seal({ database: "fixture" }),
+          sync: snapshotSync(),
+        },
         "source",
       ),
     );
@@ -120,7 +132,7 @@ it("recovers an interrupted import lease without creating another operation", as
     expect((await store.get(scope, "interrupted"))?.data.attempts).toBe(2);
     expect(await store.list(scope, "job")).toHaveLength(1);
   } finally {
-    stop();
+    await stop();
   }
 });
 it.each(["missing_handler", "toString"])(

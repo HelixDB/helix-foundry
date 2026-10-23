@@ -17,6 +17,11 @@ import { queryDatasets } from "./datasets.js";
 import { lit, plural, q } from "./discovery.js";
 import { digest } from "./security.js";
 import { resource, transaction, type Store } from "./store.js";
+import {
+  retailReading,
+  retailMetrics,
+  retailMetricPriority,
+} from "./industry-playbook.js";
 
 export const METRICS_ID = "home_metrics";
 // Bumped when compiling or normalising changes: stored specs are then
@@ -97,15 +102,18 @@ const columnsOf = (d: Resource): Column[] => d.data.profile?.columns || [];
 // Empty policies preserve existing signatures and do not reset every workspace.
 export const schemaSignature = (datasets: Resource[]) =>
   digest(
-    JSON.stringify(
-      datasets.map((d) => [
+    JSON.stringify([
+      ...datasets.map((d) => [
         d.id,
         columnsOf(d).map((c) => c.name + " " + c.type),
         ...(d.data.privacy?.additionalColumns?.length
           ? [d.data.privacy.additionalColumns]
           : []),
       ]),
-    ),
+      ...(retailReading(datasets)
+        ? [["playbook", retailReading(datasets)!.identity]]
+        : []),
+    ]),
   );
 // A dataset's everyday name: "Users (PlanetScale + WorkOS)" -> "Users",
 // "Stripe · invoices" -> "Invoices".
@@ -613,7 +621,8 @@ export function computedSpecs(datasets: Resource[]): MetricSpec[] {
         });
       }
     }
-  return specs.slice(0, 8);
+  const retail = retailMetrics(datasets);
+  return [...retail, ...specs].slice(0, 8);
 }
 
 // The AI's metrics first, then code-picked ones that measure something else,
@@ -621,6 +630,7 @@ export function computedSpecs(datasets: Resource[]): MetricSpec[] {
 export function mergePicks(
   ai: Awaited<ReturnType<typeof validateSpecs>>,
   fill: Awaited<ReturnType<typeof validateSpecs>>["kept"],
+  datasets: Resource[] = [],
 ) {
   const shape = (m: Compiled) =>
     [
@@ -632,6 +642,21 @@ export function mergePicks(
     ]
       .map(String)
       .join("|");
+  const retail = retailMetrics(datasets);
+  if (retail.length) {
+    const primary = fill.filter(
+      (k) => retailMetricPriority(k.metric.spec, datasets) < retail.length,
+    );
+    const seen = new Set<string>(),
+      kept: typeof fill = [];
+    for (const k of [...primary, ...ai.kept, ...fill]) {
+      const key = shape(k.metric);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      kept.push(k);
+    }
+    return { kept: kept.slice(0, 8), dropped: ai.dropped };
+  }
   const sqls = new Set(ai.kept.map((k) => k.metric.sql)),
     shapes = new Set(ai.kept.map((k) => shape(k.metric)));
   const extra = fill.filter(
@@ -659,7 +684,13 @@ export async function saveMetrics(
   datasets: Resource[],
   extra: Partial<Stored> = {},
 ) {
-  const metrics = picked.kept.map((k) => k.metric);
+  const metrics = picked.kept
+    .map((k) => k.metric)
+    .sort(
+      (a, b) =>
+        retailMetricPriority(a.spec, datasets) -
+        retailMetricPriority(b.spec, datasets),
+    );
   return transaction(store, scope, async (tx) => {
     const previous = await tx.get(METRICS_ID);
     const data: Stored = {
