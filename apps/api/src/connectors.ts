@@ -120,16 +120,46 @@ export async function discover(kind: string, c: ConnectorConfig) {
       const tables = await pool.query(
         "SELECT table_schema schema, table_name name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type='BASE TABLE'",
       );
-      // The schema lets each source keep only its own table's keys.
-      const keys = await pool.query(
-        "SELECT tc.table_schema, tc.table_name, kcu.column_name, tc.constraint_type FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type IN ('PRIMARY KEY','FOREIGN KEY') AND tc.table_schema NOT IN ('pg_catalog','information_schema')",
-      );
+      // information_schema hides constraint metadata from SELECT-only roles.
+      // pg_catalog keeps keys visible while has_table_privilege scopes the results
+      // to tables this connection can actually read.
+      const keys = await pool.query(`
+        SELECT ns.nspname AS table_schema, tbl.relname AS table_name,
+               col.attname AS column_name,
+               CASE con.contype WHEN 'p' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END AS constraint_type
+        FROM pg_catalog.pg_constraint con
+        JOIN pg_catalog.pg_class tbl ON tbl.oid = con.conrelid
+        JOIN pg_catalog.pg_namespace ns ON ns.oid = tbl.relnamespace
+        CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS key_col(attnum, position)
+        JOIN pg_catalog.pg_attribute col ON col.attrelid = tbl.oid AND col.attnum = key_col.attnum
+        WHERE con.contype IN ('p', 'f') AND tbl.relkind IN ('r', 'p')
+          AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND has_table_privilege(tbl.oid, 'SELECT')
+        ORDER BY ns.nspname, tbl.relname, con.conname, key_col.position
+      `);
       const columns = await pool.query(
         "SELECT table_schema AS schema,table_name AS table_name,column_name AS name,data_type AS type,is_nullable AS nullable FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog','information_schema') ORDER BY table_schema,table_name,ordinal_position",
       );
-      const foreignKeys = await pool.query(
-        "SELECT fk.table_schema, fk.table_name, fk.column_name, pk.table_schema AS referenced_schema, pk.table_name AS referenced_table, pk.column_name AS referenced_column FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk ON fk.constraint_name=rc.constraint_name AND fk.constraint_schema=rc.constraint_schema JOIN information_schema.key_column_usage pk ON pk.constraint_name=rc.unique_constraint_name AND pk.constraint_schema=rc.unique_constraint_schema AND pk.ordinal_position=fk.position_in_unique_constraint",
-      );
+      const foreignKeys = await pool.query(`
+        SELECT src_ns.nspname AS table_schema, src.relname AS table_name,
+               src_col.attname AS column_name, ref_ns.nspname AS referenced_schema,
+               ref.relname AS referenced_table, ref_col.attname AS referenced_column
+        FROM pg_catalog.pg_constraint con
+        JOIN pg_catalog.pg_class src ON src.oid = con.conrelid
+        JOIN pg_catalog.pg_namespace src_ns ON src_ns.oid = src.relnamespace
+        JOIN pg_catalog.pg_class ref ON ref.oid = con.confrelid
+        JOIN pg_catalog.pg_namespace ref_ns ON ref_ns.oid = ref.relnamespace
+        CROSS JOIN LATERAL generate_subscripts(con.conkey, 1) AS pos(idx)
+        JOIN pg_catalog.pg_attribute src_col ON src_col.attrelid = src.oid
+                                             AND src_col.attnum = con.conkey[pos.idx]
+        JOIN pg_catalog.pg_attribute ref_col ON ref_col.attrelid = ref.oid
+                                             AND ref_col.attnum = con.confkey[pos.idx]
+        WHERE con.contype = 'f' AND src.relkind IN ('r', 'p')
+          AND src_ns.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND has_table_privilege(src.oid, 'SELECT')
+          AND has_table_privilege(ref.oid, 'SELECT')
+        ORDER BY src_ns.nspname, src.relname, con.conname, pos.idx
+      `);
       const sample = c.table
         ? (
             await pool.query(
