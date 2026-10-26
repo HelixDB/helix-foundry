@@ -2,8 +2,9 @@
 # Runs tests/stack against a fresh local stack on this machine: wipes the
 # stack's volumes, starts it with the sample database, waits for the site,
 # then runs the suite in Playwright's image on the host network, its results
-# in test-results/stack. Needs the images local/compose.yaml names, and
-# local/.env (local/setup.sh). It builds the foundry image
+# in test-results/stack. Needs the images built from source
+# (helix-foundry/{site,foundry,ontology-agent}:local) unless FOUNDRY_*IMAGE
+# names others, and local/.env (local/setup.sh). It builds the foundry image
 # from backend/ first. Without models it bills nothing:
 #   FOUNDRY_STACK_MODELS=1  Claude is the install's provider, on the
 #                           ANTHROPIC_API_KEY of this shell;
@@ -21,6 +22,10 @@ if docker compose ls -q | grep -qx helix-foundry; then
   echo "Helix Foundry is running here (project helix-foundry); stop it first." >&2
   exit 1
 fi
+# Images built from source unless FOUNDRY_*IMAGE names others.
+export FOUNDRY_SITE_IMAGE="${FOUNDRY_SITE_IMAGE:-helix-foundry/site:local}"
+export FOUNDRY_IMAGE="${FOUNDRY_IMAGE:-helix-foundry/foundry:local}"
+export FOUNDRY_AGENT_IMAGE="${FOUNDRY_AGENT_IMAGE:-helix-foundry/ontology-agent:local}"
 compose="docker compose -p helix-foundry-stack -f local/compose.yaml -f tests/stack/compose.yaml"
 docker build -t "${FOUNDRY_IMAGE:-helix-foundry/foundry:local}" backend
 # Ollama's profile, overriding local/.env's.
