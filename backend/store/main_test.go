@@ -34,7 +34,7 @@ func TestMain(m *testing.M) {
 	}
 	db, err := openTestSchema(rootDSN)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "integration tests: %v. Run `make start-testdb` first.\n", err)
+		fmt.Fprintf(os.Stderr, "integration tests: %v. Run `docker compose -f compose.test.yaml up -d --wait` first.\n", err)
 		os.Exit(1)
 	}
 	testDB = db
