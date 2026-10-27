@@ -9,10 +9,12 @@
 # store at the same http://localhost:8333 foundry presigns them for.
 name: helix-foundry
 
+# One Foundry release's images; FOUNDRY_*IMAGE runs others, such as ones
+# built from source.
 x-images:
-  site: &site-image ${FOUNDRY_SITE_IMAGE:-helix-foundry/site:local}
-  foundry: &foundry-image ${FOUNDRY_IMAGE:-helix-foundry/foundry:local}
-  agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-helix-foundry/ontology-agent:local}
+  site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.0}
+  foundry: &foundry-image ${FOUNDRY_IMAGE:-ghcr.io/helixdb/foundry:0.1.0}
+  agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-ghcr.io/helixdb/ontology-agent:0.1.0}
   helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.12}
   ollama: &ollama-image ollama/ollama:0.40.10@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35
 
