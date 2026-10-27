@@ -397,7 +397,12 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
     for (const name of ["foundry", "site", "mysql", "storage"])
       expect(secrets(name), name).toEqual([true]);
     for (const name of ["ontology-agent", "helix", "pod"])
-      expect(services[name].volumes?.some((v: { source: string }) => v.source === "secrets") ?? false, name).toBe(false);
+      expect(
+        services[name].volumes?.some(
+          (v: { source: string }) => v.source === "secrets",
+        ) ?? false,
+        name,
+      ).toBe(false);
     // Not from the .env: an old one's values reach the volume alone.
     expect(services.site.environment).toEqual({
       HELIX_WFE_ORIGIN: "http://pod:8081",
@@ -473,8 +478,12 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
 // from local/ run one install.
 describe.skipIf(!compose)("the root compose.yaml", () => {
   it("is local/compose.yaml, as the same project", () => {
-    const root = composed({}, ["compose.yaml"]) as ReturnType<typeof composed> & { name: string };
-    const local = composed({}) as ReturnType<typeof composed> & { name: string };
+    const root = composed({}, ["compose.yaml"]) as ReturnType<
+      typeof composed
+    > & { name: string };
+    const local = composed({}) as ReturnType<typeof composed> & {
+      name: string;
+    };
     expect(root.name).toBe("helix-foundry");
     expect(local.name).toBe("helix-foundry");
     expect(root.services).toEqual(local.services);
