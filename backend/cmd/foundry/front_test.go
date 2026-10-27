@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/local"
 	"github.com/helixdb/helix-foundry/backend/local/directory"
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -44,8 +46,16 @@ func freeAddr(t *testing.T) string {
 // startFront migrates a fresh database on the test MySQL server
 // (HELIX_TEST_ROOT_DSN, a root DSN ending in "/"), seeds the owner and
 // serves the front end on loopback with the image's configuration, as run
-// does. Without a server the test skips; there is no default.
+// does, with no look for an AI default. Without a server the test skips;
+// there is no default.
 func startFront(t *testing.T, helixURL string) (rest string, grpcAddr string, probes *probes, db *sql.DB) {
+	t.Helper()
+	return startFrontWith(t, helixURL, func(*Config) *detect.Detector { return nil })
+}
+
+// startFrontWith is startFront with the look for an AI default detector
+// makes of the loaded configuration.
+func startFrontWith(t *testing.T, helixURL string, detector func(*Config) *detect.Detector) (rest string, grpcAddr string, probes *probes, db *sql.DB) {
 	t.Helper()
 	rootDSN := os.Getenv("HELIX_TEST_ROOT_DSN")
 	if rootDSN == "" {
@@ -83,7 +93,8 @@ func startFront(t *testing.T, helixURL string) (rest string, grpcAddr string, pr
 	cfg.Local.Listen.REST, cfg.Local.Listen.GRPC = freeAddr(t), freeAddr(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	probes = newProbes(db.PingContext, logger)
-	f, err := newFront(ctx, cfg, logger, probes, dir, store.NewMySQL(db, local.Workspaces{}), aws.Config{Region: "us-east-1"})
+	directorySvc := directory.NewService(dir, cfg.Local.HelixURL, http.DefaultClient)
+	f, err := newFront(ctx, cfg, logger, probes, directorySvc, dir, store.NewMySQL(db, local.Workspaces{}), aws.Config{Region: "us-east-1"}, detector(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +287,74 @@ func TestFrontServesFoundry(t *testing.T) {
 	if code := call(t, "GET", rest+"/v1/foundry/plans", siteToken, nil, &plans); code != http.StatusBadRequest ||
 		!strings.Contains(fmt.Sprint(plans["details"]), "LOCAL_MODE_UNSUPPORTED") {
 		t.Fatalf("plans: %d %v", code, plans)
+	}
+}
+
+// An install that names no AI provider finds one on this machine, and
+// finds it again as Settings › AI models opens: the page reads which and
+// why, and the Ollama card the server's models. The routes are the site's,
+// behind its token.
+func TestFrontFindsAnAIDefault(t *testing.T) {
+	var pulled atomic.Bool
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/version":
+			_, _ = w.Write([]byte(`{"version":"0.40.10"}`))
+		case "/api/tags":
+			if !pulled.Load() {
+				_, _ = w.Write([]byte(`{"models":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2:1b","size":1321098329,"details":{"parameter_size":"1.2B"}}]}`))
+		case "/api/show":
+			_, _ = w.Write([]byte(`{"capabilities":["completion","tools"],"model_info":{"llama.context_length":131072}}`))
+		}
+	}))
+	defer ollama.Close()
+	rest, _, _, _ := startFrontWith(t, "http://helix:8080", func(cfg *Config) *detect.Detector {
+		d := &detect.Detector{Ollamas: []string{ollama.URL}, LMStudio: "http://127.0.0.1:9/v1", Live: cfg.detectedAI}
+		d.Detect(context.Background())
+		return d
+	})
+	var ws map[string]any
+	if code := call(t, "POST", rest+"/v1/workspaces", siteToken, map[string]any{"slug": "acme", "region": "local"}, &ws); code != http.StatusOK {
+		t.Fatalf("create workspace: %d %v", code, ws)
+	}
+	aiURL := rest + "/v1/workspaces/" + ws["id"].(string) + "/foundry/ai"
+	type settings struct {
+		AI struct {
+			Default  *struct{ Kind, Label string }
+			Detected struct{ Summary, DetectedAt string }
+		} `json:"ai"`
+	}
+	var before settings
+	if code := call(t, "GET", aiURL, siteToken, nil, &before); code != http.StatusOK || before.AI.Default != nil ||
+		!strings.HasPrefix(before.AI.Detected.Summary, "No AI provider was found.") || before.AI.Detected.DetectedAt == "" {
+		t.Fatalf("before: %d %+v", code, before)
+	}
+	var refused map[string]any
+	if code := call(t, "POST", aiURL+"/detect", "", map[string]any{}, &refused); code != http.StatusUnauthorized {
+		t.Fatalf("detect without the token: %d %v", code, refused)
+	}
+	pulled.Store(true)
+	var after settings
+	if code := call(t, "POST", aiURL+"/detect", siteToken, map[string]any{}, &after); code != http.StatusOK || after.AI.Default == nil ||
+		after.AI.Default.Kind != "FOUNDRY_AI_KIND_OLLAMA" || !strings.HasPrefix(after.AI.Detected.Summary, "Using llama3.2:1b from") {
+		t.Fatalf("after: %d %+v", code, after)
+	}
+	var models struct {
+		Server struct {
+			Version string
+			Models  []struct{ Name, SizeBytes, ParameterSize, Unusable string }
+		}
+	}
+	if code := call(t, "GET", aiURL+"/ollama-models?baseUrl="+ollama.URL, siteToken, nil, &models); code != http.StatusOK ||
+		models.Server.Version != "0.40.10" || len(models.Server.Models) != 1 || models.Server.Models[0].SizeBytes != "1321098329" {
+		t.Fatalf("models: %d %+v", code, models)
+	}
+	if code := call(t, "GET", aiURL+"/ollama-models?baseUrl="+ollama.URL+"/v1", siteToken, nil, &refused); code != http.StatusBadRequest {
+		t.Fatalf("an OpenAI-compatible address: %d %v", code, refused)
 	}
 }
 
