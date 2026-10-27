@@ -192,7 +192,6 @@ func (q *queue) QueueFoundryRefresh(_ context.Context, _, ontologyID string, job
 	return q.queueable[ontologyID], nil
 }
 
-
 // objects is a bucket recording deletes.
 type objects struct{ deleted []string }
 
