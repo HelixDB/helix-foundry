@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -49,7 +50,38 @@ type Host struct {
 	// databases' gateway. Without one they are refused, unless Local, which
 	// sends none.
 	GatewayKey string
+	// DetectedAI is set only by a local install whose foundry.ai.default
+	// names no provider: the default it found on its machine, which may
+	// change while it runs (it looks again as an owner opens Settings › AI
+	// models). Every resolve reads it. nil hosted.
+	DetectedAI *LiveAIDefault
 }
+
+// LiveAIDefault is a default model provider that may change while the
+// process runs: Store replaces it, and every reader sees the new one.
+type LiveAIDefault struct{ v atomic.Pointer[DetectedAIDefault] }
+
+// DetectedAIDefault is a default found on the machine.
+type DetectedAIDefault struct {
+	// Default is the provider found, read as foundry.ai.default is; its
+	// Provider is "" when none was.
+	Default AIDefault
+	// Summary says, for the owner, what is used and why, or what was looked
+	// for and how to set a provider up. It never holds a key.
+	Summary string
+	At      time.Time
+}
+
+// Load is the default last stored, or none found yet (the zero value).
+func (l *LiveAIDefault) Load() DetectedAIDefault {
+	if d := l.v.Load(); d != nil {
+		return *d
+	}
+	return DetectedAIDefault{}
+}
+
+// Store makes d the default.
+func (l *LiveAIDefault) Store(d DetectedAIDefault) { l.v.Store(&d) }
 
 // Foundry is the foundry block: connectors and their credentials, syncs,
 // ontologies and their models, documents, graph loads, reads, questions,

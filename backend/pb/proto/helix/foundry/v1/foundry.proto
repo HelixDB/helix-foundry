@@ -283,6 +283,17 @@ service FoundryService {
   rpc UpdateFoundryAI(UpdateFoundryAIRequest) returns (FoundryAIResponse) {
     option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/ai" body: "*" };
   }
+  // A local install's only (FAILED_PRECONDITION elsewhere): looks again for
+  // the install's default on its machine (FoundryAI.detected), as Settings ›
+  // AI models opens, so a model pulled since is used without a restart.
+  rpc DetectFoundryAIDefault(DetectFoundryAIDefaultRequest) returns (FoundryAIResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ai/detect" body: "*" };
+  }
+  // A local install's only (FAILED_PRECONDITION elsewhere): the models an
+  // Ollama server has, for the Ollama card's model choice.
+  rpc ListFoundryOllamaModels(ListFoundryOllamaModelsRequest) returns (ListFoundryOllamaModelsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ai/ollama-models" };
+  }
 }
 
 // GetFoundryUsageRequest reads the workspace's AI spend this calendar month
@@ -351,6 +362,21 @@ message UpdateFoundryAIRequest {
 }
 message FoundryAIResponse {
   FoundryAI ai = 1;
+}
+// DetectFoundryAIDefaultRequest looks again for a local install's default;
+// it answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION
+// where the install names its default (FOUNDRY_AI_PROVIDER).
+message DetectFoundryAIDefaultRequest {
+  string workspace_id = 1;
+}
+// ListFoundryOllamaModelsRequest reads an Ollama server's models.
+message ListFoundryOllamaModelsRequest {
+  string workspace_id = 1;
+  // The server's address, as FoundryAIOllama.base_url.
+  string base_url = 2;
+}
+message ListFoundryOllamaModelsResponse {
+  FoundryOllamaServer server = 1;
 }
 
 message GetFoundryPlanRequest {

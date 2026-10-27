@@ -109,7 +109,7 @@ func (s *Service) UpdateFoundryAI(ctx context.Context, req *foundryv1.UpdateFoun
 	switch c := req.GetChoice().(type) {
 	case *foundryv1.UpdateFoundryAIRequest_UseDefault:
 		switch {
-		case d.Default == nil:
+		case d.Current() == nil:
 			return nil, status.Error(codes.FailedPrecondition, "this install has no default AI provider; choose one")
 		case req.GetModels() != nil || req.GetApiKey() != "":
 			return nil, status.Error(codes.InvalidArgument, "use_default takes no models or key")
@@ -205,6 +205,48 @@ func (s *Service) UpdateFoundryAI(ctx context.Context, req *foundryv1.UpdateFoun
 	return s.foundryAIResponse(ctx, ws, true)
 }
 
+// DetectFoundryAIDefault looks again for a local install's default on its
+// machine (package ai/detect), so a model pulled or a server started since
+// is used without a restart, and answers the workspace's AI settings. Only
+// a local install that names no default provider looks. Authz has checked
+// the caller may read the workspace: locally, the owner.
+func (s *Service) DetectFoundryAIDefault(ctx context.Context, req *foundryv1.DetectFoundryAIDefaultRequest) (*foundryv1.FoundryAIResponse, error) {
+	ws := req.GetWorkspaceId()
+	switch {
+	case ws == "":
+		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
+	case s.deps.LocalAI == nil || s.deps.AI.Detected == nil:
+		return nil, status.Error(codes.FailedPrecondition, "only a local install that names no AI provider looks for one")
+	}
+	s.deps.LocalAI.Detect(ctx)
+	return s.foundryAIResponse(ctx, ws, s.mayManageAI(ctx, ws))
+}
+
+// ListFoundryOllamaModels reads the models of the Ollama server at
+// base_url, for the Ollama card: a local install's only. The address is
+// checked as a save checks it; a server that doesn't answer, isn't Ollama
+// or is too old says so in the answer, not as an error.
+func (s *Service) ListFoundryOllamaModels(ctx context.Context, req *foundryv1.ListFoundryOllamaModelsRequest) (*foundryv1.ListFoundryOllamaModelsResponse, error) {
+	switch {
+	case req.GetWorkspaceId() == "":
+		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
+	case s.deps.LocalAI == nil || !s.deps.AI.Offers(ai.KindOllama):
+		return nil, status.Error(codes.FailedPrecondition, "only a local install reads an Ollama server's models")
+	}
+	base, err := ai.OllamaURL(strings.TrimSpace(req.GetBaseUrl()), s.deps.AI.Rules)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	found := s.deps.LocalAI.Ollama(ctx, base)
+	out := &foundryv1.FoundryOllamaServer{Version: found.Version, Problem: found.Problem}
+	for _, m := range found.Models {
+		out.Models = append(out.Models, &foundryv1.FoundryOllamaModel{
+			Name: m.Name, SizeBytes: m.Size, ParameterSize: m.ParameterSize, Unusable: m.Unusable,
+		})
+	}
+	return &foundryv1.ListFoundryOllamaModelsResponse{Server: out}, nil
+}
+
 // foundryAIKey is the key a save carries: the one given, or, when none is
 // and it still belongs to the endpoint, the setting's, whose config it
 // returns as kept. A kind that takes no key refuses one; one that needs a
@@ -264,9 +306,16 @@ func (s *Service) foundryAIResponse(ctx context.Context, workspaceID string, hin
 			return nil, err
 		}
 	}
-	if def := d.Default; def != nil {
+	if def := d.Current(); def != nil {
 		out.Default = &foundryv1.FoundryAIDefault{
 			Kind: kindToProto[def.Settings.Provider.Kind()], Models: modelsToProto(def.Settings.Models), Label: ai.Label(def.Settings.Provider),
+		}
+	}
+	if d.Detected != nil {
+		found := d.Detected.Load()
+		out.Detected = &foundryv1.FoundryAIDetected{Summary: found.Summary}
+		if !found.At.IsZero() {
+			out.Detected.DetectedAt = timestamppb.New(found.At)
 		}
 	}
 	for _, kind := range d.Kinds {

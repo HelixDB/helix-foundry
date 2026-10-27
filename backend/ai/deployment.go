@@ -25,14 +25,46 @@ const (
 type Deployment struct {
 	// Kinds are the kinds owners may choose, in the settings page's order.
 	Kinds []Kind
-	// Default is the deployment's own provider; nil is none, which only a
-	// local install may have.
+	// Default is the deployment's own provider, as configured; nil is none,
+	// which only a local install may have. Current is the one in force.
 	Default *Default
-	Rules   Rules
-	Catalog *Catalog
+	// Detected is set only in a local install that configures no default:
+	// the one it found on its machine (config.Host.DetectedAI), which may
+	// change while it runs.
+	Detected *config.LiveAIDefault
+	Rules    Rules
+	Catalog  *Catalog
 	// Local is a local install: no plan is sold, so owners bring keys freely.
 	Local       bool
 	CallTimeout time.Duration
+}
+
+// Current is the default in force: the configured one, else the one a local
+// install last found on its machine, else nil, none. A found default that
+// doesn't check (the detector stores only ones that do) is none. Reading a
+// found one checks it again, which costs no I/O.
+//
+//	d.Current() // Helix's Claude, hosted
+func (d *Deployment) Current() *Default {
+	if d.Default != nil || d.Detected == nil {
+		return d.Default
+	}
+	from := d.Detected.Load().Default
+	if from.Provider == "" {
+		return nil
+	}
+	def, err := d.defaultOf(from)
+	if err != nil {
+		return nil
+	}
+	return def
+}
+
+// CheckDefault checks a default as NewDeployment checks the configured one,
+// under d's rules: the detector's, before it stores what it found.
+func (d *Deployment) CheckDefault(c config.AIDefault) error {
+	_, err := d.defaultOf(c)
+	return err
 }
 
 // Default is the deployment's provider: Helix's Claude when hosted.
@@ -77,13 +109,34 @@ func NewDeployment(cfg *config.Config) (*Deployment, error) {
 		}
 		d.Kinds = append(d.Kinds, kind)
 	}
+	if detected := cfg.Host.DetectedAI; detected != nil {
+		switch {
+		case !d.Local:
+			return nil, fmt.Errorf("only a local install finds its AI default on its machine")
+		case a.Default.Provider != "":
+			return nil, fmt.Errorf("foundry.ai.default.provider is set: a local install finds its default only when it sets none")
+		}
+		d.Detected = detected
+	}
 	if a.Default.Provider == "" {
 		if !d.Local {
 			return nil, fmt.Errorf("foundry.ai.default is required in cloud")
 		}
 		return d, nil
 	}
-	settings, err := defaultSettings(a.Default)
+	def, err := d.defaultOf(a.Default)
+	if err != nil {
+		return nil, err
+	}
+	d.Default = def
+	return d, nil
+}
+
+// defaultOf is c as the deployment's default: a provider an owner could have
+// saved (its endpoint, models and prices), with a key where its kind needs
+// one in a local install.
+func (d *Deployment) defaultOf(c config.AIDefault) (*Default, error) {
+	settings, err := defaultSettings(c)
 	if err != nil {
 		return nil, err
 	}
@@ -91,10 +144,10 @@ func NewDeployment(cfg *config.Config) (*Deployment, error) {
 		return nil, fmt.Errorf("foundry.ai.default: %w", err)
 	}
 	settings = settings.Normalized(d.Rules)
-	if unpriced := catalog.Unpriced(settings); len(unpriced) > 0 {
+	if unpriced := d.Catalog.Unpriced(settings); len(unpriced) > 0 {
 		return nil, fmt.Errorf("foundry.ai.default.models.%s: the agent has no price for this %s model", unpriced[0], settings.Provider.Kind())
 	}
-	key := ontologyagent.NewModelKey(a.Default.APIKey)
+	key := ontologyagent.NewModelKey(c.APIKey)
 	switch rule := settings.Provider.Kind().Key(); {
 	case rule == KeyRefused && !key.IsZero():
 		return nil, fmt.Errorf("foundry.ai.default.api_key: %s takes no key", settings.Provider.Kind())
@@ -105,8 +158,7 @@ func NewDeployment(cfg *config.Config) (*Deployment, error) {
 	case len(key.Reveal()) > MaxKeyBytes:
 		return nil, fmt.Errorf("foundry.ai.default.api_key is longer than %d bytes", MaxKeyBytes)
 	}
-	d.Default = &Default{Settings: settings, Key: key}
-	return d, nil
+	return &Default{Settings: settings, Key: key}, nil
 }
 
 // defaultSettings reads the default as settings: the kind's own fields and

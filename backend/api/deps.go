@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/document"
 	"github.com/helixdb/helix-foundry/backend/ports"
@@ -34,4 +35,9 @@ type Deps struct {
 	Databases ports.Databases
 	Graph     ports.GraphReader
 	People    ports.People
+	// LocalAI is a local install's look at the model servers on its machine:
+	// it finds the install's default again, and lists an Ollama server's
+	// models. nil hosted, where DetectFoundryAIDefault and
+	// ListFoundryOllamaModels are refused.
+	LocalAI *detect.Detector
 }
