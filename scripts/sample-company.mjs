@@ -16,6 +16,7 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import process from "node:process";
 import { chromium } from "@playwright/test";
 
 const OUT = join(import.meta.dirname, "..", "public", "samples", "kestrel");
@@ -46,6 +47,8 @@ function weighted(weights) {
 const date = (s) => new Date(s.slice(0, 10) + "T00:00:00Z");
 const iso = (d) => d.toISOString().slice(0, 10);
 const addDays = (s, n) => iso(new Date(date(s).getTime() + n * 86_400_000));
+// A day before today at the latest.
+const earlier = (s) => (s >= TODAY ? addDays(TODAY, -1) : s);
 // Only ever from the 1st of a month, so no month overflows.
 function addMonths(s, n) {
   const d = date(s);
@@ -63,15 +66,6 @@ const usd = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-const longDate = (s) =>
-  date(s).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-const monthName = (s) =>
-  date(s).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
 
 function csv(rows) {
   const cols = Object.keys(rows[0]);
@@ -537,16 +531,15 @@ for (const s of subscriptions)
     if (quarterly && monthsBetween(s.started_on, issued) % 3) continue;
     const due = addDays(issued, quarterly ? 30 : 14);
     const late = s.account.late && issued >= "2026-09-01";
-    let status, paid_on;
-    if (s.account === KEY.brightmoor && issued === "2026-09-01")
-      ((status = "paid"), (paid_on = "2026-10-09"));
-    else if (late && (s.account !== KEY.brightmoor || issued === "2026-10-01"))
-      ((status = "overdue"), (paid_on = ""));
-    else if (due < TODAY || rand() < 0.5) {
-      status = "paid";
-      paid_on = addDays(issued, int(1, 20));
-      if (paid_on >= TODAY) paid_on = addDays(TODAY, -1);
-    } else ((status = "open"), (paid_on = ""));
+    // Brightmoor paid September's late and holds October's.
+    const [status, paid_on] =
+      s.account === KEY.brightmoor && issued === "2026-09-01"
+        ? ["paid", "2026-10-09"]
+        : late && (s.account !== KEY.brightmoor || issued === "2026-10-01")
+          ? ["overdue", ""]
+          : due < TODAY || rand() < 0.5
+            ? ["paid", earlier(addDays(issued, int(1, 20)))]
+            : ["open", ""];
     invoices.push({
       sub: s,
       issued_on: issued,
@@ -1348,6 +1341,6 @@ try {
   await browser.close();
 }
 
-console.log(
-  `${accounts.length} accounts, ${contacts.length} contacts, ${subscriptions.length} subscriptions, ${invoices.length} invoices, ${tickets.length} tickets, ${usage.length} usage rows, ${Object.keys(contracts).length} contracts → ${OUT}`,
+process.stdout.write(
+  `${accounts.length} accounts, ${contacts.length} contacts, ${subscriptions.length} subscriptions, ${invoices.length} invoices, ${tickets.length} tickets, ${usage.length} usage rows, ${Object.keys(contracts).length} contracts → ${OUT}\n`,
 );

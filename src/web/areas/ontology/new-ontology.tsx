@@ -50,6 +50,8 @@ import {
   type WizardStepId,
 } from "./model";
 import { Callout, FlowStep, canManage, type Arrival } from "./parts";
+import { SAMPLE } from "./sample";
+import { TrySample } from "./try-sample";
 import {
   createOntology,
   generateOntology,
@@ -79,8 +81,9 @@ import {
 // name the ontology (./setup.tsx).
 //
 // While the workspace has no ontology, this page is its onboarding, all the
-// shell offers (main.tsx): it has no way back to Ontologies, and offers Set
-// up with your agent. A connector link sent here (?add=<kind>) opens its
+// shell offers (main.tsx): it has no way back to Ontologies, and offers the
+// sample company (./try-sample.tsx), which fills in what is still empty and
+// opens the review, and Set up with your agent. A connector link sent here (?add=<kind>) opens its
 // form over the wizard once, and the new connection stays here. An API
 // source's token link (?event_source=<id>&token=new, forwarded from its
 // Data page by main.tsx) opens its send panel over the wizard once, at
@@ -168,7 +171,7 @@ export const forgetNewOntology = (ws: string) => {
 };
 
 export function NewOntologyPage() {
-  const { id, slug, role, onboarding } = useWorkspace(),
+  const { id, slug, role, onboarding, name: workspace } = useWorkspace(),
     navigate = useNavigate(),
     qc = useQueryClient(),
     [params, setParams] = useSearchParams();
@@ -488,6 +491,32 @@ export function NewOntologyPage() {
         title={title}
         subtitle="An ontology keeps its types, documents and data in one Helix database. Choose what it is drawn from, and Foundry’s agent drafts it."
       />
+      {onboarding && (
+        <TrySample
+          chosen={(sets.data || []).some(
+            (s) => s.name === SAMPLE.set.name && chosenSets?.has(s.id),
+          )}
+          onReady={(setIds) => {
+            // Only the sample: its own name, goal and a new database, unless
+            // already chosen.
+            const named = name.trim() || SAMPLE.ontology;
+            setName(named);
+            if (!database && databases.data)
+              setDatabase(
+                newDatabase(
+                  named,
+                  workspace,
+                  databases.data.map((p) => p.project),
+                ),
+              );
+            setChosen(new Set());
+            setChosenEvents(new Map());
+            setChosenSets(new Set(setIds));
+            if (!goal.trim()) setGoal(SAMPLE.goal);
+            go("review");
+          }}
+        />
+      )}
       {onboarding && <AgentSetup />}
       {adding !== null && (
         <ConnectData
