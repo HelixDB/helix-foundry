@@ -225,15 +225,21 @@ func (t *Task) process(ctx context.Context, job *model.FoundryGraphJob) {
 	})
 	defer stopDrain()
 	stopRenewing := t.renewLease(runCtx, cancel, job.ID)
+	start := t.now()
 	a, err := t.runner.run(runCtx, job)
 	stopRenewing()
 
 	var wait *parked
+	ended := "parked"
 	if errors.As(err, &wait) {
 		t.park(ctx, job, wait.until)
-		return
+	} else {
+		ended = t.finish(ctx, job, t.outcome(runCtx, job, a, err, ctx.Err() != nil))
 	}
-	t.finish(ctx, job, t.outcome(runCtx, job, a, err, ctx.Err() != nil))
+	seconds := t.now().Sub(start).Seconds()
+	jobSeconds.WithLabelValues(string(job.Kind), string(job.Origin), ended).Observe(seconds)
+	log.From(ctx).Info("graph job attempt ended", "job", job.ID, "kind", job.Kind, "origin", job.Origin, "outcome", ended,
+		"seconds", seconds, "rows", a.rows, "chunks", a.progress.ChunksDone, "documents", a.progress.DocumentsDone)
 }
 
 // park ends an attempt whose load waits for its People enrichment step: the
@@ -257,8 +263,9 @@ func (t *Task) park(ctx context.Context, job *model.FoundryGraphJob, until time.
 // may have ended, the worker's included, so it has a bound of its own. A job
 // that ends hands over what may follow it: the ids of an extract it owes
 // (queued within this month's budget) or of the next delete, and how many
-// loads the ontology keeps.
-func (t *Task) finish(ctx context.Context, job *model.FoundryGraphJob, outcome model.FoundryGraphJobOutcome) {
+// loads the ontology keeps. It returns the outcome it counted, or
+// "unrecorded" when the finish didn't land.
+func (t *Task) finish(ctx context.Context, job *model.FoundryGraphJob, outcome model.FoundryGraphJobOutcome) string {
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
 	outcome.Next = model.FoundryGraphNext{
@@ -267,18 +274,18 @@ func (t *Task) finish(ctx context.Context, job *model.FoundryGraphJob, outcome m
 	finish, err := t.queue.FinishFoundryGraphJob(finishCtx, job.ID, t.workerID, outcome)
 	if err != nil {
 		log.From(ctx).Warn("finish graph job failed", "job", job.ID, "err", err)
-		return
+		return "unrecorded"
 	}
+	ended := string(outcome.Status)
 	switch {
 	case finish == model.FoundryGraphJobMerged:
-		jobs.WithLabelValues("merged").Inc()
+		ended = "merged"
 	case outcome.RetryAt != nil:
-		jobs.WithLabelValues("retried").Inc()
-	default:
-		jobs.WithLabelValues(string(outcome.Status)).Inc()
+		ended = "retried"
 	}
+	jobs.WithLabelValues(ended).Inc()
 	if job.Kind != model.FoundryGraphJobDelete {
-		return
+		return ended
 	}
 	switch {
 	case outcome.RetryAt != nil:
@@ -292,6 +299,7 @@ func (t *Task) finish(ctx context.Context, job *model.FoundryGraphJob, outcome m
 		log.From(ctx).Error("graph job: a load could not be deleted", "job", job.ID, "ontology", job.OntologyID, "load", job.LoadID,
 			"err", outcome.Error)
 	}
+	return ended
 }
 
 // renewLease keeps the job's lease while the attempt runs, and fences the

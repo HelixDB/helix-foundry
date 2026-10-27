@@ -131,6 +131,8 @@ type attempt struct {
 	// the load (FoundryGraphJobUpdate.IngestViolations).
 	ingestViolations *uint64
 	progress         model.FoundryGraphJobProgress
+	// rows are the table rows the attempt's chunks covered, for its finish log.
+	rows uint64
 	// results are the agent's results by call, kept as the job's report.
 	results map[string]json.RawMessage
 	// spent is what the documents this attempt recorded spent, in
@@ -240,6 +242,7 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 		return a, permanent(fmt.Sprintf("the ontology agent speaks contract %s, not %s", info.GetContractVersion(), ontologyagent.ContractVersion), nil)
 	}
 	if job.Kind == model.FoundryGraphJobDelete {
+		defer r.timeStep("delete", r.now())
 		return a, r.deleteLoad(ctx, job, a)
 	}
 	version, err := r.db.GetOntologyVersion(ctx, job.OntologyID, job.VersionID)
@@ -277,7 +280,28 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 		}
 		a.ingestDone = true
 	}
+	defer r.timeStep("extract", r.now())
 	return a, r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
+}
+
+func (r *runner) timeStep(step string, start time.Time) {
+	stepSeconds.WithLabelValues(step).Observe(r.now().Sub(start).Seconds())
+}
+
+// chunkCounts reads a chunk event's rows and outcome. The report's shape is
+// not part of the contract, so a report it can't read counts as no rows of an
+// unknown outcome rather than failing the load.
+func chunkCounts(event json.RawMessage) (rows uint64, outcome string) {
+	var chunk struct {
+		Report struct {
+			Rows    uint64 `json:"rows"`
+			Outcome string `json:"outcome"`
+		} `json:"report"`
+	}
+	if json.Unmarshal(event, &chunk) != nil || chunk.Report.Outcome == "" {
+		return chunk.Report.Rows, "unknown"
+	}
+	return chunk.Report.Rows, chunk.Report.Outcome
 }
 
 // enrich runs the load's People enrichment step (enrichment.Load.Step)
@@ -497,10 +521,12 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 	if err := r.update(ctx, job, model.FoundryGraphJobIngest, a); err != nil {
 		return err
 	}
+	tablesStart := r.now()
 	tables, err := r.tables(ctx, job, version, def)
 	if err != nil {
 		return err
 	}
+	r.timeStep("tables", tablesStart)
 	sources := tables
 	if profiles != nil {
 		dir := filepath.Join(jobsDir, job.ID, "enrichment")
@@ -521,13 +547,19 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 	if err != nil {
 		return fmt.Errorf("encode ingest request: %w", err)
 	}
+	ingestStart := r.now()
 	raw, err := r.agent.Ingest(ctx, body, func(e json.RawMessage) error {
 		if name, _ := ontologyagent.EventName(e); name != "chunk" {
 			return nil
 		}
+		rows, outcome := chunkCounts(e)
+		a.rows += rows
+		chunkRows.WithLabelValues(string(job.Kind)).Add(float64(rows))
+		chunks.WithLabelValues(string(job.Kind), outcome).Inc()
 		a.progress.ChunksDone++
 		return r.update(ctx, job, model.FoundryGraphJobIngest, a)
 	})
+	r.timeStep("ingest", ingestStart)
 	if err != nil {
 		return callFailure("load the tables", err)
 	}

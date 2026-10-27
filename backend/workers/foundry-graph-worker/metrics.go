@@ -21,6 +21,31 @@ var loadDeletes = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Delete job attempts by outcome: done, retried, or failed (the load is left delete_failed; alert on it).",
 }, []string{"outcome"})
 
+// durationBuckets span a small extract (seconds) to a load that uses its whole attempt (2h).
+var durationBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200}
+
+var jobSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "helix_foundry_graph_job_seconds",
+	Help:    "How long a graph job attempt took, by kind (load, extract, delete), the origin of the load it works on (user or refresh) and outcome.",
+	Buckets: durationBuckets,
+}, []string{"kind", "origin", "outcome"})
+
+var stepSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "helix_foundry_graph_step_seconds",
+	Help:    "How long a step of a graph job attempt took: tables (pinning and downloading snapshots), ingest, extract or delete.",
+	Buckets: durationBuckets,
+}, []string{"step"})
+
+var chunkRows = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_rows_total",
+	Help: "Table rows the ontology agent handled in its chunks, by job kind.",
+}, []string{"kind"})
+
+var chunks = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_chunks_total",
+	Help: "Chunks the ontology agent handled, by job kind and outcome: loaded, already_loaded (a retry found it stored), empty, or unknown.",
+}, []string{"kind", "outcome"})
+
 var documentsHeld = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_documents_held_total",
 	Help: "Documents a job no person started held back unsent, by reason: set_allowance (the month's allowance of their set, or of its " +

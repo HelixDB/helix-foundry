@@ -3584,3 +3584,41 @@ func TestModelKeys(t *testing.T) {
 		}
 	})
 }
+
+func TestGraphJobMetrics(t *testing.T) {
+	// A deployment's metrics show what loads cost: each attempt is timed by kind, origin and outcome, and its chunks
+	// counted with their rows.
+	t.Run("times the attempt and counts its chunks", func(t *testing.T) {
+		h := newHarness(t)
+		rows := testutil.ToFloat64(chunkRows.WithLabelValues("load"))
+		unknown := testutil.ToFloat64(chunks.WithLabelValues("load", "unknown"))
+		h.run(t, loadJob())
+		if got := testutil.ToFloat64(chunkRows.WithLabelValues("load")) - rows; got != 4 {
+			t.Fatalf("rows counted = %v, want the two chunks' 4", got)
+		}
+		if got := testutil.ToFloat64(chunks.WithLabelValues("load", "unknown")) - unknown; got != 2 {
+			t.Fatalf("chunks counted = %v, want 2 of an unknown outcome: the fake's reports name none", got)
+		}
+		if testutil.CollectAndCount(jobSeconds, "helix_foundry_graph_job_seconds") == 0 {
+			t.Fatal("no attempt duration was recorded")
+		}
+	})
+
+	// The chunk report's shape is not part of the contract, so one the worker can't read still counts.
+	for _, tc := range []struct {
+		name, event, outcome string
+		rows                 uint64
+	}{
+		{"a loaded chunk", `{"event":"chunk","report":{"rows":1000,"outcome":"loaded"}}`, "loaded", 1000},
+		{"a chunk a retry found stored", `{"event":"chunk","report":{"rows":7,"outcome":"already_loaded"}}`, "already_loaded", 7},
+		{"a report without an outcome", `{"event":"chunk","report":{"rows":3}}`, "unknown", 3},
+		{"an unreadable report", `{"event":"chunk","report":"rows"}`, "unknown", 0},
+	} {
+		t.Run("reads "+tc.name, func(t *testing.T) {
+			rows, outcome := chunkCounts(json.RawMessage(tc.event))
+			if rows != tc.rows || outcome != tc.outcome {
+				t.Fatalf("chunkCounts = (%d, %q), want (%d, %q)", rows, outcome, tc.rows, tc.outcome)
+			}
+		})
+	}
+}
