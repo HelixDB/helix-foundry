@@ -433,7 +433,7 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
 describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
   it("runs the foundry image, FOUNDRY_IMAGE's when set", () => {
     expect(composed({}).services.foundry.image).toBe(
-      "ghcr.io/helixdb/foundry:0.1.0",
+      "ghcr.io/helixdb/foundry:0.1.1",
     );
     expect(
       composed({ FOUNDRY_IMAGE: "ghcr.io/helixdb/foundry:1.2.3" }).services
