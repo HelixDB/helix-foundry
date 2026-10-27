@@ -82,8 +82,8 @@ func workosEventTypes(follow map[string]bool) []string {
 
 // workosCursor is where the next change read begins.
 type workosCursor struct {
-	// Event is the newest event read. It is empty when WorkOS listed none,
-	// and the next read then lists the events created since Created.
+	// Event is the newest event read. It is empty after a full read, or when
+	// WorkOS listed none, and the next read then lists the events created since Created.
 	Event string `json:"event,omitempty"`
 	// Created is Event's time, or the read's own when there is no event.
 	Created time.Time `json:"created"`
@@ -118,23 +118,11 @@ func (k *workosKind) Capture(src Source, table string) Capture {
 	return CaptureFull
 }
 
-func (k *workosKind) Start(ctx context.Context, src Source, tables []Table) (Start, error) {
-	now := time.Now().UTC()
-	follow := map[string]bool{}
-	for _, t := range tables {
-		follow[t.Name] = true
-	}
-	newest, _, err := k.eventPage(ctx, workosHeader(src), url.Values{
-		"events": workosEventTypes(follow), "order": {"desc"}, "limit": {"1"},
-	})
-	if err != nil {
-		return Start{}, err
-	}
-	c := workosCursor{Created: now}
-	if len(newest) > 0 {
-		c.Event, c.Created = newest[0].ID, newest[0].CreatedAt
-	}
-	cursor, err := json.Marshal(c)
+// Start begins at the current time, which the first change read reaches back
+// from by ChangeOverlap. WorkOS answers order=desc on /events with its oldest
+// event, so the newest can't be asked for.
+func (k *workosKind) Start(context.Context, Source, []Table) (Start, error) {
+	cursor, err := json.Marshal(workosCursor{Created: time.Now().UTC()})
 	return Start{Cursor: cursor}, err
 }
 
