@@ -123,11 +123,15 @@ SET status='running', attempts=attempts+1, lease_owner=?, lease_until=?, started
 WHERE id=?`, workerID, leaseUntil, job.ID); err != nil {
 		return nil, fmt.Errorf("claim foundry graph job: %w", err)
 	}
-	var origin sql.NullString
-	if err = tx.QueryRowContext(ctx, `SELECT origin FROM foundry_loads WHERE id=?`, job.LoadID).Scan(&origin); err != nil && err != sql.ErrNoRows {
+	var origin, refreshes sql.NullString
+	if err = tx.QueryRowContext(ctx, `SELECT origin, refreshes_load_id FROM foundry_loads WHERE id=?`, job.LoadID).
+		Scan(&origin, &refreshes); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("read foundry load %s origin: %w", job.LoadID, err)
 	}
 	job.Origin = model.FoundryLoadOrigin(origin.String)
+	if refreshes.Valid {
+		job.RefreshesLoadID = &refreshes.String
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit foundry graph job claim: %w", err)
 	}
@@ -379,6 +383,13 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 			}
 			return tx.queueFullFoundryRefresh(ctx, o, job.VersionID, &model.FoundryGraphJob{ID: outcome.Next.RefreshID})
 		}
+		if job.Kind == model.FoundryGraphJobApply && outcome.Status == model.FoundryGraphJobSucceeded && outcome.IngestDone &&
+			o.DeletedAt == nil && o.CurrentLoadID != nil && *o.CurrentLoadID == job.LoadID && !outcome.Next.RebuildBefore.IsZero() {
+			rebuilt, err := tx.queueFoundryRebuild(ctx, o, job, outcome.Next)
+			if err != nil || rebuilt {
+				return err
+			}
+		}
 		return tx.queueAfterFoundryGraphJob(ctx, o, outcome.Next)
 	})
 	return finish, err
@@ -597,6 +608,37 @@ func scanFoundryGraphJob(scanner rowScanner) (*model.FoundryGraphJob, error) {
 		}
 	}
 	return &job, nil
+}
+
+// queueFoundryRebuild queues a full refresh load (next.RefreshID) of the
+// load an apply just brought up to date, when that load was built before
+// next.RebuildBefore. The rebuild reads the snapshots the apply pinned, so
+// what it holds unlike the applied load is drift, not newer data. It reports
+// whether it queued one. The caller holds the ontology's lock.
+func (s *mysqlDB) queueFoundryRebuild(ctx context.Context, o *model.FoundryOntology, apply *model.FoundryGraphJob,
+	next model.FoundryGraphNext) (bool, error) {
+	var finished sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `SELECT finished_at FROM foundry_loads WHERE id=?`, apply.LoadID).Scan(&finished); err != nil {
+		return false, err
+	}
+	if !finished.Valid || !finished.Time.Before(next.RebuildBefore) {
+		return false, nil
+	}
+	if next.RefreshID == "" {
+		return false, fmt.Errorf("a rebuild needs the full refresh's id")
+	}
+	if err := s.queueFullFoundryRefresh(ctx, o, apply.VersionID, &model.FoundryGraphJob{ID: next.RefreshID}); err != nil {
+		return false, err
+	}
+	if len(apply.Sources) == 0 {
+		return true, nil
+	}
+	pins, err := json.Marshal(apply.Sources)
+	if err != nil {
+		return false, err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE foundry_load_jobs SET sources=CAST(? AS JSON) WHERE id=?`, string(pins), next.RefreshID)
+	return true, err
 }
 
 // recordFoundryLoadSources sets the snapshot of each table the load holds to

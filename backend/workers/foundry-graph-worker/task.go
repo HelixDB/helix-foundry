@@ -291,14 +291,16 @@ func (t *Task) park(ctx context.Context, job *model.FoundryGraphJob, until time.
 // may have ended, the worker's included, so it has a bound of its own. A job
 // that ends hands over what may follow it: the ids of an extract it owes
 // (queued within this month's budget), of the next delete, or of the full
-// refresh load a failed apply hands over to, and how many loads the ontology
-// keeps. It returns the outcome it counted, or "unrecorded" when the finish
+// refresh load an apply hands over to (in place of a failed one, or as the
+// rebuild of a load older than rebuild_every), and how many loads the
+// ontology keeps. It returns the outcome it counted, or "unrecorded" when the finish
 // didn't land.
 func (t *Task) finish(ctx context.Context, job *model.FoundryGraphJob, outcome model.FoundryGraphJobOutcome) string {
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
 	outcome.Next = model.FoundryGraphNext{
 		ExtractID: id.New(), DeleteID: id.New(), RefreshID: id.New(), RetainLoads: t.cfg.RetainLoads, Budget: t.cfg.MonthBudget(t.now()),
+		RebuildBefore: t.now().Add(-t.cfg.RebuildEvery),
 	}
 	finish, err := t.queue.FinishFoundryGraphJob(finishCtx, job.ID, t.workerID, outcome)
 	if err != nil {

@@ -32,7 +32,7 @@ var jobSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 
 var stepSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "helix_foundry_graph_step_seconds",
-	Help:    "How long a step of a graph job attempt took: tables (pinning and downloading snapshots), ingest, extract or delete.",
+	Help:    "How long a step of a graph job attempt took: tables (pinning and downloading snapshots), ingest, extract, compare or delete.",
 	Buckets: durationBuckets,
 }, []string{"step"})
 
@@ -71,3 +71,13 @@ var documentsRemoved = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_documents_removed_total",
 	Help: "Deleted documents a job took out of its load's graph: their sections, mentions and quotes, and what they alone held up.",
 })
+
+var rebuilds = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_rebuilds_total",
+	Help: "Refresh loads that replaced a load applies had brought up to date, by what comparing the two found: equal, drifted (alert on it) or failed.",
+}, []string{"outcome"})
+
+var applyDrift = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_apply_drift_total",
+	Help: "Labels that differ between an applied load and the rebuild that replaced it, by kind: entity, fact, evidence or violation.",
+}, []string{"kind"})

@@ -75,6 +75,7 @@ type agent interface {
 	Ingest(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 	Extract(ctx context.Context, request []byte, key ontologyagent.ModelKey, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 	DeleteLoad(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
+	Compare(ctx context.Context, request []byte) (json.RawMessage, error)
 	Clues(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 }
 
@@ -299,8 +300,63 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 		}
 		a.ingestDone = true
 	}
-	defer r.timeStep("extract", r.now())
-	return a, r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
+	extractStart := r.now()
+	err = r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
+	r.timeStep("extract", extractStart)
+	if err == nil && job.Kind == model.FoundryGraphJobLoad && job.Origin == model.FoundryLoadByRefresh {
+		r.compareRebuild(ctx, job, def, binding, target, ontologyVersion)
+	}
+	return a, err
+}
+
+// compareRebuild compares a refresh load with the load it replaces when
+// applies brought that one up to date: a fresh load of the same version is
+// what an applied load should hold, so what differs is drift
+// (helix_foundry_graph_apply_drift_total). It runs before the refresh
+// finishes, while both loads are in the database, and never fails it.
+func (r *runner) compareRebuild(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
+	target ontologyagent.HelixTarget, ontologyVersion string) {
+	if job.RefreshesLoadID == nil {
+		return
+	}
+	logger := log.From(ctx).With("job", job.ID, "ontology", job.OntologyID)
+	replaced, err := r.db.GetFoundryLoad(ctx, job.OntologyID, *job.RefreshesLoadID)
+	if err != nil || replaced.AppliedAt == nil {
+		return
+	}
+	body, err := json.Marshal(ontologyagent.CompareRequest{
+		RequestID: job.ID + ":compare", Database: binding.TenantID, LoadA: replaced.ID, LoadB: job.LoadID,
+		OntologyTOML: def.OntologyTOML, OntologyVersion: ontologyVersion, Helix: target,
+	})
+	if err != nil {
+		return
+	}
+	start := r.now()
+	raw, err := r.agent.Compare(ctx, body)
+	r.timeStep("compare", start)
+	var result ontologyagent.CompareResult
+	if err == nil {
+		result, err = ontologyagent.DecodeCompareResult(raw)
+	}
+	if err != nil {
+		rebuilds.WithLabelValues("failed").Inc()
+		logger.Warn("graph job: compare the applied load with its rebuild failed", "applied", replaced.ID, "err", err)
+		return
+	}
+	if result.Equal {
+		rebuilds.WithLabelValues("equal").Inc()
+		logger.Info("graph job: the rebuild holds what applies left", "applied", replaced.ID)
+		return
+	}
+	rebuilds.WithLabelValues("drifted").Inc()
+	for _, k := range result.Kinds {
+		if k.Equal {
+			continue
+		}
+		applyDrift.WithLabelValues(k.Kind).Inc()
+		logger.Warn("graph job: applies drifted from a fresh load", "applied", replaced.ID, "kind", k.Kind, "label", k.Label,
+			"applied_count", k.ACount, "rebuilt_count", k.BCount, "differing", k.Differing)
+	}
 }
 
 func (r *runner) timeStep(step string, start time.Time) {

@@ -70,6 +70,9 @@ type fakeAgent struct {
 	cluesCalls []string
 	// keys are each Extract's model key metadata.
 	keys [][]string
+	// compare answers Compare; compares are its requests.
+	compare  func(req string) string
+	compares []string
 }
 
 // refused is the agent's answer to a request its schema refuses, or nil.
@@ -850,7 +853,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	// Every request the worker sends is one the vendored schemas take.
 	schemas := map[string]*jsonschema.Resolved{}
-	for _, name := range []string{"ingest_request.json", "extract_request.json", "delete_load_request.json"} {
+	for _, name := range []string{"ingest_request.json", "extract_request.json", "delete_load_request.json", "compare_request.json"} {
 		schemas[name] = contracttest.Schema(t, name)
 	}
 	agent := &fakeAgent{

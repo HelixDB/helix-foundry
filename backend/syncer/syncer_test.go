@@ -1429,23 +1429,19 @@ func TestSyncerPushed(t *testing.T) {
 			t.Fatalf("failure = %+v, rows = %d, stored rows = %d", fl, res.Rows, res.StoredRows)
 		}
 	})
-	// Each refresh re-reads a pushed source's whole table, so a large one is
-	// refreshed less often; other kinds keep their plan's spacing.
-	t.Run("spaces only a pushed kind's refreshes by its rows", func(t *testing.T) {
+	// A refresh applies only what changed, so a pushed source's table, however
+	// large, is refreshed on its plan's spacing like any other kind's.
+	t.Run("spaces every kind's refreshes by the plan alone", func(t *testing.T) {
 		pushed := newChangeFixture(t, newPushedKind(0, `{"id":"a"}`, `{"id":"b"}`, `{"id":"c"}`, `{"id":"d"}`), "pro")
 		other := newChangeFixture(t, ordersKind(`{"id":1}`, `{"id":2}`, `{"id":3}`, `{"id":4}`), "pro")
 		for _, f := range []fixture{pushed, other} {
-			f.syncer.Refresh, f.syncer.RefreshAfterPerMillionRows = &refreshes{}, time.Hour
+			f.syncer.Refresh = &refreshes{}
 			if _, err := f.syncer.Run(context.Background(), f.sync); err != nil {
 				t.Fatal(err)
 			}
-		}
-		// Four rows are 4/1,000,000 of an hour: 14.4 ms on Pro's hour.
-		if got := pushed.syncer.Refresh.(*refreshes).every; !slices.Equal(got, []time.Duration{time.Hour + 14400*time.Microsecond}) {
-			t.Fatalf("pushed spacing = %v", got)
-		}
-		if got := other.syncer.Refresh.(*refreshes).every; !slices.Equal(got, []time.Duration{time.Hour}) {
-			t.Fatalf("other spacing = %v", got)
+			if got := f.syncer.Refresh.(*refreshes).every; !slices.Equal(got, []time.Duration{time.Hour}) {
+				t.Fatalf("spacing = %v", got)
+			}
 		}
 	})
 }

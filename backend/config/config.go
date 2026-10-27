@@ -297,6 +297,10 @@ type GraphConfig struct {
 	// Apply makes a refresh bring the current load up to date in place,
 	// writing only what changed; off, every refresh builds a new load.
 	Apply bool `koanf:"apply"`
+	// RebuildEvery is how long a load is applied to before an apply that
+	// brings it up to date queues a full load of the same snapshots, which is
+	// compared with it: drift is what applies left unlike a fresh load.
+	RebuildEvery time.Duration `koanf:"rebuild_every"`
 	// RetainLoads is how many loads an ontology keeps: the current one and
 	// the newest ready, partial or failed others. Older ones are deleted.
 	RetainLoads int `koanf:"retain_loads"`
@@ -828,10 +832,6 @@ type EventsConfig struct {
 	// per million rows of its table, since every merge rewrites it.
 	SyncAfter               time.Duration `koanf:"sync_after"`
 	SyncAfterPerMillionRows time.Duration `koanf:"sync_after_per_million_rows"`
-	// RefreshAfterPerMillionRows spaces the refreshes of an ontology that
-	// reads a source this much further apart per million rows of its table,
-	// beyond the plan's refresh_every: each refresh reads the whole table.
-	RefreshAfterPerMillionRows time.Duration `koanf:"refresh_after_per_million_rows"`
 	// MaxBatchesPerSync, MaxPiecesPerSync and MaxBytesPerSync bound one
 	// sync's read of a source (events.ReadBudget). The bytes are estimated:
 	// a batch's, plus each piece's padding and parsed fields.
@@ -887,7 +887,6 @@ func (e EventsConfig) Validate() error {
 		{"send_concurrency", int64(e.SendConcurrency)}, {"sync_after", int64(e.SyncAfter)},
 		{"max_sends_in_progress", int64(e.MaxSendsInProgress)},
 		{"sync_after_per_million_rows", int64(e.SyncAfterPerMillionRows)},
-		{"refresh_after_per_million_rows", int64(e.RefreshAfterPerMillionRows)},
 		{"max_batches_per_sync", int64(e.MaxBatchesPerSync)}, {"max_pieces_per_sync", e.MaxPiecesPerSync},
 		{"max_bytes_per_sync", e.MaxBytesPerSync}, {"max_extracted", int64(e.MaxExtracted)},
 	} {
@@ -1334,6 +1333,8 @@ func (c *Config) validateRoles(roles Roles) error {
 		case g.MaxJobUSD <= 0 || g.MonthlyUSD <= g.MaxJobUSD:
 			// Work no person started stops max_job_usd short of the month: at or below it, none would run.
 			return fmt.Errorf("foundry.graph max_job_usd must be positive and monthly_usd above max_job_usd")
+		case g.RebuildEvery <= 0:
+			return fmt.Errorf("foundry.graph.rebuild_every must be positive")
 		case g.RetainLoads < 1:
 			return fmt.Errorf("foundry.graph.retain_loads must be at least 1: the current load is always kept")
 		case g.DeleteBatch < 1 || g.DeleteBatch > 5000:
@@ -1444,7 +1445,6 @@ func Defaults() Config {
 		MaxSendsInProgress:         16,
 		SyncAfter:                  time.Minute,
 		SyncAfterPerMillionRows:    10 * time.Minute,
-		RefreshAfterPerMillionRows: 30 * time.Minute,
 		MaxBatchesPerSync:          1000,
 		MaxPiecesPerSync:           50_000,
 		MaxBytesPerSync:            128 << 20,
@@ -1509,6 +1509,7 @@ func Defaults() Config {
 		RetainLoads:       5,
 		DeleteBatch:       1000,
 		Apply:             true,
+		RebuildEvery:      7 * 24 * time.Hour,
 	}, Read: ReadConfig{
 		GRPC:      ServiceGRPCConfig{Listen: ":50068", MaxRecvMsgMB: 16},
 		HTTP:      ServiceHTTPConfig{Listen: ":8100"},

@@ -761,7 +761,7 @@ type FoundryGraphJob struct {
 	// Sources are the snapshots a load job reads, pinned on its first attempt.
 	Sources []FoundryLoadSource
 	// Origin and RefreshesLoadID are written to the load a load job creates;
-	// a claim reads Origin back from the job's load.
+	// a claim reads both back from the job's load.
 	Origin          FoundryLoadOrigin
 	RefreshesLoadID *string
 }
@@ -814,11 +814,14 @@ type FoundryGraphJobOutcome struct {
 type FoundryGraphNext struct {
 	ExtractID string
 	DeleteID  string
-	// RefreshID is the id of the full refresh load an apply that failed
-	// before its tables were in queues in its place.
-	RefreshID   string
-	Budget      FoundryGraphBudget
-	RetainLoads int
+	// RefreshID is the id of the full refresh load an apply queues: in its
+	// place when it failed before its tables were in, or after it when the
+	// load it brought up to date was built before RebuildBefore (a rebuild of
+	// the same snapshots, which the rebuild then compares it with).
+	RefreshID     string
+	RebuildBefore time.Time
+	Budget        FoundryGraphBudget
+	RetainLoads   int
 }
 
 // FoundryGraphJobFinish is what finishing an attempt did.

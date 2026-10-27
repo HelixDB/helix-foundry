@@ -179,6 +179,64 @@ func TestFoundryApply(t *testing.T) {
 		assert.Equal(t, model.FoundryGraphJobApply, apply.Kind)
 	})
 
+	// A load applied to for longer than rebuild_every is built again, from the
+	// very snapshots its last apply brought it to: comparing the two then
+	// measures drift, not newer data.
+	t.Run("rebuilds an old load at the snapshots its apply brought it to", func(t *testing.T) {
+		ctx := context.Background()
+		f, connectorID, current := refreshFixture(t, "AB")
+		_, err := testDB.ExecContext(ctx, `UPDATE foundry_loads SET finished_at = NOW(6) - INTERVAL 8 DAY WHERE id=?`, current)
+		require.NoError(t, err)
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		_, err = f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("b1"))
+		require.NoError(t, err)
+		job := f.claimed(t, "w2", id26("AJ-b1"))
+		require.NoError(t, f.db.SetFoundryGraphJobSources(ctx, job.ID, "w2", applyPins("b1", 9)))
+		handover := next("b1")
+		handover.RefreshID, handover.RebuildBefore = id26("AR-b1"), time.Now().Add(-7*24*time.Hour)
+		_, err = f.db.FinishFoundryGraphJob(ctx, job.ID, "w2", model.FoundryGraphJobOutcome{
+			Status: model.FoundryGraphJobSucceeded, IngestDone: true, Next: handover,
+		})
+		require.NoError(t, err)
+		rebuild := f.liveJob(t)
+		require.NotNil(t, rebuild, "the apply queued a rebuild")
+		assert.Equal(t, id26("AR-b1"), rebuild.ID)
+		assert.Equal(t, model.FoundryGraphJobLoad, rebuild.Kind)
+		assert.Equal(t, applyPins("b1", 9), rebuild.Sources, "the rebuild reads what the apply pinned")
+		claimed := f.claimed(t, "w3", rebuild.ID)
+		require.NotNil(t, claimed.RefreshesLoadID)
+		assert.Equal(t, current, *claimed.RefreshesLoadID)
+	})
+
+	// A load built within rebuild_every keeps being applied to.
+	t.Run("leaves a young load to its applies", func(t *testing.T) {
+		ctx := context.Background()
+		f, connectorID, _ := refreshFixture(t, "AY")
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, applyJob("y1"))
+		require.NoError(t, err)
+		job := f.claimed(t, "w2", id26("AJ-y1"))
+		handover := next("y1")
+		handover.RefreshID, handover.RebuildBefore = id26("AR-y1"), time.Now().Add(-7*24*time.Hour)
+		_, err = f.db.FinishFoundryGraphJob(ctx, job.ID, "w2", model.FoundryGraphJobOutcome{
+			Status: model.FoundryGraphJobSucceeded, IngestDone: true, Next: handover,
+		})
+		require.NoError(t, err)
+		assert.Nil(t, f.liveJob(t))
+	})
+
+	// A rebuild compares itself with the load it replaces, which its claim names.
+	t.Run("claims a refresh load with the load it replaces", func(t *testing.T) {
+		ctx := context.Background()
+		f, connectorID, current := refreshFixture(t, "AC")
+		require.NoError(t, f.db.OweFoundryRefreshes(ctx, f.ontology.WorkspaceID, connectorID, []string{"customers"}, time.Millisecond))
+		_, err := f.db.QueueFoundryRefresh(ctx, f.ontology.WorkspaceID, f.ontology.ID, refreshJob("c1"))
+		require.NoError(t, err)
+		job := f.claimed(t, "w2", id26("RJ-c1"))
+		require.NotNil(t, job.RefreshesLoadID)
+		assert.Equal(t, current, *job.RefreshesLoadID)
+	})
+
 	// A deleted load's positions go with its other rows.
 	t.Run("forgets a deleted load's snapshots", func(t *testing.T) {
 		ctx := context.Background()
