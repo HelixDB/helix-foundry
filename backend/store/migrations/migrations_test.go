@@ -32,7 +32,7 @@ func isolatedTestDB(t *testing.T) *sql.DB {
 	}
 	if err := root.Ping(); err != nil {
 		root.Close()
-		t.Skipf("no test DB (%v); run `make start-testdb`", err)
+		t.Skipf("no test DB (%v); run `docker compose -f compose.test.yaml up -d --wait`", err)
 	}
 	const schema = "foundry_migrations_test"
 	for _, stmt := range []string{"DROP DATABASE IF EXISTS " + schema, "CREATE DATABASE " + schema} {

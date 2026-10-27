@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The test databases come from docker-compose.test.yml (make start-testdb).
+// The test databases come from compose.test.yaml (docker compose -f compose.test.yaml up -d --wait).
 const (
 	testMySQLAddr = "127.0.0.1:3307"
 	// testMySQLGTIDAddr runs with gtid_mode ON, for the binlog reader's GTID positions.
@@ -39,7 +39,7 @@ func mysqlFixture(t *testing.T) string {
 	t.Cleanup(func() { root.Close() })
 	name := fmt.Sprintf("connector_test_%d", time.Now().UnixNano())
 	if _, err := root.Exec("CREATE DATABASE " + name); err != nil {
-		t.Fatalf("create test database (is make start-testdb running?): %v", err)
+		t.Fatalf("create test database (are the test databases up? compose.test.yaml): %v", err)
 	}
 	t.Cleanup(func() { _, _ = root.Exec("DROP DATABASE " + name) })
 	if _, err := root.Exec("USE " + name + ";" + customersAndOrders); err != nil {
@@ -54,7 +54,7 @@ func postgresFixture(t *testing.T) string {
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, fmt.Sprintf("postgres://helix:helix@%s:%d/helix_connector_test?sslmode=disable", testPostgresHost, testPostgresPort))
 	if err != nil {
-		t.Fatalf("connect test postgres (is make start-testdb running?): %v", err)
+		t.Fatalf("connect test postgres (are the test databases up? compose.test.yaml): %v", err)
 	}
 	t.Cleanup(func() { conn.Close(context.Background()) })
 	name := fmt.Sprintf("connector_test_%d", time.Now().UnixNano())
@@ -157,8 +157,8 @@ func TestMySQLConnector(t *testing.T) {
 	})
 	// On a hosted deployment the guard is on, so a customer cannot point a connector at our network.
 	t.Run("refuses a database inside our network", func(t *testing.T) {
-		stamp := NewCatalog(DefaultEndpoints(), Guard{}, S3Options{}, EventsOptions{})
-		_, err := discoverDatabase(t, kindOf(t, stamp, "mysql"), base("helix_provision_test"), "helix")
+		catalog := NewCatalog(DefaultEndpoints(), Guard{}, S3Options{}, EventsOptions{})
+		_, err := discoverDatabase(t, kindOf(t, catalog, "mysql"), base("helix_provision_test"), "helix")
 		var invalidErr *InvalidError
 		if !errors.As(err, &invalidErr) {
 			t.Fatalf("Discover error = %v, want InvalidError", err)
@@ -224,8 +224,8 @@ func TestPostgresConnector(t *testing.T) {
 		}
 	})
 	t.Run("refuses a database inside our network", func(t *testing.T) {
-		stamp := NewCatalog(DefaultEndpoints(), Guard{}, S3Options{}, EventsOptions{})
-		_, err := discoverDatabase(t, kindOf(t, stamp, "postgres"), base("public"), "helix")
+		catalog := NewCatalog(DefaultEndpoints(), Guard{}, S3Options{}, EventsOptions{})
+		_, err := discoverDatabase(t, kindOf(t, catalog, "postgres"), base("public"), "helix")
 		var invalidErr *InvalidError
 		if !errors.As(err, &invalidErr) {
 			t.Fatalf("Discover error = %v, want InvalidError", err)

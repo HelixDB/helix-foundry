@@ -899,7 +899,7 @@ func TestEventSourceTextField(t *testing.T) {
 		ctx := context.Background()
 		// Lock waits are in performance_schema, which the test user, like
 		// the app's, may not read: it holds only its own schema
-		// (docker-compose.test.yml). Root reads them.
+		// (compose.test.yaml). Root reads them.
 		rootDSN := os.Getenv("HELIX_TEST_ROOT_DSN")
 		if rootDSN == "" {
 			rootDSN = "root:helix@tcp(127.0.0.1:3307)/"

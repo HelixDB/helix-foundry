@@ -12,7 +12,7 @@ var jobs = promauto.NewCounterVec(prometheus.CounterOpts{
 
 var refreshLag = promauto.NewHistogram(prometheus.HistogramOpts{
 	Name:    "helix_foundry_refresh_lag_seconds",
-	Help:    "How long a refresh load waited between being queued and its first claim; growth means the stamp needs more graph workers.",
+	Help:    "How long a refresh load waited between being queued and its first claim; growth means the deployment needs more graph workers.",
 	Buckets: []float64{1, 10, 30, 60, 300, 900, 1800, 3600, 4 * 3600},
 })
 

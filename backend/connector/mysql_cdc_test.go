@@ -42,7 +42,7 @@ func TestMySQLBinlogGTID(t *testing.T) {
 	if _, err := root.Exec("CREATE DATABASE " + database + "; USE " + database + `;
 CREATE TABLE customers (id INT PRIMARY KEY, email VARCHAR(100));
 INSERT INTO customers VALUES (1, 'a@example.com'), (2, 'b@example.com');`); err != nil {
-		t.Fatalf("create database (is make start-testdb running?): %v", err)
+		t.Fatalf("create database (are the test databases up? compose.test.yaml): %v", err)
 	}
 	t.Cleanup(func() { _, _ = root.Exec("DROP DATABASE " + database) })
 	kind := kindOf(t, NewCatalog(DefaultEndpoints(), Guard{AllowPrivate: true}, S3Options{}, EventsOptions{}), "mysql")
