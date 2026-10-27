@@ -410,7 +410,7 @@ func TestDetectLMStudio(t *testing.T) {
 			{"id":"text-embedding-nomic","type":"embeddings","state":"loaded"},
 			{"id":"qwen2.5-7b-instruct","type":"llm","state":"not-loaded"},
 			{"id":"gemma-3-12b","type":"vlm","state":"loaded"}]}`}, "gemma-3-12b"},
-		"none loaded": {map[string]string{"/api/v0/models": `{"data":[{"id":"qwen2.5-7b-instruct","type":"llm","state":"not-loaded"}]}`}, "qwen2.5-7b-instruct"},
+		"none loaded":        {map[string]string{"/api/v0/models": `{"data":[{"id":"qwen2.5-7b-instruct","type":"llm","state":"not-loaded"}]}`}, "qwen2.5-7b-instruct"},
 		"an older LM Studio": {map[string]string{"/v1/models": `{"data":[{"id":"text-embedding-nomic"},{"id":"mistral-7b"}]}`}, "mistral-7b"},
 	} {
 		t.Run(name, func(t *testing.T) {

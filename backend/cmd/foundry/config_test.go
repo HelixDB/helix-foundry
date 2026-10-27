@@ -233,7 +233,8 @@ func TestAIDefaultDetection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.detectedAI == nil || cfg.foundry().Host.DetectedAI != cfg.detectedAI || cfg.foundry().Host.DetectedAI != cfg.foundry().Host.DetectedAI {
+	// Every part's configuration holds the one the look stores into.
+	if first, again := cfg.foundry(), cfg.foundry(); cfg.detectedAI == nil || first.Host.DetectedAI != cfg.detectedAI || again.Host.DetectedAI != cfg.detectedAI {
 		t.Fatalf("detected = %v", cfg.detectedAI)
 	}
 	d, err := newDetector(cfg.foundry(), slog.New(slog.NewTextHandler(io.Discard, nil)), func(k string) string {

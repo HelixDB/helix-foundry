@@ -334,7 +334,7 @@ type (
 	}
 	ollamaShow struct {
 		// Capabilities is absent from a server too old to report them.
-		Capabilities *[]string     `json:"capabilities"`
+		Capabilities *[]string      `json:"capabilities"`
 		ModelInfo    map[string]any `json:"model_info"`
 		RemoteHost   string         `json:"remote_host"`
 		// Requires is the oldest Ollama that runs the model, where it says.

@@ -59,7 +59,9 @@ type Host struct {
 
 // LiveAIDefault is a default model provider that may change while the
 // process runs: Store replaces it, and every reader sees the new one.
-type LiveAIDefault struct{ v atomic.Pointer[DetectedAIDefault] }
+type LiveAIDefault struct {
+	v atomic.Pointer[DetectedAIDefault]
+}
 
 // DetectedAIDefault is a default found on the machine.
 type DetectedAIDefault struct {
