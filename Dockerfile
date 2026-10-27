@@ -2,7 +2,8 @@
 # on this machine, no sign-in. It needs, at run time:
 #   HELIX_WFE_ORIGIN     the local API, e.g. http://pod:8081
 #   FOUNDRY_ORIGIN       the loopback origin the browser uses, e.g. http://localhost:3000
-#   FOUNDRY_LOCAL_TOKEN  the token the local API accepts as its owner
+#   FOUNDRY_LOCAL_TOKEN  the token the local API accepts as its owner, or
+#   FOUNDRY_LOCAL_TOKEN_FILE  a file holding it, read until it has one
 # The hosted site is built by Vercel, not from this file.
 
 FROM node:24-bookworm-slim AS build

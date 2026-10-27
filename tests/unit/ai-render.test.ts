@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as wfe from "@/shared/wfe";
 
 // Settings › AI models as an owner first sees it: the Ollama card only in a
-// local build, first of the providers there, with its server, model and
-// context window and no key; a saved Ollama server read back into its
-// fields; and an Ollama test's failure in Ollama's words. The build is
-// read as the page loads (src/shared/deployment.ts), so each render loads
-// the page afresh for it.
+// local build, first of the providers there, with its server, the models
+// its server has and its context window and no key; a saved Ollama server
+// read back into its fields; an Ollama test's failure in Ollama's words;
+// and how a local install found its default, or what it looked for. The
+// build is read as the page loads (src/shared/deployment.ts), so each
+// render loads the page afresh for it.
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -21,7 +22,25 @@ const free = (name: string) =>
     ["draft", "ask", "extract", "verify"].map((r) => [r, { name, free: {} }]),
   );
 
-async function render(local: boolean, ai: wfe.FoundryAi) {
+// What the bundled server has, as the mock's.
+const BUNDLED: wfe.FoundryOllamaServer = {
+  version: "0.13.0",
+  models: [
+    { name: "qwen3.5:4b", sizeBytes: "3389725347" },
+    {
+      name: "embeddinggemma",
+      sizeBytes: "621875047",
+      unusable: "Not a chat model.",
+    },
+  ],
+};
+
+async function render(
+  local: boolean,
+  ai: wfe.FoundryAi,
+  // What each Ollama server has, by base URL, as read already.
+  ollama: Record<string, wfe.FoundryOllamaServer> = {},
+) {
   vi.resetModules();
   vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", local ? "local" : "");
   const { createElement } = await import("react");
@@ -32,9 +51,13 @@ async function render(local: boolean, ai: wfe.FoundryAi) {
   const { MemoryRouter } = await import("react-router-dom");
   const { WorkspaceContext } = await import("@/web/ui");
   const { AiTab } = await import("@/web/areas/workspace/ai");
-  const { aiKey } = await import("@/web/areas/workspace/ai-api");
+  const { aiKey, ollamaModelsQuery } = await import(
+    "@/web/areas/workspace/ai-api"
+  );
   const qc = new QueryClient();
   qc.setQueryData(aiKey("ws_1"), ai);
+  for (const [url, server] of Object.entries(ollama))
+    qc.setQueryData(ollamaModelsQuery("ws_1", url).queryKey, server);
   return renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -83,10 +106,11 @@ describe("the Ollama card", () => {
   });
 
   it("comes first locally, on the bundled server with the install's model, keyless", async () => {
-    const html = await render(true, {
-      offered: OFFERED,
-      privateHostsAllowed: true,
-    });
+    const html = await render(
+      true,
+      { offered: OFFERED, privateHostsAllowed: true },
+      { "http://127.0.0.1:11434": BUNDLED },
+    );
     // No default: the first provider is chosen.
     expect(cards(html)).toEqual([
       "Ollama (checked)",
@@ -97,11 +121,14 @@ describe("the Ollama card", () => {
     expect(html).toContain("Runs on this machine; nothing leaves it.");
     expect(field(html, "Server")).toContain("Bundled");
     expect(field(html, "Server")).toContain(
-      "The Ollama that runs with Foundry",
+      "The Ollama that runs with Foundry, from the compose file’s ollama profile: docker compose --profile ollama up -d.",
     );
+    expect(field(html, "Server")).not.toContain("setup.sh");
     expect(html).not.toContain("Server address");
-    expect(field(html, "Model")).toContain('value="qwen3.5:4b"');
+    // One the server has, with its size; nothing to type.
+    expect(field(html, "Model")).toContain("qwen3.5:4b · 3.4 GB");
     expect(field(html, "Model")).toContain("No cost is counted.");
+    expect(html).not.toContain("<span>Model name</span>");
     // Drafting's window, which the bundled server loads models with.
     expect(field(html, "Context window")).toContain('value="65536"');
     expect(field(html, "Context window")).toContain(
@@ -132,11 +159,22 @@ describe("the Ollama card", () => {
       label: "Ollama",
       probeState: "FOUNDRY_AI_PROBE_STATE_PASSED",
     };
-    const html = await render(true, {
-      active: saved,
-      default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC", label: "Claude" },
-      offered: OFFERED,
-    });
+    const html = await render(
+      true,
+      {
+        active: saved,
+        default: { kind: "FOUNDRY_AI_KIND_ANTHROPIC", label: "Claude" },
+        offered: OFFERED,
+      },
+      {
+        "http://gpu.lan:11434": {
+          models: [
+            { name: "qwen3.5:9b", sizeBytes: "6591893504" },
+            { name: "qwen3.5:4b", sizeBytes: "3389725347" },
+          ],
+        },
+      },
+    );
     expect(cards(html)).toEqual([
       "Install default",
       "Ollama (checked)",
@@ -151,9 +189,9 @@ describe("the Ollama card", () => {
       'value="http://gpu.lan:11434"',
     );
     expect(field(html, "Context window")).toContain('value="65536"');
-    // A model per task, as saved.
-    expect(field(html, "Drafting")).toContain('value="qwen3.5:9b"');
-    expect(field(html, "Reading documents")).toContain('value="qwen3.5:4b"');
+    // A model per task, as saved, as the server lists it.
+    expect(field(html, "Drafting")).toContain("qwen3.5:9b · 6.6 GB");
+    expect(field(html, "Reading documents")).toContain("qwen3.5:4b · 3.4 GB");
   });
 
   it("says a cloud model's work leaves this machine, in the card", async () => {
@@ -186,6 +224,7 @@ describe("the Ollama card", () => {
       },
       offered: OFFERED,
     });
+
     expect(fallback).toContain(
       "Ollama, from .env. Sent to ollama.com through your Ollama server.",
     );
@@ -227,5 +266,88 @@ describe("the Ollama card", () => {
     });
     expect(html).toContain("Ollama, from .env. Sent to your Ollama server.");
     expect(cards(html)[0]).toBe("Install default (checked)");
+  });
+
+  it("keeps the model chosen while the server's are read", async () => {
+    const html = await render(true, { offered: OFFERED });
+    expect(field(html, "Model")).toContain("qwen3.5:4b");
+    expect(field(html, "Model")).toContain(
+      "Reading the models the server has…",
+    );
+    expect(html).not.toContain("<span>Model name</span>");
+  });
+
+  it("offers a model the server can't run, greyed with why, and another by name", async () => {
+    const html = await render(
+      true,
+      { offered: OFFERED },
+      {
+        "http://127.0.0.1:11434": {
+          version: "0.13.0",
+          models: [
+            {
+              name: "embeddinggemma",
+              sizeBytes: "621875047",
+              unusable: "Not a chat model.",
+            },
+          ],
+        },
+      },
+    );
+    // Nothing on it Foundry runs: the install's model, typed, which the
+    // server hasn't pulled.
+    expect(field(html, "Model")).toContain("Another model");
+    expect(field(html, "Model name")).toContain('value="qwen3.5:4b"');
+    expect(field(html, "Model name")).toContain(
+      "The server hasn’t pulled qwen3.5:4b. Pull it there with ollama pull qwen3.5:4b before testing it.",
+    );
+  });
+
+  it("says why a server's models can't be listed, and takes one by name", async () => {
+    const problem =
+      "The bundled Ollama isn't running. Start it with docker compose --profile ollama up -d.";
+    const html = await render(
+      true,
+      { offered: OFFERED },
+      { "http://127.0.0.1:11434": { problem } },
+    );
+    expect(field(html, "Model name")).toContain('value="qwen3.5:4b"');
+    // As the markup escapes it.
+    expect(field(html, "Model name")).toContain(problem.replace("'", "&#x27;"));
+  });
+});
+
+describe("the install default", () => {
+  it("says how a local install found it", async () => {
+    const summary =
+      "Using qwen3.5:4b from the bundled Ollama: the most capable model it has that calls tools.";
+    const html = await render(true, {
+      default: {
+        kind: "FOUNDRY_AI_KIND_OLLAMA",
+        label: "Ollama",
+        models: free("qwen3.5:4b"),
+      },
+      detected: { summary, detectedAt: "2026-10-27T10:00:00Z" },
+      offered: OFFERED,
+    });
+    expect(cards(html)[0]).toBe("Install default (checked)");
+    expect(html).toContain(`${summary} Sent to your Ollama server.`);
+    expect(html).not.toContain("from .env");
+  });
+
+  it("says what a local install looked for when it found none", async () => {
+    const summary =
+      "No AI provider was found. Foundry looks for an ANTHROPIC_API_KEY or OPENAI_API_KEY where it was started, a model that calls tools in Ollama, and a model LM Studio serves on this computer.";
+    const html = await render(true, {
+      detected: { summary },
+      offered: OFFERED,
+    });
+    expect(cards(html)).not.toContain("Install default");
+    expect(html).toContain(summary);
+    expect(html).not.toContain("No AI provider is set up.");
+    // Named by the install as none: today's words.
+    expect(await render(true, { offered: OFFERED })).toContain(
+      "No AI provider is set up.",
+    );
   });
 });

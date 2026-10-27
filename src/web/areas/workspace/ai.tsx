@@ -15,6 +15,7 @@ import type {
   FoundryAiProviderKind,
   FoundryAiRates,
   FoundryAiRole,
+  FoundryOllamaServer,
 } from "../../../shared/wfe";
 import {
   Button,
@@ -32,11 +33,12 @@ import { isProRequired } from "./pro-gate";
 
 // Settings › AI models: where the workspace's drafts,
 // document reads and questions run. Hosted, that is the default unless an
-// owner brings a key (Foundry Pro or Max); a local install starts on its
-// .env's provider, or none. An owner's save is tested before it is used:
-// the page reads the setting every 1.5 s until the test ends, and says
-// so when it passes or why it failed (the setting in force stays). Owners
-// see what runs as the form's choice; everyone else reads one line.
+// owner brings a key (Foundry Pro or Max); a local install starts on the
+// provider its .env names, else the one it found on its machine (it looks
+// again as the page opens), or none. An owner's save is tested before it
+// is used: the page reads the setting every 1.5 s until the test ends, and
+// says so when it passes or why it failed (the setting in force stays).
+// Owners see what runs as the form's choice; everyone else reads one line.
 
 // The kinds this site has a form for, and the provider message each sends
 // given the Azure endpoint typed (normalized, or empty until it is one) and
@@ -80,6 +82,16 @@ type OllamaFields = {
 };
 const ollamaUrl = (o: OllamaFields) =>
   o.server === "other" ? o.url : AI.OLLAMA_SERVERS[o.server].url;
+// What the Ollama card has read of the server it asked (`url`): whether it
+// is reading its models, and what it said.
+type OllamaListing = {
+  url: string;
+  loading: boolean;
+  server?: FoundryOllamaServer;
+};
+// How long an Ollama server's address stays as typed before its models are
+// read.
+const TYPING_MS = 500;
 // A Bedrock card's region (empty until one is chosen) and FIPS choice.
 type Bedrock = { region: string; fips: boolean };
 const NO_REGION: Bedrock = { region: "", fips: false };
@@ -92,9 +104,29 @@ type CardFields = {
 type Picks = Record<FoundryAiRole, AI.ModelPick>;
 
 export function AiTab() {
-  const { id, role, notify } = useWorkspace();
+  const { id, role, notify } = useWorkspace(),
+    qc = useQueryClient();
   const query = useQuery(AI.aiQuery(id));
   const ai = query.data;
+  // A local install that finds its own default looks again once as the
+  // page opens, so a model pulled or a key given since it started is used
+  // without a restart. The setting is read already, so a failure changes
+  // nothing; an answer is kept unless the setting changed meanwhile, when
+  // it is read again.
+  const looked = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!ai?.detected || role !== "owner" || looked.current === id) return;
+    looked.current = id;
+    const before = qc.getQueryData(AI.aiKey(id));
+    AI.detectAi(id).then(
+      (next) => {
+        if (qc.getQueryData(AI.aiKey(id)) === before)
+          qc.setQueryData(AI.aiKey(id), next);
+        else void qc.invalidateQueries({ queryKey: AI.aiKey(id) });
+      },
+      () => {},
+    );
+  }, [ai, id, role, qc]);
   // The save this tab saw being tested: once it is the setting, say so.
   const watched = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -127,9 +159,13 @@ export function AiTab() {
       </Panel>
     );
   return role === "owner" ? (
-    // Keyed by the setting: once a save becomes it, the form starts afresh
-    // from it.
-    <OwnerForm key={ai.active?.id ?? "default"} ai={ai} />
+    // Keyed by the setting and the default's kind: once a save becomes the
+    // setting, or the install finds another default, the form starts
+    // afresh from it.
+    <OwnerForm
+      key={`${ai.active?.id ?? "default"} ${ai.default?.kind ?? "none"}`}
+      ai={ai}
+    />
   ) : (
     <Status ai={ai} />
   );
@@ -160,7 +196,8 @@ function Notices({ ai }: { ai: FoundryAi }) {
   return (
     <>
       {AI.inForce(ai).source === "none" && (
-        <p className="wk-note">{AI.NO_PROVIDER}</p>
+        // A local install that looked for one says what it looked for.
+        <p className="wk-note">{ai.detected?.summary || AI.NO_PROVIDER}</p>
       )}
       {AI.paused(ai) && (
         <p role="alert" className="hf-form-error">
@@ -300,6 +337,62 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
     [error, setError] = useState<unknown>(null);
   const kind = card === "default" ? undefined : card,
     offer = offers.find((o) => o.kind === kind);
+
+  // The Ollama server whose models the card lists: one it names at once,
+  // another once its address is valid and stays as typed for TYPING_MS.
+  const typedServer =
+    ollama.server === "other" && !AI.endpointProblem(OLLAMA, ollama.url, LOCAL)
+      ? AI.baseUrl(ollama.url)
+      : undefined;
+  const [settled, setSettled] = useState(typedServer);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSettled(typedServer), TYPING_MS);
+    return () => window.clearTimeout(t);
+  }, [typedServer]);
+  const asked =
+    kind !== OLLAMA
+      ? undefined
+      : ollama.server === "other"
+        ? typedServer === settled
+          ? settled
+          : undefined
+        : AI.OLLAMA_SERVERS[ollama.server].url;
+  const read = useQuery({
+    ...AI.ollamaModelsQuery(id, asked || ""),
+    enabled: LOCAL && !!asked,
+  });
+  const listing: OllamaListing | undefined = asked
+    ? { url: asked, loading: read.isLoading, server: read.data }
+    : undefined;
+  // Its models follow the server's best (AI.ollamaBest) until the owner
+  // chooses one: from the start, unless the setting is Ollama's, whose
+  // models are kept, and again once another server than the setting's is
+  // chosen.
+  const settingServer =
+    now.source === "workspace" && activeKind === OLLAMA
+      ? AI.baseUrl(now.config.provider?.ollama?.baseUrl || "")
+      : undefined;
+  const [auto, setAuto] = useState(!settingServer);
+  const best = AI.ollamaBest(listing?.server);
+  useEffect(() => {
+    if (kind !== OLLAMA || !auto || !best) return;
+    setModels(all({ name: best, free: {} }));
+    setPerTask(false);
+  }, [kind, auto, best]);
+  const editOllama = (o: OllamaFields) => {
+    const url = AI.baseUrl(ollamaUrl(o));
+    if (url !== AI.baseUrl(ollamaUrl(ollama))) {
+      // Back on the setting's server: its models again.
+      setAuto(url !== settingServer);
+      if (url === settingServer) {
+        const start = startFor(OLLAMA);
+        setModels(start);
+        setPerTask(perTaskFor(OLLAMA, start));
+      }
+    }
+    setOllama(o);
+  };
+
   const names = AI.roleModels(models);
   const choice: AI.Choice | undefined = kind && {
     kind,
@@ -330,6 +423,7 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
   const editModels = (m: Picks) => {
     if (kind === AZURE && m.draft.name.trim() !== models.draft.name.trim())
       setApiKey("");
+    if (kind === OLLAMA) setAuto(false);
     setModels(m);
   };
   const gated = !!kind && !!ai.proRequired;
@@ -382,6 +476,10 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
     const start = startFor(c);
     setModels(start);
     setPerTask(perTaskFor(c, start));
+    if (c === OLLAMA)
+      setAuto(
+        !settingServer || AI.baseUrl(ollamaUrl(ollama)) !== settingServer,
+      );
   };
 
   const save = async () => {
@@ -474,7 +572,7 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
                 title={LOCAL ? AI.INSTALL_DEFAULT : AI.HOUSE.title}
                 description={
                   LOCAL
-                    ? `${ai.default.label || "Its provider"}, from .env. ${defaultDisclosure(ai)}`
+                    ? `${ai.detected?.summary || `${ai.default.label || "Its provider"}, from .env.`} ${defaultDisclosure(ai)}`
                     : AI.HOUSE.disclosure
                 }
                 icon={
@@ -562,7 +660,7 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
                 <OllamaServer
                   value={ollama}
                   disabled={pending}
-                  onChange={setOllama}
+                  onChange={editOllama}
                 />
               )}
               {kind === BEDROCK && (
@@ -578,9 +676,11 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
                 models={models}
                 suggested={suggestedFor(kind)}
                 perTask={perTask}
+                listing={listing}
                 disabled={pending}
                 onModels={editModels}
                 onPerTask={(on) => {
+                  if (kind === OLLAMA) setAuto(false);
                   setPerTask(on);
                   if (!on && !uniform(models))
                     editModels(suggestedFor(kind) ?? all(models.draft));
@@ -779,6 +879,7 @@ function Models({
   models,
   suggested,
   perTask,
+  listing,
   disabled,
   onModels,
   onPerTask,
@@ -787,6 +888,8 @@ function Models({
   models: Picks;
   suggested?: Picks;
   perTask: boolean;
+  // Ollama's: what its server has.
+  listing?: OllamaListing;
   disabled: boolean;
   onModels: (m: Picks) => void;
   onPerTask: (on: boolean) => void;
@@ -805,13 +908,16 @@ function Models({
             : CatalogModel;
   return (
     <>
+      {/* Ollama's fields start afresh for another server. */}
       {!perTask && (
         <Field
+          key={listing?.url}
           kind={kind}
           title={kind === AZURE ? "Every task" : "Model"}
           pick={recommended ? undefined : (one ?? models.draft)}
           suggested={suggested}
           every
+          listing={listing}
           disabled={disabled}
           onPick={(p) => onModels(p ? all(p) : suggested!)}
         />
@@ -830,10 +936,11 @@ function Models({
       {perTask &&
         AI.ROLE_IDS.map((r) => (
           <Field
-            key={r}
+            key={`${r} ${listing?.url ?? ""}`}
             kind={kind}
             title={AI.ROLES[r]}
             pick={models[r]}
+            listing={listing}
             disabled={disabled}
             onPick={(p) => p && onModels({ ...models, [r]: p })}
           />
@@ -851,6 +958,8 @@ type FieldProps = {
   suggested?: Picks;
   // Whether it sets every task's model.
   every?: boolean;
+  // Ollama's: what its server has.
+  listing?: OllamaListing;
   disabled: boolean;
   onPick: (p?: AI.ModelPick) => void;
 };
@@ -1179,39 +1288,104 @@ function CompatServer({
   );
 }
 
-/** A model the Ollama server has, by name: it runs at no cost counted. */
+/**
+ * A model the Ollama server has: one it lists (those Foundry can run first,
+ * each with its size; one it can't, with why, not to be chosen), or another
+ * by name, such as one not pulled yet. While the list is read, the model
+ * chosen stays chosen; a server that can't list its models says why. It
+ * runs at no cost counted.
+ */
 function OllamaModel({
   kind,
   title,
   pick,
   every,
+  listing,
   disabled,
   onPick,
 }: FieldProps) {
-  const name = pick?.name ?? "";
-  const named = name.trim() ? AI.nameProblem(kind, name) : undefined;
+  const name = pick?.name ?? "",
+    trimmed = name.trim();
+  const choices = AI.ollamaChoices(listing?.server),
+    problem = listing?.server?.problem;
+  const chosen = choices.find((c) => c.name === name);
+  // A name typed stays typed, even one the server lists, so the field
+  // doesn't turn into the list as it is typed.
+  const [typed, setTyped] = useState(false);
+  const reading = !!listing?.loading && !!name && !chosen;
+  const value = typed || !(chosen || reading) ? OTHER : name;
+  const named = trimmed ? AI.nameProblem(kind, name) : undefined;
+  const cloud = AI.ollamaCloud(name)
+    ? "Ollama runs this model on ollama.com, so what it is sent leaves this machine. The bundled server runs no cloud models."
+    : undefined;
+  // The server listed its models, and this one isn't among them.
+  const unpulled =
+    !!listing?.server &&
+    !problem &&
+    !!trimmed &&
+    !choices.some((c) => c.name === trimmed || c.name === `${trimmed}:latest`);
+  const hint =
+    value === OTHER
+      ? named ||
+        problem ||
+        chosen?.unusable ||
+        cloud ||
+        (unpulled
+          ? `The server hasn’t pulled ${trimmed}. Pull it there with ollama pull ${trimmed} before testing it.`
+          : every
+            ? `A model the server has pulled that calls tools, like ${AI.OLLAMA_MODEL}. No cost is counted.`
+            : undefined)
+      : chosen?.unusable ||
+        problem ||
+        cloud ||
+        (reading
+          ? "Reading the models the server has…"
+          : every
+            ? "No cost is counted."
+            : undefined);
   return (
     <div role="group" aria-label={title} className="wk-ai-model">
       <label className="hf-field">
         <span>{title}</span>
-        <input
-          autoComplete="off"
-          spellCheck={false}
+        <Select
+          label={title}
+          value={value}
           disabled={disabled}
-          placeholder={AI.OLLAMA_MODEL}
-          value={name}
-          aria-invalid={!!named}
-          onChange={(e) => onPick({ name: e.target.value, free: {} })}
+          onChange={(v) => {
+            setTyped(v === OTHER);
+            onPick({ name: v === OTHER ? "" : v, free: {} });
+          }}
+          options={[
+            ...(reading ? [{ value: name, label: name }] : []),
+            ...choices.map((c) => ({
+              value: c.name,
+              label: c.label,
+              hint: c.unusable || undefined,
+              disabled: !!c.unusable,
+            })),
+            { value: OTHER, label: "Another model", hint: "Enter its name" },
+          ]}
         />
-        {(named || every || AI.ollamaCloud(name)) && (
-          <small>
-            {named ??
-              (AI.ollamaCloud(name)
-                ? "Ollama runs this model on ollama.com, so what it is sent leaves this machine. The bundled server runs no cloud models."
-                : `A model the server has pulled that calls tools, like ${AI.OLLAMA_MODEL}. No cost is counted.`)}
-          </small>
-        )}
+        {value !== OTHER && hint && <small>{hint}</small>}
       </label>
+      {value === OTHER && (
+        <label className="hf-field">
+          <span>Model name</span>
+          <input
+            autoComplete="off"
+            spellCheck={false}
+            disabled={disabled}
+            placeholder={AI.OLLAMA_MODEL}
+            value={name}
+            aria-invalid={!!named}
+            onChange={(e) => {
+              setTyped(true);
+              onPick({ name: e.target.value, free: {} });
+            }}
+          />
+          {hint && <small>{hint}</small>}
+        </label>
+      )}
     </div>
   );
 }
@@ -1262,7 +1436,7 @@ function OllamaServer({
           {
             {
               bundled:
-                "The Ollama that runs with Foundry: setup.sh’s Ollama in Docker, or the compose file’s ollama profile.",
+                "The Ollama that runs with Foundry, from the compose file’s ollama profile: docker compose --profile ollama up -d.",
               host: `Ollama installed on this computer; ${AI.OLLAMA_LINUX_HOST}`,
               other: "An Ollama server this computer can reach.",
             }[value.server]

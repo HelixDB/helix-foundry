@@ -8,6 +8,7 @@ import { sendPieces } from "./routes/event-sources";
 import {
   LOCAL_TOKEN,
   SEED_EMAIL,
+  applyConfig,
   config,
   db,
   resetState,
@@ -30,7 +31,9 @@ import { handleWorkos } from "./workos";
 // ontologyDatabaseHidden, startingQueries, readErrors, s3RoleAccess,
 // legacyDocumentSets, dataLayoutConflicts, enrichmentStepMs,
 // enrichmentOutcome, documentsPerStream, eventSyncMs, eventCaps,
-// eventSetAllowanceSpent, aiProbeMs, aiProbeOutcome, aiDefault, aiKinds }.
+// eventSetAllowanceSpent, aiProbeMs, aiProbeOutcome, aiDefault,
+// aiDefaultKind, aiDefaultNamed, aiDetect, ollamaBundled, aiKinds,
+// freshInstall }.
 //
 // POST /__mock/event-sources/{connectorId}/pieces sends pieces to an API
 // source, as an agent does through the Helix MCP: { clientToken?, pieces:
@@ -119,9 +122,10 @@ const server = createServer(async (req, res) => {
       }
       if (url.pathname === "/__mock/reset" && req.method === "POST")
         resetState();
-      else if (url.pathname === "/__mock/config" && req.method === "POST")
+      else if (url.pathname === "/__mock/config" && req.method === "POST") {
         Object.assign(config, JSON.parse(raw || "{}"));
-      else if (url.pathname !== "/__mock/stats") {
+        applyConfig();
+      } else if (url.pathname !== "/__mock/stats") {
         res.writeHead(404).end();
         return;
       }

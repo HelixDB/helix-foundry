@@ -75,7 +75,9 @@ export const papiRoutes = [
     path: "/v1/workspaces/{workspaceId}/foundry/enrichment",
   },
   // AI models: where the workspace's model calls go, and an owner's change
-  // (back to the default, or a provider tested before it is used).
+  // (back to the default, or a provider tested before it is used). A local
+  // install also looks again for its default as the page opens, and lists
+  // an Ollama server's models for its card.
   {
     area: "workspace",
     method: "GET",
@@ -85,6 +87,16 @@ export const papiRoutes = [
     area: "workspace",
     method: "PUT",
     path: "/v1/workspaces/{workspaceId}/foundry/ai",
+  },
+  {
+    area: "workspace",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ai/detect",
+  },
+  {
+    area: "workspace",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ai/ollama-models",
   },
 
   // Data: connectors (kinds, test, create, read, edit, delete), their syncs
