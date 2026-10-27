@@ -52,6 +52,56 @@ func TestSeedOwnerIsIdempotent(t *testing.T) {
 	}
 }
 
+// A new install's first start makes "My workspace", as the owner would; no
+// later start makes another, nor one again once the install has had any.
+func TestSeedWorkspace(t *testing.T) {
+	st := needDB(t)
+	svc := newService(st, "")
+	ctx := context.Background()
+	seeded, err := svc.SeedWorkspace(ctx)
+	if err != nil || seeded == nil {
+		t.Fatalf("first start: %v, %v", seeded, err)
+	}
+	if seeded.GetSlug() != directory.FirstWorkspaceSlug || seeded.GetDisplayName() != "My workspace" || seeded.GetRegion() != directory.Region ||
+		seeded.GetStatus() != directoryv1.ResourceStatus_RESOURCE_STATUS_ACTIVE {
+		t.Fatalf("seeded = %v", seeded)
+	}
+	again, err := svc.SeedWorkspace(ctx)
+	if err != nil || again != nil {
+		t.Fatalf("second start: %v, %v", again, err)
+	}
+	// The owner sees it as any workspace they made.
+	me, err := svc.Whoami(asOwner(t, st), &directoryv1.WhoamiRequest{})
+	if err != nil || len(me.GetWorkspaces()) != 1 || me.GetWorkspaces()[0].GetWorkspaceId() != seeded.GetId() ||
+		me.GetWorkspaces()[0].GetRole() != directoryv1.WorkspaceRole_WORKSPACE_ROLE_OWNER {
+		t.Fatalf("whoami = %v, %v", me, err)
+	}
+
+	// An install that already has workspaces, or had one, gets none.
+	for name, prepare := range map[string]func(t *testing.T){
+		"one of the owner's": func(t *testing.T) { createWorkspace(t, ctx, svc, "acme") },
+		"a deleted one": func(t *testing.T) {
+			w := createWorkspace(t, ctx, svc, "gone")
+			if _, err := testDB.Exec(`UPDATE workspaces SET status = 'deleted', deleted_at = NOW(6) WHERE id = ?`, w.GetId()); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := needDB(t)
+			svc = newService(st, "")
+			prepare(t)
+			if seeded, err := svc.SeedWorkspace(ctx); err != nil || seeded != nil {
+				t.Fatalf("seeded %v, %v", seeded, err)
+			}
+			var n int
+			if err := testDB.QueryRow(`SELECT COUNT(*) FROM workspaces WHERE slug = ?`, directory.FirstWorkspaceSlug).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("%d seeded, %v", n, err)
+			}
+		})
+	}
+}
+
 func TestWhoami(t *testing.T) {
 	st := needDB(t)
 	svc := newService(st, "")

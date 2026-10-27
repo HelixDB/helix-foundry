@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/helixdb/helix-foundry/backend/ai"
+	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
@@ -69,6 +70,8 @@ type runtimeDeps struct {
 	Databases  ports.Databases
 	Graph      ports.GraphReader
 	People     ports.People
+	// LocalAI is nil hosted.
+	LocalAI *detect.Detector
 }
 
 // New builds the API: its connector keyring and catalog, AI deployment,
@@ -98,7 +101,7 @@ func New(d Deps) (*Service, error) {
 	}
 	s := &Service{deps: &runtimeDeps{
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
-		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People,
+		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, LocalAI: d.LocalAI,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

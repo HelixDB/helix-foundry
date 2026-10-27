@@ -1415,4 +1415,46 @@ message FoundryAI {
   // refused (FAILED_PRECONDITION, reason FOUNDRY_PRO_REQUIRED) until it is
   // on Foundry Pro or Max. Going back to the default never is.
   bool pro_required = 7;
+  // How a local install that names no default provider found one on its
+  // machine (default, when it found one); unset hosted, and in an install
+  // whose FOUNDRY_AI_PROVIDER names its default.
+  FoundryAIDetected detected = 8;
+}
+
+// FoundryAIDetected is how a local install found its default, looking in
+// this order: an ANTHROPIC_API_KEY, then an OPENAI_API_KEY, in its
+// environment; an Ollama it can reach (the bundled one, then this
+// computer's) with a model that calls tools; LM Studio on this computer
+// serving a model. It looks again as Settings › AI models opens
+// (DetectFoundryAIDefault).
+message FoundryAIDetected {
+  // For the owner: what is used and why, or what was looked for and how to
+  // set a provider up. Never a key.
+  string                    summary     = 1;
+  google.protobuf.Timestamp detected_at = 2;
+}
+
+// FoundryOllamaServer is what an Ollama server has, as a local install
+// reads it for Settings › AI models.
+message FoundryOllamaServer {
+  // Its version; empty when it didn't answer.
+  string version = 1;
+  // For the owner: why its models can't be listed, or can't be told apart
+  // (a server too old to say which call tools), and how to fix it; empty
+  // when they can.
+  string                      problem = 2;
+  repeated FoundryOllamaModel models  = 3;
+}
+
+// FoundryOllamaModel is a model an Ollama server has pulled.
+message FoundryOllamaModel {
+  string name = 1;
+  // Its size on disk.
+  int64 size_bytes = 2;
+  // Like "4.0B"; empty when the server doesn't say.
+  string parameter_size = 3;
+  // For the owner: why Foundry can't run on it (it calls no tools, its
+  // context window is too small, it runs on ollama.com, it needs a newer
+  // Ollama); empty when it can, or when the server can't say.
+  string unusable = 4;
 }

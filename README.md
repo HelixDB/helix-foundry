@@ -14,16 +14,13 @@ You need Docker with Compose v2.
 
 ```sh
 git clone https://github.com/helixdb/helix-foundry.git
-cd helix-foundry/local
-./setup.sh                  # once: writes .env with this installation's secrets, and asks how AI should run
+cd helix-foundry
 docker compose up -d --wait
 ```
 
-Open http://localhost:3000. There is no sign-in: one owner, every connector and feature on.
+Open http://localhost:3000. There is no sign-in and nothing to set up: one owner, every connector and feature on, and a workspace to start in. The first start writes the install's secrets into a Docker volume; keep it (`docker compose down -v` deletes it with your data).
 
-AI runs where you choose: a local model with Ollama (in Docker or on your computer), Claude, OpenAI, Azure OpenAI or Amazon Bedrock with your own key, or any OpenAI-compatible server (LM Studio, vLLM, a gateway). `setup.sh` asks once; **Settings › AI models** tests and switches it later. [local/README.md](local/README.md) says what runs, where data lives, how each provider is set up and how to reach databases on this machine.
-
-`docker compose up` pulls Foundry's release images. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+AI runs where it finds it: Claude or OpenAI when the shell you ran `docker compose up` from has an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, else a model that calls tools in Ollama (`docker compose --profile ollama up -d` runs one beside Foundry, or use Ollama on your computer), else LM Studio on your computer. **Settings › AI models** says which it chose and why, and switches to Ollama, Claude, OpenAI, Azure OpenAI or Amazon Bedrock with your own key, or any OpenAI-compatible server (vLLM, a gateway). [local/README.md](local/README.md) says what runs, where data lives, what may be overridden, how each provider is set up and how to reach databases on this machine.
 
 ## Develop
 

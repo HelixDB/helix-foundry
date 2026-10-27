@@ -3,6 +3,7 @@
 // running half-configured.
 
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -44,11 +45,41 @@ export type LocalConfig = {
   origin: string;
 };
 
+// Tokens read from FOUNDRY_LOCAL_TOKEN_FILE, by path. Only a token long
+// enough is kept: a file missing, unreadable or still being written is read
+// again on the next request.
+const tokenFiles = new Map<string, string>();
+
+const longEnough = (token: string) => Buffer.byteLength(token, "utf8") >= 32;
+
+/**
+ * The owner's token: FOUNDRY_LOCAL_TOKEN, else the contents of the file
+ * FOUNDRY_LOCAL_TOKEN_FILE names (trimmed): the one a local install's first
+ * start wrote into its secrets volume (foundry init-secrets). "" when
+ * neither gives one.
+ */
+function localToken(env: NodeJS.ProcessEnv): string {
+  if (env.FOUNDRY_LOCAL_TOKEN) return env.FOUNDRY_LOCAL_TOKEN;
+  const path = env.FOUNDRY_LOCAL_TOKEN_FILE;
+  if (!path) return "";
+  const kept = tokenFiles.get(path);
+  if (kept) return kept;
+  try {
+    const token = readFileSync(path, "utf8").trim();
+    if (longEnough(token)) tokenFiles.set(path, token);
+    return token;
+  } catch {
+    return "";
+  }
+}
+
 /**
  * A local build's settings (src/shared/deployment.ts), or null when one is
  * missing or unsafe. The site must be a loopback origin: with no sign-in,
  * whoever reaches it is the owner. The API may be plain http on any host,
- * such as another container.
+ * such as another container. The token is FOUNDRY_LOCAL_TOKEN, else read
+ * from the file FOUNDRY_LOCAL_TOKEN_FILE names; it is read per request
+ * until a read gives one, then kept.
  *
  * @example
  * localConfig({
@@ -56,13 +87,18 @@ export type LocalConfig = {
  *   FOUNDRY_ORIGIN: "http://localhost:3000",
  *   FOUNDRY_LOCAL_TOKEN: "t".repeat(32),
  * })?.origin; // "http://localhost:3000"
+ * localConfig({
+ *   HELIX_WFE_ORIGIN: "http://pod:8081",
+ *   FOUNDRY_ORIGIN: "http://localhost:3000",
+ *   FOUNDRY_LOCAL_TOKEN_FILE: "/secrets/site-token",
+ * })?.token; // the file's contents, trimmed
  */
 export function localConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): LocalConfig | null {
   const wfe = parse(env.HELIX_WFE_ORIGIN),
     site = parse(env.FOUNDRY_ORIGIN),
-    token = env.FOUNDRY_LOCAL_TOKEN || "";
+    token = localToken(env);
   if (
     !wfe ||
     (wfe.protocol !== "http:" && wfe.protocol !== "https:") ||
@@ -70,7 +106,7 @@ export function localConfig(
     !isTrustedUrl(site) ||
     !LOOPBACK.has(site.hostname) ||
     site.origin + "/" !== site.href ||
-    Buffer.byteLength(token, "utf8") < 32
+    !longEnough(token)
   )
     return null;
   return {

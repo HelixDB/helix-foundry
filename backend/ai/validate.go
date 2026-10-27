@@ -79,14 +79,8 @@ func (s Settings) Validate(r Rules) error {
 			return invalid("provider.region", "must be an AWS region, like us-east-1")
 		}
 	case Ollama:
-		base, err := ModelURL(p.BaseURL, r)
-		if err != nil {
+		if _, err := OllamaURL(p.BaseURL, r); err != nil {
 			return err
-		}
-		// The agent calls {base}/api/chat: an OpenAI-compatible /v1, or the
-		// API's own path, is a mistake every call would 404 on.
-		if u, _ := url.Parse(base); strings.HasSuffix(u.Path, "/api") || strings.HasSuffix(u.Path, "/v1") || strings.Contains(u.Path, "/api/") {
-			return invalid("provider.base_url", "must be the Ollama server's address, like http://127.0.0.1:11434, without /api or /v1")
 		}
 		if p.ContextTokens < MinContextTokens || p.ContextTokens > MaxContextTokens {
 			return invalid("provider.context_tokens", fmt.Sprintf("must be %d to %d", MinContextTokens, MaxContextTokens))
@@ -162,6 +156,22 @@ func ModelName(name string) error {
 		return errors.New("looks like an API key; enter the key in the API key field")
 	}
 	return nil
+}
+
+// OllamaURL is an Ollama server's address under r, normalized as ModelURL
+// does: the agent calls {base}/api/chat, so an OpenAI-compatible /v1, or the
+// API's own path, is a mistake every call would 404 on.
+//
+//	OllamaURL("http://127.0.0.1:11434/", Rules{AllowPrivate: true}) // "http://127.0.0.1:11434"
+func OllamaURL(raw string, r Rules) (string, error) {
+	base, err := ModelURL(raw, r)
+	if err != nil {
+		return "", err
+	}
+	if u, _ := url.Parse(base); strings.HasSuffix(u.Path, "/api") || strings.HasSuffix(u.Path, "/v1") || strings.Contains(u.Path, "/api/") {
+		return "", invalid("provider.base_url", "must be the Ollama server's address, like http://127.0.0.1:11434, without /api or /v1")
+	}
+	return base, nil
 }
 
 // ModelURL is an Ollama or OpenAI-compatible base URL in its normal form, the

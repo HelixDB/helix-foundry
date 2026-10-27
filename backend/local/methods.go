@@ -98,6 +98,10 @@ var methods = map[string]check{
 	// owner chooses one.
 	foundry("GetFoundryAI"):    checkWorkspace,
 	foundry("UpdateFoundryAI"): checkWorkspace,
+	// It finds its default on this machine, and reads its Ollama servers'
+	// models.
+	foundry("DetectFoundryAIDefault"):  checkWorkspace,
+	foundry("ListFoundryOllamaModels"): checkWorkspace,
 
 	foundry("CreateFoundryLoad"):     checkOntology,
 	foundry("ListFoundryLoads"):      checkWorkspace,

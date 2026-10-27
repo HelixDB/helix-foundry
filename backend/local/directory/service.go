@@ -173,6 +173,35 @@ func (s *Service) CreateWorkspace(ctx context.Context, req *directoryv1.CreateWo
 	return workspaceProto(created), nil
 }
 
+// The workspace an install starts with.
+const (
+	FirstWorkspaceSlug = "my-workspace"
+	FirstWorkspaceName = "My workspace"
+)
+
+// SeedWorkspace makes the owner's first workspace, "My workspace", as
+// CreateWorkspace makes any, unless the install has ever had one (a deleted
+// one counts: it is never made again). Every start runs it, so a new
+// install opens in a workspace rather than on the page that creates one. It
+// returns the workspace it made, or nil.
+func (s *Service) SeedWorkspace(ctx context.Context) (*directoryv1.Workspace, error) {
+	switch had, err := s.store.AnyWorkspace(ctx); {
+	case err != nil:
+		return nil, fmt.Errorf("seed workspace: %w", err)
+	case had:
+		return nil, nil
+	}
+	name := FirstWorkspaceName
+	w, err := s.CreateWorkspace(ctx, &directoryv1.CreateWorkspaceRequest{Slug: FirstWorkspaceSlug, DisplayName: &name, Region: Region})
+	if status.Code(err) == codes.AlreadyExists {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("seed workspace: %w", err)
+	}
+	return w, nil
+}
+
 func (s *Service) GetWorkspace(ctx context.Context, req *directoryv1.GetWorkspaceRequest) (*directoryv1.Workspace, error) {
 	if req.GetId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")

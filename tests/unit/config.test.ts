@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import { authConfig, isTrustedUrl, localConfig } from "@/server/config";
 import { csrfCookieName, loginCookiePrefix } from "@/server/cookies";
 import { withSessionHeaders } from "@/server/session-headers";
@@ -158,5 +161,75 @@ describe("local configuration", () => {
     expect(
       localConfig({ ...local, ...change } as unknown as NodeJS.ProcessEnv),
     ).toBeNull();
+  });
+});
+
+describe("a local token read from a file", () => {
+  // localConfig keeps a token by its file's path, so each case has its own.
+  const dir = mkdtempSync(join(tmpdir(), "foundry-token-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  let files = 0;
+  const path = () => join(dir, `token-${++files}`);
+  const env = (file: string, token?: string) =>
+    ({
+      HELIX_WFE_ORIGIN: "http://foundry:8081",
+      FOUNDRY_ORIGIN: "http://localhost:3000",
+      FOUNDRY_LOCAL_TOKEN_FILE: file,
+      ...(token !== undefined && { FOUNDRY_LOCAL_TOKEN: token }),
+    }) as unknown as NodeJS.ProcessEnv;
+  const TOKEN = "f".repeat(64);
+
+  it("reads the file, trimmed, when FOUNDRY_LOCAL_TOKEN is unset or empty", () => {
+    const file = path();
+    writeFileSync(file, `  ${TOKEN}\n`);
+    expect(localConfig(env(file))?.token).toBe(TOKEN);
+    const other = path();
+    writeFileSync(other, `${TOKEN}\n`);
+    expect(localConfig(env(other, ""))?.token).toBe(TOKEN);
+    // Its CSRF secret is the token's, as when the token is given itself.
+    expect(localConfig(env(file))?.csrfSecret).toBe(
+      localConfig({ ...env(file), FOUNDRY_LOCAL_TOKEN: TOKEN })?.csrfSecret,
+    );
+  });
+
+  it("prefers FOUNDRY_LOCAL_TOKEN, and never reads the file then", () => {
+    const missing = path();
+    expect(localConfig(env(missing, "t".repeat(32)))?.token).toBe(
+      "t".repeat(32),
+    );
+    const file = path();
+    writeFileSync(file, TOKEN);
+    expect(localConfig(env(file, "u".repeat(32)))?.token).toBe("u".repeat(32));
+    // A short one is refused, not passed over for the file's.
+    expect(localConfig(env(file, "short"))).toBeNull();
+  });
+
+  it("refuses a missing file, a directory, an empty one or a short token", () => {
+    expect(localConfig(env(path()))).toBeNull();
+    expect(localConfig(env(dir))).toBeNull();
+    const empty = path();
+    writeFileSync(empty, " \n");
+    expect(localConfig(env(empty))).toBeNull();
+    const short = path();
+    // 31 bytes once trimmed.
+    writeFileSync(short, `${"s".repeat(31)}\n`);
+    expect(localConfig(env(short))).toBeNull();
+    // No file named, no token.
+    expect(localConfig(env(""))).toBeNull();
+  });
+
+  it("keeps a token once read, and reads again after a failed read", () => {
+    const file = path();
+    // Not written yet, then written in part: each request reads again.
+    expect(localConfig(env(file))).toBeNull();
+    writeFileSync(file, TOKEN.slice(0, 16));
+    expect(localConfig(env(file))).toBeNull();
+    writeFileSync(file, TOKEN);
+    expect(localConfig(env(file))?.token).toBe(TOKEN);
+    // Kept: the file is not read again.
+    writeFileSync(file, "g".repeat(64));
+    expect(localConfig(env(file))?.token).toBe(TOKEN);
+    rmSync(file);
+    expect(localConfig(env(file))?.token).toBe(TOKEN);
   });
 });

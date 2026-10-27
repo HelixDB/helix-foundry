@@ -2434,12 +2434,20 @@ export type AgentEnrichmentClues = {
 // model calls go (drafting ontologies, reading documents, answering
 // questions, naming generations). Unset `active` is the deployment's
 // default: Helix's Claude when hosted, the install's provider (or none)
-// locally. An owner's save is tested before it is used (`pending`); the
-// setting in force stays until the test passes. Hosted, bringing a key
-// needs Foundry Pro or Max (FAILED_PRECONDITION, reason FOUNDRY_PRO_REQUIRED);
-// a local install always may. Model work while the setting resolves to none
-// (a local install without a default) is FAILED_PRECONDITION with reason
-// FOUNDRY_AI_NOT_CONFIGURED: generating, asking and completing an upload.
+// locally: the one its .env names (FOUNDRY_AI_PROVIDER), else the one it
+// found on its machine (`detected`). An owner's save is tested before it is
+// used (`pending`); the setting in force stays until the test passes.
+// Hosted, bringing a key needs Foundry Pro or Max (FAILED_PRECONDITION,
+// reason FOUNDRY_PRO_REQUIRED); a local install always may. Model work while
+// the setting resolves to none (a local install without a default) is
+// FAILED_PRECONDITION with reason FOUNDRY_AI_NOT_CONFIGURED: generating,
+// asking and completing an upload.
+// A local install's only (FAILED_PRECONDITION elsewhere):
+// - POST .../foundry/ai/detect, body {}: looks again for the install's
+//   default, answering as GET does; FAILED_PRECONDITION too where its .env
+//   names its default.
+// - GET .../foundry/ai/ollama-models?baseUrl=<url>: the models an Ollama
+//   server has; INVALID_ARGUMENT for an address a save would refuse.
 
 /**
  * v1FoundryAIKind: every kind is declared; a deployment offers those its
@@ -2588,6 +2596,20 @@ export type FoundryAiOffer = {
   key?: FoundryAiKey;
 };
 
+/**
+ * v1FoundryAIDetected: how a local install that names no default found one
+ * on its machine, looking for an ANTHROPIC_API_KEY, then an OPENAI_API_KEY,
+ * where it was started; an Ollama it reaches (the bundled one, then this
+ * computer's) with a model that calls tools; LM Studio on this computer
+ * serving a model.
+ */
+export type FoundryAiDetected = {
+  // For the owner: what is used and why (with a `default`), or what was
+  // looked for and how to set a provider up (without). Never a key.
+  summary?: string;
+  detectedAt?: string;
+};
+
 /** v1FoundryAI: a workspace's AI setting. */
 export type FoundryAi = {
   // The provider in force; unset is the default.
@@ -2605,10 +2627,42 @@ export type FoundryAi = {
   // (FOUNDRY_PRO_REQUIRED) until the workspace is on Foundry Pro or Max.
   // Going back to the default never is.
   proRequired?: boolean;
+  // A local install that names no default: how it found `default`, or that
+  // it found none. Unset hosted, and where the install's .env names one.
+  detected?: FoundryAiDetected;
 };
 
-/** helixwfev1FoundryAIResponse: GET, and PUT's answer. */
+/** v1FoundryAIResponse: GET, PUT's and detect's answer. */
 export type FoundryAiResponse = { ai?: FoundryAi };
+
+/** v1FoundryOllamaModel: a model an Ollama server has pulled. */
+export type FoundryOllamaModel = {
+  name?: string;
+  // Its size on disk, int64 as a string.
+  sizeBytes?: string;
+  // Like "4.0B"; empty when the server doesn't say.
+  parameterSize?: string;
+  // For the owner: why Foundry can't run on it, as a sentence; empty when
+  // it can, or when the server can't say.
+  unusable?: string;
+};
+
+/**
+ * v1FoundryOllamaServer: what an Ollama server has, its models usable ones
+ * first, the most capable first, then the rest by name.
+ */
+export type FoundryOllamaServer = {
+  // Empty when it didn't answer.
+  version?: string;
+  // For the owner: why its models can't be listed, or can't be told apart
+  // (a server too old to say which call tools), and how to fix it, as a
+  // sentence; empty when they can.
+  problem?: string;
+  models?: FoundryOllamaModel[];
+};
+
+/** v1ListFoundryOllamaModelsResponse */
+export type ListFoundryOllamaModelsResponse = { server?: FoundryOllamaServer };
 
 /**
  * v1WfeServiceUpdateFoundryAIBody: PUT, owners only. Back to the default at

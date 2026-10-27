@@ -679,24 +679,115 @@ describe("Ollama", () => {
   });
 
   it("starts from the model a local install pulls", () => {
-    const text = (path: string) =>
-      readFileSync(new URL(path, import.meta.url), "utf8");
-    const example = text("../../local/.env.example"),
-      setup = text("../../local/setup.sh"),
-      compose = text("../../local/compose.yaml");
-    const value = (file: string, name: string) =>
-      new RegExp(`^${name}=(.*)$`, "m").exec(file)?.[1];
-    expect(value(example, "FOUNDRY_OLLAMA_MODEL")).toBe(AI.OLLAMA_MODEL);
-    expect(value(setup, "OLLAMA_MODEL")).toBe(AI.OLLAMA_MODEL);
+    // The compose file's ollama profile pulls FOUNDRY_OLLAMA_MODEL, this
+    // unless the install's .env says otherwise.
+    const compose = readFileSync(
+      new URL("../../local/compose.yaml", import.meta.url),
+      "utf8",
+    );
     expect(compose).toContain(`\${FOUNDRY_OLLAMA_MODEL:-${AI.OLLAMA_MODEL}}`);
-    expect(value(example, "FOUNDRY_OLLAMA_DIGEST")).toMatch(
-      /^sha256:[0-9a-f]{64}$/,
-    );
-    expect(value(setup, "OLLAMA_DIGEST")).toBe(
-      value(example, "FOUNDRY_OLLAMA_DIGEST"),
-    );
     expect(AI.OLLAMA_MODEL).toMatch(/^[a-z0-9.]+:[a-z0-9.]+$/);
     expect(AI.ollamaServer(AI.OLLAMA_SERVERS.bundled.url)).toBe("bundled");
+  });
+
+  it("writes a model's size as Ollama does", () => {
+    for (const [bytes, size] of [
+      ["3389725347", "3.4 GB"],
+      ["6591893504", "6.6 GB"],
+      ["65000000000", "65 GB"],
+      ["2000000000", "2 GB"],
+      ["9960000000", "10 GB"],
+      ["397821319", "397 MB"],
+      ["1500000", "1.5 MB"],
+      ["2048", "2 KB"],
+      ["384", "384 B"],
+      ["1234567890123", "1.2 TB"],
+    ])
+      expect(AI.ollamaSize(bytes), bytes).toBe(size);
+    for (const none of [undefined, "", "0", "-5", "lots"])
+      expect(AI.ollamaSize(none), String(none)).toBe("");
+  });
+
+  // The backend's order and words (mock/routes/ai.ts mirrors them).
+  const MODELS: wfe.FoundryOllamaModel[] = [
+    { name: "qwen3.5:9b", sizeBytes: "6591893504", parameterSize: "9.7B" },
+    { name: "qwen3.5:4b", sizeBytes: "3389725347" },
+    {
+      name: "embeddinggemma",
+      sizeBytes: "621875047",
+      unusable: "Not a chat model.",
+    },
+    { name: "gemma3:4b", sizeBytes: "3338801804", unusable: "Calls no tools." },
+    {
+      name: "gpt-oss:120b-cloud",
+      sizeBytes: "384",
+      unusable:
+        "Runs on ollama.com, so what it is sent would leave this computer.",
+    },
+  ];
+
+  it("offers a server's models, those Foundry runs first, each with its size", () => {
+    expect(AI.ollamaChoices({ models: MODELS })).toEqual([
+      { name: "qwen3.5:9b", label: "qwen3.5:9b · 6.6 GB", unusable: "" },
+      { name: "qwen3.5:4b", label: "qwen3.5:4b · 3.4 GB", unusable: "" },
+      {
+        name: "embeddinggemma",
+        label: "embeddinggemma · 621 MB",
+        unusable: "Not a chat model.",
+      },
+      {
+        name: "gemma3:4b",
+        label: "gemma3:4b · 3.3 GB",
+        unusable: "Calls no tools.",
+      },
+      // A cloud model's size is a stub's: it isn't shown.
+      {
+        name: "gpt-oss:120b-cloud",
+        label: "gpt-oss:120b-cloud",
+        unusable:
+          "Runs on ollama.com, so what it is sent would leave this computer.",
+      },
+    ]);
+    // Out of the server's order, those it can run still come first, each
+    // group as the server ordered it.
+    expect(
+      AI.ollamaChoices({
+        models: [MODELS[3]!, MODELS[1]!, MODELS[2]!, MODELS[0]!],
+      }).map((c) => c.name),
+    ).toEqual(["qwen3.5:4b", "qwen3.5:9b", "gemma3:4b", "embeddinggemma"]);
+    // A model without a name or size is still a model, or nothing.
+    expect(
+      AI.ollamaChoices({ models: [{ name: "m" }, {}, { sizeBytes: "1" }] }),
+    ).toEqual([{ name: "m", label: "m", unusable: "" }]);
+    // Nothing read, a server that didn't answer, or one with no models.
+    expect(AI.ollamaChoices()).toEqual([]);
+    expect(
+      AI.ollamaChoices({
+        problem:
+          "Nothing answered at http://gpu.invalid:11434. Check the address and that Ollama runs there.",
+      }),
+    ).toEqual([]);
+    expect(AI.ollamaChoices({ version: "0.13.0" })).toEqual([]);
+  });
+
+  it("starts on the most capable model Foundry runs, unless the server can't tell", () => {
+    expect(AI.ollamaBest({ models: MODELS })).toBe("qwen3.5:9b");
+    expect(AI.ollamaBest({ models: MODELS.slice(1) })).toBe("qwen3.5:4b");
+    // None it can run, none at all, or nothing read: the card keeps
+    // OLLAMA_MODEL, as free text.
+    expect(AI.ollamaBest({ models: MODELS.slice(2) })).toBeUndefined();
+    expect(AI.ollamaBest({ version: "0.13.0" })).toBeUndefined();
+    expect(AI.ollamaBest()).toBeUndefined();
+    // Too old to say which call tools: listed, but none is chosen for the
+    // owner.
+    expect(
+      AI.ollamaBest({
+        version: "0.5.7",
+        problem:
+          "This Ollama (0.5.7) is too old to say which models call tools. Update it from ollama.com.",
+        models: [{ name: "embeddinggemma" }, { name: "qwen3.5:4b" }],
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -1757,6 +1848,43 @@ describe("the module's examples", () => {
     expect(AI.callsProblem("0")).toBe("Use a whole number from 1 to 64.");
     expect(AI.versionless("http://host.docker.internal:1234")).toBe(true);
     expect(AI.versionless("https://openrouter.ai/api/v1")).toBe(false);
+    expect(AI.ollamaSize("3389725347")).toBe("3.4 GB");
+    expect(AI.ollamaSize("397821319")).toBe("397 MB");
+    expect(AI.ollamaSize("0")).toBe("");
+    expect(
+      AI.ollamaChoices({
+        models: [
+          {
+            name: "embeddinggemma",
+            sizeBytes: "621875047",
+            unusable: "Not a chat model.",
+          },
+          { name: "qwen3.5:4b", sizeBytes: "3389725347" },
+        ],
+      }),
+    ).toEqual([
+      { name: "qwen3.5:4b", label: "qwen3.5:4b · 3.4 GB", unusable: "" },
+      {
+        name: "embeddinggemma",
+        label: "embeddinggemma · 621 MB",
+        unusable: "Not a chat model.",
+      },
+    ]);
+    expect(
+      AI.ollamaBest({
+        models: [
+          { name: "gemma3:4b", unusable: "Calls no tools." },
+          { name: "qwen3.5:9b" },
+        ],
+      }),
+    ).toBe("qwen3.5:9b");
+    expect(
+      AI.ollamaBest({
+        problem:
+          "This Ollama (0.5.7) is too old to say which models call tools. Update it from ollama.com.",
+        models: [{ name: "qwen3.5:9b" }],
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -1816,6 +1944,55 @@ describe("the WFE calls", () => {
         url: "/papi/v1/workspaces/ws%201/foundry/ai",
         method: "PUT",
         body: JSON.stringify({ useDefault: {} }),
+      },
+    ]);
+  });
+
+  it("look again for the install's default, and list an Ollama server's models", async () => {
+    const sent: { url: string; method?: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/papi/csrf")
+          return Response.json({ token: "t", expiresInSeconds: 600 });
+        sent.push({ url, method: init?.method, body: init?.body as string });
+        return Response.json(
+          url.endsWith("/detect")
+            ? { ai: { detected: { summary: "Using Claude." } } }
+            : url.includes("gpu.lan")
+              ? { server: { version: "0.13.0", models: [{ name: "m" }] } }
+              : {},
+        );
+      }),
+    );
+    expect(await AI.detectAi("ws 1")).toEqual({
+      detected: { summary: "Using Claude." },
+    });
+    const query = AI.ollamaModelsQuery("ws 1", "http://gpu.lan:11434");
+    expect(query.queryKey).toEqual([
+      "ws 1",
+      "foundry-ollama-models",
+      "http://gpu.lan:11434",
+    ]);
+    expect(query.retry).toBe(false);
+    expect(await query.queryFn()).toEqual({
+      version: "0.13.0",
+      models: [{ name: "m" }],
+    });
+    // An answer without its server reads as an empty one.
+    expect(
+      await AI.ollamaModelsQuery("ws", "http://127.0.0.1:11434").queryFn(),
+    ).toEqual({});
+    expect(sent.slice(0, 2)).toEqual([
+      {
+        url: "/papi/v1/workspaces/ws%201/foundry/ai/detect",
+        method: "POST",
+        body: "{}",
+      },
+      {
+        url: "/papi/v1/workspaces/ws%201/foundry/ai/ollama-models?baseUrl=http%3A%2F%2Fgpu.lan%3A11434",
+        method: "GET",
+        body: undefined,
       },
     ]);
   });

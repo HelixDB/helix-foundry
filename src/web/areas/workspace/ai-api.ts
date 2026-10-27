@@ -16,6 +16,8 @@ import {
   type FoundryAiRates,
   type FoundryAiResponse,
   type FoundryAiRole,
+  type FoundryOllamaServer,
+  type ListFoundryOllamaModelsResponse,
   type UpdateFoundryAiBody,
 } from "../../../shared/wfe";
 import { ApiError, api } from "../../api";
@@ -41,6 +43,30 @@ export const aiQuery = (ws: string) => ({
 /** Saves an owner's choice: the default at once, or a provider to test. */
 export const saveAi = async (ws: string, body: UpdateFoundryAiBody) =>
   (await api<FoundryAiResponse>(path(ws), body, "PUT")).ai || {};
+
+/**
+ * A local install that found its own default (FoundryAi.detected) looks
+ * again, so a model pulled since it started is used; answers the setting.
+ */
+export const detectAi = async (ws: string) =>
+  (await api<FoundryAiResponse>(`${path(ws)}/detect`, {}, "POST")).ai || {};
+
+/**
+ * What an Ollama server has, by its base URL (a local install's only). Read
+ * again as the page is shown again, so a model pulled meanwhile appears.
+ */
+export const ollamaModelsQuery = (ws: string, url: string) => ({
+  queryKey: [ws, "foundry-ollama-models", url],
+  queryFn: async () =>
+    (
+      await api<ListFoundryOllamaModelsResponse>(
+        `${path(ws)}/ollama-models?baseUrl=${encodeURIComponent(url)}`,
+      )
+    ).server || {},
+  // A server that didn't answer is an answer (`problem`); an error is a
+  // refusal, which asking again won't change.
+  retry: false,
+});
 
 /**
  * Whether a save is waiting for or in its test.
@@ -175,7 +201,10 @@ export const PAUSED =
 /** What the owner's form says while nothing runs AI. */
 export const NO_PROVIDER =
   "No AI provider is set up. Drafting ontologies, reading documents and answering questions need one.";
-/** A local install's provider, from its .env (FOUNDRY_AI_*), read-only here. */
+/**
+ * A local install's provider, read-only here: the one its .env names
+ * (FOUNDRY_AI_PROVIDER), or the one it found on its machine (`detected`).
+ */
 export const INSTALL_DEFAULT = "Install default";
 
 /**
@@ -415,12 +444,82 @@ export const OLLAMA_LINUX_HOST =
   "on Linux, start it with OLLAMA_HOST=172.17.0.1, Docker’s bridge address, so Docker can reach it and your network can’t.";
 
 /**
- * The model a local install's Ollama starts with: local/setup.sh pulls it
- * (FOUNDRY_OLLAMA_MODEL in local/.env.example), and the card suggests it.
- * A candidate: the default is to be the smallest model that finishes a real
- * draft under the local caps, measured on a GPU.
+ * The model a local install's Ollama starts with: the compose file's ollama
+ * profile pulls it (FOUNDRY_OLLAMA_MODEL in local/compose.yaml), and the
+ * card suggests it while its server lists none it can run. A candidate: the
+ * default is to be the smallest model that finishes a real draft under the
+ * local caps, measured on a GPU.
  */
 export const OLLAMA_MODEL = "qwen3.5:4b";
+
+const SIZE_UNITS = [
+  [1e12, "TB"],
+  [1e9, "GB"],
+  [1e6, "MB"],
+  [1e3, "KB"],
+  [1, "B"],
+] as const;
+
+/**
+ * A size on disk as Ollama writes it (format.HumanBytes): powers of 1000,
+ * whole from 10 up, else to one decimal; "" for none.
+ *
+ * @example
+ * ollamaSize("3389725347"); // "3.4 GB"
+ * ollamaSize("397821319"); // "397 MB"
+ * ollamaSize("0"); // ""
+ */
+export function ollamaSize(bytes?: string): string {
+  const b = Number(bytes || 0);
+  if (!Number.isFinite(b) || b <= 0) return "";
+  const [size, unit] = SIZE_UNITS.find(([size]) => b >= size) ?? [1, "B"];
+  const value = b / size;
+  return `${value >= 10 ? Math.trunc(value) : Number(value.toFixed(1))} ${unit}`;
+}
+
+/** A model the Ollama card offers: its name, its line, why it can't run. */
+export type OllamaChoice = { name: string; label: string; unusable: string };
+
+/**
+ * The models an Ollama server has, as its card offers them: those Foundry
+ * can run first, then the rest, each in the server's order (the most
+ * capable first); each named with its size, but a cloud model, whose size
+ * is a stub's. `unusable` says why one can't run, or is empty.
+ *
+ * @example
+ * ollamaChoices({ models: [{ name: "embeddinggemma", sizeBytes: "621875047", unusable: "Not a chat model." }, { name: "qwen3.5:4b", sizeBytes: "3389725347" }] });
+ * // [{ name: "qwen3.5:4b", label: "qwen3.5:4b · 3.4 GB", unusable: "" }, { name: "embeddinggemma", label: "embeddinggemma · 621 MB", unusable: "Not a chat model." }]
+ */
+export function ollamaChoices(server?: FoundryOllamaServer): OllamaChoice[] {
+  const all = (server?.models || []).flatMap((m) => {
+    const size = ollamaCloud(m.name || "") ? "" : ollamaSize(m.sizeBytes);
+    return m.name
+      ? [
+          {
+            name: m.name,
+            label: size ? `${m.name} · ${size}` : m.name,
+            unusable: m.unusable || "",
+          },
+        ]
+      : [];
+  });
+  return [...all.filter((c) => !c.unusable), ...all.filter((c) => c.unusable)];
+}
+
+/**
+ * The model the Ollama card starts on for a server that isn't the
+ * setting's: the most capable one Foundry can run, or undefined when it has
+ * none or can't tell them apart (`problem`, as a server too old to say
+ * which call tools), and the card keeps OLLAMA_MODEL.
+ *
+ * @example
+ * ollamaBest({ models: [{ name: "gemma3:4b", unusable: "Calls no tools." }, { name: "qwen3.5:9b" }] }); // "qwen3.5:9b"
+ * ollamaBest({ problem: "This Ollama (0.5.7) is too old to say which models call tools. Update it from ollama.com.", models: [{ name: "qwen3.5:9b" }] }); // undefined
+ */
+export const ollamaBest = (server?: FoundryOllamaServer) =>
+  server?.problem
+    ? undefined
+    : ollamaChoices(server).find((c) => !c.unusable)?.name;
 
 /**
  * Whether Ollama runs a model on ollama.com rather than on the server: its

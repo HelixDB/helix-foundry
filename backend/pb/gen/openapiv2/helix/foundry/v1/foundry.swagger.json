@@ -240,6 +240,83 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ai/detect": {
+      "post": {
+        "summary": "A local install's only (FAILED_PRECONDITION elsewhere): looks again for\nthe install's default on its machine (FoundryAI.detected), as Settings ›\nAI models opens, so a model pulled since is used without a restart.",
+        "operationId": "FoundryService_DetectFoundryAIDefault",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryAIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDetectFoundryAIDefaultBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ai/ollama-models": {
+      "get": {
+        "summary": "A local install's only (FAILED_PRECONDITION elsewhere): the models an\nOllama server has, for the Ollama card's model choice.",
+        "operationId": "FoundryService_ListFoundryOllamaModels",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryOllamaModelsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "baseUrl",
+            "description": "The server's address, as FoundryAIOllama.base_url.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/connector-kinds": {
       "get": {
         "summary": "Helix Foundry connectors",
@@ -3315,6 +3392,10 @@
         }
       }
     },
+    "FoundryServiceDetectFoundryAIDefaultBody": {
+      "type": "object",
+      "description": "DetectFoundryAIDefaultRequest looks again for a local install's default;\nit answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION\nwhere the install names its default (FOUNDRY_AI_PROVIDER)."
+    },
     "FoundryServiceGenerateOntologyBody": {
       "type": "object",
       "properties": {
@@ -4248,6 +4329,10 @@
         "proRequired": {
           "type": "boolean",
           "description": "The workspace's plan doesn't include bringing a key: saving one is\nrefused (FAILED_PRECONDITION, reason FOUNDRY_PRO_REQUIRED) until it is\non Foundry Pro or Max. Going back to the default never is."
+        },
+        "detected": {
+          "$ref": "#/definitions/v1FoundryAIDetected",
+          "description": "How a local install that names no default provider found one on its\nmachine (default, when it found one); unset hosted, and in an install\nwhose FOUNDRY_AI_PROVIDER names its default."
         }
       },
       "description": "FoundryAI is a workspace's AI setting."
@@ -4368,6 +4453,20 @@
         }
       },
       "description": "FoundryAIDefault is the deployment's provider."
+    },
+    "v1FoundryAIDetected": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "For the owner: what is used and why, or what was looked for and how to\nset a provider up. Never a key."
+        },
+        "detectedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAIDetected is how a local install found its default, looking in\nthis order: an ANTHROPIC_API_KEY, then an OPENAI_API_KEY, in its\nenvironment; an Ollama it can reach (the bundled one, then this\ncomputer's) with a model that calls tools; LM Studio on this computer\nserving a model. It looks again as Settings › AI models opens\n(DetectFoundryAIDefault)."
     },
     "v1FoundryAIKey": {
       "type": "string",
@@ -5409,6 +5508,49 @@
         }
       }
     },
+    "v1FoundryOllamaModel": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "Its size on disk."
+        },
+        "parameterSize": {
+          "type": "string",
+          "description": "Like \"4.0B\"; empty when the server doesn't say."
+        },
+        "unusable": {
+          "type": "string",
+          "description": "For the owner: why Foundry can't run on it (it calls no tools, its\ncontext window is too small, it runs on ollama.com, it needs a newer\nOllama); empty when it can, or when the server can't say."
+        }
+      },
+      "description": "FoundryOllamaModel is a model an Ollama server has pulled."
+    },
+    "v1FoundryOllamaServer": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Its version; empty when it didn't answer."
+        },
+        "problem": {
+          "type": "string",
+          "description": "For the owner: why its models can't be listed, or can't be told apart\n(a server too old to say which call tools), and how to fix it; empty\nwhen they can."
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryOllamaModel"
+          }
+        }
+      },
+      "description": "FoundryOllamaServer is what an Ollama server has, as a local install\nreads it for Settings › AI models."
+    },
     "v1FoundryOntology": {
       "type": "object",
       "properties": {
@@ -6112,6 +6254,14 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryLoad"
           }
+        }
+      }
+    },
+    "v1ListFoundryOllamaModelsResponse": {
+      "type": "object",
+      "properties": {
+        "server": {
+          "$ref": "#/definitions/v1FoundryOllamaServer"
         }
       }
     },

@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -134,4 +136,72 @@ func local(def config.AIDefault, allowPrivate bool) func(*config.Config) {
 
 func models(name string) config.AIModels {
 	return config.AIModels{Draft: name, Ask: name, Extract: name, Verify: name}
+}
+
+// A local install that configures no default may find one on its machine:
+// Current reads the one found last, checked, so a model found later is used
+// without a restart. Only such an install looks.
+func TestDetectedDefault(t *testing.T) {
+	cfg := hostedConfig("")
+	local(config.AIDefault{}, true)(cfg)
+	cfg.Foundry.AI.Kinds = []string{"ollama", "anthropic"}
+	found := &config.LiveAIDefault{}
+	cfg.Host.DetectedAI = found
+	d, err := NewDeployment(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Default != nil || d.Detected != found || d.Current() != nil {
+		t.Fatalf("before a look: %+v", d)
+	}
+	found.Store(config.DetectedAIDefault{Default: config.AIDefault{Provider: "ollama", BaseURL: "HTTP://127.0.0.1:11434/", Models: models("llama3.2:1b")}})
+	cur := d.Current()
+	if cur == nil || cur.Settings.Provider != (Ollama{BaseURL: "http://127.0.0.1:11434", ContextTokens: DefaultContextTokens}) ||
+		cur.Settings.Models.Ask != (Model{Name: "llama3.2:1b", Price: PriceFree{}}) || !cur.Key.IsZero() {
+		t.Fatalf("found Ollama: %+v", cur)
+	}
+	if err := d.CheckDefault(found.Load().Default); err != nil {
+		t.Fatal(err)
+	}
+	found.Store(config.DetectedAIDefault{Default: config.AIDefault{Provider: "anthropic", APIKey: sentinel, Models: models("claude-sonnet-5-5")}})
+	if cur := d.Current(); cur == nil || cur.Settings.Provider != (Anthropic{}) || cur.Key.Reveal() != sentinel {
+		t.Fatalf("found Claude: %+v", cur)
+	}
+	// A workspace without a setting of its own runs on it.
+	r := &Resolver{DB: activeConfigs{}, Deployment: d}
+	if got, err := r.Resolve(context.Background(), "ws-1"); err != nil || got.Source != SourceDefault || got.Key.Reveal() != sentinel {
+		t.Fatalf("Resolve() = %+v, %v", got, err)
+	}
+	// One that doesn't check is none, as is none found.
+	bad := config.AIDefault{Provider: "ollama", BaseURL: "http://127.0.0.1:11434/v1", Models: models("m")}
+	found.Store(config.DetectedAIDefault{Default: bad})
+	if d.Current() != nil || d.CheckDefault(bad) == nil {
+		t.Fatal("used a default that doesn't check")
+	}
+	found.Store(config.DetectedAIDefault{Summary: "none"})
+	if d.Current() != nil || !errors.Is(r.Usable(context.Background(), "ws-1"), ErrNotConfigured) {
+		t.Fatal("none found is a default")
+	}
+
+	// A configured default wins, and the two exclude each other.
+	t.Run("with a configured default", func(t *testing.T) {
+		cfg := hostedConfig(sentinel)
+		local(cfg.Foundry.AI.Default, true)(cfg)
+		cfg.Host.DetectedAI = found
+		if _, err := NewDeployment(cfg); err == nil || !strings.Contains(err.Error(), "finds its default only when it sets none") {
+			t.Fatalf("err = %v", err)
+		}
+		cfg.Host.DetectedAI = nil
+		d, err := NewDeployment(cfg)
+		if err != nil || d.Current() != d.Default || d.Current() == nil {
+			t.Fatalf("configured: %+v, %v", d, err)
+		}
+	})
+	t.Run("hosted", func(t *testing.T) {
+		cfg := hostedConfig(sentinel)
+		cfg.Host.DetectedAI = found
+		if _, err := NewDeployment(cfg); err == nil || !strings.Contains(err.Error(), "only a local install") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }

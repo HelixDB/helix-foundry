@@ -75,47 +75,53 @@ jobs:
           cache-to: type=gha,mode=max,scope=foundry-${{ matrix.architecture }}
       # The image's own health check fetches /readyz, which answers once
       # foundry has migrated its database, made its bucket and started every
-      # part. So it starts on MySQL and SeaweedFS as local/compose.yaml runs
-      # them, with the secrets the compose file passes, and then answers the
-      # site's first call. HelixDB and the ontology agent are called only
+      # part. So it starts as local/compose.yaml runs it, with nothing set
+      # up: its own init-secrets writes the secrets into a volume (and keeps
+      # them when run again), MySQL and SeaweedFS read theirs from it, and
+      # foundry the rest, then answers the site's first call with the
+      # workspace it made. HelixDB and the ontology agent are called only
       # later.
       - name: Start it
         run: |
           set -euo pipefail
-          token=$(openssl rand -hex 32)
-          s3_secret=$(openssl rand -hex 32)
+          docker volume create secrets
+          for _ in 1 2; do
+            docker run --rm --user 0:0 --network none -v secrets:/secrets "$CI_IMAGE" \
+              init-secrets --dir /secrets --owner 65532:65532 --reader site-token=1000 --reader mysql-password=999
+          done
+          docker network create foundry
+          docker run -d --name mysql --network foundry -v secrets:/secrets:ro \
+            -e MYSQL_RANDOM_ROOT_PASSWORD=yes -e MYSQL_DATABASE=helix \
+            -e MYSQL_USER=helix -e MYSQL_PASSWORD_FILE=/secrets/mysql-password \
+            mysql:8.0 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
           # local/compose.yaml's store and its one identity, its S3 API on the
           # network.
-          printf '{"identities":[{"name":"foundry","credentials":[{"accessKey":"foundry","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' \
-            "$s3_secret" > "$RUNNER_TEMP/s3.json"
-          docker network create foundry
-          docker run -d --name mysql --network foundry \
-            -e MYSQL_RANDOM_ROOT_PASSWORD=yes -e MYSQL_DATABASE=helix \
-            -e MYSQL_USER=helix -e MYSQL_PASSWORD=helix \
-            mysql:8.0 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-          docker run -d --name storage --network foundry -v "$RUNNER_TEMP/s3.json:/etc/s3.json:ro" \
-            --entrypoint weed chrislusf/seaweedfs:4.47 server -dir=/data -ip=127.0.0.1 -ip.bind=127.0.0.1 \
-            -s3 -s3.ip.bind=0.0.0.0 -s3.port=8333 -s3.config=/etc/s3.json
+          docker run -d --name storage --network foundry -v secrets:/secrets:ro \
+            --entrypoint /bin/sh chrislusf/seaweedfs:4.47 -c \
+            'printf '"'"'{"identities":[{"name":"foundry","credentials":[{"accessKey":"foundry","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'"'"' "$(cat /secrets/s3-secret)" > /tmp/s3.json &&
+              exec weed server -dir=/data -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3 -s3.ip.bind=0.0.0.0 -s3.port=8333 -s3.config=/tmp/s3.json'
+          mysql_up() { docker exec mysql sh -c 'mysqladmin ping -h 127.0.0.1 -uhelix -p"$(cat /secrets/mysql-password)" --silent' >/dev/null 2>&1; }
           for _ in $(seq 60); do
-            docker exec mysql mysqladmin ping -h 127.0.0.1 -uhelix -phelix --silent >/dev/null 2>&1 &&
-              docker exec storage nc -z 127.0.0.1 8333 && break
+            mysql_up && docker exec storage nc -z 127.0.0.1 8333 && break
             sleep 2
           done
-          docker exec mysql mysqladmin ping -h 127.0.0.1 -uhelix -phelix --silent >/dev/null 2>&1 || { docker logs mysql; exit 1; }
+          mysql_up || { docker logs mysql; exit 1; }
           docker exec storage nc -z 127.0.0.1 8333 || { docker logs storage; exit 1; }
-          docker run -d --name foundry --network foundry -p 127.0.0.1:8081:8081 \
-            -e 'HELIX_DB_DSN=helix:helix@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true' \
-            -e HELIX_LOCAL__SITE_TOKEN="$token" \
+          docker run -d --name foundry --network foundry -p 127.0.0.1:8081:8081 -v secrets:/secrets:ro \
+            -e 'HELIX_DB_DSN=helix@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true' \
+            -e HELIX_LOCAL__SECRETS_DIR=/secrets \
             -e HELIX_LOCAL__S3__ENDPOINT=http://storage:8333 \
-            -e HELIX_LOCAL__S3__SECRET_ACCESS_KEY="$s3_secret" \
-            -e HELIX_FOUNDRY__CONNECTORS__CURRENT_KEY="$(openssl rand -base64 32)" \
             "$CI_IMAGE"
           for _ in $(seq 60); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' foundry)" = healthy ] && break
             sleep 2
           done
           docker inspect -f '{{.State.Health.Status}}' foundry | grep -qx healthy || { docker logs foundry; exit 1; }
-          curl -fsS -o /dev/null -H "Authorization: Bearer $token" http://127.0.0.1:8081/v1/whoami
+          # As the site reads it, as its user (node, 1000), whose group the file is.
+          token=$(docker run --rm --user 1000:1000 -v secrets:/secrets:ro --entrypoint cat "$CI_IMAGE" /secrets/site-token)
+          echo "::add-mask::$token"
+          curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:8081/v1/whoami |
+            jq -e '.workspaces | length == 1' >/dev/null
           docker rm -f foundry storage mysql
       - name: Save the tested image
         if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
