@@ -166,6 +166,41 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   ).toBeVisible();
 });
 
+// The first run: a new install's onboarding drafts from the sample company
+// on the provider the install found, into a database in this computer's
+// Helix.
+test("drafts a new install's first ontology from the sample company", async ({
+  page,
+}) => {
+  await configure({ freshInstall: true });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use the sample" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=review$/, {
+    timeout: 30_000,
+  });
+  const steps = page.getByRole("list", { name: "Steps" });
+  await expect(steps).toContainText(
+    "Kestrel sample: 6 table files and 9 documents",
+  );
+  await expect(steps).toContainText("A new database, Kestrel customers");
+  await page.getByRole("button", { name: "Create and generate" }).click();
+  await createdOntology(page);
+});
+
+test("asks for an AI provider before adding the sample company", async ({
+  page,
+}) => {
+  await configure({ freshInstall: true, aiDefault: false });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use the sample" }).click();
+  await expect(
+    page.getByRole("note").filter({
+      hasText: "Adding the sample needs an AI provider",
+    }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+});
+
 test("keeps only settings and the theme in the account menu", async ({
   page,
 }) => {

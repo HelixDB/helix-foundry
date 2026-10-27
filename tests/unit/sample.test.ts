@@ -1,0 +1,147 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { fileProblem, formatOfName } from "@/web/areas/documents/model";
+import { MAX_GOAL, MAX_TABLES } from "@/web/areas/ontology/model";
+import { SAMPLE } from "@/web/areas/ontology/sample";
+import { readPdfText } from "../../mock/pdf-text";
+import { readTableFile, type Row } from "../../mock/table-files";
+
+// The sample company the first ontology's wizard offers is what
+// scripts/sample-company.mjs wrote: every file it lists is served and
+// uploadable, and its tables and documents name each other's rows, so a
+// draft from them has links to find.
+
+const DIR = join(__dirname, "..", "..", "public", "samples", "kestrel");
+const bytes = (name: string) => readFileSync(join(DIR, name));
+
+async function table(name: string): Promise<Row[]> {
+  const read = await readTableFile("text/csv", bytes(name));
+  if (!read.ok) throw new Error(read.message);
+  return read.rows;
+}
+
+describe("the sample company", () => {
+  it("lists exactly the files served, each one the WFE takes", () => {
+    expect(readdirSync(DIR).sort()).toEqual([...SAMPLE.files].sort());
+    expect(SAMPLE.base).toBe("/samples/kestrel/");
+    for (const name of SAMPLE.files)
+      expect(fileProblem({ name, size: statSync(join(DIR, name)).size })).toBe(
+        undefined,
+      );
+  });
+
+  it("fits one generation, and its set and goal fit the WFE's limits", () => {
+    const tables = SAMPLE.files.filter(
+      (f) => formatOfName(f)?.kind === "table",
+    );
+    expect(tables).toHaveLength(6);
+    expect(tables.length).toBeLessThanOrEqual(MAX_TABLES);
+    expect([...SAMPLE.set.name].length).toBeLessThanOrEqual(120);
+    expect([...SAMPLE.set.description].length).toBeLessThanOrEqual(1000);
+    expect([...SAMPLE.goal].length).toBeLessThanOrEqual(MAX_GOAL);
+  });
+
+  it("reads every PDF's text", async () => {
+    for (const name of SAMPLE.files.filter((f) => f.endsWith(".pdf"))) {
+      const read = await readPdfText(bytes(name));
+      expect(read.ok, name).toBe(true);
+      expect(read.ok && read.text, name).toContain("Kestrel Software, Inc.");
+    }
+  });
+
+  it("has tables whose ids are unique and whose references resolve", async () => {
+    const [accounts, contacts, subscriptions, invoices, tickets, usage] =
+      await Promise.all(
+        [
+          "accounts.csv",
+          "contacts.csv",
+          "subscriptions.csv",
+          "invoices.csv",
+          "support_tickets.csv",
+          "product_usage.csv",
+        ].map(table),
+      );
+    const ids = (rows: Row[], key: string) => {
+      const all = rows.map((r) => String(r[key]));
+      expect(new Set(all).size, key).toBe(all.length);
+      return new Set(all);
+    };
+    const accountIds = ids(accounts!, "account_id"),
+      contactIds = ids(contacts!, "contact_id"),
+      subscriptionIds = ids(subscriptions!, "subscription_id");
+    ids(invoices!, "invoice_id");
+    ids(tickets!, "ticket_id");
+    expect(accountIds.size).toBe(40);
+
+    const contactAccount = new Map(
+      contacts!.map((c) => [c.contact_id, c.account_id]),
+    );
+    const subscriptionAccount = new Map(
+      subscriptions!.map((s) => [s.subscription_id, s.account_id]),
+    );
+    for (const c of contacts!) expect(accountIds).toContain(c.account_id);
+    for (const s of subscriptions!) expect(accountIds).toContain(s.account_id);
+    for (const u of usage!) expect(accountIds).toContain(u.account_id);
+    for (const v of invoices!) {
+      expect(subscriptionIds).toContain(v.subscription_id);
+      expect(subscriptionAccount.get(v.subscription_id)).toBe(v.account_id);
+    }
+    for (const t of tickets!) {
+      expect(contactIds).toContain(t.requester_id);
+      expect(contactAccount.get(t.requester_id)).toBe(t.account_id);
+    }
+    // Every account has its people and one subscription in force, unless
+    // it left.
+    for (const id of accountIds) {
+      expect(
+        contacts!.some((c) => c.account_id === id),
+        id,
+      ).toBe(true);
+      const own = subscriptions!.filter((s) => s.account_id === id);
+      expect(own.filter((s) => s.status !== "canceled").length, id).toBe(
+        own.some(
+          (s) => s.cancel_reason && s.cancel_reason !== "Upgraded to Growth",
+        )
+          ? 0
+          : 1,
+      );
+    }
+  });
+
+  it("names in its documents only tickets, invoices and people its tables hold", async () => {
+    const [contacts, invoices, tickets] = await Promise.all(
+      ["contacts.csv", "invoices.csv", "support_tickets.csv"].map(table),
+    );
+    const text = (
+      await Promise.all(
+        SAMPLE.files.map(async (name) => {
+          if (name.endsWith(".md")) return bytes(name).toString("utf8");
+          if (!name.endsWith(".pdf")) return "";
+          const read = await readPdfText(bytes(name));
+          return read.ok ? read.text : "";
+        }),
+      )
+    ).join("\n");
+    const ticketIds = new Set(tickets!.map((t) => t.ticket_id)),
+      invoiceIds = new Set(invoices!.map((v) => v.invoice_id));
+    const named = (pattern: RegExp) =>
+      [...text.matchAll(pattern)].map((m) => m[0]);
+    expect(named(/\bT-\d{4}\b/g).length).toBeGreaterThan(10);
+    for (const id of named(/\bT-\d{4}\b/g)) expect(ticketIds).toContain(id);
+    expect(named(/\bINV-\d{5}\b/g)).not.toHaveLength(0);
+    for (const id of named(/\bINV-\d{5}\b/g)) expect(invoiceIds).toContain(id);
+    for (const person of [
+      "Dana Okafor",
+      "Miguel Serrano",
+      "Ingrid Halvorsen",
+      "Tom Becker",
+      "Priya Natarajan",
+      "Gareth Lloyd",
+      "Marcus Bell",
+    ]) {
+      expect(text).toContain(person);
+      expect(contacts!.map((c) => c.full_name)).toContain(person);
+    }
+  });
+});
