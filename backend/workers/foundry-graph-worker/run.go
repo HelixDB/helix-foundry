@@ -95,7 +95,9 @@ type failure struct {
 	Permanent bool
 	Budget    bool
 	Uncounted bool
-	Err       error
+	// Unsupported is an apply the agent can't do in place (unsupported).
+	Unsupported bool
+	Err         error
 }
 
 func (f *failure) Error() string {
@@ -122,10 +124,18 @@ func permanent(message string, err error) error {
 	return &failure{Message: message, Permanent: true, Err: err}
 }
 
+// unsupported ends an apply the agent can't bring up to date in place; the
+// finish queues a full refresh load instead (FinishFoundryGraphJob).
+func unsupported(reason string) error {
+	return &failure{Message: clip("Helix rebuilt the graph instead of updating it in place: " + reason), Permanent: true, Unsupported: true}
+}
+
 // attempt is what one attempt did, kept whether or not it succeeded.
 type attempt struct {
 	// ingestDone means the version's tables are in the load.
 	ingestDone bool
+	// applied is what an apply's Ingest did to each stream, once it is done.
+	applied []ontologyagent.AppliedStream
 	// ingestViolations is how many violation records this attempt's Ingest
 	// left open, once its report counted them: every update records it on
 	// the load (FoundryGraphJobUpdate.IngestViolations).
@@ -261,6 +271,10 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 	if !a.ingestDone {
 		if item, err = ontologyagent.ParseEnrichments(def.MappingsTOML); err != nil {
 			return a, permanent("the version's People enrichment item can't be read", err)
+		}
+		// Applying in place would reuse the profiles the load was built with.
+		if item != nil && job.Kind == model.FoundryGraphJobApply {
+			return a, unsupported("the version enriches people")
 		}
 		if item != nil {
 			if profiles, err = r.enrich(ctx, job, version, def, item); err != nil {
@@ -540,10 +554,14 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 		}
 		sources = append(slices.Clip(tables), ontologyagent.EnrichmentSource(path, profiles.SHA256))
 	}
-	body, err := json.Marshal(ontologyagent.IngestRequest{
+	req := ontologyagent.IngestRequest{
 		RequestID: job.ID, Database: binding.TenantID, Load: job.LoadID, OntologyTOML: def.OntologyTOML, OntologyVersion: ontologyVersion,
 		Helix: target, MappingsTOML: def.MappingsTOML, Sources: sources, ChunkRows: uint64(r.cfg.Foundry.Graph.ChunkRows),
-	})
+	}
+	if job.Kind == model.FoundryGraphJobApply {
+		req.Reload = ontologyagent.ReloadDiff
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("encode ingest request: %w", err)
 	}
@@ -570,6 +588,11 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 	}
 	switch result.Status {
 	case ontologyagent.IngestDone:
+		// An apply's report counts what it changed, not what the load holds.
+		if job.Kind == model.FoundryGraphJobApply {
+			a.applied = result.Applied
+			return nil
+		}
 		// The next update records it with the phase past Ingest, which no retry runs again.
 		a.ingestViolations = ontologyagent.IngestViolations(result.Report)
 		if item == nil {
@@ -606,6 +629,10 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 			fmt.Errorf("mapping %s pass %s chunk %d: %s", result.Mapping, result.Pass, result.Chunk, result.Error))
 	case ontologyagent.IngestCancelled:
 		return retry("the load was stopped; Helix will retry", nil)
+	case ontologyagent.IngestDiffUnsupported:
+		return unsupported(fmt.Sprintf("%s (%s)", result.Reason, strings.Join(result.Unsupported, ", ")))
+	case ontologyagent.IngestPositionMismatch:
+		return unsupported("the graph holds the tables at other positions than the changes start from")
 	default:
 		return retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}

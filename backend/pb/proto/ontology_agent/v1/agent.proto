@@ -6,6 +6,7 @@
 // `ingest_{request,event,result}.json`, `extract_{request,event,result}.json` and
 // `delete_load_{request,event,result}.json` for a graph build, `clues_{request,event}.json`
 // for People enrichment's Clues, `read_{request,result}.json` for a read,
+// `compare_{request,result}.json` for a comparison of two loads,
 // `ask_{request,event,result}.json` for a question, `title_{request,result}.json` for a
 // title, `probe_{request,result}.json` for a probe, `catalog.json` for the models Helix prices,
 // and `schema/VERSION` holds the contract version they describe.
@@ -150,6 +151,18 @@ service Agent {
   // Cancelling the call stops the read: its evaluation and its graph requests.
   rpc Read(ReadRequest) returns (ReadResponse);
 
+  // Compares two loads of one version, kind by kind: each entity type, each link, rows' and
+  // documents' evidence, and open violation records, by key and a digest of what each holds,
+  // with each load's count and hash and up to `max_keys` keys that differ. It writes nothing;
+  // it reads both loads whole. What checks a load brought up to new data in place (Ingest's
+  // `reload: "diff"`) against a fresh load of the same data.
+  //
+  // The errors are Read's: INVALID_ARGUMENT (`request_json` is not a CompareRequest, an empty
+  // `database`, an ontology that doesn't compile, a Helix URL that isn't one),
+  // FAILED_PRECONDITION `load_unknown` or `load_mismatch` (either load), RESOURCE_EXHAUSTED
+  // (it shares Read's limit), and UNAVAILABLE. Cancelling the call stops it.
+  rpc Compare(CompareRequest) returns (CompareResponse);
+
   // Answers one question over a load, read-only, through `helix` (a read-only proxy). The
   // stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
   // `finished`), then exactly one result, last; a question that runs always ends with a result
@@ -277,6 +290,16 @@ message ReadRequest {
 
 message ReadResponse {
   // The ReadResult as JSON (`schema/read_result.json`).
+  string result_json = 1;
+}
+
+message CompareRequest {
+  // The CompareRequest as JSON (`schema/compare_request.json`).
+  string request_json = 1;
+}
+
+message CompareResponse {
+  // The CompareResult as JSON (`schema/compare_result.json`).
   string result_json = 1;
 }
 

@@ -153,6 +153,7 @@ type ReadStore interface {
 	GetFoundryEnrichmentSettings(ctx context.Context, workspaceID string, since time.Time) (model.FoundryEnrichmentSettings, error)
 	GetFoundryLoadEnrichment(ctx context.Context, loadID string) (*model.FoundryLoadEnrichment, error)
 	ListFoundryLoadEnrichments(ctx context.Context, loadIDs []string) (map[string]*model.FoundryLoadEnrichment, error)
+	ListFoundryLoadSources(ctx context.Context, loadIDs []string) (map[string][]model.FoundryLoadSource, error)
 	GetLatestFoundryEnrichmentResults(ctx context.Context, ontologyID string) (*model.FoundryLoadEnrichment, error)
 	GetLatestFoundryEnrichmentApplied(ctx context.Context, ontologyID string) (*model.FoundryLoadEnrichment, error)
 	GetFoundryEnrichmentLedger(ctx context.Context, workspaceID string, since time.Time) (model.FoundryEnrichmentLedger, error)

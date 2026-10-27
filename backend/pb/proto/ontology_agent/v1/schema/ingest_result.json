@@ -7,6 +7,13 @@
       "description": "Every mapping loaded and the created entities were swept.",
       "type": "object",
       "properties": {
+        "applied": {
+          "description": "For `reload: \"diff\"`, where each stream the request read stands: the fingerprint\nof its data, the change sequence that is, and the rows it added, changed and\nremoved, with zeros for one skipped. Empty otherwise.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StreamApplied"
+          }
+        },
         "report": {
           "description": "The load's report as the `ingest` crate writes it (`ingest::Report`). For display\nand storage; its shape is not part of the contract.",
           "type": "object",
@@ -84,6 +91,53 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/SourceChange"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "streams"
+      ]
+    },
+    {
+      "description": "The load can't be brought up to the request's sources in place (`reload: \"diff\"`):\nnothing was written. Build a new load instead.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "description": "Why.",
+          "$ref": "#/$defs/Unsupported"
+        },
+        "status": {
+          "type": "string",
+          "const": "diff_unsupported"
+        },
+        "streams": {
+          "description": "The streams that can't, each its source and mapping joined by U+001F.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "reason",
+        "streams"
+      ]
+    },
+    {
+      "description": "Changes sources that don't continue from the load's position (`reload: \"diff\"`), or\nwhose rows other streams need whole: nothing was written. Send those sources' whole\nsnapshots instead.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "position_mismatch"
+        },
+        "streams": {
+          "description": "Each such stream, with the change sequence the load's position holds.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Mismatch"
           }
         }
       },
@@ -205,6 +259,29 @@
     }
   ],
   "$defs": {
+    "Mismatch": {
+      "description": "A stream whose changes file doesn't continue from the load's position, with the change\nsequence the position holds: nothing was written for it, and its whole snapshot is the way.",
+      "type": "object",
+      "properties": {
+        "stored_change_seq": {
+          "description": "The change sequence the load's position holds, if it holds one.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stream": {
+          "description": "The stream: its source and mapping, joined by U+001F.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stream",
+        "stored_change_seq"
+      ]
+    },
     "Pass": {
       "description": "The two passes of a load over a mapping's rows. A load commits the [`Pass::Create`] chunks\nof every mapping before any [`Pass::Resolve`] chunk, so what rows report resolves against\nevery entity the load creates, whichever row or mapping creates it.",
       "oneOf": [
@@ -251,6 +328,82 @@
         "stored_version",
         "snapshot",
         "version"
+      ]
+    },
+    "StreamApplied": {
+      "description": "Where one stream stands after an apply: the fingerprint of the data it now holds, the\nchange sequence that is, and the rows it added, changed and removed (none for a stream\nskipped unchanged).",
+      "type": "object",
+      "properties": {
+        "added": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "change_seq": {
+          "description": "The change sequence that data holds every change up to, if the backend said.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "changed": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "removed": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "snapshot": {
+          "description": "The fingerprint of the data it holds.",
+          "type": "string"
+        },
+        "stream": {
+          "description": "The stream: its source and mapping, joined by U+001F.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stream",
+        "snapshot",
+        "change_seq",
+        "added",
+        "changed",
+        "removed"
+      ]
+    },
+    "Unsupported": {
+      "description": "Why a load can't be brought up to new data in place: nothing was written, and a new load\nbuilt from the sources is the way.",
+      "oneOf": [
+        {
+          "description": "The load holds streams it keeps no position in: it was written before loads did.",
+          "type": "string",
+          "const": "load_predates_diff"
+        },
+        {
+          "description": "A stream's mapping changed since the load read it.",
+          "type": "string",
+          "const": "stream_version_changed"
+        },
+        {
+          "description": "The mappings include People enrichment, whose identifier index spans the whole load.",
+          "type": "string",
+          "const": "enrichment"
+        },
+        {
+          "description": "A mapping has no row key.",
+          "type": "string",
+          "const": "no_row_key"
+        },
+        {
+          "description": "A changes file's keys aren't a stream's row key.",
+          "type": "string",
+          "const": "row_key_not_primary_key"
+        }
       ]
     }
   }

@@ -528,7 +528,11 @@ func (t *Task) refresh(ctx context.Context) {
 			return
 		}
 		for _, o := range due {
-			queued, err := t.queue.QueueFoundryRefresh(ctx, o.WorkspaceID, o.ID, &model.FoundryGraphJob{ID: id.New()})
+			job := &model.FoundryGraphJob{ID: id.New()}
+			if t.deps.Cfg.Foundry.Graph.Apply {
+				job.Kind = model.FoundryGraphJobApply
+			}
+			queued, err := t.queue.QueueFoundryRefresh(ctx, o.WorkspaceID, o.ID, job)
 			if err != nil {
 				log.From(ctx).Warn("queue foundry refresh failed", "ontology", o.ID, "err", err)
 				continue

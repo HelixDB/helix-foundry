@@ -110,6 +110,9 @@ type FoundryLoad struct {
 	Origin    FoundryLoadOrigin
 	// RefreshesLoadID is the current load a refresh replaces.
 	RefreshesLoadID *string
+	// AppliedAt is when an apply job last brought the load's tables up to
+	// date in place; nil until one has.
+	AppliedAt *time.Time
 }
 
 // OntologyVersion is the version the graph records the load under.
@@ -627,6 +630,10 @@ const (
 	FoundryGraphJobExtract FoundryGraphJobKind = "extract"
 	// FoundryGraphJobDelete deletes a load from the database.
 	FoundryGraphJobDelete FoundryGraphJobKind = "delete"
+	// FoundryGraphJobApply brings the current load up to its tables' newest
+	// snapshots in place, writing only what changed, then extracts the
+	// documents it waits for. A refresh queues it instead of a new load.
+	FoundryGraphJobApply FoundryGraphJobKind = "apply"
 )
 
 // FoundryGraphJobStatus is where a graph job is in its run.
@@ -808,8 +815,11 @@ type FoundryGraphJobOutcome struct {
 // current load it owes (within Budget) or else a delete of the oldest load
 // being deleted, with the id given here.
 type FoundryGraphNext struct {
-	ExtractID   string
-	DeleteID    string
+	ExtractID string
+	DeleteID  string
+	// RefreshID is the id of the full refresh load an apply that failed
+	// before its tables were in queues in its place.
+	RefreshID   string
 	Budget      FoundryGraphBudget
 	RetainLoads int
 }

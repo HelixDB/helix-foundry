@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helixdb/helix-foundry/backend/store/model"
+	"strings"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
 const foundryGraphJobColumns = `id, workspace_id, ontology_id, version_id, load_id, kind, status, phase, client_token, lease_owner,
@@ -98,13 +100,13 @@ func (s *mysqlDB) ClaimFoundryGraphJob(ctx context.Context, workerID string, lea
 			_ = tx.Rollback()
 		}
 	}()
-	// A user's job goes before a refresh's, so a refresh never delays a load
-	// someone waits for by more than the job running. The subquery takes no
-	// lock: a locking clause locks only the outer query's rows.
+	// A user's job goes before a refresh's, an apply being one, so a refresh
+	// never delays a load someone waits for by more than the job running. The
+	// subquery takes no lock: a locking clause locks only the outer query's rows.
 	job, err := scanFoundryGraphJob(tx.QueryRowContext(ctx, "SELECT "+foundryGraphJobColumns+`
 FROM foundry_load_jobs j
 WHERE (status='queued' AND next_attempt_at <= NOW(6)) OR (status='running' AND lease_until < NOW(6))
-ORDER BY (SELECT l.origin = 'refresh' FROM foundry_loads l WHERE l.id = j.load_id), next_attempt_at, id
+ORDER BY j.kind = 'apply' OR (SELECT l.origin = 'refresh' FROM foundry_loads l WHERE l.id = j.load_id), next_attempt_at, id
 LIMIT 1 FOR UPDATE SKIP LOCKED`))
 	if err == ErrNotFound {
 		_ = tx.Rollback()
@@ -333,7 +335,7 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 			finish = model.FoundryGraphJobRetried
 			// A retry resumes where the tables are.
 			phase := job.Phase
-			if outcome.IngestDone && job.Kind == model.FoundryGraphJobLoad {
+			if outcome.IngestDone && (job.Kind == model.FoundryGraphJobLoad || job.Kind == model.FoundryGraphJobApply) {
 				phase = model.FoundryGraphJobDocuments
 			}
 			givenBack := 0
@@ -345,7 +347,7 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 				append(append([]any{outcome.RetryAt.UTC(), string(phase), givenBack}, attemptArgs...), jobID)...)
 			return err
 		}
-		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.HeldSets); err != nil {
+		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets); err != nil {
 			return err
 		}
 		if outcome.Status == model.FoundryGraphJobSucceeded && job.Kind != model.FoundryGraphJobDelete &&
@@ -367,6 +369,16 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 			attempt+` WHERE id=?`, append(append([]any{string(outcome.Status)}, attemptArgs...), jobID)...); err != nil {
 			return err
 		}
+		// An apply that left the load's tables behind hands the refresh to a full
+		// load, while the load it was for is still current; that load's own end
+		// then queues what follows.
+		if job.Kind == model.FoundryGraphJobApply && outcome.Status == model.FoundryGraphJobFailed && !outcome.IngestDone &&
+			o.DeletedAt == nil && o.CurrentLoadID != nil && *o.CurrentLoadID == job.LoadID {
+			if outcome.Next.RefreshID == "" {
+				return fmt.Errorf("an apply that ends failed needs the full refresh's id")
+			}
+			return tx.queueFullFoundryRefresh(ctx, o, job.VersionID, &model.FoundryGraphJob{ID: outcome.Next.RefreshID})
+		}
 		return tx.queueAfterFoundryGraphJob(ctx, o, outcome.Next)
 	})
 	return finish, err
@@ -379,8 +391,18 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 // sets with an allowance the job's budget stop left unfinished
 // (FoundryGraphJobOutcome.HeldSets). The caller holds the ontology's lock.
 func (s *mysqlDB) endFoundryLoadWork(ctx context.Context, o *model.FoundryOntology, job *model.FoundryGraphJob, status model.FoundryGraphJobStatus,
-	held []string) error {
+	ingestDone bool, held []string) error {
 	switch job.Kind {
+	case model.FoundryGraphJobApply:
+		// What the apply brought the load's tables up to is what it pinned.
+		if !ingestDone {
+			return nil
+		}
+		if err := s.recordFoundryLoadSources(ctx, job.LoadID, job.Sources); err != nil {
+			return err
+		}
+		_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET applied_at=NOW(6) WHERE id=?`, job.LoadID)
+		return err
 	case model.FoundryGraphJobLoad:
 		// No attempt comes back to a step its job left preparing or queued:
 		// it ends with the job (cancelled if consent was withdrawn), so the
@@ -405,6 +427,9 @@ SET status=IF(cancel_requested, 'cancelled', 'failed'), ended_at=NOW(6) WHERE lo
 		}
 		if o.DeletedAt != nil || load == model.FoundryLoadFailed {
 			return nil
+		}
+		if err := s.recordFoundryLoadSources(ctx, job.LoadID, job.Sources); err != nil {
+			return err
 		}
 		var origin string
 		var refreshes sql.NullString
@@ -490,6 +515,9 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_documents WHERE load_id=?`, job.LoadID); err != nil {
 			return err
 		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_sources WHERE load_id=?`, job.LoadID); err != nil {
+			return err
+		}
 		_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_extractions WHERE load_id=?`, job.LoadID)
 		return err
 	}
@@ -569,4 +597,57 @@ func scanFoundryGraphJob(scanner rowScanner) (*model.FoundryGraphJob, error) {
 		}
 	}
 	return &job, nil
+}
+
+// recordFoundryLoadSources sets the snapshot of each table the load holds to
+// those of sources, the snapshots a job of it pinned; a table not among them
+// is no longer the load's. A job that pinned nothing (one before pins, or a
+// load of documents only) leaves them as they are.
+func (s *mysqlDB) recordFoundryLoadSources(ctx context.Context, loadID string, sources []model.FoundryLoadSource) error {
+	if len(sources) == 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_sources WHERE load_id=?`, loadID); err != nil {
+		return err
+	}
+	rows := make([]string, 0, len(sources))
+	args := make([]any, 0, 7*len(sources))
+	for _, src := range sources {
+		var syncedAt sql.NullTime
+		if !src.SyncedAt.IsZero() {
+			syncedAt = sql.NullTime{Time: src.SyncedAt.UTC(), Valid: true}
+		}
+		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, loadID, src.ConnectorID, src.Table, src.S3Key, src.SyncID, src.ChangeSeq, syncedAt)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_sources (load_id, connector_id, table_name, s3_key, sync_id, change_seq, synced_at)
+VALUES `+strings.Join(rows, ", "), args...)
+	return err
+}
+
+// ListFoundryLoadSources returns the snapshot of each table the loads hold,
+// by load, each load's by connector and table.
+func (s *mysqlDB) ListFoundryLoadSources(ctx context.Context, loadIDs []string) (map[string][]model.FoundryLoadSource, error) {
+	out := make(map[string][]model.FoundryLoadSource, len(loadIDs))
+	if len(loadIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT load_id, connector_id, table_name, s3_key, sync_id, change_seq, synced_at
+FROM foundry_load_sources WHERE load_id IN (`+idPlaceholders(len(loadIDs))+`) ORDER BY load_id, connector_id, table_name`,
+		toAnySlice(loadIDs)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var loadID string
+		var src model.FoundryLoadSource
+		var syncedAt sql.NullTime
+		if err := rows.Scan(&loadID, &src.ConnectorID, &src.Table, &src.S3Key, &src.SyncID, &src.ChangeSeq, &syncedAt); err != nil {
+			return nil, err
+		}
+		src.SyncedAt = syncedAt.Time
+		out[loadID] = append(out[loadID], src)
+	}
+	return out, rows.Err()
 }

@@ -624,6 +624,10 @@ func (u Unimplemented) ListFoundryLoadEnrichments(context.Context, []string) (ma
 	u.unimplemented("ListFoundryLoadEnrichments")
 	return nil, nil
 }
+func (u Unimplemented) ListFoundryLoadSources(context.Context, []string) (map[string][]model.FoundryLoadSource, error) {
+	u.unimplemented("ListFoundryLoadSources")
+	return nil, nil
+}
 func (u Unimplemented) GetLatestFoundryEnrichmentResults(context.Context, string) (*model.FoundryLoadEnrichment, error) {
 	u.unimplemented("GetLatestFoundryEnrichmentResults")
 	return nil, nil

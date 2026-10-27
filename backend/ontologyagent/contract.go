@@ -18,7 +18,7 @@ import (
 // ContractVersion is the contract the vendored schemas describe, the first
 // field of pb/proto/ontology_agent/v1/schema/VERSION. A generation fails
 // rather than call an agent whose GetInfo reports another.
-const ContractVersion = "4.1.1"
+const ContractVersion = "4.2.0"
 
 // TurnRequest is one turn's request (schema/turn_request.json).
 type TurnRequest struct {

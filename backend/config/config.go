@@ -294,6 +294,9 @@ type GraphConfig struct {
 	// short of MonthlyUSD, which must be above it.
 	MaxJobUSD  float64 `koanf:"max_job_usd"`
 	MonthlyUSD float64 `koanf:"monthly_usd"`
+	// Apply makes a refresh bring the current load up to date in place,
+	// writing only what changed; off, every refresh builds a new load.
+	Apply bool `koanf:"apply"`
 	// RetainLoads is how many loads an ontology keeps: the current one and
 	// the newest ready, partial or failed others. Older ones are deleted.
 	RetainLoads int `koanf:"retain_loads"`
@@ -1505,6 +1508,7 @@ func Defaults() Config {
 		MonthlyUSD:        100,
 		RetainLoads:       5,
 		DeleteBatch:       1000,
+		Apply:             true,
 	}, Read: ReadConfig{
 		GRPC:      ServiceGRPCConfig{Listen: ":50068", MaxRecvMsgMB: 16},
 		HTTP:      ServiceHTTPConfig{Listen: ":8100"},

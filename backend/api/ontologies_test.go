@@ -544,6 +544,10 @@ func (s *foundryStore) ListFoundryLoadEnrichments(context.Context, []string) (ma
 	return map[string]*foundrymodel.FoundryLoadEnrichment{}, nil
 }
 
+func (s *foundryStore) ListFoundryLoadSources(context.Context, []string) (map[string][]foundrymodel.FoundryLoadSource, error) {
+	return map[string][]foundrymodel.FoundryLoadSource{}, nil
+}
+
 // ListFoundryLoadJobs lists each load's newest jobs, newest first, and
 // counts and adds up all of them.
 func (s *foundryStore) ListFoundryLoadJobs(_ context.Context, loadIDs []string, newest int) (map[string]foundrymodel.FoundryLoadJobs, error) {
@@ -2035,7 +2039,7 @@ func TestFoundryOntologyRefreshSetting(t *testing.T) {
 // The loads list tells a refresh from a load someone started.
 func TestFoundryLoadOrigin(t *testing.T) {
 	load := &foundrymodel.FoundryLoad{ID: "l1", Version: 2, Status: foundrymodel.FoundryLoadReady, Origin: foundrymodel.FoundryLoadByRefresh, CreatedAt: time.Now()}
-	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil).GetOrigin(); got != "refresh" {
+	if got := foundryLoadToProto(load, &foundrymodel.FoundryOntology{}, foundrymodel.FoundryLoadJobs{}, nil, nil).GetOrigin(); got != "refresh" {
 		t.Fatalf("origin = %q", got)
 	}
 }

@@ -38,6 +38,17 @@
       "description": "One chunk was handled: written, found already stored, or empty.",
       "type": "object",
       "properties": {
+        "diff": {
+          "description": "For a chunk a diff wrote (`reload: \"diff\"`), what it found of the chunk's rows: the\nchunk holds the added and changed ones. Rows staged again for what changed around\nthem count as changed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RowDiff"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "event": {
           "type": "string",
           "const": "chunk"
@@ -51,6 +62,29 @@
       "required": [
         "event",
         "report"
+      ]
+    },
+    {
+      "description": "A stream whose data the load holds already was skipped, unread (`reload: \"diff\"`).",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "stream_skipped"
+        },
+        "snapshot": {
+          "description": "The fingerprint of the data it holds.",
+          "type": "string"
+        },
+        "stream": {
+          "description": "The stream: its source and mapping, joined by U+001F.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "stream",
+        "snapshot"
       ]
     },
     {
@@ -86,5 +120,43 @@
         "event"
       ]
     }
-  ]
+  ],
+  "$defs": {
+    "RowDiff": {
+      "description": "What a diff found of one chunk's rows, by (row key, row hash), or of one stream's.",
+      "type": "object",
+      "properties": {
+        "added": {
+          "description": "Rows the load didn't hold, staged.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "changed": {
+          "description": "Rows the load held with another hash, retracted and staged again.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "removed": {
+          "description": "Rows the load held that the source no longer has, retracted.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unchanged": {
+          "description": "Rows the load holds as they are, left alone.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "added",
+        "changed",
+        "removed",
+        "unchanged"
+      ]
+    }
+  }
 }

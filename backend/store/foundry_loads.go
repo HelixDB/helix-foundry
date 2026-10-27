@@ -28,7 +28,7 @@ const (
 func (r FoundryLoadRefusal) Error() string { return string(r) }
 
 const foundryLoadColumns = `l.id, l.workspace_id, l.ontology_id, l.version_id, v.version, l.status, l.ingest_violations, l.finished_at,
-       l.created_at, l.deleted_at, l.origin, l.refreshes_load_id`
+       l.created_at, l.deleted_at, l.origin, l.refreshes_load_id, l.applied_at`
 
 // foundryLoadFrom joins each load to its version for the version's number.
 const foundryLoadFrom = ` FROM foundry_loads l JOIN foundry_ontology_versions v ON v.id = l.version_id`
@@ -86,6 +86,15 @@ WHERE id=? AND status='writing'`, live.LoadID); err != nil {
 			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NULL WHERE id=?`, job.OntologyID); err != nil {
 				return err
 			}
+		case live.Kind == model.FoundryGraphJobApply && userLoad:
+			// The user's load reads the newest data too. The current load keeps what
+			// the apply wrote; a later apply brings it up to date if it stays current.
+			if err := tx.cancelLiveFoundryGraphJob(ctx, job.OntologyID, "a load the user started went first"); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NULL WHERE id=?`, job.OntologyID); err != nil {
+				return err
+			}
 		default:
 			return ErrConflict
 		}
@@ -105,8 +114,10 @@ func (s *mysqlDB) isFoundryRefreshJob(ctx context.Context, job *model.FoundryGra
 	return origin == string(model.FoundryLoadByRefresh), nil
 }
 
-// QueueFoundryRefresh queues a refresh of the ontology: a load of its current
-// load's version that replaces it, with job's id. It returns false without
+// QueueFoundryRefresh queues a refresh of the ontology, with job's id: an
+// apply job that brings its current load up to date in place when job's
+// kind asks for one and the current load is servable, or else a load of the
+// current load's version that replaces it. It returns false without
 // queueing while a job is live, leaving the refresh owed. It does not wait
 // for budget: a refresh with none left loads the tables and replays what its
 // documents' saved extractions hold, at $0. An ontology with refresh off or
@@ -130,15 +141,19 @@ func (s *mysqlDB) QueueFoundryRefresh(ctx context.Context, workspaceID, ontology
 		if err != nil || live != nil {
 			return err
 		}
-		var versionID string
-		if err := tx.db.QueryRowContext(ctx, `SELECT version_id FROM foundry_loads WHERE id=?`, *o.CurrentLoadID).Scan(&versionID); err != nil {
+		var versionID, status string
+		if err := tx.db.QueryRowContext(ctx, `SELECT version_id, status FROM foundry_loads WHERE id=?`, *o.CurrentLoadID).
+			Scan(&versionID, &status); err != nil {
 			return fmt.Errorf("read current load %s: %w", *o.CurrentLoadID, err)
 		}
-		token := "refresh:" + job.ID
-		job.WorkspaceID, job.OntologyID, job.VersionID, job.LoadID = o.WorkspaceID, o.ID, versionID, job.ID
-		job.Kind, job.Phase, job.ClientToken = model.FoundryGraphJobLoad, model.FoundryGraphJobProvisioning, &token
-		job.Origin, job.RefreshesLoadID = model.FoundryLoadByRefresh, o.CurrentLoadID
-		if err := tx.createFoundryLoad(ctx, job); err != nil {
+		job.WorkspaceID, job.OntologyID, job.VersionID = o.WorkspaceID, o.ID, versionID
+		if job.Kind == model.FoundryGraphJobApply && model.FoundryLoadStatus(status).Servable() {
+			token := "apply:" + job.ID
+			job.LoadID, job.Phase, job.ClientToken = *o.CurrentLoadID, model.FoundryGraphJobProvisioning, &token
+			if err := tx.insertFoundryGraphJob(ctx, job); err != nil {
+				return err
+			}
+		} else if err := tx.queueFullFoundryRefresh(ctx, o, versionID, job); err != nil {
 			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_ontologies SET refresh_due_at=NULL WHERE id=?`, o.ID); err != nil {
@@ -148,6 +163,16 @@ func (s *mysqlDB) QueueFoundryRefresh(ctx context.Context, workspaceID, ontology
 		return nil
 	})
 	return queued, err
+}
+
+// queueFullFoundryRefresh queues job as a refresh load of versionID that
+// replaces the ontology's current load. The caller holds the ontology's lock.
+func (s *mysqlDB) queueFullFoundryRefresh(ctx context.Context, o *model.FoundryOntology, versionID string, job *model.FoundryGraphJob) error {
+	token := "refresh:" + job.ID
+	job.WorkspaceID, job.OntologyID, job.VersionID, job.LoadID = o.WorkspaceID, o.ID, versionID, job.ID
+	job.Kind, job.Phase, job.ClientToken = model.FoundryGraphJobLoad, model.FoundryGraphJobProvisioning, &token
+	job.Origin, job.RefreshesLoadID = model.FoundryLoadByRefresh, o.CurrentLoadID
+	return s.createFoundryLoad(ctx, job)
 }
 
 // insertFoundryLoad writes load job job's load, with the documents and
@@ -472,11 +497,11 @@ WHERE id=? AND NOT EXISTS (SELECT 1 FROM foundry_loads WHERE ontology_id=? AND s
 func scanFoundryLoad(scanner rowScanner) (*model.FoundryLoad, error) {
 	var l model.FoundryLoad
 	var status string
-	var finishedAt, deletedAt sql.NullTime
+	var finishedAt, deletedAt, appliedAt sql.NullTime
 	var origin string
 	var refreshes sql.NullString
 	if err := scanner.Scan(&l.ID, &l.WorkspaceID, &l.OntologyID, &l.VersionID, &l.Version, &status, &l.IngestViolations, &finishedAt,
-		&l.CreatedAt, &deletedAt, &origin, &refreshes); err != nil {
+		&l.CreatedAt, &deletedAt, &origin, &refreshes, &appliedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -491,6 +516,9 @@ func scanFoundryLoad(scanner rowScanner) (*model.FoundryLoad, error) {
 	}
 	if deletedAt.Valid {
 		l.DeletedAt = &deletedAt.Time
+	}
+	if appliedAt.Valid {
+		l.AppliedAt = &appliedAt.Time
 	}
 	return &l, nil
 }

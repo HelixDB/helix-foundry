@@ -26,7 +26,7 @@ var durationBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 720
 
 var jobSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "helix_foundry_graph_job_seconds",
-	Help:    "How long a graph job attempt took, by kind (load, extract, delete), the origin of the load it works on (user or refresh) and outcome.",
+	Help:    "How long a graph job attempt took, by kind (load, extract, apply, delete), the origin of the load it works on (user or refresh) and outcome.",
 	Buckets: durationBuckets,
 }, []string{"kind", "origin", "outcome"})
 
@@ -51,3 +51,13 @@ var documentsHeld = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Documents a job no person started held back unsent, by reason: set_allowance (the month's allowance of their set, or of its " +
 		"workspace's sets of its kind, is spent: config.FoundryConfig.SetAllowances). They wait for next month or a load a person starts.",
 }, []string{"reason"})
+
+var applies = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_applies_total",
+	Help: "Apply jobs that ended, by outcome: done (the tables are up to date), unsupported (a full refresh load replaces it) or failed.",
+}, []string{"outcome"})
+
+var applyRows = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_apply_rows_total",
+	Help: "Table rows an apply wrote, by change: added, changed or removed. Rows it found unchanged are not counted.",
+}, []string{"change"})

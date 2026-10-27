@@ -267,10 +267,9 @@ func (s *mysqlDB) oweFoundrySetRefreshes(ctx context.Context, ontologies []*mode
 		if !reads {
 			continue
 		}
-		var last sql.NullTime
-		if err := s.db.QueryRowContext(ctx, `SELECT MAX(created_at) FROM foundry_loads WHERE ontology_id=? AND origin='refresh'`,
-			o.ID).Scan(&last); err != nil {
-			return fmt.Errorf("read last refresh of ontology %s: %w", o.ID, err)
+		last, err := s.lastFoundryRefresh(ctx, o.ID)
+		if err != nil {
+			return err
 		}
 		if err := s.oweFoundryRefresh(ctx, o.ID, last, refreshEvery); err != nil {
 			return err
