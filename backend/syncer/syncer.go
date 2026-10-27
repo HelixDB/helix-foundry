@@ -260,7 +260,7 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	}
 	tables := selected(discovery, choice)
 	r := &run{s: s, sync: sync, kind: kind, src: src, previous: previous}
-	if r.docs, err = r.openDocuments(ctx, tables, plan.Sync.RefreshEvery); err != nil {
+	if r.docs, err = r.openDocuments(ctx, tables); err != nil {
 		return res, err
 	}
 	// An earlier attempt's changes still owe their refreshes, though this

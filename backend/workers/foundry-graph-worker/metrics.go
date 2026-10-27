@@ -66,3 +66,8 @@ var changeFileRows = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_change_file_rows_total",
 	Help: "Changes an apply sent as change files in place of whole snapshots, one per changed key.",
 })
+
+var documentsRemoved = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_documents_removed_total",
+	Help: "Deleted documents a job took out of its load's graph: their sections, mentions and quotes, and what they alone held up.",
+})

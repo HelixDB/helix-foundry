@@ -412,6 +412,14 @@ func (u Unimplemented) ListPendingFoundryDocuments(context.Context, string) ([]*
 	u.unimplemented("ListPendingFoundryDocuments")
 	return nil, nil
 }
+func (u Unimplemented) ListRemovedFoundryDocuments(context.Context, string) ([]string, error) {
+	u.unimplemented("ListRemovedFoundryDocuments")
+	return nil, nil
+}
+func (u Unimplemented) RecordFoundryDocumentRemoval(context.Context, string, string, string) error {
+	u.unimplemented("RecordFoundryDocumentRemoval")
+	return nil
+}
 func (u Unimplemented) ListUploadedFoundryDocuments(context.Context, string, string, int) ([]*model.FoundryDocument, error) {
 	u.unimplemented("ListUploadedFoundryDocuments")
 	return nil, nil

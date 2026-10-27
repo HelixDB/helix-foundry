@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/store/model"
-	"slices"
 	"strings"
 	"time"
 )
@@ -102,9 +101,9 @@ func (s *mysqlDB) ReserveConnectorDocuments(ctx context.Context, workspaceID str
 //   - p.Add is written uploaded, and read by every ontology that reads the
 //     set (fanOutFoundryDocuments, with p.Fan): reads holds what that did;
 //   - each of p.Update takes its new name, version, time and link;
-//   - when a document was removed, every ontology with refresh on that
-//     reads the set owes a refresh (oweFoundrySetRefreshes): what the
-//     document put in the graph stays until a load without it is current.
+//   - when a document was removed, every ontology with refresh on whose
+//     live or current load holds it takes it out of the graph with an
+//     extract (oweFoundryRemovals).
 //
 // A document of Remove or Update no longer uploaded in the set (the graph
 // worker deleted it, its original gone) is left as it is: the next sync's
@@ -186,7 +185,7 @@ WHERE id=? AND set_id=? AND status='uploaded'`, u.Name, u.Version, u.At.UTC(), u
 		if removed == 0 {
 			return nil
 		}
-		return tx.oweFoundrySetRefreshes(ctx, ontologies, []string{p.SetID}, p.RefreshEvery)
+		return tx.oweFoundryRemovals(ctx, ontologies, true)
 	})
 	if err != nil {
 		return nil, err
@@ -230,52 +229,6 @@ WHERE id IN (`+idPlaceholders(len(ids))+`)`, toAnySlice(ids)...); err != nil {
 		return 0, fmt.Errorf("delete removed connector documents: %w", err)
 	}
 	return len(ids), nil
-}
-
-// oweFoundrySetRefreshes owes a refresh of each of ontologies with refresh
-// on that reads one of setIDs (as fanOutFoundryDocuments reads a set: its
-// live job's load, unless the job deletes one, or its current load is of a
-// version whose scope holds it), spaced by refreshEvery as a table change's
-// is (oweFoundryRefresh). The caller holds the ontologies' locks.
-func (s *mysqlDB) oweFoundrySetRefreshes(ctx context.Context, ontologies []*model.FoundryOntology, setIDs []string,
-	refreshEvery time.Duration) error {
-	for _, o := range ontologies {
-		if !o.AutoRefresh {
-			continue
-		}
-		live, err := s.liveFoundryGraphJob(ctx, o.ID)
-		if err != nil {
-			return err
-		}
-		var loads []string
-		if live != nil && live.Kind != model.FoundryGraphJobDelete {
-			loads = append(loads, live.LoadID)
-		}
-		if o.CurrentLoadID != nil {
-			loads = append(loads, *o.CurrentLoadID)
-		}
-		reads := false
-		for _, l := range loads {
-			_, scope, err := s.foundryLoadScope(ctx, l)
-			if err != nil {
-				return err
-			}
-			if reads = slices.ContainsFunc(scope, func(id string) bool { return slices.Contains(setIDs, id) }); reads {
-				break
-			}
-		}
-		if !reads {
-			continue
-		}
-		last, err := s.lastFoundryRefresh(ctx, o.ID)
-		if err != nil {
-			return err
-		}
-		if err := s.oweFoundryRefresh(ctx, o.ID, last, refreshEvery); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // shareLiveConnector locks a live connector of the workspace FOR SHARE, so

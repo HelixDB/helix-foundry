@@ -87,12 +87,12 @@ WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, args...)
 // DeleteConnector deletes a live connector of the workspace with what its
 // syncs wrote (deleteConnector), in one transaction that locks as every
 // writer of documents does: the workspace's live ontologies, then the
-// connector, FOR UPDATE, then its sets and documents. What its tables and
-// documents put in the graph stays until a load without them is current, so
-// each ontology with refresh on whose current load reads one of its tables
-// (OweFoundryRefreshes), or that reads one of its sets as a sync's removal
-// sees it (oweFoundrySetRefreshes), owes a refresh due now. ErrNotFound
-// means the workspace has no such live connector.
+// connector, FOR UPDATE, then its sets and documents. Each ontology with
+// refresh on whose current load reads one of its tables owes a refresh due
+// now (OweFoundryRefreshes), which leaves the tables out; one whose live or
+// current load holds one of its documents takes them out of the graph with
+// an extract (oweFoundryRemovals). ErrNotFound means the workspace has no
+// such live connector.
 func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -121,7 +121,7 @@ func (s *mysqlDB) DeleteConnector(ctx context.Context, workspaceID, id string) e
 		if len(sets) == 0 {
 			return nil
 		}
-		return tx.oweFoundrySetRefreshes(ctx, ontologies, sets, 0)
+		return tx.oweFoundryRemovals(ctx, ontologies, true)
 	})
 }
 

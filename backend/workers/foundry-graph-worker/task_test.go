@@ -371,6 +371,10 @@ type memStore struct {
 	// batches are every table's change batches, by seq.
 	positions map[string][]model.FoundryLoadSource
 	batches   []*model.ConnectorChangeBatch
+	// removed are the deleted documents the job's load holds, and forgotten
+	// those RecordFoundryDocumentRemoval forgot, in order.
+	removed   []string
+	forgotten []string
 }
 
 // spendRead is one FoundryDocumentSetSpend read.

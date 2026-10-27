@@ -53,6 +53,8 @@ type store interface {
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
+	ListRemovedFoundryDocuments(ctx context.Context, loadID string) ([]string, error)
+	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	DeleteFoundryDocument(ctx context.Context, workspaceID, id string) error
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 	UpdateFoundryGraphJob(ctx context.Context, id, workerID string, update model.FoundryGraphJobUpdate) error
@@ -706,10 +708,14 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	if err != nil {
 		return retry("could not list the documents; Helix will retry", err)
 	}
+	removed, err := r.db.ListRemovedFoundryDocuments(ctx, job.LoadID)
+	if err != nil {
+		return retry("could not list the documents to remove; Helix will retry", err)
+	}
 	// A previous attempt in documents may have committed every document but
 	// stopped before Extract's final sweep. Any Extract finishes it.
 	needsSweep := job.Phase == model.FoundryGraphJobDocuments
-	if len(pending) == 0 && !needsSweep {
+	if len(pending) == 0 && len(removed) == 0 && !needsSweep {
 		return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
 	}
 	free, sets, err := r.partition(ctx, job, pending)
@@ -739,6 +745,14 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	}
 	// swept means an Extract reached the run's end, where the engine sweeps.
 	swept := false
+	if len(removed) > 0 {
+		// Removals go first, in an Extract of their own: they spend nothing.
+		if _, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":remove", "remove", []ontologyagent.ExtractDocument{},
+			removed, 0, providers, a); err != nil {
+			return err
+		}
+		swept = true
+	}
 	if len(free) > 0 {
 		maxUSD, spent, err := r.budget(ctx, job, a)
 		if err != nil {
@@ -749,7 +763,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 			return err
 		}
 		if len(documents) > 0 {
-			exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", documents, maxUSD, providers, a)
+			exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", documents, nil, maxUSD, providers, a)
 			switch {
 			case err != nil:
 				return err
@@ -793,7 +807,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 			continue
 		}
 		remainingUSD := float64(remaining) / 1e6
-		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":"+set.id, "extract:"+set.id, documents,
+		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":"+set.id, "extract:"+set.id, documents, nil,
 			min(maxUSD, remainingUSD), providers, a)
 		switch {
 		case err != nil:
@@ -811,7 +825,8 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	}
 	if needsSweep && !swept {
 		// JSON [] even when staging found only deleted originals.
-		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", []ontologyagent.ExtractDocument{}, 0, providers, a)
+		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", []ontologyagent.ExtractDocument{}, nil, 0,
+			providers, a)
 		switch {
 		case err != nil:
 			return err
@@ -930,8 +945,8 @@ func allowanceSpent(spend model.FoundryDocumentSetSpend, a model.FoundrySetAllow
 // have ended every document it was sent. Any other end is the attempt's
 // failure, and a request past the agent's message limit fails for good.
 func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
-	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument, maxUSD float64,
-	providers []string, a *attempt) (exhausted bool, err error) {
+	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument, remove []string,
+	maxUSD float64, providers []string, a *attempt) (exhausted bool, err error) {
 	a.progress.DocumentsTotal += len(documents)
 	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
 		return false, err
@@ -953,6 +968,7 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 			MaxTextBytes: uint64(r.cfg.Foundry.Documents.MaxBytes),
 		},
 		Models: resolved.Extract(),
+		Remove: remove,
 	})
 	if err != nil {
 		return false, fmt.Errorf("encode extract request: %w", err)
@@ -968,12 +984,26 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 	artifacts := map[string]string{}
 	done := a.progress.DocumentsDone
+	// removing are the documents of remove not yet recorded as taken out.
+	removing := map[string]bool{}
+	for _, docID := range remove {
+		removing[docID] = true
+	}
 	raw, err := r.agent.Extract(ctx, body, resolved.Key, func(e json.RawMessage) error {
 		switch name, _ := ontologyagent.EventName(e); name {
 		case "artifact":
 			r.saveArtifact(ctx, job, e, sent, artifacts)
 		case "document":
 			return r.recordDocument(ctx, job, e, sent, artifacts, resolved, a)
+		case "document_removed":
+			var removed ontologyagent.DocumentRemoved
+			if err := json.Unmarshal(e, &removed); err != nil || !removing[removed.DocID] {
+				log.From(ctx).Warn("graph job: the ontology agent removed a document Helix didn't send", "job", job.ID, "event", string(e))
+				return nil
+			}
+			log.From(ctx).Info("graph job: a document left the load", "job", job.ID, "document", removed.DocID,
+				"facts", removed.FactsRemoved, "entities", removed.EntitiesRemoved)
+			return r.recordRemoval(ctx, job, removed.DocID, removing)
 		}
 		return nil
 	})
@@ -987,6 +1017,12 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 	switch result.Status {
 	case ontologyagent.ExtractDone:
+		// Done took out every document of remove, those the load didn't hold included.
+		for _, docID := range remove {
+			if err := r.recordRemoval(ctx, job, docID, removing); err != nil {
+				return false, err
+			}
+		}
 		// Done means every document ended; one that didn't would be sent, and merged, forever.
 		if ended := a.progress.DocumentsDone - done; ended < len(documents) {
 			return false, retry("the ontology agent left documents unfinished; Helix will retry",
@@ -1010,6 +1046,25 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	default:
 		return false, retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}
+}
+
+// recordRemoval forgets a document the agent took out of the job's load,
+// once: a lost lease ends the attempt, and any other failure leaves it for
+// the next extract to send again, which changes nothing in the graph.
+func (r *runner) recordRemoval(ctx context.Context, job *model.FoundryGraphJob, docID string, removing map[string]bool) error {
+	if !removing[docID] {
+		return nil
+	}
+	delete(removing, docID)
+	switch err := r.db.RecordFoundryDocumentRemoval(ctx, job.ID, r.workerID, docID); {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return retry("the job's lease was lost", err)
+	case err != nil:
+		log.From(ctx).Warn("graph job: record a document's removal failed", "job", job.ID, "document", docID, "err", err)
+		return nil
+	}
+	documentsRemoved.Inc()
+	return nil
 }
 
 // deleteLoad deletes the job's load from the ontology's database, a batch

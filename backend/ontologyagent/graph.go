@@ -140,6 +140,9 @@ type ExtractRequest struct {
 	// Models are the extraction's models, resolved for the workspace; the
 	// key goes in the call's metadata.
 	Models ExtractModels `json:"models"`
+	// Remove are documents to take out of the load before Documents are
+	// extracted; one the load doesn't hold is nothing to remove.
+	Remove []string `json:"remove,omitempty"`
 }
 
 // ExtractDecision is one settled review, internally tagged by kind.
@@ -438,6 +441,14 @@ const (
 	// names: stored with its sections, with no model call.
 	OutcomeOutOfScope OutcomeKind = "out_of_scope"
 )
+
+// DocumentRemoved is a document of an Extract's Remove taken out of its load
+// (event document_removed), with the facts and entities it alone held up.
+type DocumentRemoved struct {
+	DocID           string `json:"doc_id"`
+	FactsRemoved    uint64 `json:"facts_removed"`
+	EntitiesRemoved uint64 `json:"entities_removed"`
+}
 
 // DocumentOutcome is how one document ended: Of is set for duplicate, Code
 // and Retryable for failed, and ModelFailure for a failed code "model".

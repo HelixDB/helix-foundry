@@ -499,19 +499,28 @@ ON DUPLICATE KEY UPDATE document_id=foundry_load_documents.document_id`, append(
 
 // DeleteFoundryDocument marks a document of the workspace deleted and, in
 // the same transaction, removes its reads: a worker reading it can no longer
-// record what it read, and removes what it wrote. ErrNotFound means it is
-// missing or already deleted. What it put in databases stays. It deletes a
-// connector's document too, for the graph worker, whose original is gone;
-// the service refuses a person's delete of one.
+// record what it read, and removes what it wrote. Each ontology whose live
+// or current load holds it takes it out of the graph with an extract
+// (oweFoundryRemovals), so it locks the workspace's live ontologies first,
+// as every writer of documents does. ErrNotFound means it is missing or
+// already deleted. It deletes a connector's document too, for the graph
+// worker, whose original is gone; the service refuses a person's delete of
+// one.
 func (s *mysqlDB) DeleteFoundryDocument(ctx context.Context, workspaceID, id string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		ontologies, err := tx.lockLiveFoundryOntologies(ctx, workspaceID)
+		if err != nil {
+			return err
+		}
 		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_documents SET status='deleted', deleted_at=NOW(6)
 WHERE id=? AND workspace_id=? AND status<>'deleted'`, id, workspaceID); err != nil {
 			return err
 		}
-		_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_document_reads WHERE document_id=?`, id)
-		return err
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_document_reads WHERE document_id=?`, id); err != nil {
+			return err
+		}
+		return tx.oweFoundryRemovals(ctx, ontologies, false)
 	})
 }
 

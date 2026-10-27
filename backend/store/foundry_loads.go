@@ -437,7 +437,8 @@ WHERE ontology_id=? AND status IN ('ready', 'partial', 'failed') ORDER BY create
 
 // queueFoundryExtract queues extract into the ontology's current load while
 // documents of its membership wait for it and the workspace's month has
-// budget for extract's requester (model.FoundryGraphBudget.CapFor); queued
+// budget for extract's requester (model.FoundryGraphBudget.CapFor), or it
+// holds deleted documents to take out, whatever the budget; queued
 // reports whether it did. The caller holds the ontology's lock, no job is
 // live, and what the load should send has joined it: a fan-out's documents
 // as they are added, the rest of its scope at a job's end or a change of
@@ -449,12 +450,19 @@ func (s *mysqlDB) queueFoundryExtract(ctx context.Context, o *model.FoundryOntol
 	}
 	loadID := *o.CurrentLoadID
 	waiting, err := s.countWaitingFoundryDocuments(ctx, loadID)
-	if err != nil || waiting == 0 {
+	if err != nil {
 		return false, err
 	}
-	spent, err := s.SumFoundryGraphJobSpend(ctx, o.WorkspaceID, budget.Since)
-	if err != nil || spent >= budget.CapFor(extract.RequestedByUserID) {
+	removed, err := s.countRemovedFoundryDocuments(ctx, loadID)
+	if err != nil || waiting == 0 && removed == 0 {
 		return false, err
+	}
+	// A removal spends nothing, so only documents to extract wait for budget.
+	if removed == 0 {
+		spent, err := s.SumFoundryGraphJobSpend(ctx, o.WorkspaceID, budget.Since)
+		if err != nil || spent >= budget.CapFor(extract.RequestedByUserID) {
+			return false, err
+		}
 	}
 	var versionID string
 	if err := s.db.QueryRowContext(ctx, `SELECT version_id FROM foundry_loads WHERE id=?`, loadID).Scan(&versionID); err != nil {

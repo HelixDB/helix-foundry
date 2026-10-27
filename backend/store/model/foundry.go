@@ -406,9 +406,6 @@ type ConnectorDocumentsPublish struct {
 	// older than Grace/2 is refused, so the sweep never deletes the bytes
 	// of a document being published.
 	Grace time.Duration
-	// RefreshEvery spaces the refreshes a removal owes, as a table change's
-	// do (OweFoundryRefreshes).
-	RefreshEvery time.Duration
 	// Fan reads Add into the ontologies that read the set. A sync's has no
 	// requester and may write every database: the trust a refresh has. A
 	// stream whose kind has an allowance flushes with Fan.SystemOnly.

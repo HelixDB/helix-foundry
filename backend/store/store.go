@@ -132,6 +132,7 @@ type ReadStore interface {
 		pageToken string, limit int) ([]*model.FoundryDocument, string, error)
 	FoundryLoadHoldsDocument(ctx context.Context, loadID, documentID string) (bool, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
+	ListRemovedFoundryDocuments(ctx context.Context, loadID string) ([]string, error)
 	GetFoundryDocumentExtraction(ctx context.Context, loadID, documentID string) (*model.FoundryDocumentExtraction, error)
 	ListFoundryDocumentExtractions(ctx context.Context, loadID string, documentIDs []string) (map[string]*model.FoundryDocumentExtraction, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
@@ -243,6 +244,7 @@ type Store interface {
 	RenewFoundryGraphJobLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	UpdateFoundryGraphJob(ctx context.Context, id, workerID string, update model.FoundryGraphJobUpdate) error
 	RecordFoundryDocumentExtraction(ctx context.Context, jobID, workerID string, e *model.FoundryDocumentExtraction, keepExisting bool) error
+	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	FinishFoundryGraphJob(ctx context.Context, jobID, workerID string, outcome model.FoundryGraphJobOutcome) (model.FoundryGraphJobFinish, error)
 	CreateFoundryQuestion(ctx context.Context, q *model.FoundryQuestion, limits model.FoundryQuestionLimits) error
 	ClaimFoundryQuestion(ctx context.Context, workerID string, claim model.FoundryQuestionClaim) (*model.FoundryQuestion, error)

@@ -63,8 +63,7 @@ type documents struct {
 	streams map[string]*stream
 	tables  map[string][]*stream
 	// sets are the connector's sets when the attempt began.
-	sets         []*model.FoundryDocumentSet
-	refreshEvery time.Duration
+	sets []*model.FoundryDocumentSet
 	// systemOnly is set when the kind has an allowance (Syncer.Allowances):
 	// its documents are work no person started
 	// (model.FoundryDocumentFanOut.SystemOnly).
@@ -148,8 +147,8 @@ func (b *batch) empty() bool { return len(b.add)+len(b.update)+len(b.remove) == 
 // unless it is already as the stream names it), and loads its live index.
 // A kind with no streams has none. For a kind with an allowance, it then
 // decides which streams pause (pause).
-func (r *run) openDocuments(ctx context.Context, tables []connector.Table, refreshEvery time.Duration) (*documents, error) {
-	d := &documents{r: r, streams: map[string]*stream{}, tables: map[string][]*stream{}, refreshEvery: refreshEvery}
+func (r *run) openDocuments(ctx context.Context, tables []connector.Table) (*documents, error) {
+	d := &documents{r: r, streams: map[string]*stream{}, tables: map[string][]*stream{}}
 	kind, ok := r.kind.(connector.DocumentKind)
 	if !ok {
 		return d, nil
@@ -580,7 +579,7 @@ func (d *documents) flush(ctx context.Context, s *stream) error {
 	}
 	_, err := d.r.s.DB.PublishConnectorDocuments(ctx, model.ConnectorDocumentsPublish{
 		WorkspaceID: sync.WorkspaceID, ConnectorID: sync.ConnectorID, SetID: s.setID,
-		Add: b.add, Update: b.update, Remove: b.remove, Grace: d.r.s.PurgeGrace, RefreshEvery: d.refreshEvery,
+		Add: b.add, Update: b.update, Remove: b.remove, Grace: d.r.s.PurgeGrace,
 		Fan: model.FoundryDocumentFanOut{NewJobID: id.New, Budget: d.r.s.MonthBudget(d.r.s.now()), CanWrite: func(string) bool { return true },
 			SystemOnly: d.systemOnly},
 	}, sync.ID, leaseOwner(sync))
