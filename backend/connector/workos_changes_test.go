@@ -80,26 +80,17 @@ func TestWorkOSChanges(t *testing.T) {
 		}
 	})
 
-	// The cursor is the newest event of the types the followed tables read,
-	// cascades included, so the next read starts exactly after it.
-	t.Run("starts from the newest event the tables read", func(t *testing.T) {
-		url := routeServer(t, map[string]func(*http.Request) (int, string){
-			"/events": func(r *http.Request) (int, string) {
-				q := r.URL.Query()
-				want := []string{"dsync.deleted", "dsync.user.created", "dsync.user.deleted", "dsync.user.updated"}
-				if !slices.Equal(q["events"], want) || q.Get("order") != "desc" || q.Get("limit") != "1" {
-					t.Errorf("newest event read as %s", r.URL.RawQuery)
-				}
-				return http.StatusOK, page(event("event_9", "dsync.user.updated", `{"id":"du_1"}`))
-			},
-		})
-		start, err := reader(t, url).Start(ctx, source, tables("directory_users"))
+	// WorkOS answers order=desc with its oldest event, so a cursor taken from
+	// it would replay every retained event; the cursor is the current time instead.
+	t.Run("starts at the current time without asking WorkOS", func(t *testing.T) {
+		before := time.Now().UTC()
+		start, err := reader(t, routeServer(t, map[string]func(*http.Request) (int, string){})).Start(ctx, source, tables("directory_users"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		var c workosCursor
-		if err := json.Unmarshal(start.Cursor, &c); err != nil || c.Event != "event_9" || !c.Created.Equal(time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)) {
-			t.Fatalf("cursor = %s (%v), want event_9", start.Cursor, err)
+		if err := json.Unmarshal(start.Cursor, &c); err != nil || c.Event != "" || c.Created.Before(before) || c.Created.After(time.Now()) {
+			t.Fatalf("cursor = %s (%v), want the current time and no event", start.Cursor, err)
 		}
 	})
 

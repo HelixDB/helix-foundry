@@ -160,6 +160,12 @@ var workosParents = map[string]workosParent{
 		within: &workosParent{path: "/directories", param: "directory"}},
 }
 
+// workosListFilters narrow a table's list. Unasked, WorkOS lists only active
+// memberships, while a change read's fetch by id returns any status.
+var workosListFilters = map[string]url.Values{
+	"organization_memberships": {"statuses": {"active,inactive,pending"}},
+}
+
 func (k *workosKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {
 	return table, k.copyRows(ctx, src, table.Name, w)
 }
@@ -181,15 +187,20 @@ func (k *workosKind) copyRows(ctx context.Context, src Source, table string, w R
 	}
 	header := workosHeader(src)
 	path := workosObjectPaths[table]
+	filter := workosListFilters[table]
 	parent, perParent := workosParents[table]
 	if !perParent {
-		return k.list(ctx, header, path, nil, func(row map[string]any) error {
+		return k.list(ctx, header, path, filter, func(row map[string]any) error {
 			return w.Write(normalizeWorkOS(object, row, workosParent{}, ""))
 		})
 	}
 	return k.listParents(ctx, header, parent, func(p map[string]any) error {
 		parentID, _ := p["id"].(string)
-		return k.list(ctx, header, path, url.Values{parent.param: {parentID}}, func(row map[string]any) error {
+		query := url.Values{parent.param: {parentID}}
+		for key, values := range filter {
+			query[key] = values
+		}
+		return k.list(ctx, header, path, query, func(row map[string]any) error {
 			return w.Write(normalizeWorkOS(object, row, parent, parentID))
 		})
 	})

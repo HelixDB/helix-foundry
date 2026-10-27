@@ -7,7 +7,7 @@
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile .
 #
-# Releases are ghcr.io/helixdb/foundry.
+# Releases are ghcr.io/helixdb/foundry (.github/workflows/foundry-image.yml).
 
 # --platform=$BUILDPLATFORM keeps the toolchain native and cross-compiles.
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
