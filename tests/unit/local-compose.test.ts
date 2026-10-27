@@ -4,14 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-// local/compose.yaml's AI default, as Compose reads it from an .env: foundry
-// refuses default settings without a provider ("foundry.ai.default has
-// settings but no provider"), so an empty FOUNDRY_AI_PROVIDER must pass none
-// of the others, whatever .env still sets (setup.sh's Claude models, a key).
-// tests/stack/run.sh and the README switch AI off by emptying it alone, and
-// run.sh's Claude empties every other kind's field, which foundry refuses
-// for Claude ("foundry.ai.default.base_url is not used by anthropic").
-// Needs Docker Compose, which reads the file without a daemon.
+// local/compose.yaml as Compose reads it: a fresh clone runs with nothing
+// set, its secrets written once into a volume (init-secrets) that every
+// service reads its own from, and an install from before (its local/.env
+// from setup.sh) keeps its own. The AI default: foundry refuses default
+// settings without a provider ("foundry.ai.default has settings but no
+// provider"), so an empty FOUNDRY_AI_PROVIDER must pass none of the others,
+// whatever .env still sets; empty, foundry finds one (the shell's
+// ANTHROPIC_API_KEY and OPENAI_API_KEY pass to it), and "none" is none.
+// tests/stack/run.sh's "none" and its Claude empty every other kind's field,
+// which foundry refuses for Claude ("foundry.ai.default.base_url is not used
+// by anthropic"). Needs Docker Compose, which reads the file without a
+// daemon.
 
 const compose =
   spawnSync("docker", ["compose", "version"], { encoding: "utf8" }).status ===
@@ -19,14 +23,14 @@ const compose =
 const dir = mkdtempSync(join(tmpdir(), "foundry-compose-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-// The secrets setup.sh writes, which every service requires.
+// The secrets an install set up with setup.sh has in its local/.env.
 const SECRETS = {
   FOUNDRY_LOCAL_TOKEN: "t",
   FOUNDRY_S3_SECRET: "s",
   FOUNDRY_MYSQL_PASSWORD: "m",
   FOUNDRY_CONNECTOR_KEY: "c",
 };
-// What setup.sh writes for Claude.
+// What setup.sh wrote for Claude.
 const CLAUDE = {
   FOUNDRY_AI_PROVIDER: "anthropic",
   FOUNDRY_AI_API_KEY: "sk-ant-api03-test",
@@ -35,7 +39,7 @@ const CLAUDE = {
   FOUNDRY_AI_EXTRACT_MODEL: "claude-haiku-5-5",
   FOUNDRY_AI_VERIFY_MODEL: "claude-sonnet-5-5",
 };
-// What setup.sh writes for an OpenAI-compatible server without a key.
+// What setup.sh wrote for an OpenAI-compatible server without a key.
 const COMPATIBLE = {
   FOUNDRY_AI_PROVIDER: "openai_compatible",
   FOUNDRY_AI_BASE_URL: "'http://host.docker.internal:1234/v1'",
@@ -72,7 +76,7 @@ function composed(
   const env = join(dir, `${Math.random().toString(36).slice(2)}.env`);
   writeFileSync(
     env,
-    Object.entries({ ...SECRETS, ...vars })
+    Object.entries(vars)
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
   );
@@ -145,7 +149,7 @@ const NONE = {
 };
 
 describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
-  it("passes setup.sh's Claude as written", () => {
+  it("passes an .env's Claude as written", () => {
     expect(aiDefault(CLAUDE)).toEqual({
       ...NONE,
       PROVIDER: "anthropic",
@@ -157,7 +161,7 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
     });
   });
 
-  it("passes setup.sh's OpenAI-compatible server as written", () => {
+  it("passes an .env's OpenAI-compatible server as written", () => {
     expect(aiDefault(COMPATIBLE)).toEqual({
       ...NONE,
       PROVIDER: "openai_compatible",
@@ -182,7 +186,7 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
     });
   });
 
-  it("passes setup.sh's Amazon Bedrock as written", () => {
+  it("passes an .env's Amazon Bedrock as written", () => {
     expect(
       aiDefault({
         FOUNDRY_AI_PROVIDER: "bedrock",
@@ -232,7 +236,7 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
     ).toEqual(NONE);
   });
 
-  it("passes run.sh's Claude alone, whatever kind local/.env holds", () => {
+  it("passes run.sh's Claude, or none, alone, whatever kind local/.env holds", () => {
     // Every FOUNDRY_AI_* the AI default reads, as another kind would set it.
     const every = Object.fromEntries(
       [
@@ -252,7 +256,10 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
         MODELS__EXTRACT: "claude-haiku-5-5",
         MODELS__VERIFY: "claude-sonnet-5-5",
       });
-      expect(aiDefault(env, stackShell(false))).toEqual(NONE);
+      expect(aiDefault(env, stackShell(false))).toEqual({
+        ...NONE,
+        PROVIDER: "none",
+      });
     }
   });
 
@@ -264,9 +271,27 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
         .map((line) => line.split(/=(.*)/).slice(0, 2) as [string, string]),
     );
 
-  it("passes nothing for .env.example as shipped", () => {
-    expect(Object.keys(example())).toContain("FOUNDRY_AI_PROVIDER");
-    expect(aiDefault({ ...example(), ...SECRETS })).toEqual(NONE);
+  it("passes nothing for .env.example as shipped: every override is commented out", () => {
+    expect(example()).toEqual({});
+    expect(readFileSync("local/.env.example", "utf8")).toMatch(
+      /^# FOUNDRY_AI_PROVIDER=$/m,
+    );
+    expect(aiDefault(example())).toEqual(NONE);
+  });
+
+  it("passes the shell's API keys to foundry, which finds its default", () => {
+    const environment = composed({}, undefined, {
+      ANTHROPIC_API_KEY: "sk-ant-shell",
+      OPENAI_API_KEY: "sk-shell",
+    }).services.foundry.environment as Record<string, string>;
+    expect(environment).toMatchObject({
+      ANTHROPIC_API_KEY: "sk-ant-shell",
+      OPENAI_API_KEY: "sk-shell",
+      HELIX_FOUNDRY__AI__DEFAULT__PROVIDER: "",
+    });
+    expect(
+      composed({}).services.foundry.environment as Record<string, string>,
+    ).toMatchObject({ ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" });
   });
 
   // An .env written by hand from .env.example, as its comments say: no
@@ -275,7 +300,6 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
     expect(
       aiDefault({
         ...example(),
-        ...SECRETS,
         FOUNDRY_AI_PROVIDER: "ollama",
         FOUNDRY_AI_BASE_URL: "http://host.docker.internal:11434",
         FOUNDRY_AI_MODEL: "qwen3.5:4b",
@@ -292,9 +316,114 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
   });
 });
 
+// Nothing to set up: no .env, no variable. The first start writes the
+// secrets into the volume (init-secrets, the foundry image's own command),
+// adopting an old .env's; every other service waits for it and reads its
+// own secret from the volume, read-only.
+describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
+  it("runs from a fresh clone with nothing set", () => {
+    const { services, volumes } = composed({});
+    expect(Object.keys(services).sort()).toEqual([
+      "foundry",
+      "helix",
+      "init-secrets",
+      "mysql",
+      "ontology-agent",
+      "pod",
+      "site",
+      "storage",
+    ]);
+    expect(volumes).toHaveProperty("secrets");
+    expect(readFileSync("local/compose.yaml", "utf8")).not.toMatch(/:\?/);
+  });
+
+  it("writes them first, in the foundry image, offline, once each start", () => {
+    const { services } = composed({});
+    const init = services["init-secrets"];
+    expect(init.image).toBe(services.foundry.image);
+    expect(init.user).toBe("0:0");
+    expect(init.command).toEqual([
+      "init-secrets",
+      "--dir",
+      "/secrets",
+      "--owner",
+      "65532:65532",
+      "--reader",
+      "site-token=1000",
+      "--reader",
+      "mysql-password=999",
+    ]);
+    expect(init.network_mode).toBe("none");
+    expect(init.restart).toBe("no");
+    expect(init.healthcheck.disable).toBe(true);
+    expect(init.volumes).toEqual([
+      expect.objectContaining({
+        type: "volume",
+        source: "secrets",
+        target: "/secrets",
+      }),
+    ]);
+    expect(init.volumes[0].read_only).toBeFalsy();
+    // Nothing to adopt, so it makes them.
+    expect(init.environment).toEqual({
+      FOUNDRY_LOCAL_TOKEN: "",
+      FOUNDRY_S3_SECRET: "",
+      FOUNDRY_MYSQL_PASSWORD: "",
+      FOUNDRY_CONNECTOR_KEY: "",
+    });
+    for (const [name, service] of Object.entries(services)) {
+      if (name === "init-secrets") continue;
+      expect(service.depends_on?.["init-secrets"]?.condition, name).toBe(
+        "service_completed_successfully",
+      );
+    }
+  });
+
+  it("adopts an old install's secrets from its .env", () => {
+    expect(composed(SECRETS).services["init-secrets"].environment).toEqual({
+      FOUNDRY_LOCAL_TOKEN: "t",
+      FOUNDRY_S3_SECRET: "s",
+      FOUNDRY_MYSQL_PASSWORD: "m",
+      FOUNDRY_CONNECTOR_KEY: "c",
+    });
+  });
+
+  it("gives each service its own, from the volume, read-only", () => {
+    const { services } = composed(SECRETS);
+    const secrets = (name: string) =>
+      (services[name].volumes as { source: string; read_only?: boolean }[])
+        .filter((v) => v.source === "secrets")
+        .map((v) => v.read_only);
+    for (const name of ["foundry", "site", "mysql", "storage"])
+      expect(secrets(name), name).toEqual([true]);
+    for (const name of ["ontology-agent", "helix", "pod"])
+      expect(services[name].volumes?.some((v: { source: string }) => v.source === "secrets") ?? false, name).toBe(false);
+    // Not from the .env: an old one's values reach the volume alone.
+    expect(services.site.environment).toEqual({
+      HELIX_WFE_ORIGIN: "http://pod:8081",
+      FOUNDRY_ORIGIN: "http://localhost:3000",
+      FOUNDRY_LOCAL_TOKEN_FILE: "/secrets/site-token",
+    });
+    expect(services.mysql.environment).toEqual({
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes",
+      MYSQL_DATABASE: "helix",
+      MYSQL_USER: "helix",
+      MYSQL_PASSWORD_FILE: "/secrets/mysql-password",
+    });
+    expect(services.mysql.healthcheck.test.join(" ")).toContain(
+      "$(cat /secrets/mysql-password)",
+    );
+    expect(services.storage.environment ?? {}).toEqual({});
+    // Compose keeps the file's $$, which the container's shell reads as $.
+    expect(services.storage.command[0]).toMatch(
+      /^secret=\$\$\(cat \/secrets\/s3-secret\) && \[ -n "\$\$secret" \]/,
+    );
+  });
+});
+
 // The foundry service: the standalone image (Foundry's API, its directory
-// and its workers in one process) in the pod's namespace, given setup.sh's
-// secrets and the AI default alone, and healthy once its readiness probe
+// and its workers in one process) in the pod's namespace, given the secrets
+// directory and the AI default alone, and healthy once its readiness probe
 // answers on the pod's loopback.
 describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
   it("runs the foundry image, FOUNDRY_IMAGE's when set", () => {
@@ -307,8 +436,8 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     ).toBe("ghcr.io/helixdb/foundry:1.2.3");
   });
 
-  it("passes the secrets and the AI default, nothing else", () => {
-    const { services } = composed({});
+  it("passes the secrets directory, the API keys and the AI default, nothing else", () => {
+    const { services } = composed(SECRETS);
     const foundry = services.foundry;
     const environment = foundry.environment as Record<string, string>;
     expect(
@@ -316,17 +445,16 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
         .filter((k) => !k.startsWith("HELIX_FOUNDRY__AI__DEFAULT__"))
         .sort(),
     ).toEqual([
+      "ANTHROPIC_API_KEY",
       "HELIX_DB_DSN",
-      "HELIX_FOUNDRY__CONNECTORS__CURRENT_KEY",
-      "HELIX_LOCAL__S3__SECRET_ACCESS_KEY",
-      "HELIX_LOCAL__SITE_TOKEN",
+      "HELIX_LOCAL__SECRETS_DIR",
+      "OPENAI_API_KEY",
     ]);
     expect(environment).toMatchObject({
+      // No password: foundry reads it from the directory.
       HELIX_DB_DSN:
-        "helix:m@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true",
-      HELIX_FOUNDRY__CONNECTORS__CURRENT_KEY: "c",
-      HELIX_LOCAL__S3__SECRET_ACCESS_KEY: "s",
-      HELIX_LOCAL__SITE_TOKEN: "t",
+        "helix@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true",
+      HELIX_LOCAL__SECRETS_DIR: "/secrets",
     });
     expect(foundry.network_mode).toBe("service:pod");
     expect(foundry.healthcheck.test).toEqual([
@@ -340,11 +468,25 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
   });
 });
 
-// The ollama profile (setup.sh's "Ollama in Docker"): Ollama beside the agent
-// on the pod's loopback, pinned by digest, and its one-shot model pull; the
-// GPU file gives it the NVIDIA GPUs.
+// The repository's root compose.yaml includes local/compose.yaml: the same
+// project, services and volumes, so `docker compose up` from the root and
+// from local/ run one install.
+describe.skipIf(!compose)("the root compose.yaml", () => {
+  it("is local/compose.yaml, as the same project", () => {
+    const root = composed({}, ["compose.yaml"]) as ReturnType<typeof composed> & { name: string };
+    const local = composed({}) as ReturnType<typeof composed> & { name: string };
+    expect(root.name).toBe("helix-foundry");
+    expect(local.name).toBe("helix-foundry");
+    expect(root.services).toEqual(local.services);
+    expect(root.volumes).toEqual(local.volumes);
+  });
+});
+
+// The ollama profile (Ollama in Docker): Ollama beside the agent on the
+// pod's loopback, pinned by digest, and its one-shot model pull; the GPU
+// file gives it the NVIDIA GPUs.
 describe.skipIf(!compose)("local/compose.yaml's ollama profile", () => {
-  // What setup.sh writes for Ollama in Docker.
+  // What setup.sh wrote for Ollama in Docker.
   const OLLAMA = {
     COMPOSE_PROFILES: "ollama",
     FOUNDRY_OLLAMA_MODEL: "qwen3.5:4b",
@@ -420,7 +562,7 @@ describe.skipIf(!compose)("local/compose.yaml's ollama profile", () => {
     });
   });
 
-  it("makes it the install's AI as setup.sh writes it", () => {
+  it("makes it the install's AI as an .env names it", () => {
     expect(aiDefault(OLLAMA)).toEqual({
       ...NONE,
       PROVIDER: "ollama",

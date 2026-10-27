@@ -1,7 +1,9 @@
 # Helix Foundry on one machine. The image bakes this file in at
 # /etc/foundry/foundry.yaml; HELIX_* environment variables override any key
-# (HELIX_LOCAL__S3__ENDPOINT is local.s3.endpoint), and the local compose
-# file passes the secrets so:
+# (HELIX_LOCAL__S3__ENDPOINT is local.s3.endpoint). The local compose file
+# passes the secrets as a directory, HELIX_LOCAL__SECRETS_DIR (written by
+# foundry init-secrets), and a HELIX_DB_DSN without a password; each may be
+# set itself instead, which wins:
 #   HELIX_DB_DSN, HELIX_LOCAL__SITE_TOKEN, HELIX_LOCAL__S3__SECRET_ACCESS_KEY,
 #   HELIX_FOUNDRY__CONNECTORS__CURRENT_KEY.
 # Every listener is inside the compose stack's shared network namespace: the
@@ -47,9 +49,12 @@ aws:
 
 foundry:
   # Owners choose a model provider of these kinds in Settings > AI models,
-  # Ollama first; until one does (or HELIX_FOUNDRY__AI__DEFAULT__PROVIDER sets
-  # the install's own: for Ollama, with HELIX_FOUNDRY__AI__DEFAULT__BASE_URL,
-  # __MODELS__* and maybe __CONTEXT_TOKENS), model work waits. A model server
+  # Ollama first. Until one does, model work runs on the install's default:
+  # HELIX_FOUNDRY__AI__DEFAULT__PROVIDER's (for Ollama, with
+  # HELIX_FOUNDRY__AI__DEFAULT__BASE_URL, __MODELS__* and maybe
+  # __CONTEXT_TOKENS); without one, what foundry finds on this machine (an
+  # ANTHROPIC_API_KEY or OPENAI_API_KEY in its environment, an Ollama, LM
+  # Studio); "none", none, and model work waits. A model server
   # on this machine or its network (host.docker.internal) may be called over
   # http, and a local model on a CPU is slow: a call gets half an hour and a
   # probe a quarter of an hour to pass.

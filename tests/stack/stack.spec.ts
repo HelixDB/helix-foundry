@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { choose, startOntology, uploadCard } from "../e2e/support/mock";
 
-// The real local stack, from a fresh install: the first workspace, a
-// PostgreSQL connection synced into the store from its onboarding, and an
-// ontology on a new database in the local HelixDB. Without an AI provider
-// (run.sh's default), uploads and the draft wait for one.
+// The real local stack, from a fresh install with nothing set up: the
+// workspace it starts with, a PostgreSQL connection synced into the store
+// from its onboarding, and an ontology on a new database in the local
+// HelixDB. Without an AI provider (run.sh's default, none), uploads and the
+// draft wait for one.
 // FOUNDRY_STACK_MODELS=1 (Claude as the install's provider, with the shell's
 // ANTHROPIC_API_KEY) PUTs a document from the browser straight to the store,
 // drafts from both, waits for the agent's draft, loads it, reads its records
@@ -44,16 +45,20 @@ async function toSources(page: Page) {
   await page.getByRole("button", { name: "Continue" }).click();
 }
 
-test("creates the first workspace", async ({ page }) => {
+// The install made the owner's first workspace as it first started, so the
+// site opens in it, never on the page that creates one.
+test("opens in the workspace the install starts with", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Create workspace" }).click();
-  const create = page.getByRole("dialog", { name: "Create a workspace" });
-  await create.getByLabel("Workspace name").fill("Acme");
-  await create.getByRole("button", { name: "Create workspace" }).click();
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
     page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Workspace: My workspace" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toHaveCount(0);
 });
 
 test("connects and syncs a PostgreSQL database", async ({ page }) => {

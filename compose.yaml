@@ -1,0 +1,12 @@
+# Helix Foundry on this computer, from the repository's root:
+#   docker compose up -d --wait
+# then open http://localhost:3000. The stack is local/compose.yaml (what runs,
+# and what may be overridden: local/README.md), included here so a fresh
+# clone needs no other step; `docker compose -f local/compose.yaml ...`, and
+# running from local/, are the same project with the same volumes. Optional
+# overrides go in local/.env, which Compose reads for that file from either
+# place.
+name: helix-foundry
+
+include:
+  - local/compose.yaml

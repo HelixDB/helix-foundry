@@ -1,7 +1,8 @@
 # Ollama (the ollama profile) on this machine's NVIDIA GPUs. Needs the NVIDIA
-# Container Toolkit. setup.sh adds it when it finds Docker's NVIDIA runtime,
-# as COMPOSE_FILE=compose.yaml:compose.gpu.yaml in .env; by hand:
-#   docker compose -f compose.yaml -f compose.gpu.yaml up -d
+# Container Toolkit. From local/:
+#   docker compose -f compose.yaml -f compose.gpu.yaml --profile ollama up -d
+# or COMPOSE_FILE=compose.yaml:compose.gpu.yaml and COMPOSE_PROFILES=ollama
+# in local/.env, read when Compose runs from local/.
 services:
   ollama:
     deploy:

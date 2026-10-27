@@ -1,13 +1,14 @@
 #!/bin/sh
 # Runs tests/stack against a fresh local stack on this machine: wipes the
-# stack's volumes, starts it with the sample database, waits for the site,
-# then runs the suite in Playwright's image on the host network, its results
-# in test-results/stack. Needs local/.env (local/setup.sh). It runs the site
-# and foundry built from source, helix-foundry/{site,foundry}:local (it
-# builds foundry's from backend/ first; Compose builds the site's when it is
-# missing), and the release's ontology agent, whose source is not here.
-# FOUNDRY_SITE_IMAGE, FOUNDRY_IMAGE and FOUNDRY_AGENT_IMAGE run others as
-# they are. Without models it bills nothing:
+# stack's volumes (its secrets too), starts it as a fresh clone does, with
+# nothing set up, plus the sample database, waits for the site, then runs
+# the suite in Playwright's image on the host network, its results in
+# test-results/stack. It runs the site and foundry built from source,
+# helix-foundry/{site,foundry}:local (it builds foundry's from backend/
+# first; Compose builds the site's when it is missing), and the release's
+# ontology agent, whose source is not here. FOUNDRY_SITE_IMAGE, FOUNDRY_IMAGE
+# and FOUNDRY_AGENT_IMAGE run others as they are. Without models it bills
+# nothing, and finds none on this machine (FOUNDRY_AI_PROVIDER=none):
 #   FOUNDRY_STACK_MODELS=1  Claude is the install's provider, on the
 #                           ANTHROPIC_API_KEY of this shell;
 #   FOUNDRY_STACK_OLLAMA=1  Ollama in Docker (the ollama profile) with
@@ -44,12 +45,12 @@ if [ -n "${FOUNDRY_STACK_OLLAMA:-}" ]; then
   fi
   docker volume create helix-foundry-stack-ollama >/dev/null
 fi
-# The install's AI provider, overriding local/.env's: none without models,
-# so drafts and uploads wait for one and nothing is billed (an empty
-# provider passes none of local/.env's other FOUNDRY_AI_*); with
-# FOUNDRY_STACK_MODELS=1, Claude with the ANTHROPIC_API_KEY of this shell,
-# and none of another kind's fields from local/.env, which Foundry refuses
-# for Claude.
+# The install's AI provider, overriding local/.env's if there is one: none
+# without models, so drafts and uploads wait for one, nothing is billed, and
+# nothing on this machine (an Ollama, a key in this shell) is found instead;
+# with FOUNDRY_STACK_MODELS=1, Claude with the ANTHROPIC_API_KEY of this
+# shell. Either way none of another kind's fields from local/.env, which
+# Foundry refuses for Claude.
 if [ -n "${FOUNDRY_STACK_MODELS:-}" ]; then
   export FOUNDRY_AI_PROVIDER=anthropic \
     FOUNDRY_AI_API_KEY="${ANTHROPIC_API_KEY:?FOUNDRY_STACK_MODELS needs ANTHROPIC_API_KEY}" \
@@ -58,7 +59,11 @@ if [ -n "${FOUNDRY_STACK_MODELS:-}" ]; then
     FOUNDRY_AI_BASE_URL= FOUNDRY_AI_REGION= FOUNDRY_AI_ENDPOINT= FOUNDRY_AI_API= \
     FOUNDRY_AI_CONTEXT_TOKENS=
 else
-  export FOUNDRY_AI_PROVIDER=
+  export FOUNDRY_AI_PROVIDER=none \
+    FOUNDRY_AI_API_KEY= FOUNDRY_AI_MODEL= FOUNDRY_AI_DRAFT_MODEL= FOUNDRY_AI_ASK_MODEL= \
+    FOUNDRY_AI_EXTRACT_MODEL= FOUNDRY_AI_VERIFY_MODEL= \
+    FOUNDRY_AI_BASE_URL= FOUNDRY_AI_REGION= FOUNDRY_AI_ENDPOINT= FOUNDRY_AI_API= \
+    FOUNDRY_AI_CONTEXT_TOKENS=
 fi
 # With the profile on, so a last run's Ollama goes too.
 COMPOSE_PROFILES=ollama $compose down -v --remove-orphans
