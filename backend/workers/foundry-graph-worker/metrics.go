@@ -61,3 +61,8 @@ var applyRows = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_apply_rows_total",
 	Help: "Table rows an apply wrote, by change: added, changed or removed. Rows it found unchanged are not counted.",
 }, []string{"change"})
+
+var changeFileRows = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_change_file_rows_total",
+	Help: "Changes an apply sent as change files in place of whole snapshots, one per changed key.",
+})

@@ -57,6 +57,9 @@ type store interface {
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 	UpdateFoundryGraphJob(ctx context.Context, id, workerID string, update model.FoundryGraphJobUpdate) error
 	SetFoundryGraphJobSources(ctx context.Context, id, workerID string, sources []model.FoundryLoadSource) error
+	ListFoundryLoadSources(ctx context.Context, loadIDs []string) (map[string][]model.FoundryLoadSource, error)
+	ListConnectorChangeBatchesAfter(ctx context.Context, workspaceID, connectorID, table string, afterSeq, toSeq int64) (
+		[]*model.ConnectorChangeBatch, error)
 	RecordFoundryDocumentExtraction(ctx context.Context, jobID, workerID string, e *model.FoundryDocumentExtraction, keepExisting bool) error
 	RecordFoundryLoadEnrichmentIngest(ctx context.Context, loadID, jobWorker string, applied, unmatched int64) error
 	FoundryDocumentSetSpend(ctx context.Context, workspaceID string, setIDs []string, month time.Time) (map[string]model.FoundryDocumentSetSpend, error)
@@ -560,31 +563,21 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 	}
 	if job.Kind == model.FoundryGraphJobApply {
 		req.Reload = ontologyagent.ReloadDiff
+		changes := filepath.Join(r.snapshots.WorkDir, jobsDir, job.ID, "changes")
+		defer func() { _ = os.RemoveAll(changes) }() // best-effort: the next attempt merges afresh
+		req.Sources = changeFiles(ctx, r.db, r.snapshots.Snapshots, r.snapshots.WorkDir, job, def.MappingsTOML, sources)
 	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("encode ingest request: %w", err)
-	}
-	ingestStart := r.now()
-	raw, err := r.agent.Ingest(ctx, body, func(e json.RawMessage) error {
-		if name, _ := ontologyagent.EventName(e); name != "chunk" {
-			return nil
+	result, err := r.callIngest(ctx, job, req, a)
+	if err == nil && result.Status == ontologyagent.IngestPositionMismatch {
+		// The load holds those tables at other positions than their change files start from.
+		if req.Sources, err = withoutChanges(req.Sources, result.Positions); err != nil {
+			return permanent("the ontology agent returned a result Helix can't read", err)
 		}
-		rows, outcome := chunkCounts(e)
-		a.rows += rows
-		chunkRows.WithLabelValues(string(job.Kind)).Add(float64(rows))
-		chunks.WithLabelValues(string(job.Kind), outcome).Inc()
-		a.progress.ChunksDone++
-		return r.update(ctx, job, model.FoundryGraphJobIngest, a)
-	})
-	r.timeStep("ingest", ingestStart)
-	if err != nil {
-		return callFailure("load the tables", err)
+		req.RequestID = job.ID + ":snapshots"
+		result, err = r.callIngest(ctx, job, req, a)
 	}
-	a.results["ingest"] = raw
-	result, err := ontologyagent.DecodeIngestResult(raw)
 	if err != nil {
-		return permanent("the ontology agent returned a result Helix can't read", err)
+		return err
 	}
 	switch result.Status {
 	case ontologyagent.IngestDone:
@@ -632,10 +625,42 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 	case ontologyagent.IngestDiffUnsupported:
 		return unsupported(fmt.Sprintf("%s (%s)", result.Reason, strings.Join(result.Unsupported, ", ")))
 	case ontologyagent.IngestPositionMismatch:
-		return unsupported("the graph holds the tables at other positions than the changes start from")
+		return unsupported("the graph holds the tables at other positions than their snapshots")
 	default:
 		return retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}
+}
+
+// callIngest sends req to Ingest, counting its chunks as they come, and
+// keeps its result as the job's ingest report.
+func (r *runner) callIngest(ctx context.Context, job *model.FoundryGraphJob, req ontologyagent.IngestRequest, a *attempt) (
+	ontologyagent.IngestResult, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return ontologyagent.IngestResult{}, fmt.Errorf("encode ingest request: %w", err)
+	}
+	ingestStart := r.now()
+	raw, err := r.agent.Ingest(ctx, body, func(e json.RawMessage) error {
+		if name, _ := ontologyagent.EventName(e); name != "chunk" {
+			return nil
+		}
+		rows, outcome := chunkCounts(e)
+		a.rows += rows
+		chunkRows.WithLabelValues(string(job.Kind)).Add(float64(rows))
+		chunks.WithLabelValues(string(job.Kind), outcome).Inc()
+		a.progress.ChunksDone++
+		return r.update(ctx, job, model.FoundryGraphJobIngest, a)
+	})
+	r.timeStep("ingest", ingestStart)
+	if err != nil {
+		return ontologyagent.IngestResult{}, callFailure("load the tables", err)
+	}
+	a.results["ingest"] = raw
+	result, err := ontologyagent.DecodeIngestResult(raw)
+	if err != nil {
+		return ontologyagent.IngestResult{}, permanent("the ontology agent returned a result Helix can't read", err)
+	}
+	return result, nil
 }
 
 // reachedBudget ends a run the job's or the month's budget stopped.

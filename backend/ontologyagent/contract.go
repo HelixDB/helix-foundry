@@ -119,6 +119,9 @@ type Source struct {
 	// in Format.
 	Path   string
 	Format FileFormat
+	// Changes, when set, is sent in place of Path: the table's changes since
+	// the position the load holds it at. Only a ReloadDiff takes it.
+	Changes *ChangeFile
 	// Documents are a document set's staged documents.
 	Documents []DocumentFile
 	// Fingerprint identifies the data; the agent measures changed data afresh.
@@ -210,10 +213,15 @@ func (s Source) MarshalJSON() ([]byte, error) {
 	}{mapping{Trust: s.Kind.trust()}}, struct {
 		File file `json:"file"`
 	}{file{Path: s.Path, Format: s.Format.String()}}
-	if s.Kind == SourceDocuments {
+	switch {
+	case s.Kind == SourceDocuments:
 		route, access = "extraction", struct {
 			Documents documents `json:"documents"`
 		}{documents{Files: s.Documents}}
+	case s.Changes != nil:
+		access = struct {
+			Changes *ChangeFile `json:"changes"`
+		}{s.Changes}
 	}
 	return json.Marshal(struct {
 		ID          string   `json:"id"`

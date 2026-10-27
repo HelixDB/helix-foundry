@@ -110,6 +110,19 @@ type Table struct {
 	Dense bool
 }
 
+// WindowedTable reports whether a kind's table holds only a recent window
+// of its source's rows (Table.Windowed): its change batches never delete a
+// row that left the window.
+func WindowedTable(kind, table string) bool {
+	switch kind {
+	case "posthog":
+		return table == "events" || table == "daily_event_counts"
+	case "github":
+		return table == "pull_request_reviews"
+	}
+	return false
+}
+
 // Object is one file of a file source's table.
 type Object struct {
 	Key    string

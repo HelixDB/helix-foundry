@@ -367,6 +367,10 @@ type memStore struct {
 	prior     map[string]map[string]*model.FoundryDocumentExtraction
 	priorErr  error
 	sumErr    error
+	// positions are the snapshots each load holds (ListFoundryLoadSources);
+	// batches are every table's change batches, by seq.
+	positions map[string][]model.FoundryLoadSource
+	batches   []*model.ConnectorChangeBatch
 }
 
 // spendRead is one FoundryDocumentSetSpend read.

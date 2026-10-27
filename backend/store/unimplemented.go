@@ -143,6 +143,10 @@ func (u Unimplemented) ListConnectorChangeBatches(context.Context, string, strin
 	u.unimplemented("ListConnectorChangeBatches")
 	return nil, nil
 }
+func (u Unimplemented) ListConnectorChangeBatchesAfter(context.Context, string, string, string, int64, int64) ([]*model.ConnectorChangeBatch, error) {
+	u.unimplemented("ListConnectorChangeBatchesAfter")
+	return nil, nil
+}
 func (u Unimplemented) ListExpiredChangeBatches(context.Context, time.Time, int) ([]*model.ConnectorChangeBatch, error) {
 	u.unimplemented("ListExpiredChangeBatches")
 	return nil, nil
