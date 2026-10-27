@@ -62,7 +62,7 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 ## Images
 
-`docker compose up` pulls Foundry's release images. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+`docker compose up` pulls Foundry's release images: `foundry-site` and `foundry` 0.1.1, and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
 
 ## Connecting databases
 
