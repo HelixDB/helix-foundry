@@ -1,0 +1,1690 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskResult",
+  "description": "What a question returns, after its last event.\n\nA result of an earlier contract version reads as one with no outputs and no visuals.",
+  "type": "object",
+  "properties": {
+    "queries": {
+      "description": "Every typed query the agent ran, with the evidence it was recorded as and its output,\nthe outputs at most 512 KiB together.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QueryRecord"
+      }
+    },
+    "usage": {
+      "description": "What the question spent.",
+      "$ref": "#/$defs/Usage"
+    }
+  },
+  "oneOf": [
+    {
+      "description": "Answered, every claim cited.",
+      "type": "object",
+      "properties": {
+        "answer": {
+          "description": "The answer.",
+          "$ref": "#/$defs/Answer"
+        },
+        "citations": {
+          "description": "What each of its markers cites.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Citation"
+          }
+        },
+        "status": {
+          "type": "string",
+          "const": "answered"
+        }
+      },
+      "required": [
+        "status",
+        "answer",
+        "citations"
+      ]
+    },
+    {
+      "description": "The load or the ontology can't answer it.",
+      "type": "object",
+      "properties": {
+        "gap": {
+          "description": "What the ontology or the data would need, in plain text.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why not, in plain text.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "cannot_answer"
+        }
+      },
+      "required": [
+        "status",
+        "reason",
+        "gap"
+      ]
+    },
+    {
+      "description": "A cap (spend, steps, wall time or the context window) ended it first.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "budget_exhausted"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    {
+      "description": "It failed.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "description": "Why.",
+          "$ref": "#/$defs/Failure"
+        },
+        "status": {
+          "type": "string",
+          "const": "failed"
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ]
+    }
+  ],
+  "required": [
+    "queries",
+    "usage"
+  ],
+  "$defs": {
+    "Aggregate": {
+      "description": "An aggregate of a numeric property, over all of a position's entities or by groups.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "fn": {
+          "description": "The function.",
+          "$ref": "#/$defs/Function"
+        },
+        "group_by": {
+          "description": "Groups by a property (or `name`) at a position, greatest aggregate first.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GroupBy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "description": "The most groups, 1 to 100.",
+          "type": "integer",
+          "format": "uint",
+          "default": 50,
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property: an integer or float.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fn",
+        "at",
+        "prop",
+        "group_by",
+        "limit"
+      ]
+    },
+    "AggregateGroup": {
+      "description": "One group of an aggregate.",
+      "type": "object",
+      "properties": {
+        "aggregate": {
+          "description": "The aggregate over the group; `null` for a mean, least or greatest of no values.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "value": {
+          "description": "The group's value; `null` for the entities without one."
+        },
+        "values": {
+          "description": "How many values it is over.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "aggregate",
+        "values"
+      ]
+    },
+    "Answer": {
+      "description": "An answer: blocks of plain text with `[cN]` markers, and the query results it shows as\ntables or charts.",
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "description": "Paragraphs and lists, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "visuals": {
+          "description": "Query results shown as tables or charts, each after a block: at most 4, each of\nanother result.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Visual"
+          },
+          "maxItems": 4
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "blocks"
+      ]
+    },
+    "Answer2": {
+      "description": "What a query gives.",
+      "oneOf": [
+        {
+          "description": "Rows, at most the limit.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "rows"
+            },
+            "rows": {
+              "description": "The rows, in order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RowOut"
+              }
+            },
+            "total": {
+              "description": "How many distinct rows there are in all.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "rows",
+            "total"
+          ]
+        },
+        {
+          "description": "Distinct entities at a position.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "description": "How many: exact.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "count"
+            }
+          },
+          "required": [
+            "kind",
+            "count"
+          ]
+        },
+        {
+          "description": "Counts by value, most first, then by value with absent last.",
+          "type": "object",
+          "properties": {
+            "groups": {
+              "description": "The groups, at most the limit.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/GroupOut"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "group_count"
+            },
+            "total_groups": {
+              "description": "How many groups there are in all.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "groups",
+            "total_groups"
+          ]
+        },
+        {
+          "description": "An aggregate over a position's distinct entities.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "aggregate"
+            },
+            "value": {
+              "description": "Its value; `null` for a mean, least or greatest of no values.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "values": {
+              "description": "How many values it is over.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "values"
+          ]
+        },
+        {
+          "description": "An aggregate by groups, greatest first, then by value with absent last.",
+          "type": "object",
+          "properties": {
+            "groups": {
+              "description": "The groups, at most the limit.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AggregateGroup"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "grouped_aggregate"
+            },
+            "total_groups": {
+              "description": "How many groups there are in all.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "groups",
+            "total_groups"
+          ]
+        }
+      ]
+    },
+    "Block": {
+      "description": "A block of an answer.",
+      "oneOf": [
+        {
+          "description": "A paragraph.",
+          "type": "object",
+          "properties": {
+            "para": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "para"
+          ]
+        },
+        {
+          "description": "A list, an item a line.",
+          "type": "object",
+          "properties": {
+            "list": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "list"
+          ]
+        }
+      ]
+    },
+    "Cell": {
+      "description": "One column's value in a row: the entity, or a property's value (`null` if absent).",
+      "anyOf": [
+        {
+          "description": "The entity.",
+          "$ref": "#/$defs/EntityCell"
+        },
+        {
+          "description": "A property's value."
+        }
+      ]
+    },
+    "Citation": {
+      "description": "What one marker cites.",
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "description": "The tool result that showed the target.",
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "marker": {
+          "description": "The marker without brackets, such as `c1`.",
+          "type": "string"
+        },
+        "target": {
+          "description": "What is cited.",
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "marker",
+        "evidence_id",
+        "target"
+      ]
+    },
+    "Column": {
+      "description": "One column of rows.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "prop": {
+          "description": "A property, or `name`; the entity itself if `null`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "prop"
+      ]
+    },
+    "Condition": {
+      "description": "A test of one property (or `name`, the entity's name) of an entity. A comparison never\nholds for an absent value, `!=` included; `is_null` does.",
+      "type": "object",
+      "properties": {
+        "op": {
+          "description": "How it is tested.",
+          "$ref": "#/$defs/Op"
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        },
+        "value": {
+          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from the read's `as_of`). None for\n`is_null` and `not_null`.",
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "prop",
+        "op",
+        "value"
+      ]
+    },
+    "Count": {
+      "description": "A count of distinct entities.",
+      "type": "object",
+      "properties": {
+        "distinct_at": {
+          "description": "The position; the last if `null`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "distinct_at"
+      ]
+    },
+    "DerivedRef": {
+      "description": "A fact the rules derive: `link:<l>`, `relation:<r>`, `derived:<d>` or `violation:<c>`\nover its arguments.",
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Its arguments.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntityRef"
+          }
+        },
+        "pred": {
+          "description": "The predicate.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pred",
+        "args"
+      ]
+    },
+    "Direction": {
+      "description": "Which way a step goes.",
+      "oneOf": [
+        {
+          "description": "From the subject to the object.",
+          "type": "string",
+          "const": "out"
+        },
+        {
+          "description": "From the object to the subject.",
+          "type": "string",
+          "const": "in"
+        }
+      ]
+    },
+    "EntityCell": {
+      "description": "An entity in a row: its identity and name.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its stored identity.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name it was created with.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "name"
+      ]
+    },
+    "EntityRef": {
+      "description": "One entity of the load.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its identity in the load: the key's encoding for a keyed type, the normalized name for\na named one.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Its type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id"
+      ]
+    },
+    "EvidenceId": {
+      "description": "The id of a stored tool result, such as `e17`: every number the user sees cites one.\nIds order by number.",
+      "type": "string"
+    },
+    "FactRef": {
+      "description": "A stated fact.",
+      "type": "object",
+      "properties": {
+        "link": {
+          "description": "The link.",
+          "type": "string"
+        },
+        "object": {
+          "description": "Its object.",
+          "$ref": "#/$defs/EntityRef"
+        },
+        "subject": {
+          "description": "Its subject.",
+          "$ref": "#/$defs/EntityRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "link",
+        "subject",
+        "object"
+      ]
+    },
+    "Failure": {
+      "description": "Why a question failed. A model call that failed says how, as the contract's model failures\ndo, each prefixed `model_`; one the provider was unavailable for is `model_failed`, and a\nquestion too long for the model ends `budget_exhausted` instead.",
+      "oneOf": [
+        {
+          "description": "The model call failed, after retries: the provider was unavailable.",
+          "type": "string",
+          "const": "model_failed"
+        },
+        {
+          "description": "The model declined.",
+          "type": "string",
+          "const": "model_refused"
+        },
+        {
+          "description": "The provider refused the API key.",
+          "type": "string",
+          "const": "model_auth"
+        },
+        {
+          "description": "The key may not use the model.",
+          "type": "string",
+          "const": "model_permission"
+        },
+        {
+          "description": "The provider has no such model.",
+          "type": "string",
+          "const": "model_not_found"
+        },
+        {
+          "description": "The provider kept limiting the rate of calls.",
+          "type": "string",
+          "const": "model_rate_limited"
+        },
+        {
+          "description": "The account is out of credit or quota.",
+          "type": "string",
+          "const": "model_quota"
+        },
+        {
+          "description": "The model or endpoint can't do what the question needs (tool calls), or refused the\nrequest as invalid.",
+          "type": "string",
+          "const": "model_unsupported"
+        },
+        {
+          "description": "The answer hit the output limit.",
+          "type": "string",
+          "const": "model_truncated"
+        },
+        {
+          "description": "The model's answer couldn't be read.",
+          "type": "string",
+          "const": "model_malformed"
+        },
+        {
+          "description": "The call ran out of time.",
+          "type": "string",
+          "const": "model_timeout"
+        },
+        {
+          "description": "The model's weights changed since it was tested.",
+          "type": "string",
+          "const": "model_changed"
+        },
+        {
+          "description": "The endpoint resolves to a private address.",
+          "type": "string",
+          "const": "model_private_host"
+        },
+        {
+          "description": "The model stopped, reminded, without `answer` or `cannot_answer`.",
+          "type": "string",
+          "const": "no_answer"
+        },
+        {
+          "description": "The graph holds no such load, or it is being deleted.",
+          "type": "string",
+          "const": "load_unknown"
+        },
+        {
+          "description": "The load holds another version.",
+          "type": "string",
+          "const": "load_mismatch"
+        },
+        {
+          "description": "The graph couldn't be read.",
+          "type": "string",
+          "const": "store_failed"
+        }
+      ]
+    },
+    "Filter": {
+      "description": "A test of the entities at a position: `at` and exactly one test.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "description": "A flag (a one-place rule-defined predicate) holds for the entity.",
+          "type": "object",
+          "properties": {
+            "holds": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "holds"
+          ]
+        },
+        {
+          "description": "A flag doesn't hold for it.",
+          "type": "object",
+          "properties": {
+            "not_holds": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "not_holds"
+          ]
+        },
+        {
+          "description": "A stored violation record of this constraint (a `[constraints.<name>]` name,\n`<link>.cardinality` or `<link>.required`) names it.",
+          "type": "object",
+          "properties": {
+            "violates": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "violates"
+          ]
+        }
+      ],
+      "required": [
+        "at"
+      ],
+      "unevaluatedProperties": false
+    },
+    "Function": {
+      "description": "An aggregate's function.",
+      "oneOf": [
+        {
+          "description": "The total; 0 over no values.",
+          "type": "string",
+          "const": "sum"
+        },
+        {
+          "description": "The mean.",
+          "type": "string",
+          "const": "avg"
+        },
+        {
+          "description": "The least.",
+          "type": "string",
+          "const": "min"
+        },
+        {
+          "description": "The greatest.",
+          "type": "string",
+          "const": "max"
+        }
+      ]
+    },
+    "GroupBy": {
+      "description": "What an aggregate groups by.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "prop"
+      ]
+    },
+    "GroupCount": {
+      "description": "Counts by value, most first.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "limit": {
+          "description": "The most groups, 1 to 100.",
+          "type": "integer",
+          "format": "uint",
+          "default": 50,
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "prop",
+        "limit"
+      ]
+    },
+    "GroupOut": {
+      "description": "One group of counts by value.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "How many distinct entities have it.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "value": {
+          "description": "The value; `null` for the entities without one."
+        }
+      },
+      "required": [
+        "value",
+        "count"
+      ]
+    },
+    "Op": {
+      "description": "How a condition tests.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "=",
+            "!=",
+            "<",
+            "<=",
+            ">",
+            ">="
+          ]
+        },
+        {
+          "description": "Text containing the value, case-sensitive.",
+          "type": "string",
+          "const": "contains"
+        },
+        {
+          "description": "Text starting with the value, case-sensitive.",
+          "type": "string",
+          "const": "starts_with"
+        },
+        {
+          "description": "No value.",
+          "type": "string",
+          "const": "is_null"
+        },
+        {
+          "description": "A value.",
+          "type": "string",
+          "const": "not_null"
+        }
+      ]
+    },
+    "OrderBy": {
+      "description": "How rows are ordered. Absent values come first ascending and last descending.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position, one the columns name.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "desc": {
+          "description": "Greatest first.",
+          "type": "boolean",
+          "default": false
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "prop",
+        "desc"
+      ]
+    },
+    "Query": {
+      "description": "A typed question over a load (see the [module](self)).",
+      "type": "object",
+      "properties": {
+        "filters": {
+          "description": "Tests of positions' entities against flags and constraints; at most 20.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "maxItems": 20
+        },
+        "return": {
+          "description": "What the query gives.",
+          "$ref": "#/$defs/Return"
+        },
+        "start": {
+          "description": "Position 0: where the path starts.",
+          "$ref": "#/$defs/Start"
+        },
+        "steps": {
+          "description": "Each step leads to the next position; at most 8.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "maxItems": 8
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "steps",
+        "filters",
+        "return"
+      ]
+    },
+    "QueryRecord": {
+      "description": "A typed query the agent ran.",
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "description": "The result it was recorded as.",
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "output": {
+          "description": "Its output as the engine computed it, before it was cut to fit the model's view: what\na visual of the result shows. Left out when the question's outputs together would pass\n512 KiB and no visual shows this one (and by results of an earlier contract version).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordedOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "query": {
+          "description": "The query, entity ids resolved.",
+          "$ref": "#/$defs/Query"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "query"
+      ]
+    },
+    "QuoteRef": {
+      "description": "A span of a document: a section, and byte offsets into that section's text.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The document.",
+          "type": "string"
+        },
+        "end": {
+          "description": "Where it ends, exclusive.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "section": {
+          "description": "The section of the document, from 0.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "description": "Where the span starts in the section.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "doc_id",
+        "section",
+        "start",
+        "end"
+      ]
+    },
+    "RecordedOutput": {
+      "description": "A query's output as a question records it: the `Read` call's query answer (the same\ndefinition, by its `kind`), and what was left out of it, if anything.\n\n- At most 200 rows or 100 groups, as the query asked for them.\n- Every string at most 1,000 characters, cut with \"…\".\n- A value a document gave (a document-filled property, a group's value) is\n  `{\"untrusted\": text}`: data to show as text, never markup. An entity's `name` is plain\n  text, as in the `Read` call's answers.",
+      "type": "object",
+      "properties": {
+        "cut": {
+          "description": "What was left out to keep the question's outputs within their bound, such as\n\"12 rows left out\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "$ref": "#/$defs/Answer2"
+    },
+    "Ref": {
+      "description": "An entity as results name it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its stored identity: `norm_name` or `entity_key`.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ]
+    },
+    "Return": {
+      "description": "What a query gives.",
+      "oneOf": [
+        {
+          "description": "Rows, distinct over the positions the columns name.",
+          "type": "object",
+          "properties": {
+            "rows": {
+              "$ref": "#/$defs/Rows"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rows"
+          ]
+        },
+        {
+          "description": "How many distinct entities are at a position.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "$ref": "#/$defs/Count"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count"
+          ]
+        },
+        {
+          "description": "How many distinct entities at a position have each value of a property.",
+          "type": "object",
+          "properties": {
+            "group_count": {
+              "$ref": "#/$defs/GroupCount"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "group_count"
+          ]
+        },
+        {
+          "description": "A function of a numeric property over the distinct entities at a position.",
+          "type": "object",
+          "properties": {
+            "aggregate": {
+              "$ref": "#/$defs/Aggregate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "aggregate"
+          ]
+        }
+      ]
+    },
+    "RowOut": {
+      "description": "One row.",
+      "type": "object",
+      "properties": {
+        "cells": {
+          "description": "One per column.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Cell"
+          }
+        },
+        "edges": {
+          "description": "The edge of each step whose two positions the columns both name.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StepEdge"
+          }
+        }
+      },
+      "required": [
+        "cells",
+        "edges"
+      ]
+    },
+    "RowRef": {
+      "description": "A source row, as its mapping keys it.",
+      "type": "object",
+      "properties": {
+        "mapping": {
+          "description": "The mapping that read it.",
+          "type": "string"
+        },
+        "row_key": {
+          "description": "The row's key; empty for a People enrichment row (`foundry_enrichment`), whose key is\nthe provider's profile id.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The source.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "mapping",
+        "row_key"
+      ]
+    },
+    "Rows": {
+      "description": "Rows to return.",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "description": "Each column: the entity at a position, or one of its properties (or `name`); 1 to 20.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Column"
+          },
+          "maxItems": 20
+        },
+        "limit": {
+          "description": "The most rows, 1 to 200.",
+          "type": "integer",
+          "format": "uint",
+          "default": 50,
+          "minimum": 0
+        },
+        "order_by": {
+          "description": "The order: a property of a position the columns name, then the entities; by the\nentities alone if `null`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderBy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "columns",
+        "order_by",
+        "limit"
+      ]
+    },
+    "Start": {
+      "description": "Where a query starts.",
+      "type": "object",
+      "properties": {
+        "ids": {
+          "description": "Only these entities, by their stored identity (a named type's normalized name, a\nkeyed type's key encoding), at most 1,000; every entity of the type if `null`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "description": "A text search of the type's names, over what rows and documents created alike: the\nquery starts from its best 100 matches by score, so it finds names that share words\nwith the text rather than testing them (use `where` with `contains` for that). At most\n256 bytes, with a word to search for; not with `ids`, and only for a type with names.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "type": {
+          "description": "The type.",
+          "type": "string"
+        },
+        "where": {
+          "description": "Tests every entity there must pass; at most 20.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Condition"
+          },
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "where",
+        "ids",
+        "text"
+      ]
+    },
+    "Step": {
+      "description": "One step of a path.",
+      "type": "object",
+      "properties": {
+        "dir": {
+          "description": "`out` from its subject to its object, `in` back.",
+          "$ref": "#/$defs/Direction"
+        },
+        "to": {
+          "description": "The type where it lands.",
+          "type": "string"
+        },
+        "via": {
+          "description": "A link, a relation, or a rule-defined predicate of two places.",
+          "type": "string"
+        },
+        "where": {
+          "description": "Tests every entity there must pass; at most 20.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Condition"
+          },
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "via",
+        "dir",
+        "to",
+        "where"
+      ]
+    },
+    "StepEdge": {
+      "description": "The edge of one step of a row.",
+      "type": "object",
+      "properties": {
+        "step": {
+          "description": "The step: it joins positions `step` and `step + 1`.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "description": "A stored fact: its evidence is the fact's.",
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "object",
+              "properties": {
+                "link": {
+                  "description": "The link.",
+                  "type": "string"
+                },
+                "object": {
+                  "description": "The object.",
+                  "$ref": "#/$defs/Ref"
+                },
+                "subject": {
+                  "description": "The subject.",
+                  "$ref": "#/$defs/Ref"
+                }
+              },
+              "required": [
+                "link",
+                "subject",
+                "object"
+              ]
+            }
+          },
+          "required": [
+            "fact"
+          ]
+        },
+        {
+          "description": "A fact only rules give: `explain` says why.",
+          "type": "object",
+          "properties": {
+            "derived": {
+              "type": "object",
+              "properties": {
+                "args": {
+                  "description": "Its arguments.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Ref"
+                  }
+                },
+                "pred": {
+                  "description": "`relation:<r>`, `link:<l>` or `derived:<d>`.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pred",
+                "args"
+              ]
+            }
+          },
+          "required": [
+            "derived"
+          ]
+        }
+      ],
+      "required": [
+        "step"
+      ]
+    },
+    "Target": {
+      "description": "What a citation points at.",
+      "oneOf": [
+        {
+          "description": "An entity.",
+          "type": "object",
+          "properties": {
+            "entity": {
+              "$ref": "#/$defs/EntityRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "entity"
+          ]
+        },
+        {
+          "description": "A stated fact.",
+          "type": "object",
+          "properties": {
+            "fact": {
+              "$ref": "#/$defs/FactRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "fact"
+          ]
+        },
+        {
+          "description": "A derived fact.",
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/DerivedRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "derived"
+          ]
+        },
+        {
+          "description": "A source row.",
+          "type": "object",
+          "properties": {
+            "row": {
+              "$ref": "#/$defs/RowRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "row"
+          ]
+        },
+        {
+          "description": "A document span.",
+          "type": "object",
+          "properties": {
+            "quote": {
+              "$ref": "#/$defs/QuoteRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "quote"
+          ]
+        },
+        {
+          "description": "A violation record.",
+          "type": "object",
+          "properties": {
+            "violation": {
+              "$ref": "#/$defs/ViolationRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "violation"
+          ]
+        },
+        {
+          "description": "A state the load recorded of an entity, one of its properties, a fact or a violation\nrecord, as of a transaction: what it was then, which it may no longer be.",
+          "type": "object",
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/VersionRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "version"
+          ]
+        },
+        {
+          "description": "A tool result as a whole, such as a count.",
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "object",
+              "properties": {
+                "evidence_id": {
+                  "description": "Its evidence id.",
+                  "$ref": "#/$defs/EvidenceId"
+                }
+              },
+              "required": [
+                "evidence_id"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "result"
+          ]
+        }
+      ]
+    },
+    "Usage": {
+      "description": "What a turn spent.",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input tokens read from the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input tokens written to the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usd": {
+          "description": "The cost, in US dollars.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "usd"
+      ]
+    },
+    "VersionOf": {
+      "description": "What a recorded version is of: an entity, one of its properties, a fact, or a violation record. One key names which.",
+      "oneOf": [
+        {
+          "description": "An entity, as the rows that stated it.",
+          "type": "object",
+          "properties": {
+            "entity": {
+              "$ref": "#/$defs/EntityRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "entity"
+          ]
+        },
+        {
+          "description": "One of an entity's properties.",
+          "type": "object",
+          "properties": {
+            "prop": {
+              "type": "object",
+              "properties": {
+                "entity": {
+                  "description": "The entity.",
+                  "$ref": "#/$defs/EntityRef"
+                },
+                "prop": {
+                  "description": "One of its type's properties.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "entity",
+                "prop"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "prop"
+          ]
+        },
+        {
+          "description": "A stated fact of a link with no identity properties: one fact per link and ends.",
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "object",
+              "properties": {
+                "link": {
+                  "description": "The link.",
+                  "type": "string"
+                },
+                "object": {
+                  "description": "Its object.",
+                  "$ref": "#/$defs/EntityRef"
+                },
+                "subject": {
+                  "description": "Its subject.",
+                  "$ref": "#/$defs/EntityRef"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "link",
+                "subject",
+                "object"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "fact"
+          ]
+        },
+        {
+          "description": "A violation record, open or not: one the load holds, or held.",
+          "type": "object",
+          "properties": {
+            "record": {
+              "$ref": "#/$defs/ViolationRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "record"
+          ]
+        }
+      ]
+    },
+    "VersionRef": {
+      "description": "A state the load recorded: what `of` was as of the transaction `tx`, which committed at `at`, as a history showed it. `tx` is the load's own id for the transaction, so the version names that one state, whatever the load records since.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "When it committed: when the load recorded it.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "of": {
+          "description": "What it is a version of.",
+          "$ref": "#/$defs/VersionOf"
+        },
+        "tx": {
+          "description": "The transaction, by the load's id for it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "tx",
+        "at",
+        "of"
+      ]
+    },
+    "ViolationRef": {
+      "description": "A stored violation record.",
+      "type": "object",
+      "properties": {
+        "constraint": {
+          "description": "The constraint.",
+          "type": "string"
+        },
+        "key": {
+          "description": "The record's key.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "constraint",
+        "key"
+      ]
+    },
+    "Visual": {
+      "description": "A query result the answer shows as a table or a chart. The model picks the result, where\nit goes, a kind and a title; what it shows is the output the engine recorded for the\nresult (its query's `output`), never text the model wrote.",
+      "type": "object",
+      "properties": {
+        "after": {
+          "description": "The index of the block it follows, from 0: right after the paragraph that introduces\nit. After the last block if left out.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "evidence_id": {
+          "description": "The result shown: a query result of this question, such as e2. One visual per result.",
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "kind": {
+          "description": "How to show it; left out, the kind the output's shape suits. A kind the output doesn't\nsuit is shown as a table.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VisualKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "description": "A title: plain text, at most 80 characters.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "evidence_id"
+      ]
+    },
+    "VisualKind": {
+      "description": "How a visual shows its result: a hint, which falls back to a table when the output's\nshape doesn't suit it.",
+      "oneOf": [
+        {
+          "description": "Rows or groups, in columns.",
+          "type": "string",
+          "const": "table"
+        },
+        {
+          "description": "Bars: groups and their counts or aggregates, or rows of a label and a number, such as\na ranking or a breakdown.",
+          "type": "string",
+          "const": "bar"
+        },
+        {
+          "description": "A line: a number over dates or times, such as a trend.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "One figure: a count or an aggregate.",
+          "type": "string",
+          "const": "figure"
+        }
+      ]
+    }
+  }
+}

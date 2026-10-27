@@ -1,0 +1,14 @@
+# Foundry's protos: its API (helix/foundry/v1), the standalone install's
+# directory (helix/foundry/directory/v1), foundry-read (helix/foundryread/v1)
+# and the ontology agent's contract, vendored unchanged (ontology_agent/v1).
+version: v2
+modules:
+  - path: pb/proto
+deps:
+  - buf.build/googleapis/googleapis
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

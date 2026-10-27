@@ -1,0 +1,185 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "helix/foundry/v1/events.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "FoundryEventsService"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {},
+  "definitions": {
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1EventSourceCapacity": {
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "string",
+          "format": "int64",
+          "description": "Rows in its table plus pieces not synced yet (resent ids count again)."
+        },
+        "maxRows": {
+          "type": "string",
+          "format": "int64"
+        },
+        "bytes": {
+          "type": "string",
+          "format": "int64",
+          "description": "Uncompressed bytes of its table plus those of batches not synced yet."
+        },
+        "maxBytes": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "EventSourceCapacity is how full an event source's table is, against the\ncaps every table has. Output only.",
+      "readOnly": true
+    },
+    "v1EventSourceField": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "description": "string, number, boolean, object or array; null while it has only been null."
+        }
+      }
+    },
+    "v1FoundryEventBatch": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "string",
+          "format": "int64"
+        },
+        "pieces": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "bytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "firstAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "synced": {
+          "type": "boolean",
+          "description": "A sync has read it: its pieces are in the source's table."
+        }
+      },
+      "description": "FoundryEventBatch is one send's pieces."
+    },
+    "v1FoundryEventPiece": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "1 to 128 bytes, each 0x21-0x7E; unique per source: a later piece with the\nsame id replaces it."
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened; optional."
+        },
+        "dataJson": {
+          "type": "string",
+          "description": "The piece's data: one JSON object, as its exact text."
+        }
+      },
+      "description": "FoundryEventPiece is one piece sent to an event source."
+    },
+    "v1SendFoundryEventsResponse": {
+      "type": "object",
+      "properties": {
+        "batch": {
+          "$ref": "#/definitions/v1FoundryEventBatch"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "newFields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1EventSourceField"
+          },
+          "description": "Fields this send added to the source."
+        },
+        "capacity": {
+          "$ref": "#/definitions/v1EventSourceCapacity"
+        },
+        "warning": {
+          "type": "string",
+          "description": "Set from 80% full: how full the source is and what happens at 100%."
+        }
+      }
+    },
+    "v1ValidateFoundryEventSourceTokenResponse": {
+      "type": "object",
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "tokenId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "connectorId": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

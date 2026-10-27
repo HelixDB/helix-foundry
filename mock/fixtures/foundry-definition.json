@@ -1,0 +1,197 @@
+{
+  "entities": [
+    {
+      "name": "Customer",
+      "description": "A paying account in Stripe, billed through invoices and subscriptions.",
+      "source": {
+        "connector_id": "conn_acme_stripe",
+        "table": "customers"
+      },
+      "primary_key": "customer_id",
+      "properties": [
+        {
+          "name": "email",
+          "type": "string",
+          "description": "Billing email."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "description": "The customer's display name."
+        },
+        {
+          "name": "currency",
+          "type": "string",
+          "description": "Currency the customer is billed in."
+        },
+        {
+          "name": "created",
+          "type": "timestamp",
+          "description": "When the account was created."
+        }
+      ]
+    },
+    {
+      "name": "Invoice",
+      "description": "A bill sent to a customer for a billing period.",
+      "source": {
+        "connector_id": "conn_acme_stripe",
+        "table": "invoices"
+      },
+      "primary_key": "invoice_id",
+      "properties": [
+        {
+          "name": "customer_id",
+          "type": "string",
+          "description": "The customer billed."
+        },
+        {
+          "name": "subscription_id",
+          "type": "string",
+          "description": "The subscription it bills, if any."
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "description": "draft, open, paid, uncollectible or void."
+        },
+        {
+          "name": "amount_due",
+          "type": "integer",
+          "description": "Amount owed, in the smallest currency unit."
+        },
+        {
+          "name": "created",
+          "type": "timestamp",
+          "description": "When it was issued."
+        }
+      ]
+    },
+    {
+      "name": "Subscription",
+      "description": "A recurring plan a customer pays for.",
+      "source": {
+        "connector_id": "conn_acme_stripe",
+        "table": "subscriptions"
+      },
+      "primary_key": "subscription_id",
+      "properties": [
+        {
+          "name": "customer_id",
+          "type": "string",
+          "description": "The subscribed customer."
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "description": "active, past_due, canceled, unpaid or trialing."
+        },
+        {
+          "name": "created",
+          "type": "timestamp",
+          "description": "When it started."
+        }
+      ]
+    },
+    {
+      "name": "Charge",
+      "description": "One attempt to collect a payment from a customer.",
+      "source": {
+        "connector_id": "conn_acme_stripe",
+        "table": "charges"
+      },
+      "primary_key": "charge_id",
+      "properties": [
+        {
+          "name": "customer_id",
+          "type": "string",
+          "description": "The customer charged."
+        },
+        {
+          "name": "invoice_id",
+          "type": "string",
+          "description": "The invoice it pays, if any."
+        },
+        {
+          "name": "amount",
+          "type": "integer",
+          "description": "Amount charged, in the smallest currency unit."
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "description": "succeeded, pending or failed."
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "name": "billed_on",
+      "from": "Invoice",
+      "to": "Customer",
+      "from_property": "customer_id",
+      "to_property": "customer_id",
+      "cardinality": "many_to_one"
+    },
+    {
+      "name": "subscribed_by",
+      "from": "Subscription",
+      "to": "Customer",
+      "from_property": "customer_id",
+      "to_property": "customer_id",
+      "cardinality": "many_to_one"
+    },
+    {
+      "name": "charged_to",
+      "from": "Charge",
+      "to": "Customer",
+      "from_property": "customer_id",
+      "to_property": "customer_id",
+      "cardinality": "many_to_one"
+    },
+    {
+      "name": "pays",
+      "from": "Charge",
+      "to": "Invoice",
+      "from_property": "invoice_id",
+      "to_property": "invoice_id",
+      "cardinality": "many_to_one"
+    }
+  ],
+  "rules": [
+    {
+      "name": "unpaid_invoice",
+      "entity": "Invoice",
+      "description": "An invoice still waiting for payment.",
+      "expression": "status = 'open' AND amount_due > 0"
+    },
+    {
+      "name": "churn_risk",
+      "entity": "Subscription",
+      "description": "A subscription behind on payment.",
+      "expression": "status IN ('past_due', 'unpaid')"
+    }
+  ],
+  "constraints": [
+    {
+      "name": "invoice_has_customer",
+      "entity": "Invoice",
+      "kind": "not_null",
+      "properties": ["customer_id"]
+    },
+    {
+      "name": "charge_not_negative",
+      "entity": "Charge",
+      "kind": "check",
+      "properties": ["amount"],
+      "expression": "amount >= 0"
+    },
+    {
+      "name": "unique_email",
+      "entity": "Customer",
+      "kind": "unique",
+      "properties": ["email"]
+    }
+  ]
+}

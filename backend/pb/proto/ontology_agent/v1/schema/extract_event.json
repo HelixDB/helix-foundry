@@ -1,0 +1,606 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExtractEvent",
+  "description": "One event of an Extract stream.",
+  "oneOf": [
+    {
+      "description": "The run started.",
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "description": "The version of the contract it speaks, [`CONTRACT_VERSION`](crate::CONTRACT_VERSION).",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "extract_started"
+        },
+        "extractor": {
+          "description": "The model that extracts.",
+          "type": "string"
+        },
+        "prompt_version": {
+          "description": "The extraction prompt's version.",
+          "type": "string"
+        },
+        "verifier": {
+          "description": "The model that verifies.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "contract_version",
+        "extractor",
+        "verifier",
+        "prompt_version"
+      ]
+    },
+    {
+      "description": "A document's model output, sent before the document is committed. Store `json` and\nsend its path back in [`ExtractDocument::artifacts`] to replay it.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The document.",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "artifact"
+        },
+        "json": {
+          "description": "The artifact, as JSON text.",
+          "type": "string"
+        },
+        "key": {
+          "description": "What the output depends on, hashed: the text, the document's scope, the prompt, the\nmodels and the section size. It names the artifact; a run replays every call any\nartifact passed in holds, whatever its key.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "doc_id",
+        "key",
+        "json"
+      ]
+    },
+    {
+      "description": "A document reached its final state.",
+      "type": "object",
+      "properties": {
+        "counts": {
+          "description": "What it put in the graph.",
+          "$ref": "#/$defs/DocumentCounts"
+        },
+        "doc_id": {
+          "description": "The document.",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "document"
+        },
+        "outcome": {
+          "description": "How it ended.",
+          "$ref": "#/$defs/DocumentOutcome"
+        },
+        "sections": {
+          "description": "Its sections.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "text_bytes": {
+          "description": "Its text's length, in bytes.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "usage": {
+          "description": "What it spent.",
+          "$ref": "#/$defs/DocumentUsage"
+        }
+      },
+      "required": [
+        "event",
+        "doc_id",
+        "outcome",
+        "text_bytes",
+        "sections",
+        "counts",
+        "usage"
+      ]
+    },
+    {
+      "description": "The run ended; the result follows.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "extract_finished"
+        }
+      },
+      "required": [
+        "event"
+      ]
+    }
+  ],
+  "$defs": {
+    "DocumentCounts": {
+      "description": "What one document put in the graph, or would have.",
+      "type": "object",
+      "properties": {
+        "attribute_reviews": {
+          "description": "Property values the verifier was unsure of, written as reviews.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "attributes": {
+          "description": "Property values it stated that were written as evidence.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "attributes_over_entries": {
+          "description": "Accepted property values left out because its write had no room for them.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "created": {
+          "description": "Entities it created, as its routes let it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "entities": {
+          "description": "Entities it names that resolved to the graph's.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "facts": {
+          "description": "Facts written or given evidence.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "identifiers_unverified": {
+          "description": "Identifiers it gave entities that the verifier didn't accept, or that its text doesn't\nwrite: none resolved an entity.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "mentions": {
+          "description": "Mentions written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "prop_conflicts": {
+          "description": "Properties whose evidence now disagrees, with each other or with a row's value: each a\nreview.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "rejected": {
+          "description": "Facts the verifier rejected, kept only in the artifact.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "resolved": {
+          "description": "How its entities resolved, by rung.",
+          "$ref": "#/$defs/ResolvedCounts"
+        },
+        "reviews": {
+          "description": "Reviews written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unresolved": {
+          "description": "Names that resolved to no entity, or to several.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entities",
+        "mentions",
+        "facts",
+        "reviews",
+        "unresolved",
+        "rejected",
+        "attributes",
+        "attribute_reviews",
+        "prop_conflicts",
+        "created",
+        "identifiers_unverified",
+        "attributes_over_entries",
+        "resolved"
+      ]
+    },
+    "DocumentOutcome": {
+      "description": "How one document ended.",
+      "oneOf": [
+        {
+          "description": "It was committed.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ingested"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "No route reads its set: it was stored with its sections, and no model was asked.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "out_of_scope"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The load already held it, by id and content.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "already_ingested"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The load holds the same text under another id.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "duplicate"
+            },
+            "of": {
+              "description": "The other document's id.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "of"
+          ]
+        },
+        {
+          "description": "It couldn't be extracted or committed.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            },
+            "retryable": {
+              "description": "Whether a later run may succeed.",
+              "type": "boolean"
+            }
+          },
+          "oneOf": [
+            {
+              "description": "Its text, or its commit, is past a limit.",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "too_large"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            },
+            {
+              "description": "Its format isn't read.",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "unsupported"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            },
+            {
+              "description": "A model call failed.",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "model"
+                },
+                "model_failure": {
+                  "description": "How.",
+                  "$ref": "#/$defs/ModelFailure"
+                }
+              },
+              "required": [
+                "code",
+                "model_failure"
+              ]
+            },
+            {
+              "description": "The store refused its commit.",
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "store"
+                }
+              },
+              "required": [
+                "code"
+              ]
+            }
+          ],
+          "required": [
+            "kind",
+            "retryable"
+          ]
+        }
+      ]
+    },
+    "DocumentUsage": {
+      "description": "What one document spent.",
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "description": "Input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "phases": {
+          "description": "The same, by phase.",
+          "$ref": "#/$defs/PhaseUsages"
+        },
+        "replayed": {
+          "description": "Whether every model call it needed replayed from an artifact, at no cost.",
+          "type": "boolean"
+        },
+        "usd_micros": {
+          "description": "The cost, in millionths of a US dollar.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "usd_micros",
+        "input_tokens",
+        "output_tokens",
+        "replayed",
+        "phases"
+      ]
+    },
+    "ModelFailure": {
+      "description": "Why a model call failed for good, as the contract's model failures name it.",
+      "oneOf": [
+        {
+          "description": "The model declined the request.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "The provider was unavailable, overloaded or broke off, retries included.",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "description": "The provider refused the API key.",
+          "type": "string",
+          "const": "auth"
+        },
+        {
+          "description": "The key may not use the model.",
+          "type": "string",
+          "const": "permission"
+        },
+        {
+          "description": "The provider has no such model.",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The provider kept limiting the rate of calls, retries included.",
+          "type": "string",
+          "const": "rate_limited"
+        },
+        {
+          "description": "The account is out of credit or quota.",
+          "type": "string",
+          "const": "quota"
+        },
+        {
+          "description": "The request is too long for the model.",
+          "type": "string",
+          "const": "context_too_long"
+        },
+        {
+          "description": "The model or endpoint can't do what the request asks (tool calls, structured answers),\nor refused it as invalid.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "The answer hit the output limit.",
+          "type": "string",
+          "const": "truncated"
+        },
+        {
+          "description": "The answer couldn't be read: not the JSON asked for, or a stream that broke its\nprotocol.",
+          "type": "string",
+          "const": "malformed"
+        },
+        {
+          "description": "The call ran out of time.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The model's weights changed since it was tested.",
+          "type": "string",
+          "const": "model_changed"
+        },
+        {
+          "description": "The endpoint resolves to a private address.",
+          "type": "string",
+          "const": "private_host"
+        }
+      ]
+    },
+    "PhaseUsage": {
+      "description": "What one phase's model calls spent.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "description": "Calls asked of a model, replays left out.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "description": "Input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "replayed": {
+          "description": "Calls answered from an artifact.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usd_micros": {
+          "description": "The cost, in millionths of a US dollar.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "calls",
+        "replayed",
+        "usd_micros",
+        "input_tokens",
+        "output_tokens"
+      ]
+    },
+    "PhaseUsages": {
+      "description": "What a document's model calls spent, by phase of extraction.",
+      "type": "object",
+      "properties": {
+        "adjudicate": {
+          "description": "Candidate assessment and independent identity pairing.",
+          "$ref": "#/$defs/PhaseUsage"
+        },
+        "entity": {
+          "description": "The entity pass.",
+          "$ref": "#/$defs/PhaseUsage"
+        },
+        "link": {
+          "description": "The link and attribute pass, gleanings included.",
+          "$ref": "#/$defs/PhaseUsage"
+        },
+        "verify": {
+          "description": "Verification.",
+          "$ref": "#/$defs/PhaseUsage"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entity",
+        "link",
+        "verify",
+        "adjudicate"
+      ]
+    },
+    "ResolvedCounts": {
+      "description": "How many of a document's entities each rung of the resolution ladder resolved.",
+      "type": "object",
+      "properties": {
+        "adjudicated": {
+          "description": "Linked by independently verified adjudication, when explicitly enabled.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "alias": {
+          "description": "By another of its names, its fullest naming none.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "created": {
+          "description": "Created by the document.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "identifier": {
+          "description": "By an identifier the verifier accepted, that a row gave one stored entity.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "name": {
+          "description": "By its fullest name.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "user": {
+          "description": "Linked by a settled resolve decision.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "user",
+        "adjudicated",
+        "identifier",
+        "name",
+        "alias",
+        "created"
+      ]
+    }
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeleteLoadResult",
+  "description": "How a DeleteLoad ended. What was deleted before any failure stays deleted, and a retry of\nthe same request goes on from there.",
+  "oneOf": [
+    {
+      "description": "The load is gone, its marker last; both counts are 0 when the graph held no such load.",
+      "type": "object",
+      "properties": {
+        "edges": {
+          "description": "Edges this call deleted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "nodes": {
+          "description": "Nodes this call deleted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "status": {
+          "type": "string",
+          "const": "done"
+        }
+      },
+      "required": [
+        "status",
+        "nodes",
+        "edges"
+      ]
+    },
+    {
+      "description": "The call was cancelled between requests; the load's marker stays, marked deleting.",
+      "type": "object",
+      "properties": {
+        "edges": {
+          "description": "Edges this call deleted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "nodes": {
+          "description": "Nodes this call deleted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "status": {
+          "type": "string",
+          "const": "cancelled"
+        }
+      },
+      "required": [
+        "status",
+        "nodes",
+        "edges"
+      ]
+    },
+    {
+      "description": "A request may or may not have committed. Retry the same request: it goes on from\nwhatever is left.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "What failed.",
+          "type": "string"
+        },
+        "label": {
+          "description": "The label it was deleting under.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "outcome_unknown"
+        }
+      },
+      "required": [
+        "status",
+        "label",
+        "error"
+      ]
+    },
+    {
+      "description": "Reading or writing the store failed, and nothing was left in doubt.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "What failed.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "store_failed"
+        }
+      },
+      "required": [
+        "status",
+        "error"
+      ]
+    }
+  ]
+}

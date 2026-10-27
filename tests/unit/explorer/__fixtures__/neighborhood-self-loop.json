@@ -1,0 +1,588 @@
+{
+  "args": {
+    "dbId": 97,
+    "shape": {
+      "keys": [
+        "name",
+        "active",
+        "address",
+        "age",
+        "archived",
+        "at",
+        "color",
+        "counts",
+        "created",
+        "description",
+        "domain",
+        "draft",
+        "event_id",
+        "founded",
+        "industry",
+        "joined",
+        "kind",
+        "languages",
+        "meta",
+        "metadata",
+        "model",
+        "position",
+        "profile",
+        "public",
+        "score",
+        "severity",
+        "slug",
+        "stars",
+        "tags",
+        "title",
+        "username",
+        "weight",
+        "word_count",
+        "email",
+        "published",
+        "rating"
+      ],
+      "heavyKeys": ["body", "embedding", "payload", "text"],
+      "heavyByLabel": {
+        "Chunk": ["embedding", "text"],
+        "Company": [],
+        "Document": ["body", "embedding"],
+        "Event": ["payload"],
+        "Project": [],
+        "Tag": [],
+        "User": []
+      },
+      "keysByLabel": {
+        "Chunk": ["model", "position"],
+        "Company": [
+          "address",
+          "domain",
+          "founded",
+          "industry",
+          "name",
+          "public",
+          "rating"
+        ],
+        "Document": ["draft", "metadata", "title", "word_count", "published"],
+        "Event": ["at", "counts", "event_id", "kind", "severity"],
+        "Project": [
+          "archived",
+          "created",
+          "description",
+          "languages",
+          "meta",
+          "name",
+          "slug",
+          "stars"
+        ],
+        "Tag": ["color", "name", "weight"],
+        "User": [
+          "active",
+          "age",
+          "joined",
+          "name",
+          "profile",
+          "score",
+          "tags",
+          "username",
+          "email"
+        ]
+      }
+    }
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_neighborhood",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "center",
+              "root": { "nodes": { "reference": { "param": "node_id" } } }
+            }
+          },
+          {
+            "query": {
+              "name": "node",
+              "root": {
+                "values": {
+                  "input": { "nodes": { "reference": { "var": "center" } } },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "out_rows",
+              "root": {
+                "limit": {
+                  "input": {
+                    "out_e": {
+                      "input": { "nodes": { "reference": { "var": "center" } } }
+                    }
+                  },
+                  "count": { "literal": 51 }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "out_edges",
+              "root": {
+                "edge_properties": {
+                  "input": { "edges": { "reference": { "var": "out_rows" } } }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "out_nodes",
+              "root": {
+                "values": {
+                  "input": {
+                    "dedup": {
+                      "input": {
+                        "out_n": {
+                          "input": {
+                            "edges": { "reference": { "var": "out_rows" } }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "in_rows",
+              "root": {
+                "limit": {
+                  "input": {
+                    "in_e": {
+                      "input": { "nodes": { "reference": { "var": "center" } } }
+                    }
+                  },
+                  "count": { "literal": 51 }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "in_edges",
+              "root": {
+                "edge_properties": {
+                  "input": { "edges": { "reference": { "var": "in_rows" } } }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "in_nodes",
+              "root": {
+                "values": {
+                  "input": {
+                    "dedup": {
+                      "input": {
+                        "in_n": {
+                          "input": {
+                            "edges": { "reference": { "var": "in_rows" } }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["node", "out_edges", "out_nodes", "in_edges", "in_nodes"]
+      }
+    },
+    "parameters": { "node_id": 97 },
+    "parameter_types": { "node_id": "i64" }
+  },
+  "status": 200,
+  "response": {
+    "in_edges": [
+      {
+        "$from": 97,
+        "$id": 600,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "note": "self-loop",
+        "since": "2023-08-15T20:30:13.760Z"
+      },
+      {
+        "$from": 154,
+        "$id": 1357,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "since": "2023-01-22T14:06:29.518Z"
+      },
+      {
+        "$from": 224,
+        "$id": 1420,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "since": "2023-09-26T23:53:03.373Z"
+      },
+      { "$from": 569, "$id": 2033, "$label": "FOLLOWS", "$to": 97 }
+    ],
+    "in_nodes": [
+      {
+        "$id": 97,
+        "$label": "User",
+        "active": true,
+        "age": 22,
+        "joined": "2025-01-11T11:24:00.072Z",
+        "name": "Katherine Lamport",
+        "profile": {
+          "location": { "city": "Osaka", "country": "JP" },
+          "prefs": { "notifications": false, "theme": "light" }
+        },
+        "score": 17.74,
+        "tags": [],
+        "username": "katherine0"
+      },
+      {
+        "$id": 154,
+        "$label": "User",
+        "active": true,
+        "age": 56,
+        "email": "shafi.57@example.com",
+        "joined": "2024-04-22T05:09:10.572Z",
+        "name": "Shafi Conway",
+        "profile": {
+          "location": { "city": "Lisbon", "country": "PT" },
+          "prefs": { "notifications": true, "theme": "system" }
+        },
+        "score": 64.71,
+        "tags": ["oss", "graph", "staff"],
+        "username": "shafi57"
+      },
+      {
+        "$id": 224,
+        "$label": "User",
+        "active": true,
+        "age": 47,
+        "email": "leslie.127@example.com",
+        "joined": "2023-04-22T11:57:03.273Z",
+        "name": "Leslie Ritchie",
+        "profile": {
+          "location": { "city": "Melbourne", "country": "AU" },
+          "prefs": { "notifications": false, "theme": "dark" }
+        },
+        "score": 64.25,
+        "tags": ["admin", "graph", "trial"],
+        "username": "leslie127"
+      },
+      {
+        "$id": 569,
+        "$label": "User",
+        "active": true,
+        "age": 58,
+        "email": "shafi.472@example.com",
+        "joined": "2023-08-14T11:46:51.802Z",
+        "name": "Shafi Conway",
+        "profile": {
+          "location": { "city": "Lisbon", "country": "PT" },
+          "prefs": { "notifications": true, "theme": "system" }
+        },
+        "score": 63.98,
+        "tags": ["admin", "beta", "graph"],
+        "username": "shafi472"
+      }
+    ],
+    "node": [
+      {
+        "$id": 97,
+        "$label": "User",
+        "active": true,
+        "age": 22,
+        "joined": "2025-01-11T11:24:00.072Z",
+        "name": "Katherine Lamport",
+        "profile": {
+          "location": { "city": "Osaka", "country": "JP" },
+          "prefs": { "notifications": false, "theme": "light" }
+        },
+        "score": 17.74,
+        "tags": [],
+        "username": "katherine0"
+      }
+    ],
+    "out_edges": [
+      {
+        "$from": 97,
+        "$id": 0,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "Engineer",
+        "since": 2018
+      },
+      {
+        "$from": 97,
+        "$id": 600,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "note": "self-loop",
+        "since": "2023-08-15T20:30:13.760Z"
+      },
+      { "$from": 97, "$id": 872, "$label": "FOLLOWS", "$to": 535 },
+      { "$from": 97, "$id": 1407, "$label": "FOLLOWS", "$to": 529 },
+      {
+        "$from": 97,
+        "$id": 1465,
+        "$label": "FOLLOWS",
+        "$to": 243,
+        "since": "2024-05-17T16:41:11.929Z"
+      },
+      { "$from": 97, "$id": 1835, "$label": "FOLLOWS", "$to": 320 },
+      {
+        "$from": 97,
+        "$id": 2295,
+        "$label": "MEMBER_OF",
+        "$to": 760,
+        "role": "maintainer"
+      }
+    ],
+    "out_nodes": [
+      {
+        "$id": 37,
+        "$label": "Company",
+        "address": {
+          "city": "Osaka",
+          "country": "JP",
+          "geo": { "lat": -86.35519579052925, "lng": 109.0530227869749 }
+        },
+        "domain": "company0.example.com",
+        "founded": 1965,
+        "industry": "Retail",
+        "name": "Acme Corp",
+        "public": false
+      },
+      {
+        "$id": 97,
+        "$label": "User",
+        "active": true,
+        "age": 22,
+        "joined": "2025-01-11T11:24:00.072Z",
+        "name": "Katherine Lamport",
+        "profile": {
+          "location": { "city": "Osaka", "country": "JP" },
+          "prefs": { "notifications": false, "theme": "light" }
+        },
+        "score": 17.74,
+        "tags": [],
+        "username": "katherine0"
+      },
+      {
+        "$id": 535,
+        "$label": "User",
+        "active": true,
+        "age": 31,
+        "email": "james.438@example.com",
+        "joined": "2024-09-21T23:10:07.201Z",
+        "name": "James Johnson",
+        "profile": {
+          "location": { "city": "Nairobi", "country": "KE" },
+          "prefs": { "notifications": false, "theme": "dark" }
+        },
+        "score": 44.08,
+        "tags": ["staff"],
+        "username": "james438"
+      },
+      {
+        "$id": 529,
+        "$label": "User",
+        "active": true,
+        "age": 36,
+        "email": "ken.432@example.com",
+        "joined": "2025-04-22T12:27:06.329Z",
+        "name": "Ken Knuth",
+        "profile": {
+          "location": { "city": "Berlin", "country": "DE" },
+          "prefs": { "notifications": true, "theme": "dark" }
+        },
+        "score": 66.56,
+        "tags": ["trial", "admin", "staff"],
+        "username": "ken432"
+      },
+      {
+        "$id": 243,
+        "$label": "User",
+        "active": true,
+        "age": 69,
+        "email": "joan.146@example.com",
+        "joined": "2024-10-15T17:22:47.747Z",
+        "name": "Joan van Rossum",
+        "profile": {
+          "location": { "city": "Bogotá", "country": "CO" },
+          "prefs": { "notifications": true, "theme": "light" }
+        },
+        "score": 1.8,
+        "tags": ["staff", "vip"],
+        "username": "joan146"
+      },
+      {
+        "$id": 320,
+        "$label": "User",
+        "active": true,
+        "age": 19,
+        "email": "ada.223@example.com",
+        "joined": "2025-04-10T00:18:33.209Z",
+        "name": "Ada Boyd",
+        "profile": {
+          "location": { "city": "Nairobi", "country": "KE" },
+          "prefs": { "notifications": true, "theme": "light" }
+        },
+        "score": 5.67,
+        "tags": ["trial"],
+        "username": "ada223"
+      },
+      {
+        "$id": 760,
+        "$label": "Project",
+        "archived": false,
+        "created": "2024-11-20T08:34:34.417Z",
+        "description": "Vector query vector token latency relevance planner distance search embedding distance replica analyzer. Shard cluster degree database edge bloom graph equality. Query community bloom label cache memory. Search storage vector query gateway query label index equality community relevance property shard compaction.",
+        "languages": ["zig", "rust", "typescript"],
+        "meta": {
+          "ci": { "green": true, "provider": "github" },
+          "license": "MIT"
+        },
+        "name": "Vertex 63",
+        "slug": "project-63",
+        "stars": 7261
+      }
+    ]
+  }
+}

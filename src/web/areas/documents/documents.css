@@ -1,0 +1,288 @@
+/* Documents: uploads in flight, and a document's text with its marks
+   (names underlined in their type's hue, quotes tinted, reviews marked).
+   Built from the kit's tokens and the cn-card surfaces. */
+.dc-drop-choose {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.dc-uploads {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dc-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: 10px;
+  background: var(--hf-raised);
+}
+.dc-upload.is-failed {
+  border-color: color-mix(in srgb, var(--hf-danger) 30%, var(--hf-border));
+}
+.dc-upload-body {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+.dc-upload-body strong {
+  overflow: hidden;
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-upload-body span {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.dc-upload.is-failed .dc-upload-body span {
+  color: var(--hf-danger-text);
+}
+.dc-upload-body .dc-upload-reads {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-xs);
+}
+.dc-doc-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: var(--hf-text-sm);
+}
+.dc-upload progress {
+  width: 100%;
+  height: 4px;
+  accent-color: var(--hf-accent);
+}
+.dc-doc-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.dc-doc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+  gap: var(--hf-space-2);
+  align-items: start;
+}
+.dc-doc-side {
+  position: sticky;
+  top: var(--hf-space-2);
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 2 * var(--hf-space-2));
+  overflow: auto;
+  padding: 0 14px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.dc-doc-text {
+  display: grid;
+  gap: 14px;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.65;
+}
+.dc-doc-section {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+/* Where a PDF's page starts in its text: its number, then a rule. Not
+   selected with the text around it. */
+.dc-page-break {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 2;
+  white-space: nowrap;
+  user-select: none;
+}
+.dc-page-break::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--hf-border);
+}
+.dc-mark {
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  scroll-margin: 96px;
+}
+.dc-mark.is-mention {
+  text-decoration: underline 2px var(--dc-hue, var(--hf-accent));
+  text-underline-offset: 3px;
+}
+.dc-mark.is-quote {
+  background: var(--hf-accent-soft);
+}
+.dc-mark.is-review {
+  background: var(--hf-warning-soft);
+}
+.dc-mark.is-hover {
+  background: color-mix(
+    in srgb,
+    var(--dc-hue, var(--hf-accent)) 22%,
+    transparent
+  );
+}
+/* A span a link points at that is no mark of its own (a property's
+   quote): underlined in the focus colour as long as the page shows it. */
+.dc-mark.is-span {
+  box-shadow: inset 0 -2px 0 var(--hf-focus);
+}
+/* The span a link or a side tab points at: tinted, after a flash. */
+.dc-mark.is-active {
+  background: color-mix(in srgb, var(--hf-focus) 22%, transparent);
+  animation: dc-flash 1.2s var(--hf-ease) 1;
+}
+@keyframes dc-flash {
+  0% {
+    background: color-mix(in srgb, var(--hf-focus) 55%, transparent);
+  }
+}
+/* A mark a click opens something from: its entity's page (a link around
+   the mark, which keeps the mark's look) or its fact or review in the side
+   tabs (the mark as a button). Hovered or focused, it takes the tint of an
+   entity pointed at in the side tabs; a review's, the review's tone. */
+.dc-mark-link,
+.dc-markdown a.dc-mark-link {
+  color: inherit;
+  text-decoration: none;
+}
+.dc-mark-link:focus-visible {
+  outline-offset: 1px;
+}
+.dc-mark.is-clickable {
+  cursor: pointer;
+}
+.dc-mark.is-clickable:hover,
+.dc-mark.is-clickable:focus-visible,
+.dc-mark-link:focus-visible > .dc-mark {
+  background: color-mix(
+    in srgb,
+    var(--dc-hue, var(--hf-accent)) 22%,
+    transparent
+  );
+}
+.dc-mark.is-review.is-clickable:not(.is-mention, .is-quote):hover,
+.dc-mark.is-review.is-clickable:not(.is-mention, .is-quote):focus-visible {
+  background: color-mix(in srgb, var(--hf-warning) 30%, transparent);
+}
+.dc-mark[role="button"]:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+/* A fact or review a mark opened: flashed once. */
+.dc-doc-list > li.is-active {
+  border-radius: 6px;
+  animation: dc-flash 1.2s var(--hf-ease) 1;
+}
+.dc-doc-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dc-doc-list > li {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hf-border);
+}
+.dc-doc-list > li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.dc-doc-list small {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.dc-fact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--hf-text-sm);
+}
+.dc-fact a {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.dc-fact-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+}
+.dc-quote {
+  padding: 6px 10px;
+  border: 0;
+  border-left: 2px solid var(--hf-border-strong);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.dc-quote:hover {
+  border-left-color: var(--hf-accent);
+  color: var(--hf-text);
+}
+.dc-review strong {
+  font-size: var(--hf-text-sm);
+}
+.dc-review p {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-doc-type h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+  font-family: inherit;
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.dc-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--hf-faint);
+}
+@media (max-width: 1000px) {
+  .dc-doc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dc-doc-side {
+    position: static;
+    max-height: none;
+  }
+}
+.dc-doc-type + .dc-doc-type {
+  margin-top: 14px;
+}

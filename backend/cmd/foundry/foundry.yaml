@@ -1,0 +1,98 @@
+# Helix Foundry on one machine. The image bakes this file in at
+# /etc/foundry/foundry.yaml; HELIX_* environment variables override any key
+# (HELIX_LOCAL__S3__ENDPOINT is local.s3.endpoint), and the local compose
+# file passes the secrets so:
+#   HELIX_DB_DSN, HELIX_LOCAL__SITE_TOKEN, HELIX_LOCAL__S3__SECRET_ACCESS_KEY,
+#   HELIX_FOUNDRY__CONNECTORS__CURRENT_KEY.
+# Every listener is inside the compose stack's shared network namespace: the
+# ontology agent serves 127.0.0.1:50051 (foundry.ontology.agent.addr and its
+# siblings for graph, ask and read), and the graph and read proxies hand it
+# 127.0.0.1 addresses.
+
+local:
+  # Only REST listens beyond this namespace: the site calls it with the site
+  # token. gRPC and health stay on loopback.
+  listen:
+    rest: ":8081"
+    grpc: "127.0.0.1:50061"
+    health: "127.0.0.1:8083"
+  # The public helix-db image: one database every ontology's loads share.
+  helix_url: "http://helix:8080"
+  # The browser PUTs documents to URLs presigned for this address, so it is
+  # the same from Foundry (the store shares its network namespace) and from
+  # the browser (the port is published on 127.0.0.1).
+  s3:
+    endpoint: "http://localhost:8333"
+    access_key_id: "foundry"
+
+# No plan is sold, so every workspace is on the first plan: here the only
+# one, with every connector kind and Max's sync rules. Change its sync to sync
+# less often; it must keep every kind and stay unsold.
+billing:
+  autumn:
+    foundry:
+      plans:
+        - code: local
+          display_name: Local
+          kinds: [stripe, workos, posthog, github, linear, calcom, granola, events, postgres, mysql, s3]
+          sync: { every: 15m, shortest: 15m, capture: [full, cursor, events, log], reconcile_every: 24h, refresh_every: 15m }
+
+backend:
+  foundry_read:
+    address: "localhost:50068"
+
+# The region S3 requests are signed for; the local store accepts any.
+aws:
+  region: us-east-1
+
+foundry:
+  # Owners choose a model provider of these kinds in Settings > AI models,
+  # Ollama first; until one does (or HELIX_FOUNDRY__AI__DEFAULT__PROVIDER sets
+  # the install's own: for Ollama, with HELIX_FOUNDRY__AI__DEFAULT__BASE_URL,
+  # __MODELS__* and maybe __CONTEXT_TOKENS), model work waits. A model server
+  # on this machine or its network (host.docker.internal) may be called over
+  # http, and a local model on a CPU is slow: a call gets half an hour and a
+  # probe a quarter of an hour to pass.
+  ai:
+    kinds: [ollama, anthropic, openai, azure_openai, openai_compatible, bedrock]
+    allow_private_hosts: true
+    call_timeout: "30m"
+    probe: { timeout: "15m", lease: "20m" }
+  connectors:
+    current_key_id: "local"
+    # Connectors reach databases on this machine and its network.
+    allow_private_hosts: true
+  sync:
+    http: { listen: "127.0.0.1:8097" }
+    data_bucket: "foundry-data"
+  # Drafts come from the ontology agent. A first draft runs 10-20 minutes on
+  # a hosted model and may take 40 on a model server on this machine; the
+  # attempt timeout leaves five minutes above its wall-time cap.
+  ontology:
+    http: { listen: "127.0.0.1:8098" }
+    timeout: "45m"
+    agent:
+      limits:
+        max_usd: 10
+        max_steps: 200
+        max_wall_secs: 2400
+  # Spend caps on the owner's own model keys.
+  graph:
+    http: { listen: "127.0.0.1:8099" }
+    max_job_usd: 20
+    monthly_usd: 100
+  read:
+    grpc: { listen: "127.0.0.1:50068" }
+    http: { listen: "127.0.0.1:8100" }
+  ask:
+    # foundry-read already listens on 8100 in this process.
+    http: { listen: "127.0.0.1:8101" }
+    # The hosted caps, $0.50 and 20 steps, and the most time the agent gives
+    # a question, under the five minutes its prompt cache lives, for a model
+    # server on this machine.
+    max_usd: 0.5
+    max_steps: 20
+    max_wall_secs: 299
+    monthly_usd: 30
+    max_running: 2
+    per_hour: 30

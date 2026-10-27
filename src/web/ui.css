@@ -1,0 +1,14 @@
+/* RefreshFailed (ui.tsx): helix-foundry's Home metrics note
+   (areas/workspace/home.css, .wk-metrics-note), for any page. */
+.hf-refresh-failed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--hf-space-2);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.hf-refresh-failed svg {
+  flex: none;
+  color: var(--hf-warning-text);
+}

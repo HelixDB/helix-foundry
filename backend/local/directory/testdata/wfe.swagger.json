@@ -1,0 +1,875 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "The Helix WFE routes a standalone install serves (DirectoryService), from the Foundry site's contract/wfe.swagger.json",
+    "version": "version not set"
+  },
+  "paths": {
+    "/v1/whoami": {
+      "get": {
+        "operationId": "WfeService_Whoami",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1WhoamiResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "operationId": "WfeService_ListWorkspaces",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1ListWorkspacesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "RESOURCE_STATUS_UNSPECIFIED",
+              "RESOURCE_STATUS_PENDING",
+              "RESOURCE_STATUS_PROVISIONING",
+              "RESOURCE_STATUS_ACTIVE",
+              "RESOURCE_STATUS_DELETING",
+              "RESOURCE_STATUS_DELETED",
+              "RESOURCE_STATUS_FAILED"
+            ],
+            "default": "RESOURCE_STATUS_UNSPECIFIED"
+          },
+          {
+            "name": "page.size",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "page.token",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      },
+      "post": {
+        "operationId": "WfeService_CreateWorkspace",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1Workspace"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/helixwfev1CreateWorkspaceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/workspaces/{id}": {
+      "get": {
+        "operationId": "WfeService_GetWorkspace",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1Workspace"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/projects": {
+      "get": {
+        "operationId": "WfeService_ListProjects",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1ListProjectsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "page.size",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "page.token",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      },
+      "post": {
+        "operationId": "WfeService_CreateProject",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1Project"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/helixwfev1CreateProjectRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/tenants": {
+      "get": {
+        "operationId": "WfeService_ListTenants",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1ListTenantsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "clusterId",
+            "description": "optional filter",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "RESOURCE_STATUS_UNSPECIFIED",
+              "RESOURCE_STATUS_PENDING",
+              "RESOURCE_STATUS_PROVISIONING",
+              "RESOURCE_STATUS_ACTIVE",
+              "RESOURCE_STATUS_DELETING",
+              "RESOURCE_STATUS_DELETED",
+              "RESOURCE_STATUS_FAILED"
+            ],
+            "default": "RESOURCE_STATUS_UNSPECIFIED"
+          },
+          {
+            "name": "page.size",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "page.token",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      },
+      "post": {
+        "operationId": "WfeService_CreateTenant",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1CreateTenantResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/helixwfev1CreateTenantRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/databases:query-read": {
+      "post": {
+        "operationId": "WfeService_ExecuteDatabaseReadQuery",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1ExecuteDatabaseQueryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/helixwfev1ExecuteDatabaseQueryRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "helixwfev1CreateProjectRequest": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "helixwfev1CreateTenantRequest": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "clusterId": {
+          "type": "string",
+          "title": "empty = the shared cluster"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "planCode": {
+          "type": "string",
+          "title": "required on the shared cluster, rejected on a dedicated one"
+        }
+      }
+    },
+    "helixwfev1CreateTenantResponse": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "$ref": "#/definitions/v1Tenant"
+        },
+        "token": {
+          "type": "string",
+          "title": "raw bearer token of the first tenant key, returned exactly once"
+        },
+        "key": {
+          "$ref": "#/definitions/v1ApiKey"
+        }
+      }
+    },
+    "helixwfev1CreateWorkspaceRequest": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "cidr": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "helixwfev1ExecuteDatabaseQueryRequest": {
+      "type": "object",
+      "properties": {
+        "database": {
+          "$ref": "#/definitions/v1DatabaseReference"
+        },
+        "queryJson": {
+          "type": "string",
+          "format": "byte"
+        }
+      }
+    },
+    "helixwfev1ExecuteDatabaseQueryResponse": {
+      "type": "object",
+      "properties": {
+        "responseJson": {
+          "type": "string",
+          "format": "byte"
+        },
+        "statusCode": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "contentType": {
+          "type": "string"
+        }
+      }
+    },
+    "helixwfev1ListProjectsResponse": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Project"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "helixwfev1ListTenantsResponse": {
+      "type": "object",
+      "properties": {
+        "tenants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Tenant"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "helixwfev1ListWorkspacesResponse": {
+      "type": "object",
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Workspace"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1ApiKey": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "clusterId": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string",
+          "title": "empty for cluster-scoped keys"
+        },
+        "type": {
+          "$ref": "#/definitions/v1ApiKeyType"
+        },
+        "name": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "$ref": "#/definitions/v1ApiKeyStatus"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "description": "ApiKey is one gateway bearer key (cluster- or tenant-scoped). The raw\ntoken is never returned here \u2014 it is handed out exactly once at creation."
+    },
+    "v1ApiKeyStatus": {
+      "type": "string",
+      "enum": [
+        "API_KEY_STATUS_UNSPECIFIED",
+        "API_KEY_STATUS_DEPLOYING",
+        "API_KEY_STATUS_DEPLOYED",
+        "API_KEY_STATUS_DELETING",
+        "API_KEY_STATUS_DELETED"
+      ],
+      "default": "API_KEY_STATUS_UNSPECIFIED",
+      "description": "deploying/deleting are pending intents; the keys-sync worker flips them\nonce the change is confirmed on the cluster's gateway."
+    },
+    "v1ApiKeyType": {
+      "type": "string",
+      "enum": [
+        "API_KEY_TYPE_UNSPECIFIED",
+        "API_KEY_TYPE_CLUSTER",
+        "API_KEY_TYPE_TENANT"
+      ],
+      "default": "API_KEY_TYPE_UNSPECIFIED"
+    },
+    "v1DatabaseReference": {
+      "type": "object",
+      "properties": {
+        "clusterId": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        }
+      },
+      "description": "DatabaseReference makes the logical database boundary explicit. A dedicated\ncluster and a tenant are distinct authorization and routing variants."
+    },
+    "v1Project": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        },
+        "meta": {
+          "type": "object"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ProjectAccess": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "read": {
+          "$ref": "#/definitions/v1ResourceScope"
+        },
+        "write": {
+          "$ref": "#/definitions/v1ResourceScope"
+        },
+        "queryRead": {
+          "$ref": "#/definitions/v1ResourceScope"
+        },
+        "queryWrite": {
+          "$ref": "#/definitions/v1ResourceScope"
+        }
+      },
+      "description": "ProjectAccess is the canonical workspace-member project policy persisted as\nprotobuf JSON. Version 2 keeps resource management and database query scopes\nindependent so project visibility never implies database-data access."
+    },
+    "v1ResourceScope": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "projectIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "ResourceScope is the protobuf JSON boundary for the validated all, none, or\nselected(project_ids) algebraic type. Mode is one of \"all\", \"none\", or\n\"selected\"; project_ids must be non-empty only when mode is \"selected\"."
+    },
+    "v1ResourceStatus": {
+      "type": "string",
+      "enum": [
+        "RESOURCE_STATUS_UNSPECIFIED",
+        "RESOURCE_STATUS_PENDING",
+        "RESOURCE_STATUS_PROVISIONING",
+        "RESOURCE_STATUS_ACTIVE",
+        "RESOURCE_STATUS_DELETING",
+        "RESOURCE_STATUS_DELETED",
+        "RESOURCE_STATUS_FAILED"
+      ],
+      "default": "RESOURCE_STATUS_UNSPECIFIED"
+    },
+    "v1Tenant": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "clusterId": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1ResourceStatus"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        },
+        "meta": {
+          "type": "object"
+        },
+        "connectionEndpoint": {
+          "type": "string"
+        },
+        "queryState": {
+          "$ref": "#/definitions/v1TenantQueryState"
+        },
+        "gateReason": {
+          "$ref": "#/definitions/v1WorkspaceGateReason",
+          "description": "Why queries are paused while query_state is disabled: the workspace's\nbilling gate. Unspecified on a disabled tenant means Helix staff disabled\nit, or a billing gate whose reason is not recorded yet."
+        }
+      },
+      "description": "Tenant is an isolated database inside a cluster. workspace/project are\nthe owner, which on a shared cluster differs from the cluster's owner."
+    },
+    "v1TenantQueryState": {
+      "type": "string",
+      "enum": [
+        "TENANT_QUERY_STATE_UNSPECIFIED",
+        "TENANT_QUERY_STATE_ENABLED",
+        "TENANT_QUERY_STATE_DISABLED"
+      ],
+      "default": "TENANT_QUERY_STATE_UNSPECIFIED",
+      "description": "TenantQueryState is the gateway query gate. A disabled tenant's keys still\nauthenticate; its queries are answered 402 tenant_disabled, and\nTenant.gate_reason says why."
+    },
+    "v1Timestamps": {
+      "type": "object",
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deletedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "v1User": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        }
+      }
+    },
+    "v1WhoamiResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/v1User"
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1WorkspaceMember"
+          }
+        }
+      }
+    },
+    "v1Workspace": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "cidr": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1ResourceStatus"
+        },
+        "vpcId": {
+          "type": "string"
+        },
+        "publicSubnets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "privateSubnets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tofuStateKey": {
+          "type": "string"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        },
+        "meta": {
+          "type": "object"
+        },
+        "settings": {
+          "$ref": "#/definitions/v1WorkspaceSettings"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "iconUrl": {
+          "type": "string"
+        }
+      }
+    },
+    "v1WorkspaceGateReason": {
+      "type": "string",
+      "enum": [
+        "WORKSPACE_GATE_REASON_UNSPECIFIED",
+        "WORKSPACE_GATE_REASON_NO_SUBSCRIPTION",
+        "WORKSPACE_GATE_REASON_SUBSCRIPTION_UNPAID",
+        "WORKSPACE_GATE_REASON_QUOTA_EXHAUSTED",
+        "WORKSPACE_GATE_REASON_CREDIT_EXHAUSTED",
+        "WORKSPACE_GATE_REASON_WORKSPACE_DELINQUENT",
+        "WORKSPACE_GATE_REASON_WORKSPACE_OVER_LIMIT"
+      ],
+      "default": "WORKSPACE_GATE_REASON_UNSPECIFIED"
+    },
+    "v1WorkspaceMember": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "user": {
+          "$ref": "#/definitions/v1User"
+        },
+        "role": {
+          "$ref": "#/definitions/v1WorkspaceRole"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        },
+        "projectAccess": {
+          "$ref": "#/definitions/v1ProjectAccess",
+          "description": "Effective access after applying built-in role precedence and any\nmember-specific persisted policy."
+        }
+      }
+    },
+    "v1WorkspaceRole": {
+      "type": "string",
+      "enum": [
+        "WORKSPACE_ROLE_UNSPECIFIED",
+        "WORKSPACE_ROLE_ADMIN",
+        "WORKSPACE_ROLE_MEMBER",
+        "WORKSPACE_ROLE_OWNER"
+      ],
+      "default": "WORKSPACE_ROLE_UNSPECIFIED"
+    },
+    "v1WorkspaceSettings": {
+      "type": "object",
+      "properties": {
+        "aiInsightsEnabled": {
+          "type": "boolean",
+          "description": "Deterministic query diagnostics remain available when disabled. This\nsetting only controls creation of new AI recommendations."
+        }
+      }
+    }
+  }
+}

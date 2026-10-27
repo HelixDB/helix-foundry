@@ -1,5 +1,0 @@
-packages:
-  - packages/*
-onlyBuiltDependencies:
-  - "@duckdb/node-bindings"
-  - esbuild

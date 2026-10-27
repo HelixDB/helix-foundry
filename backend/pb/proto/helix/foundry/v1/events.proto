@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package helix.foundry.v1;
+
+import "helix/foundry/v1/types.proto";
+
+option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1;foundryv1";
+
+// FoundryEventsService is the internal half of event sources: the door that
+// takes an event source's sends calls it, for the sender holding the send
+// token (an Actor of SOURCE_EVENT_SOURCE). It has no REST routes.
+service FoundryEventsService {
+
+  // Helix Foundry event sources: connectors of kind events
+  rpc SendFoundryEvents(SendFoundryEventsRequest) returns (SendFoundryEventsResponse);
+  rpc ValidateFoundryEventSourceToken(ValidateFoundryEventSourceTokenRequest) returns (ValidateFoundryEventSourceTokenResponse);
+}
+
+message SendFoundryEventsRequest {
+  string       workspace_id = 2;
+  string       connector_id = 3;
+  // 16 to 64 bytes, each 0x21-0x7E, new and random for each send (a UUID);
+  // optional. A retry with the same token and the same pieces stores nothing
+  // and returns the first send (replayed). The same token with other pieces
+  // is refused.
+  string client_token = 4;
+  repeated FoundryEventPiece pieces = 5;
+}
+message SendFoundryEventsResponse {
+  FoundryEventBatch batch = 1;
+  bool replayed = 2;
+  // Fields this send added to the source.
+  repeated EventSourceField new_fields = 3;
+  EventSourceCapacity capacity = 4;
+  // Set from 80% full: how full the source is and what happens at 100%.
+  string warning = 5;
+}
+message ValidateFoundryEventSourceTokenRequest {
+  // Lowercase hex SHA-256 of the whole token.
+  string hash = 2;
+}
+message ValidateFoundryEventSourceTokenResponse {
+  bool   valid        = 1;
+  string token_id     = 2;
+  string workspace_id = 3;
+  string connector_id = 4;
+}

@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Result",
+  "description": "Exactly a revised result carries a definition and full draft rule counts.",
+  "oneOf": [
+    {
+      "description": "Valid revision with accepted evidence for every rule gate.",
+      "type": "object",
+      "properties": {
+        "cards": {
+          "description": "Harness-owned per-item evidence envelopes, in item order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Card"
+          }
+        },
+        "definition": {
+          "description": "The complete canonical revised definition.",
+          "$ref": "#/$defs/Definition"
+        },
+        "findings": {
+          "description": "Validation/coverage information.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Finding"
+          }
+        },
+        "rules": {
+          "description": "Counts over the whole revised draft, never only changed items.",
+          "$ref": "#/$defs/RuleCounts"
+        },
+        "status": {
+          "type": "string",
+          "const": "revised"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "definition",
+        "findings",
+        "cards",
+        "rules"
+      ]
+    },
+    {
+      "description": "Nothing changed; no definition can be stored.",
+      "type": "object",
+      "properties": {
+        "cards": {
+          "description": "Evidence gathered before refusal, if any.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Card"
+          }
+        },
+        "findings": {
+          "description": "Typed edit, validation, or evidence errors.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Finding"
+          }
+        },
+        "status": {
+          "type": "string",
+          "const": "refused"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "findings",
+        "cards"
+      ]
+    }
+  ],
+  "$defs": {
+    "Card": {
+      "description": "The same per-item evidence envelope the `evaluate` tool returns.",
+      "type": "object",
+      "properties": {
+        "card": {
+          "description": "Evidence for this verdict.",
+          "$ref": "#/$defs/EvidenceCard"
+        },
+        "item": {
+          "description": "Evaluated item.",
+          "$ref": "#/$defs/ItemId"
+        },
+        "verdict": {
+          "description": "Harness verdict.",
+          "$ref": "#/$defs/RuleVerdict"
+        }
+      },
+      "required": [
+        "item",
+        "verdict",
+        "card"
+      ]
+    },
+    "CardRow": {
+      "description": "The source and mapping of rows behind a counterexample's premises. A card never names the\nrows: their identities are source data.",
+      "type": "object",
+      "properties": {
+        "mapping": {
+          "description": "Mapping id without its prefix.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Catalog source id.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "mapping"
+      ]
+    },
+    "Code": {
+      "description": "A stable refusal or coverage code. Load coverage is a finding, not an RPC failure.",
+      "oneOf": [
+        {
+          "description": "This item or change lies outside Revise's allowlist.",
+          "type": "string",
+          "const": "EditNotAllowed"
+        },
+        {
+          "description": "Inconsistent or invalid parent definition.",
+          "type": "string",
+          "const": "InvalidDefinition"
+        },
+        {
+          "description": "Invalid edit count, duplicate id, size, or malformed snippet.",
+          "type": "string",
+          "const": "InvalidEdit"
+        },
+        {
+          "description": "The revised ontology, mappings or rules failed validation.",
+          "type": "string",
+          "const": "Validation"
+        },
+        {
+          "description": "Evidence failed, is incomplete, or policy refused an item.",
+          "type": "string",
+          "const": "Evaluation"
+        },
+        {
+          "description": "A recomputed, unacknowledged lint finding; it does not by itself refuse a revision.",
+          "type": "string",
+          "const": "Lint"
+        },
+        {
+          "description": "The supplied load is absent or structurally incompatible.",
+          "type": "string",
+          "const": "no_comparable_load"
+        },
+        {
+          "description": "Measuring on the load needed more than its budget (rule instances or wall time); no\ncard comes from part of a measurement.",
+          "type": "string",
+          "const": "budget"
+        }
+      ]
+    },
+    "Counterexample": {
+      "description": "A bounded counterexample with its proof and row provenance. Source values are untrusted.",
+      "type": "object",
+      "properties": {
+        "fact": {
+          "description": "The violated constraint or contradicted fact, with sample entity identities.",
+          "type": "string"
+        },
+        "proof": {
+          "description": "Proof steps in premise order, with sample entity identities.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rows": {
+          "description": "Rows behind the proof's stated facts and types.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CardRow"
+          }
+        }
+      },
+      "required": [
+        "fact",
+        "proof",
+        "rows"
+      ]
+    },
+    "Definition": {
+      "description": "The complete immutable definition, with serialized JSON strings as Foundry stores them.",
+      "type": "object",
+      "properties": {
+        "draft_json": {
+          "description": "DraftView JSON with its inner questions stored separately below.",
+          "type": "string"
+        },
+        "mappings_toml": {
+          "description": "Rendered mappings, checked against the draft items.",
+          "type": "string"
+        },
+        "ontology_toml": {
+          "description": "Rendered ontology, checked against the draft items.",
+          "type": "string"
+        },
+        "questions_json": {
+          "description": "JSON array of agent questions.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ontology_toml",
+        "mappings_toml",
+        "draft_json",
+        "questions_json"
+      ]
+    },
+    "EvidenceCard": {
+      "description": "The evidence for one item, computed over the current row sample and document preview.\nAll counts describe that sample; no full-data estimate is made without a sampling ratio.",
+      "type": "object",
+      "properties": {
+        "added": {
+          "description": "Attributed facts only derived.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "confirmed": {
+          "description": "Attributed facts that are both stated and derived.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "contradicted": {
+          "description": "Added facts with a complete head for their subject.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "counterexamples": {
+          "description": "At most five counterexamples.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Counterexample"
+          }
+        },
+        "failure_rate_bound": {
+          "description": "95% Wilson upper failure bound, or min(1, 3/n) with zero failures.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "instances": {
+          "description": "Well-founded attributed rule instances.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "precision": {
+          "description": "Confirmed / (confirmed + contradicted), absent when the denominator is zero.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "reason": {
+          "description": "Why policy assigned this verdict.",
+          "type": "string"
+        },
+        "rev": {
+          "description": "Draft revision measured, before the harness records this card.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "review_facts": {
+          "description": "Facts implicated in blocking violations (dry-run review effect).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "sample": {
+          "description": "Explicit sampling basis; never a claim about all source data.",
+          "type": "string"
+        },
+        "subjects": {
+          "description": "Distinct eligible subjects for a constraint.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unmeasurable": {
+          "description": "No attributed fact has a complete head.",
+          "type": "boolean"
+        },
+        "unmeasured": {
+          "description": "What the counts leave out, if anything.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Unmeasured"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unrepresentable": {
+          "description": "Attributed relation facts that no link can represent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "violation_rate": {
+          "description": "Distinct violating subjects divided by eligible subjects, when measured.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "violations": {
+          "description": "Violations caused or cleared, by constraint and requested severity.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ViolationDelta"
+          }
+        }
+      },
+      "required": [
+        "rev",
+        "sample",
+        "instances",
+        "confirmed",
+        "added",
+        "contradicted",
+        "unmeasurable",
+        "precision",
+        "failure_rate_bound",
+        "violations",
+        "subjects",
+        "violation_rate",
+        "review_facts",
+        "unrepresentable",
+        "counterexamples",
+        "reason"
+      ]
+    },
+    "Finding": {
+      "description": "A revision finding; item ids remain strings so refused unknown ids can be reported.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "Machine-readable reason.",
+          "$ref": "#/$defs/Code"
+        },
+        "item_id": {
+          "description": "The edited item, if the finding names one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Explanation without connection credentials.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "item_id",
+        "message"
+      ]
+    },
+    "ItemId": {
+      "description": "One item of a draft: a piece of `ontology.toml` or `mappings.toml`, or a competency question\nor gap of the review. Together the items cover both files, each piece in exactly one item:\n\n| Item | Owns |\n|---|---|\n| `type.T` | all of `[types.T]` |\n| `link.l` | `from`, `to`, `description`, `props` and `identity` of `[links.l]` |\n| `link.l.cardinality` | `cardinality = \"one\"` (the default `many` is no item) |\n| `link.l.required` | `required = true` |\n| `link.l.implies.t` | `t` in `implies` |\n| `link.l.inverse_of` | `inverse_of` |\n| `link.l.symmetric`, `link.l.transitive` | `symmetric = true`, `transitive = true` |\n| `link.l.chain.a.b` | the chain `[\"a\", \"b\"]` in `chain` |\n| `relation.r` | `description` of `[relations.r]`; its declarations are `relation.r.implies.t` and so on, as for links |\n| `rule.r`, `constraint.c` | all of `[rules.r]`, `[constraints.c]` |\n| `mapping.m` | all of `[mappings.m]`, its bindings included |\n| `extraction.name` | all of `[extractions.name]`, its document selector, types and links |\n| `enrichment.name` | all of `[enrichments.name]`: People enrichment of one type |\n| `cq.ID`, `gap.ID` | a competency question, a gap (review data, in no file) |\n\nThe file headers (`version`, and `ontology` in `mappings.toml`) belong to no item: the\nharness sets them.",
+      "type": "string"
+    },
+    "RuleCounts": {
+      "description": "Number of rule/constraint items and inference declarations and how many have an accepted evaluation.\nThe backend copies this into `Definition.rules` and requires `evaluated == count` to load.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "RuleEvidence/ConstraintEvidence items, including inference declarations.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "evaluated": {
+          "description": "Those with a harness verdict that permits the executable item (refusals excluded).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "count",
+        "evaluated"
+      ]
+    },
+    "RuleVerdict": {
+      "description": "The executable outcome of evaluation. A refused item remains gated until removed or fixed.",
+      "oneOf": [
+        {
+          "description": "A definitional/process rule, or a constraint permitted at its requested severity.",
+          "type": "string",
+          "const": "rule"
+        },
+        {
+          "description": "A constraint permitted at most as a warning: the harness rewrites a `block` one to\n`severity = \"warn\"`, and a `warn` or `info` one keeps its severity.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "The item cannot be used as written.",
+          "type": "string",
+          "const": "refused"
+        }
+      ]
+    },
+    "Unmeasured": {
+      "description": "What a card's counts leave out. A constraint with any is capped at `warn`; a rule missing\nrows it needs is refused.",
+      "oneOf": [
+        {
+          "description": "Rows the item needs are missing from the latest dry run's sample: those of a mapping\nthat can fill it or, for a rule, those that state a head it derived about its subject.",
+          "type": "string",
+          "const": "rows"
+        },
+        {
+          "description": "A document set a route that can fill the item reads has no preview.",
+          "type": "string",
+          "const": "documents"
+        },
+        {
+          "description": "Both of those.",
+          "type": "string",
+          "const": "rows, documents"
+        },
+        {
+          "description": "Revise had no comparable load to measure on.",
+          "type": "string",
+          "const": "load"
+        },
+        {
+          "description": "Some of the load's entities were over the read budget.",
+          "type": "string",
+          "const": "entities"
+        }
+      ]
+    },
+    "ViolationDelta": {
+      "description": "A constraint's before/after counts at its requested severity.",
+      "type": "object",
+      "properties": {
+        "after": {
+          "description": "Violations with the candidate.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "before": {
+          "description": "Violations without the candidate.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "constraint": {
+          "description": "Constraint id as displayed by the rules engine.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "Requested severity (`block`, `warn`, `info`).",
+          "type": "string",
+          "enum": [
+            "block",
+            "warn",
+            "info"
+          ]
+        }
+      },
+      "required": [
+        "constraint",
+        "severity",
+        "before",
+        "after"
+      ]
+    }
+  }
+}

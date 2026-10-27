@@ -1,14 +1,13 @@
-node_modules
 .git
-.env
-.env.*
-.data
-test-results
+node_modules
+.next
+.next-*
 playwright-report
-apps/web/dist
-packages/*/dist
-*.tgz
-*.log
-backups
-*.bak
-.claude
+test-results
+docs-media
+# Copied on install inside the image (scripts/pdfjs-assets.mjs).
+public/pdfjs
+**/.env*
+!**/.env.example
+# The site image's context; the backend's image builds from backend/
+backend

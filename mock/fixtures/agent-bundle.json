@@ -1,0 +1,612 @@
+{
+  "format": "agent_bundle",
+  "status": "done",
+  "ontology_toml": "version = \"draft\"\n\n[types.Customer]\ndescription = \"A person or household with a shop account, identified by their customer number.\"\nprops = { customer_number = \"string\" }\nkey = [\"customer_number\"]\n\n[types.Order]\ndescription = \"A purchase placed in the shop, identified by its order number.\"\nprops = { order_number = \"string\", placed_at = \"datetime\" }\nkey = [\"order_number\"]\n\n[types.OrderLine]\ndescription = \"One product line of an order, with the quantity ordered, identified by its order number and line number.\"\nprops = { line_no = \"integer\", order_number = \"string\", qty = \"integer\" }\nkey = [\"order_number\", \"line_no\"]\n\n[types.Parcel]\ndescription = \"One physical package in a shipment, identified by its tracking number.\"\nprops = { tracking_no = \"string\", weight_kg = \"float\" }\nkey = [\"tracking_no\"]\n\n[types.Product]\ndescription = \"An item the shop sells, identified by its SKU.\"\nprops = { sku = \"string\", title = \"string\" }\nkey = [\"sku\"]\nnames = [\"title\"]\n\n[types.Return]\ndescription = \"One item a customer sent back, with when and why, identified by its return id.\"\nprops = { reason = \"string\", return_ref = \"string\", returned_at = \"datetime\" }\nkey = [\"return_ref\"]\n\n[types.SalesChannel]\ndescription = \"A channel through which orders are sold, identified by its channel code.\"\nprops = { code = \"integer\" }\nkey = [\"code\"]\n\n[types.Shipment]\ndescription = \"A dispatch of goods from the warehouse by one carrier, identified by its shipment id.\"\nprops = { carrier = \"string\", shipment_ref = \"string\", shipped_on = \"date\" }\nkey = [\"shipment_ref\"]\n\n[links.for_product]\nfrom = \"OrderLine\"\nto = \"Product\"\ndescription = \"The line orders the product.\"\ncardinality = \"one\"\n\n[links.line_of]\nfrom = \"OrderLine\"\nto = \"Order\"\ndescription = \"The line is part of the order.\"\ncardinality = \"one\"\nrequired = true\n\n[links.packed_in]\nfrom = \"Parcel\"\nto = \"Shipment\"\ndescription = \"The parcel was sent as part of the shipment.\"\ncardinality = \"one\"\nrequired = true\n\n[links.placed_by]\nfrom = \"Order\"\nto = \"Customer\"\ndescription = \"The order was placed by the customer.\"\ncardinality = \"one\"\nrequired = true\n\n[links.returned_from]\nfrom = \"Return\"\nto = \"Order\"\ndescription = \"The returned item was bought on the order.\"\ncardinality = \"one\"\n\n[links.returns_product]\nfrom = \"Return\"\nto = \"Product\"\ndescription = \"The return sends back an item of the product.\"\ncardinality = \"one\"\nrequired = true\n\n[links.ships_order]\nfrom = \"Shipment\"\nto = \"Order\"\ndescription = \"The shipment carries goods of the order.\"\ncardinality = \"one\"\n\n[links.sold_through]\nfrom = \"Order\"\nto = \"SalesChannel\"\ndescription = \"The order was sold through the channel.\"\ncardinality = \"one\"\nrequired = true\n\n[rules.order_products]\ndescription = \"An order includes a product when one of its lines orders that product.\"\ndatalog = \"on_order(o, p) :- line_of(l, o), for_product(l, p).\"\n\n[constraints.return_was_ordered]\ndescription = \"A returned product was on the order it was returned from.\"\nseverity = \"warn\"\ndatalog = \"violation(r) :- returned_from(r, o), returns_product(r, p), not on_order(o, p).\"\n",
+  "mappings_toml": "version = \"draft\"\nontology = \"draft\"\n\n[mappings.customers]\nsource = \"src_66578f9aca73ac6c\"\n\n[mappings.customers.bind.customer]\ntype = \"Customer\"\nkey = { customer_number = \"customer_number\" }\nmissing = \"create\"\n\n[mappings.order_lines]\nsource = \"src_ff037eec694c3be1\"\nlinks = [\n  { link = \"line_of\", from = \"line\", to = \"order\" },\n  { link = \"for_product\", from = \"line\", to = \"product\" },\n]\n\n[mappings.order_lines.bind.line]\ntype = \"OrderLine\"\nkey = { line_no = \"line_no\", order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nprops = { qty = \"qty\" }\nmissing = \"create\"\n\n[mappings.order_lines.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.order_lines.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nmissing = \"report\"\noptional = true\n\n[mappings.orders]\nsource = \"src_4cfe9b3e7852efa5\"\nlinks = [\n  { link = \"placed_by\", from = \"order\", to = \"customer\" },\n  { link = \"sold_through\", from = \"order\", to = \"channel\" },\n]\n\n[mappings.orders.bind.channel]\ntype = \"SalesChannel\"\nkey = { code = \"channel_cd\" }\nmissing = \"create\"\n\n[mappings.orders.bind.customer]\ntype = \"Customer\"\nlookup = { mapping = \"customers\", on = { id = \"customer_id\" } }\nmissing = \"report\"\n\n[mappings.orders.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nprops = { placed_at = \"placed_at\" }\nmissing = \"create\"\n\n[mappings.parcels]\nrecords = \"/packages\"\nparent = \"shipments\"\nrow_key = [\"/tracking_no\"]\nlinks = [\n  { link = \"packed_in\", from = \"parcel\", to = \"parent.shipment\" },\n]\n\n[mappings.parcels.bind.parcel]\ntype = \"Parcel\"\nkey = { tracking_no = \"/tracking_no\" }\nprops = { weight_kg = \"/weight_kg\" }\nmissing = \"create\"\n\n[mappings.products]\nsource = \"src_507dfd7e147113e6\"\nrow_key = [\"sku\"]\n\n[mappings.products.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nprops = { title = \"title\" }\nmissing = \"create\"\n\n[mappings.returns]\nsource = \"src_8430773c4c7c34db\"\nrow_key = [\"return_id\"]\nlinks = [\n  { link = \"returned_from\", from = \"ret\", to = \"order\" },\n  { link = \"returns_product\", from = \"ret\", to = \"product\" },\n]\n\n[mappings.returns.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.returns.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.returns.bind.ret]\ntype = \"Return\"\nkey = { return_ref = \"return_id\" }\nprops = { reason = \"reason\", returned_at = { field = \"returned_at\", parse = { datetime = { format = \"%Y-%m-%d %H:%M\", tz = \"UTC\" } } } }\nmissing = \"create\"\n\n[mappings.shipments]\nsource = \"src_f16a79166c0c7a62\"\nrow_key = [\"/shipment_id\"]\nlinks = [\n  { link = \"ships_order\", from = \"shipment\", to = \"order\" },\n]\n\n[mappings.shipments.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"/order/number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.shipments.bind.shipment]\ntype = \"Shipment\"\nkey = { shipment_ref = \"/shipment_id\" }\nprops = { carrier = \"/carrier\", shipped_on = { field = \"/shipped_on\", parse = { date = \"%m/%d/%Y\" } } }\nmissing = \"create\"\n",
+  "draft": {
+    "ontology_toml": "version = \"draft\"\n\n[types.Customer]\ndescription = \"A person or household with a shop account, identified by their customer number.\"\nprops = { customer_number = \"string\" }\nkey = [\"customer_number\"]\n\n[types.Order]\ndescription = \"A purchase placed in the shop, identified by its order number.\"\nprops = { order_number = \"string\", placed_at = \"datetime\" }\nkey = [\"order_number\"]\n\n[types.OrderLine]\ndescription = \"One product line of an order, with the quantity ordered, identified by its order number and line number.\"\nprops = { line_no = \"integer\", order_number = \"string\", qty = \"integer\" }\nkey = [\"order_number\", \"line_no\"]\n\n[types.Parcel]\ndescription = \"One physical package in a shipment, identified by its tracking number.\"\nprops = { tracking_no = \"string\", weight_kg = \"float\" }\nkey = [\"tracking_no\"]\n\n[types.Product]\ndescription = \"An item the shop sells, identified by its SKU.\"\nprops = { sku = \"string\", title = \"string\" }\nkey = [\"sku\"]\nnames = [\"title\"]\n\n[types.Return]\ndescription = \"One item a customer sent back, with when and why, identified by its return id.\"\nprops = { reason = \"string\", return_ref = \"string\", returned_at = \"datetime\" }\nkey = [\"return_ref\"]\n\n[types.SalesChannel]\ndescription = \"A channel through which orders are sold, identified by its channel code.\"\nprops = { code = \"integer\" }\nkey = [\"code\"]\n\n[types.Shipment]\ndescription = \"A dispatch of goods from the warehouse by one carrier, identified by its shipment id.\"\nprops = { carrier = \"string\", shipment_ref = \"string\", shipped_on = \"date\" }\nkey = [\"shipment_ref\"]\n\n[links.for_product]\nfrom = \"OrderLine\"\nto = \"Product\"\ndescription = \"The line orders the product.\"\ncardinality = \"one\"\n\n[links.line_of]\nfrom = \"OrderLine\"\nto = \"Order\"\ndescription = \"The line is part of the order.\"\ncardinality = \"one\"\nrequired = true\n\n[links.packed_in]\nfrom = \"Parcel\"\nto = \"Shipment\"\ndescription = \"The parcel was sent as part of the shipment.\"\ncardinality = \"one\"\nrequired = true\n\n[links.placed_by]\nfrom = \"Order\"\nto = \"Customer\"\ndescription = \"The order was placed by the customer.\"\ncardinality = \"one\"\nrequired = true\n\n[links.returned_from]\nfrom = \"Return\"\nto = \"Order\"\ndescription = \"The returned item was bought on the order.\"\ncardinality = \"one\"\n\n[links.returns_product]\nfrom = \"Return\"\nto = \"Product\"\ndescription = \"The return sends back an item of the product.\"\ncardinality = \"one\"\nrequired = true\n\n[links.ships_order]\nfrom = \"Shipment\"\nto = \"Order\"\ndescription = \"The shipment carries goods of the order.\"\ncardinality = \"one\"\n\n[links.sold_through]\nfrom = \"Order\"\nto = \"SalesChannel\"\ndescription = \"The order was sold through the channel.\"\ncardinality = \"one\"\nrequired = true\n\n[rules.order_products]\ndescription = \"An order includes a product when one of its lines orders that product.\"\ndatalog = \"on_order(o, p) :- line_of(l, o), for_product(l, p).\"\n\n[constraints.return_was_ordered]\ndescription = \"A returned product was on the order it was returned from.\"\nseverity = \"warn\"\ndatalog = \"violation(r) :- returned_from(r, o), returns_product(r, p), not on_order(o, p).\"\n",
+    "mappings_toml": "version = \"draft\"\nontology = \"draft\"\n\n[mappings.customers]\nsource = \"src_66578f9aca73ac6c\"\n\n[mappings.customers.bind.customer]\ntype = \"Customer\"\nkey = { customer_number = \"customer_number\" }\nmissing = \"create\"\n\n[mappings.order_lines]\nsource = \"src_ff037eec694c3be1\"\nlinks = [\n  { link = \"line_of\", from = \"line\", to = \"order\" },\n  { link = \"for_product\", from = \"line\", to = \"product\" },\n]\n\n[mappings.order_lines.bind.line]\ntype = \"OrderLine\"\nkey = { line_no = \"line_no\", order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nprops = { qty = \"qty\" }\nmissing = \"create\"\n\n[mappings.order_lines.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.order_lines.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nmissing = \"report\"\noptional = true\n\n[mappings.orders]\nsource = \"src_4cfe9b3e7852efa5\"\nlinks = [\n  { link = \"placed_by\", from = \"order\", to = \"customer\" },\n  { link = \"sold_through\", from = \"order\", to = \"channel\" },\n]\n\n[mappings.orders.bind.channel]\ntype = \"SalesChannel\"\nkey = { code = \"channel_cd\" }\nmissing = \"create\"\n\n[mappings.orders.bind.customer]\ntype = \"Customer\"\nlookup = { mapping = \"customers\", on = { id = \"customer_id\" } }\nmissing = \"report\"\n\n[mappings.orders.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nprops = { placed_at = \"placed_at\" }\nmissing = \"create\"\n\n[mappings.parcels]\nrecords = \"/packages\"\nparent = \"shipments\"\nrow_key = [\"/tracking_no\"]\nlinks = [\n  { link = \"packed_in\", from = \"parcel\", to = \"parent.shipment\" },\n]\n\n[mappings.parcels.bind.parcel]\ntype = \"Parcel\"\nkey = { tracking_no = \"/tracking_no\" }\nprops = { weight_kg = \"/weight_kg\" }\nmissing = \"create\"\n\n[mappings.products]\nsource = \"src_507dfd7e147113e6\"\nrow_key = [\"sku\"]\n\n[mappings.products.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nprops = { title = \"title\" }\nmissing = \"create\"\n\n[mappings.returns]\nsource = \"src_8430773c4c7c34db\"\nrow_key = [\"return_id\"]\nlinks = [\n  { link = \"returned_from\", from = \"ret\", to = \"order\" },\n  { link = \"returns_product\", from = \"ret\", to = \"product\" },\n]\n\n[mappings.returns.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.returns.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.returns.bind.ret]\ntype = \"Return\"\nkey = { return_ref = \"return_id\" }\nprops = { reason = \"reason\", returned_at = { field = \"returned_at\", parse = { datetime = { format = \"%Y-%m-%d %H:%M\", tz = \"UTC\" } } } }\nmissing = \"create\"\n\n[mappings.shipments]\nsource = \"src_f16a79166c0c7a62\"\nrow_key = [\"/shipment_id\"]\nlinks = [\n  { link = \"ships_order\", from = \"shipment\", to = \"order\" },\n]\n\n[mappings.shipments.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"/order/number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.shipments.bind.shipment]\ntype = \"Shipment\"\nkey = { shipment_ref = \"/shipment_id\" }\nprops = { carrier = \"/carrier\", shipped_on = { field = \"/shipped_on\", parse = { date = \"%m/%d/%Y\" } } }\nmissing = \"create\"\n",
+    "draft": {
+      "rev": 5,
+      "base_version": null,
+      "items": {
+        "type.Customer": {
+          "toml": "[types.Customer]\ndescription = \"A person or household with a shop account, identified by their customer number.\"\nprops = { customer_number = \"string\" }\nkey = [\"customer_number\"]\n",
+          "status": "proposed",
+          "rationale": "CQ1 and CQ7 reach customers. The customer number is a unique domain key (e13); the table's id is a surrogate, and names, emails and phones are personal data no question needs.",
+          "serves": ["key", "cq.CQ1", "cq.CQ7"],
+          "evidence_ids": ["e7", "e13"],
+          "basis": null,
+          "pending": null
+        },
+        "type.Order": {
+          "toml": "[types.Order]\ndescription = \"A purchase placed in the shop, identified by its order number.\"\nprops = { order_number = \"string\", placed_at = \"datetime\" }\nkey = [\"order_number\"]\n",
+          "status": "proposed",
+          "rationale": "Every CQ passes through orders. The order number is unique once upper-cased and its spaces collapsed (e12), the form the warehouse export also needs (e8).",
+          "serves": [
+            "key",
+            "cq.CQ1",
+            "cq.CQ2",
+            "cq.CQ3",
+            "cq.CQ4",
+            "cq.CQ5",
+            "cq.CQ6",
+            "cq.CQ7"
+          ],
+          "evidence_ids": ["e5", "e8", "e12"],
+          "basis": null,
+          "pending": null
+        },
+        "type.OrderLine": {
+          "toml": "[types.OrderLine]\ndescription = \"One product line of an order, with the quantity ordered, identified by its order number and line number.\"\nprops = { line_no = \"integer\", order_number = \"string\", qty = \"integer\" }\nkey = [\"order_number\", \"line_no\"]\n",
+          "status": "proposed",
+          "rationale": "CQ2 needs a quantity per product per order, so the line is an entity. The order number and line number together are unique (e15); neither alone is.",
+          "serves": ["key", "cq.CQ2"],
+          "evidence_ids": ["e6", "e15"],
+          "basis": null,
+          "pending": null
+        },
+        "type.Parcel": {
+          "toml": "[types.Parcel]\ndescription = \"One physical package in a shipment, identified by its tracking number.\"\nprops = { tracking_no = \"string\", weight_kg = \"float\" }\nkey = [\"tracking_no\"]\n",
+          "status": "proposed",
+          "rationale": "CQ4 lists the parcels in each shipment. Tracking numbers look unique per parcel (e27, e2).",
+          "serves": ["key", "cq.CQ4"],
+          "evidence_ids": ["e2", "e27"],
+          "basis": null,
+          "pending": null
+        },
+        "type.Product": {
+          "toml": "[types.Product]\ndescription = \"An item the shop sells, identified by its SKU.\"\nprops = { sku = \"string\", title = \"string\" }\nkey = [\"sku\"]\nnames = [\"title\"]\n",
+          "status": "proposed",
+          "rationale": "CQ2 and CQ5 end at products. The SKU upper-cased matches far more order lines than as written (e19, e25), but then two catalogue rows collide (e14, e18); the user is asked which is right.",
+          "serves": ["key", "cq.CQ2", "cq.CQ5"],
+          "evidence_ids": ["e14", "e18", "e19", "e25"],
+          "basis": null,
+          "pending": null
+        },
+        "type.Return": {
+          "toml": "[types.Return]\ndescription = \"One item a customer sent back, with when and why, identified by its return id.\"\nprops = { reason = \"string\", return_ref = \"string\", returned_at = \"datetime\" }\nkey = [\"return_ref\"]\n",
+          "status": "proposed",
+          "rationale": "CQ5 and CQ7 reach returns; a return has a time and several participants, so it is an entity. The return id is unique (e17).",
+          "serves": ["key", "cq.CQ5", "cq.CQ7"],
+          "evidence_ids": ["e9", "e17"],
+          "basis": null,
+          "pending": null
+        },
+        "type.SalesChannel": {
+          "toml": "[types.SalesChannel]\ndescription = \"A channel through which orders are sold, identified by its channel code.\"\nprops = { code = \"integer\" }\nkey = [\"code\"]\n",
+          "status": "proposed",
+          "rationale": "CQ6 groups orders by channel, so the channel is an endpoint. Orders carry a small set of integer codes (e5) whose names no source gives; the user is asked for them.",
+          "serves": ["key", "cq.CQ6"],
+          "evidence_ids": ["e5"],
+          "basis": null,
+          "pending": null
+        },
+        "type.Shipment": {
+          "toml": "[types.Shipment]\ndescription = \"A dispatch of goods from the warehouse by one carrier, identified by its shipment id.\"\nprops = { carrier = \"string\", shipment_ref = \"string\", shipped_on = \"date\" }\nkey = [\"shipment_ref\"]\n",
+          "status": "proposed",
+          "rationale": "CQ3 and CQ4 go through shipments. The shipment id is unique (e16); the carrier is a property, since no question asks about carriers beyond naming them.",
+          "serves": ["key", "cq.CQ3", "cq.CQ4"],
+          "evidence_ids": ["e8", "e16"],
+          "basis": null,
+          "pending": null
+        },
+        "link.for_product": {
+          "toml": "[links.for_product]\nfrom = \"OrderLine\"\nto = \"Product\"\ndescription = \"The line orders the product.\"\n",
+          "status": "proposed",
+          "rationale": "CQ2. Most lines find their product once SKUs are upper-cased; one code matches no catalogue entry (e19).",
+          "serves": ["join", "cq.CQ2"],
+          "evidence_ids": ["e19"],
+          "basis": null,
+          "pending": null
+        },
+        "link.for_product.cardinality": {
+          "toml": "[links.for_product]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "Each line names one SKU.",
+          "serves": ["cq.CQ2"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.line_of": {
+          "toml": "[links.line_of]\nfrom = \"OrderLine\"\nto = \"Order\"\ndescription = \"The line is part of the order.\"\n",
+          "status": "proposed",
+          "rationale": "CQ2. Every line finds its order (e20).",
+          "serves": ["join", "cq.CQ2"],
+          "evidence_ids": ["e20"],
+          "basis": null,
+          "pending": null
+        },
+        "link.line_of.cardinality": {
+          "toml": "[links.line_of]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "A line belongs to one order by definition.",
+          "serves": ["cq.CQ2"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.line_of.required": {
+          "toml": "[links.line_of]\nrequired = true\n",
+          "status": "proposed",
+          "rationale": "A line exists only as part of an order (e20, e28).",
+          "serves": ["cq.CQ2"],
+          "evidence_ids": ["e20", "e28"],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.packed_in": {
+          "toml": "[links.packed_in]\nfrom = \"Parcel\"\nto = \"Shipment\"\ndescription = \"The parcel was sent as part of the shipment.\"\n",
+          "status": "proposed",
+          "rationale": "CQ4. Parcels are nested inside their shipment (e2).",
+          "serves": ["cq.CQ4"],
+          "evidence_ids": ["e2"],
+          "basis": null,
+          "pending": null
+        },
+        "link.packed_in.cardinality": {
+          "toml": "[links.packed_in]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "A parcel travels in one shipment.",
+          "serves": ["cq.CQ4"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.packed_in.required": {
+          "toml": "[links.packed_in]\nrequired = true\n",
+          "status": "proposed",
+          "rationale": "A parcel is always part of a shipment; it is nested in one (e30).",
+          "serves": ["cq.CQ4"],
+          "evidence_ids": ["e30"],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.placed_by": {
+          "toml": "[links.placed_by]\nfrom = \"Order\"\nto = \"Customer\"\ndescription = \"The order was placed by the customer.\"\n",
+          "status": "proposed",
+          "rationale": "CQ1 and CQ7. Every order finds its customer through the account id (e24).",
+          "serves": ["join", "cq.CQ1", "cq.CQ7"],
+          "evidence_ids": ["e24"],
+          "basis": null,
+          "pending": null
+        },
+        "link.placed_by.cardinality": {
+          "toml": "[links.placed_by]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "An order is placed by one customer.",
+          "serves": ["cq.CQ1"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.placed_by.required": {
+          "toml": "[links.placed_by]\nrequired = true\n",
+          "status": "proposed",
+          "rationale": "Every order is placed by someone; every sampled order has its customer (e24, e28).",
+          "serves": ["cq.CQ1"],
+          "evidence_ids": ["e24", "e28"],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.returned_from": {
+          "toml": "[links.returned_from]\nfrom = \"Return\"\nto = \"Order\"\ndescription = \"The returned item was bought on the order.\"\n",
+          "status": "proposed",
+          "rationale": "CQ5 and CQ7. Most returns find their order; one names an order the shop has no record of (e22).",
+          "serves": ["join", "cq.CQ5", "cq.CQ7"],
+          "evidence_ids": ["e22"],
+          "basis": null,
+          "pending": null
+        },
+        "link.returned_from.cardinality": {
+          "toml": "[links.returned_from]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "A returned item comes from one order.",
+          "serves": ["cq.CQ5"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.returns_product": {
+          "toml": "[links.returns_product]\nfrom = \"Return\"\nto = \"Product\"\ndescription = \"The return sends back an item of the product.\"\n",
+          "status": "proposed",
+          "rationale": "CQ5. Every return's SKU finds a product once upper-cased (e23).",
+          "serves": ["join", "cq.CQ5"],
+          "evidence_ids": ["e23"],
+          "basis": null,
+          "pending": null
+        },
+        "link.returns_product.cardinality": {
+          "toml": "[links.returns_product]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "The report has one row per returned item, naming one SKU (e3).",
+          "serves": ["cq.CQ5"],
+          "evidence_ids": ["e3"],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.returns_product.required": {
+          "toml": "[links.returns_product]\nrequired = true\n",
+          "status": "proposed",
+          "rationale": "A return is of some product; every return finds its product (e23, e31).",
+          "serves": ["cq.CQ5"],
+          "evidence_ids": ["e23", "e31"],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.ships_order": {
+          "toml": "[links.ships_order]\nfrom = \"Shipment\"\nto = \"Order\"\ndescription = \"The shipment carries goods of the order.\"\n",
+          "status": "proposed",
+          "rationale": "CQ3 and CQ4. Shipments find their order once order numbers are upper-cased and spaces collapsed, except one (e21).",
+          "serves": ["join", "cq.CQ3", "cq.CQ4"],
+          "evidence_ids": ["e21"],
+          "basis": null,
+          "pending": null
+        },
+        "link.ships_order.cardinality": {
+          "toml": "[links.ships_order]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "Each shipment record names one order.",
+          "serves": ["cq.CQ3"],
+          "evidence_ids": ["e2"],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.sold_through": {
+          "toml": "[links.sold_through]\nfrom = \"Order\"\nto = \"SalesChannel\"\ndescription = \"The order was sold through the channel.\"\n",
+          "status": "proposed",
+          "rationale": "CQ6. Every order carries a channel code (e5).",
+          "serves": ["cq.CQ6"],
+          "evidence_ids": ["e5"],
+          "basis": null,
+          "pending": null
+        },
+        "link.sold_through.cardinality": {
+          "toml": "[links.sold_through]\ncardinality = \"one\"\n",
+          "status": "proposed",
+          "rationale": "An order comes through one channel.",
+          "serves": ["cq.CQ6"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "link.sold_through.required": {
+          "toml": "[links.sold_through]\nrequired = true\n",
+          "status": "proposed",
+          "rationale": "Every order carries a channel code (e5, e28).",
+          "serves": ["cq.CQ6"],
+          "evidence_ids": ["e5", "e28"],
+          "basis": null,
+          "pending": "dry_run_counts"
+        },
+        "rule.order_products": {
+          "toml": "[rules.order_products]\ndescription = \"An order includes a product when one of its lines orders that product.\"\ndatalog = \"on_order(o, p) :- line_of(l, o), for_product(l, p).\"\n",
+          "status": "proposed",
+          "rationale": "Helper for the returned-item constraint: the products an order's lines name, by what the two links mean.",
+          "serves": ["cq.CQ5"],
+          "evidence_ids": ["e28"],
+          "basis": "definitional",
+          "pending": null,
+          "verdict": "rule",
+          "card": {
+            "rev": 5,
+            "added": 0,
+            "contradicted": 0,
+            "unmeasurable": false,
+            "review_facts": 0,
+            "unrepresentable": 0,
+            "counterexamples": [],
+            "unmeasured": null,
+            "sample": "Mock fixture: evidence written for the seeded draft, not measured.",
+            "instances": 48,
+            "confirmed": 48,
+            "precision": 1,
+            "failure_rate_bound": 0.06,
+            "violations": [],
+            "subjects": 20,
+            "violation_rate": null,
+            "reason": "Each order includes the products its lines order."
+          }
+        },
+        "constraint.return_was_ordered": {
+          "toml": "[constraints.return_was_ordered]\ndescription = \"A returned product was on the order it was returned from.\"\nseverity = \"warn\"\ndatalog = \"violation(r) :- returned_from(r, o), returns_product(r, p), not on_order(o, p).\"\n",
+          "status": "proposed",
+          "rationale": "Customer service traces returns back to what was on the order, so a returned product should be on the order it came from. Warn, since a mistyped SKU on either side would trip it.",
+          "serves": ["cq.CQ5"],
+          "evidence_ids": ["e28", "e31"],
+          "basis": "definitional",
+          "pending": null,
+          "verdict": "rule",
+          "card": {
+            "rev": 5,
+            "added": 0,
+            "contradicted": 0,
+            "unmeasurable": false,
+            "review_facts": 0,
+            "unrepresentable": 0,
+            "counterexamples": [],
+            "unmeasured": null,
+            "sample": "Mock fixture: evidence written for the seeded draft, not measured.",
+            "instances": 0,
+            "confirmed": 0,
+            "precision": null,
+            "failure_rate_bound": null,
+            "violations": [
+              {
+                "constraint": "return_was_ordered",
+                "severity": "warn",
+                "before": 0,
+                "after": 0
+              }
+            ],
+            "subjects": 12,
+            "violation_rate": 0,
+            "reason": "No return names a product its order didn't have."
+          }
+        },
+        "mapping.customers": {
+          "toml": "[mappings.customers]\nsource = \"src_66578f9aca73ac6c\"\n\n[mappings.customers.bind.customer]\ntype = \"Customer\"\nkey = { customer_number = \"customer_number\" }\nmissing = \"create\"\n",
+          "status": "proposed",
+          "rationale": "Creates customers by customer number (e13), so orders can find them by account id (e24). Personal fields stay out.",
+          "serves": ["key", "cq.CQ1", "cq.CQ7"],
+          "evidence_ids": ["e13", "e24"],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.order_lines": {
+          "toml": "[mappings.order_lines]\nsource = \"src_ff037eec694c3be1\"\nlinks = [\n  { link = \"line_of\", from = \"line\", to = \"order\" },\n  { link = \"for_product\", from = \"line\", to = \"product\" },\n]\n\n[mappings.order_lines.bind.line]\ntype = \"OrderLine\"\nkey = { line_no = \"line_no\", order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nprops = { qty = \"qty\" }\nmissing = \"create\"\n\n[mappings.order_lines.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.order_lines.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nmissing = \"report\"\noptional = true\n",
+          "status": "proposed",
+          "rationale": "Creates order lines with quantities (e15), linked to their order (e20) and product, SKUs trimmed and upper-cased (e6, e19). One placeholder SKU matches no catalogue product under any transform (e19, e36); those lines stay without a product until the user says what it means.",
+          "serves": ["key", "join", "cq.CQ2"],
+          "evidence_ids": ["e6", "e15", "e19", "e20", "e36"],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.orders": {
+          "toml": "[mappings.orders]\nsource = \"src_4cfe9b3e7852efa5\"\nlinks = [\n  { link = \"placed_by\", from = \"order\", to = \"customer\" },\n  { link = \"sold_through\", from = \"order\", to = \"channel\" },\n]\n\n[mappings.orders.bind.channel]\ntype = \"SalesChannel\"\nkey = { code = \"channel_cd\" }\nmissing = \"create\"\n\n[mappings.orders.bind.customer]\ntype = \"Customer\"\nlookup = { mapping = \"customers\", on = { id = \"customer_id\" } }\nmissing = \"report\"\n\n[mappings.orders.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nprops = { placed_at = \"placed_at\" }\nmissing = \"create\"\n",
+          "status": "proposed",
+          "rationale": "Creates orders keyed as e12 checked, with placement time, customer (e24) and channel (e5). The channel binding repeats its key by design: many orders share one channel, and each repeat names the same channel (e35).",
+          "serves": ["key", "join", "cq.CQ1", "cq.CQ6"],
+          "evidence_ids": ["e5", "e12", "e24", "e35"],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.parcels": {
+          "toml": "[mappings.parcels]\nrecords = \"/packages\"\nparent = \"shipments\"\nrow_key = [\"/tracking_no\"]\nlinks = [\n  { link = \"packed_in\", from = \"parcel\", to = \"parent.shipment\" },\n]\n\n[mappings.parcels.bind.parcel]\ntype = \"Parcel\"\nkey = { tracking_no = \"/tracking_no\" }\nprops = { weight_kg = \"/weight_kg\" }\nmissing = \"create\"\n",
+          "status": "proposed",
+          "rationale": "Creates the parcels nested in each shipment (e2), linked to it. A tracking number identifies one parcel by definition, and none repeats across all shipments read (e27, e34).",
+          "serves": ["key", "cq.CQ4"],
+          "evidence_ids": ["e2", "e27", "e34"],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.products": {
+          "toml": "[mappings.products]\nsource = \"src_507dfd7e147113e6\"\nrow_key = [\"sku\"]\n\n[mappings.products.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nprops = { title = \"title\" }\nmissing = \"create\"\n",
+          "status": "proposed",
+          "rationale": "Creates products keyed by upper-cased SKU, the form order lines and returns match far better (e19, e25). Two catalogue rows differing only in case then merge with conflicting titles (e14, e18, e37); kept pending the user's answer on whether SKUs are case-sensitive.",
+          "serves": ["key", "cq.CQ2", "cq.CQ5"],
+          "evidence_ids": ["e14", "e18", "e19", "e25", "e37"],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.returns": {
+          "toml": "[mappings.returns]\nsource = \"src_8430773c4c7c34db\"\nrow_key = [\"return_id\"]\nlinks = [\n  { link = \"returned_from\", from = \"ret\", to = \"order\" },\n  { link = \"returns_product\", from = \"ret\", to = \"product\" },\n]\n\n[mappings.returns.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"order_number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.returns.bind.product]\ntype = \"Product\"\nkey = { sku = { field = \"sku\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.returns.bind.ret]\ntype = \"Return\"\nkey = { return_ref = \"return_id\" }\nprops = { reason = \"reason\", returned_at = { field = \"returned_at\", parse = { datetime = { format = \"%Y-%m-%d %H:%M\", tz = \"UTC\" } } } }\nmissing = \"create\"\n",
+          "status": "proposed",
+          "rationale": "Creates returns (e17) with reason and time (e9), linked to their order (e22) and product (e23). The time has no zone and is read as UTC until the user says otherwise.",
+          "serves": ["key", "join", "cq.CQ5", "cq.CQ7"],
+          "evidence_ids": ["e9", "e17", "e22", "e23"],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.shipments": {
+          "toml": "[mappings.shipments]\nsource = \"src_f16a79166c0c7a62\"\nrow_key = [\"/shipment_id\"]\nlinks = [\n  { link = \"ships_order\", from = \"shipment\", to = \"order\" },\n]\n\n[mappings.shipments.bind.order]\ntype = \"Order\"\nkey = { order_number = { field = \"/order/number\", transform = [\"upper\", \"collapse_ws\"] } }\nmissing = \"report\"\n\n[mappings.shipments.bind.shipment]\ntype = \"Shipment\"\nkey = { shipment_ref = \"/shipment_id\" }\nprops = { carrier = \"/carrier\", shipped_on = { field = \"/shipped_on\", parse = { date = \"%m/%d/%Y\" } } }\nmissing = \"create\"\n",
+          "status": "proposed",
+          "rationale": "Creates shipments (e16) linked to their order (e21). Ship dates parse either way (e8); month-first is read because it puts them just after the orders and before the returns (e5, e9).",
+          "serves": ["key", "join", "cq.CQ3", "cq.CQ4"],
+          "evidence_ids": ["e5", "e8", "e9", "e16", "e21"],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ1": {
+          "toml": "[cq.CQ1]\nquestion = \"Who placed each order?\"\npath = [\"Order\", \"placed_by>\", \"Customer\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 1: who placed the order.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ2": {
+          "toml": "[cq.CQ2]\nquestion = \"Which products, in which quantities, were on each order?\"\npath = [\"Order\", \"<line_of\", \"OrderLine\", \"for_product>\", \"Product\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 1: the products on the order and their quantities, carried by the order line.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ3": {
+          "toml": "[cq.CQ3]\nquestion = \"In which shipments, with which carriers, did each order go out?\"\npath = [\"Order\", \"<ships_order\", \"Shipment\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 2: an order's shipments and their carriers.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ4": {
+          "toml": "[cq.CQ4]\nquestion = \"Which parcels were in each order's shipments?\"\npath = [\"Order\", \"<ships_order\", \"Shipment\", \"<packed_in\", \"Parcel\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 2: the parcels in each shipment.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ5": {
+          "toml": "[cq.CQ5]\nquestion = \"Which products came back from each order, and why?\"\npath = [\"Order\", \"<returned_from\", \"Return\", \"returns_product>\", \"Product\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 3: returned products per order, with the return's reason.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ6": {
+          "toml": "[cq.CQ6]\nquestion = \"Which orders came through each sales channel?\"\npath = [\"SalesChannel\", \"<sold_through\", \"Order\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 4: comparing orders across sales channels.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ7": {
+          "toml": "[cq.CQ7]\nquestion = \"What has each customer sent back, across all their orders?\"\npath = [\"Customer\", \"<placed_by\", \"Order\", \"<returned_from\", \"Return\"]\n",
+          "status": "proposed",
+          "rationale": "The workflow traces from the customer through the order to anything sent back.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "gap.G1": {
+          "toml": "[gap.G1]\ndescription = \"A return is accepted only if it comes back within 30 days of the order being placed.\"\n",
+          "status": "proposed",
+          "rationale": "Goal 5 compares the return time with the order time, which rules can't state yet.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        }
+      },
+      "left_out": [
+        {
+          "what": "src_66578f9aca73ac6c file.full_name",
+          "reason": "Personal data no question needs."
+        },
+        {
+          "what": "src_66578f9aca73ac6c file.email",
+          "reason": "Personal data no question needs."
+        },
+        {
+          "what": "src_66578f9aca73ac6c file.phone",
+          "reason": "Personal data no question needs."
+        },
+        {
+          "what": "src_66578f9aca73ac6c file.created_at",
+          "reason": "No question asks when accounts were opened."
+        },
+        {
+          "what": "src_507dfd7e147113e6 file.category",
+          "reason": "No goal groups products by category."
+        },
+        {
+          "what": "src_507dfd7e147113e6 file.price",
+          "reason": "No goal asks about prices or revenue."
+        },
+        {
+          "what": "src_f16a79166c0c7a62 file.carrier_note",
+          "reason": "Free-text delivery instruction no question needs."
+        },
+        {
+          "what": "src_f16a79166c0c7a62 file.order/channel",
+          "reason": "The order's channel is taken from the shop database, which owns it; this copy always shows a single value."
+        },
+        {
+          "what": "src_8430773c4c7c34db file.customer_number",
+          "reason": "Redundant: the return reaches its customer through its order."
+        },
+        {
+          "what": "src_8430773c4c7c34db file.customer_name",
+          "reason": "Personal data; the customer is reached through the order."
+        },
+        {
+          "what": "src_8430773c4c7c34db file.customer_email",
+          "reason": "Personal data; the customer is reached through the order."
+        },
+        {
+          "what": "src_8430773c4c7c34db file.product_title",
+          "reason": "Redundant with the product's title from the catalogue."
+        }
+      ],
+      "questions": [
+        {
+          "id": "Q1",
+          "items": ["type.Product", "mapping.products"],
+          "text": "The catalogue has two different products whose SKUs differ only in upper and lower case, but order lines use lowercase spellings of many SKUs that only exist in uppercase. Are SKUs case-insensitive (one of those two catalogue rows is an error), or truly case-sensitive?",
+          "options": [
+            "case-insensitive: keep upper-casing; fix the catalogue row",
+            "case-sensitive: key SKUs exactly as written"
+          ],
+          "default": "case-insensitive: keep upper-casing; fix the catalogue row",
+          "blocking": false
+        },
+        {
+          "id": "Q2",
+          "items": ["type.SalesChannel", "mapping.orders"],
+          "text": "Orders carry a numeric channel code with three values. What channel does each code stand for (web, app, marketplace…)? The names would be added to the sales channels.",
+          "options": [],
+          "default": "keep the numeric codes only",
+          "blocking": false
+        },
+        {
+          "id": "Q3",
+          "items": ["mapping.shipments", "mapping.returns"],
+          "text": "Ship dates are read as month/day/year, and return times are read as UTC. Is that right, and if not, which date order and time zone do the warehouse and customer service use?",
+          "options": [
+            "month/day/year, UTC",
+            "day/month/year, UTC",
+            "month/day/year, another zone (tell me which)"
+          ],
+          "default": "month/day/year, UTC",
+          "blocking": false
+        }
+      ],
+      "acknowledged": [],
+      "lint": []
+    }
+  },
+  "questions": [
+    {
+      "id": "Q1",
+      "items": ["type.Product", "mapping.products"],
+      "text": "The catalogue has two different products whose SKUs differ only in upper and lower case, but order lines use lowercase spellings of many SKUs that only exist in uppercase. Are SKUs case-insensitive (one of those two catalogue rows is an error), or truly case-sensitive?",
+      "options": [
+        "case-insensitive: keep upper-casing; fix the catalogue row",
+        "case-sensitive: key SKUs exactly as written"
+      ],
+      "default": "case-insensitive: keep upper-casing; fix the catalogue row",
+      "blocking": false
+    },
+    {
+      "id": "Q2",
+      "items": ["type.SalesChannel", "mapping.orders"],
+      "text": "Orders carry a numeric channel code with three values. What channel does each code stand for (web, app, marketplace…)? The names would be added to the sales channels.",
+      "options": [],
+      "default": "keep the numeric codes only",
+      "blocking": false
+    },
+    {
+      "id": "Q3",
+      "items": ["mapping.shipments", "mapping.returns"],
+      "text": "Ship dates are read as month/day/year, and return times are read as UTC. Is that right, and if not, which date order and time zone do the warehouse and customer service use?",
+      "options": [
+        "month/day/year, UTC",
+        "day/month/year, UTC",
+        "month/day/year, another zone (tell me which)"
+      ],
+      "default": "month/day/year, UTC",
+      "blocking": false
+    }
+  ],
+  "summary": "This is a first draft that lets customer service trace an order from customer to returns. It has 7 competency questions and 8 types: Customer, Order, OrderLine, Product, SalesChannel, Shipment, Parcel and Return. There are 8 links between them.\n\n**Keys and joins**\n- Customers, shipments and returns are keyed by their business numbers, which are unique (e13, e16, e17), not by database ids. Orders are keyed by order number with letters upper-cased and spaces collapsed (e12). That form matches the warehouse export's mixed spellings (e8, e21).\n- An order line is keyed by order number plus line number (e15). The line holds the quantity.\n- SKUs are upper-cased on every side. That matches far more order lines than the SKUs as written (e19, e25).\n- Ship dates are read month-first, because day-first would put shipments after the returns (e5, e8, e9). Return times have no time zone and are read as UTC for now.\n\n**Dry runs**\n- Every sampled order has its customer, its lines and its channel (e35, e36), and parcels sit in their shipments (e34). The question about products on an order (CQ2) found complete answers for every sampled order (e35).\n- Some references don't resolve and are left unlinked rather than invented:\n  - a placeholder SKU on some order lines (e36);\n  - one shipment's order (e34);\n  - one return's order (e33).\n- I added a warning constraint: a returned product should be on the order it came from. No order-seeded sample breaks it (e35).\n\n**Not modelled**\n- Goal 5, accepting a return only within 30 days, needs a date comparison that rules can't express yet. It is recorded as gap G1.",
+  "usage": {
+    "input": 38,
+    "cache_read": 1072449,
+    "cache_write": 85383,
+    "output": 20625,
+    "usd": 1.1532068
+  }
+}

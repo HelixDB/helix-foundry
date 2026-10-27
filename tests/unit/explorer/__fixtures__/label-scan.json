@@ -1,0 +1,80 @@
+{
+  "args": {},
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_label_scan",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "node_labels",
+              "root": {
+                "group_count": {
+                  "input": { "nodes": { "reference": "all" } },
+                  "property": "$label"
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_labels",
+              "root": {
+                "group_count": {
+                  "input": { "edges": { "reference": "all" } },
+                  "property": "$label"
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_total",
+              "root": {
+                "count": { "input": { "nodes": { "reference": "all" } } }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_total",
+              "root": {
+                "count": { "input": { "edges": { "reference": "all" } } }
+              }
+            }
+          }
+        ],
+        "returns": ["node_labels", "edge_labels", "node_total", "edge_total"]
+      }
+    },
+    "parameters": {},
+    "parameter_types": {}
+  },
+  "status": 200,
+  "response": {
+    "edge_labels": [
+      { "$label": "ABOUT", "count": 260 },
+      { "$label": "AUTHORED", "count": 300 },
+      { "$label": "FOLLOWS", "count": 1501 },
+      { "$label": "MEMBER_OF", "count": 902 },
+      { "$label": "OWNS", "count": 200 },
+      { "$label": "PART_OF", "count": 40 },
+      { "$label": "REFERENCES", "count": 312 },
+      { "$label": "TAGGED", "count": 1230 },
+      { "$label": "TRIGGERED", "count": 260 },
+      { "$label": "WORKS_AT", "count": 600 }
+    ],
+    "edge_total": 5605,
+    "node_labels": [
+      { "$label": "Chunk", "count": 40 },
+      { "$label": "Company", "count": 60 },
+      { "$label": "Document", "count": 300 },
+      { "$label": "Event", "count": 260 },
+      { "$label": "Project", "count": 200 },
+      { "$label": "Tag", "count": 80 },
+      { "$label": "User", "count": 600 }
+    ],
+    "node_total": 1540
+  }
+}

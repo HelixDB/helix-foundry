@@ -1,0 +1,227 @@
+/* Incoming data feed. */
+.data-feed {
+  container: data-feed / inline-size;
+  width: 100%;
+  --feed-mint: var(--hf-accent);
+  --feed-mint-soft: var(--hf-accent-soft);
+  --feed-border: var(--hf-border);
+  --feed-muted: var(--hf-muted);
+  color: var(--hf-text);
+  font-size: 13px;
+}
+.feed-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.feed-grid {
+  display: grid;
+  gap: 18px;
+}
+@container data-feed (min-width: 600px) {
+  .feed-grid {
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+.feed-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.feed-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  line-height: 18px;
+  color: var(--hf-muted);
+  transition: color 0.4s;
+}
+.feed-step-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1.5px solid var(--hf-border-strong);
+  border-radius: 50%;
+  color: var(--hf-on-accent);
+  transition:
+    background-color 0.3s,
+    border-color 0.3s;
+}
+.feed-step.is-active {
+  color: var(--hf-text);
+  font-weight: 500;
+}
+.feed-step.is-active .feed-step-mark {
+  border-color: var(--feed-mint);
+  border-right-color: transparent;
+  animation: feed-spin 0.9s linear infinite;
+}
+.feed-step.is-done {
+  color: var(--hf-text-2);
+}
+.feed-step.is-done .feed-step-mark {
+  background: var(--feed-mint);
+  border-color: var(--feed-mint);
+  animation: feed-pop 0.35s ease both;
+}
+/* Columns rather than a grid, so sources with more tables leave no holes. */
+.feed-sources {
+  columns: 2 200px;
+  column-gap: 10px;
+}
+.feed-source {
+  break-inside: avoid;
+  margin-bottom: 10px;
+  padding: 10px 11px 7px;
+  background: var(--hf-raised);
+  border: 1px solid var(--feed-border);
+  border-radius: 10px;
+  animation: feed-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.feed-source h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.feed-source h4 img,
+.feed-source h4 svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  color: var(--hf-text-2);
+}
+.feed-source h4 small {
+  margin-left: auto;
+  animation: feed-fade 0.4s ease both;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--feed-muted);
+}
+.feed-source ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.feed-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 24px;
+  border-top: 1px solid var(--feed-border);
+  animation: feed-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+.feed-item-mark {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.2px dashed var(--hf-border-strong);
+  border-radius: 50%;
+  color: var(--feed-mint);
+}
+.feed-item.is-loading .feed-item-mark {
+  border: 1.5px solid var(--feed-mint);
+  border-right-color: transparent;
+  animation: feed-spin 0.9s linear infinite;
+}
+.feed-item.is-ready .feed-item-mark {
+  border: 0;
+  background: var(--feed-mint-soft);
+  animation: feed-pop 0.35s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+.feed-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--hf-text);
+}
+.feed-item.is-pending .feed-item-name {
+  color: var(--hf-muted);
+}
+.feed-item-rows {
+  font-size: 11.5px;
+  color: var(--feed-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.feed-item.is-pending .feed-item-rows {
+  color: var(--hf-muted);
+}
+.feed-item.is-ready .feed-item-rows {
+  animation: feed-fade 0.4s ease both;
+}
+.feed-shimmer {
+  display: block;
+  width: 58px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--hf-hover) 0%,
+    var(--hf-bg) 50%,
+    var(--hf-hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: feed-shimmer 1.2s linear infinite;
+}
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes feed-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes feed-pop {
+  from {
+    transform: scale(0.4);
+  }
+}
+@keyframes feed-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes feed-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .data-feed * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .feed-step.is-active .feed-step-mark,
+  .feed-item.is-loading .feed-item-mark {
+    border-right-color: var(--feed-mint);
+    border-style: dotted;
+  }
+}

@@ -1,0 +1,667 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "helix/foundry/directory/v1/directory.proto",
+    "description": "The directory of a standalone Foundry install: its one owner, the\nworkspaces they make, and the projects and HelixDB databases (tenants)\nontologies load into. A hosted deployment serves the same routes from its\nown control plane; these are the ones the Foundry site calls, with the same\npaths, verbs and JSON, carrying the fields the site reads.",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "DirectoryService"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/databases:query-read": {
+      "post": {
+        "summary": "Runs a read query on a database and returns its answer as it gave it.",
+        "operationId": "DirectoryService_ExecuteDatabaseReadQuery",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ExecuteDatabaseReadQueryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1ExecuteDatabaseReadQueryRequest"
+            }
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      }
+    },
+    "/v1/projects": {
+      "get": {
+        "summary": "A workspace's live projects, newest first.",
+        "operationId": "DirectoryService_ListProjects",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListProjectsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "page.size",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "page.token",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      },
+      "post": {
+        "operationId": "DirectoryService_CreateProject",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1Project"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateProjectRequest"
+            }
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      }
+    },
+    "/v1/tenants": {
+      "get": {
+        "summary": "A project's databases, newest first, deleted ones included.",
+        "operationId": "DirectoryService_ListTenants",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListTenantsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "page.size",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "page.token",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      },
+      "post": {
+        "operationId": "DirectoryService_CreateTenant",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateTenantResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateTenantRequest"
+            }
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "summary": "The owner, and every workspace as one of their memberships.",
+        "operationId": "DirectoryService_Whoami",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1WhoamiResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "DirectoryService"
+        ]
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "summary": "The live workspaces, newest first.",
+        "operationId": "DirectoryService_ListWorkspaces",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListWorkspacesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page.size",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "page.token",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      },
+      "post": {
+        "operationId": "DirectoryService_CreateWorkspace",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1Workspace"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateWorkspaceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{id}": {
+      "get": {
+        "operationId": "DirectoryService_GetWorkspace",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1Workspace"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DirectoryService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1CreateProjectRequest": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "v1CreateTenantRequest": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      }
+    },
+    "v1CreateTenantResponse": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "$ref": "#/definitions/v1Tenant"
+        }
+      }
+    },
+    "v1CreateWorkspaceRequest": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "v1DatabaseReference": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        }
+      },
+      "description": "A database, by its tenant id."
+    },
+    "v1ExecuteDatabaseReadQueryRequest": {
+      "type": "object",
+      "properties": {
+        "database": {
+          "$ref": "#/definitions/v1DatabaseReference"
+        },
+        "queryJson": {
+          "type": "string",
+          "format": "byte",
+          "description": "A HelixDB query request: {\"request_type\": \"read\", \"query\": ...}."
+        }
+      }
+    },
+    "v1ExecuteDatabaseReadQueryResponse": {
+      "type": "object",
+      "properties": {
+        "responseJson": {
+          "type": "string",
+          "format": "byte",
+          "description": "The database's body, status and content type, as it answered."
+        },
+        "statusCode": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "contentType": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListProjectsResponse": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Project"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListTenantsResponse": {
+      "type": "object",
+      "properties": {
+        "tenants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Tenant"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ListWorkspacesResponse": {
+      "type": "object",
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Workspace"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "v1Page": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "token": {
+          "type": "string"
+        }
+      }
+    },
+    "v1Project": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ResourceStatus": {
+      "type": "string",
+      "enum": [
+        "RESOURCE_STATUS_UNSPECIFIED",
+        "RESOURCE_STATUS_ACTIVE",
+        "RESOURCE_STATUS_DELETING",
+        "RESOURCE_STATUS_DELETED"
+      ],
+      "default": "RESOURCE_STATUS_UNSPECIFIED"
+    },
+    "v1Tenant": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1ResourceStatus"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        },
+        "queryState": {
+          "$ref": "#/definitions/v1TenantQueryState"
+        }
+      }
+    },
+    "v1TenantQueryState": {
+      "type": "string",
+      "enum": [
+        "TENANT_QUERY_STATE_UNSPECIFIED",
+        "TENANT_QUERY_STATE_ENABLED"
+      ],
+      "default": "TENANT_QUERY_STATE_UNSPECIFIED",
+      "description": "The query state of a database: a standalone install never pauses one."
+    },
+    "v1Timestamps": {
+      "type": "object",
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deletedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "v1User": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        }
+      }
+    },
+    "v1WhoamiResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/v1User"
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1WorkspaceMember"
+          }
+        }
+      }
+    },
+    "v1Workspace": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1ResourceStatus"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "iconUrl": {
+          "type": "string"
+        }
+      }
+    },
+    "v1WorkspaceMember": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "user": {
+          "$ref": "#/definitions/v1User"
+        },
+        "role": {
+          "$ref": "#/definitions/v1WorkspaceRole"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        }
+      }
+    },
+    "v1WorkspaceRole": {
+      "type": "string",
+      "enum": [
+        "WORKSPACE_ROLE_UNSPECIFIED",
+        "WORKSPACE_ROLE_OWNER"
+      ],
+      "default": "WORKSPACE_ROLE_UNSPECIFIED"
+    }
+  }
+}

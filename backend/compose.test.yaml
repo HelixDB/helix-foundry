@@ -1,0 +1,54 @@
+# The databases the tests use, where they look for them:
+#   docker compose -f compose.test.yaml up -d --wait
+#   HELIX_TEST_ROOT_DSN='root:helix@tcp(127.0.0.1:3307)/' go test ./...
+#   docker compose -f compose.test.yaml down -v
+services:
+  # The store's and migrations' tests (HELIX_TEST_ROOT_DSN), and the MySQL
+  # connector's.
+  mysql:
+    image: mysql:8.0
+    ports: ["127.0.0.1:3307:3306"]
+    environment:
+      MYSQL_ROOT_PASSWORD: helix
+      MYSQL_DATABASE: helix_provision_test
+      MYSQL_USER: helix
+      MYSQL_PASSWORD: helix
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uhelix", "-phelix"]
+      interval: 2s
+      retries: 30
+
+  # The MySQL connector's binlog reader with GTID auto-positioning.
+  mysql-gtid:
+    image: mysql:8.0
+    ports: ["127.0.0.1:3309:3306"]
+    environment:
+      MYSQL_ROOT_PASSWORD: helix
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-phelix"]
+      interval: 2s
+      retries: 30
+
+  # The PostgreSQL connector, with logical decoding for its change capture.
+  postgres:
+    image: postgres:16
+    command:
+      ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
+    ports: ["127.0.0.1:5433:5432"]
+    environment:
+      POSTGRES_USER: helix
+      POSTGRES_PASSWORD: helix
+      POSTGRES_DB: helix_connector_test
+    healthcheck:
+      # Over TCP: the image's first-start server listens on the socket only.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "helix", "-d", "helix_connector_test"]
+      interval: 2s
+      retries: 30

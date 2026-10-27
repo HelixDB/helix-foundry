@@ -1,0 +1,433 @@
+{
+  "customers": [
+    [
+      "cus_EASTON21",
+      "Easton Marine Supplies",
+      "billing@easton-marine-supplies.example",
+      "usd"
+    ],
+    [
+      "cus_JESSOP31",
+      "Jessop & Lane Interiors",
+      "billing@jessop-lane-interiors.example",
+      "usd"
+    ],
+    [
+      "cus_HARROW27",
+      "Harrowgate Apparel GmbH",
+      "billing@harrowgate-apparel.example",
+      "eur"
+    ],
+    [
+      "cus_ELSTRE22",
+      "Elstree Media Group",
+      "billing@elstree-media.example",
+      "eur"
+    ],
+    [
+      "cus_GALLOW25",
+      "Galloway Outdoor Inc",
+      "billing@galloway-outdoor.example",
+      "usd"
+    ],
+    [
+      "cus_LOCKHA37",
+      "Lockhart Shipping plc",
+      "billing@lockhart-shipping.example",
+      "usd"
+    ],
+    [
+      "cus_SALTMA54",
+      "Saltmarsh Brewing Co",
+      "billing@saltmarsh-brewing-co.example",
+      "eur"
+    ],
+    [
+      "cus_BELLHA13",
+      "Bellhaven Schools Limited",
+      "billing@bellhaven-schools.example",
+      "usd"
+    ],
+    [
+      "cus_NETHER41",
+      "Netherby Ceramics",
+      "billing@netherby-ceramics.example",
+      "usd"
+    ],
+    [
+      "cus_OAKHUR44",
+      "Oakhurst Vineyards LLC",
+      "billing@oakhurst-vineyards.example",
+      "gbp"
+    ],
+    [
+      "cus_KESTRE33",
+      "Kestrel Logistics Inc",
+      "billing@kestrel-logistics.example",
+      "usd"
+    ],
+    [
+      "cus_INGLEB29",
+      "Ingleby Software Ltd",
+      "billing@ingleby-software.example",
+      "usd"
+    ],
+    [
+      "cus_FOXGLO24",
+      "Foxglove Health Inc",
+      "billing@foxglove-health.example",
+      "gbp"
+    ],
+    [
+      "cus_JUNIPE32",
+      "Juniper Row Florists",
+      "billing@juniper-row-florists.example",
+      "gbp"
+    ],
+    [
+      "cus_NIGHTI42",
+      "Nightingale Care Homes Ltd",
+      "billing@nightingale-care-homes.example",
+      "usd"
+    ],
+    [
+      "cus_YARDLE67",
+      "Yardley Print Works",
+      "billing@yardley-print-works.example",
+      "eur"
+    ],
+    [
+      "cus_DRAYCO19",
+      "Draycott Events Ltd",
+      "billing@draycott-events.example",
+      "eur"
+    ],
+    [
+      "cus_RAVENS51",
+      "Ravensworth Insurance Ltd",
+      "billing@ravensworth-insurance.example",
+      "eur"
+    ],
+    [
+      "cus_VANTOR63",
+      "Vantor Partners",
+      "billing@vantor-partners.example",
+      "usd"
+    ],
+    [
+      "cus_KITTER35",
+      "Kittering Labs Inc",
+      "billing@kittering-labs.example",
+      "eur"
+    ],
+    [
+      "cus_WESTBR64",
+      "Westbrook Veterinary Group",
+      "billing@westbrook-veterinary.example",
+      "gbp"
+    ],
+    [
+      "cus_PELLIN46",
+      "Pellingham Tutors Ltd",
+      "billing@pellingham-tutors.example",
+      "eur"
+    ],
+    [
+      "cus_THORNB58",
+      "Thornbury Auto Parts Ltd",
+      "billing@thornbury-auto-parts.example",
+      "usd"
+    ],
+    [
+      "cus_COPPER17",
+      "Copperleaf Foods GmbH",
+      "billing@copperleaf-foods.example",
+      "usd"
+    ],
+    [
+      "cus_PINECR48",
+      "Pinecrest Hotels Group",
+      "billing@pinecrest-hotels.example",
+      "gbp"
+    ],
+    [
+      "cus_WEXFOR65",
+      "Wexford Textiles Ltd",
+      "billing@wexford-textiles.example",
+      "usd"
+    ],
+    [
+      "cus_SILVER55",
+      "Silverbirch Travel Ltd",
+      "billing@silverbirch-travel.example",
+      "usd"
+    ],
+    [
+      "cus_ZELLWO69",
+      "Zellwood Coffee Roasters",
+      "billing@zellwood-coffee-roasters.example",
+      "usd"
+    ],
+    [
+      "cus_BIRCHF14",
+      "Birchfield Nurseries Ltd",
+      "billing@birchfield-nurseries.example",
+      "eur"
+    ],
+    [
+      "cus_TAMSWO57",
+      "Tamsworth Pet Supplies",
+      "billing@tamsworth-pet-supplies.example",
+      "usd"
+    ],
+    [
+      "cus_LARKSP36",
+      "Larkspur Organics Inc",
+      "billing@larkspur-organics.example",
+      "gbp"
+    ],
+    [
+      "cus_ASHCOM12",
+      "Ashcombe Dental Group",
+      "billing@ashcombe-dental.example",
+      "gbp"
+    ],
+    [
+      "cus_VALEWO62",
+      "Valewood Furniture GmbH",
+      "billing@valewood-furniture.example",
+      "eur"
+    ],
+    [
+      "cus_UPPERT61",
+      "Upperton Opticians Ltd",
+      "billing@upperton-opticians.example",
+      "usd"
+    ],
+    [
+      "cus_ZEPHYR70",
+      "Zephyrine Studios",
+      "billing@zephyrine-studios.example",
+      "eur"
+    ],
+    [
+      "cus_ALDERM11",
+      "Aldermoor Capital Holdings",
+      "billing@aldermoor-capital.example",
+      "eur"
+    ],
+    [
+      "cus_CALLOW16",
+      "Calloway Freight LLC",
+      "billing@calloway-freight.example",
+      "gbp"
+    ],
+    [
+      "cus_QUARRY49",
+      "Quarry Lane Architects",
+      "billing@quarry-lane-architects.example",
+      "usd"
+    ],
+    [
+      "cus_QUILLO50",
+      "Quillon Robotics Inc",
+      "billing@quillon-robotics.example",
+      "usd"
+    ],
+    [
+      "cus_GLENRO26",
+      "Glenrock Outfitters LLC",
+      "billing@glenrock-outfitters.example",
+      "usd"
+    ],
+    [
+      "cus_ULVERS60",
+      "Ulverston Mills Ltd",
+      "billing@ulverston-mills.example",
+      "gbp"
+    ],
+    [
+      "cus_MERRIW39",
+      "Merriweather Pharmacy Ltd",
+      "billing@merriweather-pharmacy.example",
+      "usd"
+    ],
+    [
+      "cus_ROOKWO53",
+      "Rookwood Bicycles Ltd",
+      "billing@rookwood-bicycles.example",
+      "usd"
+    ],
+    [
+      "cus_TIDEWE59",
+      "Tidewell Energy Corporation",
+      "billing@tidewell-energy.example",
+      "eur"
+    ],
+    [
+      "cus_REDBAN52",
+      "Redbank Solar GmbH",
+      "billing@redbank-solar.example",
+      "gbp"
+    ],
+    [
+      "cus_FENNIM23",
+      "Fennimore Bakeries Ltd",
+      "billing@fennimore-bakeries.example",
+      "usd"
+    ],
+    [
+      "cus_MOORFI40",
+      "Moorfield Security Ltd",
+      "billing@moorfield-security.example",
+      "gbp"
+    ],
+    [
+      "cus_WRENFI66",
+      "Wrenfield Studios Inc",
+      "billing@wrenfield-studios.example",
+      "usd"
+    ],
+    [
+      "cus_IVYBRI30",
+      "Ivybridge Telecom Ltd",
+      "billing@ivybridge-telecom.example",
+      "eur"
+    ],
+    [
+      "cus_NORTHG43",
+      "Northgate Clinics plc",
+      "billing@northgate-clinics.example",
+      "eur"
+    ],
+    [
+      "cus_ORCHAR45",
+      "Orchard & Vale Cider Co",
+      "billing@orchard-vale-cider-co.example",
+      "usd"
+    ],
+    [
+      "cus_KINGSM34",
+      "Kingsmere Property Group",
+      "billing@kingsmere-property.example",
+      "usd"
+    ],
+    [
+      "cus_STILLW56",
+      "Stillwater Payments Inc",
+      "billing@stillwater-payments.example",
+      "gbp"
+    ],
+    [
+      "cus_DUNMOR20",
+      "Dunmore Legal LLP",
+      "billing@dunmore-legal-llp.example",
+      "gbp"
+    ],
+    [
+      "cus_MARLOW38",
+      "Marlowe & Byrne LLP",
+      "billing@marlowe-byrne-llp.example",
+      "eur"
+    ],
+    [
+      "cus_BRIGHT15",
+      "Brightwater Analytics Ltd",
+      "billing@brightwater-analytics.example",
+      "usd"
+    ],
+    [
+      "cus_ALDERF10",
+      "Alder & Finch LLP",
+      "billing@alder-finch-llp.example",
+      "usd"
+    ],
+    [
+      "cus_PEMBER47",
+      "Pemberton Fitness Group",
+      "billing@pemberton-fitness.example",
+      "usd"
+    ],
+    [
+      "cus_YARROW68",
+      "Yarrowby Farms LLC",
+      "billing@yarrowby-farms.example",
+      "gbp"
+    ],
+    [
+      "cus_CRESSW18",
+      "Cresswell Engineering plc",
+      "billing@cresswell-engineering.example",
+      "usd"
+    ],
+    [
+      "cus_HARTWE28",
+      "Hartwell Accounting LLP",
+      "billing@hartwell-accounting-llp.example",
+      "gbp"
+    ]
+  ],
+  "invoices": [
+    ["in_1005", "cus_EASTON21", 670900, "draft"],
+    ["in_1006", "cus_JESSOP31", 489900, "uncollectible"],
+    ["in_1007", "cus_HARROW27", 922300, "open"],
+    ["in_1008", "cus_ELSTRE22", 562800, "paid"],
+    ["in_1009", "cus_GALLOW25", 238500, "void"],
+    ["in_1010", "cus_LOCKHA37", 741300, "draft"],
+    ["in_1011", "cus_SALTMA54", 703600, "paid"],
+    ["in_1012", "cus_BELLHA13", 635700, "draft"],
+    ["in_1013", "cus_NETHER41", 308900, "void"],
+    ["in_1014", "cus_OAKHUR44", 884600, "paid"],
+    ["in_1015", "cus_KESTRE33", 273700, "void"],
+    ["in_1016", "cus_INGLEB29", 706100, "draft"],
+    ["in_1017", "cus_FOXGLO24", 346600, "paid"],
+    ["in_1018", "cus_JUNIPE32", 381800, "paid"],
+    ["in_1019", "cus_NIGHTI42", 200800, "paid"],
+    ["in_1020", "cus_YARDLE67", 198300, "open"],
+    ["in_1021", "cus_DRAYCO19", 887100, "open"],
+    ["in_1022", "cus_RAVENS51", 127900, "open"],
+    ["in_1023", "cus_VANTOR63", 630700, "uncollectible"],
+    ["in_1024", "cus_KITTER35", 957500, "open"],
+    ["in_1025", "cus_WESTBR64", 522600, "paid"],
+    ["in_1026", "cus_PELLIN46", 668400, "paid"],
+    ["in_1027", "cus_THORNB58", 271200, "paid"],
+    ["in_1028", "cus_COPPER17", 203300, "void"],
+    ["in_1029", "cus_PINECR48", 452200, "paid"],
+    ["in_1030", "cus_WEXFOR65", 414500, "void"],
+    ["in_1031", "cus_SILVER55", 595500, "uncollectible"],
+    ["in_1032", "cus_ZELLWO69", 882100, "draft"],
+    ["in_1033", "cus_BIRCHF14", 527600, "paid"],
+    ["in_1034", "cus_TAMSWO57", 379300, "void"],
+    ["in_1035", "cus_LARKSP36", 849400, "paid"],
+    ["in_1036", "cus_ASHCOM12", 743800, "paid"],
+    ["in_1037", "cus_VALEWO62", 738800, "paid"],
+    ["in_1038", "cus_UPPERT61", 846900, "draft"],
+    ["in_1039", "cus_ZEPHYR70", 774000, "paid"],
+    ["in_1040", "cus_ALDERM11", 851900, "open"],
+    ["in_1041", "cus_CALLOW16", 311400, "paid"],
+    ["in_1042", "cus_QUARRY49", 344100, "void"],
+    ["in_1043", "cus_QUILLO50", 236000, "paid"],
+    ["in_1044", "cus_GLENRO26", 130400, "paid"],
+    ["in_1045", "cus_ULVERS60", 955000, "paid"],
+    ["in_1046", "cus_MERRIW39", 525100, "uncollectible"],
+    ["in_1047", "cus_ROOKWO53", 811700, "draft"],
+    ["in_1048", "cus_TIDEWE59", 163100, "open"],
+    ["in_1049", "cus_REDBAN52", 919800, "paid"],
+    ["in_1050", "cus_FENNIM23", 454700, "uncollectible"],
+    ["in_1051", "cus_MOORFI40", 417000, "paid"],
+    ["in_1052", "cus_WRENFI66", 306400, "paid"],
+    ["in_1053", "cus_IVYBRI30", 598000, "paid"],
+    ["in_1054", "cus_NORTHG43", 92700, "open"],
+    ["in_1055", "cus_ORCHAR45", 776500, "draft"],
+    ["in_1056", "cus_KINGSM34", 165600, "paid"],
+    ["in_1057", "cus_STILLW56", 487400, "paid"],
+    ["in_1058", "cus_DUNMOR20", 779000, "paid"],
+    ["in_1059", "cus_MARLOW38", 633200, "paid"],
+    ["in_1060", "cus_BRIGHT15", 419500, "uncollectible"],
+    ["in_1061", "cus_ALDERF10", 60000, "paid"],
+    ["in_1062", "cus_PEMBER47", 560300, "uncollectible"],
+    ["in_1063", "cus_YARROW68", 90200, "paid"],
+    ["in_1064", "cus_CRESSW18", 95200, "paid"],
+    ["in_1065", "cus_HARTWE28", 814200, "paid"]
+  ]
+}

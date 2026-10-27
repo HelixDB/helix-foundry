@@ -1,0 +1,1130 @@
+/* Ontology area styles (prefix on-). Cards follow helix-foundry's Data
+   connection cards (cn-card), callouts its Analyst cards (an-card) and code
+   its Analyst SQL block (an-sql); the progress feed and the graph's schema
+   bring their own CSS (ontology-scene.css, suggested-ontology.css). */
+/* One column no wider than the page: a list wider than a phone (the
+   overview's versions and loads) scrolls in its own frame. */
+.on-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-2);
+}
+.on-muted {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-base);
+}
+.on-pad {
+  padding: var(--hf-space-2);
+}
+.on-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.on-link:disabled {
+  color: var(--hf-faint);
+  text-decoration: none;
+  cursor: default;
+}
+.on-row-link {
+  color: var(--hf-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+.on-row-link:hover,
+.on-row-link:focus-visible {
+  text-decoration: underline;
+}
+/* Long text in a grid cell truncates instead of widening every column (the
+   kit's grid sizes its flexible columns by their widest content). */
+.on-cell-text {
+  display: block;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  contain: inline-size;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-cell-text small {
+  color: var(--hf-muted);
+}
+.on-error-text {
+  color: var(--hf-danger-text);
+}
+.on-endpoints {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.on-endpoints svg {
+  color: var(--hf-faint);
+}
+
+/* Callouts: what is generating, a draft to review, a failure. */
+.on-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.on-card-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--hf-radius);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.on-card-text {
+  flex: 1;
+  min-width: min(240px, 100%);
+}
+.on-card-text strong {
+  display: block;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.on-card-text p {
+  margin: 2px 0 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.on-card > .hf-btn,
+.on-card-actions {
+  align-self: center;
+}
+.on-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.on-card.is-danger {
+  border-color: color-mix(in srgb, var(--hf-danger) 30%, var(--hf-border));
+  background: var(--hf-danger-soft);
+}
+.on-card.is-danger .on-card-icon {
+  background: color-mix(in srgb, var(--hf-danger) 14%, transparent);
+  color: var(--hf-danger-text);
+}
+.on-card.is-muted {
+  background: var(--hf-sunken);
+}
+
+/* An unfinished ontology's setup: one card, its head minimising it to that
+   bar (the chevron turned), Set up with your agent in the head; what an
+   open step shows sits flat in it, a failure apart. The title's button
+   stretches over the whole head, the agent's button above it. */
+.on-setup .hf-panel-head {
+  position: relative;
+  border-radius: calc(var(--hf-radius-lg) - 1px) calc(var(--hf-radius-lg) - 1px)
+    0 0;
+  cursor: pointer;
+}
+.on-setup .hf-panel-head:hover {
+  background: var(--hf-hover);
+}
+.on-setup.is-minimised .hf-panel-head {
+  border-radius: calc(var(--hf-radius-lg) - 1px);
+}
+.on-setup .hf-panel-head h3 {
+  display: flex;
+}
+.on-setup .hf-panel-actions {
+  position: relative;
+  z-index: 1;
+}
+.on-setup-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.on-setup-toggle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--hf-radius-lg) - 1px);
+}
+.on-setup-toggle:focus-visible {
+  outline: none;
+}
+.on-setup-toggle:focus-visible::after {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: -2px;
+}
+.on-setup-chevron {
+  flex: none;
+  color: var(--hf-muted);
+  transition: transform 120ms var(--hf-ease);
+}
+.on-setup.is-minimised .on-setup-chevron {
+  transform: rotate(-90deg);
+}
+.on-setup.is-minimised .hf-panel-head {
+  border-bottom: 0;
+}
+.on-setup .on-card:not(.is-danger) {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.on-setup .on-card:not(.is-danger) .on-card-icon {
+  display: none;
+}
+
+/* The current version over its graph. */
+.on-current-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.on-current-head h2 {
+  margin: 0 4px 0 0;
+  font-family: inherit;
+  font-size: var(--hf-text-lg);
+  font-weight: 600;
+}
+.on-current-head h2 a {
+  color: inherit;
+  text-decoration: none;
+}
+.on-current-head h2 a:hover,
+.on-current-head h2 a:focus-visible {
+  text-decoration: underline;
+}
+
+/* Graph: the schema, under a count of its types and links. */
+.on-graph-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.on-graph-count {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+
+/* The agent's summary, in the suggested ontology's summary type. */
+.on-agent-summary {
+  margin-bottom: var(--hf-space-3);
+}
+.on-prose {
+  max-width: 720px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-md);
+  line-height: 1.65;
+}
+.on-prose p {
+  margin: 0 0 10px;
+}
+.on-prose ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  list-style: disc;
+}
+.on-prose ul ul {
+  margin: 2px 0 0;
+  list-style: circle;
+}
+.on-prose li + li {
+  margin-top: 2px;
+}
+.on-prose strong {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.on-more {
+  font-size: var(--hf-text-base);
+}
+
+/* A generation's title: the page title's style on one line. A longer one ends
+   in an ellipsis and shows whole in its tooltip. */
+.on-titled .hf-page-header-title > div:last-child {
+  min-width: 0;
+}
+.on-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Its goal as written: body text with its line breaks, four lines of it until
+   Show more. */
+.on-goal-text {
+  margin: 0;
+  max-width: 720px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.6;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.on-goal-text.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+.on-goal-text + .on-more {
+  margin-top: 6px;
+}
+.on-agent-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+}
+
+/* Items: types, mappings, rules and questions, in the connection card look. */
+.on-types,
+.on-groups {
+  display: grid;
+  gap: 12px;
+}
+.on-groups {
+  gap: var(--hf-space-3);
+}
+.on-group {
+  display: grid;
+  gap: 10px;
+}
+.on-group > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.on-item {
+  padding: 14px 16px;
+  border: 1px solid var(--hf-border);
+  border-radius: 10px;
+  background: var(--hf-raised);
+  scroll-margin-top: 16px;
+}
+.on-item > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.on-item h3 {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.on-item > p {
+  margin: 6px 0 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.on-item > p.on-muted {
+  color: var(--hf-muted);
+}
+.on-item:target {
+  border-color: var(--hf-accent-border);
+  box-shadow: 0 0 0 3px var(--hf-accent-soft);
+}
+.on-why {
+  margin: 10px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--hf-accent-border);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+.on-item > .on-why {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+
+/* A type's properties. */
+.on-props,
+.on-binds {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: var(--hf-text-sm);
+}
+/* Undo the legacy global table cells (style.css, minimal.css). */
+.on-props th,
+.on-props td,
+.on-binds th,
+.on-binds td {
+  max-width: none;
+  padding: 6px 12px 6px 0;
+  overflow: visible;
+  border-top: 1px solid var(--hf-border);
+  border-bottom: 0;
+  background: none;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+}
+.on-props thead th,
+.on-binds thead th {
+  border-top: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+}
+.on-props tbody th {
+  width: 32%;
+  color: var(--hf-text);
+  font-weight: 500;
+}
+.on-props td:nth-child(2) {
+  width: 16%;
+  color: var(--hf-muted);
+}
+.on-prop-notes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--hf-text-2);
+}
+.on-type-sources,
+.on-type-links {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.on-type-links li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 6px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+}
+.on-type-links svg {
+  margin-top: 2px;
+  color: var(--hf-faint);
+}
+.on-type-links strong {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.on-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.on-source small,
+.on-source-sep {
+  color: var(--hf-muted);
+}
+
+/* Sources: per type and link, what each table and document route fills. */
+.on-sources-wrap {
+  display: grid;
+  gap: 10px;
+  overflow-x: auto;
+}
+.on-sources-wrap > p {
+  margin: 0;
+  font-size: var(--hf-text-sm);
+}
+.on-sources {
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--hf-text-sm);
+}
+/* Undo the legacy global table cells (style.css, minimal.css). */
+.on-sources th,
+.on-sources td {
+  max-width: none;
+  padding: 8px 14px 8px 0;
+  overflow: visible;
+  border-top: 1px solid var(--hf-border);
+  border-bottom: 0;
+  background: none;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+}
+.on-sources thead th {
+  border-top: 0;
+  min-width: 180px;
+}
+.on-sources thead th small {
+  display: block;
+  margin-top: 2px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.on-sources tbody th[scope="row"] {
+  color: var(--hf-text);
+}
+.on-sources-group th {
+  padding-top: 14px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+}
+.on-source-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.on-source-cell small {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+
+/* Mappings: what each row binds and links. */
+.on-mapping > header .on-muted {
+  font-size: var(--hf-text-sm);
+}
+.on-binds {
+  table-layout: fixed;
+}
+.on-binds th:nth-child(1) {
+  width: 30%;
+}
+.on-binds th:nth-child(2) {
+  width: 38%;
+}
+.on-binds tbody th {
+  font-weight: 400;
+}
+.on-binds tbody th strong {
+  font-weight: 600;
+}
+.on-bind-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.on-pairs {
+  display: grid;
+  gap: 4px;
+}
+.on-field {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--hf-font-mono);
+  font-size: 0.92em;
+}
+.on-field-step {
+  padding: 0 6px;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.on-mapping-links {
+  margin: 10px 0 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+
+/* Datalog, SQL and the raw files, as the Analyst shows SQL. */
+.on-code {
+  max-height: 280px;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-sm);
+  line-height: 1.6;
+  white-space: pre;
+}
+.on-code code {
+  color: inherit;
+  font-size: inherit;
+}
+.on-code--file {
+  max-height: min(70vh, 900px);
+  margin: 0;
+}
+.on-toml {
+  display: grid;
+  gap: 10px;
+}
+
+/* The agent's questions and what the draft answers. */
+.on-questions,
+.on-cqs,
+.on-options {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.on-question {
+  padding: 14px 16px;
+  border: 1px solid var(--hf-border);
+  border-radius: 10px;
+  background: var(--hf-raised);
+}
+.on-question > p {
+  margin: 6px 0 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  line-height: 1.5;
+}
+.on-question > p.on-muted {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.on-question-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.on-question-id {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+}
+.on-options {
+  gap: 6px;
+  margin-top: 10px;
+}
+.on-options li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+}
+.on-options li.is-default {
+  border-color: var(--hf-accent-border);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.on-cqs li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.on-cqs .on-question-id {
+  justify-self: start;
+}
+.on-path {
+  display: block;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.on-path strong {
+  color: var(--hf-text-2);
+  font-weight: 600;
+}
+.on-path-link {
+  color: var(--hf-accent-text);
+}
+
+/* Generate: connectors to draft from. */
+.on-goal {
+  margin-top: 0;
+}
+.on-goal textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.on-select-actions {
+  display: flex;
+  gap: 12px;
+  font-size: var(--hf-text-sm);
+}
+.on-connectors,
+.on-tables {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.on-connector + .on-connector {
+  border-top: 1px solid var(--hf-border);
+}
+/* A kind's connectors, nested under its choice as the tables nest under a
+   connector's. */
+.on-kind-connectors {
+  padding-left: 28px;
+}
+.on-kind-connectors > .on-connector {
+  border-top: 1px solid var(--hf-border);
+}
+.on-connector-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+}
+.on-check {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  cursor: pointer;
+}
+.on-check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--hf-ink);
+}
+.on-connector.is-off .on-check {
+  cursor: default;
+  opacity: 0.6;
+}
+/* A document set's folder, in the place a connector's logo takes. */
+.on-set-icon {
+  flex: none;
+  width: 28px;
+  color: var(--hf-muted);
+}
+.on-connector-text {
+  display: grid;
+  min-width: 0;
+}
+.on-connector-text strong {
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+}
+.on-connector-text small {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.on-disclose {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  color: var(--hf-muted);
+  cursor: pointer;
+}
+.on-disclose:hover {
+  background: var(--hf-hover);
+}
+.on-disclose svg {
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.on-disclose[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.on-tables {
+  padding: 0 16px 10px 72px;
+}
+.on-tables li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  border-top: 1px solid var(--hf-border);
+  font-size: var(--hf-text-sm);
+}
+/* Under an API source's row, inset as a connector's tables are: how it is
+   read once chosen, and its send panel. */
+.on-event-more {
+  display: grid;
+  gap: var(--hf-space-2);
+  padding: 0 16px 12px 72px;
+}
+.on-table-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.on-table-rows {
+  margin-left: auto;
+  color: var(--hf-muted);
+  font-variant-numeric: tabular-nums;
+}
+.on-generate-foot {
+  display: grid;
+  gap: 6px;
+}
+.on-generate-foot .hf-form-error,
+.on-generate-foot .hf-form-actions {
+  margin-top: 0;
+}
+
+/* New ontology, and an unfinished ontology's overview: its steps, a
+   numbered row each, done ones ticked with what they chose, the current (or
+   running) one open below its row. */
+.on-wizard {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.on-wizard-step + .on-wizard-step {
+  border-top: 1px solid var(--hf-border);
+}
+.on-wizard-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 0;
+}
+.on-wizard-number {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: 50%;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.on-wizard-step.is-current .on-wizard-number {
+  border-color: var(--hf-text);
+  background: var(--hf-text);
+  color: var(--hf-raised);
+}
+.on-wizard-step.is-done .on-wizard-number {
+  border-color: var(--hf-accent);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.on-wizard-step.is-running .on-wizard-number {
+  border-color: var(--hf-accent);
+  color: var(--hf-accent-text);
+}
+.on-wizard-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+.on-wizard-text strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 500;
+}
+.on-wizard-text strong small {
+  padding: 1px 6px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+}
+.on-wizard-text > small {
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-wizard-step.is-done .on-wizard-text strong {
+  color: var(--hf-muted);
+}
+.on-wizard-step.is-upcoming {
+  opacity: 0.6;
+}
+.on-wizard-body {
+  display: grid;
+  gap: var(--hf-space-2);
+  padding: 0 0 var(--hf-space-2) 34px;
+}
+
+@media (max-width: 640px) {
+  .on-tables,
+  .on-event-more {
+    padding-left: 16px;
+  }
+  .on-wizard-body {
+    padding-left: 0;
+  }
+  /* The new-ontology form's database choice wraps under its title. */
+  .on-db-panel .hf-panel-head {
+    flex-wrap: wrap;
+  }
+  .on-db-panel .hf-panel-actions {
+    flex: 1 1 100%;
+  }
+  .on-props tbody th {
+    width: auto;
+  }
+  .on-binds,
+  .on-binds tbody,
+  .on-binds tr,
+  .on-binds th,
+  .on-binds td {
+    display: block;
+    width: auto;
+  }
+  .on-binds thead {
+    display: none;
+  }
+  .on-binds td {
+    border-top: 0;
+    padding-top: 0;
+  }
+}
+
+/* The Versions and Loads grids' actions column: the kit draws every
+   header's type icon, which means nothing over buttons. */
+.on-actions .hf-grid-type {
+  display: none;
+}
+/* A load's version and, beside it, its Current badge. */
+.on-load-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* A grid row is one line high: its buttons stay on that line. */
+.on-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Helix Cloud addition: what a load reads and may spend, in its dialog. */
+.on-load-plan {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.on-load-plan li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  font-size: var(--hf-text-sm);
+}
+.on-load-plan strong {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.on-load-plan span {
+  color: var(--hf-text-2);
+  line-height: 1.5;
+}
+
+/* Helix Cloud additions: an ontology's database in its overview's header, and
+   the new-database fields of the create form. */
+.on-db-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.on-db-cell svg {
+  flex: none;
+  color: var(--hf-muted);
+}
+.on-db-cell small {
+  color: var(--hf-muted);
+}
+.on-new-db {
+  display: grid;
+  gap: 4px;
+}
+.on-new-db .hf-field:first-child {
+  margin-top: 0;
+}
+
+/* The Ontologies panel beside the sidebar: a head and filter as the Data
+   explorer's (dx-head), rows as Ask's threads (ak-thread), and the open
+   ontology's pages as the sidebar's (hf-subnav), on the sidebar's surface.
+   The head stays in view while the list scrolls. */
+.on-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.on-panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 10px 8px 6px 14px;
+  background: var(--hf-sidebar);
+}
+.on-panel-head h2 {
+  flex: 1;
+  margin: 0;
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.on-panel-filter.hf-search {
+  flex: none;
+  min-width: 0;
+  margin: 0 8px 8px;
+}
+.on-panel-filter input {
+  height: 30px;
+}
+.on-panel > .hf-refresh-failed {
+  margin: 0 8px 8px;
+}
+.on-panel-note {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin: 0;
+  padding: 6px 14px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.on-panel-note p {
+  margin: 0;
+}
+.on-panel-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  padding: 0 8px 16px;
+  list-style: none;
+}
+.on-panel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 1px;
+  padding: 6px 10px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.4;
+  text-decoration: none;
+}
+.on-panel-row:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.on-panel-row.is-active {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.on-panel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-panel-row.is-active .on-panel-name {
+  font-weight: 550;
+}
+.on-panel-row small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.on-panel-list .hf-subnav {
+  margin: 2px 0 6px 18px;
+}
+/* Documents' count, as the Data tree counts a folder's. */
+.on-panel-count {
+  margin-left: auto;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+/* Under an ontology's Documents in the panel: its documents as the Data
+   explorer's tree, a set's count being of its documents to review, in the
+   review dot's colour. */
+.on-docs-nested {
+  margin: 2px 0 4px;
+}
+.on-docs-nested .dx-body {
+  padding: 0;
+}
+.on-docs-nested .dx-none {
+  margin: 4px 10px;
+}
+.on-docs-nested .dx-loading {
+  padding: 4px 10px;
+}
+.on-docs-tree .dt-count {
+  color: var(--hf-warning-text);
+  font-weight: 600;
+}

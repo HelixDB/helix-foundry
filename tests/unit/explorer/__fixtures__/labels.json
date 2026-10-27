@@ -1,0 +1,1774 @@
+{
+  "args": {
+    "labels": {
+      "nodes": [
+        "Company",
+        "Document",
+        "Event",
+        "Project",
+        "User",
+        "Chunk",
+        "Deleted"
+      ],
+      "edges": [
+        "FOLLOWS",
+        "MEMBER_OF",
+        "OWNS",
+        "REFERENCES",
+        "TAGGED",
+        "WORKS_AT",
+        "GONE"
+      ]
+    },
+    "probeRows": 1
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_labels",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "node_count_0",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "Company" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_count_1",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "Document" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_count_2",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "Event" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_count_3",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "Project" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_count_4",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "User" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_count_5",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "Chunk" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_count_6",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "Deleted" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_count_0",
+              "root": {
+                "count": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "FOLLOWS" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_count_1",
+              "root": {
+                "count": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "MEMBER_OF" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_count_2",
+              "root": {
+                "count": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "OWNS" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_count_3",
+              "root": {
+                "count": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "REFERENCES" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_count_4",
+              "root": {
+                "count": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "TAGGED" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_count_5",
+              "root": {
+                "count": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "WORKS_AT" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_count_6",
+              "root": {
+                "count": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "GONE" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_0",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Company" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_1",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Document" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_2",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Event" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_3",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Project" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_4",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "User" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_5",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Chunk" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_6",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Deleted" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_0",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "FOLLOWS" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_1",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "MEMBER_OF" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_2",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "OWNS" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_3",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": {
+                                "constant": { "string": "REFERENCES" }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_4",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "TAGGED" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_5",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "WORKS_AT" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_6",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "GONE" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "returns": [
+          "node_count_0",
+          "node_count_1",
+          "node_count_2",
+          "node_count_3",
+          "node_count_4",
+          "node_count_5",
+          "node_count_6",
+          "edge_count_0",
+          "edge_count_1",
+          "edge_count_2",
+          "edge_count_3",
+          "edge_count_4",
+          "edge_count_5",
+          "edge_count_6",
+          "node_0",
+          "node_1",
+          "node_2",
+          "node_3",
+          "node_4",
+          "node_5",
+          "node_6",
+          "edge_0",
+          "edge_1",
+          "edge_2",
+          "edge_3",
+          "edge_4",
+          "edge_5",
+          "edge_6"
+        ]
+      }
+    },
+    "parameters": {},
+    "parameter_types": {}
+  },
+  "status": 200,
+  "response": {
+    "edge_0": [
+      {
+        "$from": 97,
+        "$id": 600,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "note": "self-loop",
+        "since": "2023-08-15T20:30:13.760Z"
+      }
+    ],
+    "edge_1": [
+      {
+        "$from": 258,
+        "$id": 2101,
+        "$label": "MEMBER_OF",
+        "$to": 873,
+        "role": "maintainer"
+      }
+    ],
+    "edge_2": [{ "$from": 57, "$id": 3303, "$label": "OWNS", "$to": 697 }],
+    "edge_3": [
+      {
+        "$from": 1062,
+        "$id": 4733,
+        "$label": "REFERENCES",
+        "$to": 1251,
+        "context": "Cluster traversal query property equality range vector."
+      }
+    ],
+    "edge_4": [
+      {
+        "$from": 977,
+        "$id": 3503,
+        "$label": "TAGGED",
+        "$to": 897,
+        "weight": 0.25
+      }
+    ],
+    "edge_5": [
+      {
+        "$from": 97,
+        "$id": 0,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "Engineer",
+        "since": 2018
+      }
+    ],
+    "edge_6": null,
+    "edge_count_0": 1501,
+    "edge_count_1": 902,
+    "edge_count_2": 200,
+    "edge_count_3": 312,
+    "edge_count_4": 1230,
+    "edge_count_5": 600,
+    "edge_count_6": 0,
+    "node_0": [
+      {
+        "$id": 37,
+        "$label": "Company",
+        "address": {
+          "city": "Osaka",
+          "country": "JP",
+          "geo": { "lat": -86.35519579052925, "lng": 109.0530227869749 }
+        },
+        "domain": "company0.example.com",
+        "founded": 1965,
+        "industry": "Retail",
+        "name": "Acme Corp",
+        "public": false
+      }
+    ],
+    "node_1": [
+      {
+        "$id": 977,
+        "$label": "Document",
+        "body": "Replica token latency neighbor node posting commit distance equality score token latency label. Batch analyzer relevance vector ranking cosine shard batch embedding supernode hop. Shard schema vector cosine tenant index hop vector index. Filter edge edge graph commit hop embedding supernode cluster label gateway. Latency score gateway distance analyzer graph centrality. Bloom range gateway index batch posting storage range commit batch query replica token. Cycle edge filter database neighbor database gateway filter supernode database replica posting analyzer. Compaction latency path throughput score label throughput cosine distance commit compaction token label. Edge latency relevance executor degree cluster merge bloom. Snapshot analyzer path planner commit cache range edge replica edge. Stream cosine vector latency neighbor traversal embedding compaction community posting edge. Batch schema segment bloom executor stream latency vector embedding replica equality token commit storage. Degree index query schema analyzer embedding degree cycle. Storage equality label graph snapshot neighbor cycle segment filter commit compaction posting compaction cosine. Neighbor community hop property schema shard latency. Distance label batch database node memory ranking property storage property. Compaction posting segment schema graph distance graph cycle relevance vector. Relevance snapshot posting traversal snapshot shard replica node equality latency shard schema hop schema range. Posting ranking score node traversal equality token replica. Cycle latency posting score cluster merge vector. Cycle ranking latency cluster embedding property. Compaction stream executor range community stream segment hop traversal commit node embedding memory label. Throughput search memory analyzer degree filter analyzer path range cosine gateway database gateway shard traversal. Graph node cosine gateway range centrality shard bloom ranking cluster replica. Commit degree latency traversal throughput token analyzer traversal cycle bloom hop. Cache edge database merge centrality degree planner vector throughput gateway. Embedding storage hop relevance snapshot centrality shard. Embedding ranking neighbor stream stream ranking equality schema posting schema range. Search vector query cycle distance range cache score replica latency executor community label storage vector. Posting community traversal property property replica schema graph query node degree tenant posting cache executor. Score neighbor cluster equality segment tenant query. Latency traversal throughput range community graph. Query shard graph batch relevance relevance storage. Cycle cache filter index posting posting bloom tenant database storage. Shard index edge cluster storage bloom score graph cycle planner commit. Compaction supernode traversal community community supernode analyzer batch. Node tenant range score node degree. Embedding schema token score storage schema distance relevance shard node filter shard bloom. Embedding hop planner community neighbor traversal graph stream. Merge merge path community centrality replica distance. Distance executor cosine planner merge latency throughput supernode node token equality bloom equality path community range. Shard compaction cluster query bloom cluster filter commit graph degree. Stream cluster segment posting cache replica merge. Gateway degree shard replica latency community supernode query graph. Database edge executor range analyzer analyzer cache node embedding gateway supernode throughput supernode path latency. Stream commit embedding embedding label commit score commit centrality centrality executor hop. Storage schema score analyzer ranking commit index tenant neighbor segment bloom equality query. Stream embedding memory edge posting memory property stream degree community centrality storage executor node merge compaction. Cosine relevance filter degree gateway distance latency planner distance cosine property property tenant cosine cycle. Degree posting latency schema gateway degree property token centrality. Distance hop property node relevance schema compaction supernode memory bloom cycle vector path distance token property. Degree traversal compaction planner degree throughput commit database range throughput distance database edge ranking distance vector. Traversal equality planner index batch storage batch supernode batch equality hop. Property range index score replica community database. Range segment node relevance schema community snapshot node gateway planner. Vector cache compaction neighbor merge neighbor planner posting cycle relevance index tenant cluster. Degree relevance equality tenant executor edge throughput embedding relevance memory degree gateway planner gateway. Merge throughput executor ranking equality token edge gateway cache database. Segment memory throughput stream token degree executor filter search. Score graph neighbor schema search snapshot hop equality hop equality executor latency centrality bloom. Replica stream index planner cosine path. Equality storage score graph throughput tenant hop traversal distance merge centrality cosine graph filter storage distance. Query compaction index storage tenant centrality. Throughput database batch posting throughput filter bloom. Edge posting graph filter commit cycle filter gateway relevance shard range. Posting tenant community snapshot stream traversal traversal equality commit storage storage commit. Batch index centrality node label property gateway score stream token cycle throughput. Cache score schema executor segment stream graph embedding token score search throughput score. Gateway cosine memory community tenant schema. Hop node path tenant storage memory schema snapshot tenant schema supernode latency token. Range executor community score bloom label tenant token. Cluster centrality range stream batch community analyzer embedding node tenant ranking query property centrality. Bloom label ranking filter analyzer supernode cluster bloom cache analyzer edge cluster throughput. Merge degree replica score cosine replica stream supernode traversal cluster. Property hop community throughput query planner cosine community gateway. Storage equality memory label database compaction node posting tenant. Hop throughput batch bloom shard commit. Path snapshot supernode executor gateway edge analyzer vector degree cosine equality label node. Gateway equality compaction executor supernode token gateway executor equality latency posting path.",
+        "draft": true,
+        "embedding": [
+          -0.08769900351762772, -0.04568000137805939, 0.04767699912190437,
+          0.0764010027050972, -0.07236500084400177, -0.001104000024497509,
+          0.041019998490810394, -0.007701999973505735, 0.06356299668550491,
+          0.03032900020480156, -0.003215000033378601, -0.0560929998755455,
+          0.004083999898284674, -0.08863600343465805, 0.07627899944782257,
+          -0.03646799921989441, 0.005787999834865332, 0.04814999923110008,
+          0.05748799815773964, 0.019363999366760254, -0.026372000575065613,
+          -0.06696899980306625, 0.009449999779462814, -0.07743799686431885,
+          0.036910999566316605, -0.0025080000050365925, 0.05023699998855591,
+          -0.0893540009856224, -0.06027499958872795, -0.09127800166606903,
+          0.06584099680185318, -0.002409999957308173, 0.0359949991106987,
+          0.062116000801324844, 0.006124999839812517, -0.012749000452458858,
+          -0.05790900066494942, 0.05780399963259697, 0.084197998046875,
+          0.05056200176477432, 0.024406999349594116, 0.030640000477433205,
+          -0.03803100064396858, 0.07162699848413467, 0.007612000219523907,
+          -0.06728299707174301, -0.06463500112295151, -0.01624399982392788,
+          0.0024139999877661467, -0.04803000018000603, -0.07267499715089798,
+          -0.04288800060749054, 0.014146000146865845, -0.01678300090134144,
+          -0.008245999924838543, 0.03782700002193451, 0.07477200031280518,
+          0.0810289978981018, 0.041196998208761215, 0.02175999991595745,
+          -0.07646200060844421, 0.04022200033068657, 0.034890998154878616,
+          -0.06099599972367287, -0.05530000105500221, -0.08539099991321564,
+          -0.04504799842834473, -0.016308000311255455, -0.012868000194430351,
+          0.05549899861216545, -0.002575000049546361, -0.046980999410152435,
+          0.045510001480579376, -0.08109600096940994, -0.009805000387132168,
+          -0.08473899960517883, 0.01610800065100193, 0.06528999656438828,
+          0.012148999609053135, 0.047380998730659485, 0.06530100107192993,
+          -0.03615599870681763, -0.038467999547719955, -0.02428399957716465,
+          -0.01965400017797947, 0.04225499927997589, -0.0014779999619349837,
+          0.02737399935722351, -0.011022999882698059, 0.004850999917834997,
+          -0.03009600006043911, 0.08870299905538559, 0.053339000791311264,
+          -0.03093699924647808, -0.007716000080108643, -0.0024979999288916588,
+          0.07973100244998932, -0.05075199902057648, 0.04810100048780441,
+          0.08081500232219696, 0.014406000263988972, 0.025328999385237694,
+          -0.0005619999719783664, -0.04931600019335747, 0.013875000178813934,
+          -0.04126099869608879, 0.02501700073480606, 0.019197000190615654,
+          -0.0017239999724552035, -0.009898999705910683, 0.08495700359344482,
+          -0.07749000191688538, -0.04114200174808502, 0.03504500165581703,
+          0.08187399804592133, 0.023065000772476196, -0.03493800014257431,
+          -0.041508998721838, 0.07383300364017487, 0.08263400197029114,
+          -0.029709000140428543, -0.04932200163602829, -0.08279400318861008,
+          -0.04968700185418129, -0.04197600111365318, -0.04226600006222725,
+          -0.012384000234305859, 0.08201300352811813, 0.025147000327706337,
+          0.038256000727415085, 0.0615059994161129, -0.0008399999933317304,
+          -0.0811230018734932, -0.08445099741220474, 0.05384700000286102,
+          0.03887400031089783, -0.09115699678659439, 0.07514499872922897,
+          0.031575001776218414, -0.03738199919462204, 0.03526800125837326,
+          -0.006045000161975622, -0.0029239999130368233, -0.08839499950408936,
+          -0.048179998993873596, 0.027326999232172966, 0.055730998516082764,
+          -0.06511099636554718, 0.019850000739097595, -0.057833001017570496,
+          0.07658199965953827, -0.016023999080061913, 0.08681800216436386,
+          -0.01670300029218197, 0.023538000881671906, 0.011208999902009964,
+          0.03087400086224079, -0.0350629985332489, -0.06753399968147278,
+          -0.0805089995265007, 0.06513900309801102, 0.038116998970508575,
+          -0.03361000120639801, -0.06759700179100037, -0.08959099650382996,
+          -0.0358709990978241, -0.09132400155067444, -0.049550000578165054,
+          -0.016107000410556793, -0.027772000059485435, -0.05699099972844124,
+          0.023412000387907028, 0.016898000612854958, 0.06565599888563156,
+          0.06572400033473969, -0.06771299988031387, -0.07786399871110916,
+          0.021289000287652016, -0.04950999841094017, 0.03301500156521797,
+          0.02691599912941456, -0.05666600167751312, 0.08592399954795837,
+          -0.06477200239896774, -0.06322299689054489, -0.01978899911046028,
+          -0.022933999076485634, -0.0899059996008873, -0.016669999808073044,
+          0.051833998411893845, -0.0325700007379055, -0.059728000313043594,
+          0.06803599745035172, 0.07995700091123581, -0.09077399969100952,
+          0.02053000032901764, 0.06572700291872025, -0.06703600287437439,
+          -0.054416999220848083, 0.04521400108933449, 0.07103099673986435,
+          0.030912000685930252, -0.004279999993741512, 0.06294800341129303,
+          -0.018492000177502632, -0.0404990017414093, 0.03320600092411041,
+          0.058706000447273254, -0.024229999631643295, 0.02207699976861477,
+          -0.08911199867725372, -0.009538999758660793, 0.017109999433159828,
+          0.044110000133514404, 0.011389000341296196, -0.024454999715089798,
+          -0.041117001324892044, 0.08569800108671188, 0.010692000389099121,
+          -0.07941500097513199, -0.055966999381780624, -0.007178000174462795,
+          0.09067799896001816, 0.0886320024728775, -0.07861699908971786,
+          -0.02237500064074993, 0.048767998814582825, 0.03510399907827377,
+          0.08808699995279312, 0.030619999393820763, 0.05927800014615059,
+          0.045113999396562576, -0.0030380000825971365, -0.013425000011920929,
+          -0.05502299964427948, -0.06947200000286102, 0.08252900093793869,
+          0.0297279991209507, -0.037011001259088516, 0.06463000178337097,
+          0.03921499848365784, -0.042082998901605606, 0.0039019999094307423,
+          -0.03964899852871895, -0.024376999586820602, -0.09056799858808517,
+          0.06293699890375137, -0.08108799904584885, -0.02745399996638298,
+          -0.016582999378442764, 0.07337000221014023, 0.008258000016212463,
+          0.011273999698460102, -0.03762400150299072, -0.06590600311756134,
+          0.025652000680565834, 0.018975000828504562, -0.06813599914312363,
+          0.0398700013756752, -0.042103998363018036, -0.033302001655101776,
+          0.01706000044941902, -0.03061000071465969, 0.01611199975013733,
+          -0.07650700211524963, 0.017062999308109283, 0.015709999948740005,
+          0.06716299802064896, 0.07793200016021729, 0.032597001641988754,
+          -0.027363000437617302, -0.021165000274777412, 0.06101899966597557,
+          0.08875100314617157, -0.043852001428604126, -0.0806799978017807,
+          0.007447999902069569, -0.023545999079942703, 0.02609200030565262,
+          0.03282200172543526, 0.009809000417590141, -0.07096300274133682,
+          0.08793599903583527, -0.011664999648928642, -0.017865000292658806,
+          -0.033525001257658005, 0.03854300081729889, 0.042541999369859695,
+          -0.08504100143909454, -0.004759000148624182, 0.021341999992728233,
+          0.04338899999856949, 0.003777999896556139, -0.0690390020608902,
+          -0.07091400027275085, 0.06219499930739403, 0.08275099843740463,
+          0.005003000143915415, 0.04771300032734871, -0.00820900034159422,
+          -0.0010310000507161021, 0.015943000093102455, -0.029347000643610954,
+          0.05171100050210953, -0.03251500055193901, -0.03609900176525116,
+          0.06446199864149094, -0.07115799933671951, -0.035659000277519226,
+          0.023920999839901924, -0.08485600352287292, -0.0030720001086592674,
+          0.04324299842119217, -0.08585400134325027, 0.019524000585079193,
+          0.012752000242471695, -0.09013800323009491, -0.022505000233650208,
+          0.0725490003824234, 0.009820000268518925, 0.07808300107717514,
+          0.05548299849033356, 0.0772709995508194, -0.00711200013756752,
+          0.07492999732494354, 0.0013569999719038606, 0.04548199847340584,
+          0.038026001304388046, 0.04566799849271774, 0.04565700143575668,
+          -0.03086799941956997, 0.0790719985961914, -0.030465999618172646,
+          -0.07037399709224701, -0.01080700010061264, -0.02300499938428402,
+          0.011602000333368778, 0.06378299742937088, -0.058952998369932175,
+          0.06555599719285965, -0.03370000049471855, 0.07363899797201157,
+          0.06388299912214279, 0.05713599920272827, 0.04324600100517273,
+          0.08914600312709808, 0.02459999918937683, -0.06095200031995773,
+          0.07644200325012207, -0.04184899851679802, -0.02217400074005127,
+          0.08645900338888168, 0.0816119983792305, 0.008848000317811966,
+          -0.042024001479148865, -0.046316999942064285, -0.017764000222086906,
+          -0.0626169964671135, 0.013975000008940697, -0.05699799954891205,
+          -0.04432399943470955, -0.050960998982191086, 0.06726200133562088,
+          -0.045705001801252365, -0.08840899914503098, 0.02191299945116043,
+          0.06193400174379349, 0.023150000721216202, 0.061482999473810196,
+          -0.011769000440835953, 0.00571999978274107, -0.0615679994225502,
+          -0.04858599975705147, -0.029402999207377434, -0.00863100029528141,
+          0.009232000447809696, -0.0261439997702837, 0.06574799865484238,
+          -0.00829899962991476, 0.01585100032389164, 0.008016999810934067,
+          0.02606000006198883, -0.04057399928569794, -0.04847799986600876
+        ],
+        "metadata": {
+          "checksum": "sha256:1067853555",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Planner centrality degree merge (0)",
+        "word_count": 1606
+      }
+    ],
+    "node_2": [
+      {
+        "$id": 1277,
+        "$label": "Event",
+        "at": "2023-11-15T12:44:34.041Z",
+        "counts": [4, 59, 170],
+        "event_id": "evt_000000",
+        "kind": "incident",
+        "payload": {
+          "attrs": { "region": "us-east-1", "retries": 3 },
+          "mixed": ["a", 1, false],
+          "source": "dashboard",
+          "trace": [
+            "frame 0: memory::replica",
+            "frame 1: gateway::cosine",
+            "frame 2: segment::ranking",
+            "frame 3: query::filter",
+            "frame 4: database::traversal",
+            "frame 5: embedding::score",
+            "frame 6: relevance::degree",
+            "frame 7: cluster::stream",
+            "frame 8: property::compaction",
+            "frame 9: label::storage",
+            "frame 10: search::vector",
+            "frame 11: replica::search",
+            "frame 12: executor::stream",
+            "frame 13: distance::commit",
+            "frame 14: centrality::snapshot",
+            "frame 15: neighbor::node",
+            "frame 16: edge::neighbor",
+            "frame 17: executor::posting",
+            "frame 18: posting::node",
+            "frame 19: schema::index",
+            "frame 20: graph::community",
+            "frame 21: relevance::database",
+            "frame 22: storage::vector",
+            "frame 23: traversal::distance",
+            "frame 24: planner::node",
+            "frame 25: commit::cycle",
+            "frame 26: vector::bloom",
+            "frame 27: relevance::relevance",
+            "frame 28: compaction::cache",
+            "frame 29: analyzer::cycle",
+            "frame 30: path::traversal",
+            "frame 31: cycle::property",
+            "frame 32: relevance::score",
+            "frame 33: compaction::stream",
+            "frame 34: snapshot::filter",
+            "frame 35: filter::score",
+            "frame 36: index::filter",
+            "frame 37: snapshot::executor",
+            "frame 38: graph::filter",
+            "frame 39: throughput::schema",
+            "frame 40: ranking::vector",
+            "frame 41: community::database",
+            "frame 42: degree::property",
+            "frame 43: embedding::filter",
+            "frame 44: cycle::token",
+            "frame 45: graph::property",
+            "frame 46: memory::posting",
+            "frame 47: shard::merge",
+            "frame 48: hop::score",
+            "frame 49: throughput::compaction",
+            "frame 50: executor::supernode",
+            "frame 51: segment::traversal",
+            "frame 52: storage::search",
+            "frame 53: batch::node",
+            "frame 54: property::latency",
+            "frame 55: latency::distance",
+            "frame 56: distance::bloom",
+            "frame 57: range::relevance",
+            "frame 58: embedding::commit",
+            "frame 59: replica::commit",
+            "frame 60: batch::merge",
+            "frame 61: edge::score",
+            "frame 62: database::degree",
+            "frame 63: graph::planner",
+            "frame 64: range::filter",
+            "frame 65: supernode::score",
+            "frame 66: segment::storage",
+            "frame 67: shard::planner",
+            "frame 68: database::latency",
+            "frame 69: memory::query",
+            "frame 70: ranking::latency",
+            "frame 71: stream::posting",
+            "frame 72: node::compaction",
+            "frame 73: neighbor::storage",
+            "frame 74: embedding::executor",
+            "frame 75: supernode::property",
+            "frame 76: edge::stream",
+            "frame 77: equality::range",
+            "frame 78: stream::database",
+            "frame 79: snapshot::centrality",
+            "frame 80: node::relevance",
+            "frame 81: compaction::index",
+            "frame 82: vector::range",
+            "frame 83: neighbor::community",
+            "frame 84: commit::range",
+            "frame 85: bloom::segment",
+            "frame 86: traversal::compaction",
+            "frame 87: replica::cluster",
+            "frame 88: snapshot::schema",
+            "frame 89: neighbor::search",
+            "frame 90: score::neighbor",
+            "frame 91: cluster::supernode",
+            "frame 92: database::distance",
+            "frame 93: batch::relevance",
+            "frame 94: storage::storage",
+            "frame 95: community::vector",
+            "frame 96: cycle::embedding",
+            "frame 97: cache::gateway",
+            "frame 98: throughput::hop",
+            "frame 99: segment::equality",
+            "frame 100: vector::vector",
+            "frame 101: cluster::commit",
+            "frame 102: stream::snapshot",
+            "frame 103: tenant::query",
+            "frame 104: search::token",
+            "frame 105: batch::label",
+            "frame 106: index::traversal",
+            "frame 107: batch::database",
+            "frame 108: search::analyzer",
+            "frame 109: cosine::executor",
+            "frame 110: filter::distance",
+            "frame 111: equality::equality",
+            "frame 112: commit::score",
+            "frame 113: edge::token",
+            "frame 114: token::edge",
+            "frame 115: commit::shard",
+            "frame 116: cosine::index",
+            "frame 117: score::cosine",
+            "frame 118: vector::gateway",
+            "frame 119: shard::executor",
+            "frame 120: token::posting",
+            "frame 121: posting::path",
+            "frame 122: posting::replica",
+            "frame 123: database::merge",
+            "frame 124: memory::score",
+            "frame 125: degree::edge",
+            "frame 126: traversal::cache",
+            "frame 127: shard::stream",
+            "frame 128: cosine::index",
+            "frame 129: centrality::token",
+            "frame 130: gateway::replica",
+            "frame 131: replica::filter",
+            "frame 132: traversal::range",
+            "frame 133: range::replica",
+            "frame 134: distance::segment",
+            "frame 135: degree::shard",
+            "frame 136: score::batch",
+            "frame 137: database::analyzer",
+            "frame 138: range::database",
+            "frame 139: relevance::gateway",
+            "frame 140: bloom::neighbor",
+            "frame 141: gateway::edge",
+            "frame 142: equality::merge",
+            "frame 143: cache::stream",
+            "frame 144: tenant::community",
+            "frame 145: filter::shard",
+            "frame 146: range::segment",
+            "frame 147: segment::ranking",
+            "frame 148: index::graph",
+            "frame 149: gateway::edge",
+            "frame 150: property::shard",
+            "frame 151: edge::stream",
+            "frame 152: equality::throughput",
+            "frame 153: equality::cycle",
+            "frame 154: cache::planner",
+            "frame 155: query::supernode",
+            "frame 156: segment::index",
+            "frame 157: cluster::hop",
+            "frame 158: replica::shard",
+            "frame 159: ranking::stream",
+            "frame 160: relevance::graph",
+            "frame 161: community::vector",
+            "frame 162: edge::supernode",
+            "frame 163: supernode::path",
+            "frame 164: neighbor::path",
+            "frame 165: stream::tenant",
+            "frame 166: edge::shard",
+            "frame 167: bloom::property",
+            "frame 168: ranking::planner",
+            "frame 169: stream::batch",
+            "frame 170: vector::range",
+            "frame 171: centrality::traversal",
+            "frame 172: score::vector",
+            "frame 173: embedding::label",
+            "frame 174: index::cluster",
+            "frame 175: equality::hop",
+            "frame 176: path::supernode",
+            "frame 177: commit::compaction",
+            "frame 178: gateway::throughput",
+            "frame 179: analyzer::stream",
+            "frame 180: stream::equality",
+            "frame 181: cosine::equality",
+            "frame 182: search::ranking",
+            "frame 183: hop::hop",
+            "frame 184: node::node",
+            "frame 185: score::gateway",
+            "frame 186: hop::schema",
+            "frame 187: compaction::relevance",
+            "frame 188: segment::edge",
+            "frame 189: token::ranking",
+            "frame 190: path::supernode",
+            "frame 191: community::distance",
+            "frame 192: edge::score",
+            "frame 193: ranking::distance",
+            "frame 194: executor::degree",
+            "frame 195: vector::tenant",
+            "frame 196: edge::distance",
+            "frame 197: snapshot::bloom",
+            "frame 198: embedding::throughput",
+            "frame 199: latency::query",
+            "frame 200: equality::hop",
+            "frame 201: vector::relevance",
+            "frame 202: bloom::hop",
+            "frame 203: cosine::storage",
+            "frame 204: distance::property",
+            "frame 205: centrality::cycle",
+            "frame 206: cycle::posting",
+            "frame 207: neighbor::vector",
+            "frame 208: snapshot::latency",
+            "frame 209: latency::database",
+            "frame 210: equality::tenant",
+            "frame 211: centrality::search",
+            "frame 212: supernode::cycle",
+            "frame 213: path::index",
+            "frame 214: equality::stream",
+            "frame 215: supernode::traversal",
+            "frame 216: replica::degree",
+            "frame 217: score::property",
+            "frame 218: distance::label",
+            "frame 219: gateway::merge",
+            "frame 220: planner::database",
+            "frame 221: vector::edge",
+            "frame 222: graph::shard",
+            "frame 223: cosine::embedding",
+            "frame 224: centrality::database",
+            "frame 225: supernode::memory",
+            "frame 226: planner::shard",
+            "frame 227: graph::score",
+            "frame 228: community::node",
+            "frame 229: snapshot::vector",
+            "frame 230: batch::cluster",
+            "frame 231: planner::memory",
+            "frame 232: storage::cycle",
+            "frame 233: replica::hop",
+            "frame 234: degree::schema",
+            "frame 235: batch::executor",
+            "frame 236: cosine::supernode",
+            "frame 237: cosine::merge",
+            "frame 238: latency::gateway",
+            "frame 239: schema::stream",
+            "frame 240: gateway::commit",
+            "frame 241: throughput::tenant",
+            "frame 242: database::cache",
+            "frame 243: supernode::relevance",
+            "frame 244: executor::embedding",
+            "frame 245: path::cosine",
+            "frame 246: community::cycle",
+            "frame 247: latency::cosine",
+            "frame 248: range::executor",
+            "frame 249: label::query",
+            "frame 250: tenant::posting",
+            "frame 251: path::ranking",
+            "frame 252: cluster::latency",
+            "frame 253: search::cluster",
+            "frame 254: index::path",
+            "frame 255: embedding::executor",
+            "frame 256: node::stream",
+            "frame 257: shard::embedding",
+            "frame 258: traversal::cluster",
+            "frame 259: filter::score",
+            "frame 260: hop::hop",
+            "frame 261: compaction::equality",
+            "frame 262: embedding::relevance",
+            "frame 263: traversal::batch",
+            "frame 264: cosine::traversal",
+            "frame 265: neighbor::commit",
+            "frame 266: community::community",
+            "frame 267: tenant::relevance",
+            "frame 268: supernode::cluster",
+            "frame 269: filter::replica",
+            "frame 270: edge::memory",
+            "frame 271: cycle::cosine",
+            "frame 272: schema::schema",
+            "frame 273: index::ranking",
+            "frame 274: vector::database",
+            "frame 275: degree::snapshot",
+            "frame 276: range::distance",
+            "frame 277: filter::shard",
+            "frame 278: equality::hop",
+            "frame 279: index::schema",
+            "frame 280: cache::database",
+            "frame 281: filter::index",
+            "frame 282: executor::centrality",
+            "frame 283: cycle::segment",
+            "frame 284: cluster::cycle",
+            "frame 285: centrality::query",
+            "frame 286: merge::vector",
+            "frame 287: query::search",
+            "frame 288: cluster::supernode",
+            "frame 289: bloom::storage",
+            "frame 290: throughput::throughput",
+            "frame 291: planner::search",
+            "frame 292: cache::bloom",
+            "frame 293: batch::edge",
+            "frame 294: supernode::segment",
+            "frame 295: community::storage",
+            "frame 296: neighbor::token",
+            "frame 297: property::relevance",
+            "frame 298: supernode::database",
+            "frame 299: cosine::label"
+          ]
+        },
+        "severity": 3
+      }
+    ],
+    "node_3": [
+      {
+        "$id": 697,
+        "$label": "Project",
+        "archived": false,
+        "created": "2025-04-30T17:25:32.375Z",
+        "description": "Cycle stream posting vector embedding property throughput centrality cycle executor community batch database. Gateway relevance segment index tenant batch memory equality query cluster cosine segment ranking neighbor search.",
+        "languages": ["kotlin", "zig"],
+        "meta": {
+          "ci": { "green": true, "provider": "github" },
+          "license": "BSD-3-Clause"
+        },
+        "name": "Vertex 0",
+        "slug": "project-0",
+        "stars": 5296
+      }
+    ],
+    "node_4": [
+      {
+        "$id": 97,
+        "$label": "User",
+        "active": true,
+        "age": 22,
+        "joined": "2025-01-11T11:24:00.072Z",
+        "name": "Katherine Lamport",
+        "profile": {
+          "location": { "city": "Osaka", "country": "JP" },
+          "prefs": { "notifications": false, "theme": "light" }
+        },
+        "score": 17.74,
+        "tags": [],
+        "username": "katherine0"
+      }
+    ],
+    "node_5": [
+      {
+        "$id": 1537,
+        "$label": "Chunk",
+        "embedding": [
+          -0.002104999963194132, -0.0360959991812706, 0.016181999817490578,
+          -0.03233100101351738, -0.02580999955534935, 0.02149900048971176,
+          0.022617999464273453, -0.042148999869823456, -0.00035600000410340726,
+          -0.01763799972832203, -0.03580300137400627, -0.04026300087571144,
+          -0.010654999874532223, -0.03601200133562088, 0.018617000430822372,
+          0.03966299816966057, 0.04312000051140785, -0.006004999857395887,
+          -0.01912900060415268, 0.02336999960243702, -0.013001999817788601,
+          0.002248999895527959, 0.0440949983894825, -0.03194599971175194,
+          0.03203599900007248, -0.026271000504493713, -0.010439000092446804,
+          -0.00408599991351366, -0.004217999987304211, 0.026110000908374786,
+          0.03815000131726265, -0.002560999942943454, -0.0035639998968690634,
+          0.00559200020506978, 0.020779000595211983, -0.041492998600006104,
+          -0.032774001359939575, 0.0416410006582737, 0.001306000049225986,
+          0.009317000396549702, -0.0064929998479783535, 0.041689999401569366,
+          0.03928399831056595, 0.03690500184893608, -0.04041299968957901,
+          -0.027891000732779503, -0.04237399995326996, -0.034526001662015915,
+          -0.00979700032621622, 0.006178999785333872, 0.03318599984049797,
+          -0.04023599997162819, 0.006849000230431557, -0.014818999916315079,
+          -0.03249799832701683, -0.03185499832034111, 0.0009459999855607748,
+          -0.04224099963903427, 0.042906999588012695, 0.002947000088170171,
+          -0.003418999956920743, 0.0010720000136643648, -0.019026000052690506,
+          0.005880000069737434, -0.031902000308036804, 0.0033889999613165855,
+          0.03640500083565712, -0.019497999921441078, -0.007885999977588654,
+          0.0016830000095069408, -0.019711999222636223, 0.03510399907827377,
+          -0.007493999786674976, 0.010746999643743038, 0.025294000282883644,
+          0.0025430000387132168, -0.022917000576853752, 0.02903600037097931,
+          -0.03820100054144859, -0.03934599831700325, -0.0015409999759867787,
+          -0.019361000508069992, 0.0133670000359416, 0.015963999554514885,
+          -0.02665100060403347, 0.015255000442266464, 0.003469000104814768,
+          -0.013352000154554844, 0.017629999667406082, -0.0072639998979866505,
+          0.029498999938368797, -0.0060709998942911625, -0.029689999297261238,
+          0.02858399972319603, -0.00518900016322732, 0.021045999601483345,
+          0.011931000277400017, 0.007321999873965979, -0.0313199982047081,
+          0.019804000854492188, 0.013403000310063362, 0.002675000112503767,
+          -0.0008009999874047935, -0.012965000234544277, 0.03213899955153465,
+          -0.002208000048995018, -0.018716000020503998, -0.017653999850153923,
+          0.023919999599456787, 0.005247999913990498, -0.03358199819922447,
+          0.0003659999929368496, -0.04036499932408333, 0.009731000289320946,
+          0.04377000033855438, 0.0065750000067055225, -0.004780999850481749,
+          -0.027269000187516212, -0.012663999572396278, 0.0152580002322793,
+          0.007414999883621931, -0.028548000380396843, -0.02696700021624565,
+          0.015468000434339046, -0.029735000804066658, -0.013824000023305416,
+          -0.016882000491023064, -0.04125799983739853, 0.00890399981290102,
+          0.02438100054860115, 0.025112999603152275, -0.015561999753117561,
+          0.011022999882698059, 0.018619999289512634, 0.034616000950336456,
+          -0.002833999926224351, -0.023475000634789467, -0.02453400008380413,
+          0.042729999870061874, 0.017508000135421753, -0.02795499935746193,
+          -0.03546199947595596, -0.008876999840140343, 0.018650000914931297,
+          0.012048999778926373, -0.00017499999376013875, -0.013062999583780766,
+          -0.029790999367833138, 0.04332900047302246, 0.028906000778079033,
+          -0.02383200079202652, -0.018807999789714813, 0.017209000885486603,
+          -0.01753300055861473, -0.01974399946630001, 0.03923499956727028,
+          0.017712999135255814, 0.037918999791145325, 0.016983000561594963,
+          -0.003642000025138259, 0.0029349999967962503, 0.0405380018055439,
+          0.012756000272929668, 0.03634899854660034, 0.027264000847935677,
+          0.024769000709056854, -0.031293999403715134, -0.018376000225543976,
+          -0.028558999300003052, 0.04367600008845329, -0.026043999940156937,
+          -0.022794000804424286, 0.022933999076485634, -0.039625998586416245,
+          -0.04051699861884117, -0.006399000063538551, -0.02400200068950653,
+          0.03491700068116188, -0.04110800102353096, -0.017558999359607697,
+          0.03898800164461136, 0.01768999919295311, -0.022439999505877495,
+          0.030507000163197517, -0.015169000253081322, 0.00304200011305511,
+          -0.022647999227046967, 0.013274000026285648, 0.024244999513030052,
+          0.04045800119638443, 0.025551000609993935, -0.01891699992120266,
+          -0.03851800039410591, -0.000029000000722589903, -0.03311700001358986,
+          -0.003000000026077032, 0.015278000384569168, 0.026218999177217484,
+          0.025174999609589577, 0.010497000068426132, 0.035371001809835434,
+          -0.024567000567913055, -0.023024000227451324, -0.0028299998957663774,
+          0.03142099827528, -0.0016370000084862113, 0.02539299987256527,
+          -0.025464000180363655, 0.036084000021219254, 0.008170999586582184,
+          0.043150998651981354, 0.0061610001139342785, -0.014431999996304512,
+          0.04050299897789955, -0.006219000089913607, -0.019655000418424606,
+          -0.01648000068962574, 0.04312799870967865, 0.021838000044226646,
+          -0.023639999330043793, 0.0027570000384002924, 0.02954700030386448,
+          -0.009922999888658524, 0.039500001817941666, -0.014472000300884247,
+          -0.017246000468730927, 0.031084999442100525, -0.040504999458789825,
+          -0.04076400026679039, -0.040199000388383865, -0.005392999853938818,
+          0.024983000010252, 0.014884999953210354, -0.0050200000405311584,
+          0.0294560007750988, 0.03461400046944618, -0.03217199817299843,
+          -0.04237399995326996, -0.0053400001488626, 0.02119399979710579,
+          -0.025908000767230988, -0.031137999147176743, -0.009188000112771988,
+          0.016217999160289764, 0.027639999985694885, -0.019744999706745148,
+          0.007776999846100807, 0.03097200021147728, 0.015932999551296234,
+          -0.017681000754237175, -0.030544999986886978, -0.012734999880194664,
+          -0.020304000005126, -0.026863999664783478, 0.01840599998831749,
+          0.022391000762581825, -0.04094000160694122, 0.004251000005751848,
+          -0.044516999274492264, 0.03952300176024437, 0.0002119999990100041,
+          0.005628000013530254, 0.010192000307142735, -0.03341300040483475,
+          -0.0240509994328022, -0.0279959999024868, -0.0015350000467151403,
+          0.04404100030660629, -0.010870000347495079, 0.03322099894285202,
+          0.017880000174045563, 0.0038709999062120914, 0.010130000300705433,
+          -0.011214000172913074, -0.015565999783575535, 0.02434699982404709,
+          0.00002300000051036477, 0.029505999758839607, 0.03642300143837929,
+          0.00735200010240078, -0.028382999822497368, -0.039124999195337296,
+          -0.009968000464141369, -0.030665000900626183, -0.020740000531077385,
+          -0.0076950001530349255, -0.027945000678300858, 0.025098999962210655,
+          -0.0143649997189641, 0.006541000213474035, -0.026058999821543694,
+          0.021376999095082283, -0.005628000013530254, -0.016018999740481377,
+          -0.032437000423669815, 0.032784998416900635, 0.026409000158309937,
+          -0.0037819999270141125, -0.013656999915838242, 0.02527499943971634,
+          0.00624299980700016, 0.004102999810129404, 0.01246500015258789,
+          0.02997099980711937, -0.003283000085502863, 0.039969999343156815,
+          -0.04254399985074997, -0.025182999670505524, -0.003326999954879284,
+          -0.043884001672267914, -0.01310800015926361, -0.04051699861884117,
+          0.021257000043988228, 0.023603999987244606, -0.0352340005338192,
+          0.0292930006980896, 0.020527999848127365, 0.012109000235795975,
+          0.038015998899936676, 0.03437099978327751, -0.03640799969434738,
+          -0.03966899961233139, 0.039799001067876816, -0.018061000853776932,
+          0.031214000657200813, 0.025645000860095024, 0.0016319999704137444,
+          0.010363999754190445, -0.0446930006146431, -0.025551000609993935,
+          -0.013784999959170818, 0.023389000445604324, -0.015755999833345413,
+          0.013379000127315521, 0.03243599832057953, 0.006806999910622835,
+          0.025716999545693398, 0.036793000996112823, -0.0015399999683722854,
+          0.037108998745679855, -0.021523000672459602, -0.026308000087738037,
+          -0.01413000002503395, -0.03269699960947037, -0.0003169999981764704,
+          0.013155000284314156, 0.024826999753713608, 0.038015998899936676,
+          -0.019641999155282974, -0.004747000057250261, -0.016753999516367912,
+          0.013375000096857548, -0.035186998546123505, -0.026451999321579933,
+          -0.04224700108170509, -0.019471999257802963, 0.044071998447179794,
+          -0.013992000371217728, -0.004860999993979931, 0.04112600162625313,
+          -0.033208999782800674, -0.025179000571370125, 0.024568000808358192,
+          -0.024164000526070595, -0.04135400056838989, 0.013958999887108803,
+          -0.029448000714182854, -0.02382900007069111, -0.03624900057911873,
+          0.02043299935758114, 0.025348000228405, 0.0121069997549057,
+          0.033879999071359634, -0.0357539989054203, 0.043880000710487366,
+          -0.03569500148296356, -0.03445800021290779, -0.030577000230550766,
+          0.02435700036585331, -0.04229699820280075, 0.009573999792337418,
+          0.003298999974504113, -0.032485999166965485, 0.0057379999198019505,
+          0.005216000135987997, 0.00837399996817112, -0.036598000675439835,
+          0.0027910000644624233, -0.006140999961644411, -0.043818000704050064,
+          0.043901000171899796, -0.014938999898731709, -0.04273099824786186,
+          0.008438000455498695, 0.01833299919962883, -0.04089999943971634,
+          -0.016993999481201172, 0.023173000663518906, 0.0396369993686676,
+          -0.030038999393582344, 0.037032000720500946, -0.025828000158071518,
+          0.03524500131607056, -0.02530599944293499, 0.00038300000596791506,
+          0.030525999143719673, -0.004308999981731176, -0.038697998970746994,
+          -0.010067000053822994, 0.03203300014138222, -0.00826600007712841,
+          -0.03861000016331673, -0.014398000203073025, 0.005663000047206879,
+          0.042948998510837555, 0.006827999837696552, 0.011603999882936478,
+          -0.04343299940228462, -0.02869899943470955, 0.010134999640285969,
+          -0.03638000041246414, -0.006058000028133392, 0.019454000517725945,
+          -0.031578999012708664, -0.00583899999037385, 0.014094999991357327,
+          -0.001230000052601099, -0.009925000369548798, -0.021206999197602272,
+          -0.014913000166416168, 0.013933000154793262, -0.025570999830961227,
+          0.015487000346183777, 0.04233499988913536, 0.02597000077366829,
+          0.037882000207901, -0.01731099933385849, -0.0064849997870624065,
+          0.007139999885112047, -0.020434999838471413, -0.003992000129073858,
+          0.04397600144147873, 0.03729100152850151, 0.024939000606536865,
+          -0.028164999559521675, 0.01307700015604496, 0.03713100031018257,
+          -0.02085999958217144, 0.017974000424146652, 0.026441000401973724,
+          -0.024142000824213028, -0.033403001725673676, 0.02643500082194805,
+          -0.010218000039458275, -0.033713001757860184, -0.037317000329494476,
+          0.03381999954581261, -0.007668000180274248, -0.021795999258756638,
+          0.01030499953776598, -0.02878900058567524, -0.005892000161111355,
+          -0.03256300091743469, -0.02095000073313713, 0.00381199992261827,
+          -0.043696001172065735, 0.02958899922668934, -0.00938200019299984,
+          0.003157000057399273, 0.01811799965798855, 0.027501000091433525,
+          0.009763999842107296, 0.01781499944627285, -0.03920099884271622,
+          -0.024709999561309814, 0.006298999767750502, 0.0029909999575465918,
+          -0.02505600079894066, -0.006899000145494938, 0.036639001220464706,
+          0.005929999984800816, 0.033799998462200165, 0.0226259995251894,
+          0.034717001020908356, -0.005547999870032072, 0.0070039997808635235,
+          -0.03313099965453148, -0.0011409999569877982, 0.02318600006401539,
+          -0.008440000005066395, -0.013176999986171722, -0.023615999147295952,
+          0.03427699953317642, 0.02014400064945221, 0.0020379999186843634,
+          -0.014321000315248966, -0.04077700152993202, 0.020109999924898148,
+          0.03949800133705139, -0.02018900029361248, -0.028586000204086304,
+          0.0361969992518425, 0.025505999103188515, 0.03711999952793121,
+          -0.0016199999954551458, -0.031217999756336212, 0.02879999950528145,
+          0.03765000030398369, 0.025213999673724174, -0.02428399957716465,
+          -0.04279100149869919, -0.03207699954509735, 0.0071319998241961,
+          -0.016330000013113022, -0.010119999758899212, 0.027442999184131622,
+          -0.010851999744772911, -0.026505999267101288, -0.012989000417292118,
+          0.028029000386595726, 0.0050479997880756855, 0.04369800165295601,
+          -0.041857000440359116, -0.03468000143766403, 0.023310000076889992,
+          0.006738000083714724, -0.04371099919080734, -0.0292930006980896,
+          -0.01287699956446886, 0.03280699998140335, -0.023384999483823776,
+          0.02576499991118908, 0.018254999071359634, 0.011195000261068344,
+          -0.003266999963670969, 0.011966000311076641, -0.02522199973464012,
+          0.04101800173521042, 0.0035250000655651093, 0.04231100156903267,
+          0.03139200061559677, 0.0008379999781027436, 0.007814000360667706,
+          0.021093999966979027, 0.002466999925673008, -0.006147000007331371,
+          -0.03609300032258034, -0.023287000134587288, 0.027672000229358673,
+          0.004437999799847603, 0.020983999595046043, -0.018883999437093735,
+          -0.015225999988615513, -0.022981999441981316, 0.007488999981433153,
+          -0.039264000952243805, 0.018113000318408012, 0.005247000139206648,
+          -0.001319000031799078, 0.01539700012654066, -0.021524999290704727,
+          -0.03863900154829025, 0.036827001720666885, -0.010227000340819359,
+          0.01483600027859211, 0.002179000061005354, 0.010263999924063683,
+          0.018703000620007515, 0.00938399974256754, -0.021250000223517418,
+          0.0033710000570863485, -0.028376000002026558, 0.003117999993264675,
+          -0.0387439988553524, 0.005392000079154968, -0.009305000305175781,
+          0.025544000789523125, 0.03793099895119667, -0.0057299998588860035,
+          0.03764300048351288, -0.002589999930933118, -0.030726000666618347,
+          -0.026242999359965324, 0.00901000015437603, -0.04197100177407265,
+          -0.02013299986720085, 0.03363500162959099, 0.03498600050806999,
+          -0.018936000764369965, -0.015011999756097794, 0.018091000616550446,
+          0.02136800065636635, 0.035328999161720276, 0.042941998690366745,
+          -0.033277999609708786, 0.015999000519514084, 0.03337499871850014,
+          0.019341999664902687, 0.005512000061571598, 0.043912000954151154,
+          0.03662300109863281, 0.012715999968349934, -0.0009609999833628535,
+          0.028246000409126282, 0.009410999715328217, -0.03978100046515465,
+          -0.022693000733852386, 0.04427200183272362, 0.012726999819278717,
+          0.017470000311732292, -0.004798999987542629, 0.0286640003323555,
+          0.033385999500751495, -0.0036700000055134296, 0.02934500016272068,
+          0.011652999557554722, 0.007408999837934971, 0.04079199954867363,
+          -0.0007779999868944287, -0.04333899915218353, -0.025550000369548798,
+          0.0032709999941289425, 0.04291800037026405, 0.02122499980032444,
+          0.037064000964164734, -0.032937001436948776, -0.044206999242305756,
+          -0.008812000043690205, 0.01028900034725666, 0.012640999630093575,
+          0.012551000341773033, -0.020674999803304672, -0.02070399932563305,
+          -0.012865000404417515, -0.024632999673485756, 0.016961000859737396,
+          0.010068999603390694, 0.040268998593091965, 0.017356999218463898,
+          0.026069000363349915, -0.01657100021839142, -0.003645000047981739,
+          -0.0026310000102967024, -0.03117300011217594, 0.03478899970650673,
+          -0.022631999105215073, -0.03198700025677681, -0.03393600136041641,
+          -0.007451000157743692, 0.01752699911594391, 0.025072000920772552,
+          0.022161999717354774, -0.028454000130295753, 0.01921599917113781,
+          -0.007311999797821045, 0.007927999831736088, 0.019531000405550003,
+          0.02181600034236908, -0.006113000214099884, 0.004379999823868275,
+          -0.01693199947476387, 0.017789000645279884, -0.009890999644994736,
+          0.02572299912571907, -0.03604099899530411, 0.022283000871539116,
+          -0.039806000888347626, -0.02950200065970421, 0.011663000099360943,
+          0.0006440000142902136, -0.016039999201893806, 0.03803100064396858,
+          -0.0202029999345541, -0.04055900126695633, 0.0168210007250309,
+          0.04424000158905983, -0.040024999529123306, -0.01889199949800968,
+          -0.0018159999744966626, 0.03943299874663353, -0.0024500000290572643,
+          -0.03429799899458885, 0.019365999847650528, 0.014431999996304512,
+          -0.042406000196933746, -0.0027540000155568123, -0.019922999665141106,
+          -0.02690500020980835, 0.026979999616742134, -0.019884999841451645,
+          0.0018970000091940165, 0.013145999982953072, 0.003782999934628606,
+          -0.0075079998932778835, 0.005915000103414059, -0.03890400007367134,
+          0.02994300052523613, 0.014293000102043152, -0.006020000204443932,
+          -0.005022000055760145, -0.0007810000097379088, 0.03572100028395653,
+          -0.011845000088214874, -0.01620200090110302, -0.008440000005066395,
+          -0.0132039999589324, -0.006525000091642141, 0.012411000207066536,
+          0.01361399982124567, -0.02237600088119507, -0.02010500058531761,
+          -0.012910000048577785, -0.04102399945259094, -0.02327900007367134,
+          -0.020780999213457108, 0.03209599852561951, 0.009290999732911587,
+          0.04412199929356575, -0.00392200006172061, -0.021649999544024467,
+          -0.006940000224858522, 0.042440999299287796, -0.01744600012898445,
+          0.021219000220298767, -0.030496999621391296, 0.026200000196695328,
+          0.01752600073814392, 0.005413999781012535, 0.0446619987487793,
+          -0.022912999615073204, -0.020437000319361687, 0.007906000129878521,
+          -0.03752199932932854, -0.032829999923706055, 0.036486998200416565,
+          -0.02398199960589409, 0.0023709998931735754, 0.04301900044083595,
+          -0.04303000122308731, -0.010165000334382057, 0.007261999882757664,
+          -0.027324000373482704, -0.025120999664068222, -0.002259999979287386,
+          -0.010518000461161137, 0.015527999959886074, 0.023770999163389206,
+          0.02873300015926361, 0.015123999677598476, 0.01498199999332428,
+          -0.03610499948263168, 0.012798000127077103, -0.011965000070631504,
+          -0.02411399967968464, 0.0408019982278347, -0.009444000199437141,
+          0.021491000428795815, -0.03196899965405464, 0.0443510003387928,
+          -0.031752001494169235, 0.04403499886393547, -0.0429220013320446,
+          0.031293999403715134, 0.03449799865484238, -0.00802099984139204,
+          -0.027215000241994858, -0.04367300122976303, -0.019666999578475952,
+          -0.013531000353395939, -0.00034100000630132854, -0.03217500075697899,
+          0.0430620014667511, 0.004002000205218792, -0.04426499828696251,
+          -0.04135600104928017, 0.029870999976992607, -0.0266100000590086,
+          -0.01235399954020977, -0.0003389999910723418, -0.041940998286008835,
+          -0.0021879998967051506, -0.012144999578595161, 0.022760000079870224,
+          -0.04437199980020523, -0.0444130003452301, -0.04078499972820282,
+          -0.02281299978494644, -0.03966600075364113, 0.04188999906182289,
+          0.040352001786231995, 0.0052999998442828655, -0.009693999774754047,
+          -0.004422000143676996, -0.01750900037586689, -0.016203999519348145,
+          -0.012319999746978283, -0.018182000145316124, 0.0139979999512434,
+          -0.027365999296307564, 0.040762998163700104, 0.030081000179052353,
+          -0.02435299940407276, -0.01447299961000681, 0.031084999442100525,
+          -0.012120000086724758, 0.03725599870085716, 0.01762700080871582,
+          -0.009329999797046185, -0.04311700165271759, -0.022425999864935875,
+          -0.01527899969369173, -0.03376400098204613, -0.037817999720573425,
+          -0.04156000167131424, 0.02864300087094307, 0.017351999878883362,
+          0.03631399944424629, 0.034244999289512634, 0.024147000163793564,
+          0.017431000247597694, -0.020824000239372253, -0.0051299999468028545,
+          -0.03365800157189369, 0.010335000231862068, -0.04009300097823143,
+          0.0173179991543293, -0.038447000086307526, -0.03975899890065193,
+          0.04216499999165535, -0.03356799855828285, 0.016978999599814415,
+          0.0031530000269412994, -0.032878998667001724, -0.0021329999435693026,
+          -0.025937000289559364, 0.02257400006055832, -0.01501299999654293,
+          -0.02311900071799755, 0.0024590000975877047, 0.044137001037597656,
+          0.005789999850094318, -0.009829999879002571, -0.02198600023984909,
+          0.04175100103020668, 0.034662000834941864, -0.04054199904203415,
+          -0.011195000261068344, 0.003782999934628606, 0.007445999886840582,
+          -0.03643300011754036, -0.020114999264478683, 0.02269499935209751,
+          -0.009913000278174877, -0.007973000407218933, -0.032604001462459564,
+          -0.0036959999706596136, 0.00279300007969141, -0.028149999678134918,
+          -0.030280999839305878, -0.04437699913978577, 0.04159500077366829,
+          -0.038245998322963715, -0.04071800038218498, 0.006184000056236982,
+          -0.03269299864768982, -0.002957999939098954, 0.01925100013613701,
+          -0.023289000615477562, -0.002265000017359853, 0.024793000891804695,
+          0.025025000795722008, -0.01915000006556511, -0.01028400007635355,
+          -0.021784000098705292, 0.002698000054806471, -0.0029140000697225332,
+          0.005504999775439501, -0.03167299926280975, 0.020627999678254128,
+          0.020075000822544098, 0.026481999084353447, 0.02691500075161457,
+          0.028219999745488167, 0.027002999559044838, -0.025929000228643417,
+          0.009872999973595142, 0.0018520000157877803, 0.005415999796241522,
+          -0.022931000217795372, 0.0156230004504323, -0.004095999989658594,
+          -0.03226799890398979, -0.026388999074697495, -0.01496999990195036,
+          -0.03044999949634075, -0.014945000410079956, -0.040380001068115234,
+          -0.0037010000087320805, -0.038770001381635666, 0.0019490000559017062,
+          -0.032503001391887665, -0.010828999802470207, -0.034129999577999115,
+          0.04087899997830391, -0.04040199890732765, -0.02840700000524521,
+          0.0007689999765716493, -0.039980001747608185, 0.024511000141501427,
+          0.03792199864983559, 0.03512300178408623, -0.013806999661028385,
+          -0.01413199957460165, -0.0379519984126091, 0.02522899955511093,
+          0.002472999971359968, -0.020210999995470047, -0.007164000067859888,
+          0.014312000013887882, -0.007853999733924866, 0.01692100055515766,
+          -0.0007169999880716205, 0.002899999963119626, -0.011064000427722931,
+          0.006541000213474035, -0.01808900013566017, 0.03345099836587906,
+          -0.03929600119590759, -0.023874999955296516, -0.0279339998960495,
+          -0.032999999821186066, -0.025777999311685562, -0.00014899999951012433,
+          0.0015200000489130616, -0.04200800135731697, -0.0000779999973019585,
+          -0.015425000339746475, 0.03541500121355057, -0.029833000153303146,
+          -0.036660999059677124, -0.015531999990344048, -0.04171400144696236,
+          0.042107000946998596, 0.005462000146508217, -0.023273000493645668,
+          0.035585999488830566, 0.03436100110411644, 0.015343000181019306,
+          -0.002862999914214015, -0.03315100073814392, 0.010200999677181244,
+          0.024010999128222466, -0.01408000010997057, 0.02606300078332424,
+          -0.012919999659061432, 0.018130000680685043, 0.013363000005483627,
+          0.026040999218821526, -0.01842699944972992, -0.02725999988615513,
+          -0.00028199999360367656, 0.026402000337839127, -0.04079800099134445,
+          0.010114000178873539, 0.028780000284314156, -0.0372919999063015,
+          0.003648000070825219, -0.04263100028038025, -0.0300890002399683,
+          0.041561998426914215, -0.043675001710653305, 0.02297399938106537,
+          0.003961999900639057, 0.04410199820995331, -0.013129999861121178,
+          -0.01028400007635355, -0.026660999283194542, 0.011483999900519848,
+          -0.031328000128269196, 0.0019330000504851341, 0.021633999422192574,
+          0.024282999336719513, -0.026227999478578568, -0.0005520000122487545,
+          0.007116000168025494, -0.02318600006401539, 0.00957299955189228,
+          0.009255999699234962, 0.010545999743044376, 0.03031099960207939,
+          0.039914000779390335, 0.019689999520778656, 0.03794100135564804,
+          -0.003512999974191189, 0.022944999858736992, 0.0377580001950264,
+          0.04369200021028519, 0.0012519999872893095, 0.006548000033944845,
+          0.017736999318003654, -0.00926900003105402, -0.008662999607622623,
+          -0.026792999356985092, 0.017009999603033066, 0.01959099993109703,
+          -0.028196999803185463, 0.0058639999479055405, -0.029481999576091766,
+          0.03156699985265732, -0.025482000783085823, -0.039767999202013016,
+          -0.02665800042450428, -0.022545000538229942, 0.01752600073814392,
+          0.028970999643206596, 0.0036879999097436666, -0.033661000430583954,
+          -0.0011230000527575612, 0.018880000337958336, -0.021395999938249588,
+          0.025786999613046646, 0.03138099983334541, 0.016858000308275223,
+          0.036486998200416565, -0.01884699985384941, 0.03055099956691265,
+          0.00012799999967683107, 0.008438999764621258, 0.030493000522255898,
+          -0.012114999815821648, 0.01727600023150444, -0.03578300029039383,
+          -0.025547999888658524, -0.018528999760746956, -0.035137999802827835,
+          -0.020836999639868736, 0.04073600098490715, 0.010401999577879906,
+          -0.0291569996625185, 0.03305400162935257, 0.01868000067770481,
+          -0.0333000011742115, -0.01139300037175417, -0.010987999849021435,
+          0.01065099984407425, 0.025376999750733376, -0.012873999774456024,
+          -0.024258000776171684, -0.02829499915242195, -0.004385999869555235,
+          0.038378000259399414, -0.016517000272870064, 0.03592799976468086,
+          0.02822900004684925, 0.04131399840116501, 0.010479000397026539,
+          0.00355300004594028, 0.023699000477790833, 0.02971000038087368,
+          0.022881999611854553, -0.042135000228881836, -0.0187120009213686,
+          0.04407599940896034, 0.035301998257637024, -0.011061999946832657,
+          -0.020163999870419502, -0.03606700152158737, -0.011792000383138657,
+          0.002919000107795, 0.00837200041860342, -0.01659799925982952,
+          0.01510199997574091, 0.03822600096464157, -0.018743999302387238,
+          0.03949499875307083, -0.0028649999294430017, -0.0220589991658926,
+          0.025857999920845032, 0.034421999007463455, 0.006597999949008226,
+          0.03482099995017052, -0.003381999908015132, -0.0161530002951622,
+          -0.017721999436616898, -0.010023999959230423, 0.028869999572634697,
+          0.0343719981610775, -0.006748000159859657, 0.01753300055861473,
+          0.037647001445293427, 0.03468799963593483, -0.013230999931693077,
+          0.03737200051546097, -0.026156000792980194, -0.006767000071704388,
+          0.014000000432133675, 0.04107299819588661, 0.002076999982818961,
+          0.01958400011062622, 0.04100099951028824, 0.03905799984931946,
+          -0.026335999369621277, 0.01976500079035759, 0.03683499991893768,
+          0.0029819998890161514, -0.014295999892055988, 0.028818000108003616,
+          -0.019821999594569206, -0.036010999232530594, -0.006517999805510044,
+          0.042330000549554825, 0.019334999844431877, 0.03873800113797188,
+          -0.024701999500393867, -0.024786999449133873, -0.012304999865591526,
+          0.03296700119972229, -0.03532699868083, 0.03852400183677673,
+          -0.0052189999260008335, -0.013098999857902527, -0.019171999767422676,
+          0.026278000324964523, 0.041113000363111496, -0.011281000450253487,
+          0.03831399977207184, 0.004763000179082155, 0.028109999373555183,
+          -0.012133000418543816, 0.041138000786304474, -0.021963000297546387,
+          -0.005727999843657017, -0.00518900016322732, -0.03901800140738487,
+          -0.021220000460743904, -0.0389380007982254, -0.019957000389695168,
+          0.018011000007390976, -0.0315140001475811, 0.035645000636577606,
+          -0.040755998343229294, -0.04165299981832504, 0.03297099843621254,
+          -0.0034179999493062496, 0.03328799828886986, 0.028054000809788704,
+          0.001196000026538968, -0.004004999995231628, -0.003949999809265137,
+          0.04318999871611595, 0.012326999567449093, -0.009699000045657158,
+          -0.00009200000204145908, -0.036779001355171204, 0.022172000259160995,
+          -0.010431000031530857, 0.0326789990067482, -0.042389001697301865,
+          0.014746000058948994, 0.0320420004427433, -0.028669999912381172,
+          -0.0388530008494854, -0.03446900099515915, 0.016586000099778175,
+          0.04195300117135048, 0.04041999951004982, -0.020315000787377357,
+          0.010191000066697598, 0.003361999988555908, -0.024605000391602516,
+          -0.0003640000068116933, -0.04275599867105484, 0.01816299930214882,
+          -0.004652000032365322, 0.03903000056743622, 0.009701999835669994,
+          0.013454999774694443, -0.04316600039601326, 0.013876999728381634,
+          -0.02943900041282177, 0.013145999982953072, -0.006386000197380781,
+          -0.021703999489545822, 0.017263999208807945, 0.008070999756455421,
+          -0.03988400101661682, -0.023934999480843544, 0.0358709990978241,
+          0.04288800060749054, 0.03476699814200401, -0.03909900039434433,
+          0.007619000039994717, 0.009378000162541866, 0.010975000448524952,
+          0.041795000433921814, -0.02552499994635582, -0.02566099911928177,
+          0.043717000633478165, 0.040477000176906586, 0.04399200156331062,
+          -0.02088100090622902, 0.018132999539375305, 0.008015000261366367,
+          -0.019965000450611115, 0.005032999906688929, -0.03053699992597103,
+          -0.010684999637305737, -0.02232999913394451, 0.01810700073838234,
+          -0.04303999990224838, 0.015852000564336777, -0.034341000020504,
+          0.02587899938225746, 0.040017999708652496, 0.04184199869632721,
+          0.006335999816656113, -0.0011180000146850944, -0.014422000385820866,
+          -0.0037960000336170197, 0.02330699935555458, -0.011721000075340271,
+          0.006085999775677919, -0.03966199979186058, -0.029273999854922295,
+          -0.015224999748170376, -0.0012130000395700336, -0.015172000043094158,
+          -0.023969000205397606, -0.006479000207036734, -0.01817600056529045,
+          0.014680000022053719, 0.03178799897432327, 0.033608999103307724,
+          -0.004881000146269798, -0.009583000093698502, -0.030038999393582344,
+          0.009922999888658524, -0.0023320000618696213, 0.02682499960064888,
+          0.018410999327898026, 0.013313000090420246, -0.01958799920976162,
+          0.021928999572992325, -0.03834199905395508, -0.027639999985694885,
+          -0.017031000927090645, 0.04140700027346611, 0.03621799871325493,
+          -0.002724000019952655, -0.010625000111758709, -0.03285700082778931,
+          -0.016018999740481377, 0.014210999943315983, -0.007242000196129084,
+          0.007302999962121248, 0.01959500089287758, -0.020750999450683594,
+          -0.027859000489115715, 0.04220600053668022, 0.02755099907517433,
+          0.041965000331401825, 0.04185900092124939, 0.03235200047492981,
+          0.03312499821186066, 0.020855000242590904, -0.0047109997831285,
+          0.042360998690128326, -0.004511999897658825, -0.0015269999857991934,
+          0.0385890007019043, 0.020997000858187675, -0.03409099951386452,
+          0.04187000170350075, 0.014736000448465347, -0.03523699939250946,
+          0.01042999979108572, 0.032526999711990356, -0.0002749999985098839,
+          0.03264100104570389, -0.03949199989438057, 0.007689999882131815,
+          0.01211399957537651, -0.003765000030398369, -0.018221000209450722,
+          -0.02810399979352951, 0.027272000908851624, -0.023473000153899193,
+          -0.040307000279426575, 0.025964999571442604, 0.0076060001738369465,
+          -0.00903400033712387, -0.016486000269651413, 0.0007430000114254653,
+          -0.00009999999747378752, 0.0025140000507235527, 0.037932999432086945,
+          0.01116899959743023, 0.025592999532818794, 0.018803000450134277,
+          0.013458999805152416, 0.006095999851822853, -0.009851000271737576,
+          -0.006089000031352043, -0.006453999783843756, 0.03872700035572052,
+          -0.034522999078035355, -0.013106999918818474, 0.0197759997099638,
+          0.03314400091767311, -0.01016900036484003, 0.004844000097364187,
+          -0.02933100052177906, -0.026159999892115593, 0.00723200011998415,
+          -0.030100999400019646, -0.004712999798357487, 0.038488999009132385,
+          0.007462000008672476, 0.019836999475955963, 0.02833399921655655,
+          -0.021733000874519348, -0.032947998493909836, 0.014516999945044518,
+          -0.022443000227212906, 0.029035000130534172, -0.03763800114393234,
+          -0.026768000796437263, -0.038516998291015625, 0.04061799868941307,
+          -0.0009869999485090375, 0.018465999513864517, 0.003501000115647912,
+          0.03526400029659271, -0.023665999993681908, 0.02727299928665161,
+          -0.021432999521493912, 0.0033990000374615192, 0.01332200039178133,
+          0.0050039999186992645, -0.02182699926197529, 0.04309700056910515,
+          -0.010034999810159206, 0.025940999388694763, 0.011258999817073345,
+          -0.04309999942779541, -0.04335299879312515, 0.006262000184506178,
+          -0.031067999079823494, -0.014977999962866306, -0.03531400114297867,
+          0.03075999952852726, -0.00018699999782256782, -0.02437799982726574,
+          0.013791999779641628, -0.020440999418497086, 0.019175000488758087,
+          -0.04461599886417389, 0.007023000158369541, -0.03525799885392189,
+          -0.01777699962258339, 0.044693998992443085, 0.04247400164604187,
+          0.0003330000035930425, -0.03631899878382683, 0.039292000234127045,
+          -0.03471599891781807, 0.013213999569416046, -0.040337998420000076,
+          0.04149100184440613, 0.01058799959719181, -0.028994999825954437,
+          -0.00686099985614419, 0.04384399950504303, 0.04081699997186661,
+          0.030572999268770218, -0.02047000080347061, -0.03840700164437294,
+          -0.0005319999763742089, 0.011633999645709991, 0.015627000480890274,
+          0.01846799999475479, -0.03518500179052353, 0.032005999237298965,
+          -0.028903000056743622, 0.03909200057387352, -0.01587500050663948,
+          0.02224699966609478, 0.016472000628709793, 0.01153900008648634,
+          -0.03395099937915802, 0.035572998225688934, 0.01278700027614832,
+          0.00432500010356307, -0.012130999937653542, -0.035978998988866806,
+          0.030067000538110733, -0.003541999962180853, 0.03129599988460541,
+          0.02348800003528595, 0.02218499965965748, -0.021817000582814217,
+          0.013655999675393105, 0.024858999997377396, -0.03246099874377251,
+          -0.04471899941563606, 0.03206999972462654, 0.027058999985456467,
+          -0.003206999972462654, -0.001867000013589859, -0.02338699996471405,
+          0.031176000833511353, 0.027974000200629234, 0.005121999885886908,
+          -0.01471100002527237, -0.004029999952763319, -0.021453000605106354,
+          -0.00861399993300438, 0.023096999153494835, -0.012690000236034393,
+          0.012892999686300755, -0.003945999778807163, 0.010203000158071518,
+          0.023964999243617058, 0.006053000222891569, 0.04422900080680847,
+          0.03531400114297867, -0.022544000297784805, 0.01013999991118908,
+          0.03355899825692177, 0.008779999800026417, -0.01094099972397089,
+          0.018904000520706177, 0.02887599915266037, 0.009983999654650688,
+          -0.020232999697327614, 0.0007270000060088933, -0.04061099886894226,
+          -0.022745000198483467, 0.04273099824786186, -0.025484999641776085,
+          -0.010366999544203281, -0.005590000189840794, 0.03587000072002411,
+          -0.04013499990105629, 0.03730100020766258, -0.006271000020205975,
+          0.002662000013515353, 0.017789000645279884, 0.041703999042510986,
+          -0.022776000201702118, 0.011915000155568123, 0.016071999445557594,
+          -0.030167000368237495, 0.028227999806404114, -0.01244600024074316,
+          0.012501999735832214, 0.032698001712560654, 0.021327000111341476,
+          -0.028907999396324158, -0.04421300068497658, 0.03138900175690651,
+          0.019398000091314316, 0.009500999934971333, 0.004046999849379063,
+          -0.033879999071359634, 0.01382100023329258, 0.014822999946773052,
+          -0.007288000080734491, 0.018654000014066696, 0.024109000340104103,
+          -0.02330400049686432, -0.02143700048327446, -0.0035520000383257866,
+          0.007681000046432018, 0.028470000252127647, -0.021104000508785248,
+          -0.0196749996393919, -0.021671999245882034, 0.006544000003486872,
+          -0.03938499838113785, 0.02781599946320057, 0.018370000645518303,
+          0.03818900138139725, -0.01056899968534708, 0.00016599999798927456,
+          -0.0443589985370636, 0.03273399919271469, 0.030105000361800194,
+          0.017784999683499336, 0.004865999799221754, -0.03899899870157242,
+          0.0032259998843073845, -0.020614000037312508, 0.03039499931037426,
+          -0.04406299814581871, 0.0006769999745301902, -0.008166000247001648,
+          0.024692999199032784, 0.03718600049614906, 0.0282639991492033,
+          -0.04431299865245819, 0.01143100019544363, 0.02783999964594841,
+          0.019449999555945396, 0.02607100084424019, 0.015300000086426735,
+          -0.0011680000461637974, 0.019798999652266502, -0.029895000159740448,
+          0.0009640000062063336, -0.01990699954330921, 0.0024679999332875013,
+          0.024475999176502228, 0.0003539999888744205, 0.014569000340998173,
+          0.008124999701976776, -0.03547099977731705, 0.01994200050830841,
+          0.003843999933451414, 0.0442500002682209, -0.036003001034259796,
+          -0.039066001772880554, -0.02160000056028366, 0.03569599986076355,
+          -0.04176900163292885, -0.0011980000417679548, 0.0021639999467879534,
+          0.012238999828696251, 0.020648999139666557, -0.031136000528931618,
+          0.014913000166416168, 0.038013000041246414, -0.044436000287532806,
+          -0.018967000767588615, -0.0026459998916834593, -0.0319099985063076
+        ],
+        "model": "text-embedding-3-small",
+        "position": 0,
+        "text": "Gateway compaction database vector throughput equality label memory property token query. Database posting supernode token tenant replica. Cycle cycle shard filter replica property filter cosine storage latency label query relevance. Neighbor posting schema node cosine posting planner index replica segment merge label throughput. Bloom relevance token cache token commit path. Neighbor analyzer analyzer vector ranking neighbor degree bloom planner edge."
+      }
+    ],
+    "node_6": null,
+    "node_count_0": 60,
+    "node_count_1": 300,
+    "node_count_2": 260,
+    "node_count_3": 200,
+    "node_count_4": 600,
+    "node_count_5": 40,
+    "node_count_6": 0
+  }
+}

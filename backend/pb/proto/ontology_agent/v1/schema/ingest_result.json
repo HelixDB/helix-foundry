@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IngestResult",
+  "description": "How an Ingest ended. Chunks written before any failure stay written, and a retry of the\nsame request skips them.",
+  "oneOf": [
+    {
+      "description": "Every mapping loaded and the created entities were swept.",
+      "type": "object",
+      "properties": {
+        "report": {
+          "description": "The load's report as the `ingest` crate writes it (`ingest::Report`). For display\nand storage; its shape is not part of the contract.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "status": {
+          "type": "string",
+          "const": "done"
+        }
+      },
+      "required": [
+        "status",
+        "report"
+      ]
+    },
+    {
+      "description": "The load's marker records another ontology version: nothing was written.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "load_mismatch"
+        },
+        "stored_version": {
+          "description": "The version the marker records.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "stored_version"
+      ]
+    },
+    {
+      "description": "The load is being deleted: nothing was written.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "load_unknown"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    {
+      "description": "Building an index over data the graph already holds outlasted `helix.timeout_secs`:\nnothing was written. Retry; the attempt doesn't count.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "The node or edge label whose index was still building.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "indexes_pending"
+        }
+      },
+      "required": [
+        "status",
+        "label"
+      ]
+    },
+    {
+      "description": "Streams the load holds were loaded from other snapshots or through other mappings, as\nwhen the tables were re-synced while it was being written: nothing was written. Start a\nnew load.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "sources_changed"
+        },
+        "streams": {
+          "description": "Each changed stream.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceChange"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "streams"
+      ]
+    },
+    {
+      "description": "The mappings don't fit the ontology or the sources: nothing was written, and a retry\nfails the same way.",
+      "type": "object",
+      "properties": {
+        "errors": {
+          "description": "Every problem, each naming its mapping.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "const": "invalid_mappings"
+        }
+      },
+      "required": [
+        "status",
+        "errors"
+      ]
+    },
+    {
+      "description": "A source couldn't be read; a retry may succeed.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The source.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "source_unavailable"
+        }
+      },
+      "required": [
+        "status",
+        "source"
+      ]
+    },
+    {
+      "description": "A write may or may not have committed. Retry the same request once the store has\nsettled: it skips the chunk if it committed.",
+      "type": "object",
+      "properties": {
+        "chunk": {
+          "description": "Its position in the pass, from 0.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "error": {
+          "description": "What failed.",
+          "type": "string"
+        },
+        "mapping": {
+          "description": "The chunk's mapping.",
+          "type": "string"
+        },
+        "pass": {
+          "description": "Its pass.",
+          "$ref": "#/$defs/Pass"
+        },
+        "status": {
+          "type": "string",
+          "const": "outcome_unknown"
+        }
+      },
+      "required": [
+        "status",
+        "mapping",
+        "pass",
+        "chunk",
+        "error"
+      ]
+    },
+    {
+      "description": "The call was cancelled; the write in flight finished first.",
+      "type": "object",
+      "properties": {
+        "report": {
+          "description": "What the load did before it stopped, as in [`IngestResult::Done`].",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "status": {
+          "type": "string",
+          "const": "cancelled"
+        }
+      },
+      "required": [
+        "status",
+        "report"
+      ]
+    },
+    {
+      "description": "Reading or writing the store failed, and nothing was left in doubt.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "What failed.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "store_failed"
+        }
+      },
+      "required": [
+        "status",
+        "error"
+      ]
+    }
+  ],
+  "$defs": {
+    "Pass": {
+      "description": "The two passes of a load over a mapping's rows. A load commits the [`Pass::Create`] chunks\nof every mapping before any [`Pass::Resolve`] chunk, so what rows report resolves against\nevery entity the load creates, whichever row or mapping creates it.",
+      "oneOf": [
+        {
+          "description": "The entities rows create.",
+          "type": "string",
+          "const": "create"
+        },
+        {
+          "description": "What rows report: the properties they set on entities they don't create, and facts.",
+          "type": "string",
+          "const": "resolve"
+        }
+      ]
+    },
+    "SourceChange": {
+      "description": "A stream loaded from one snapshot and mapping version, asked to load from others.",
+      "type": "object",
+      "properties": {
+        "snapshot": {
+          "description": "The snapshot asked for.",
+          "type": "string"
+        },
+        "stored": {
+          "description": "The snapshot it was stored from.",
+          "type": "string"
+        },
+        "stored_version": {
+          "description": "The mapping version it was stored through.",
+          "type": "string"
+        },
+        "stream": {
+          "description": "The stream: its source and mapping, joined by U+001F.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The mapping version asked for.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stream",
+        "stored",
+        "stored_version",
+        "snapshot",
+        "version"
+      ]
+    }
+  }
+}

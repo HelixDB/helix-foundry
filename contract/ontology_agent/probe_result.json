@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProbeResult",
+  "description": "What each check found, in the request's order, and what the probe spent.",
+  "type": "object",
+  "properties": {
+    "checks": {
+      "description": "Each check's outcome.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CheckResult"
+      }
+    },
+    "ollama": {
+      "description": "What an Ollama server said of its model; none for every other provider.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OllamaInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "usage": {
+      "description": "What the probe spent, at the models' prices.",
+      "$ref": "#/$defs/Usage"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "checks",
+    "usage"
+  ],
+  "$defs": {
+    "CheckOutcome": {
+      "description": "How a check went.",
+      "oneOf": [
+        {
+          "description": "The model did what the role needs.",
+          "type": "object",
+          "properties": {
+            "passed": {
+              "type": "object",
+              "properties": {
+                "reasoning": {
+                  "description": "Whether it passed with the provider's reasoning knob sent: the role's model runs so.",
+                  "type": "boolean"
+                },
+                "seconds": {
+                  "description": "How long the check took.",
+                  "type": "number",
+                  "format": "double"
+                },
+                "served_model": {
+                  "description": "The model that served it, when the provider served another (a fallback).",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "seconds",
+                "reasoning"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "passed"
+          ]
+        },
+        {
+          "description": "It didn't.",
+          "type": "object",
+          "properties": {
+            "failed": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "description": "What the check saw, when it says more than the failure.",
+                  "$ref": "#/$defs/ProbeDetail"
+                },
+                "failure": {
+                  "description": "How the model failed.",
+                  "$ref": "#/$defs/ModelFailure"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "failure",
+                "detail"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "failed"
+          ]
+        }
+      ]
+    },
+    "CheckResult": {
+      "description": "One check's outcome.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "description": "How it went.",
+          "$ref": "#/$defs/CheckOutcome"
+        },
+        "role": {
+          "description": "The role checked.",
+          "$ref": "#/$defs/Role"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "outcome"
+      ]
+    },
+    "ModelFailure": {
+      "description": "Why a model call failed for good, as the contract's model failures name it.",
+      "oneOf": [
+        {
+          "description": "The model declined the request.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "The provider was unavailable, overloaded or broke off, retries included.",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "description": "The provider refused the API key.",
+          "type": "string",
+          "const": "auth"
+        },
+        {
+          "description": "The key may not use the model.",
+          "type": "string",
+          "const": "permission"
+        },
+        {
+          "description": "The provider has no such model.",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The provider kept limiting the rate of calls, retries included.",
+          "type": "string",
+          "const": "rate_limited"
+        },
+        {
+          "description": "The account is out of credit or quota.",
+          "type": "string",
+          "const": "quota"
+        },
+        {
+          "description": "The request is too long for the model.",
+          "type": "string",
+          "const": "context_too_long"
+        },
+        {
+          "description": "The model or endpoint can't do what the request asks (tool calls, structured answers),\nor refused it as invalid.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "The answer hit the output limit.",
+          "type": "string",
+          "const": "truncated"
+        },
+        {
+          "description": "The answer couldn't be read: not the JSON asked for, or a stream that broke its\nprotocol.",
+          "type": "string",
+          "const": "malformed"
+        },
+        {
+          "description": "The call ran out of time.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The model's weights changed since it was tested.",
+          "type": "string",
+          "const": "model_changed"
+        },
+        {
+          "description": "The endpoint resolves to a private address.",
+          "type": "string",
+          "const": "private_host"
+        }
+      ]
+    },
+    "OllamaInfo": {
+      "description": "What an Ollama server says of its model.",
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "description": "What it can do, as the server lists it (`tools`, `thinking`, …).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "context_length": {
+          "description": "Its context window, in tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "description": "The model's digest, `sha256:` and 64 hex digits.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "context_length",
+        "capabilities"
+      ]
+    },
+    "ProbeDetail": {
+      "description": "What a failed check saw.",
+      "oneOf": [
+        {
+          "description": "The provider refused the request with the role's tools.",
+          "type": "string",
+          "const": "tools_rejected"
+        },
+        {
+          "description": "The model answered without calling the tool with the input asked for.",
+          "type": "string",
+          "const": "tool_call_missing"
+        },
+        {
+          "description": "The provider refused the call's answer schema.",
+          "type": "string",
+          "const": "schema_rejected"
+        },
+        {
+          "description": "The answer didn't fit the call's schema.",
+          "type": "string",
+          "const": "json_invalid"
+        },
+        {
+          "description": "The model answered with no text where it needed some.",
+          "type": "string",
+          "const": "text_missing"
+        },
+        {
+          "description": "The model's context window is too small for the role.",
+          "type": "string",
+          "const": "context_too_small"
+        },
+        {
+          "description": "Helix's price table has no row for the model, so no call was made.",
+          "type": "string",
+          "const": "unpriced"
+        },
+        {
+          "description": "Nothing more than the failure.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "Role": {
+      "description": "A role a model plays in a request.",
+      "oneOf": [
+        {
+          "description": "Drafts an ontology, with tools.",
+          "type": "string",
+          "const": "draft"
+        },
+        {
+          "description": "Answers a question, with tools.",
+          "type": "string",
+          "const": "ask"
+        },
+        {
+          "description": "Extracts from documents, with structured answers.",
+          "type": "string",
+          "const": "extract"
+        },
+        {
+          "description": "Verifies extracted facts, with structured answers.",
+          "type": "string",
+          "const": "verify"
+        },
+        {
+          "description": "Writes a generation's title, as text.",
+          "type": "string",
+          "const": "title"
+        }
+      ]
+    },
+    "Usage": {
+      "description": "What a turn spent.",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input tokens read from the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input tokens written to the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usd": {
+          "description": "The cost, in US dollars.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "usd"
+      ]
+    }
+  }
+}

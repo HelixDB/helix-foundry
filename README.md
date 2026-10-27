@@ -1,174 +1,47 @@
-<h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <img src="docs/assets/logo-light.svg" alt="Helix Foundry" width="320">
-  </picture>
-</h1>
+# Helix Foundry
 
-<p align="center">
-  <strong>Your company's data, connected into one ontology, on your own computer.</strong>
-</p>
+Connect your company's data, let an agent draft an ontology over it, and load it into [HelixDB](https://docs.helix-db.com) as one connected graph you can explore and ask questions of.
 
-Helix Foundry is a local-first data workspace built on [HelixDB](https://docs.helix-db.com) and [DuckDB](https://duckdb.org). Connect the tools your company already runs on, such as your database, Stripe, WorkOS, PostHog, files and APIs, and it suggests one connected ontology across them that you can explore and ask questions of. There are no accounts and nothing to host: it runs on your computer, and AI runs locally by default.
+- Connect PostgreSQL, MySQL, Amazon S3, Stripe, PostHog, WorkOS, GitHub, Linear, Granola and Cal.com, and upload documents (Markdown, text, PDF) and table files (CSV, TSV, JSON, JSON Lines, Parquet).
+- An agent drafts the ontology: types, links, the tables and documents each comes from, and rules. You review it, edit it and make a version current.
+- A load writes the version into HelixDB. Explore it as a graph or as records, follow every value back to its row or its quote, and ask questions with cited answers.
 
-<p align="center">
-  <img src="docs/assets/hero.png" width="720" alt="The Helix Foundry Explorer showing accounts, users, invoices, subscriptions, campaigns, SSO connections and support tickets as one connected graph">
-</p>
+Use it hosted at [foundry.helix-db.com](https://foundry.helix-db.com), or run it on your own computer.
 
-## Get started with your coding agent
+## Run it on your computer
 
-You need [Docker](https://docs.docker.com/get-started/get-docker/) installed and running. The first run downloads several GB, so give it a few minutes.
-
-Paste this prompt into Claude Code, Codex, Cursor or any coding agent that can run terminal commands:
-
-```text
-Set up Helix Foundry on this computer.
-
-Clone https://github.com/helixdb/helix-foundry.git (or use the copy I already
-have), cd into it, then read AGENTS.md and follow it to install, start and
-verify the app. Ask me before doing anything that deletes data or stops
-something that is already running. When it is ready, give me the URL and
-tell me what to do next.
-```
-
-Your agent will ask you to approve `git`, `docker` and network commands as it goes. Approve them one at a time rather than allowing every `docker` command up front; the runbook asks before anything that deletes data.
-
-**What your agent will do**
-
-- Check that Docker is running and that the app's port (3001 by default) is free, and pick another port if it is not.
-- Generate local encryption keys in `.env` with `scripts/setup.sh`.
-- Build and start the stack with Docker Compose, including a local AI model. On a Mac where Ollama is already running, it uses that instead.
-- Wait for the health check to pass, then give you the URL.
-
-**What you do next**
-
-1. Open the URL (http://localhost:3001 by default). There is no account to create.
-2. Guided setup takes you through **AI → Data → Ontology**. Choose Local, Claude, OpenAI, Azure OpenAI, Amazon Bedrock, or a custom OpenAI-compatible endpoint. Connect your data, or choose **Continue with sample data**. Then confirm the suggested ontology.
-3. Home opens with your key metrics. Ask anything about your data from the box at the top.
-
-You enter Claude or OpenAI keys and database credentials yourself, in the browser. Your agent never needs them.
-
-## Manual quick start
-
-You need Docker with Compose v2 (see [requirements](#requirements)).
+You need Docker with Compose v2.
 
 ```sh
 git clone https://github.com/helixdb/helix-foundry.git
-cd helix-foundry
-./scripts/setup.sh --compose
+cd helix-foundry/local
+./setup.sh                  # once: writes .env with this installation's secrets, and asks how AI should run
+docker compose build        # the site's and the backend's images, from this checkout
+docker compose up -d --wait
 ```
 
-`setup.sh` writes fresh keys to `.env` if it does not exist yet, then builds and starts the app, a background worker, the DuckDB executor, HelixDB and Ollama. The first run builds the image and downloads HelixDB, Ollama and the `qwen3:4b` model (roughly 2.5 GB), so give it several minutes.
+Foundry's first release, 0.1.0, will publish its images. Until then the ontology agent's image is not public, and the stack does not start without it.
 
-It is ready when the health check answers:
+Open http://localhost:3000. There is no sign-in: one owner, every connector and feature on.
 
-```sh
-curl -fsS http://localhost:3001/api/health
-# {"ok":true,"service":"helix-foundry"}
-```
+AI runs where you choose: a local model with Ollama (in Docker or on your computer), Claude, OpenAI, Azure OpenAI or Amazon Bedrock with your own key, or any OpenAI-compatible server (LM Studio, vLLM, a gateway). `setup.sh` asks once; **Settings › AI models** tests and switches it later. [local/README.md](local/README.md) says what runs, where data lives, how each provider is set up and how to reach databases on this machine.
 
-Then open **http://localhost:3001**. The model keeps downloading in the background, and you can start setup before it finishes.
+## Develop
 
-**Port 3001 already in use?** Create `.env` first, then set the port and the matching origin together:
-
-```sh
-./scripts/setup.sh                                   # creates .env with fresh keys
-echo 'PUBLIC_PORT=3005' >> .env
-echo 'PUBLIC_ORIGIN=http://localhost:3005' >> .env
-./scripts/setup.sh --compose
-```
-
-Add the two lines once; if `.env` already has them, change their values instead. Always change both. If only the port changes, pages load but every save fails with `403 Origin is not allowed`.
-
-**Apple Silicon.** Docker cannot use Metal, so local AI is faster with native [Ollama](https://ollama.com). Start Ollama, then run the stack without the bundled model:
-
-```sh
-./scripts/setup.sh
-grep -q '^MODEL_ENDPOINT=' .env || echo 'MODEL_ENDPOINT=http://host.docker.internal:11434' >> .env
-docker compose up -d --build
-```
-
-This relies on Docker Desktop, which provides `host.docker.internal`. With another Docker runtime, use the default command above.
-
-## Requirements
-
-- **Docker** with the Compose v2 plugin (`docker compose`, not `docker-compose`). Checked with Compose 2.29.
-- **git, bash and openssl** for the setup scripts.
-- **Disk:** several GB for the first run: the app image (about 0.9 GB), HelixDB, Ollama and the `qwen3:4b` model. Then room for your data: importing a large file can take several times its size while it runs. See [deployment limits](docs/OPERATIONS.md#deployment-limits).
-- **Memory:** local AI was developed and benchmarked on a 16 GB machine. Give Docker enough memory for the model, or choose Claude or OpenAI during setup.
-- **Node.js 24 and pnpm 10.7**, only for [local development](#local-development).
-
-Helix Foundry is developed and validated on macOS with Apple Silicon, and CI runs on Linux. Windows is untested, and the scripts need bash.
-
-## What you get
-
-- **Connectors** for Neon, Supabase, PlanetScale, PostgreSQL, MySQL, Neo4j, Stripe, WorkOS, PostHog, REST APIs, S3-compatible storage, file uploads (CSV, JSON, JSONL, Parquet) and an ingestion API.
-- **Automatic sync** through native PostgreSQL and MySQL change capture where the database allows it, and scheduled snapshot refreshes otherwise.
-- **A suggested ontology** that matches the same customers and records across sources, stored as real objects and relationships in HelixDB.
-- **Versioned data:** immutable Parquet snapshots with profiles, schema-drift review and history, queried by isolated DuckDB processes.
-- **Home and Analyst:** key metrics, and answers to your questions backed by executed SQL with snapshot citations.
-- **Your choice of AI:** local `qwen3:4b` through Ollama by default, or Claude or OpenAI. AI-proposed changes are tested and wait for your review.
-- **Developer access:** OpenAPI at `/api/docs`, a TypeScript SDK, scoped API tokens, and backup, restore and upgrade scripts.
-
-The full feature list, connector details and architecture are in the [guide](docs/GUIDE.md).
-
-## Everyday commands
-
-Run these from the repository. If you use native Ollama, leave out `--profile local`.
-
-```sh
-docker compose --profile local ps -a                # status
-docker compose --profile local logs -f app worker   # follow logs (Ctrl+C to stop)
-docker compose --profile local stop                 # stop
-docker compose --profile local up -d                # start again
-```
-
-The stack starts again with Docker unless you stopped it.
-
-**Upgrade.** Run `./scripts/upgrade.sh`. It backs up to `~/helix-foundry-backups/` first and stops if the backup fails, then pulls and rebuilds; if the rebuild fails, run it again. If the new release changes HelixDB, it asks first: a newer HelixDB upgrades your data one way, so only that backup can take you back. To go back, run the two commands it prints at the end. A checkout from before `scripts/upgrade.sh` records the running commit and pulls once first; see [operations](docs/OPERATIONS.md#backup-restore-and-upgrades).
-
-**Back up and restore.** `./scripts/backup.sh PATH` briefly stops the services and archives the HelixDB and data volumes to a folder outside the repository. Backups leave out your encryption key, so keep a separate copy of `.env`, for example in a password manager. `--include-key` adds `.env`, encrypted with a passphrase. `./scripts/restore.sh PATH --replace` replaces the current data. It refuses a backup made with another key unless you pass your copy with `--env-file`, and keeps the `.env` it replaces as `.env.pre-restore-TIME`.
-
-Never run `docker compose down -v` unless you mean to delete everything. It removes all workspaces, imported data and stored credentials. See [operations](docs/OPERATIONS.md) for upgrades, change capture and limits.
-
-## Local development
-
-Use Node.js 24 and pnpm 10.7. Run HelixDB in Docker and the app natively:
+The site, the Foundry app and its same-origin API proxy (Next.js), is at the root. It needs Node 24 and pnpm.
 
 ```sh
 pnpm install
-./scripts/setup.sh
-docker run -d --name helix-foundry-dev -p 127.0.0.1:6996:8080 \
-  -e HELIX_DATA_DIR=/var/lib/helix -v helix-foundry-dev:/var/lib/helix \
-  ghcr.io/helixdb/helixdb:v0.0.12@sha256:f22b50fdab8fadbf8b5a881e656f293fdf5c688bad018f503b8dbc2f0f29543d
-pnpm dev
+pnpm dev:mock        # the hosted site against a mock API, on http://localhost:3000
+pnpm dev:mock:local  # the local build against the mock
 ```
 
-Open **http://localhost:5173**. `pnpm dev` runs the API on 3001, the executor on 3002 and the web app on 5173. Local AI also needs Ollama on port 11434 (`ollama serve`). Before opening a pull request, run the same checks as CI: `pnpm typecheck`, `pnpm test` and `pnpm build`. The [guide](docs/GUIDE.md#local-development) covers tests, ports and the SDK.
+The mock stands in for the API and sign-in, so no account or secret is needed. Before sending a change, run `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm e2e` (Playwright; needs `pnpm exec playwright install chromium`). [AGENTS.md](AGENTS.md) describes the layout and the rules.
 
-## Security model
+## Backend
 
-Helix Foundry is built for one person on their own computer. There are no accounts and no sign-in, so anyone who can reach the app controls every workspace.
-
-- The app is published on `127.0.0.1` only. Never expose it with a reverse proxy, tunnel or port forward, and never publish the internal HelixDB, executor or Ollama ports.
-- The API rejects requests whose `Host` is not this computer, and browser changes from any other origin, with `403`.
-- Connector and AI credentials are encrypted with `ENCRYPTION_KEY` from `.env`. Keep `.env`, `.env.pre-restore-*` files and backups private and out of git, and keep a copy of `.env` apart from your backups, which do not include the key. Backups made by an older `backup.sh` do: their `config.env` holds both keys in plain text, often in the repository's `backups/` folder. Once you have a new backup and a separate copy of `.env`, delete those backups, or at least their `config.env`; `backup.sh` and `upgrade.sh` warn while any remain in `backups/` or `~/helix-foundry-backups/`. If you lose the key, stored credentials cannot be recovered. Do not try to rotate it by replacing the value.
-- Generated SQL runs in a separate DuckDB executor on an internal network with no internet access, no connector credentials, no Linux capabilities, and memory and process limits.
-- Scripts and the SDK use workspace-scoped API tokens from **Settings → Developer tools**. Tokens are read-only unless you grant write access.
-
-## Documentation
-
-| Document                                 | What it covers                                                                                                                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [AGENTS.md](AGENTS.md)                   | Runbook for coding agents: preflight, setup, verification and troubleshooting                                                                                             |
-| [docs/GUIDE.md](docs/GUIDE.md)           | Features, connectors, AI and review, architecture, development and testing                                                                                                |
-| [docs/DESIGN.md](docs/DESIGN.md)         | Existing visual standards, UI tokens, progress feedback and accessibility                                                                                                 |
-| [docs/onboarding.md](docs/onboarding.md) | Onboarding API routes, SDK methods and import limits                                                                                                                      |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Install profiles, diagnostics, change capture, backup, restore, upgrades, limits                                                                                          |
-| [docs/HOSTING.md](docs/HOSTING.md)       | Neon, Supabase and PlanetScale sign-in, scopes and permissions                                                                                                            |
-| [docs/API.md](docs/API.md)               | REST API reference, authentication and the TypeScript SDK                                                                                                                 |
-| [docs/VALIDATION.md](docs/VALIDATION.md) | Test results, benchmarks and known limits from the September and October 2026 validation runs; the backup, restore and upgrade scripts have only stub Docker tests so far |
+[`backend/`](backend) is Foundry's backend, the Go module `github.com/helixdb/helix-foundry/backend`: the API, the workers that sync data, draft ontologies, load them into HelixDB and answer questions, and their MySQL store. [backend/README.md](backend/README.md) says how to build, test and run it. Hosted Helix runs the same code as a library.
 
 ## License
 
-Helix Foundry is released under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+This repository, the site and the backend, is [Apache 2.0](LICENSE), and the `foundry-site` and `foundry` images are built from it. Of the other images `local/compose.yaml` runs, HelixDB is open source ([Apache 2.0](https://github.com/HelixDB/helix-db)); `ontology-agent` is not open source yet and is free to run under the [Helix Foundry Images License](LICENSE-IMAGES.md).

@@ -1,0 +1,39 @@
+# The backend's slow jobs: its tests against MySQL and PostgreSQL, and its
+# image, on changes to backend/. backend-check.yml runs the fast checks on
+# every change.
+name: Backend
+on:
+  push:
+    paths:
+      - backend/**
+      - .github/workflows/backend.yml
+  pull_request:
+    paths:
+      - backend/**
+      - .github/workflows/backend.yml
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: backend
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # MySQL on 3307 (and with GTIDs on 3309) and PostgreSQL on 5433, where
+      # the tests look for them.
+      - run: docker compose -f compose.test.yaml up -d --wait
+      - run: go test -timeout 80m ./...
+        env:
+          HELIX_TEST_ROOT_DSN: root:helix@tcp(127.0.0.1:3307)/
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag helix-foundry/foundry:ci .

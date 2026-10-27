@@ -1,0 +1,157 @@
+# The site's local build (Dockerfile), the image local/compose.yaml runs as
+# `site`. Each architecture is built on its own runner and started once.
+#
+#   pull_request       build and start, publish nothing
+#   workflow_dispatch  the same; with release_version, then publish exactly the
+#                      tested images as ghcr.io/helixdb/foundry-site:<version>
+#                      and :latest, from the default branch, refusing a
+#                      version that is already published
+#
+# The hosted site is built by Vercel, not here.
+name: Site image
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/site-image.yml"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "next.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Publish the tested images under this new version (for example 0.1.0); empty builds and tests only"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/helixdb/foundry-site
+
+jobs:
+  image:
+    name: Image (${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      CI_IMAGE: foundry-site:ci-${{ matrix.architecture }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          tags: ${{ env.CI_IMAGE }}
+          load: true
+          push: false
+          provenance: false
+          labels: |
+            org.opencontainers.image.title=Helix Foundry site
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha,scope=foundry-site-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=foundry-site-${{ matrix.architecture }}
+      # The image's own health check fetches /, which the site serves without
+      # its API.
+      - name: Start it
+        run: |
+          set -euo pipefail
+          docker run -d --name site -p 127.0.0.1:3000:3000 \
+            -e HELIX_WFE_ORIGIN=http://127.0.0.1:9 \
+            -e FOUNDRY_ORIGIN=http://localhost:3000 \
+            -e FOUNDRY_LOCAL_TOKEN="$(openssl rand -hex 32)" \
+            "$CI_IMAGE"
+          for _ in $(seq 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' site)" = healthy ] && break
+            sleep 2
+          done
+          docker inspect -f '{{.State.Health.Status}}' site | grep -qx healthy || { docker logs site; exit 1; }
+          curl -fsS -o /dev/null http://localhost:3000/
+          docker rm -f site
+      - name: Save the tested image
+        if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
+        run: docker save "$CI_IMAGE" | gzip > image-${{ matrix.architecture }}.tar.gz
+      - name: Upload the tested image
+        if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-image-${{ matrix.architecture }}
+          path: image-${{ matrix.architecture }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish the tested images
+    if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
+    needs: [image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version }}
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Check the source and version
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "Releases come from the default branch" >&2; exit 1; }
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "The version must be MAJOR.MINOR.PATCH" >&2; exit 1; }
+          repo=${IMAGE_REPOSITORY#ghcr.io/}
+          token=$(curl -fsS --user "$GITHUB_ACTOR:$GH_TOKEN" "https://ghcr.io/token?service=ghcr.io&scope=repository:$repo:pull" | jq -er '.token')
+          echo "::add-mask::$token"
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/$repo/manifests/$RELEASE_VERSION")
+          [[ "$status" == 404 ]] || { echo "Version $RELEASE_VERSION is not confirmed absent (HTTP $status)" >&2; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tested-image-*
+          path: tested-images
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          refs=()
+          for arch in amd64 arm64; do
+            docker load --input "tested-images/image-$arch.tar.gz"
+            ref="$IMAGE_REPOSITORY:release-$GITHUB_SHA-$GITHUB_RUN_ID-$arch"
+            docker tag "foundry-site:ci-$arch" "$ref"
+            docker push "$ref"
+            digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -er '.digest')
+            refs+=("$IMAGE_REPOSITORY@$digest")
+          done
+          docker buildx imagetools create --tag "$IMAGE_REPOSITORY:$RELEASE_VERSION" "${refs[@]}"
+          docker buildx imagetools inspect "$IMAGE_REPOSITORY:$RELEASE_VERSION" --raw |
+            jq -e '[.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]'
+          docker buildx imagetools create --tag "$IMAGE_REPOSITORY:latest" "$IMAGE_REPOSITORY:$RELEASE_VERSION"

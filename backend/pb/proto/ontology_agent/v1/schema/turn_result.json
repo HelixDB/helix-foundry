@@ -1,0 +1,1310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TurnResult",
+  "description": "What a turn returns.",
+  "type": "object",
+  "properties": {
+    "bundle": {
+      "description": "The approved bundle, when the turn approved one.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApprovedBundle"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "draft": {
+      "description": "The draft, with its rendered files.",
+      "$ref": "#/$defs/DraftView"
+    },
+    "rules": {
+      "description": "Counts of evidence-gated items. Always emitted by this engine; optional on the wire.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuleCounts"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "state": {
+      "description": "The state to send with the next turn: opaque, bounded at about 1 MB.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "status": {
+      "description": "How the turn ended.",
+      "$ref": "#/$defs/Status"
+    },
+    "summary": {
+      "description": "What the model said of the turn when it ended it with `finish`: what it did, what it\nleft out and why, and how it answered each comment (the comments themselves are\nanswered, so the state no longer holds them). `None` when the turn ended otherwise.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "usage": {
+      "description": "What the turn spent.",
+      "$ref": "#/$defs/Usage"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "state",
+    "draft",
+    "bundle",
+    "summary",
+    "usage"
+  ],
+  "$defs": {
+    "AgentVersion": {
+      "description": "What built a bundle; see [`ApprovedBundle`]. A bundle Anthropic's Claude drafted, on\nHelix's key or a workspace's own, names no provider, as every bundle before contract 4.0.0\ndoes, so an engine of then still reads it.",
+      "type": "object",
+      "properties": {
+        "effort": {
+          "description": "The effort level.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model, as the request named it.",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "`AGENT_PROMPT_VERSION`.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "The kind of provider that served the model; none for Anthropic's own API.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tools": {
+          "description": "The tools' version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "prompt",
+        "model",
+        "effort",
+        "tools"
+      ]
+    },
+    "ApprovedBundle": {
+      "description": "An approved version: what drives `ingest-mapped` and extraction.",
+      "type": "object",
+      "properties": {
+        "agent_version": {
+          "description": "What built it.",
+          "$ref": "#/$defs/AgentVersion"
+        },
+        "impact": {
+          "description": "What approving it changes in loaded data.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Impact"
+          }
+        },
+        "mappings_toml": {
+          "description": "`mappings.toml`.",
+          "type": "string"
+        },
+        "ontology_toml": {
+          "description": "`ontology.toml`.",
+          "type": "string"
+        },
+        "parent": {
+          "description": "The version it was built from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_json": {
+          "description": "`review.json`: rationale, competency questions, gaps and what was left out.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "The SHA-256 of its content.",
+          "type": "string"
+        },
+        "version": {
+          "description": "`YYYY-MM-DD.N`, set by the harness.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "parent",
+        "sha256",
+        "ontology_toml",
+        "mappings_toml",
+        "review_json",
+        "impact",
+        "agent_version"
+      ]
+    },
+    "Basis": {
+      "description": "What an item rests on, which the policy gates read.",
+      "oneOf": [
+        {
+          "description": "What the link descriptions and the user's workflow mean.",
+          "type": "string",
+          "const": "definitional"
+        },
+        {
+          "description": "How the process works, as a user stated it.",
+          "type": "string",
+          "const": "process"
+        },
+        {
+          "description": "What the data showed; never enough for a rule.",
+          "type": "string",
+          "const": "observed"
+        }
+      ]
+    },
+    "CardRow": {
+      "description": "The source and mapping of rows behind a counterexample's premises. A card never names the\nrows: their identities are source data.",
+      "type": "object",
+      "properties": {
+        "mapping": {
+          "description": "Mapping id without its prefix.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Catalog source id.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "mapping"
+      ]
+    },
+    "Check": {
+      "description": "One lint check.",
+      "oneOf": [
+        {
+          "description": "A type no link, mapping or competency question uses.",
+          "type": "string",
+          "const": "orphan"
+        },
+        {
+          "description": "A resolve-only keyed type has no row-filled names or identifiers.",
+          "type": "string",
+          "const": "names_unfilled"
+        },
+        {
+          "description": "A type named like a data value: all capitals (`LAX`) or with digits (`B737`).",
+          "type": "string",
+          "const": "data_like_name"
+        },
+        {
+          "description": "A link with the same endpoint types as another and a similar name or description.",
+          "type": "string",
+          "const": "near_duplicate"
+        },
+        {
+          "description": "A type, link or mapping that serves no competency question, key or join.",
+          "type": "string",
+          "const": "untraced"
+        },
+        {
+          "description": "A name against the rules: UpperCamel singular types; snake_case links, relations,\nproperties, rules and constraints.",
+          "type": "string",
+          "const": "name_style"
+        },
+        {
+          "description": "A description of more than one sentence, or a rationale of more than three.",
+          "type": "string",
+          "const": "sentences"
+        },
+        {
+          "description": "An email or phone pattern in a name, description, question or rationale.",
+          "type": "string",
+          "const": "pii"
+        },
+        {
+          "description": "A data-like token in a description or question.",
+          "type": "string",
+          "const": "data_value"
+        }
+      ]
+    },
+    "Clues": {
+      "description": "Whom an `[enrichments]` item could look up, as `check_draft` measured it over the turn's\ntables with the create passes a load runs ([`ingest::clues`]): what the website's\nconfidence reads (High at 80% usable or more and none shared, Medium at 50% or more, Low\nbelow). A person needs a full name ([`extraction::text::full_name`]) to be usable, as the\nload's planner does; its other filters (free mail, role mailboxes, LinkedIn URLs it can't\nread) aren't applied. Stored on the item until the item, a type or a mapping changes.",
+      "type": "object",
+      "properties": {
+        "conflicting": {
+          "description": "Those with a clue left out because it holds two values.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "email": {
+          "description": "Those with a work email to look them up by.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "linkedin_url": {
+          "description": "Those with a LinkedIn URL to look them up by.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "no_name": {
+          "description": "Those without a full name, whom no load looks up: none of the type's `names` props has a\nvalue, or together they give fewer than two words of letters.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "people": {
+          "description": "The entities of the item's type the tables create.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "shared": {
+          "description": "Those with a clue value left out because another entity holds it too.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "usable": {
+          "description": "Those with a full name, two words of letters or more, and at least one clue: whom a load\ncould look up.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "people",
+        "usable",
+        "email",
+        "linkedin_url",
+        "no_name",
+        "shared",
+        "conflicting"
+      ]
+    },
+    "Counterexample": {
+      "description": "A bounded counterexample with its proof and row provenance. Source values are untrusted.",
+      "type": "object",
+      "properties": {
+        "fact": {
+          "description": "The violated constraint or contradicted fact, with sample entity identities.",
+          "type": "string"
+        },
+        "proof": {
+          "description": "Proof steps in premise order, with sample entity identities.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rows": {
+          "description": "Rows behind the proof's stated facts and types.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CardRow"
+          }
+        }
+      },
+      "required": [
+        "fact",
+        "proof",
+        "rows"
+      ]
+    },
+    "Draft": {
+      "description": "A draft ontology and its mappings, as items. It always validates: every write that would\nleave it invalid is refused whole.\n\nIt serializes with each item's snippet as canonical TOML and its lint; deserializing parses\nevery snippet again, checks the ontology, rules and CQ paths (the mappings' catalog isn't at\nhand; [`SessionState::validate`](crate::SessionState::validate) checks against it) and\ncomputes the lint afresh.",
+      "type": "object",
+      "properties": {
+        "acknowledged": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FindingKey"
+          },
+          "uniqueItems": true
+        },
+        "base_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "items": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ItemRepr"
+          }
+        },
+        "left_out": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LeftOut"
+          }
+        },
+        "lint": {
+          "description": "Written for readers; recomputed on reading.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Finding"
+          }
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Question"
+          }
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rev",
+        "base_version",
+        "items",
+        "left_out",
+        "questions",
+        "acknowledged",
+        "lint"
+      ]
+    },
+    "DraftView": {
+      "description": "A draft with its rendered files.",
+      "type": "object",
+      "properties": {
+        "draft": {
+          "description": "The draft.",
+          "$ref": "#/$defs/Draft"
+        },
+        "mappings_toml": {
+          "description": "`mappings.toml`, version `\"draft\"`.",
+          "type": "string"
+        },
+        "ontology_toml": {
+          "description": "`ontology.toml`, version `\"draft\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ontology_toml",
+        "mappings_toml",
+        "draft"
+      ]
+    },
+    "Effect": {
+      "description": "What an item's change needs done to loaded data.",
+      "oneOf": [
+        {
+          "description": "Mapped sources load again.",
+          "type": "string",
+          "const": "needs_remap"
+        },
+        {
+          "description": "Text is extracted again.",
+          "type": "string",
+          "const": "needs_reextraction"
+        },
+        {
+          "description": "Rules are compiled again.",
+          "type": "string",
+          "const": "needs_rule_build"
+        },
+        {
+          "description": "Stored data no longer fits.",
+          "type": "string",
+          "const": "breaking"
+        }
+      ]
+    },
+    "ErrorKind": {
+      "description": "What kind of check refused an item.",
+      "oneOf": [
+        {
+          "description": "The snippet doesn't define exactly its item, or the draft's structure breaks: a part\nwithout its link, a gap in a link's chains, a reference to a CQ that isn't there, a\nrepeated id.",
+          "type": "string",
+          "const": "shape"
+        },
+        {
+          "description": "The item isn't in the draft (or the question isn't open).",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The user locked the item.",
+          "type": "string",
+          "const": "locked"
+        },
+        {
+          "description": "The user removed the item, so it can't come back without asking.",
+          "type": "string",
+          "const": "absent"
+        },
+        {
+          "description": "A name, description or rationale carries data: an email or phone pattern, a source's\ndisplay name, or a sampled value.",
+          "type": "string",
+          "const": "leak"
+        },
+        {
+          "description": "A policy gate refused it, before any evidence: a rule's basis, a `block` constraint's\nbasis, a raw rule a declaration expresses.",
+          "type": "string",
+          "const": "policy"
+        },
+        {
+          "description": "It cites an evidence id the session doesn't hold.",
+          "type": "string",
+          "const": "evidence"
+        },
+        {
+          "description": "`schema::Ontology::from_toml` refused the rendered ontology.",
+          "type": "string",
+          "const": "schema"
+        },
+        {
+          "description": "`rules::Program::compile` refused it.",
+          "type": "string",
+          "const": "compile"
+        },
+        {
+          "description": "`mapping::Mappings::from_toml` or `validate` refused the rendered mappings.",
+          "type": "string",
+          "const": "mapping"
+        },
+        {
+          "description": "A competency question's path doesn't follow the ontology's links.",
+          "type": "string",
+          "const": "cq"
+        },
+        {
+          "description": "The session state would pass its size bound.",
+          "type": "string",
+          "const": "too_large"
+        }
+      ]
+    },
+    "EvidenceCard": {
+      "description": "The evidence for one item, computed over the current row sample and document preview.\nAll counts describe that sample; no full-data estimate is made without a sampling ratio.",
+      "type": "object",
+      "properties": {
+        "added": {
+          "description": "Attributed facts only derived.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "confirmed": {
+          "description": "Attributed facts that are both stated and derived.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "contradicted": {
+          "description": "Added facts with a complete head for their subject.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "counterexamples": {
+          "description": "At most five counterexamples.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Counterexample"
+          }
+        },
+        "failure_rate_bound": {
+          "description": "95% Wilson upper failure bound, or min(1, 3/n) with zero failures.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "instances": {
+          "description": "Well-founded attributed rule instances.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "precision": {
+          "description": "Confirmed / (confirmed + contradicted), absent when the denominator is zero.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "reason": {
+          "description": "Why policy assigned this verdict.",
+          "type": "string"
+        },
+        "rev": {
+          "description": "Draft revision measured, before the harness records this card.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "review_facts": {
+          "description": "Facts implicated in blocking violations (dry-run review effect).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "sample": {
+          "description": "Explicit sampling basis; never a claim about all source data.",
+          "type": "string"
+        },
+        "subjects": {
+          "description": "Distinct eligible subjects for a constraint.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unmeasurable": {
+          "description": "No attributed fact has a complete head.",
+          "type": "boolean"
+        },
+        "unmeasured": {
+          "description": "What the counts leave out, if anything.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Unmeasured"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unrepresentable": {
+          "description": "Attributed relation facts that no link can represent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "violation_rate": {
+          "description": "Distinct violating subjects divided by eligible subjects, when measured.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "violations": {
+          "description": "Violations caused or cleared, by constraint and requested severity.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ViolationDelta"
+          }
+        }
+      },
+      "required": [
+        "rev",
+        "sample",
+        "instances",
+        "confirmed",
+        "added",
+        "contradicted",
+        "unmeasurable",
+        "precision",
+        "failure_rate_bound",
+        "violations",
+        "subjects",
+        "violation_rate",
+        "review_facts",
+        "unrepresentable",
+        "counterexamples",
+        "reason"
+      ]
+    },
+    "EvidenceId": {
+      "description": "The id of a stored tool result, such as `e17`: every number the user sees cites one.\nIds order by number.",
+      "type": "string"
+    },
+    "Finding": {
+      "description": "A lint finding.",
+      "type": "object",
+      "properties": {
+        "acknowledged": {
+          "description": "Whether it was acknowledged as intended.",
+          "type": "boolean"
+        },
+        "check": {
+          "description": "The check that found it.",
+          "$ref": "#/$defs/Check"
+        },
+        "item": {
+          "description": "The item it is about.",
+          "$ref": "#/$defs/ItemId"
+        },
+        "message": {
+          "description": "What was found.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "check",
+        "message",
+        "acknowledged"
+      ]
+    },
+    "FindingKey": {
+      "description": "One finding: what an acknowledged finding is known by.",
+      "type": "object",
+      "properties": {
+        "check": {
+          "description": "The check.",
+          "$ref": "#/$defs/Check"
+        },
+        "item": {
+          "description": "The item.",
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "required": [
+        "item",
+        "check"
+      ]
+    },
+    "Gate": {
+      "description": "A policy gate that needs evidence from the data, which the harness computes and fills.",
+      "oneOf": [
+        {
+          "description": "A rule or declaration: no contradiction, support of at least 20 (or unmeasurable with a\ndefinitional basis), no new `block` violation, all from the current revision.",
+          "type": "string",
+          "const": "rule_evidence"
+        },
+        {
+          "description": "A constraint: its violations in the data; `block` needs none.",
+          "type": "string",
+          "const": "constraint_evidence"
+        },
+        {
+          "description": "`cardinality = \"one\"` or `required`: dry-run counts back it, or the user saw what it\nsends to review.",
+          "type": "string",
+          "const": "dry_run_counts"
+        }
+      ]
+    },
+    "Impact": {
+      "description": "One item's effect on data already loaded; see [`ApprovedBundle`].",
+      "type": "object",
+      "properties": {
+        "effect": {
+          "description": "The effect.",
+          "$ref": "#/$defs/Effect"
+        },
+        "item": {
+          "description": "The item.",
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "effect"
+      ]
+    },
+    "ItemError": {
+      "description": "One reason a write was refused.",
+      "type": "object",
+      "properties": {
+        "hint": {
+          "description": "How to fix it.",
+          "type": "string"
+        },
+        "item": {
+          "description": "The item that caused it; `None` when the error names none, so the batch as a whole.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "description": "Which check refused it.",
+          "$ref": "#/$defs/ErrorKind"
+        },
+        "message": {
+          "description": "What is wrong, as the check put it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "kind",
+        "message",
+        "hint"
+      ]
+    },
+    "ItemId": {
+      "description": "One item of a draft: a piece of `ontology.toml` or `mappings.toml`, or a competency question\nor gap of the review. Together the items cover both files, each piece in exactly one item:\n\n| Item | Owns |\n|---|---|\n| `type.T` | all of `[types.T]` |\n| `link.l` | `from`, `to`, `description`, `props` and `identity` of `[links.l]` |\n| `link.l.cardinality` | `cardinality = \"one\"` (the default `many` is no item) |\n| `link.l.required` | `required = true` |\n| `link.l.implies.t` | `t` in `implies` |\n| `link.l.inverse_of` | `inverse_of` |\n| `link.l.symmetric`, `link.l.transitive` | `symmetric = true`, `transitive = true` |\n| `link.l.chain.a.b` | the chain `[\"a\", \"b\"]` in `chain` |\n| `relation.r` | `description` of `[relations.r]`; its declarations are `relation.r.implies.t` and so on, as for links |\n| `rule.r`, `constraint.c` | all of `[rules.r]`, `[constraints.c]` |\n| `mapping.m` | all of `[mappings.m]`, its bindings included |\n| `extraction.name` | all of `[extractions.name]`, its document selector, types and links |\n| `enrichment.name` | all of `[enrichments.name]`: People enrichment of one type |\n| `cq.ID`, `gap.ID` | a competency question, a gap (review data, in no file) |\n\nThe file headers (`version`, and `ontology` in `mappings.toml`) belong to no item: the\nharness sets them.",
+      "type": "string"
+    },
+    "ItemRepr": {
+      "description": "An item as the state stores it: its snippet as canonical TOML.",
+      "type": "object",
+      "properties": {
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Basis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "card": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvidenceCard"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clues": {
+          "description": "An `enrichment.<name>` item's measured clues; never on another item.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Clues"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          },
+          "uniqueItems": true
+        },
+        "pending": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Gate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "serves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Serves"
+          },
+          "uniqueItems": true
+        },
+        "status": {
+          "$ref": "#/$defs/ItemStatus"
+        },
+        "toml": {
+          "type": "string"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "toml",
+        "status",
+        "rationale",
+        "serves",
+        "evidence_ids",
+        "basis",
+        "pending"
+      ]
+    },
+    "ItemStatus": {
+      "description": "Where an item is in review.",
+      "oneOf": [
+        {
+          "description": "The agent wrote it.",
+          "type": "string",
+          "const": "proposed"
+        },
+        {
+          "description": "The user wrote it, with an `Edit`.",
+          "type": "string",
+          "const": "user_edited"
+        },
+        {
+          "description": "The user approved it.",
+          "type": "string",
+          "const": "approved"
+        }
+      ]
+    },
+    "LeftOut": {
+      "description": "A field, object or source left out of the draft, and why.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "description": "Why.",
+          "type": "string"
+        },
+        "what": {
+          "description": "What: a source id, then an object and field when it is one of those.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "what",
+        "reason"
+      ]
+    },
+    "ModelFailure": {
+      "description": "Why a model call failed for good, as the contract's model failures name it.",
+      "oneOf": [
+        {
+          "description": "The model declined the request.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "The provider was unavailable, overloaded or broke off, retries included.",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "description": "The provider refused the API key.",
+          "type": "string",
+          "const": "auth"
+        },
+        {
+          "description": "The key may not use the model.",
+          "type": "string",
+          "const": "permission"
+        },
+        {
+          "description": "The provider has no such model.",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The provider kept limiting the rate of calls, retries included.",
+          "type": "string",
+          "const": "rate_limited"
+        },
+        {
+          "description": "The account is out of credit or quota.",
+          "type": "string",
+          "const": "quota"
+        },
+        {
+          "description": "The request is too long for the model.",
+          "type": "string",
+          "const": "context_too_long"
+        },
+        {
+          "description": "The model or endpoint can't do what the request asks (tool calls, structured answers),\nor refused it as invalid.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "The answer hit the output limit.",
+          "type": "string",
+          "const": "truncated"
+        },
+        {
+          "description": "The answer couldn't be read: not the JSON asked for, or a stream that broke its\nprotocol.",
+          "type": "string",
+          "const": "malformed"
+        },
+        {
+          "description": "The call ran out of time.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The model's weights changed since it was tested.",
+          "type": "string",
+          "const": "model_changed"
+        },
+        {
+          "description": "The endpoint resolves to a private address.",
+          "type": "string",
+          "const": "private_host"
+        }
+      ]
+    },
+    "ProviderKind": {
+      "description": "The kind of provider a workspace's models run on: which API they are reached through, and\nso which wire, catalog rows and failure copy apply. Every kind the contract declares is\nhere, whether or not this build can reach it yet.",
+      "oneOf": [
+        {
+          "description": "Anthropic's Messages API.",
+          "type": "string",
+          "const": "anthropic"
+        },
+        {
+          "description": "OpenAI's Responses API.",
+          "type": "string",
+          "const": "openai"
+        },
+        {
+          "description": "An Azure OpenAI resource's v1 API.",
+          "type": "string",
+          "const": "azure_openai"
+        },
+        {
+          "description": "Amazon Bedrock's Converse API.",
+          "type": "string",
+          "const": "bedrock"
+        },
+        {
+          "description": "An Ollama server's native API.",
+          "type": "string",
+          "const": "ollama"
+        },
+        {
+          "description": "A server speaking OpenAI's Chat Completions or Responses API.",
+          "type": "string",
+          "const": "openai_compatible"
+        }
+      ]
+    },
+    "Question": {
+      "description": "A question the agent asked the user. Its `default`, when it has options, is one of them.",
+      "type": "object",
+      "properties": {
+        "blocking": {
+          "type": "boolean"
+        },
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "id": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          }
+        },
+        "options": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "items",
+        "text",
+        "options",
+        "default",
+        "blocking"
+      ]
+    },
+    "RuleCounts": {
+      "description": "Number of rule/constraint items and inference declarations and how many have an accepted evaluation.\nThe backend copies this into `Definition.rules` and requires `evaluated == count` to load.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "RuleEvidence/ConstraintEvidence items, including inference declarations.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "evaluated": {
+          "description": "Those with a harness verdict that permits the executable item (refusals excluded).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "count",
+        "evaluated"
+      ]
+    },
+    "RuleVerdict": {
+      "description": "The executable outcome of evaluation. A refused item remains gated until removed or fixed.",
+      "oneOf": [
+        {
+          "description": "A definitional/process rule, or a constraint permitted at its requested severity.",
+          "type": "string",
+          "const": "rule"
+        },
+        {
+          "description": "A constraint permitted at most as a warning: the harness rewrites a `block` one to\n`severity = \"warn\"`, and a `warn` or `info` one keeps its severity.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "The item cannot be used as written.",
+          "type": "string",
+          "const": "refused"
+        }
+      ]
+    },
+    "Serves": {
+      "description": "What an item is for: a competency question, an entity key, or a join between sources.\nEvery type, link and mapping traces to at least one ([`Check::Untraced`](crate::Check)).",
+      "type": "string"
+    },
+    "Status": {
+      "description": "How a turn ended.",
+      "oneOf": [
+        {
+          "description": "The agent finished.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "The agent asked questions.",
+          "type": "string",
+          "const": "needs_input"
+        },
+        {
+          "description": "The revision was approved and the bundle emitted; the state's draft builds on the\nbundle's version from then on, so a later approval is its child.",
+          "type": "string",
+          "const": "approved"
+        },
+        {
+          "description": "A cap was hit; the last valid draft is kept and `Continue` resumes.",
+          "type": "string",
+          "const": "budget_exhausted"
+        },
+        {
+          "description": "A source kept failing; the backend may refresh its credentials.",
+          "type": "object",
+          "properties": {
+            "source_unavailable": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "description": "The source.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "source"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "source_unavailable"
+          ]
+        },
+        {
+          "description": "The model failed.",
+          "type": "object",
+          "properties": {
+            "model_failed": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "description": "How.",
+                  "$ref": "#/$defs/ModelFailure"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "model_failed"
+          ]
+        },
+        {
+          "description": "The input was invalid: nothing changed.",
+          "type": "object",
+          "properties": {
+            "invalid_input": {
+              "type": "object",
+              "properties": {
+                "errors": {
+                  "description": "Every problem found.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/ItemError"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "errors"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "invalid_input"
+          ]
+        },
+        {
+          "description": "The input was for another revision: nothing changed.",
+          "type": "string",
+          "const": "stale_draft"
+        }
+      ]
+    },
+    "Unmeasured": {
+      "description": "What a card's counts leave out. A constraint with any is capped at `warn`; a rule missing\nrows it needs is refused.",
+      "oneOf": [
+        {
+          "description": "Rows the item needs are missing from the latest dry run's sample: those of a mapping\nthat can fill it or, for a rule, those that state a head it derived about its subject.",
+          "type": "string",
+          "const": "rows"
+        },
+        {
+          "description": "A document set a route that can fill the item reads has no preview.",
+          "type": "string",
+          "const": "documents"
+        },
+        {
+          "description": "Both of those.",
+          "type": "string",
+          "const": "rows, documents"
+        },
+        {
+          "description": "Revise had no comparable load to measure on.",
+          "type": "string",
+          "const": "load"
+        },
+        {
+          "description": "Some of the load's entities were over the read budget.",
+          "type": "string",
+          "const": "entities"
+        }
+      ]
+    },
+    "Usage": {
+      "description": "What a turn spent.",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input tokens read from the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input tokens written to the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usd": {
+          "description": "The cost, in US dollars.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "usd"
+      ]
+    },
+    "ViolationDelta": {
+      "description": "A constraint's before/after counts at its requested severity.",
+      "type": "object",
+      "properties": {
+        "after": {
+          "description": "Violations with the candidate.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "before": {
+          "description": "Violations without the candidate.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "constraint": {
+          "description": "Constraint id as displayed by the rules engine.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "Requested severity (`block`, `warn`, `info`).",
+          "type": "string",
+          "enum": [
+            "block",
+            "warn",
+            "info"
+          ]
+        }
+      },
+      "required": [
+        "constraint",
+        "severity",
+        "before",
+        "after"
+      ]
+    }
+  }
+}

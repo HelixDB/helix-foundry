@@ -1,18 +1,23 @@
 node_modules
+.next
+.next-*
+next-env.d.ts
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
-.data
 coverage
 playwright-report
 test-results
-apps/web/dist
-packages/*/dist
-*.tgz
+docs-media
 *.log
 .DS_Store
-
-# Backups hold workspace data; scripts/backup.sh refuses folders in the repository
-backups/
-*.bak
-.claude/launch.json
+# mkcert certificates for `pnpm dev`
+*.pem
+coverage
+# pdf.js run-time files, copied on install (scripts/pdfjs-assets.mjs)
+/public/pdfjs
+# Go test binaries (backend/)
+*.test
+# Go build output (backend/)
+/backend/bin/

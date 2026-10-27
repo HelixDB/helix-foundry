@@ -1,0 +1,671 @@
+{
+  "args": {
+    "labels": {
+      "nodes": ["Document", "Event", "User"],
+      "edges": ["FOLLOWS", "WORKS_AT"]
+    },
+    "rowsPerLabel": 1,
+    "indexes": [
+      {
+        "indexId": "1",
+        "label": "Document",
+        "property": "title",
+        "target": "node",
+        "type": "full_text",
+        "tenantProperty": null
+      },
+      {
+        "indexId": "2",
+        "label": "Chunk",
+        "property": "embedding",
+        "target": "node",
+        "type": "vector",
+        "tenantProperty": null
+      },
+      {
+        "indexId": "3",
+        "label": "User",
+        "property": "email",
+        "target": "node",
+        "type": "equality",
+        "unique": true
+      }
+    ]
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_schema_probe",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "node_0",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Document" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_1",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Event" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "node_2",
+              "root": {
+                "value_map": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "User" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_0",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "FOLLOWS" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_1",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "edges_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "WORKS_AT" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["node_0", "node_1", "node_2", "edge_0", "edge_1"]
+      }
+    },
+    "parameters": {},
+    "parameter_types": {}
+  },
+  "status": 200,
+  "response": {
+    "edge_0": [
+      {
+        "$from": 97,
+        "$id": 600,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "note": "self-loop",
+        "since": "2023-08-15T20:30:13.760Z"
+      }
+    ],
+    "edge_1": [
+      {
+        "$from": 97,
+        "$id": 0,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "Engineer",
+        "since": 2018
+      }
+    ],
+    "node_0": [
+      {
+        "$id": 977,
+        "$label": "Document",
+        "body": "Replica token latency neighbor node posting commit distance equality score token latency label. Batch analyzer relevance vector ranking cosine shard batch embedding supernode hop. Shard schema vector cosine tenant index hop vector index. Filter edge edge graph commit hop embedding supernode cluster label gateway. Latency score gateway distance analyzer graph centrality. Bloom range gateway index batch posting storage range commit batch query replica token. Cycle edge filter database neighbor database gateway filter supernode database replica posting analyzer. Compaction latency path throughput score label throughput cosine distance commit compaction token label. Edge latency relevance executor degree cluster merge bloom. Snapshot analyzer path planner commit cache range edge replica edge. Stream cosine vector latency neighbor traversal embedding compaction community posting edge. Batch schema segment bloom executor stream latency vector embedding replica equality token commit storage. Degree index query schema analyzer embedding degree cycle. Storage equality label graph snapshot neighbor cycle segment filter commit compaction posting compaction cosine. Neighbor community hop property schema shard latency. Distance label batch database node memory ranking property storage property. Compaction posting segment schema graph distance graph cycle relevance vector. Relevance snapshot posting traversal snapshot shard replica node equality latency shard schema hop schema range. Posting ranking score node traversal equality token replica. Cycle latency posting score cluster merge vector. Cycle ranking latency cluster embedding property. Compaction stream executor range community stream segment hop traversal commit node embedding memory label. Throughput search memory analyzer degree filter analyzer path range cosine gateway database gateway shard traversal. Graph node cosine gateway range centrality shard bloom ranking cluster replica. Commit degree latency traversal throughput token analyzer traversal cycle bloom hop. Cache edge database merge centrality degree planner vector throughput gateway. Embedding storage hop relevance snapshot centrality shard. Embedding ranking neighbor stream stream ranking equality schema posting schema range. Search vector query cycle distance range cache score replica latency executor community label storage vector. Posting community traversal property property replica schema graph query node degree tenant posting cache executor. Score neighbor cluster equality segment tenant query. Latency traversal throughput range community graph. Query shard graph batch relevance relevance storage. Cycle cache filter index posting posting bloom tenant database storage. Shard index edge cluster storage bloom score graph cycle planner commit. Compaction supernode traversal community community supernode analyzer batch. Node tenant range score node degree. Embedding schema token score storage schema distance relevance shard node filter shard bloom. Embedding hop planner community neighbor traversal graph stream. Merge merge path community centrality replica distance. Distance executor cosine planner merge latency throughput supernode node token equality bloom equality path community range. Shard compaction cluster query bloom cluster filter commit graph degree. Stream cluster segment posting cache replica merge. Gateway degree shard replica latency community supernode query graph. Database edge executor range analyzer analyzer cache node embedding gateway supernode throughput supernode path latency. Stream commit embedding embedding label commit score commit centrality centrality executor hop. Storage schema score analyzer ranking commit index tenant neighbor segment bloom equality query. Stream embedding memory edge posting memory property stream degree community centrality storage executor node merge compaction. Cosine relevance filter degree gateway distance latency planner distance cosine property property tenant cosine cycle. Degree posting latency schema gateway degree property token centrality. Distance hop property node relevance schema compaction supernode memory bloom cycle vector path distance token property. Degree traversal compaction planner degree throughput commit database range throughput distance database edge ranking distance vector. Traversal equality planner index batch storage batch supernode batch equality hop. Property range index score replica community database. Range segment node relevance schema community snapshot node gateway planner. Vector cache compaction neighbor merge neighbor planner posting cycle relevance index tenant cluster. Degree relevance equality tenant executor edge throughput embedding relevance memory degree gateway planner gateway. Merge throughput executor ranking equality token edge gateway cache database. Segment memory throughput stream token degree executor filter search. Score graph neighbor schema search snapshot hop equality hop equality executor latency centrality bloom. Replica stream index planner cosine path. Equality storage score graph throughput tenant hop traversal distance merge centrality cosine graph filter storage distance. Query compaction index storage tenant centrality. Throughput database batch posting throughput filter bloom. Edge posting graph filter commit cycle filter gateway relevance shard range. Posting tenant community snapshot stream traversal traversal equality commit storage storage commit. Batch index centrality node label property gateway score stream token cycle throughput. Cache score schema executor segment stream graph embedding token score search throughput score. Gateway cosine memory community tenant schema. Hop node path tenant storage memory schema snapshot tenant schema supernode latency token. Range executor community score bloom label tenant token. Cluster centrality range stream batch community analyzer embedding node tenant ranking query property centrality. Bloom label ranking filter analyzer supernode cluster bloom cache analyzer edge cluster throughput. Merge degree replica score cosine replica stream supernode traversal cluster. Property hop community throughput query planner cosine community gateway. Storage equality memory label database compaction node posting tenant. Hop throughput batch bloom shard commit. Path snapshot supernode executor gateway edge analyzer vector degree cosine equality label node. Gateway equality compaction executor supernode token gateway executor equality latency posting path.",
+        "draft": true,
+        "embedding": [
+          -0.08769900351762772, -0.04568000137805939, 0.04767699912190437,
+          0.0764010027050972, -0.07236500084400177, -0.001104000024497509,
+          0.041019998490810394, -0.007701999973505735, 0.06356299668550491,
+          0.03032900020480156, -0.003215000033378601, -0.0560929998755455,
+          0.004083999898284674, -0.08863600343465805, 0.07627899944782257,
+          -0.03646799921989441, 0.005787999834865332, 0.04814999923110008,
+          0.05748799815773964, 0.019363999366760254, -0.026372000575065613,
+          -0.06696899980306625, 0.009449999779462814, -0.07743799686431885,
+          0.036910999566316605, -0.0025080000050365925, 0.05023699998855591,
+          -0.0893540009856224, -0.06027499958872795, -0.09127800166606903,
+          0.06584099680185318, -0.002409999957308173, 0.0359949991106987,
+          0.062116000801324844, 0.006124999839812517, -0.012749000452458858,
+          -0.05790900066494942, 0.05780399963259697, 0.084197998046875,
+          0.05056200176477432, 0.024406999349594116, 0.030640000477433205,
+          -0.03803100064396858, 0.07162699848413467, 0.007612000219523907,
+          -0.06728299707174301, -0.06463500112295151, -0.01624399982392788,
+          0.0024139999877661467, -0.04803000018000603, -0.07267499715089798,
+          -0.04288800060749054, 0.014146000146865845, -0.01678300090134144,
+          -0.008245999924838543, 0.03782700002193451, 0.07477200031280518,
+          0.0810289978981018, 0.041196998208761215, 0.02175999991595745,
+          -0.07646200060844421, 0.04022200033068657, 0.034890998154878616,
+          -0.06099599972367287, -0.05530000105500221, -0.08539099991321564,
+          -0.04504799842834473, -0.016308000311255455, -0.012868000194430351,
+          0.05549899861216545, -0.002575000049546361, -0.046980999410152435,
+          0.045510001480579376, -0.08109600096940994, -0.009805000387132168,
+          -0.08473899960517883, 0.01610800065100193, 0.06528999656438828,
+          0.012148999609053135, 0.047380998730659485, 0.06530100107192993,
+          -0.03615599870681763, -0.038467999547719955, -0.02428399957716465,
+          -0.01965400017797947, 0.04225499927997589, -0.0014779999619349837,
+          0.02737399935722351, -0.011022999882698059, 0.004850999917834997,
+          -0.03009600006043911, 0.08870299905538559, 0.053339000791311264,
+          -0.03093699924647808, -0.007716000080108643, -0.0024979999288916588,
+          0.07973100244998932, -0.05075199902057648, 0.04810100048780441,
+          0.08081500232219696, 0.014406000263988972, 0.025328999385237694,
+          -0.0005619999719783664, -0.04931600019335747, 0.013875000178813934,
+          -0.04126099869608879, 0.02501700073480606, 0.019197000190615654,
+          -0.0017239999724552035, -0.009898999705910683, 0.08495700359344482,
+          -0.07749000191688538, -0.04114200174808502, 0.03504500165581703,
+          0.08187399804592133, 0.023065000772476196, -0.03493800014257431,
+          -0.041508998721838, 0.07383300364017487, 0.08263400197029114,
+          -0.029709000140428543, -0.04932200163602829, -0.08279400318861008,
+          -0.04968700185418129, -0.04197600111365318, -0.04226600006222725,
+          -0.012384000234305859, 0.08201300352811813, 0.025147000327706337,
+          0.038256000727415085, 0.0615059994161129, -0.0008399999933317304,
+          -0.0811230018734932, -0.08445099741220474, 0.05384700000286102,
+          0.03887400031089783, -0.09115699678659439, 0.07514499872922897,
+          0.031575001776218414, -0.03738199919462204, 0.03526800125837326,
+          -0.006045000161975622, -0.0029239999130368233, -0.08839499950408936,
+          -0.048179998993873596, 0.027326999232172966, 0.055730998516082764,
+          -0.06511099636554718, 0.019850000739097595, -0.057833001017570496,
+          0.07658199965953827, -0.016023999080061913, 0.08681800216436386,
+          -0.01670300029218197, 0.023538000881671906, 0.011208999902009964,
+          0.03087400086224079, -0.0350629985332489, -0.06753399968147278,
+          -0.0805089995265007, 0.06513900309801102, 0.038116998970508575,
+          -0.03361000120639801, -0.06759700179100037, -0.08959099650382996,
+          -0.0358709990978241, -0.09132400155067444, -0.049550000578165054,
+          -0.016107000410556793, -0.027772000059485435, -0.05699099972844124,
+          0.023412000387907028, 0.016898000612854958, 0.06565599888563156,
+          0.06572400033473969, -0.06771299988031387, -0.07786399871110916,
+          0.021289000287652016, -0.04950999841094017, 0.03301500156521797,
+          0.02691599912941456, -0.05666600167751312, 0.08592399954795837,
+          -0.06477200239896774, -0.06322299689054489, -0.01978899911046028,
+          -0.022933999076485634, -0.0899059996008873, -0.016669999808073044,
+          0.051833998411893845, -0.0325700007379055, -0.059728000313043594,
+          0.06803599745035172, 0.07995700091123581, -0.09077399969100952,
+          0.02053000032901764, 0.06572700291872025, -0.06703600287437439,
+          -0.054416999220848083, 0.04521400108933449, 0.07103099673986435,
+          0.030912000685930252, -0.004279999993741512, 0.06294800341129303,
+          -0.018492000177502632, -0.0404990017414093, 0.03320600092411041,
+          0.058706000447273254, -0.024229999631643295, 0.02207699976861477,
+          -0.08911199867725372, -0.009538999758660793, 0.017109999433159828,
+          0.044110000133514404, 0.011389000341296196, -0.024454999715089798,
+          -0.041117001324892044, 0.08569800108671188, 0.010692000389099121,
+          -0.07941500097513199, -0.055966999381780624, -0.007178000174462795,
+          0.09067799896001816, 0.0886320024728775, -0.07861699908971786,
+          -0.02237500064074993, 0.048767998814582825, 0.03510399907827377,
+          0.08808699995279312, 0.030619999393820763, 0.05927800014615059,
+          0.045113999396562576, -0.0030380000825971365, -0.013425000011920929,
+          -0.05502299964427948, -0.06947200000286102, 0.08252900093793869,
+          0.0297279991209507, -0.037011001259088516, 0.06463000178337097,
+          0.03921499848365784, -0.042082998901605606, 0.0039019999094307423,
+          -0.03964899852871895, -0.024376999586820602, -0.09056799858808517,
+          0.06293699890375137, -0.08108799904584885, -0.02745399996638298,
+          -0.016582999378442764, 0.07337000221014023, 0.008258000016212463,
+          0.011273999698460102, -0.03762400150299072, -0.06590600311756134,
+          0.025652000680565834, 0.018975000828504562, -0.06813599914312363,
+          0.0398700013756752, -0.042103998363018036, -0.033302001655101776,
+          0.01706000044941902, -0.03061000071465969, 0.01611199975013733,
+          -0.07650700211524963, 0.017062999308109283, 0.015709999948740005,
+          0.06716299802064896, 0.07793200016021729, 0.032597001641988754,
+          -0.027363000437617302, -0.021165000274777412, 0.06101899966597557,
+          0.08875100314617157, -0.043852001428604126, -0.0806799978017807,
+          0.007447999902069569, -0.023545999079942703, 0.02609200030565262,
+          0.03282200172543526, 0.009809000417590141, -0.07096300274133682,
+          0.08793599903583527, -0.011664999648928642, -0.017865000292658806,
+          -0.033525001257658005, 0.03854300081729889, 0.042541999369859695,
+          -0.08504100143909454, -0.004759000148624182, 0.021341999992728233,
+          0.04338899999856949, 0.003777999896556139, -0.0690390020608902,
+          -0.07091400027275085, 0.06219499930739403, 0.08275099843740463,
+          0.005003000143915415, 0.04771300032734871, -0.00820900034159422,
+          -0.0010310000507161021, 0.015943000093102455, -0.029347000643610954,
+          0.05171100050210953, -0.03251500055193901, -0.03609900176525116,
+          0.06446199864149094, -0.07115799933671951, -0.035659000277519226,
+          0.023920999839901924, -0.08485600352287292, -0.0030720001086592674,
+          0.04324299842119217, -0.08585400134325027, 0.019524000585079193,
+          0.012752000242471695, -0.09013800323009491, -0.022505000233650208,
+          0.0725490003824234, 0.009820000268518925, 0.07808300107717514,
+          0.05548299849033356, 0.0772709995508194, -0.00711200013756752,
+          0.07492999732494354, 0.0013569999719038606, 0.04548199847340584,
+          0.038026001304388046, 0.04566799849271774, 0.04565700143575668,
+          -0.03086799941956997, 0.0790719985961914, -0.030465999618172646,
+          -0.07037399709224701, -0.01080700010061264, -0.02300499938428402,
+          0.011602000333368778, 0.06378299742937088, -0.058952998369932175,
+          0.06555599719285965, -0.03370000049471855, 0.07363899797201157,
+          0.06388299912214279, 0.05713599920272827, 0.04324600100517273,
+          0.08914600312709808, 0.02459999918937683, -0.06095200031995773,
+          0.07644200325012207, -0.04184899851679802, -0.02217400074005127,
+          0.08645900338888168, 0.0816119983792305, 0.008848000317811966,
+          -0.042024001479148865, -0.046316999942064285, -0.017764000222086906,
+          -0.0626169964671135, 0.013975000008940697, -0.05699799954891205,
+          -0.04432399943470955, -0.050960998982191086, 0.06726200133562088,
+          -0.045705001801252365, -0.08840899914503098, 0.02191299945116043,
+          0.06193400174379349, 0.023150000721216202, 0.061482999473810196,
+          -0.011769000440835953, 0.00571999978274107, -0.0615679994225502,
+          -0.04858599975705147, -0.029402999207377434, -0.00863100029528141,
+          0.009232000447809696, -0.0261439997702837, 0.06574799865484238,
+          -0.00829899962991476, 0.01585100032389164, 0.008016999810934067,
+          0.02606000006198883, -0.04057399928569794, -0.04847799986600876
+        ],
+        "metadata": {
+          "checksum": "sha256:1067853555",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Planner centrality degree merge (0)",
+        "word_count": 1606
+      }
+    ],
+    "node_1": [
+      {
+        "$id": 1277,
+        "$label": "Event",
+        "at": "2023-11-15T12:44:34.041Z",
+        "counts": [4, 59, 170],
+        "event_id": "evt_000000",
+        "kind": "incident",
+        "payload": {
+          "attrs": { "region": "us-east-1", "retries": 3 },
+          "mixed": ["a", 1, false],
+          "source": "dashboard",
+          "trace": [
+            "frame 0: memory::replica",
+            "frame 1: gateway::cosine",
+            "frame 2: segment::ranking",
+            "frame 3: query::filter",
+            "frame 4: database::traversal",
+            "frame 5: embedding::score",
+            "frame 6: relevance::degree",
+            "frame 7: cluster::stream",
+            "frame 8: property::compaction",
+            "frame 9: label::storage",
+            "frame 10: search::vector",
+            "frame 11: replica::search",
+            "frame 12: executor::stream",
+            "frame 13: distance::commit",
+            "frame 14: centrality::snapshot",
+            "frame 15: neighbor::node",
+            "frame 16: edge::neighbor",
+            "frame 17: executor::posting",
+            "frame 18: posting::node",
+            "frame 19: schema::index",
+            "frame 20: graph::community",
+            "frame 21: relevance::database",
+            "frame 22: storage::vector",
+            "frame 23: traversal::distance",
+            "frame 24: planner::node",
+            "frame 25: commit::cycle",
+            "frame 26: vector::bloom",
+            "frame 27: relevance::relevance",
+            "frame 28: compaction::cache",
+            "frame 29: analyzer::cycle",
+            "frame 30: path::traversal",
+            "frame 31: cycle::property",
+            "frame 32: relevance::score",
+            "frame 33: compaction::stream",
+            "frame 34: snapshot::filter",
+            "frame 35: filter::score",
+            "frame 36: index::filter",
+            "frame 37: snapshot::executor",
+            "frame 38: graph::filter",
+            "frame 39: throughput::schema",
+            "frame 40: ranking::vector",
+            "frame 41: community::database",
+            "frame 42: degree::property",
+            "frame 43: embedding::filter",
+            "frame 44: cycle::token",
+            "frame 45: graph::property",
+            "frame 46: memory::posting",
+            "frame 47: shard::merge",
+            "frame 48: hop::score",
+            "frame 49: throughput::compaction",
+            "frame 50: executor::supernode",
+            "frame 51: segment::traversal",
+            "frame 52: storage::search",
+            "frame 53: batch::node",
+            "frame 54: property::latency",
+            "frame 55: latency::distance",
+            "frame 56: distance::bloom",
+            "frame 57: range::relevance",
+            "frame 58: embedding::commit",
+            "frame 59: replica::commit",
+            "frame 60: batch::merge",
+            "frame 61: edge::score",
+            "frame 62: database::degree",
+            "frame 63: graph::planner",
+            "frame 64: range::filter",
+            "frame 65: supernode::score",
+            "frame 66: segment::storage",
+            "frame 67: shard::planner",
+            "frame 68: database::latency",
+            "frame 69: memory::query",
+            "frame 70: ranking::latency",
+            "frame 71: stream::posting",
+            "frame 72: node::compaction",
+            "frame 73: neighbor::storage",
+            "frame 74: embedding::executor",
+            "frame 75: supernode::property",
+            "frame 76: edge::stream",
+            "frame 77: equality::range",
+            "frame 78: stream::database",
+            "frame 79: snapshot::centrality",
+            "frame 80: node::relevance",
+            "frame 81: compaction::index",
+            "frame 82: vector::range",
+            "frame 83: neighbor::community",
+            "frame 84: commit::range",
+            "frame 85: bloom::segment",
+            "frame 86: traversal::compaction",
+            "frame 87: replica::cluster",
+            "frame 88: snapshot::schema",
+            "frame 89: neighbor::search",
+            "frame 90: score::neighbor",
+            "frame 91: cluster::supernode",
+            "frame 92: database::distance",
+            "frame 93: batch::relevance",
+            "frame 94: storage::storage",
+            "frame 95: community::vector",
+            "frame 96: cycle::embedding",
+            "frame 97: cache::gateway",
+            "frame 98: throughput::hop",
+            "frame 99: segment::equality",
+            "frame 100: vector::vector",
+            "frame 101: cluster::commit",
+            "frame 102: stream::snapshot",
+            "frame 103: tenant::query",
+            "frame 104: search::token",
+            "frame 105: batch::label",
+            "frame 106: index::traversal",
+            "frame 107: batch::database",
+            "frame 108: search::analyzer",
+            "frame 109: cosine::executor",
+            "frame 110: filter::distance",
+            "frame 111: equality::equality",
+            "frame 112: commit::score",
+            "frame 113: edge::token",
+            "frame 114: token::edge",
+            "frame 115: commit::shard",
+            "frame 116: cosine::index",
+            "frame 117: score::cosine",
+            "frame 118: vector::gateway",
+            "frame 119: shard::executor",
+            "frame 120: token::posting",
+            "frame 121: posting::path",
+            "frame 122: posting::replica",
+            "frame 123: database::merge",
+            "frame 124: memory::score",
+            "frame 125: degree::edge",
+            "frame 126: traversal::cache",
+            "frame 127: shard::stream",
+            "frame 128: cosine::index",
+            "frame 129: centrality::token",
+            "frame 130: gateway::replica",
+            "frame 131: replica::filter",
+            "frame 132: traversal::range",
+            "frame 133: range::replica",
+            "frame 134: distance::segment",
+            "frame 135: degree::shard",
+            "frame 136: score::batch",
+            "frame 137: database::analyzer",
+            "frame 138: range::database",
+            "frame 139: relevance::gateway",
+            "frame 140: bloom::neighbor",
+            "frame 141: gateway::edge",
+            "frame 142: equality::merge",
+            "frame 143: cache::stream",
+            "frame 144: tenant::community",
+            "frame 145: filter::shard",
+            "frame 146: range::segment",
+            "frame 147: segment::ranking",
+            "frame 148: index::graph",
+            "frame 149: gateway::edge",
+            "frame 150: property::shard",
+            "frame 151: edge::stream",
+            "frame 152: equality::throughput",
+            "frame 153: equality::cycle",
+            "frame 154: cache::planner",
+            "frame 155: query::supernode",
+            "frame 156: segment::index",
+            "frame 157: cluster::hop",
+            "frame 158: replica::shard",
+            "frame 159: ranking::stream",
+            "frame 160: relevance::graph",
+            "frame 161: community::vector",
+            "frame 162: edge::supernode",
+            "frame 163: supernode::path",
+            "frame 164: neighbor::path",
+            "frame 165: stream::tenant",
+            "frame 166: edge::shard",
+            "frame 167: bloom::property",
+            "frame 168: ranking::planner",
+            "frame 169: stream::batch",
+            "frame 170: vector::range",
+            "frame 171: centrality::traversal",
+            "frame 172: score::vector",
+            "frame 173: embedding::label",
+            "frame 174: index::cluster",
+            "frame 175: equality::hop",
+            "frame 176: path::supernode",
+            "frame 177: commit::compaction",
+            "frame 178: gateway::throughput",
+            "frame 179: analyzer::stream",
+            "frame 180: stream::equality",
+            "frame 181: cosine::equality",
+            "frame 182: search::ranking",
+            "frame 183: hop::hop",
+            "frame 184: node::node",
+            "frame 185: score::gateway",
+            "frame 186: hop::schema",
+            "frame 187: compaction::relevance",
+            "frame 188: segment::edge",
+            "frame 189: token::ranking",
+            "frame 190: path::supernode",
+            "frame 191: community::distance",
+            "frame 192: edge::score",
+            "frame 193: ranking::distance",
+            "frame 194: executor::degree",
+            "frame 195: vector::tenant",
+            "frame 196: edge::distance",
+            "frame 197: snapshot::bloom",
+            "frame 198: embedding::throughput",
+            "frame 199: latency::query",
+            "frame 200: equality::hop",
+            "frame 201: vector::relevance",
+            "frame 202: bloom::hop",
+            "frame 203: cosine::storage",
+            "frame 204: distance::property",
+            "frame 205: centrality::cycle",
+            "frame 206: cycle::posting",
+            "frame 207: neighbor::vector",
+            "frame 208: snapshot::latency",
+            "frame 209: latency::database",
+            "frame 210: equality::tenant",
+            "frame 211: centrality::search",
+            "frame 212: supernode::cycle",
+            "frame 213: path::index",
+            "frame 214: equality::stream",
+            "frame 215: supernode::traversal",
+            "frame 216: replica::degree",
+            "frame 217: score::property",
+            "frame 218: distance::label",
+            "frame 219: gateway::merge",
+            "frame 220: planner::database",
+            "frame 221: vector::edge",
+            "frame 222: graph::shard",
+            "frame 223: cosine::embedding",
+            "frame 224: centrality::database",
+            "frame 225: supernode::memory",
+            "frame 226: planner::shard",
+            "frame 227: graph::score",
+            "frame 228: community::node",
+            "frame 229: snapshot::vector",
+            "frame 230: batch::cluster",
+            "frame 231: planner::memory",
+            "frame 232: storage::cycle",
+            "frame 233: replica::hop",
+            "frame 234: degree::schema",
+            "frame 235: batch::executor",
+            "frame 236: cosine::supernode",
+            "frame 237: cosine::merge",
+            "frame 238: latency::gateway",
+            "frame 239: schema::stream",
+            "frame 240: gateway::commit",
+            "frame 241: throughput::tenant",
+            "frame 242: database::cache",
+            "frame 243: supernode::relevance",
+            "frame 244: executor::embedding",
+            "frame 245: path::cosine",
+            "frame 246: community::cycle",
+            "frame 247: latency::cosine",
+            "frame 248: range::executor",
+            "frame 249: label::query",
+            "frame 250: tenant::posting",
+            "frame 251: path::ranking",
+            "frame 252: cluster::latency",
+            "frame 253: search::cluster",
+            "frame 254: index::path",
+            "frame 255: embedding::executor",
+            "frame 256: node::stream",
+            "frame 257: shard::embedding",
+            "frame 258: traversal::cluster",
+            "frame 259: filter::score",
+            "frame 260: hop::hop",
+            "frame 261: compaction::equality",
+            "frame 262: embedding::relevance",
+            "frame 263: traversal::batch",
+            "frame 264: cosine::traversal",
+            "frame 265: neighbor::commit",
+            "frame 266: community::community",
+            "frame 267: tenant::relevance",
+            "frame 268: supernode::cluster",
+            "frame 269: filter::replica",
+            "frame 270: edge::memory",
+            "frame 271: cycle::cosine",
+            "frame 272: schema::schema",
+            "frame 273: index::ranking",
+            "frame 274: vector::database",
+            "frame 275: degree::snapshot",
+            "frame 276: range::distance",
+            "frame 277: filter::shard",
+            "frame 278: equality::hop",
+            "frame 279: index::schema",
+            "frame 280: cache::database",
+            "frame 281: filter::index",
+            "frame 282: executor::centrality",
+            "frame 283: cycle::segment",
+            "frame 284: cluster::cycle",
+            "frame 285: centrality::query",
+            "frame 286: merge::vector",
+            "frame 287: query::search",
+            "frame 288: cluster::supernode",
+            "frame 289: bloom::storage",
+            "frame 290: throughput::throughput",
+            "frame 291: planner::search",
+            "frame 292: cache::bloom",
+            "frame 293: batch::edge",
+            "frame 294: supernode::segment",
+            "frame 295: community::storage",
+            "frame 296: neighbor::token",
+            "frame 297: property::relevance",
+            "frame 298: supernode::database",
+            "frame 299: cosine::label"
+          ]
+        },
+        "severity": 3
+      }
+    ],
+    "node_2": [
+      {
+        "$id": 97,
+        "$label": "User",
+        "active": true,
+        "age": 22,
+        "joined": "2025-01-11T11:24:00.072Z",
+        "name": "Katherine Lamport",
+        "profile": {
+          "location": { "city": "Osaka", "country": "JP" },
+          "prefs": { "notifications": false, "theme": "light" }
+        },
+        "score": 17.74,
+        "tags": [],
+        "username": "katherine0"
+      }
+    ]
+  }
+}

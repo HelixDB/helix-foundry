@@ -1,0 +1,123 @@
+/* The Data document page's viewers for JSON, tables and PDFs
+   (json-tree.tsx, table-preview.tsx, pdf.tsx), in the kit's tokens. */
+
+/* JSON: a tree of keys and values in the mono face, one indent a level. */
+.dc-json,
+.dc-json ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dc-json {
+  overflow-x: auto;
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-sm);
+  line-height: 1.7;
+}
+.dc-json ul {
+  margin-left: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--hf-border);
+}
+.dc-json-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 0;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.dc-json-toggle:hover {
+  background: var(--hf-hover);
+}
+.dc-json-toggle:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+.dc-json-chevron {
+  color: var(--hf-muted);
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.dc-json-toggle[aria-expanded="true"] .dc-json-chevron {
+  transform: rotate(90deg);
+}
+.dc-json-leaf {
+  display: flex;
+  gap: 6px;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.dc-json-key {
+  color: var(--hf-text-2);
+}
+.dc-json-key::after {
+  content: ":";
+}
+.dc-json-summary,
+.dc-json-value.is-null {
+  color: var(--hf-muted);
+}
+.dc-json-value.is-string {
+  color: var(--hf-success-text);
+}
+.dc-json-value.is-number {
+  color: var(--hf-info-text);
+}
+.dc-json-value.is-boolean {
+  color: var(--hf-warning-text);
+}
+
+/* A table's first rows, under how many it holds. */
+.dc-table {
+  display: grid;
+  gap: 8px;
+}
+.dc-table-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-table-note.is-failed {
+  color: var(--hf-warning-text);
+}
+
+/* A PDF's pages in a column that scrolls, as tall as the window allows. */
+.dc-pdf {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  width: 100%;
+  height: max(480px, calc(100vh - 260px));
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+}
+.dc-pdf-page {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.dc-pdf-page canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 2px;
+  /* Where a page is still being drawn, its outline holds its place. */
+  outline: 1px solid var(--hf-border);
+  background: var(--hf-surface);
+  box-shadow: var(--hf-shadow-1);
+}
+.dc-pdf-page figcaption,
+.dc-pdf-missing {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  text-align: center;
+}

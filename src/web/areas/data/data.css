@@ -1,0 +1,871 @@
+/* Data Connection area styles (prefix dc-). */
+.dc-connection-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  gap: var(--hf-space-2);
+  margin-bottom: var(--hf-space-4);
+  align-items: start;
+}
+.dc-connection-grid .hf-grid-wrap {
+  border: 0;
+  border-radius: 0 0 var(--hf-radius-lg) var(--hf-radius-lg);
+}
+/* Synced tables: equal cards of three lines that never wrap, the name, its
+   size, then its key with a count of its links. */
+.dc-dataset-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  grid-auto-rows: 1fr;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dc-dataset-list a {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: center;
+  height: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised);
+  color: var(--hf-text);
+  text-decoration: none;
+}
+.dc-dataset-list a:hover {
+  border-color: var(--hf-border-strong);
+}
+.dc-dataset-list svg {
+  color: var(--hf-muted);
+}
+.dc-dataset-meta {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-dataset-keys {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dc-dataset-keys .ds-tag {
+  flex: none;
+  margin-left: auto;
+}
+@media (max-width: 1000px) {
+  .dc-connection-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Datasets grouped by origin, matching the setup data feed. */
+.ds-groups {
+  columns: 2 260px;
+  column-gap: 12px;
+  margin-top: 14px;
+}
+.ds-group {
+  break-inside: avoid;
+  margin-bottom: 12px;
+  padding: 12px 14px 8px;
+  background: var(--hf-raised);
+  border: 1px solid var(--hf-border);
+  border-radius: 10px;
+}
+.ds-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-family: inherit;
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.ds-group h3 small {
+  margin-left: auto;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 400;
+}
+.ds-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--hf-border);
+  border-radius: 999px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+}
+.ds-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ds-group li + li {
+  border-top: 1px solid var(--hf-border);
+}
+.ds-group li a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: inherit;
+  text-decoration: none;
+  font-size: var(--hf-text-sm);
+}
+.ds-group li a:hover .ds-name,
+.ds-group li a:focus-visible .ds-name {
+  text-decoration: underline;
+}
+.ds-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-rows {
+  margin-left: auto;
+  color: var(--hf-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The explorer: its head, filter and notes over the tree, on the sidebar's
+   surface. The head stays in view while the tree scrolls. */
+.dx {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.dx-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 10px 8px 6px 14px;
+  background: var(--hf-sidebar);
+}
+.dx-head h2 {
+  flex: 1;
+  margin: 0;
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.dx-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.dx-filter.hf-search {
+  flex: none;
+  min-width: 0;
+  margin: 0 8px 8px;
+}
+.dx-filter input {
+  height: 30px;
+}
+.dx > :is(.dt-note, .dt-uploads, .hf-refresh-failed) {
+  margin: 0 8px 8px;
+}
+.dx .dt-note {
+  padding: 8px 10px;
+  font-size: var(--hf-text-xs);
+}
+.dx .dc-upload {
+  gap: 8px;
+  padding: 8px 10px;
+}
+.dx-body {
+  flex: 1;
+  padding: 0 4px 16px;
+}
+.dx-loading {
+  display: grid;
+  gap: 8px;
+  padding: 6px 10px;
+}
+.dx-none {
+  margin: 6px 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.dt-note {
+  margin: 0 0 var(--hf-space-3);
+  padding: 10px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+
+/* The tree, as in an IDE: rows of 28px, indented a step per level with a
+   guide line under each folder's chevron, so the whole row lights up on
+   hover and for the page open (the sidebar's colors). A row's actions show
+   over its end while it is hovered or has the focus. A grip sits in the
+   indent left of the chevron, so the tree leaves room for it while it can
+   be arranged. */
+.dt-tree {
+  --dt-indent: 14px;
+  --dt-gutter: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dt-tree.is-arranging {
+  --dt-gutter: 20px;
+}
+.dt-group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dt-node {
+  border-radius: var(--hf-radius-sm);
+}
+.dt-node:focus {
+  outline: none;
+}
+.dt-row,
+.dt-empty {
+  position: relative;
+  padding-left: calc(
+    var(--dt-gutter) + (var(--dt-level) - 1) * var(--dt-indent)
+  );
+}
+.dt-row::before,
+.dt-empty::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--dt-gutter);
+  width: calc((var(--dt-level) - 1) * var(--dt-indent));
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0 6px,
+    var(--hf-border-strong) 6px 7px,
+    transparent 7px var(--dt-indent)
+  );
+  pointer-events: none;
+}
+.dt-row {
+  --dt-row-bg: var(--hf-sidebar);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding-right: 6px;
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+}
+.dt-folder-row {
+  cursor: pointer;
+}
+.dt-row:hover {
+  --dt-row-bg: var(--hf-hover);
+  background: var(--dt-row-bg);
+}
+[aria-current="page"] > .dt-row {
+  --dt-row-bg: var(--hf-selected);
+  background: var(--dt-row-bg);
+  color: var(--hf-text);
+}
+[aria-current="page"] > .dt-row :is(.dt-link, .dt-icon) {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.dt-node:focus-visible > .dt-row {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: -2px;
+}
+.dt-chevron,
+.dt-icon {
+  flex: none;
+  color: var(--hf-muted);
+}
+.dt-chevron {
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+[aria-expanded="true"] > .dt-row .dt-chevron {
+  transform: rotate(90deg);
+}
+.dt-twist {
+  flex: none;
+  width: 14px;
+}
+/* A connection's chevron sits over the link its name spreads across the
+   row, so a click on it opens the connection here, not its page. */
+.dt-toggle {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  height: 20px;
+  cursor: pointer;
+}
+.dt-toggle:hover .dt-chevron {
+  color: var(--hf-text);
+}
+.dt-row > .dt-count,
+.dt-row > .hf-status-dot {
+  margin-left: auto;
+}
+.dt-row > .hf-status-dot {
+  margin-right: 4px;
+}
+.dt-count {
+  flex: none;
+  padding-left: 4px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.dt-row-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 8px;
+  border-radius: inherit;
+  background: var(--dt-row-bg);
+  opacity: 0;
+}
+.dt-row:hover > .dt-row-actions,
+.dt-row:focus-within > .dt-row-actions,
+.dt-node:focus-visible > .dt-row > .dt-row-actions {
+  opacity: 1;
+}
+.dt-row-actions .hf-btn--sm.hf-btn--icon {
+  width: 24px;
+  height: 24px;
+}
+@media (hover: none) {
+  .dt-row-actions {
+    position: static;
+    padding: 0;
+    opacity: 1;
+  }
+}
+.dt-name-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.dt-link,
+.dt-name {
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A name that links covers its row; the row's buttons sit above it. */
+.dt-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.dt-row :is(button, input) {
+  position: relative;
+  z-index: 1;
+}
+.dt-rename {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--hf-muted);
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+}
+.dt-row:hover .dt-rename,
+.dt-rename:focus-visible {
+  opacity: 1;
+}
+.dt-rename:hover {
+  background: var(--hf-sunken);
+}
+.dt-rename:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+@media (hover: none) {
+  .dt-rename {
+    opacity: 0.55;
+  }
+}
+.dt-name-input {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  margin: 0 0 0 -5px;
+  padding: 0 5px;
+  border: 1px solid var(--hf-faint);
+  border-radius: 5px;
+  background: var(--hf-raised);
+  color: var(--hf-text);
+  font: inherit;
+}
+.dt-name-input:focus,
+.dt-name-input:focus-visible {
+  border-color: var(--hf-muted);
+  outline: 3px solid color-mix(in srgb, var(--hf-focus) 20%, transparent);
+  outline-offset: 0;
+}
+.dt-empty {
+  padding-top: 4px;
+  padding-bottom: 6px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+  list-style: none;
+}
+.dt-empty > :not(:first-child) {
+  margin-left: 4px;
+}
+/* A folder a drag of files would land in lights up as the documents'
+   dropzone does. */
+.dt-node.is-over {
+  background: var(--hf-accent-soft);
+  outline: 1.5px dashed var(--hf-accent);
+  outline-offset: -1px;
+}
+/* A row's grip: hidden until the row is hovered or it has the focus; it
+   drags the row, and a click opens its menu. A row being dragged fades. */
+.dt-row > .dt-grip {
+  position: absolute;
+  top: 50%;
+  left: calc(
+    var(--dt-gutter) + (var(--dt-level) - 1) * var(--dt-indent) - 18px
+  );
+  z-index: 1;
+  display: inline-flex;
+  transform: translateY(-50%);
+}
+.dt-grip-button {
+  justify-content: center;
+  width: 16px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  color: var(--hf-muted);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 0.15s;
+}
+.dt-grip-icon {
+  display: inline-flex;
+}
+.dt-row:hover .dt-grip-button,
+.dt-grip-button:focus-visible,
+.dt-grip-button[aria-expanded="true"] {
+  opacity: 1;
+}
+.dt-grip-button:hover,
+.dt-grip-button[aria-expanded="true"] {
+  background: var(--hf-sunken);
+  color: var(--hf-text);
+}
+.dt-grip-button:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 1px;
+}
+@media (hover: none) {
+  .dt-grip-button {
+    opacity: 0.55;
+  }
+}
+.dt-tree .is-dragging {
+  opacity: 0.4;
+}
+.dt-drag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: 260px;
+  min-height: 30px;
+  padding: 4px 12px 4px 8px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-2);
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  cursor: grabbing;
+}
+.dt-drag .dt-name {
+  font-weight: 600;
+}
+
+/* The Data page: the connections' grid, and the document sets as a list
+   on the Datasets card's surface. A set a drag of files would land in
+   lights up as in the explorer; the list does when only connections' sets
+   are in it, as the first upload makes General. */
+.dt-page {
+  min-height: 100%;
+}
+.dt-uploads {
+  margin-bottom: var(--hf-space-3);
+}
+.dt-grid-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dt-sets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.dt-sets li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+}
+.dt-sets li + li {
+  border-top: 1px solid var(--hf-border);
+}
+.dt-set-text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+.dt-set-text strong {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+}
+.dt-set-text span {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+:is(.dt-sets, .dt-sets li, .hf-empty).is-over {
+  background: var(--hf-accent-soft);
+  outline: 1.5px dashed var(--hf-accent);
+  outline-offset: -1px;
+}
+.dataset-privacy label {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+.dataset-privacy input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: auto;
+  margin-top: 3px;
+}
+.dataset-privacy fieldset {
+  margin-bottom: 14px;
+}
+
+/* Helix Cloud additions: sync errors, the synced table page and its keys. */
+/* Grid cells hold at most this much, so one long value cannot widen every
+   column of a DataGrid (its tracks share the widest cell's width). */
+.dc-clip {
+  display: block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-clip small {
+  color: var(--hf-muted);
+  font-size: inherit;
+}
+.dc-sync-error,
+.dc-pro-gate {
+  margin-bottom: var(--hf-space-2);
+}
+.dc-table-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised);
+  color: var(--hf-muted);
+}
+.dc-table-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  gap: var(--hf-space-2);
+  align-items: start;
+}
+.dc-table-grid .hf-grid-wrap {
+  border: 0;
+  border-radius: 0 0 var(--hf-radius-lg) var(--hf-radius-lg);
+}
+.dc-key-panels {
+  display: grid;
+  gap: var(--hf-space-2);
+}
+.dc-key-cell,
+.dc-key-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dc-key-cell {
+  gap: 8px;
+}
+.dc-fk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dc-fk,
+.dc-key-list svg {
+  color: var(--hf-muted);
+}
+.dc-fk a,
+.dc-key-list a {
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+}
+.dc-key-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--hf-text-sm);
+}
+.dc-note {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hf-border);
+}
+@media (max-width: 1000px) {
+  .dc-table-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Tailwind's preflight drops list markers; a guide's steps keep numbers,
+   indented so they line up with the fields below and wrapped lines hang
+   under the text, as the S3 steps do. */
+.connection-guide ol {
+  padding-left: 20px;
+  list-style: decimal;
+}
+/* The connection form's fields are minimal.css inputs; its Selects match
+   them. */
+.connect-data .hf-select-trigger {
+  padding: 9px 11px;
+  border-radius: 7px;
+  line-height: inherit;
+}
+
+/* The S3 form: access choice, the external ID and policies to copy, and a
+   tested file table's details. */
+.dc-access.choice-options {
+  margin-bottom: 8px;
+}
+.dc-access .choice-card {
+  min-height: 0;
+}
+.dc-copy-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0 4px;
+}
+.dc-copy-field input {
+  flex: 1;
+  min-width: 0;
+}
+.dc-steps {
+  margin: 0;
+  padding-left: 20px;
+  list-style: decimal;
+}
+.dc-steps li + li {
+  margin-top: 12px;
+}
+.dc-policy {
+  position: relative;
+  margin: 6px 0 0;
+}
+.dc-policy pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+}
+.dc-policy > button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.selection-row.dc-file-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.dc-format {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.selection-row small.dc-problem {
+  color: var(--hf-warning-text);
+}
+.dc-file-details {
+  margin-left: 26px;
+  font-size: var(--hf-text-sm);
+}
+.dc-file-details summary {
+  cursor: pointer;
+  color: var(--hf-muted);
+}
+.dc-file-details[open] summary {
+  margin-bottom: 8px;
+}
+.dc-file-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.dc-file-columns small {
+  display: inline;
+  margin-left: 4px;
+  padding: 0;
+  color: var(--hf-muted);
+}
+.dc-preview {
+  max-height: 220px;
+}
+.dc-preview th,
+.dc-preview td {
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.dc-unavailable {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+.dc-warnings {
+  margin: 0;
+  padding-left: 18px;
+  list-style: disc;
+  color: var(--hf-warning-text);
+}
+
+/* An API source (event-source-*.tsx): its send panel, the tokens above the
+   prompt, as helix-foundry's Ingestion API lays out its token, a new token
+   shown once, the form's second step, a failed sync with Resume, its text
+   field above its set of pieces, and its capacity and extraction spend in
+   amber from 80%, and "Send over HTTP", its curl and pieces.json in the S3
+   form's policy blocks. helix-foundry has no styles of its own for
+   these: they are its plain blocks with the S3 form's copy field. */
+.dc-event-send,
+.dc-event-made,
+.dc-event-documents {
+  display: grid;
+  gap: var(--hf-space-3);
+}
+.dc-event-http {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.dc-event-http > p,
+.dc-event-http .dc-policy {
+  margin: 0;
+}
+/* The curl is one line: it wraps beside its Copy button rather than
+   scrolling under it. */
+.dc-event-http .dc-policy pre {
+  padding-right: 84px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dc-event-tokens {
+  display: grid;
+  gap: 10px;
+}
+.dc-event-tokens > p,
+.dc-event-made > p {
+  margin: 0;
+}
+.dc-event-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.dc-event-secret {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-sunken);
+}
+.dc-event-secret .dc-event-actions {
+  margin-top: 6px;
+}
+.dc-event-paused {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dc-event-paused p {
+  margin: 0;
+}
+.dc-capacity-warn {
+  color: var(--hf-warning-text);
+  font-weight: 500;
+}

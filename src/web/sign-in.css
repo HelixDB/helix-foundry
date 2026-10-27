@@ -1,0 +1,171 @@
+/* Pages outside the shell: sign-in, its errors, and choosing a workspace.
+   One narrow column on the paper background, in the kit's type and tokens. */
+.hf-gate {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--hf-space-5) var(--hf-space-2);
+}
+.hf-gate-card {
+  width: 100%;
+  max-width: 400px;
+}
+.hf-gate-card.is-wide {
+  max-width: 520px;
+}
+.hf-gate-brand {
+  display: inline-flex;
+  margin-bottom: var(--hf-space-5);
+  color: var(--hf-text);
+  text-decoration: none;
+}
+.hf-gate-brand .hf-brand-name {
+  font-size: 20px;
+}
+.hf-gate-title {
+  margin: 0;
+  font-family: var(--hf-font-display);
+  font-size: var(--hf-text-2xl);
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  line-height: 1.2;
+  color: var(--hf-text);
+}
+.hf-gate-lede {
+  margin: 8px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-md);
+  line-height: 1.55;
+}
+.hf-gate-body {
+  display: grid;
+  gap: 10px;
+  margin-top: var(--hf-space-3);
+}
+.hf-gate-body .hf-btn {
+  width: 100%;
+}
+/* Provider buttons: logo on the left, label centred. */
+.hf-gate-body .hf-provider-button {
+  justify-content: flex-start;
+}
+.hf-provider-button > span {
+  flex: 1;
+  margin-right: 16px;
+  text-align: center;
+}
+.hf-gate-alert {
+  display: grid;
+  gap: 4px;
+  margin-top: var(--hf-space-3);
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--hf-danger) 25%, transparent);
+  border-radius: var(--hf-radius);
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.hf-gate-alert strong {
+  font-weight: 600;
+}
+.hf-gate-fine {
+  margin: var(--hf-space-3) 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.55;
+}
+.hf-gate-fine a {
+  color: var(--hf-text-2);
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+  text-underline-offset: 3px;
+}
+.hf-provider-logo {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* Who is signed in, under a gate screen, with Sign out. */
+.hf-gate-account {
+  margin: var(--hf-space-3) 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.55;
+}
+.hf-gate-account strong {
+  color: var(--hf-text-2);
+  font-weight: 550;
+}
+.hf-gate-account button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-text-2);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.hf-gate-account button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Workspace picker */
+.hf-ws-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-1);
+  overflow: hidden;
+}
+.hf-ws-list li + li {
+  border-top: 1px solid var(--hf-border);
+}
+.hf-ws-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--hf-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--hf-duration) var(--hf-ease);
+}
+.hf-ws-option:hover {
+  background: var(--hf-hover);
+}
+.hf-ws-option .hf-ws-mark {
+  width: 32px;
+  height: 32px;
+  font-size: var(--hf-text-sm);
+}
+.hf-ws-option-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.hf-ws-option-text strong {
+  overflow: hidden;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hf-ws-option-text small {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.hf-ws-option > svg {
+  color: var(--hf-faint);
+}

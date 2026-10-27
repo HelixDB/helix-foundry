@@ -1,0 +1,99 @@
+# Send pieces of data to “Order lines” in Helix Foundry
+
+I’d like you to send pieces of data to my API source “Order lines” in Helix Foundry, in my workspace “Acme” (`ws1`). Its id is `c1`; the Helix MCP calls it an event source, a connector of kind `events`.
+
+An API source holds pieces of data: JSON objects, each with an id. Foundry keeps every piece, and merges them by id into the source’s table, `events`, which ontologies read.
+
+What each piece is, in my words:
+
+> One line of an order.
+
+Its fields are the top-level keys your pieces carry. Each keeps the JSON type it first had; a send that changes one is refused and names both types.
+
+## Connect
+
+You send through the Helix MCP, at https://mcp.example.com/mcp, in one of two ways.
+
+### An app or agent that sends on its own
+
+It uses a send token of this source as its bearer, and sees only the send tool. I make the token on the source’s page in Foundry, https://foundry.example.com/data/connections/c1?workspace=ws1&token=new, and put it in the sender’s environment as `HELIX_EVENT_TOKEN`. If `HELIX_EVENT_TOKEN` isn’t set, give me that link: never ask me for the token in the chat. Never print, log or commit the token.
+
+For Claude Code, add `helix-events` to the project’s `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "helix-events": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${HELIX_EVENT_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Claude Code expands `${HELIX_EVENT_TOKEN}` when it starts the server, so the file holds no secret. Never add the server with `claude mcp add --header`: the shell expands the variable there, and writes the token itself into Claude Code’s config.
+
+For Codex, add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.helix-events]
+url = "https://mcp.example.com/mcp"
+bearer_token_env_var = "HELIX_EVENT_TOKEN"
+```
+
+### An agent I drive
+
+An agent I work with, as you do now, can send as me through its signed-in Helix MCP, if I’m an owner or admin of the workspace. If you don’t have the MCP’s tools (`helix_foundry_send_pieces` and the rest), add it, and have me sign in:
+
+- Claude Code: `claude mcp add --transport http helix https://mcp.example.com/mcp`, then `/mcp` to sign in.
+- Codex: `codex mcp add helix --url https://mcp.example.com/mcp && codex mcp login helix`.
+
+## Send
+
+Send with `helix_foundry_send_pieces`, in calls like this one:
+
+```json
+{
+  "workspace_id": "ws1",
+  "event_source_id": "c1",
+  "client_token": "<a new UUID>",
+  "pieces": [
+    {
+      "id": "<the piece’s id>",
+      "occurred_at": "<when it happened, RFC 3339; optional>",
+      "data_json": "<the piece: one JSON object, as text>"
+    }
+  ]
+}
+```
+
+- Up to 500 pieces a call, with at most 1 MiB of data together: keep a call under about 800 KB, because `data_json` is escaped inside it. One bad piece refuses the whole call, and none of it is stored.
+- `client_token`: a new random value (a UUID) for each call, 16 to 64 printable ASCII characters. Keep it only to retry that call with the same pieces: the retry stores nothing new, and its answer has `replayed: true`. With other pieces, it’s refused.
+- `id`: 1 to 128 printable ASCII characters with no spaces, unique within the call. A piece with an id already in the source replaces it, whoever sent it. If several apps or agents send, give each its own source.
+- `occurred_at`: when it happened, if you know: an RFC 3339 time (`2026-10-23T09:30:00Z`) in the years 1000 to 9999.
+- `data_json`: the piece itself, one JSON object as text, at most 256 KiB. Write it from the original text; if your client parses JSON into doubles first, send integers above 2^53 (9007199254740992) as strings.
+- Its JSON nests at most 64 deep, every number in it is finite (not `1e400`), and every `\uD800`-`\uDBFF` escape is followed by a `\uDC00`-`\uDFFF` one.
+- Its top-level keys are the source’s fields, at most 200 in the source: 1 to 64 bytes each, with no control characters and no backticks, and none twice. `id`, `received_at` and `occurred_at` are not data keys: the piece’s id and time go beside `data_json`.
+- A field keeps the JSON type it first had: string, number (integers and decimals alike), boolean, object or array. `null` is always allowed.
+- Pieces reach the source’s table at its next sync, about a minute after they’re sent: each answer’s `next` says so.
+- Watch `capacity` and `warning` in each answer, and tell me at 80%. Foundry keeps every piece, so a full source refuses sends.
+
+## On errors
+
+- `invalid_arguments`: fix the piece it names. If it says the `client_token` was already used, send with a new one.
+- `resource_exhausted`: wait as it says, then retry with the same `client_token`.
+- `failed_precondition`: the source is full or paused, or has all the fields it may have. Stop and tell me what it says.
+- `backend_unavailable`: retry with the same `client_token`.
+- `not_found`: the workspace or source id is wrong, or isn’t the send token’s own. Stop and tell me.
+- If the MCP won’t take the send token (401), it’s wrong or was revoked: tell me, and I’ll make another at https://foundry.example.com/data/connections/c1?workspace=ws1&token=new.
+
+## Which mode fits
+
+An ontology reads the source in one of two ways, and the pieces’ shape decides which fits:
+
+- Structured mappings suit strictly structured JSON: ids, amounts, statuses, times. Its fields map to types and properties, and every piece is kept.
+- Entity extraction suits a piece whose body is text, such as an agent’s reply or a note: Foundry’s agent reads the text and drafts the entities and facts it describes. The text goes in one top-level field, the source’s text field (`text_field`), which I choose in Foundry. It must stay a string in every piece (or `null`): a send that makes it anything else is refused.
+- Extraction suits a few hundred pieces a month, not a steady stream. The graph keeps the newest 500, and each costs about 1 cent for each ontology that reads it, up to $5 a month for the source; past that, new pieces wait for next month.

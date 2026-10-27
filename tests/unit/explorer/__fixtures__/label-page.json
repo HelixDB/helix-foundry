@@ -1,0 +1,224 @@
+{
+  "args": {
+    "label": "Tag",
+    "afterDbId": null,
+    "pageSize": 3,
+    "shape": {
+      "keys": [
+        "name",
+        "active",
+        "address",
+        "age",
+        "archived",
+        "at",
+        "color",
+        "counts",
+        "created",
+        "description",
+        "domain",
+        "draft",
+        "event_id",
+        "founded",
+        "industry",
+        "joined",
+        "kind",
+        "languages",
+        "meta",
+        "metadata",
+        "model",
+        "position",
+        "profile",
+        "public",
+        "score",
+        "severity",
+        "slug",
+        "stars",
+        "tags",
+        "title",
+        "username",
+        "weight",
+        "word_count",
+        "email",
+        "published",
+        "rating"
+      ],
+      "heavyKeys": ["body", "embedding", "payload", "text"],
+      "heavyByLabel": {
+        "Chunk": ["embedding", "text"],
+        "Company": [],
+        "Document": ["body", "embedding"],
+        "Event": ["payload"],
+        "Project": [],
+        "Tag": [],
+        "User": []
+      },
+      "keysByLabel": {
+        "Chunk": ["model", "position"],
+        "Company": [
+          "address",
+          "domain",
+          "founded",
+          "industry",
+          "name",
+          "public",
+          "rating"
+        ],
+        "Document": ["draft", "metadata", "title", "word_count", "published"],
+        "Event": ["at", "counts", "event_id", "kind", "severity"],
+        "Project": [
+          "archived",
+          "created",
+          "description",
+          "languages",
+          "meta",
+          "name",
+          "slug",
+          "stars"
+        ],
+        "Tag": ["color", "name", "weight"],
+        "User": [
+          "active",
+          "age",
+          "joined",
+          "name",
+          "profile",
+          "score",
+          "tags",
+          "username",
+          "email"
+        ]
+      }
+    }
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_label_page",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "page",
+              "root": {
+                "values": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "nodes_where": {
+                          "predicate": {
+                            "eq": {
+                              "left": { "property": "$label" },
+                              "right": { "constant": { "string": "Tag" } }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 4 }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "color",
+                    "name",
+                    "weight",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "total",
+              "root": {
+                "count": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "Tag" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["page", "total"]
+      }
+    },
+    "parameters": {},
+    "parameter_types": {}
+  },
+  "status": 200,
+  "response": {
+    "page": [
+      {
+        "$id": 897,
+        "$label": "Tag",
+        "color": "#dbd829",
+        "name": "general",
+        "weight": 1000
+      },
+      {
+        "$id": 898,
+        "$label": "Tag",
+        "color": "#8349b6",
+        "name": "rust",
+        "weight": 52
+      },
+      {
+        "$id": 899,
+        "$label": "Tag",
+        "color": "#846057",
+        "name": "typescript",
+        "weight": 62
+      },
+      {
+        "$id": 900,
+        "$label": "Tag",
+        "color": "#add5ca",
+        "name": "infra",
+        "weight": 16
+      }
+    ],
+    "total": 80
+  }
+}

@@ -1,0 +1,327 @@
+// The ontology agent, one turn at a time, and the graph builds of approved versions.
+//
+// The messages carry the same JSON the `ontology-agent turn` CLI reads and writes, so the CLI
+// and this service share one contract. Its JSON Schemas are in `schema/`:
+// `turn_request.json`, `event.json` and `turn_result.json` for a turn,
+// `ingest_{request,event,result}.json`, `extract_{request,event,result}.json` and
+// `delete_load_{request,event,result}.json` for a graph build, `clues_{request,event}.json`
+// for People enrichment's Clues, `read_{request,result}.json` for a read,
+// `ask_{request,event,result}.json` for a question, `title_{request,result}.json` for a
+// title, `probe_{request,result}.json` for a probe, `catalog.json` for the models Helix prices,
+// and `schema/VERSION` holds the contract version they describe.
+//
+// Turn, Ask, Extract, Title and Probe run on the models their request names (`models`, or a
+// probe's `endpoint` and `checks`). The endpoint's API key never goes in the JSON: it travels
+// in the call's `x-foundry-model-key` metadata, which the server takes out before it reads the
+// request. A provider that needs a key, called without one, is INVALID_ARGUMENT, and so is a
+// key that isn't 1 to 512 printable ASCII characters; a server replaying its response store
+// needs none and ignores one. A provider kind this build doesn't call (GetInfo's `providers`
+// lists those it does) is FAILED_PRECONDITION `provider_not_supported`, and so is a model
+// priced from Helix's table that the table doesn't hold.
+//
+// The server takes and sends messages of up to 32 MiB; a client must raise its own limit to
+// match (gRPC's default is 4 MiB), since a result carries the session state (up to 1 MiB),
+// the draft and any approved bundle.
+syntax = "proto3";
+
+package ontology_agent.v1;
+
+// Runs turns of the ontology agent. The server keeps no state between turns.
+service Agent {
+  // Runs one turn. The stream carries every event as it happens, then exactly one result,
+  // last. A turn that runs always ends with a result: a failed model call, an exhausted
+  // budget or an unreachable source is a status in the result, not a gRPC error.
+  //
+  // The errors come before any event. INVALID_ARGUMENT: `request_json` is not a
+  // TurnRequest (the message has the JSON error), a file source's path resolves outside
+  // the server's files root, or its models or key don't fit (see above). FAILED_PRECONDITION:
+  // the provider or model (see above). RESOURCE_EXHAUSTED: the server runs as many turns as
+  // it allows at once. UNAVAILABLE: the server is shutting down.
+  //
+  // Retry the last two with the same `request_id`. Cancelling the call, or dropping the
+  // connection, stops the turn before its next model call. A retry of the same request
+  // replays the model calls the server already recorded, at no cost, when it runs with a
+  // response store.
+  rpc Turn(TurnRequest) returns (stream TurnEvent);
+
+  // What this server runs: its contract, prompt and tools versions, the provider kinds it
+  // calls, and its build.
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  // Writes a generation's title from its goal: the model's text when it ended its turn, or how
+  // the call failed, with what it cost; a failed model call is a result, not a gRPC error.
+  //
+  // The errors: INVALID_ARGUMENT, `request_json` is not a TitleRequest, or its goal or
+  // `request_id` is empty, or its models or key don't fit (see above). FAILED_PRECONDITION:
+  // the provider or model (see above), or the server replays its response store, which holds
+  // no titles. RESOURCE_EXHAUSTED: the server writes as many titles as it allows at once.
+  // UNAVAILABLE: the server is shutting down.
+  rpc Title(TitleRequest) returns (TitleResponse);
+  // Checks whether an endpoint's models can do what each role needs, with the roles' real
+  // tools and schemas: a model the price table lacks fails its check `unpriced` with no call,
+  // and each check's failure is a result, not a gRPC error. The errors are Title's, a
+  // request that can't run (an empty `request_id`, no checks or a role twice, a spend that
+  // isn't a number of dollars) also INVALID_ARGUMENT. Cancelling the call stops every check.
+  rpc Probe(ProbeRequest) returns (ProbeResponse);
+
+  // Revises immutable draft items without writing a load. Its own limit is two calls;
+  // no graph write lock is acquired. Invalid JSON is INVALID_ARGUMENT, capacity is
+  // RESOURCE_EXHAUSTED, and shutdown or a graph that failed in a way a retry may clear (a
+  // connection, a timeout, an error answer) is UNAVAILABLE: retry those. Edit, evidence,
+  // budget and invalid-load refusals are results. All calls are dry runs against the load;
+  // the caller alone persists a new version.
+  rpc Revise(ReviseRequest) returns (ReviseResponse);
+
+  // Creates a load, one write of an approved version into a graph named by `load`, and fills
+  // it from the tables through the version's mappings: a create pass, a resolve pass, then a
+  // sweep of the created entities. Every node and edge it writes carries `foundry_load`. The
+  // stream carries every event as it happens, then exactly one result, last; a load that runs
+  // always ends with a result.
+  //
+  // The errors come before any event. INVALID_ARGUMENT: `request_json` is not an
+  // IngestRequest (the message has the JSON error, such as an empty `load`), or it can't run
+  // (the message says why: a file path that resolves outside the server's files root, an
+  // ontology that doesn't compile, an empty `database`). ABORTED: another Ingest, Extract or
+  // DeleteLoad is writing to the same `database`. RESOURCE_EXHAUSTED: the server runs as many
+  // calls as it allows at once. UNAVAILABLE: the server is shutting down.
+  //
+  // Cancelling the call stops the load before its next chunk; a write in flight always
+  // finishes, and the result (`cancelled`) is still sent. The database stays busy (ABORTED)
+  // until then. A retry of the same request skips the chunks already stored.
+  rpc Ingest(IngestRequest) returns (stream IngestEvent);
+
+  // Extracts documents into a load Ingest created, resolving the names they state against
+  // the load's entities. Each document's model output is streamed as an `artifact` event
+  // before its commit; sending it back with a later request replays it with no model call.
+  // The errors, cancelling and retries are as for Ingest, cancelling stopping before the next
+  // document's commit or sweep page, and the errors of the request's models and key (see
+  // above).
+  rpc Extract(ExtractRequest) returns (stream ExtractEvent);
+
+  // Removes one load from a graph: its edges, then its nodes, `batch` per request, then its
+  // marker. Deleting the load's nodes also deletes every edge attached to them, edges the
+  // graph's own data attached included; nothing without the load's `foundry_load` is touched.
+  // The stream carries every event as it happens, then exactly one result, last.
+  //
+  // The errors come before any event. INVALID_ARGUMENT: `request_json` is not a
+  // DeleteLoadRequest (the message has the JSON error, such as an empty `load` or a `batch`
+  // of 0 or over 5,000), or an empty `database`. ABORTED, RESOURCE_EXHAUSTED and UNAVAILABLE
+  // are as for Ingest.
+  //
+  // Cancelling the call stops it between requests; the request in flight always finishes, and
+  // the result (`cancelled`) is still sent. The call is idempotent: a retry goes on from
+  // whatever is left, and a load already gone is `done` with nothing deleted.
+  rpc DeleteLoad(DeleteLoadRequest) returns (stream DeleteLoadEvent);
+
+  // People enrichment's Clues: the people a load of an approved version could look up. It
+  // reads the tables and runs only the create passes of the mappings that make the people its
+  // `[enrichments]` item enriches (and of the mappings they look up), as the load would,
+  // with no graph, and streams each person's clues and name as the load's identifier index
+  // holds them, so a profile found by them binds the person they name. The stream carries
+  // `clues_started`, the people in `clues` pages of at most 1,000, then exactly one of `done`
+  // (with counts), `no_enrichment`, `invalid_mappings` or `source_unavailable`, which ends it.
+  //
+  // The errors come before any event. INVALID_ARGUMENT: `request_json` is not a CluesRequest
+  // (the message has the JSON error), or it can't run (a file path that resolves outside the
+  // server's files root, a Postgres variable the server doesn't admit, an ontology that
+  // doesn't compile, a `max_request_bytes` too small for any chunk). RESOURCE_EXHAUSTED: the
+  // server runs as many calls as it allows at once. UNAVAILABLE: the server is shutting down,
+  // also after events when it stops a running call; retry it. ABORTED doesn't apply: Clues
+  // takes no write lock.
+  //
+  // Cancelling the call stops it before its next chunk of rows. It writes nothing, so a retry
+  // simply runs again.
+  rpc Clues(CluesRequest) returns (stream CluesEvent);
+
+  // Reads one load with its version's rules applied as they are read: an entity's derived
+  // facts, flags and live violations, a pattern's facts, why a fact holds, a page of stored
+  // violation records, the evidence for a fact, an entity or one of its properties (its rows,
+  // then documents' quotes of it), or a typed query's rows, counts or aggregates. It writes
+  // nothing. Each read has its own result, an answer or an error code (`budget`, `hub`,
+  // `too_broad`, `unknown_entity`, `invalid`); the result is at most 4 MiB.
+  //
+  // The errors come before any result. INVALID_ARGUMENT: `request_json` is not a ReadRequest
+  // (the message has the JSON error), or it can't run (no reads or more than 20, an empty
+  // `database`, an ontology that doesn't compile, a Helix URL that isn't one).
+  // FAILED_PRECONDITION: `load_unknown` (the graph holds no such load, or it is being
+  // deleted) or `load_mismatch` (the load was created with another version), as the message
+  // starts. RESOURCE_EXHAUSTED: the server runs as many reads as it allows at once.
+  // UNAVAILABLE: the graph failed, or the server is shutting down. Retry the last two.
+  //
+  // Cancelling the call stops the read: its evaluation and its graph requests.
+  rpc Read(ReadRequest) returns (ReadResponse);
+
+  // Answers one question over a load, read-only, through `helix` (a read-only proxy). The
+  // stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
+  // `finished`), then exactly one result, last; a question that runs always ends with a result
+  // (`answered`, `cannot_answer`, `budget_exhausted` or `failed`). A load the graph doesn't
+  // hold with the request's version ends `failed` with no model call.
+  //
+  // The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
+  // (the message has the JSON error), or it can't run (the message says why: an empty
+  // question, more than 5 earlier turns, an `as_of` that isn't a date, an ontology that
+  // doesn't compile, a `helix.url` that isn't one), or its models or key don't fit (see
+  // above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
+  // server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting
+  // down. ABORTED doesn't apply: Ask takes no write lock.
+  //
+  // Cancelling the call, or dropping the connection, stops the question before its next
+  // model call. A retry of the same request replays the model calls the server already
+  // recorded, at no cost, when it runs with a response store.
+  rpc Ask(AskRequest) returns (stream AskEvent);
+}
+
+message TurnRequest {
+  // The TurnRequest as JSON, exactly as `ontology-agent turn` reads it on stdin
+  // (`schema/turn_request.json`).
+  string request_json = 1;
+}
+
+message TurnEvent {
+  oneof kind {
+    // One event as JSON, exactly one NDJSON line of `ontology-agent turn`
+    // (`schema/event.json`). The first is `turn_started`, the last `turn_finished`.
+    string event_json = 1;
+    // The TurnResult as JSON, the CLI's last line (`schema/turn_result.json`). It follows
+    // the last event and ends the stream. Persist its `state` and send it with the next turn.
+    string result_json = 2;
+  }
+}
+
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  // The model fields of contract 3: each request names its models now.
+  reserved 4, 5, 7, 8, 10;
+  reserved "model", "effort", "extractor", "verifier", "ask_model";
+  // The version of the JSON contract, as in `schema/VERSION` and every `turn_started` event.
+  string contract_version = 1;
+  // The prompt's version, as approved bundles record it.
+  string prompt_version = 2;
+  // The hash of the tool definitions, as approved bundles record it.
+  string tools_version = 3;
+  // The server's build: its crate version and the revision it was built from.
+  string build = 6;
+  // The extraction prompt's version, which artifact keys include.
+  string extraction_prompt_version = 9;
+  // The provider kinds this build calls, as requests name them (`anthropic`, ...). The
+  // contract declares more; a request naming one of those is FAILED_PRECONDITION.
+  repeated string providers = 11;
+  // Whether the server calls private hosts and plain http (`--allow-private-model-hosts`): a
+  // local install only.
+  bool private_model_hosts = 12;
+}
+
+message IngestRequest {
+  // The IngestRequest as JSON (`schema/ingest_request.json`).
+  string request_json = 1;
+}
+
+message IngestEvent {
+  oneof kind {
+    // One event as JSON (`schema/ingest_event.json`). The first is `ingest_started`, the last
+    // `ingest_finished`.
+    string event_json = 1;
+    // The IngestResult as JSON (`schema/ingest_result.json`). It follows the last event and
+    // ends the stream.
+    string result_json = 2;
+  }
+}
+
+message ExtractRequest {
+  // The ExtractRequest as JSON (`schema/extract_request.json`).
+  string request_json = 1;
+}
+
+message ExtractEvent {
+  oneof kind {
+    // One event as JSON (`schema/extract_event.json`). The first is `extract_started`, the
+    // last `extract_finished`.
+    string event_json = 1;
+    // The ExtractResult as JSON (`schema/extract_result.json`). It follows the last event and
+    // ends the stream.
+    string result_json = 2;
+  }
+}
+
+message DeleteLoadRequest {
+  // The DeleteLoadRequest as JSON (`schema/delete_load_request.json`).
+  string request_json = 1;
+}
+
+message DeleteLoadEvent {
+  oneof kind {
+    // One event as JSON (`schema/delete_load_event.json`). The first is `delete_started`, the
+    // last `delete_finished`.
+    string event_json = 1;
+    // The DeleteLoadResult as JSON (`schema/delete_load_result.json`). It follows the last
+    // event and ends the stream.
+    string result_json = 2;
+  }
+}
+
+message CluesRequest {
+  // The CluesRequest as JSON (`schema/clues_request.json`).
+  string request_json = 1;
+}
+
+message CluesEvent {
+  // One event as JSON (`schema/clues_event.json`). The first is `clues_started`; the last is
+  // `done`, `no_enrichment`, `invalid_mappings` or `source_unavailable`, and ends the stream.
+  string event_json = 1;
+}
+
+message ReadRequest {
+  // The ReadRequest as JSON (`schema/read_request.json`).
+  string request_json = 1;
+}
+
+message ReadResponse {
+  // The ReadResult as JSON (`schema/read_result.json`).
+  string result_json = 1;
+}
+
+message AskRequest {
+  // The AskRequest as JSON (`schema/ask_request.json`).
+  string request_json = 1;
+}
+
+message AskEvent {
+  oneof kind {
+    // One event as JSON (`schema/ask_event.json`). The first is `started`, the last
+    // `finished`.
+    string event_json = 1;
+    // The AskResult as JSON (`schema/ask_result.json`). It follows the last event and ends
+    // the stream.
+    string result_json = 2;
+  }
+}
+
+message ReviseRequest {
+  // JSON conforming to schema/revise_request.json.
+  string request_json = 1;
+}
+
+message ReviseResponse {
+  // JSON conforming to schema/revise_result.json.
+  string result_json = 1;
+}
+
+message TitleRequest {
+  // The TitleRequest as JSON (`schema/title_request.json`).
+  string request_json = 1;
+}
+
+message TitleResponse {
+  // The TitleResult as JSON (`schema/title_result.json`).
+  string result_json = 1;
+}
+
+message ProbeRequest {
+  // The ProbeRequest as JSON (`schema/probe_request.json`).
+  string request_json = 1;
+}
+
+message ProbeResponse {
+  // The ProbeResult as JSON (`schema/probe_result.json`).
+  string result_json = 1;
+}

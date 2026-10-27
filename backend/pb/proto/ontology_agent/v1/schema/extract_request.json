@@ -1,0 +1,698 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExtractRequest",
+  "description": "A request to extract documents into a load Ingest created.",
+  "type": "object",
+  "properties": {
+    "adjudication": {
+      "description": "Optional model-selected linking. `adjudication.auto` defaults to false.",
+      "$ref": "#/$defs/Adjudication",
+      "default": {
+        "auto": false
+      }
+    },
+    "database": {
+      "description": "The graph written to; one request at a time writes to it.",
+      "type": "string"
+    },
+    "decisions": {
+      "description": "Settled review decisions snapshotted for this load: at most 10,000, never truncated.\nTwo of one identity, a resolve decision without a document or a normalized name, or a\ndecision giving one of `decision_id` and `decided_at` without the other, refuse the\nrequest; one that no longer fits `ontology_toml` is counted (`totals.stale_decisions`)\nand left out, except a resolve decision of a type it has, whose name is reviewed again\nrather than matched another way. A value a property decision overwrites keeps the\ndecision's `decision_id` and `decided_at`, so the load tells when it was decided.",
+      "$ref": "#/$defs/Decisions",
+      "default": []
+    },
+    "documents": {
+      "description": "The documents, extracted up to `limits.documents_in_flight` at once and committed one\nat a time.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExtractDocument"
+      }
+    },
+    "dry_run": {
+      "description": "Read the store but write nothing.",
+      "type": "boolean",
+      "default": false
+    },
+    "helix": {
+      "description": "Where the graph is written.",
+      "$ref": "#/$defs/HelixTarget"
+    },
+    "limits": {
+      "description": "Hard caps on the run.",
+      "$ref": "#/$defs/ExtractLimits"
+    },
+    "load": {
+      "description": "The load written to, the backend's current one. Ingest must have created it with\n`ontology_version`, and it must not be being deleted; otherwise nothing is written\n(`load_unknown`, `load_mismatch`).",
+      "$ref": "#/$defs/LoadId"
+    },
+    "mappings_toml": {
+      "description": "The approved `mappings.toml`. Its `[extractions]` routes give each document set's\nscope: what its documents may name, create, fill and link. A document of a set no route\nreads is stored with its sections, unread (`out_of_scope`).",
+      "type": "string"
+    },
+    "models": {
+      "description": "The models that extract and verify. The endpoint's API key travels in the call's\nmetadata, never here.",
+      "$ref": "#/$defs/ExtractModels"
+    },
+    "ontology_toml": {
+      "description": "The approved `ontology.toml`.",
+      "type": "string"
+    },
+    "ontology_version": {
+      "description": "The version the graph records, in place of the one `ontology_toml` declares.",
+      "type": "string"
+    },
+    "request_id": {
+      "description": "The idempotency key: a retry sends the same one.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "database",
+    "load",
+    "ontology_toml",
+    "ontology_version",
+    "mappings_toml",
+    "helix",
+    "documents",
+    "limits",
+    "models"
+  ],
+  "$defs": {
+    "Adjudication": {
+      "description": "Optional `ExtractRequest.adjudication`; `auto` is off unless explicitly enabled.\nSuggestions are still recorded when it is off.",
+      "type": "object",
+      "properties": {
+        "auto": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "AwsRegion": {
+      "description": "An AWS region, such as `us-east-1` or `ap-southeast-2`: its endpoint's host is built from\nit, never typed.",
+      "type": "string"
+    },
+    "AzureEndpoint": {
+      "description": "An Azure OpenAI resource's endpoint: https on a host of `openai.azure.com`,\n`cognitiveservices.azure.com` or `services.ai.azure.com`, with no port, user, query or\nfragment, and no path but `/openai/v1`. It is kept as `{origin}/openai/v1`.",
+      "type": "string"
+    },
+    "CompatApi": {
+      "description": "The OpenAI API an OpenAI-compatible server speaks.",
+      "oneOf": [
+        {
+          "description": "`{base_url}/chat/completions`.",
+          "type": "string",
+          "const": "chat_completions"
+        },
+        {
+          "description": "`{base_url}/responses`.",
+          "type": "string",
+          "const": "responses"
+        }
+      ]
+    },
+    "Decision": {
+      "description": "One settled review: a link choice or a property value, never a mix of the two.\n`entity_key` is the stored key encoding for keyed types, the normalized name for named ones.\nEither may name the decision, by the backend's `decision_id` and when it was settled\n(`decided_at`): both or neither, as one alone is refused. The version of a value a property\ndecision overwrites keeps them, so a load built since still tells when it was decided.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "decided_at": {
+              "description": "When it was settled; given with `decision_id`.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "decision_id": {
+              "description": "The decision's id, as the backend keeps it; given with `decided_at`.",
+              "type": "string"
+            },
+            "doc_id": {
+              "type": "string"
+            },
+            "entity_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "resolve"
+            },
+            "norm_name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "dependentRequired": {
+            "decided_at": [
+              "decision_id"
+            ],
+            "decision_id": [
+              "decided_at"
+            ]
+          },
+          "required": [
+            "kind",
+            "type",
+            "doc_id",
+            "norm_name",
+            "entity_key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "decided_at": {
+              "description": "When it was settled; given with `decision_id`.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "decision_id": {
+              "description": "The decision's id, as the backend keeps it; given with `decided_at`.",
+              "type": "string"
+            },
+            "entity_key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "prop"
+            },
+            "prop": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/Value"
+            }
+          },
+          "additionalProperties": false,
+          "dependentRequired": {
+            "decided_at": [
+              "decision_id"
+            ],
+            "decision_id": [
+              "decided_at"
+            ]
+          },
+          "required": [
+            "kind",
+            "type",
+            "entity_key",
+            "prop",
+            "value"
+          ]
+        }
+      ]
+    },
+    "Decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Decision"
+      },
+      "maxItems": 10000
+    },
+    "Endpoint": {
+      "description": "The endpoint every model of a request is called on.",
+      "type": "object",
+      "properties": {
+        "call_timeout_secs": {
+          "description": "One JSON or text call's attempt, from connecting to its last byte, in seconds. Turns\nare bounded by the request's wall time and an idle watchdog instead.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1
+        },
+        "max_calls_in_flight": {
+          "description": "Calls in flight on this endpoint at once, across every request, model and kind of call;\nnone for no endpoint-wide bound. A local server takes one or a few.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "provider": {
+          "description": "Who serves the models, and where.",
+          "$ref": "#/$defs/Provider"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "call_timeout_secs"
+      ]
+    },
+    "ExtractDocument": {
+      "description": "One document to extract.",
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "description": "Artifacts of earlier runs, under the files root. Every model call one of them holds\nreplays, with no cost; only the others are asked, such as the section calls a route's\nnew property changes.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "doc_id": {
+          "description": "The backend's document id, which the graph records it by.",
+          "type": "string"
+        },
+        "media_type": {
+          "description": "How the text is written.",
+          "$ref": "#/$defs/MediaType"
+        },
+        "path": {
+          "description": "The text to read, under the files root.",
+          "type": "string"
+        },
+        "set": {
+          "description": "The document set it belongs to, whose routes give its scope.",
+          "$ref": "#/$defs/SetId"
+        },
+        "uri": {
+          "description": "Where the original is kept, recorded as the document's provenance; never read.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "doc_id",
+        "set",
+        "uri",
+        "path",
+        "media_type"
+      ]
+    },
+    "ExtractLimits": {
+      "description": "Hard caps on one Extract.",
+      "type": "object",
+      "properties": {
+        "documents_in_flight": {
+          "description": "Documents extracting at once.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "max_text_bytes": {
+          "description": "The largest document text read; a longer one fails `too_large`.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "max_usd": {
+          "description": "Spend, in US dollars, checked before every model call.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_usd",
+        "documents_in_flight",
+        "max_text_bytes"
+      ]
+    },
+    "ExtractModels": {
+      "description": "The models a document's extraction runs on.",
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "description": "Where both roles run.",
+          "$ref": "#/$defs/Endpoint"
+        },
+        "extract": {
+          "description": "Extracts entities and facts.",
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "verify": {
+          "description": "Judges whether the text states each fact.",
+          "$ref": "#/$defs/ModelSpec"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "extract",
+        "verify"
+      ]
+    },
+    "HelixTarget": {
+      "description": "Where the graph is written: the backend's proxy for one Helix database.",
+      "type": "object",
+      "properties": {
+        "max_request_bytes": {
+          "description": "The largest request body the proxy takes; a write past it is refused before it is sent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "timeout_secs": {
+          "description": "How long one request may take, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "token": {
+          "description": "The job's bearer token for the proxy.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The proxy's base URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token",
+        "max_request_bytes",
+        "timeout_secs"
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    },
+    "MediaType": {
+      "description": "Document formats that take the LLM path. Tables and code take deterministic routes and are\nnot documents.",
+      "oneOf": [
+        {
+          "description": "Markdown: sections break at headings too.",
+          "type": "string",
+          "const": "markdown"
+        },
+        {
+          "description": "Plain text.",
+          "type": "string",
+          "const": "plain_text"
+        }
+      ]
+    },
+    "ModelName": {
+      "description": "A model's name as its provider takes it: 1 to 200 characters, none of them whitespace or a\ncontrol character.",
+      "type": "string"
+    },
+    "ModelSpec": {
+      "description": "What a request runs a role on.",
+      "type": "object",
+      "properties": {
+        "context_tokens": {
+          "description": "The context window: Ollama's `num_ctx`, elsewhere a bound the prompt is checked\nagainst.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "description": "The most output one response may write, under the task's own ceiling.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 1
+        },
+        "name": {
+          "description": "The model, as the provider names it (an Azure deployment's name, a Bedrock model or\ninference profile id).",
+          "$ref": "#/$defs/ModelName"
+        },
+        "price": {
+          "description": "What its tokens cost.",
+          "$ref": "#/$defs/Price"
+        },
+        "reasoning": {
+          "description": "Send the provider's reasoning knob (Anthropic's effort, OpenAI's reasoning effort).",
+          "type": "boolean",
+          "default": true
+        },
+        "revision": {
+          "description": "The Ollama model's digest the request was tested on.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OllamaDigest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "price"
+      ]
+    },
+    "ModelUrl": {
+      "description": "The base URL of a server the request names: http or https, with a host, and with no user,\npassword, query or fragment; a path is kept, without a trailing `/`. Whether plain http or\na private address may be called is the server's to say ([`TurnModels::check`]).",
+      "type": "string"
+    },
+    "OllamaDigest": {
+      "description": "An Ollama model's digest: `sha256:` and 64 lowercase hex digits.",
+      "type": "string"
+    },
+    "Price": {
+      "description": "What a model's tokens cost.",
+      "oneOf": [
+        {
+          "description": "The model's row in Helix's price table.",
+          "type": "string",
+          "const": "table"
+        },
+        {
+          "description": "Another model's row of the same provider kind: the model an Azure deployment runs, or\nthe model behind a Bedrock inference profile.",
+          "type": "object",
+          "properties": {
+            "table_as": {
+              "$ref": "#/$defs/ModelName"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "table_as"
+          ]
+        },
+        {
+          "description": "These rates.",
+          "type": "object",
+          "properties": {
+            "rates": {
+              "$ref": "#/$defs/Rates"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rates"
+          ]
+        },
+        {
+          "description": "Nothing: a local or self-hosted model.",
+          "type": "string",
+          "const": "free"
+        }
+      ]
+    },
+    "Provider": {
+      "description": "Who serves a request's models, and where. Anthropic, OpenAI, Azure OpenAI and Bedrock need\nan API key; an Ollama server takes none; an OpenAI-compatible server may.",
+      "oneOf": [
+        {
+          "description": "Anthropic's API, `https://api.anthropic.com`.",
+          "type": "string",
+          "const": "anthropic"
+        },
+        {
+          "description": "OpenAI's API, `https://api.openai.com/v1`.",
+          "type": "string",
+          "const": "openai"
+        },
+        {
+          "description": "An Azure OpenAI resource; each model is a deployment's name.",
+          "type": "object",
+          "properties": {
+            "azure_openai": {
+              "type": "object",
+              "properties": {
+                "endpoint": {
+                  "description": "The resource's endpoint.",
+                  "$ref": "#/$defs/AzureEndpoint"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "endpoint"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "azure_openai"
+          ]
+        },
+        {
+          "description": "Amazon Bedrock's runtime in a region, with a Bedrock API key.",
+          "type": "object",
+          "properties": {
+            "bedrock": {
+              "type": "object",
+              "properties": {
+                "fips": {
+                  "description": "The region's FIPS endpoint.",
+                  "type": "boolean",
+                  "default": false
+                },
+                "region": {
+                  "description": "The AWS region.",
+                  "$ref": "#/$defs/AwsRegion"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "region"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "bedrock"
+          ]
+        },
+        {
+          "description": "An Ollama server.",
+          "type": "object",
+          "properties": {
+            "ollama": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "description": "Where it listens, such as `http://127.0.0.1:11434`.",
+                  "$ref": "#/$defs/ModelUrl"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "base_url"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ollama"
+          ]
+        },
+        {
+          "description": "A server speaking an OpenAI API.",
+          "type": "object",
+          "properties": {
+            "openai_compatible": {
+              "type": "object",
+              "properties": {
+                "api": {
+                  "description": "Which API it speaks.",
+                  "$ref": "#/$defs/CompatApi"
+                },
+                "base_url": {
+                  "description": "Its base URL, the version path included, such as `https://llm.example.com/v1`.",
+                  "$ref": "#/$defs/ModelUrl"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "base_url",
+                "api"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "openai_compatible"
+          ]
+        }
+      ]
+    },
+    "Rates": {
+      "description": "Per-token rates, in nano-dollars ($1 per million tokens is 1,000).",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input read from the provider's prompt cache; the input rate when none.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input written to the provider's prompt cache; the input rate when none.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output, reasoning included.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "output"
+      ]
+    },
+    "SetId": {
+      "description": "The id of a document set, such as `set_01JDX4K2`: 1 to 64 ASCII letters, digits, `_` or `-`.",
+      "type": "string",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "Value": {
+      "description": "A scalar property decision. Objects and arrays are refused at the contract boundary.",
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CluesEvent",
+  "description": "One event of a Clues stream: `clues_started`, then the people in `clues` pages, then\nexactly one of `done`, `no_enrichment`, `invalid_mappings` or `source_unavailable`, which\nends the stream.",
+  "oneOf": [
+    {
+      "description": "The call started.",
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "description": "The version of the contract it speaks, [`CONTRACT_VERSION`](crate::CONTRACT_VERSION).",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "clues_started"
+        }
+      },
+      "required": [
+        "event",
+        "contract_version"
+      ]
+    },
+    {
+      "description": "A page of at most 1,000 people, fewer once their JSON passes 1 MiB, in entity order.\nEvery entity of the item's type the tables create is on one page, with or without a\nclue.",
+      "type": "object",
+      "properties": {
+        "entities": {
+          "description": "The people.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CluedEntity"
+          }
+        },
+        "event": {
+          "type": "string",
+          "const": "clues"
+        }
+      },
+      "required": [
+        "event",
+        "entities"
+      ]
+    },
+    {
+      "description": "Every person was sent.",
+      "type": "object",
+      "properties": {
+        "conflicting": {
+          "description": "People with a clue left out because it holds two values.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "entities": {
+          "description": "The people sent: every entity of the item's type the tables create.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "event": {
+          "type": "string",
+          "const": "done"
+        },
+        "no_clue": {
+          "description": "People left with no clue to look them up by.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "no_name": {
+          "description": "People without a name: none of the type's `names` props has a value.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "shared": {
+          "description": "People with a clue value left out because another entity holds it too.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "entities",
+        "no_clue",
+        "no_name",
+        "conflicting",
+        "shared"
+      ]
+    },
+    {
+      "description": "The mappings have no `[enrichments]` item: nobody is looked up.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "no_enrichment"
+        }
+      },
+      "required": [
+        "event"
+      ]
+    },
+    {
+      "description": "The mappings don't fit the ontology or the sources, as Ingest's `invalid_mappings`:\na retry fails the same way.",
+      "type": "object",
+      "properties": {
+        "errors": {
+          "description": "Every problem, each naming its mapping.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "event": {
+          "type": "string",
+          "const": "invalid_mappings"
+        }
+      },
+      "required": [
+        "event",
+        "errors"
+      ]
+    },
+    {
+      "description": "A source couldn't be read; a retry may succeed.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "source_unavailable"
+        },
+        "source": {
+          "description": "The source.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "source"
+      ]
+    }
+  ],
+  "$defs": {
+    "CluedEntity": {
+      "description": "One person a load could look up: the clues the load's identifier index holds for them, and\nthe name a profile found by them must give (as `clue_name`) to bind them.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "description": "The work email, normalized as an `email` identifier: what the profile's `clue_email`\nmust be. Absent when the person has none, shares it or has two.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entity": {
+          "description": "The entity, by type and key: `Person[sc_17]`.",
+          "type": "string"
+        },
+        "linkedin_url": {
+          "description": "The LinkedIn URL as the person's prop holds it, normalized as an `exact` identifier:\nwhat the profile's `clue_linkedin_url` must be. Absent as `email` is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The person's name as the load checks it: the first value each of the type's `names`\nprops was given, in `names` order, joined by spaces. A profile binds the person only\nwhen its `clue_name` is exactly this. Absent when none has a value.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entity"
+      ]
+    }
+  }
+}

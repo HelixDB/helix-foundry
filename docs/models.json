@@ -1,1 +1,0 @@
-{"local":{"model":"qwen3:4b","digest":"359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7"},"note":"Local model digest is checked during default-provider activation. Other selected models require structured-output compatibility tests."}

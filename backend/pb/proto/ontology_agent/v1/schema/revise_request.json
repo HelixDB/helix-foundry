@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Request",
+  "description": "Unary Revise input. All calls are dry runs against the load; only Foundry stores a version.",
+  "type": "object",
+  "properties": {
+    "definition": {
+      "description": "Parent definition; its draft items are authoritative.",
+      "$ref": "#/$defs/Definition"
+    },
+    "edits": {
+      "description": "One to 100 distinct edits, at most 1 MiB of TOML in total.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Edit"
+      }
+    },
+    "eval": {
+      "description": "Current servable load, if the worker has one.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Eval"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "definition",
+    "edits"
+  ],
+  "$defs": {
+    "Definition": {
+      "description": "The complete immutable definition, with serialized JSON strings as Foundry stores them.",
+      "type": "object",
+      "properties": {
+        "draft_json": {
+          "description": "DraftView JSON with its inner questions stored separately below.",
+          "type": "string"
+        },
+        "mappings_toml": {
+          "description": "Rendered mappings, checked against the draft items.",
+          "type": "string"
+        },
+        "ontology_toml": {
+          "description": "Rendered ontology, checked against the draft items.",
+          "type": "string"
+        },
+        "questions_json": {
+          "description": "JSON array of agent questions.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ontology_toml",
+        "mappings_toml",
+        "draft_json",
+        "questions_json"
+      ]
+    },
+    "Edit": {
+      "description": "A user edit. Unknown item strings reach policy and return `EditNotAllowed`.",
+      "oneOf": [
+        {
+          "description": "Add or replace one complete item snippet.",
+          "type": "object",
+          "properties": {
+            "put": {
+              "type": "object",
+              "properties": {
+                "item_id": {
+                  "description": "An extraction route, rule, constraint or the People enrichment item; an existing\ntype, with new identifiers or props the enrichment item fills; or the new link its\nwork history states.",
+                  "type": "string"
+                },
+                "toml": {
+                  "description": "Exactly this item's table.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "item_id",
+                "toml"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "put"
+          ]
+        },
+        {
+          "description": "Remove an existing extraction route, rule, constraint or People enrichment item.",
+          "type": "object",
+          "properties": {
+            "remove": {
+              "type": "object",
+              "properties": {
+                "item_id": {
+                  "description": "The extraction route, rule, constraint or People enrichment item to remove.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "item_id"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "remove"
+          ]
+        }
+      ]
+    },
+    "Eval": {
+      "description": "The current load, to measure the revision on, and its read-only proxy. Credentials never\nappear in Debug output.",
+      "type": "object",
+      "properties": {
+        "database": {
+          "description": "The graph read.",
+          "type": "string"
+        },
+        "helix": {
+          "description": "Where the graph is read: the backend's read-only proxy.",
+          "$ref": "#/$defs/HelixTarget"
+        },
+        "load": {
+          "description": "The load read: the id of the job that created it.",
+          "$ref": "#/$defs/LoadId"
+        },
+        "mappings_toml": {
+          "description": "The `mappings.toml` of the load's version: the targets and work history link of its\n`[enrichments]` item, if it has one, are what the load holds values of only from the\nprofiles it applied, so a constraint over them isn't measured on it ([`load::unheld`]).\nOne that doesn't parse refuses the revision, as an `ontology_toml` that doesn't does.",
+          "type": "string"
+        },
+        "ontology_toml": {
+          "description": "The `ontology.toml` of the load's version: the revision is measured on the load only\nif it keeps its types, links and properties ([`comparable`]), and an item only if it\nreads none the version lacks ([`load::unheld`]).",
+          "type": "string"
+        },
+        "ontology_version": {
+          "description": "The version the load records; a load of another version, or one being deleted, is no\ncomparable load.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "database",
+        "load",
+        "ontology_version",
+        "ontology_toml",
+        "mappings_toml",
+        "helix"
+      ]
+    },
+    "HelixTarget": {
+      "description": "Where the graph is written: the backend's proxy for one Helix database.",
+      "type": "object",
+      "properties": {
+        "max_request_bytes": {
+          "description": "The largest request body the proxy takes; a write past it is refused before it is sent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "timeout_secs": {
+          "description": "How long one request may take, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "token": {
+          "description": "The job's bearer token for the proxy.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The proxy's base URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token",
+        "max_request_bytes",
+        "timeout_secs"
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    }
+  }
+}

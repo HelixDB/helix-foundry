@@ -1,0 +1,543 @@
+{
+  "args": {
+    "text": "centrality",
+    "idCandidate": 977,
+    "textIndexes": [{ "label": "Document", "property": "title" }],
+    "containsTargets": [
+      { "label": "Document", "keys": ["title"] },
+      { "label": "User", "keys": ["name", "email"] }
+    ],
+    "k": 5,
+    "shape": {
+      "keys": [
+        "name",
+        "active",
+        "address",
+        "age",
+        "archived",
+        "at",
+        "color",
+        "counts",
+        "created",
+        "description",
+        "domain",
+        "draft",
+        "event_id",
+        "founded",
+        "industry",
+        "joined",
+        "kind",
+        "languages",
+        "meta",
+        "metadata",
+        "model",
+        "position",
+        "profile",
+        "public",
+        "score",
+        "severity",
+        "slug",
+        "stars",
+        "tags",
+        "title",
+        "username",
+        "weight",
+        "word_count",
+        "email",
+        "published",
+        "rating"
+      ],
+      "heavyKeys": ["body", "embedding", "payload", "text"],
+      "heavyByLabel": {
+        "Chunk": ["embedding", "text"],
+        "Company": [],
+        "Document": ["body", "embedding"],
+        "Event": ["payload"],
+        "Project": [],
+        "Tag": [],
+        "User": []
+      },
+      "keysByLabel": {
+        "Chunk": ["model", "position"],
+        "Company": [
+          "address",
+          "domain",
+          "founded",
+          "industry",
+          "name",
+          "public",
+          "rating"
+        ],
+        "Document": ["draft", "metadata", "title", "word_count", "published"],
+        "Event": ["at", "counts", "event_id", "kind", "severity"],
+        "Project": [
+          "archived",
+          "created",
+          "description",
+          "languages",
+          "meta",
+          "name",
+          "slug",
+          "stars"
+        ],
+        "Tag": ["color", "name", "weight"],
+        "User": [
+          "active",
+          "age",
+          "joined",
+          "name",
+          "profile",
+          "score",
+          "tags",
+          "username",
+          "email"
+        ]
+      }
+    }
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_search",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "by_id",
+              "root": {
+                "values": {
+                  "input": {
+                    "where": {
+                      "input": { "nodes": { "reference": { "param": "id" } } },
+                      "predicate": { "is_null": { "property": "foundry_load" } }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "text_0",
+              "root": {
+                "values": {
+                  "input": {
+                    "text_search_nodes": {
+                      "label": "Document",
+                      "property": "title",
+                      "query_text": { "expr": { "param": "text" } },
+                      "k": { "literal": 5 }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "$score",
+                    "title",
+                    "draft",
+                    "metadata",
+                    "word_count",
+                    "published",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "username",
+                    "weight",
+                    "email",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "contains_0",
+              "root": {
+                "values": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "where": {
+                          "input": {
+                            "nodes_where": {
+                              "predicate": {
+                                "eq": {
+                                  "left": { "property": "$label" },
+                                  "right": {
+                                    "constant": { "string": "Document" }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "predicate": {
+                            "contains": {
+                              "value": { "property": "title" },
+                              "substring": { "param": "text" }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 5 }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "draft",
+                    "metadata",
+                    "title",
+                    "word_count",
+                    "published",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "username",
+                    "weight",
+                    "email",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "contains_1",
+              "root": {
+                "values": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "where": {
+                          "input": {
+                            "nodes_where": {
+                              "predicate": {
+                                "eq": {
+                                  "left": { "property": "$label" },
+                                  "right": { "constant": { "string": "User" } }
+                                }
+                              }
+                            }
+                          },
+                          "predicate": {
+                            "or": {
+                              "predicates": [
+                                {
+                                  "contains": {
+                                    "value": { "property": "name" },
+                                    "substring": { "param": "text" }
+                                  }
+                                },
+                                {
+                                  "contains": {
+                                    "value": { "property": "email" },
+                                    "substring": { "param": "text" }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 5 }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "active",
+                    "age",
+                    "joined",
+                    "name",
+                    "profile",
+                    "score",
+                    "tags",
+                    "username",
+                    "email",
+                    "address",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "public",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "title",
+                    "weight",
+                    "word_count",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["by_id", "text_0", "contains_0", "contains_1"]
+      }
+    },
+    "parameters": { "id": 977, "text": "centrality" },
+    "parameter_types": { "id": "i64", "text": "string" }
+  },
+  "status": 200,
+  "response": {
+    "by_id": [
+      {
+        "$id": 977,
+        "$label": "Document",
+        "draft": true,
+        "metadata": {
+          "checksum": "sha256:1067853555",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Planner centrality degree merge (0)",
+        "word_count": 1606
+      }
+    ],
+    "contains_0": [
+      {
+        "$id": 977,
+        "$label": "Document",
+        "draft": true,
+        "metadata": {
+          "checksum": "sha256:1067853555",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Planner centrality degree merge (0)",
+        "word_count": 1606
+      },
+      {
+        "$id": 978,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:3318844922",
+          "lang": "en",
+          "source": "upload"
+        },
+        "published": "2024-08-05T08:31:19.007Z",
+        "title": "Cosine centrality score (1)",
+        "word_count": 1687
+      },
+      {
+        "$id": 986,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:3980058757",
+          "lang": "en",
+          "source": "api"
+        },
+        "title": "Storage segment bloom traversal embedding shard centrality (9)",
+        "word_count": 1490
+      },
+      {
+        "$id": 989,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:8566647245",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "published": "2024-12-03T01:54:08.998Z",
+        "title": "Range filter node merge centrality equality node edge (12)",
+        "word_count": 1485
+      },
+      {
+        "$id": 997,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:6899268737",
+          "lang": "en",
+          "source": "api"
+        },
+        "published": "2023-11-24T04:26:48.360Z",
+        "title": "Path schema batch centrality search batch vector stream (20)",
+        "word_count": 497
+      }
+    ],
+    "contains_1": [],
+    "text_0": [
+      {
+        "$id": 1265,
+        "$label": "Document",
+        "$score": 3.13291335105896,
+        "draft": true,
+        "metadata": {
+          "checksum": "sha256:3783855701",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Centrality executor centrality replica schema (288)",
+        "word_count": 101
+      },
+      {
+        "$id": 978,
+        "$label": "Document",
+        "$score": 2.645923137664795,
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:3318844922",
+          "lang": "en",
+          "source": "upload"
+        },
+        "published": "2024-08-05T08:31:19.007Z",
+        "title": "Cosine centrality score (1)",
+        "word_count": 1687
+      },
+      {
+        "$id": 1164,
+        "$label": "Document",
+        "$score": 2.645923137664795,
+        "draft": true,
+        "metadata": {
+          "checksum": "sha256:4551572137",
+          "lang": "en",
+          "source": "upload"
+        },
+        "published": "2025-03-25T23:56:12.447Z",
+        "title": "Cache centrality search (187)",
+        "word_count": 549
+      },
+      {
+        "$id": 977,
+        "$label": "Document",
+        "$score": 2.4627110958099365,
+        "draft": true,
+        "metadata": {
+          "checksum": "sha256:1067853555",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Planner centrality degree merge (0)",
+        "word_count": 1606
+      },
+      {
+        "$id": 1140,
+        "$label": "Document",
+        "$score": 2.4627110958099365,
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:2406305765",
+          "lang": "en",
+          "source": "upload"
+        },
+        "published": "2025-02-24T14:57:46.536Z",
+        "title": "Posting memory distance centrality (163)",
+        "word_count": 1689
+      }
+    ]
+  }
+}

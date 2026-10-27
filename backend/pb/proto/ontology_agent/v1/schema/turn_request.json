@@ -1,0 +1,1242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TurnRequest",
+  "description": "One turn's request.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "description": "What the turn is for.",
+      "$ref": "#/$defs/Input"
+    },
+    "limits": {
+      "description": "Hard caps on the turn.",
+      "$ref": "#/$defs/Limits"
+    },
+    "models": {
+      "description": "The models the turn runs on: the draft's, and the extraction previews'. The endpoint's\nAPI key travels in the call's metadata, never here.",
+      "$ref": "#/$defs/TurnModels"
+    },
+    "request_id": {
+      "description": "The idempotency key: a retry sends the same one.",
+      "type": "string"
+    },
+    "session_id": {
+      "description": "The ontology project.",
+      "type": "string"
+    },
+    "sources": {
+      "description": "The sources, sent every turn and never stored in the state.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceDescriptor"
+      }
+    },
+    "state": {
+      "description": "The state from the last turn's result, sent back as it came; none for the first.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "session_id",
+    "request_id",
+    "sources",
+    "input",
+    "limits",
+    "models"
+  ],
+  "$defs": {
+    "Action": {
+      "description": "One thing the user did in review.",
+      "oneOf": [
+        {
+          "description": "A comment for the model, on an item or on the draft.",
+          "type": "object",
+          "properties": {
+            "comment": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "description": "The item, if it is about one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/ItemId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "text": {
+                  "description": "What the user said.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "comment"
+          ]
+        },
+        {
+          "description": "The user's own snippet for an item: it locks the item.",
+          "type": "object",
+          "properties": {
+            "edit": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "description": "The item.",
+                  "$ref": "#/$defs/ItemId"
+                },
+                "toml": {
+                  "description": "Its new snippet.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "item",
+                "toml"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "edit"
+          ]
+        },
+        {
+          "description": "Removes an item, so the agent can't add it back.",
+          "type": "object",
+          "properties": {
+            "remove": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "description": "The item.",
+                  "$ref": "#/$defs/ItemId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "item"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "remove"
+          ]
+        },
+        {
+          "description": "Approves an item: it locks the item.",
+          "type": "object",
+          "properties": {
+            "approve": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "description": "The item.",
+                  "$ref": "#/$defs/ItemId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "item"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "approve"
+          ]
+        },
+        {
+          "description": "Releases the lock or the removal on an item.",
+          "type": "object",
+          "properties": {
+            "unlock": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "description": "The item.",
+                  "$ref": "#/$defs/ItemId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "item"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "unlock"
+          ]
+        },
+        {
+          "description": "Answers an open question.",
+          "type": "object",
+          "properties": {
+            "answer": {
+              "type": "object",
+              "properties": {
+                "question_id": {
+                  "description": "The question.",
+                  "type": "string"
+                },
+                "text": {
+                  "description": "The answer.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "question_id",
+                "text"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "answer"
+          ]
+        }
+      ]
+    },
+    "AgentVersion": {
+      "description": "What built a bundle; see [`ApprovedBundle`]. A bundle Anthropic's Claude drafted, on\nHelix's key or a workspace's own, names no provider, as every bundle before contract 4.0.0\ndoes, so an engine of then still reads it.",
+      "type": "object",
+      "properties": {
+        "effort": {
+          "description": "The effort level.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model, as the request named it.",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "`AGENT_PROMPT_VERSION`.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "The kind of provider that served the model; none for Anthropic's own API.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tools": {
+          "description": "The tools' version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "prompt",
+        "model",
+        "effort",
+        "tools"
+      ]
+    },
+    "ApprovedBundle": {
+      "description": "An approved version: what drives `ingest-mapped` and extraction.",
+      "type": "object",
+      "properties": {
+        "agent_version": {
+          "description": "What built it.",
+          "$ref": "#/$defs/AgentVersion"
+        },
+        "impact": {
+          "description": "What approving it changes in loaded data.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Impact"
+          }
+        },
+        "mappings_toml": {
+          "description": "`mappings.toml`.",
+          "type": "string"
+        },
+        "ontology_toml": {
+          "description": "`ontology.toml`.",
+          "type": "string"
+        },
+        "parent": {
+          "description": "The version it was built from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_json": {
+          "description": "`review.json`: rationale, competency questions, gaps and what was left out.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "The SHA-256 of its content.",
+          "type": "string"
+        },
+        "version": {
+          "description": "`YYYY-MM-DD.N`, set by the harness.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sha256",
+        "ontology_toml",
+        "mappings_toml",
+        "review_json",
+        "impact",
+        "agent_version"
+      ]
+    },
+    "AwsRegion": {
+      "description": "An AWS region, such as `us-east-1` or `ap-southeast-2`: its endpoint's host is built from\nit, never typed.",
+      "type": "string"
+    },
+    "AzureEndpoint": {
+      "description": "An Azure OpenAI resource's endpoint: https on a host of `openai.azure.com`,\n`cognitiveservices.azure.com` or `services.ai.azure.com`, with no port, user, query or\nfragment, and no path but `/openai/v1`. It is kept as `{origin}/openai/v1`.",
+      "type": "string"
+    },
+    "CompatApi": {
+      "description": "The OpenAI API an OpenAI-compatible server speaks.",
+      "oneOf": [
+        {
+          "description": "`{base_url}/chat/completions`.",
+          "type": "string",
+          "const": "chat_completions"
+        },
+        {
+          "description": "`{base_url}/responses`.",
+          "type": "string",
+          "const": "responses"
+        }
+      ]
+    },
+    "DocumentFile": {
+      "description": "One staged document of a document set ([`SourceAccess::Documents`](crate::SourceAccess::Documents)).",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The backend's document id.",
+          "type": "string"
+        },
+        "media_type": {
+          "description": "How the text is written.",
+          "$ref": "#/$defs/MediaType"
+        },
+        "path": {
+          "description": "The staged text, under the files root.",
+          "type": "string"
+        },
+        "title": {
+          "description": "The document's title, as the backend shows it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "doc_id",
+        "path",
+        "media_type",
+        "title"
+      ]
+    },
+    "Effect": {
+      "description": "What an item's change needs done to loaded data.",
+      "oneOf": [
+        {
+          "description": "Mapped sources load again.",
+          "type": "string",
+          "const": "needs_remap"
+        },
+        {
+          "description": "Text is extracted again.",
+          "type": "string",
+          "const": "needs_reextraction"
+        },
+        {
+          "description": "Rules are compiled again.",
+          "type": "string",
+          "const": "needs_rule_build"
+        },
+        {
+          "description": "Stored data no longer fits.",
+          "type": "string",
+          "const": "breaking"
+        }
+      ]
+    },
+    "Endpoint": {
+      "description": "The endpoint every model of a request is called on.",
+      "type": "object",
+      "properties": {
+        "call_timeout_secs": {
+          "description": "One JSON or text call's attempt, from connecting to its last byte, in seconds. Turns\nare bounded by the request's wall time and an idle watchdog instead.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1
+        },
+        "max_calls_in_flight": {
+          "description": "Calls in flight on this endpoint at once, across every request, model and kind of call;\nnone for no endpoint-wide bound. A local server takes one or a few.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "provider": {
+          "description": "Who serves the models, and where.",
+          "$ref": "#/$defs/Provider"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "call_timeout_secs"
+      ]
+    },
+    "FileFormat": {
+      "description": "How a file is written.",
+      "oneOf": [
+        {
+          "description": "CSV.",
+          "type": "object",
+          "properties": {
+            "csv": {
+              "type": "object",
+              "properties": {
+                "delimiter": {
+                  "description": "The field delimiter, one ASCII character.",
+                  "type": "string",
+                  "maxLength": 1,
+                  "minLength": 1
+                },
+                "header": {
+                  "description": "Whether the first row names the fields.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "delimiter",
+                "header"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "csv"
+          ]
+        },
+        {
+          "description": "One JSON document.",
+          "type": "string",
+          "const": "json"
+        },
+        {
+          "description": "One JSON value per line.",
+          "type": "string",
+          "const": "jsonl"
+        },
+        {
+          "description": "Text for extraction.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "Impact": {
+      "description": "One item's effect on data already loaded; see [`ApprovedBundle`].",
+      "type": "object",
+      "properties": {
+        "effect": {
+          "description": "The effect.",
+          "$ref": "#/$defs/Effect"
+        },
+        "item": {
+          "description": "The item.",
+          "$ref": "#/$defs/ItemId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "effect"
+      ]
+    },
+    "Input": {
+      "description": "What a turn is for.",
+      "oneOf": [
+        {
+          "description": "A first build, or a new iteration from an approved bundle.",
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "object",
+              "properties": {
+                "base": {
+                  "description": "The approved bundle a new iteration starts from (boxed: it holds both files).",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/ApprovedBundle"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "goals": {
+                  "description": "What they want the graph to answer.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "workflow": {
+                  "description": "What the user does, in their words.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "workflow",
+                "goals"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "start"
+          ]
+        },
+        {
+          "description": "The user's review of a revision.",
+          "type": "object",
+          "properties": {
+            "feedback": {
+              "type": "object",
+              "properties": {
+                "actions": {
+                  "description": "What the user did.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Action"
+                  }
+                },
+                "draft_rev": {
+                  "description": "The revision reviewed.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "draft_rev",
+                "actions"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "feedback"
+          ]
+        },
+        {
+          "description": "Carry on after `BudgetExhausted`.",
+          "type": "object",
+          "properties": {
+            "continue": {
+              "type": "object",
+              "properties": {
+                "draft_rev": {
+                  "description": "The revision to carry on from.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "draft_rev"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "continue"
+          ]
+        },
+        {
+          "description": "Approve the revision: a harness gate with no model call.",
+          "type": "object",
+          "properties": {
+            "approve": {
+              "type": "object",
+              "properties": {
+                "draft_rev": {
+                  "description": "The revision approved.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "draft_rev"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "approve"
+          ]
+        }
+      ]
+    },
+    "ItemId": {
+      "description": "One item of a draft: a piece of `ontology.toml` or `mappings.toml`, or a competency question\nor gap of the review. Together the items cover both files, each piece in exactly one item:\n\n| Item | Owns |\n|---|---|\n| `type.T` | all of `[types.T]` |\n| `link.l` | `from`, `to`, `description`, `props` and `identity` of `[links.l]` |\n| `link.l.cardinality` | `cardinality = \"one\"` (the default `many` is no item) |\n| `link.l.required` | `required = true` |\n| `link.l.implies.t` | `t` in `implies` |\n| `link.l.inverse_of` | `inverse_of` |\n| `link.l.symmetric`, `link.l.transitive` | `symmetric = true`, `transitive = true` |\n| `link.l.chain.a.b` | the chain `[\"a\", \"b\"]` in `chain` |\n| `relation.r` | `description` of `[relations.r]`; its declarations are `relation.r.implies.t` and so on, as for links |\n| `rule.r`, `constraint.c` | all of `[rules.r]`, `[constraints.c]` |\n| `mapping.m` | all of `[mappings.m]`, its bindings included |\n| `extraction.name` | all of `[extractions.name]`, its document selector, types and links |\n| `enrichment.name` | all of `[enrichments.name]`: People enrichment of one type |\n| `cq.ID`, `gap.ID` | a competency question, a gap (review data, in no file) |\n\nThe file headers (`version`, and `ontology` in `mappings.toml`) belong to no item: the\nharness sets them.",
+      "type": "string"
+    },
+    "Limits": {
+      "description": "Hard caps on one turn.",
+      "type": "object",
+      "properties": {
+        "max_steps": {
+          "description": "Model calls.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_usd": {
+          "description": "Spend, in US dollars.",
+          "type": "number",
+          "format": "double"
+        },
+        "max_wall_secs": {
+          "description": "Wall time, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_usd",
+        "max_steps",
+        "max_wall_secs"
+      ]
+    },
+    "MediaType": {
+      "description": "Document formats that take the LLM path. Tables and code take deterministic routes and are\nnot documents.",
+      "oneOf": [
+        {
+          "description": "Markdown: sections break at headings too.",
+          "type": "string",
+          "const": "markdown"
+        },
+        {
+          "description": "Plain text.",
+          "type": "string",
+          "const": "plain_text"
+        }
+      ]
+    },
+    "ModelName": {
+      "description": "A model's name as its provider takes it: 1 to 200 characters, none of them whitespace or a\ncontrol character.",
+      "type": "string"
+    },
+    "ModelSpec": {
+      "description": "What a request runs a role on.",
+      "type": "object",
+      "properties": {
+        "context_tokens": {
+          "description": "The context window: Ollama's `num_ctx`, elsewhere a bound the prompt is checked\nagainst.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "description": "The most output one response may write, under the task's own ceiling.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 1
+        },
+        "name": {
+          "description": "The model, as the provider names it (an Azure deployment's name, a Bedrock model or\ninference profile id).",
+          "$ref": "#/$defs/ModelName"
+        },
+        "price": {
+          "description": "What its tokens cost.",
+          "$ref": "#/$defs/Price"
+        },
+        "reasoning": {
+          "description": "Send the provider's reasoning knob (Anthropic's effort, OpenAI's reasoning effort).",
+          "type": "boolean",
+          "default": true
+        },
+        "revision": {
+          "description": "The Ollama model's digest the request was tested on.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OllamaDigest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "price"
+      ]
+    },
+    "ModelUrl": {
+      "description": "The base URL of a server the request names: http or https, with a host, and with no user,\npassword, query or fragment; a path is kept, without a trailing `/`. Whether plain http or\na private address may be called is the server's to say ([`TurnModels::check`]).",
+      "type": "string"
+    },
+    "Observed": {
+      "description": "When a source's data was observed, as the caller pinned the source: the connector's sync\nits snapshot was taken at, or the upload of its file. The transactions of the source's rows\nrecord it ([`Origin::Rows`]), so a load tells when what its rows say held at the source.",
+      "oneOf": [
+        {
+          "description": "A connector's sync of the source's table.",
+          "type": "object",
+          "properties": {
+            "sync": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "description": "When the sync observed the table.",
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "change_seq": {
+                  "description": "The table's change sequence number the snapshot holds every change up to.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "sync_id": {
+                  "description": "The sync, by the backend's id.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "at",
+                "sync_id",
+                "change_seq"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "sync"
+          ]
+        },
+        {
+          "description": "The upload of the source's file.",
+          "type": "object",
+          "properties": {
+            "upload": {
+              "type": "object",
+              "properties": {
+                "document_id": {
+                  "description": "The uploaded document, by the backend's id.",
+                  "type": "string"
+                },
+                "uploaded_at": {
+                  "description": "When it was uploaded.",
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "document_id",
+                "uploaded_at"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "upload"
+          ]
+        }
+      ]
+    },
+    "OllamaDigest": {
+      "description": "An Ollama model's digest: `sha256:` and 64 lowercase hex digits.",
+      "type": "string"
+    },
+    "Price": {
+      "description": "What a model's tokens cost.",
+      "oneOf": [
+        {
+          "description": "The model's row in Helix's price table.",
+          "type": "string",
+          "const": "table"
+        },
+        {
+          "description": "Another model's row of the same provider kind: the model an Azure deployment runs, or\nthe model behind a Bedrock inference profile.",
+          "type": "object",
+          "properties": {
+            "table_as": {
+              "$ref": "#/$defs/ModelName"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "table_as"
+          ]
+        },
+        {
+          "description": "These rates.",
+          "type": "object",
+          "properties": {
+            "rates": {
+              "$ref": "#/$defs/Rates"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rates"
+          ]
+        },
+        {
+          "description": "Nothing: a local or self-hosted model.",
+          "type": "string",
+          "const": "free"
+        }
+      ]
+    },
+    "Provider": {
+      "description": "Who serves a request's models, and where. Anthropic, OpenAI, Azure OpenAI and Bedrock need\nan API key; an Ollama server takes none; an OpenAI-compatible server may.",
+      "oneOf": [
+        {
+          "description": "Anthropic's API, `https://api.anthropic.com`.",
+          "type": "string",
+          "const": "anthropic"
+        },
+        {
+          "description": "OpenAI's API, `https://api.openai.com/v1`.",
+          "type": "string",
+          "const": "openai"
+        },
+        {
+          "description": "An Azure OpenAI resource; each model is a deployment's name.",
+          "type": "object",
+          "properties": {
+            "azure_openai": {
+              "type": "object",
+              "properties": {
+                "endpoint": {
+                  "description": "The resource's endpoint.",
+                  "$ref": "#/$defs/AzureEndpoint"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "endpoint"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "azure_openai"
+          ]
+        },
+        {
+          "description": "Amazon Bedrock's runtime in a region, with a Bedrock API key.",
+          "type": "object",
+          "properties": {
+            "bedrock": {
+              "type": "object",
+              "properties": {
+                "fips": {
+                  "description": "The region's FIPS endpoint.",
+                  "type": "boolean",
+                  "default": false
+                },
+                "region": {
+                  "description": "The AWS region.",
+                  "$ref": "#/$defs/AwsRegion"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "region"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "bedrock"
+          ]
+        },
+        {
+          "description": "An Ollama server.",
+          "type": "object",
+          "properties": {
+            "ollama": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "description": "Where it listens, such as `http://127.0.0.1:11434`.",
+                  "$ref": "#/$defs/ModelUrl"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "base_url"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ollama"
+          ]
+        },
+        {
+          "description": "A server speaking an OpenAI API.",
+          "type": "object",
+          "properties": {
+            "openai_compatible": {
+              "type": "object",
+              "properties": {
+                "api": {
+                  "description": "Which API it speaks.",
+                  "$ref": "#/$defs/CompatApi"
+                },
+                "base_url": {
+                  "description": "Its base URL, the version path included, such as `https://llm.example.com/v1`.",
+                  "$ref": "#/$defs/ModelUrl"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "base_url",
+                "api"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "openai_compatible"
+          ]
+        }
+      ]
+    },
+    "ProviderKind": {
+      "description": "The kind of provider a workspace's models run on: which API they are reached through, and\nso which wire, catalog rows and failure copy apply. Every kind the contract declares is\nhere, whether or not this build can reach it yet.",
+      "oneOf": [
+        {
+          "description": "Anthropic's Messages API.",
+          "type": "string",
+          "const": "anthropic"
+        },
+        {
+          "description": "OpenAI's Responses API.",
+          "type": "string",
+          "const": "openai"
+        },
+        {
+          "description": "An Azure OpenAI resource's v1 API.",
+          "type": "string",
+          "const": "azure_openai"
+        },
+        {
+          "description": "Amazon Bedrock's Converse API.",
+          "type": "string",
+          "const": "bedrock"
+        },
+        {
+          "description": "An Ollama server's native API.",
+          "type": "string",
+          "const": "ollama"
+        },
+        {
+          "description": "A server speaking OpenAI's Chat Completions or Responses API.",
+          "type": "string",
+          "const": "openai_compatible"
+        }
+      ]
+    },
+    "Rates": {
+      "description": "Per-token rates, in nano-dollars ($1 per million tokens is 1,000).",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input read from the provider's prompt cache; the input rate when none.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input written to the provider's prompt cache; the input rate when none.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output, reasoning included.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "output"
+      ]
+    },
+    "Route": {
+      "description": "How a source's data enters the graph.",
+      "oneOf": [
+        {
+          "description": "Through mappings; its facts carry this confidence.",
+          "type": "object",
+          "properties": {
+            "mapping": {
+              "type": "object",
+              "properties": {
+                "trust": {
+                  "description": "How far to trust what its rows state; 1 unless the user says otherwise.",
+                  "type": "number",
+                  "format": "double",
+                  "default": 1.0,
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "mapping"
+          ]
+        },
+        {
+          "description": "Through text extraction.",
+          "type": "string",
+          "const": "extraction"
+        }
+      ]
+    },
+    "SourceAccess": {
+      "description": "How to read a source. A presigned URL for a file is not taken yet: the readers read local\npaths.",
+      "oneOf": [
+        {
+          "description": "A Postgres database, through a short-lived read-only role.",
+          "type": "object",
+          "properties": {
+            "postgres": {
+              "type": "object",
+              "properties": {
+                "dsn_env": {
+                  "description": "The environment variable that holds the connection string.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "dsn_env"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "postgres"
+          ]
+        },
+        {
+          "description": "A local file.",
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "object",
+              "properties": {
+                "format": {
+                  "description": "How it is written.",
+                  "$ref": "#/$defs/FileFormat"
+                },
+                "path": {
+                  "description": "Where it is; a relative path is taken from the base directory the caller gives.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "format"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "file"
+          ]
+        },
+        {
+          "description": "A document set: some of its documents, staged as local text files. Extraction reads the\nset's documents through `mappings.toml`'s `[extractions]` routes, not through the table\nreaders.",
+          "type": "object",
+          "properties": {
+            "documents": {
+              "type": "object",
+              "properties": {
+                "files": {
+                  "description": "The documents staged.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/DocumentFile"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "files"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "documents"
+          ]
+        }
+      ]
+    },
+    "SourceDescriptor": {
+      "description": "A source the turn may read; see [`TurnRequest`] for one in JSON.",
+      "type": "object",
+      "properties": {
+        "access": {
+          "description": "How to read it.",
+          "$ref": "#/$defs/SourceAccess"
+        },
+        "description": {
+          "description": "What it holds, in the user's words.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "display_name": {
+          "description": "What the user calls it; kept out of the artifacts by the leak guard.",
+          "type": "string"
+        },
+        "fingerprint": {
+          "description": "What identifies its data: a file's content hash, or the backend's snapshot id of a\ndatabase. Seeds and the tools' memo depend on it, so changed data is measured afresh.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The opaque id artifacts name it by.",
+          "type": "string"
+        },
+        "observed": {
+          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows; a turn reads nothing of it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Observed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "route": {
+          "description": "How its data enters the graph, as the backend decides.",
+          "$ref": "#/$defs/Route"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "display_name",
+        "route",
+        "access",
+        "fingerprint"
+      ]
+    },
+    "TurnModels": {
+      "description": "The models a turn runs on: one drafts, and scoped extraction previews extract and verify.",
+      "type": "object",
+      "properties": {
+        "draft": {
+          "description": "Drafts the ontology, with tools.",
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "endpoint": {
+          "description": "Where every role runs.",
+          "$ref": "#/$defs/Endpoint"
+        },
+        "extract": {
+          "description": "Extracts entities and facts from documents.",
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "verify": {
+          "description": "Judges whether the text states each extracted fact.",
+          "$ref": "#/$defs/ModelSpec"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "draft",
+        "extract",
+        "verify"
+      ]
+    }
+  }
+}

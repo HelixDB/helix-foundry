@@ -1,0 +1,12 @@
+# Added to local/compose.yaml for pnpm e2e:stack: a PostgreSQL database for
+# Foundry to connect to, on the stack's network as sample-db. Test-only.
+# Paths are relative to local/, the first file's directory:
+#   docker compose -f local/compose.yaml -f tests/stack/compose.yaml up -d
+services:
+  sample-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_USER: foundry
+      POSTGRES_PASSWORD: stack-only-sample-password
+    volumes: ["../tests/stack/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro"]
