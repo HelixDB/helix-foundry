@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskEvent",
+  "description": "One event of a question, as it happens: `started` first, `finished` last.",
+  "oneOf": [
+    {
+      "description": "The question started, with this model.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "started"
+        },
+        "model": {
+          "description": "The model that answers, as the request named it.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "The kind of provider that serves it.",
+          "$ref": "#/$defs/ProviderKind"
+        }
+      },
+      "required": [
+        "event",
+        "model",
+        "provider"
+      ]
+    },
+    {
+      "description": "The agent called a tool.",
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "description": "The call's id, which its result names.",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "tool_call"
+        },
+        "input": {
+          "description": "Its input as the model wrote it; a query is the typed query itself."
+        },
+        "tool": {
+          "description": "The tool.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "call_id",
+        "tool",
+        "input"
+      ]
+    },
+    {
+      "description": "A call's result.",
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "description": "The call's id.",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "tool_result"
+        },
+        "summary": {
+          "description": "What it found, in a line; never a data value.",
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {
+          "description": "Recorded as this evidence.",
+          "type": "object",
+          "properties": {
+            "evidence_id": {
+              "description": "The evidence id.",
+              "$ref": "#/$defs/EvidenceId"
+            }
+          },
+          "required": [
+            "evidence_id"
+          ]
+        },
+        {
+          "description": "Failed, or refused: the model was told why.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "Why.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "error"
+          ]
+        },
+        {
+          "description": "Ended the question (`answer` or `cannot_answer`); nothing to cite.",
+          "type": "object"
+        }
+      ],
+      "required": [
+        "event",
+        "call_id",
+        "summary"
+      ]
+    },
+    {
+      "description": "The question ended; the result follows.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "finished"
+        }
+      },
+      "required": [
+        "event"
+      ]
+    }
+  ],
+  "$defs": {
+    "EvidenceId": {
+      "description": "The id of a stored tool result, such as `e17`: every number the user sees cites one.\nIds order by number.",
+      "type": "string"
+    },
+    "ProviderKind": {
+      "description": "The kind of provider a workspace's models run on: which API they are reached through, and\nso which wire, catalog rows and failure copy apply. Every kind the contract declares is\nhere, whether or not this build can reach it yet.",
+      "oneOf": [
+        {
+          "description": "Anthropic's Messages API.",
+          "type": "string",
+          "const": "anthropic"
+        },
+        {
+          "description": "OpenAI's Responses API.",
+          "type": "string",
+          "const": "openai"
+        },
+        {
+          "description": "An Azure OpenAI resource's v1 API.",
+          "type": "string",
+          "const": "azure_openai"
+        },
+        {
+          "description": "Amazon Bedrock's Converse API.",
+          "type": "string",
+          "const": "bedrock"
+        },
+        {
+          "description": "An Ollama server's native API.",
+          "type": "string",
+          "const": "ollama"
+        },
+        {
+          "description": "A server speaking OpenAI's Chat Completions or Responses API.",
+          "type": "string",
+          "const": "openai_compatible"
+        }
+      ]
+    }
+  }
+}

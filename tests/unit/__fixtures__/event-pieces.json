@@ -1,0 +1,1636 @@
+{
+  "about": [
+    "The piece envelope's rules as one table, run by the backend's events package (envelope_test.go) and by the site's mock (tests/unit/event-sources-mock.test.ts, from a copy at tests/unit/__fixtures__/event-pieces.json). Change both with it.",
+    "Each case sends pieces to a source that holds schema (field to type), or schema_fields fields f1 to fN that are all numbers, or none, under limits. A refusal's piece is the place, from 1, of the piece it refuses, and 0 when it refuses the send as a whole.",
+    "A piece's data is data_json (its exact text), data_base64 (bytes that are not UTF-8) or data_size (the object {\"s\":\"aaa...\"} of exactly that many bytes). repeat stands for that many pieces with the id followed by 1, 2, and so on. occurred_at is RFC 3339 text, read before the other rules.",
+    "want is a refusal (refused: invalid or fields, and its message) or what the send stores: bytes (its batch object, uncompressed), new_fields by name, and the schema after it (or schema_fields, its size).",
+    "text_fields are the rules of a source's text field (Go's Schema.WithText, run by schema_test.go): each names text_field on a source that holds schema and, beside it, schema_fields fields f1 to fN that are all numbers, under limits' max_fields. want is a refusal (refused: invalid or fields, and its message) or the schema after it (or schema_fields, its size), which always holds text_field as a string."
+  ],
+  "limits": {
+    "max_pieces_per_send": 500,
+    "max_send_bytes": 1048576,
+    "max_piece_bytes": 262144,
+    "max_fields": 200
+  },
+  "cases": [
+    {
+      "name": "accepts ids of 0x21 and 0x7E",
+      "pieces": [
+        {
+          "id": "!",
+          "data_json": "{}"
+        },
+        {
+          "id": "~",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 130
+      }
+    },
+    {
+      "name": "accepts an id with a quote and a backslash",
+      "pieces": [
+        {
+          "id": "a\"b\\c",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 71
+      }
+    },
+    {
+      "name": "refuses an id with a space (0x20)",
+      "pieces": [
+        {
+          "id": "a b",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1: id must be 1 to 128 printable ASCII characters with no spaces"
+      }
+    },
+    {
+      "name": "refuses an id with DEL (0x7F)",
+      "pieces": [
+        {
+          "id": "a\u007f",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1: id must be 1 to 128 printable ASCII characters with no spaces"
+      }
+    },
+    {
+      "name": "refuses an id outside ASCII",
+      "pieces": [
+        {
+          "id": "café",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1: id must be 1 to 128 printable ASCII characters with no spaces"
+      }
+    },
+    {
+      "name": "refuses an empty id",
+      "pieces": [
+        {
+          "id": "",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1: id must be 1 to 128 printable ASCII characters with no spaces"
+      }
+    },
+    {
+      "name": "accepts an id of 128 bytes",
+      "pieces": [
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 192
+      }
+    },
+    {
+      "name": "refuses an id of 129 bytes",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{}"
+        },
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 2,
+        "message": "piece 2: id must be 1 to 128 printable ASCII characters with no spaces"
+      }
+    },
+    {
+      "name": "refuses an id repeated within a send",
+      "pieces": [
+        {
+          "id": "p1",
+          "data_json": "{}"
+        },
+        {
+          "id": "p2",
+          "data_json": "{}"
+        },
+        {
+          "id": "p1",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 3,
+        "message": "piece 3 repeats the id of piece 1"
+      }
+    },
+    {
+      "name": "accepts an RFC 3339 time with an offset and fractional seconds",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "2026-10-23T20:20:00.5+02:00",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 106
+      }
+    },
+    {
+      "name": "truncates a time to the microsecond",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "2026-10-23T18:20:00.123456789Z",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 111
+      }
+    },
+    {
+      "name": "accepts the year 1000",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "1000-01-01T00:00:00Z",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 104
+      }
+    },
+    {
+      "name": "accepts the year 9999",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "9999-12-31T23:59:59.999999Z",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 111
+      }
+    },
+    {
+      "name": "refuses the year 999",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "0999-12-31T23:59:59Z",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): occurred_at must be in the years 1000 to 9999 (UTC)"
+      }
+    },
+    {
+      "name": "refuses the year 10000",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "10000-01-01T00:00:00Z",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): occurred_at is not an RFC 3339 time"
+      }
+    },
+    {
+      "name": "refuses an offset that puts a time before the year 1000 in UTC",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "1000-01-01T00:30:00+01:00",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): occurred_at must be in the years 1000 to 9999 (UTC)"
+      }
+    },
+    {
+      "name": "refuses a time with no zone",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "2026-10-23T18:20:00",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): occurred_at is not an RFC 3339 time"
+      }
+    },
+    {
+      "name": "refuses a date alone",
+      "pieces": [
+        {
+          "id": "o-1",
+          "occurred_at": "2026-10-23",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): occurred_at is not an RFC 3339 time"
+      }
+    },
+    {
+      "name": "refuses data that is an array",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "[1]"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is not a JSON object"
+      }
+    },
+    {
+      "name": "refuses data that is a string",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "\"text\""
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is not a JSON object"
+      }
+    },
+    {
+      "name": "refuses data that is null",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "null"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is not a JSON object"
+      }
+    },
+    {
+      "name": "refuses invalid JSON",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is not valid JSON"
+      }
+    },
+    {
+      "name": "refuses two objects",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{}{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is not valid JSON"
+      }
+    },
+    {
+      "name": "refuses empty data",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": ""
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is not valid JSON"
+      }
+    },
+    {
+      "name": "refuses data that is not UTF-8",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_base64": "eyJhIjoi/yJ9"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is not valid UTF-8"
+      }
+    },
+    {
+      "name": "accepts data of 256 KiB compacted",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_size": 262144
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "s",
+            "type": "string"
+          }
+        ],
+        "schema": {
+          "s": "string"
+        },
+        "bytes": 262209
+      }
+    },
+    {
+      "name": "refuses data of 256 KiB and one byte compacted",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_size": 262145
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data is 262,145 bytes compacted; a piece holds at most 262,144"
+      }
+    },
+    {
+      "name": "measures data after compaction",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{ \"a\" : 1 ,\n\t\"b\" : [ 1 , 2 ] }"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "a",
+            "type": "number"
+          },
+          {
+            "name": "b",
+            "type": "array"
+          }
+        ],
+        "schema": {
+          "a": "number",
+          "b": "array"
+        },
+        "bytes": 82
+      }
+    },
+    {
+      "name": "refuses a top-level key twice",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":1,\"a\":2}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has the top-level key \"a\" twice"
+      }
+    },
+    {
+      "name": "refuses a top-level key twice through an escape",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":1,\"\\u0061\":2}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has the top-level key \"a\" twice"
+      }
+    },
+    {
+      "name": "accepts a nested key twice",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":{\"b\":1,\"b\":2}}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "a",
+            "type": "object"
+          }
+        ],
+        "schema": {
+          "a": "object"
+        },
+        "bytes": 84
+      }
+    },
+    {
+      "name": "refuses a top-level id",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"id\":\"x\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data may not have a top-level id; send it as the piece's id"
+      }
+    },
+    {
+      "name": "refuses a top-level received_at",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"received_at\":\"x\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data may not have a top-level received_at; Foundry sets it when the piece arrives"
+      }
+    },
+    {
+      "name": "refuses a top-level occurred_at",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"occurred_at\":\"x\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data may not have a top-level occurred_at; send it as the piece's occurred_at"
+      }
+    },
+    {
+      "name": "accepts the reserved names nested",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":{\"id\":1,\"occurred_at\":2}}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "a",
+            "type": "object"
+          }
+        ],
+        "schema": {
+          "a": "object"
+        },
+        "bytes": 95
+      }
+    },
+    {
+      "name": "accepts a key of 64 bytes",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\":1}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+            "type": "number"
+          }
+        ],
+        "schema": {
+          "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk": "number"
+        },
+        "bytes": 135
+      }
+    },
+    {
+      "name": "refuses a key of 65 bytes",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a top-level key of 65 bytes; a key is 1 to 64 bytes"
+      }
+    },
+    {
+      "name": "counts a key's bytes, not its characters",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"ééééééééééééééééééééééééééééééééé\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a top-level key of 66 bytes; a key is 1 to 64 bytes"
+      }
+    },
+    {
+      "name": "accepts a key of 64 bytes of two-byte characters",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"éééééééééééééééééééééééééééééééé\":1}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "éééééééééééééééééééééééééééééééé",
+            "type": "number"
+          }
+        ],
+        "schema": {
+          "éééééééééééééééééééééééééééééééé": "number"
+        },
+        "bytes": 135
+      }
+    },
+    {
+      "name": "refuses an empty key",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a top-level key of 0 bytes; a key is 1 to 64 bytes"
+      }
+    },
+    {
+      "name": "refuses a key with a C0 control character",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\\u0001\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a top-level key with a control character"
+      }
+    },
+    {
+      "name": "refuses a key with DEL",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\u007f\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a top-level key with a control character"
+      }
+    },
+    {
+      "name": "refuses a key with a C1 control character",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\\u0085\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a top-level key with a control character"
+      }
+    },
+    {
+      "name": "refuses a key with a backtick",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a`b\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a top-level key with a backtick"
+      }
+    },
+    {
+      "name": "accepts control characters and backticks in nested keys and values",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":{\"`\\u0001\":\"`\\u0001\"}}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "a",
+            "type": "object"
+          }
+        ],
+        "schema": {
+          "a": "object"
+        },
+        "bytes": 92
+      }
+    },
+    {
+      "name": "accepts nesting 64 deep",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "a",
+            "type": "object"
+          }
+        ],
+        "schema": {
+          "a": "object"
+        },
+        "bytes": 445
+      }
+    },
+    {
+      "name": "refuses nesting 65 deep",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data nests deeper than 64"
+      }
+    },
+    {
+      "name": "counts arrays in the depth",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "a",
+            "type": "array"
+          }
+        ],
+        "schema": {
+          "a": "array"
+        },
+        "bytes": 197
+      }
+    },
+    {
+      "name": "refuses arrays past the depth",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data nests deeper than 64"
+      }
+    },
+    {
+      "name": "refuses 1e400",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"n\":1e400}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data holds 1e400, which is not a finite number"
+      }
+    },
+    {
+      "name": "refuses -1e400 nested",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":[{\"n\":-1e400}]}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data holds -1e400, which is not a finite number"
+      }
+    },
+    {
+      "name": "accepts 1e-400, which is 0",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"n\":1e-400}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "n",
+            "type": "number"
+          }
+        ],
+        "schema": {
+          "n": "number"
+        },
+        "bytes": 77
+      }
+    },
+    {
+      "name": "accepts 2^63-1 and 2^64+1",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":9223372036854775807,\"b\":18446744073709551617}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "a",
+            "type": "number"
+          },
+          {
+            "name": "b",
+            "type": "number"
+          }
+        ],
+        "schema": {
+          "a": "number",
+          "b": "number"
+        },
+        "bytes": 115
+      }
+    },
+    {
+      "name": "refuses a lone high surrogate escape",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"s\":\"x\\uD800\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a \\uD800 escape with no pair"
+      }
+    },
+    {
+      "name": "refuses a lone low surrogate escape",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"s\":\"\\uDC00\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a \\uDC00 escape with no pair"
+      }
+    },
+    {
+      "name": "refuses a high surrogate escape before a letter",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"s\":\"\\uD800x\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a \\uD800 escape with no pair"
+      }
+    },
+    {
+      "name": "refuses two high surrogate escapes",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"s\":\"\\ud800\\ud800\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a \\ud800 escape with no pair"
+      }
+    },
+    {
+      "name": "refuses a high surrogate escape before another escape",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"s\":\"\\uD800\\n\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a \\uD800 escape with no pair"
+      }
+    },
+    {
+      "name": "refuses a lone surrogate escape in a key",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"\\uDBFF\":1}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): data has a \\uDBFF escape with no pair"
+      }
+    },
+    {
+      "name": "accepts a surrogate pair",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"s\":\"\\uD83D\\uDE00\",\"\\ud83d\\ude00\":1}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "s",
+            "type": "string"
+          },
+          {
+            "name": "😀",
+            "type": "number"
+          }
+        ],
+        "schema": {
+          "s": "string",
+          "😀": "number"
+        },
+        "bytes": 102
+      }
+    },
+    {
+      "name": "accepts an escaped backslash before u",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"s\":\"\\\\uD800\"}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "s",
+            "type": "string"
+          }
+        ],
+        "schema": {
+          "s": "string"
+        },
+        "bytes": 80
+      }
+    },
+    {
+      "name": "refuses a string where the source holds a number",
+      "schema": {
+        "amount": "number"
+      },
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"amount\":\"12\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): \"amount\" is a string; this source holds \"amount\" as a number"
+      }
+    },
+    {
+      "name": "accepts integers and decimals as one number type",
+      "schema": {
+        "amount": "number"
+      },
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"amount\":12}"
+        },
+        {
+          "id": "o-2",
+          "data_json": "{\"amount\":12.5}"
+        },
+        {
+          "id": "o-3",
+          "data_json": "{\"amount\":-1E3}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {
+          "amount": "number"
+        },
+        "bytes": 238
+      }
+    },
+    {
+      "name": "accepts null for a typed field",
+      "schema": {
+        "amount": "number"
+      },
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"amount\":null}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {
+          "amount": "number"
+        },
+        "bytes": 80
+      }
+    },
+    {
+      "name": "locks a field that was only null",
+      "schema": {
+        "note": "null"
+      },
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"note\":\"hi\"}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {
+          "note": "string"
+        },
+        "bytes": 78
+      }
+    },
+    {
+      "name": "keeps a new field null until a value types it",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"note\":null}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "note",
+            "type": "null"
+          }
+        ],
+        "schema": {
+          "note": "null"
+        },
+        "bytes": 78
+      }
+    },
+    {
+      "name": "types a new field by a later piece of the same send",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"flag\":null}"
+        },
+        {
+          "id": "o-2",
+          "data_json": "{\"flag\":true}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "flag",
+            "type": "boolean"
+          }
+        ],
+        "schema": {
+          "flag": "boolean"
+        },
+        "bytes": 156
+      }
+    },
+    {
+      "name": "refuses an array where the source holds an object",
+      "schema": {
+        "tags": "object"
+      },
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"tags\":[]}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 1,
+        "message": "piece 1 (id \"o-1\"): \"tags\" is an array; this source holds \"tags\" as an object"
+      }
+    },
+    {
+      "name": "refuses a type change within one send",
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"a\":1}"
+        },
+        {
+          "id": "o-2",
+          "data_json": "{\"a\":\"1\"}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 2,
+        "message": "piece 2 (id \"o-2\"): \"a\" is a string; this source holds \"a\" as a number"
+      }
+    },
+    {
+      "name": "refuses a boolean where a piece locked a null field",
+      "schema": {
+        "b": "null"
+      },
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"b\":{}}"
+        },
+        {
+          "id": "o-2",
+          "data_json": "{\"b\":false}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 2,
+        "message": "piece 2 (id \"o-2\"): \"b\" is a boolean; this source holds \"b\" as an object"
+      }
+    },
+    {
+      "name": "adds fields beside the ones held",
+      "schema": {
+        "a": "number"
+      },
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"c\":\"x\",\"b\":[1],\"a\":2}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "b",
+            "type": "array"
+          },
+          {
+            "name": "c",
+            "type": "string"
+          }
+        ],
+        "schema": {
+          "a": "number",
+          "b": "array",
+          "c": "string"
+        },
+        "bytes": 88
+      }
+    },
+    {
+      "name": "accepts the 200th field",
+      "schema_fields": 199,
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"x\":1}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "x",
+            "type": "number"
+          }
+        ],
+        "schema_fields": 200,
+        "bytes": 72
+      }
+    },
+    {
+      "name": "refuses the 201st field",
+      "schema_fields": 200,
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"x\":1}"
+        }
+      ],
+      "want": {
+        "refused": "fields",
+        "piece": 0,
+        "message": "this source has 200 fields and this send adds 1, past the 200 a source may have: send pieces without new fields, or make another source"
+      }
+    },
+    {
+      "name": "refuses two new fields past the cap",
+      "schema_fields": 199,
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"x\":1}"
+        },
+        {
+          "id": "o-2",
+          "data_json": "{\"y\":1}"
+        }
+      ],
+      "want": {
+        "refused": "fields",
+        "piece": 0,
+        "message": "this source has 199 fields and this send adds 2, past the 200 a source may have: send pieces without new fields, or make another source"
+      }
+    },
+    {
+      "name": "accepts pieces of held fields at the cap",
+      "schema_fields": 200,
+      "pieces": [
+        {
+          "id": "o-1",
+          "data_json": "{\"f1\":1,\"f200\":null}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema_fields": 200,
+        "bytes": 85
+      }
+    },
+    {
+      "name": "accepts 500 pieces",
+      "pieces": [
+        {
+          "id": "p",
+          "repeat": 500,
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [],
+        "schema": {},
+        "bytes": 33892
+      }
+    },
+    {
+      "name": "refuses 501 pieces",
+      "pieces": [
+        {
+          "id": "p",
+          "repeat": 501,
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 0,
+        "message": "a send holds 1 to 500 pieces; this one holds 501"
+      }
+    },
+    {
+      "name": "refuses a send of no pieces",
+      "pieces": [],
+      "want": {
+        "refused": "invalid",
+        "piece": 0,
+        "message": "a send holds 1 to 500 pieces; this one holds none"
+      }
+    },
+    {
+      "name": "accepts 1 MiB of data",
+      "pieces": [
+        {
+          "id": "p",
+          "repeat": 3,
+          "data_size": 262144
+        },
+        {
+          "id": "q",
+          "data_size": 262142
+        },
+        {
+          "id": "r",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "new_fields": [
+          {
+            "name": "s",
+            "type": "string"
+          }
+        ],
+        "schema": {
+          "s": "string"
+        },
+        "bytes": 1048894
+      }
+    },
+    {
+      "name": "refuses 1 MiB and one byte of data",
+      "pieces": [
+        {
+          "id": "p",
+          "repeat": 3,
+          "data_size": 262144
+        },
+        {
+          "id": "q",
+          "data_size": 262143
+        },
+        {
+          "id": "r",
+          "data_json": "{}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 0,
+        "message": "a send holds at most 1,048,576 bytes of data, compacted; this one holds 1,048,577"
+      }
+    },
+    {
+      "name": "refuses a bad piece of an otherwise good send whole",
+      "pieces": [
+        {
+          "id": "p",
+          "repeat": 10,
+          "data_json": "{\"a\":1}"
+        },
+        {
+          "id": "q",
+          "data_json": "{\"a\":1e999}"
+        }
+      ],
+      "want": {
+        "refused": "invalid",
+        "piece": 11,
+        "message": "piece 11 (id \"q\"): data holds 1e999, which is not a finite number"
+      }
+    }
+  ],
+  "text_fields": [
+    {
+      "name": "keeps a field held as a string as it is",
+      "schema": {
+        "n": "number",
+        "reply": "string"
+      },
+      "text_field": "reply",
+      "want": {
+        "schema": {
+          "n": "number",
+          "reply": "string"
+        }
+      }
+    },
+    {
+      "name": "locks a field that was only null as a string",
+      "schema": {
+        "reply": "null"
+      },
+      "text_field": "reply",
+      "want": {
+        "schema": {
+          "reply": "string"
+        }
+      }
+    },
+    {
+      "name": "adds a field no piece has carried as a string",
+      "schema": {
+        "n": "number"
+      },
+      "text_field": "reply",
+      "want": {
+        "schema": {
+          "n": "number",
+          "reply": "string"
+        }
+      }
+    },
+    {
+      "name": "adds a field to a source with no fields",
+      "text_field": "reply",
+      "want": {
+        "schema": {
+          "reply": "string"
+        }
+      }
+    },
+    {
+      "name": "refuses a number field",
+      "schema": {
+        "n": "number"
+      },
+      "text_field": "n",
+      "want": {
+        "refused": "invalid",
+        "message": "a text field holds strings; this source holds \"n\" as a number"
+      }
+    },
+    {
+      "name": "refuses a boolean field",
+      "schema": {
+        "b": "boolean"
+      },
+      "text_field": "b",
+      "want": {
+        "refused": "invalid",
+        "message": "a text field holds strings; this source holds \"b\" as a boolean"
+      }
+    },
+    {
+      "name": "refuses an object field",
+      "schema": {
+        "o": "object"
+      },
+      "text_field": "o",
+      "want": {
+        "refused": "invalid",
+        "message": "a text field holds strings; this source holds \"o\" as an object"
+      }
+    },
+    {
+      "name": "refuses an array field",
+      "schema": {
+        "a": "array"
+      },
+      "text_field": "a",
+      "want": {
+        "refused": "invalid",
+        "message": "a text field holds strings; this source holds \"a\" as an array"
+      }
+    },
+    {
+      "name": "refuses id",
+      "text_field": "id",
+      "want": {
+        "refused": "invalid",
+        "message": "id is a column of every piece, not a field of its data"
+      }
+    },
+    {
+      "name": "refuses received_at",
+      "text_field": "received_at",
+      "want": {
+        "refused": "invalid",
+        "message": "received_at is a column of every piece, not a field of its data"
+      }
+    },
+    {
+      "name": "refuses occurred_at",
+      "text_field": "occurred_at",
+      "want": {
+        "refused": "invalid",
+        "message": "occurred_at is a column of every piece, not a field of its data"
+      }
+    },
+    {
+      "name": "accepts a reserved name in another case",
+      "text_field": "ID",
+      "want": {
+        "schema": {
+          "ID": "string"
+        }
+      }
+    },
+    {
+      "name": "refuses an empty name",
+      "text_field": "",
+      "want": {
+        "refused": "invalid",
+        "message": "a field name is 1 to 64 bytes; this one is 0"
+      }
+    },
+    {
+      "name": "accepts a name of 64 bytes",
+      "text_field": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "want": {
+        "schema": {
+          "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk": "string"
+        }
+      }
+    },
+    {
+      "name": "refuses a name of 65 bytes",
+      "text_field": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "want": {
+        "refused": "invalid",
+        "message": "a field name is 1 to 64 bytes; this one is 65"
+      }
+    },
+    {
+      "name": "counts a name's bytes, not its characters",
+      "text_field": "ééééééééééééééééééééééééééééééééé",
+      "want": {
+        "refused": "invalid",
+        "message": "a field name is 1 to 64 bytes; this one is 66"
+      }
+    },
+    {
+      "name": "refuses a name with a C0 control character",
+      "text_field": "a\u0001",
+      "want": {
+        "refused": "invalid",
+        "message": "a field name has no control characters"
+      }
+    },
+    {
+      "name": "refuses a name with DEL",
+      "text_field": "a\u007f",
+      "want": {
+        "refused": "invalid",
+        "message": "a field name has no control characters"
+      }
+    },
+    {
+      "name": "refuses a name with a C1 control character",
+      "text_field": "a\u0085",
+      "want": {
+        "refused": "invalid",
+        "message": "a field name has no control characters"
+      }
+    },
+    {
+      "name": "refuses a name with a backtick",
+      "text_field": "a`b",
+      "want": {
+        "refused": "invalid",
+        "message": "a field name has no backticks"
+      }
+    },
+    {
+      "name": "accepts the 200th field",
+      "schema_fields": 199,
+      "text_field": "reply",
+      "want": {
+        "schema_fields": 200
+      }
+    },
+    {
+      "name": "refuses the 201st field",
+      "schema_fields": 200,
+      "text_field": "reply",
+      "want": {
+        "refused": "fields",
+        "message": "this source has 200 fields and a source may have 200: choose a text field its pieces already carry"
+      }
+    },
+    {
+      "name": "locks a null field at the cap",
+      "schema": {
+        "reply": "null"
+      },
+      "schema_fields": 199,
+      "text_field": "reply",
+      "want": {
+        "schema_fields": 200
+      }
+    },
+    {
+      "name": "keeps a string field past a lowered cap",
+      "schema": {
+        "reply": "string"
+      },
+      "schema_fields": 205,
+      "text_field": "reply",
+      "want": {
+        "schema_fields": 206
+      }
+    },
+    {
+      "name": "refuses a field of another type at the cap for its type, not the cap",
+      "schema_fields": 200,
+      "text_field": "f7",
+      "want": {
+        "refused": "invalid",
+        "message": "a text field holds strings; this source holds \"f7\" as a number"
+      }
+    }
+  ]
+}

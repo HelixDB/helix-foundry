@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package helix.foundryread.v1;
+
+option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundryread/v1;foundryreadv1";
+
+// FoundryRead reads Foundry ontology loads for the backend, which has
+// checked the caller may read the ontology's database, that the load is the
+// ontology's and that it is not being deleted. It runs beside an ontology
+// agent sidecar of the read profile: per call it binds the ontology's
+// database, lets the sidecar reach it through a read-only proxy, and calls
+// the sidecar's Read. It also writes generations' titles, on the
+// workspace's AI setting through the sidecar's Title, so the backend makes
+// no model call and holds no model key. Internal only: nothing outside the
+// cluster reaches it.
+service FoundryRead {
+  // Reads a load. RESOURCE_EXHAUSTED while the workspace has as many reads
+  // running as it may (4 on each replica); NOT_FOUND for a deleted ontology or
+  // database; FAILED_PRECONDITION for a paused database, or a load the
+  // database doesn't hold for this version; INVALID_ARGUMENT for reads the
+  // agent's contract refuses.
+  rpc Read(ReadRequest) returns (ReadResponse);
+  // Writes a generation's title from its goal, with the workspace's AI
+  // setting's title model (its document-reading model, without reasoning).
+  // Not counted against the workspace's reads. INVALID_ARGUMENT for a
+  // missing field; FAILED_PRECONDITION for a setting that can't run or a
+  // model that failed; UNAVAILABLE while the sidecar is.
+  rpc Title(TitleRequest) returns (TitleResponse);
+}
+
+message ReadRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string load_id      = 3;
+  // The load's version as the graph records it: foundry-v<number>.
+  string ontology_version = 4;
+  // The version's ontology.toml, whose rules the reads evaluate.
+  string ontology_toml = 5;
+  // A JSON array of 1 to 20 reads (the agent's read_request.json `reads`).
+  string reads_json = 6;
+}
+
+message ReadResponse {
+  // The agent's ReadResult (read_result.json).
+  string result_json = 1;
+}
+
+message TitleRequest {
+  string workspace_id  = 1;
+  // The generation it titles, the same on every attempt.
+  string generation_id = 2;
+  // The generation's goal, as its author wrote it.
+  string goal          = 3;
+}
+
+message TitleResponse {
+  // The model's text, as it ended its turn with it: the backend makes a
+  // title of its first line that is one.
+  string text = 1;
+}

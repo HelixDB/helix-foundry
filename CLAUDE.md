@@ -1,5 +1,5 @@
 # Claude Code instructions
 
-The runbook for setting up, verifying, operating and developing Helix Foundry is in AGENTS.md; follow it for every setup or code task in this repository.
+The guide to this repository is AGENTS.md; follow it for every code task.
 
 @AGENTS.md

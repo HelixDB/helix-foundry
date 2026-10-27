@@ -1,0 +1,431 @@
+{
+  "args": {
+    "dbId": 897,
+    "limit": 3,
+    "shape": {
+      "keys": [
+        "name",
+        "active",
+        "address",
+        "age",
+        "archived",
+        "at",
+        "color",
+        "counts",
+        "created",
+        "description",
+        "domain",
+        "draft",
+        "event_id",
+        "founded",
+        "industry",
+        "joined",
+        "kind",
+        "languages",
+        "meta",
+        "metadata",
+        "model",
+        "position",
+        "profile",
+        "public",
+        "score",
+        "severity",
+        "slug",
+        "stars",
+        "tags",
+        "title",
+        "username",
+        "weight",
+        "word_count",
+        "email",
+        "published",
+        "rating"
+      ],
+      "heavyKeys": ["body", "embedding", "payload", "text"],
+      "heavyByLabel": {
+        "Chunk": ["embedding", "text"],
+        "Company": [],
+        "Document": ["body", "embedding"],
+        "Event": ["payload"],
+        "Project": [],
+        "Tag": [],
+        "User": []
+      },
+      "keysByLabel": {
+        "Chunk": ["model", "position"],
+        "Company": [
+          "address",
+          "domain",
+          "founded",
+          "industry",
+          "name",
+          "public",
+          "rating"
+        ],
+        "Document": ["draft", "metadata", "title", "word_count", "published"],
+        "Event": ["at", "counts", "event_id", "kind", "severity"],
+        "Project": [
+          "archived",
+          "created",
+          "description",
+          "languages",
+          "meta",
+          "name",
+          "slug",
+          "stars"
+        ],
+        "Tag": ["color", "name", "weight"],
+        "User": [
+          "active",
+          "age",
+          "joined",
+          "name",
+          "profile",
+          "score",
+          "tags",
+          "username",
+          "email"
+        ]
+      }
+    }
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_neighborhood",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "center",
+              "root": { "nodes": { "reference": { "param": "node_id" } } }
+            }
+          },
+          {
+            "query": {
+              "name": "node",
+              "root": {
+                "values": {
+                  "input": { "nodes": { "reference": { "var": "center" } } },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "out_rows",
+              "root": {
+                "limit": {
+                  "input": {
+                    "out_e": {
+                      "input": { "nodes": { "reference": { "var": "center" } } }
+                    }
+                  },
+                  "count": { "literal": 4 }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "out_edges",
+              "root": {
+                "edge_properties": {
+                  "input": { "edges": { "reference": { "var": "out_rows" } } }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "out_nodes",
+              "root": {
+                "values": {
+                  "input": {
+                    "dedup": {
+                      "input": {
+                        "out_n": {
+                          "input": {
+                            "edges": { "reference": { "var": "out_rows" } }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "in_rows",
+              "root": {
+                "limit": {
+                  "input": {
+                    "in_e": {
+                      "input": { "nodes": { "reference": { "var": "center" } } }
+                    }
+                  },
+                  "count": { "literal": 4 }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "in_edges",
+              "root": {
+                "edge_properties": {
+                  "input": { "edges": { "reference": { "var": "in_rows" } } }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "in_nodes",
+              "root": {
+                "values": {
+                  "input": {
+                    "dedup": {
+                      "input": {
+                        "in_n": {
+                          "input": {
+                            "edges": { "reference": { "var": "in_rows" } }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["node", "out_edges", "out_nodes", "in_edges", "in_nodes"]
+      }
+    },
+    "parameters": { "node_id": 897 },
+    "parameter_types": { "node_id": "i64" }
+  },
+  "status": 200,
+  "response": {
+    "in_edges": [
+      {
+        "$from": 977,
+        "$id": 3503,
+        "$label": "TAGGED",
+        "$to": 897,
+        "weight": 0.25
+      },
+      {
+        "$from": 978,
+        "$id": 3506,
+        "$label": "TAGGED",
+        "$to": 897,
+        "weight": 0.39
+      },
+      {
+        "$from": 979,
+        "$id": 3509,
+        "$label": "TAGGED",
+        "$to": 897,
+        "weight": 0.94
+      },
+      {
+        "$from": 980,
+        "$id": 3512,
+        "$label": "TAGGED",
+        "$to": 897,
+        "weight": 0.87
+      }
+    ],
+    "in_nodes": [
+      {
+        "$id": 977,
+        "$label": "Document",
+        "draft": true,
+        "metadata": {
+          "checksum": "sha256:1067853555",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Planner centrality degree merge (0)",
+        "word_count": 1606
+      },
+      {
+        "$id": 978,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:3318844922",
+          "lang": "en",
+          "source": "upload"
+        },
+        "published": "2024-08-05T08:31:19.007Z",
+        "title": "Cosine centrality score (1)",
+        "word_count": 1687
+      },
+      {
+        "$id": 979,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:4584719704",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "published": "2024-09-29T22:52:32.431Z",
+        "title": "Vector memory embedding commit (2)",
+        "word_count": 1357
+      },
+      {
+        "$id": 980,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:7416909859",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "published": "2023-12-10T06:54:05.470Z",
+        "title": "Cycle schema cosine property path label posting search (3)",
+        "word_count": 1087
+      }
+    ],
+    "node": [
+      {
+        "$id": 897,
+        "$label": "Tag",
+        "color": "#dbd829",
+        "name": "general",
+        "weight": 1000
+      }
+    ],
+    "out_edges": [],
+    "out_nodes": []
+  }
+}

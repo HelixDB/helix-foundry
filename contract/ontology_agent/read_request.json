@@ -1,0 +1,955 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReadRequest",
+  "description": "A request to read a load with its version's rules applied.",
+  "type": "object",
+  "properties": {
+    "as_of": {
+      "description": "The day the read is as of, which value rules compare `today` with.",
+      "$ref": "#/$defs/AsOf"
+    },
+    "budget": {
+      "description": "What the request may spend.",
+      "$ref": "#/$defs/ReadLimits",
+      "default": {
+        "facts": 200000,
+        "instances": 2000000,
+        "per_list": 10000,
+        "rounds": 64,
+        "scan_entities": 20000,
+        "wall_ms": 5000
+      }
+    },
+    "database": {
+      "description": "The graph read.",
+      "type": "string"
+    },
+    "helix": {
+      "description": "Where the graph is read: the backend's read-only proxy.",
+      "$ref": "#/$defs/HelixTarget"
+    },
+    "load": {
+      "description": "The load read: the id of the job that created it.",
+      "$ref": "#/$defs/LoadId"
+    },
+    "ontology_toml": {
+      "description": "The load's version's `ontology.toml`, whose rules apply.",
+      "type": "string"
+    },
+    "ontology_version": {
+      "description": "The version the load records; a load of another version is refused.",
+      "type": "string"
+    },
+    "reads": {
+      "description": "The reads, at most [`MAX_READS`]; each has its own result, in order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ReadItem"
+      }
+    },
+    "request_id": {
+      "description": "The idempotency key; a read writes nothing, so a retry simply reads again.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "database",
+    "load",
+    "ontology_toml",
+    "ontology_version",
+    "helix",
+    "as_of",
+    "reads"
+  ],
+  "$defs": {
+    "Aggregate": {
+      "description": "An aggregate of a numeric property, over all of a position's entities or by groups.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "fn": {
+          "description": "The function.",
+          "$ref": "#/$defs/Function"
+        },
+        "group_by": {
+          "description": "Groups by a property (or `name`) at a position, greatest aggregate first.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GroupBy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "description": "The most groups, 1 to 100.",
+          "type": "integer",
+          "format": "uint",
+          "default": 50,
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property: an integer or float.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fn",
+        "at",
+        "prop"
+      ]
+    },
+    "AsOf": {
+      "description": "A calendar date, YYYY-MM-DD.",
+      "type": "string",
+      "format": "date"
+    },
+    "Column": {
+      "description": "One column of rows.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "prop": {
+          "description": "A property, or `name`; the entity itself if `null`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at"
+      ]
+    },
+    "Condition": {
+      "description": "A test of one property (or `name`, the entity's name) of an entity. A comparison never\nholds for an absent value, `!=` included; `is_null` does.",
+      "type": "object",
+      "properties": {
+        "op": {
+          "description": "How it is tested.",
+          "$ref": "#/$defs/Op"
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        },
+        "value": {
+          "description": "A value of the property's type: a string, number or boolean; for a date or datetime\nalso `today`, `today-30d` or `today+7d` (days from the read's `as_of`). None for\n`is_null` and `not_null`.",
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "prop",
+        "op"
+      ]
+    },
+    "Count": {
+      "description": "A count of distinct entities.",
+      "type": "object",
+      "properties": {
+        "distinct_at": {
+          "description": "The position; the last if `null`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Direction": {
+      "description": "Which way a step goes.",
+      "oneOf": [
+        {
+          "description": "From the subject to the object.",
+          "type": "string",
+          "const": "out"
+        },
+        {
+          "description": "From the object to the subject.",
+          "type": "string",
+          "const": "in"
+        }
+      ]
+    },
+    "EntityRef": {
+      "description": "An entity: its type and its identity within the type, as the load stores it (a named\ntype's normalized name, a keyed type's key encoding).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "`norm_name` or `entity_key`.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id"
+      ]
+    },
+    "EvidenceRead": {
+      "description": "The evidence stored for a fact or an entity.",
+      "anyOf": [
+        {
+          "description": "A fact's quotes, then its rows.",
+          "type": "object",
+          "properties": {
+            "fact": {
+              "description": "The fact.",
+              "$ref": "#/$defs/FactRef"
+            },
+            "limit": {
+              "description": "The most pieces, 1 to 100.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 10,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "fact"
+          ]
+        },
+        {
+          "description": "The rows that state an entity; with `prop`, the rows that set that property, then\nevery document quote stating a value of it, each with the value.",
+          "type": "object",
+          "properties": {
+            "entity": {
+              "description": "The entity.",
+              "$ref": "#/$defs/EntityRef"
+            },
+            "limit": {
+              "description": "The most pieces, 1 to 100.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 10,
+              "minimum": 0
+            },
+            "prop": {
+              "description": "The property asked about.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "entity"
+          ]
+        }
+      ]
+    },
+    "ExplainRead": {
+      "description": "Why `pred(args…)` holds.",
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Every argument.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntityRef"
+          }
+        },
+        "pred": {
+          "description": "As in [`PatternRead::pred`].",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pred",
+        "args"
+      ]
+    },
+    "FactRef": {
+      "description": "A fact by its link and ends.",
+      "type": "object",
+      "properties": {
+        "link": {
+          "description": "The link.",
+          "type": "string"
+        },
+        "object": {
+          "description": "The object.",
+          "$ref": "#/$defs/EntityRef"
+        },
+        "subject": {
+          "description": "The subject.",
+          "$ref": "#/$defs/EntityRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "link",
+        "subject",
+        "object"
+      ]
+    },
+    "Filter": {
+      "description": "A test of the entities at a position: `at` and exactly one test.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "description": "A flag (a one-place rule-defined predicate) holds for the entity.",
+          "type": "object",
+          "properties": {
+            "holds": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "holds"
+          ]
+        },
+        {
+          "description": "A flag doesn't hold for it.",
+          "type": "object",
+          "properties": {
+            "not_holds": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "not_holds"
+          ]
+        },
+        {
+          "description": "A stored violation record of this constraint (a `[constraints.<name>]` name,\n`<link>.cardinality` or `<link>.required`) names it.",
+          "type": "object",
+          "properties": {
+            "violates": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "violates"
+          ]
+        }
+      ],
+      "required": [
+        "at"
+      ],
+      "unevaluatedProperties": false
+    },
+    "Function": {
+      "description": "An aggregate's function.",
+      "oneOf": [
+        {
+          "description": "The total; 0 over no values.",
+          "type": "string",
+          "const": "sum"
+        },
+        {
+          "description": "The mean.",
+          "type": "string",
+          "const": "avg"
+        },
+        {
+          "description": "The least.",
+          "type": "string",
+          "const": "min"
+        },
+        {
+          "description": "The greatest.",
+          "type": "string",
+          "const": "max"
+        }
+      ]
+    },
+    "GroupBy": {
+      "description": "What an aggregate groups by.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "prop"
+      ]
+    },
+    "GroupCount": {
+      "description": "Counts by value, most first.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "limit": {
+          "description": "The most groups, 1 to 100.",
+          "type": "integer",
+          "format": "uint",
+          "default": 50,
+          "minimum": 0
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "prop"
+      ]
+    },
+    "HelixTarget": {
+      "description": "Where the graph is written: the backend's proxy for one Helix database.",
+      "type": "object",
+      "properties": {
+        "max_request_bytes": {
+          "description": "The largest request body the proxy takes; a write past it is refused before it is sent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "timeout_secs": {
+          "description": "How long one request may take, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "token": {
+          "description": "The job's bearer token for the proxy.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The proxy's base URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token",
+        "max_request_bytes",
+        "timeout_secs"
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    },
+    "Op": {
+      "description": "How a condition tests.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "=",
+            "!=",
+            "<",
+            "<=",
+            ">",
+            ">="
+          ]
+        },
+        {
+          "description": "Text containing the value, case-sensitive.",
+          "type": "string",
+          "const": "contains"
+        },
+        {
+          "description": "Text starting with the value, case-sensitive.",
+          "type": "string",
+          "const": "starts_with"
+        },
+        {
+          "description": "No value.",
+          "type": "string",
+          "const": "is_null"
+        },
+        {
+          "description": "A value.",
+          "type": "string",
+          "const": "not_null"
+        }
+      ]
+    },
+    "OrderBy": {
+      "description": "How rows are ordered. Absent values come first ascending and last descending.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The position, one the columns name.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "desc": {
+          "description": "Greatest first.",
+          "type": "boolean",
+          "default": false
+        },
+        "prop": {
+          "description": "The property, or `name`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "prop"
+      ]
+    },
+    "PatternRead": {
+      "description": "The facts of `pred` whose bound arguments are these entities.",
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "One per argument place; `null` is open. At least one is bound, except a unary\nderived flag: `[null]` reads the flag across its inferred types, pushed into the\nstore where possible, otherwise capped by scan_entities.",
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EntityRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "pred": {
+          "description": "`link:<l>`, `relation:<r>`, `derived:<d>` or `violation:<constraint>`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pred",
+        "args"
+      ]
+    },
+    "Query": {
+      "description": "A typed question over a load (see the [module](self)).",
+      "type": "object",
+      "properties": {
+        "filters": {
+          "description": "Tests of positions' entities against flags and constraints; at most 20.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "maxItems": 20
+        },
+        "return": {
+          "description": "What the query gives.",
+          "$ref": "#/$defs/Return"
+        },
+        "start": {
+          "description": "Position 0: where the path starts.",
+          "$ref": "#/$defs/Start"
+        },
+        "steps": {
+          "description": "Each step leads to the next position; at most 8.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "maxItems": 8
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "return"
+      ]
+    },
+    "ReadItem": {
+      "description": "One read.",
+      "oneOf": [
+        {
+          "description": "What rules give about an entity: derived facts, flags and live violations.",
+          "type": "object",
+          "properties": {
+            "entity": {
+              "$ref": "#/$defs/EntityRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "entity"
+          ]
+        },
+        {
+          "description": "The facts of a predicate with these arguments.",
+          "type": "object",
+          "properties": {
+            "pattern": {
+              "$ref": "#/$defs/PatternRead"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "pattern"
+          ]
+        },
+        {
+          "description": "Why a fact holds.",
+          "type": "object",
+          "properties": {
+            "explain": {
+              "$ref": "#/$defs/ExplainRead"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "explain"
+          ]
+        },
+        {
+          "description": "A page of stored violation records.",
+          "type": "object",
+          "properties": {
+            "violations": {
+              "$ref": "#/$defs/ViolationsRead"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "violations"
+          ]
+        },
+        {
+          "description": "The evidence stored for a fact or an entity.",
+          "type": "object",
+          "properties": {
+            "evidence": {
+              "$ref": "#/$defs/EvidenceRead"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "evidence"
+          ]
+        },
+        {
+          "description": "A typed query over the load.",
+          "type": "object",
+          "properties": {
+            "query": {
+              "$ref": "#/$defs/Query"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "query"
+          ]
+        }
+      ]
+    },
+    "ReadLimits": {
+      "description": "What one request may spend.",
+      "type": "object",
+      "properties": {
+        "facts": {
+          "description": "Stated facts read per read.",
+          "type": "integer",
+          "format": "uint",
+          "default": 200000,
+          "minimum": 1
+        },
+        "instances": {
+          "description": "Rule instances fired or weighed, over the whole request.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 2000000,
+          "minimum": 1
+        },
+        "per_list": {
+          "description": "Facts in any one adjacency list: a longer one (a hub) fails what needs it.",
+          "type": "integer",
+          "format": "uint",
+          "default": 10000,
+          "minimum": 1
+        },
+        "rounds": {
+          "description": "Rounds of reads from the graph per read.",
+          "type": "integer",
+          "format": "uint",
+          "default": 64,
+          "minimum": 1
+        },
+        "scan_entities": {
+          "description": "Matches a `query` read may read at any stage before it is `too_broad`.",
+          "type": "integer",
+          "format": "uint",
+          "default": 20000,
+          "minimum": 1
+        },
+        "wall_ms": {
+          "description": "Wall time for the whole request, in milliseconds, enforced inside evaluation.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 5000,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "Return": {
+      "description": "What a query gives.",
+      "oneOf": [
+        {
+          "description": "Rows, distinct over the positions the columns name.",
+          "type": "object",
+          "properties": {
+            "rows": {
+              "$ref": "#/$defs/Rows"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rows"
+          ]
+        },
+        {
+          "description": "How many distinct entities are at a position.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "$ref": "#/$defs/Count"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count"
+          ]
+        },
+        {
+          "description": "How many distinct entities at a position have each value of a property.",
+          "type": "object",
+          "properties": {
+            "group_count": {
+              "$ref": "#/$defs/GroupCount"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "group_count"
+          ]
+        },
+        {
+          "description": "A function of a numeric property over the distinct entities at a position.",
+          "type": "object",
+          "properties": {
+            "aggregate": {
+              "$ref": "#/$defs/Aggregate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "aggregate"
+          ]
+        }
+      ]
+    },
+    "Rows": {
+      "description": "Rows to return.",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "description": "Each column: the entity at a position, or one of its properties (or `name`); 1 to 20.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Column"
+          },
+          "maxItems": 20
+        },
+        "limit": {
+          "description": "The most rows, 1 to 200.",
+          "type": "integer",
+          "format": "uint",
+          "default": 50,
+          "minimum": 0
+        },
+        "order_by": {
+          "description": "The order: a property of a position the columns name, then the entities; by the\nentities alone if `null`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderBy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "columns"
+      ]
+    },
+    "Start": {
+      "description": "Where a query starts.",
+      "type": "object",
+      "properties": {
+        "ids": {
+          "description": "Only these entities, by their stored identity (a named type's normalized name, a\nkeyed type's key encoding), at most 1,000; every entity of the type if `null`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "description": "A text search of the type's names, over what rows and documents created alike: the\nquery starts from its best 100 matches by score, so it finds names that share words\nwith the text rather than testing them (use `where` with `contains` for that). At most\n256 bytes, with a word to search for; not with `ids`, and only for a type with names.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "type": {
+          "description": "The type.",
+          "type": "string"
+        },
+        "where": {
+          "description": "Tests every entity there must pass; at most 20.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Condition"
+          },
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ]
+    },
+    "Step": {
+      "description": "One step of a path.",
+      "type": "object",
+      "properties": {
+        "dir": {
+          "description": "`out` from its subject to its object, `in` back.",
+          "$ref": "#/$defs/Direction"
+        },
+        "to": {
+          "description": "The type where it lands.",
+          "type": "string"
+        },
+        "via": {
+          "description": "A link, a relation, or a rule-defined predicate of two places.",
+          "type": "string"
+        },
+        "where": {
+          "description": "Tests every entity there must pass; at most 20.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Condition"
+          },
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "via",
+        "dir",
+        "to"
+      ]
+    },
+    "ViolationsRead": {
+      "description": "A page of stored violation records, in key order.",
+      "type": "object",
+      "properties": {
+        "after": {
+          "description": "The `next` of the page before.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "constraint": {
+          "description": "Only this constraint's: a `[constraints.<name>]` name, `<link>.cardinality` or\n`<link>.required`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "entity": {
+          "description": "Only those naming this entity.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "description": "The most records, 1 to 1,000.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

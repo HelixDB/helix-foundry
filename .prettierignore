@@ -1,0 +1,15 @@
+.next
+.next-*
+node_modules
+pnpm-lock.yaml
+playwright-report
+test-results
+contract/**/*.json
+public
+# next build rewrites it in its own format
+tsconfig.json
+docs-media
+# The backend's render goldens, byte for byte
+tests/unit/__fixtures__/event-render
+# The Go module: gofmt formats it, and its testdata is byte for byte
+backend

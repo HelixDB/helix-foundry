@@ -1,0 +1,7 @@
+# Added to the stack by tests/stack/run.sh for FOUNDRY_STACK_OLLAMA=1:
+# Ollama's models in a volume of their own, which run.sh's down -v keeps, so
+# a model is downloaded once. Test-only.
+volumes:
+  ollama:
+    name: helix-foundry-stack-ollama
+    external: true

@@ -1,0 +1,1418 @@
+syntax = "proto3";
+
+package helix.foundry.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1;foundryv1";
+
+// FoundryTier is a workspace's Helix Foundry plan. Free is the absence of a
+// paid tier. Max grants everything Pro does.
+enum FoundryTier {
+  FOUNDRY_TIER_UNSPECIFIED = 0;
+  FOUNDRY_TIER_FREE        = 1;
+  FOUNDRY_TIER_PRO         = 2;
+  FOUNDRY_TIER_MAX         = 3;
+}
+
+// FoundryPlan is a workspace's Foundry plan as the billing system reports it now.
+message FoundryPlan {
+  FoundryTier tier = 1;
+  // A paid tier with an unpaid invoice.
+  bool past_due = 2;
+  // End of the paid period; unset on Free.
+  google.protobuf.Timestamp current_period_end = 3;
+  // The paid tier ends at current_period_end unless resumed.
+  bool cancel_at_period_end = 4;
+  // The catalog plan held: free, pro, max or any plan a deployment adds.
+  string code         = 5;
+  string display_name = 6;
+  FoundrySyncRules sync = 7;
+}
+
+// FoundrySyncRules is how often a plan syncs connectors and refreshes graphs.
+message FoundrySyncRules {
+  // The automatic sync interval a connector gets unless its owner picks a longer one.
+  int64 every_seconds = 1;
+  // The shortest interval an owner may pick.
+  int64 shortest_seconds = 2;
+  // Capture methods allowed: full, cursor, events, log.
+  repeated string capture = 3;
+  // How often a table that takes changes is read in full; 0 when every sync is full.
+  int64 reconcile_every_seconds = 4;
+  // The least time between two refreshes of one ontology.
+  int64 refresh_every_seconds = 5;
+}
+
+// FoundryCatalogPlan is one plan the deployment's catalog offers.
+message FoundryCatalogPlan {
+  string code         = 1;
+  string display_name = 2;
+  // False for Free and for a plan the deployment does not sell.
+  bool             sold  = 3;
+  repeated string  kinds = 4;
+  FoundrySyncRules sync  = 5;
+}
+
+// ConnectorKind is one type of Helix Foundry data source.
+message ConnectorKind {
+  // stripe, workos, posthog, github, linear, calcom, granola, postgres, mysql,
+  // s3 or events.
+  string kind         = 1;
+  string display_name = 2;
+  bool   requires_pro = 3;
+  // False when the workspace's plan does not include the kind.
+  bool available = 4;
+  // What a customer sets up for the kind; s3 only, where role access is configured.
+  oneof setup {
+    S3ConnectorSetup s3 = 5;
+  }
+  // The lowest catalog plan that includes the kind.
+  string plan_code = 6;
+}
+
+// S3ConnectorSetup is what a customer's role must trust.
+message S3ConnectorSetup {
+  // Helix's foundry-connector role.
+  string principal_arn = 1;
+  // This workspace's; the role's trust policy must require it.
+  string external_id = 2;
+}
+
+// S3ConnectorConfig reads Parquet, JSON, JSON Lines and CSV files from a bucket.
+message S3ConnectorConfig {
+  string bucket = 1;
+  // Folder; empty reads the whole bucket. Ends with "/" once prepared.
+  string prefix = 2;
+  // A test fills it in when empty; optional with an endpoint.
+  string region = 3;
+  oneof auth {
+    S3RoleAuth role = 4;
+    S3KeyAuth  keys = 5;
+  }
+  // Tables to sync; empty means every table.
+  repeated string tables = 6;
+}
+
+message S3RoleAuth {
+  string role_arn = 1;
+}
+
+message S3KeyAuth {
+  string access_key_id = 1;
+  // Write-only.
+  string secret_access_key = 2;
+  // HTTPS origin of an S3-compatible store; empty means AWS.
+  string endpoint = 3;
+}
+
+message StripeConnectorConfig {
+  // Secret or restricted key; write-only.
+  string api_key = 1;
+}
+
+message WorkOSConnectorConfig {
+  // Write-only.
+  string api_key = 1;
+}
+
+message PostHogConnectorConfig {
+  // Personal API key with Query Read and Project Read; write-only.
+  string api_key = 1;
+  // us (default), eu or custom.
+  string region = 2;
+  // HTTPS origin of a self-hosted PostHog; custom region only.
+  string host = 3;
+  // Filled in by a test when the key sees exactly one project.
+  string project_id = 4;
+  // Days of events to sync, 1 to 365; 0 means 30.
+  int32 event_days = 5;
+  // export reads PostHog batch exports from export_bucket; empty reads the query API.
+  string            mode          = 6;
+  S3ConnectorConfig export_bucket = 7;
+}
+
+message DatabaseConnectorConfig {
+  string host     = 1;
+  // 0 means the database's default port.
+  int32  port     = 2;
+  string database = 3;
+  string user     = 4;
+  // Write-only.
+  string password = 5;
+  // PostgreSQL only; empty means public.
+  string schema = 6;
+  // Tables to sync; empty means every table.
+  repeated string tables = 7;
+  bool   disable_tls     = 8;
+  // PEM bundle trusted besides the system roots.
+  string ca = 9;
+  // Table to the column its application updates on every write; a change
+  // sync reads only rows past the column's last value.
+  map<string, string> cursor_columns = 10;
+  // Change data capture from the database's log; plans with log capture only.
+  DatabaseCDCConfig cdc = 11;
+}
+
+message DatabaseCDCConfig {
+  bool enabled = 1;
+  // PostgreSQL: the publication the customer created; empty means helix_foundry.
+  string publication = 2;
+  // MySQL: the replica server id; 0 derives one from the connector.
+  uint32 server_id = 3;
+}
+
+message GitHubConnectorConfig {
+  // Fine-grained (github_pat_…) or classic (ghp_…) personal access token; write-only.
+  string token = 1;
+  // owner/name; empty syncs every repository the token reads, up to 100.
+  repeated string repos = 2;
+  // Reviews are read for pull requests updated in the last this many days, 1 to 365; 0 means 90.
+  int32 review_days = 3;
+}
+
+message LinearConnectorConfig {
+  // Personal API key (lin_api_…); write-only.
+  string api_key = 1;
+}
+
+message CalcomConnectorConfig {
+  // Cal.com API key (cal_live_… or cal_…); write-only.
+  string api_key = 1;
+}
+
+message GranolaConnectorConfig {
+  // Granola personal or workspace API key (grn_…); write-only.
+  string api_key = 1;
+  // Also keep each note's transcript as a document, in the connection's
+  // Transcripts set beside its Notes. Off by default.
+  bool transcripts = 2;
+}
+
+// EventsConnectorConfig is an event source: pieces of data, JSON objects
+// with an id, that people and their agents send to Foundry. It has no
+// credential.
+message EventsConnectorConfig {
+  // What each piece is, for people and Foundry's agent; at most 1000
+  // characters. Absent on update leaves it unchanged.
+  optional string description = 1;
+  // Output only: the top-level fields its pieces have carried, by name, each
+  // with the JSON type it holds. Ignored on create and update.
+  repeated EventSourceField fields = 2;
+  // The top-level field holding each piece's text: the body of the piece's
+  // document in the source's own set, which entity extraction reads. It
+  // names a field the pieces have carried as a string (or only as null), or
+  // one they have not carried yet, and locks it as a string: later pieces
+  // must comply. Absent on update leaves it unchanged; "" clears it, and the
+  // source then has no documents and no extraction. Changing it re-renders
+  // the newest pieces in one full sync.
+  optional string text_field = 3;
+}
+
+message EventSourceField {
+  string name = 1;
+  // string, number, boolean, object or array; null while it has only been null.
+  string type = 2;
+}
+
+// ConnectorConfig is a connector's settings. Write-only fields come back empty.
+message ConnectorConfig {
+  oneof kind {
+    StripeConnectorConfig   stripe   = 1;
+    WorkOSConnectorConfig   workos   = 2;
+    PostHogConnectorConfig  posthog  = 3;
+    DatabaseConnectorConfig postgres = 4;
+    DatabaseConnectorConfig mysql    = 5;
+    S3ConnectorConfig       s3       = 6;
+    GitHubConnectorConfig   github   = 7;
+    LinearConnectorConfig   linear   = 8;
+    CalcomConnectorConfig   calcom   = 9;
+    GranolaConnectorConfig  granola  = 10;
+    // 11 and 12 are gdrive's and gmail's (Google connectors).
+    EventsConnectorConfig   events   = 13;
+  }
+}
+
+message Connector {
+  string          id           = 1;
+  string          workspace_id = 2;
+  string          kind         = 3;
+  string          name         = 4;
+  ConnectorConfig config       = 5;
+  // Identifies the stored credential without revealing it, e.g. sk_live…4f2a.
+  string                    secret_hint = 6;
+  google.protobuf.Timestamp created_at  = 7;
+  google.protobuf.Timestamp updated_at  = 8;
+  // Tables the last syncs copied, each pointing at its newest snapshot.
+  repeated SyncedTable tables = 9;
+  // The newest sync, if any.
+  ConnectorSync last_sync = 10;
+  ConnectorSchedule schedule = 11;
+  // Set while the connector reads a database's log.
+  ConnectorCDCStatus cdc_status = 12;
+}
+
+// ConnectorSchedule is when a connector syncs by itself.
+message ConnectorSchedule {
+  // The owner's choice; 0 means the plan's interval, -1 manual only.
+  int64 every_seconds = 1;
+  // The interval in force, after the plan's limits; 0 when manual only.
+  int64                     effective_every_seconds = 2;
+  google.protobuf.Timestamp next_sync_at            = 3;
+  // Why automatic syncs stopped; empty while they run.
+  string paused_reason = 4;
+}
+
+message ConnectorCDCStatus {
+  // The PostgreSQL slot, or the MySQL binlog position.
+  string position = 1;
+  // Bytes of WAL the slot holds on the customer's database; PostgreSQL only.
+  int64                     retained_bytes = 2;
+  google.protobuf.Timestamp last_reset_at  = 3;
+  string                    last_reset     = 4;
+}
+
+enum ConnectorSyncStatus {
+  CONNECTOR_SYNC_STATUS_UNSPECIFIED = 0;
+  CONNECTOR_SYNC_STATUS_QUEUED      = 1;
+  CONNECTOR_SYNC_STATUS_RUNNING     = 2;
+  CONNECTOR_SYNC_STATUS_SUCCEEDED   = 3;
+  CONNECTOR_SYNC_STATUS_FAILED      = 4;
+}
+
+// ConnectorSync is one run copying a connector's tables into snapshots.
+message ConnectorSync {
+  string              id           = 1;
+  string              connector_id = 2;
+  ConnectorSyncStatus status       = 3;
+  int32               attempts     = 4;
+  // Why the last attempt failed, written for the customer.
+  string                    error           = 5;
+  int64                     rows_synced     = 6;
+  google.protobuf.Timestamp created_at      = 7;
+  google.protobuf.Timestamp started_at      = 8;
+  google.protobuf.Timestamp finished_at     = 9;
+  // When a queued sync runs next; later than now while a retry waits.
+  google.protobuf.Timestamp next_attempt_at = 10;
+  // manual, schedule or settings.
+  string origin = 11;
+  // full or changes.
+  string mode = 12;
+  // What it changed, per table.
+  repeated ConnectorTableChange tables = 13;
+}
+
+// ConnectorTableChange is one sync's change to one table.
+message ConnectorTableChange {
+  string table = 1;
+  // changes, replace or drop.
+  string kind    = 2;
+  int64  inserts = 3;
+  int64  updates = 4;
+  int64  deletes = 5;
+}
+
+// SyncedTable is one table's newest snapshot.
+message SyncedTable {
+  string                       name         = 1;
+  int64                        row_count    = 2;
+  google.protobuf.Timestamp    synced_at    = 3;
+  string                       sync_id      = 4;
+  repeated ConnectorColumn     columns      = 5;
+  repeated string              primary_key  = 6;
+  repeated ConnectorForeignKey foreign_keys = 7;
+  // How the table is read now: full, cursor, events or log.
+  string capture = 8;
+  // Its last full read.
+  google.protobuf.Timestamp reconciled_at = 9;
+}
+
+message ConnectorColumn {
+  string name     = 1;
+  string type     = 2;
+  bool   nullable = 3;
+}
+
+message ConnectorForeignKey {
+  string column            = 1;
+  string referenced_table  = 2;
+  string referenced_column = 3;
+}
+
+message ConnectorTable {
+  string name = 1;
+  // Empty for API sources until their first sync.
+  repeated ConnectorColumn     columns      = 2;
+  repeated string              primary_key  = 3;
+  repeated ConnectorForeignKey foreign_keys = 4;
+  // File sources only, from here on.
+  // parquet, json or csv.
+  string format     = 5;
+  int32  file_count = 6;
+  // Stored bytes of the table's files.
+  int64 bytes = 7;
+  // At most 5 rows, each one JSON object.
+  repeated string preview = 8;
+  // Why a sample could not be read; the sync fails until it is fixed.
+  string problem = 9;
+}
+
+// ConnectorDiscovery is what a source exposes to the connector's credential.
+message ConnectorDiscovery {
+  repeated ConnectorTable tables = 1;
+  // Objects the source has but the connector cannot read, as name or
+  // "name: reason".
+  repeated string unavailable = 2;
+  // File sources: the stored-byte limit across the tables one sync reads.
+  int64 max_bytes = 3;
+  // Settings that work but cost the customer, each worded with its fix.
+  repeated string warnings = 4;
+}
+
+// EventSourceCapacity is how full an event source's table is, against the
+// caps every table has. Output only.
+message EventSourceCapacity {
+  // Rows in its table plus pieces not synced yet (resent ids count again).
+  int64 rows     = 1;
+  int64 max_rows = 2;
+  // Uncompressed bytes of its table plus those of batches not synced yet.
+  int64 bytes     = 3;
+  int64 max_bytes = 4;
+}
+
+// FoundryEventPiece is one piece sent to an event source.
+message FoundryEventPiece {
+  // 1 to 128 bytes, each 0x21-0x7E; unique per source: a later piece with the
+  // same id replaces it.
+  string id = 1;
+  // When it happened; optional.
+  google.protobuf.Timestamp occurred_at = 2;
+  // The piece's data: one JSON object, as its exact text.
+  string data_json = 3;
+}
+
+// FoundryEventBatch is one send's pieces.
+message FoundryEventBatch {
+  string                    id         = 1;
+  int64                     seq        = 2;
+  int32                     pieces     = 3;
+  int64                     bytes      = 4;
+  google.protobuf.Timestamp first_at   = 5;
+  google.protobuf.Timestamp last_at    = 6;
+  google.protobuf.Timestamp created_at = 7;
+  // A sync has read it: its pieces are in the source's table.
+  bool synced = 8;
+}
+
+// FoundryEventSourceToken is a send-only credential of one event source.
+message FoundryEventSourceToken {
+  string id           = 1;
+  string connector_id = 2;
+  // hx_ev_ and the next 6 characters.
+  string                    prefix             = 3;
+  string                    created_by_user_id = 4;
+  google.protobuf.Timestamp created_at         = 5;
+  google.protobuf.Timestamp revoked_at         = 6;
+  google.protobuf.Timestamp last_used_at       = 7;
+}
+
+// FoundryEventSourceMode is how a generation reads an event source.
+enum FoundryEventSourceMode {
+  FOUNDRY_EVENT_SOURCE_MODE_UNSPECIFIED = 0;
+  // Its table, through mappings: pieces reach the graph when the ontology refreshes.
+  FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED = 1;
+  // Its pieces as text documents of its own set, extracted as they arrive.
+  FOUNDRY_EVENT_SOURCE_MODE_EXTRACTION = 2;
+}
+
+// FoundryEventSourcePick is one event source a generation drafts from, and
+// how its ontology reads it.
+message FoundryEventSourcePick {
+  string                 connector_id = 1;
+  FoundryEventSourceMode mode         = 2;
+}
+
+enum OntologySource {
+  ONTOLOGY_SOURCE_UNSPECIFIED = 0;
+  ONTOLOGY_SOURCE_MANUAL      = 1;
+  ONTOLOGY_SOURCE_GENERATED   = 2;
+}
+
+// OntologyFormat says what a version's definition holds.
+enum OntologyFormat {
+  ONTOLOGY_FORMAT_UNSPECIFIED = 0;
+  // Entities, relationships, rules and constraints.
+  ONTOLOGY_FORMAT_FOUNDRY_V1 = 1;
+  // The ontology agent's draft: format, status, ontology_toml, mappings_toml,
+  // draft, questions, summary and usage.
+  ONTOLOGY_FORMAT_AGENT_BUNDLE = 2;
+}
+
+// OntologyVersion is one immutable ontology of a workspace.
+message OntologyVersion {
+  string id           = 1;
+  string workspace_id = 2;
+  // 1, 2, 3 per ontology.
+  int32 version = 3;
+  // The definition, in the shape format names; unset in lists.
+  google.protobuf.Struct    definition         = 4;
+  OntologySource            source             = 5;
+  // The generation that wrote it, for generated versions.
+  string                    generation_id      = 6;
+  string                    created_by_user_id = 7;
+  google.protobuf.Timestamp created_at         = 8;
+  // Whether the ontology points at this version.
+  bool is_current = 9;
+  OntologyFormat format = 10;
+  // The Foundry ontology it is a version of.
+  string ontology_id = 11;
+  // The definition's draft items were sent without their evidence cards: a
+  // revised version's cards measure the ontology's load, and the caller
+  // can't query its database (database.query.read on its project).
+  bool evidence_withheld = 12;
+  // Its scope: the document sets its loads read. A load's documents are the
+  // uploaded documents of these sets; empty reads none. A generated
+  // version's are the sets its generation picked, a revised one's its
+  // parent's plus the sets its revised routes name; a hand-written
+  // Definition v1 reads none.
+  repeated string document_set_ids = 13;
+}
+
+enum OntologyGenerationStatus {
+  ONTOLOGY_GENERATION_STATUS_UNSPECIFIED = 0;
+  ONTOLOGY_GENERATION_STATUS_QUEUED      = 1;
+  ONTOLOGY_GENERATION_STATUS_RUNNING     = 2;
+  ONTOLOGY_GENERATION_STATUS_SUCCEEDED   = 3;
+  ONTOLOGY_GENERATION_STATUS_FAILED      = 4;
+}
+
+// One edit of a version's draft: put an item, or remove one.
+message OntologyEdit {
+  oneof edit {
+    OntologyPut    put    = 1;
+    OntologyRemove remove = 2;
+  }
+}
+
+// Puts an item's TOML snippet in the draft, replacing the item if the draft
+// has it: an extraction route, a rule, a constraint, or a type's identifiers.
+message OntologyPut {
+  // The item, such as rule.overdue or type.Customer; at most 256 bytes.
+  string item_id = 1;
+  // The item's whole TOML snippet. A revision's snippets add up to at most 1 MiB.
+  string toml = 2;
+}
+
+// Removes an item from the draft.
+message OntologyRemove {
+  string item_id = 1;
+}
+
+// What a revision generation revises, and what came of it.
+message OntologyRevision {
+  // The version it revises.
+  string parent_version_id = 1;
+  // A preview: it stores no version.
+  bool dry_run = 2;
+  // Neither until the revision ends, and neither in lists.
+  oneof result {
+    // The engine's result once it ended: status, findings and cards, without
+    // the definition, refusals included. Only GetOntologyGeneration has it.
+    string result_json = 3;
+    // True in place of result_json for a caller who can't query the
+    // ontology's database (database.query.read on its project): the result
+    // measures its load, so its cards, counts and findings are withheld.
+    bool result_withheld = 4;
+  }
+}
+
+// OntologyGeneration is one request to draft a version of an ontology.
+message OntologyGeneration {
+  string                   id           = 1;
+  string                   workspace_id = 2;
+  OntologyGenerationStatus status       = 3;
+  string                   goal         = 4;
+  // The tables it drafts from.
+  repeated OntologyGenerationTable tables = 5;
+  // The version that was current when it was requested; the draft extends it.
+  // Unset for a revision, whose parent is revision.parent_version_id.
+  string base_version_id = 6;
+  int32  attempts        = 7;
+  // Why the last attempt failed, written for the customer.
+  string error = 8;
+  // The draft it stored, once succeeded. It is not made current.
+  string                    result_version_id    = 9;
+  string                    model                = 10;
+  string                    requested_by_user_id = 11;
+  google.protobuf.Timestamp created_at           = 12;
+  google.protobuf.Timestamp started_at           = 13;
+  google.protobuf.Timestamp finished_at          = 14;
+  // When a queued generation runs next; later than now while a retry waits.
+  google.protobuf.Timestamp next_attempt_at = 15;
+  // The Foundry ontology it drafts a version of.
+  string ontology_id = 16;
+  // A one-line, plain-text title of the goal, at most 60 characters, for
+  // lists and headings; the goal holds the full text. Empty without a goal and
+  // for generations queued before titles.
+  string title = 17;
+  // The document sets the draft may route to extraction.
+  repeated string document_set_ids = 18;
+  // Set exactly for a revision of a version (ReviseOntologyVersion).
+  OntologyRevision revision = 19;
+  // The table files of its document sets it drafts from beside the tables:
+  // each is a table of its own, which mappings name by its document id. A
+  // revision's are its parent's.
+  repeated OntologyGenerationDocument documents = 20;
+}
+
+message OntologyGenerationTable {
+  string connector_id = 1;
+  string table        = 2;
+}
+
+// OntologyGenerationDocument is a table file a generation drafts from, and
+// the set it was in then.
+message OntologyGenerationDocument {
+  string id     = 1;
+  string set_id = 2;
+}
+
+// FoundryOntology is a workspace's ontology, bound to one Helix database: a
+// tenant of one of the workspace's projects. Statuses are the lowercase names
+// the Foundry contract fixes.
+message FoundryOntology {
+  string id   = 1;
+  string name = 2;
+  // project_id, tenant_id and database_name are empty for a caller who can't
+  // read the project's databases (clusters.read on the project).
+  string project_id = 3;
+  string tenant_id  = 4;
+  // The tenant's name.
+  string                    database_name      = 5;
+  optional string           current_version_id = 6;
+  google.protobuf.Timestamp created_at         = 7;
+  // Its newest load job (kind load); unset before the first.
+  FoundryOntologyLastLoad last_load = 8;
+  FoundryOntologyCounts   counts    = 9;
+  // The load reads go to and uploads are extracted into; unset before a load
+  // finished writing.
+  FoundryOntologyCurrentLoad current_load = 10;
+  // The job queued or running now, of any kind; unset when none is. The
+  // website polls while it is set.
+  FoundryOntologyActiveJob active_job = 11;
+  // Whether a changed table reloads the current version by itself.
+  bool auto_refresh = 12;
+  // When a refresh is owed from; unset when none is.
+  google.protobuf.Timestamp refresh_due_at = 13;
+  // Why an owed refresh waits: busy (a job is live); empty otherwise.
+  string refresh_waiting = 14;
+}
+
+message FoundryOntologyLastLoad {
+  string job_id = 1;
+  // queued, running, succeeded, budget_exhausted, failed or cancelled.
+  string                    status      = 2;
+  google.protobuf.Timestamp finished_at = 3;
+}
+
+message FoundryOntologyCurrentLoad {
+  string id = 1;
+  // The version it writes, as the graph records it: foundry-v<number>.
+  string                    version     = 2;
+  google.protobuf.Timestamp finished_at = 3;
+}
+
+message FoundryOntologyActiveJob {
+  // load, extract or delete.
+  string kind = 1;
+  // The load it writes or deletes.
+  string load_id = 2;
+  // provisioning, ingest, documents, finishing or deleting.
+  string                  phase    = 3;
+  FoundryGraphJobProgress progress = 4;
+}
+
+message FoundryOntologyCounts {
+  // The uploaded documents its reading version's scope holds: that of the
+  // current load's version, else of the current version; 0 with neither.
+  int32 documents = 1;
+}
+
+// FoundryDocument is one document of a workspace, in one of its document
+// sets: one a person uploaded, or the text of one row of a connector's table
+// (source), which the connector's syncs write into its set. Ontologies read
+// text/markdown, text/mdx (as Markdown, with its code blanked to spaces; it
+// is never compiled or run) and text/plain as text, extracted through
+// routes. Each text/csv,
+// text/tab-separated-values, application/json, application/x-ndjson and
+// application/vnd.apache.parquet document is read once, at upload, as a
+// table of its own, which a version's mappings name by the document's id; it
+// is never extracted. Each application/pdf document is read once, at
+// upload, to its text (read), and is extracted through routes as that text
+// once read; a scanned PDF has no text to read.
+message FoundryDocument {
+  string id   = 1;
+  string name = 2;
+  // text/markdown, text/mdx, text/plain, application/json, text/csv,
+  // text/tab-separated-values, application/x-ndjson,
+  // application/vnd.apache.parquet or application/pdf. A rename keeps it.
+  string media_type = 3;
+  int64  size_bytes = 4;
+  // Lowercase hex SHA-256 of the bytes.
+  string sha256 = 5;
+  // pending_upload, uploaded or deleted. A connector's document is only
+  // uploaded or deleted: deleted once replaced or removed at its source.
+  string                    status     = 6;
+  google.protobuf.Timestamp created_at = 7;
+  // Read through an ontology's routes: what extracting it into that
+  // ontology's current load made of it; unset until then, while no load is
+  // current, and on the workspace's routes.
+  FoundryDocumentExtraction extraction = 8;
+  // The document set it belongs to.
+  string set_id = 9;
+  // The ontologies associated with it, on the workspace's GET only: those
+  // whose current load holds it, and those whose reading version (the
+  // current load's, else the current version) has its set in scope.
+  repeated FoundryDocumentOntology ontologies = 10;
+  // How ontologies read it, and what reading it has come to; unset until
+  // its upload completes.
+  FoundryFileRead read = 11;
+  // The row of a connector's table it is the text of; unset for an upload.
+  FoundryDocumentSource source = 12;
+}
+
+// FoundryDocumentSource is where a connector's document comes from. The
+// document is the connector's: renaming, moving or deleting it is
+// FAILED_PRECONDITION. New text at the source is a new document that
+// replaces it; a new version with the same text changes it in place.
+message FoundryDocumentSource {
+  // The key of its row at the source (a Granola note's id), unique among
+  // its set's documents that are not deleted.
+  string external_id = 1;
+  // The source's version of the row's text.
+  string version = 2;
+  // The item's page at the source, an absolute https URL; empty when it
+  // has none.
+  string url = 3;
+  // The item's own time at the source (a note's creation), which orders the
+  // set's documents, newest first.
+  google.protobuf.Timestamp at = 4;
+}
+
+// FoundryReadKind is how ontologies read a type of document.
+enum FoundryReadKind {
+  FOUNDRY_READ_KIND_UNSPECIFIED = 0;
+  // Markdown, MDX and plain text: extracted as text through routes.
+  FOUNDRY_READ_KIND_TEXT = 1;
+  // CSV, TSV, JSON, JSONL and Parquet: read once, at upload, as a table of
+  // its own, which mappings name by the document's id.
+  FOUNDRY_READ_KIND_TABLE = 2;
+  // PDF: read once, at upload, to its text (each page's, a form feed
+  // between pages), then extracted as that text through routes. One with no
+  // text layer (a scan), encrypted or damaged can't be read.
+  FOUNDRY_READ_KIND_PDF = 3;
+}
+
+// FoundryFileReadState is what reading a document has come to.
+enum FoundryFileReadState {
+  reserved 4;
+  reserved "FOUNDRY_FILE_READ_STATE_OFF";
+  FOUNDRY_FILE_READ_STATE_UNSPECIFIED = 0;
+  // Ontologies can read it: text, or a file whose read succeeded (a PDF's
+  // text is then on :content).
+  FOUNDRY_FILE_READ_STATE_READY = 1;
+  // Being read, or waiting to be (retrying says when after a failure). A
+  // generation started now leaves it out; a load waits for a PDF, and reads
+  // it once its read ends.
+  FOUNDRY_FILE_READ_STATE_READING = 2;
+  // It can't be read: error says why, and a load records the PDF failed
+  // with the same code. Upload a fixed file.
+  FOUNDRY_FILE_READ_STATE_FAILED = 3;
+}
+
+// FoundryFileReadMode is how deeply a document is read.
+enum FoundryFileReadMode {
+  FOUNDRY_FILE_READ_MODE_UNSPECIFIED = 0;
+  FOUNDRY_FILE_READ_MODE_STANDARD    = 1;
+  FOUNDRY_FILE_READ_MODE_DEEP        = 2;
+}
+
+// FoundryFileRead is how ontologies read a document, and what reading it
+// has come to.
+message FoundryFileRead {
+  FoundryReadKind      kind  = 1;
+  FoundryFileReadState state = 2;
+  // A table file's rows, once read.
+  optional int64 rows = 3;
+  // A PDF's pages, once read.
+  optional int32 pages = 4;
+  // The read shown, for a table file or a PDF; unset for text.
+  FoundryFileReadMode mode = 5;
+  // Why it can't be read, exactly when FAILED.
+  FoundryFileReadError error = 6;
+  // A READING read that failed for a reason that is not the file's (such as
+  // storage) and waits to be read again.
+  bool retrying = 7;
+}
+
+// FoundryFileReadError is why a file can't be read.
+message FoundryFileReadError {
+  // too_large (past a reading limit: a PDF of more than 150 pages, or whose
+  // text is past 1 MiB) or unsupported (not what its type says; a PDF that
+  // is damaged, encrypted, or scanned with no text, whose message is
+  // "Scanned PDF: no text to read").
+  string code = 1;
+  // What to fix, for the user.
+  string message = 2;
+}
+
+// FoundryDocumentOntology is one ontology a document is associated with.
+message FoundryDocumentOntology {
+  string ontology_id = 1;
+  // Whether the routes of the ontology's reading version name the
+  // document's set: its documents are read for what they hold, not only
+  // stored.
+  bool routed = 2;
+  // What extracting it into the ontology's current load made of it; unset
+  // when that load has not extracted it, or there is none.
+  FoundryDocumentExtraction extraction = 3;
+}
+
+// FoundryDocumentSet is a named group of a workspace's documents: a folder
+// of the Data tree. Every document belongs to one set. A version reads the
+// sets of its scope, and its extraction routes ([extractions.<name>] in its
+// mappings) name, by id, the sets whose documents they read for what they
+// hold. A person makes a set, or a connector's syncs do (connector).
+message FoundryDocumentSet {
+  string id   = 1;
+  string name = 2;
+  // What its documents hold, in the user's words; empty when none was given.
+  string description = 3;
+  // Its documents that are not deleted.
+  int32                     documents  = 4;
+  google.protobuf.Timestamp created_at = 5;
+  // The ontologies whose reading version (the current load's, else the
+  // current version) has it in scope, on lists.
+  repeated FoundryDocumentSetReader read_by = 6;
+  // The connector whose syncs write the set; unset for a set a person made.
+  FoundryDocumentSetConnector connector = 7;
+}
+
+// FoundryDocumentSetConnector is the connector and stream a set holds the
+// documents of: one set per connector and stream, for as long as the
+// connector lives. The set and its documents are the connector's: changing
+// or deleting the set, and uploading, moving or deleting its documents, is
+// FAILED_PRECONDITION; what it holds changes with the connection's
+// settings. Its name is the stream's title ("Notes"), and the user calls it
+// "<connector_name> / <name>". It takes no place among the workspace's
+// document sets or their names, and its documents none in the workspace's
+// uploads; a generation's pick of sets counts it.
+message FoundryDocumentSetConnector {
+  string connector_id = 1;
+  // The kind's name for what the set holds (notes); it never changes.
+  string stream = 2;
+  // The most documents a sync of everything keeps: the newest at the
+  // source. A sync of changes may add past it until the next one, except
+  // in an API source's set, which never holds more.
+  int32 max_documents = 3;
+  // The connector's name when the set was read.
+  string connector_name = 4;
+  // The connector's kind (granola, events); it never changes.
+  string connector_kind = 5;
+  // What work no person started (refreshes, and extracts no one asked for)
+  // has spent extracting the set's documents in the current UTC month, in
+  // millionths of a US dollar. Read only for a set with an allowance; 0
+  // for any other.
+  int64 month_system_usd_micros = 6;
+  // The most that work may spend on the set in a UTC month, its allowance;
+  // set only for a set with one (an API source's). Once it is spent the set
+  // is paused.
+  optional int64 max_month_system_usd_micros = 7;
+  // Whether the set's syncs write no documents now: it holds some, and work
+  // no person started can spend no more extracting it this UTC month (its
+  // allowance, its workspace's for all its API sources, or the workspace's
+  // month's share for such work is spent). The graph keeps the pieces it
+  // extracted; the newest wait for next month, or for a load a person
+  // starts, and a sync a person starts still writes them. False for a set
+  // without an allowance.
+  bool paused = 8;
+}
+
+// FoundryDocumentSetReader is an ontology that reads a document set.
+message FoundryDocumentSetReader {
+  string ontology_id = 1;
+  // Whether the reading version's routes name the set.
+  bool routed = 2;
+}
+
+// What completing or moving a document did for one ontology that reads its
+// set: one whose live job's load, or current load, is of a version with the
+// set in scope.
+enum FoundryDocumentReadOutcome {
+  FOUNDRY_DOCUMENT_READ_OUTCOME_UNSPECIFIED = 0;
+  // An extract of the document into the current load was queued.
+  FOUNDRY_DOCUMENT_READ_OUTCOME_QUEUED = 1;
+  // A job of the ontology is live: it reads the document, or its end
+  // queues the extract that does.
+  FOUNDRY_DOCUMENT_READ_OUTCOME_OWED = 2;
+  // Nothing was queued: the workspace spent this month's budget. The next
+  // load or extract reads it.
+  FOUNDRY_DOCUMENT_READ_OUTCOME_NO_BUDGET = 3;
+  // Nothing was queued: the current load already holds the document (a
+  // move), and keeps what it read until the next load.
+  FOUNDRY_DOCUMENT_READ_OUTCOME_HELD = 4;
+  // Nothing was queued or owed: the caller may not write the ontology's
+  // database (database.query.write on its project). A later load or extract
+  // reads it.
+  FOUNDRY_DOCUMENT_READ_OUTCOME_SKIPPED = 5;
+  // Nothing was queued yet: the document is a PDF whose text is still being
+  // read. The load holds it, and the read's end has the ontology read it
+  // (queued, or owed by a live job).
+  FOUNDRY_DOCUMENT_READ_OUTCOME_READING = 6;
+}
+
+// FoundryDocumentRead is the outcome for one ontology.
+message FoundryDocumentRead {
+  string                     ontology_id = 1;
+  FoundryDocumentReadOutcome outcome     = 2;
+}
+
+// FoundryDocumentExtraction is how a document ended in its ontology's database.
+message FoundryDocumentExtraction {
+  // extracted, duplicate, failed or out_of_scope: no extraction route of the
+  // load's version names its set, so it is stored with its sections and no
+  // model read it.
+  string status = 1;
+  // The document whose text this one repeats, for duplicate.
+  optional string duplicate_of = 2;
+  // Why it failed, for failed.
+  FoundryExtractionError    error       = 3;
+  int32                     sections    = 4;
+  int32                     entities    = 5;
+  int32                     mentions    = 6;
+  int32                     facts       = 7;
+  int32                     reviews     = 8;
+  int64                     usd_micros  = 9;
+  google.protobuf.Timestamp finished_at = 10;
+  int32 attributes = 11;
+  int32 attribute_reviews = 12;
+  int32 prop_conflicts = 13;
+  int32 created = 14;
+  int32 identifiers_unverified = 15;
+  int32 attributes_over_entries = 16;
+  int32 resolved_user = 17;
+  int32 resolved_adjudicated = 18;
+  int32 resolved_identifier = 19;
+  int32 resolved_name = 20;
+  int32 resolved_alias = 21;
+  int32 resolved_created = 22;
+}
+
+message FoundryExtractionError {
+  // too_large, unsupported, model or store. A PDF whose read failed is
+  // recorded with the read's code; the document's read says why.
+  string code = 1;
+  // Whether a later load may succeed.
+  bool retryable = 2;
+}
+
+// FoundryDocumentUpload is a presigned PUT of a document's bytes. Send exactly
+// the declared bytes with these headers before expires_at; the browser adds
+// Content-Length, which is signed too.
+message FoundryDocumentUpload {
+  string                    url        = 1;
+  string                    method     = 2;
+  map<string, string>       headers    = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// FoundryGraphJob is one job on an ontology's database: a load job creates a
+// load (whose id is its own) from a version's tables, then the documents; an
+// extract adds documents to a load; a delete removes one.
+message FoundryGraphJob {
+  string id         = 1;
+  string version_id = 2;
+  // queued, running, succeeded, budget_exhausted, failed or cancelled (a
+  // delete a new load went before, or any job of a deleted ontology).
+  string status = 3;
+  // provisioning, ingest, documents or finishing; deleting for a delete.
+  string                  phase      = 4;
+  FoundryGraphJobProgress progress   = 5;
+  int64                   usd_micros = 6;
+  // Why the last attempt failed, written for the customer.
+  optional string           error       = 7;
+  google.protobuf.Timestamp created_at  = 8;
+  google.protobuf.Timestamp started_at  = 9;
+  google.protobuf.Timestamp finished_at = 10;
+  // load, extract or delete.
+  string kind = 11;
+  // The load it writes or deletes.
+  string load_id = 12;
+}
+
+// FoundryLoad is one write of an approved version into an ontology's
+// database. Its id is the id of the load job that creates it, and every node
+// and edge it writes carries that id as foundry_load, so loads of different
+// versions sit side by side. Foundry keeps the current load and the newest
+// others, five in all, and deletes the rest in the background.
+message FoundryLoad {
+  string id         = 1;
+  string version_id = 2;
+  // The version it writes, as the graph records it: foundry-v<number>.
+  string version = 3;
+  // writing, ready, partial, failed, deleting or delete_failed.
+  string status = 4;
+  // Whether reads go to it.
+  bool                      current     = 5;
+  google.protobuf.Timestamp created_at  = 6;
+  // When writing ended; unset while writing.
+  google.protobuf.Timestamp finished_at = 7;
+  // Its newest jobs, newest first: at most 20. A current load gains an
+  // extract per upload, so job_count and usd_micros cover all of them.
+  repeated FoundryGraphJob jobs = 8;
+  // How many jobs it has had.
+  int32 job_count = 9;
+  // What all its jobs spent, in millionths of a US dollar.
+  int64 usd_micros = 10;
+  // How many violation records its tables left open, as the ingest report
+  // counted them. Unset while writing the tables, and when the report did not
+  // count every chunk (an ingest retried after part of it was written).
+  // Extraction changes the live records, which the graph holds, not this.
+  optional uint64 ingest_violations = 11;
+  // user, or refresh when a changed table queued it.
+  string origin = 12;
+  // Its People enrichment step; unset when its version enriches no one.
+  FoundryLoadEnrichment enrichment = 13;
+}
+
+// FoundryLoadEnrichment is a load's People enrichment step: whom it looked up
+// on context.dev, what it found, and what its profiles bound.
+message FoundryLoadEnrichment {
+  // preparing, queued (waiting for a lookup slot), running, done, partial,
+  // off (the workspace's consent is off: no profiles apply), failed (the
+  // profiles found before apply) or cancelled.
+  string status = 1;
+  // Why a partial step stopped: cap, provider_credits, provider, time, busy,
+  // stopped (someone stopped the lookups), pro or flag. Unset on any other.
+  optional string stopped_by = 2;
+  // Everyone of the enriched type the tables hold.
+  int64 people = 3;
+  // Left out with no full name.
+  int64 no_name = 4;
+  // Left out with no usable email or LinkedIn URL.
+  int64 no_clue = 5;
+  // Lost a clue another person holds too.
+  int64 shared = 6;
+  // Everyone left out: no_name and no_clue.
+  int64 skipped = 7;
+  // Reused from an earlier load, at no cost.
+  int64 carried = 8;
+  // To be looked up this load.
+  int64 to_look_up = 9;
+  // Looked up so far.
+  int64 looked_up = 10;
+  // This step's lookups by outcome: found (accepted), held back by the
+  // checks, not found, and unanswered (booked, not resent). A step that
+  // published after its load stopped waiting for it (past its deadline and
+  // the grace) counts what it found then, though the load applied only the
+  // profiles found before; applied and unmatched say what the load applied.
+  int64 found     = 11;
+  int64 held      = 12;
+  int64 not_found = 13;
+  int64 uncertain = 14;
+  // Credits charged, unanswered calls included.
+  int64 credits = 15;
+  // The profiles the load applied that bound their person, and those that
+  // bound no one (the person changed since the lookup); 0 until its tables
+  // are in.
+  int64 applied   = 16;
+  int64 unmatched = 17;
+  // When the step published its profiles; unset before.
+  google.protobuf.Timestamp published_at = 18;
+}
+
+// FoundryEnrichmentAvailability is whether a workspace's loads may look
+// people up.
+enum FoundryEnrichmentAvailability {
+  // Helix can't say for now: the workspace's plan couldn't be read. Turning
+  // People enrichment off still works.
+  FOUNDRY_ENRICHMENT_AVAILABILITY_UNSPECIFIED = 0;
+  // Helix has People enrichment off: loads look no one up, and apply the
+  // profiles found before.
+  FOUNDRY_ENRICHMENT_AVAILABILITY_DISABLED = 1;
+  // New lookups need Foundry Pro; the profiles found before still apply.
+  FOUNDRY_ENRICHMENT_AVAILABILITY_PRO_REQUIRED = 2;
+  FOUNDRY_ENRICHMENT_AVAILABILITY_AVAILABLE    = 3;
+}
+
+// FoundryEnrichment is a workspace's People enrichment setting and month.
+message FoundryEnrichment {
+  FoundryEnrichmentAvailability availability = 1;
+  // The owner's consent to look the workspace's people up on context.dev.
+  bool enabled = 2;
+  // The most credits the workspace's loads charge in a calendar month (UTC);
+  // 0 until an owner sets it.
+  int64 monthly_credit_cap = 3;
+  // Credits charged this month, unanswered calls included.
+  int64 credits_used = 4;
+  // Credits a running load holds for its lookups.
+  int64 credits_reserved = 5;
+  // When the month's credits start again: the first of next month, UTC.
+  google.protobuf.Timestamp cap_resets_at = 6;
+  // The owner who turned it on, and when; unset while it is off.
+  string                    enabled_by = 7;
+  google.protobuf.Timestamp enabled_at = 8;
+  // Ontologies whose enriched values a clean load has still to remove,
+  // since consent was turned off.
+  int32 purges_pending = 9;
+}
+
+// FoundryQuestion is one question asked of one load of an ontology. The
+// foundry-ask-worker answers it with the ontology agent's read-only Ask; its
+// run streams events (ListFoundryQuestionEvents), then it ends with a result.
+message FoundryQuestion {
+  string id      = 1;
+  string load_id = 2;
+  // The load's version, whose definition the agent was given.
+  string version_id = 3;
+  // The first question of its thread; a new thread's is its own id.
+  string thread_id = 4;
+  string question  = 5;
+  // The entity the user asked about, {"type": ..., "id": ...}; empty for none.
+  string focus_json = 6;
+  // queued, running, answered, cannot_answer, failed or cancelled.
+  string status = 7;
+  // The agent's AskResult as JSON (ask_result.json): set once answered or
+  // cannot_answer, and for a failed question whose agent sent one.
+  string result_json = 8;
+  // Why it failed or was retried, for the user.
+  string error = 9;
+  // What its attempts spent, in millionths of a US dollar.
+  int64  usd_micros = 10;
+  // The seq of its newest event; 0 before any.
+  int32  last_seq          = 11;
+  string asked_by_user_id  = 12;
+  google.protobuf.Timestamp created_at  = 13;
+  google.protobuf.Timestamp started_at  = 14;
+  google.protobuf.Timestamp finished_at = 15;
+  // Attempts claimed so far; a queued question with attempts above 0 is
+  // waiting to be retried, and error says why.
+  int32 attempts = 16;
+  // What a running question holds back of the month's budget: its cap.
+  int64 reserved_micros = 17;
+}
+
+// FoundryQuestionBudget is a workspace's questions budget this calendar
+// month (UTC), apart from its loads', and the caps every question runs
+// under. A question is refused when what the month spent plus its cap passes
+// the budget, and waits, queued, while running questions' reservations
+// leave too little.
+message FoundryQuestionBudget {
+  // In millionths of a US dollar.
+  int64 monthly_usd_micros  = 1;
+  int64 spent_usd_micros    = 2;
+  int64 reserved_usd_micros = 3;
+  // Per question.
+  int64 question_usd_micros = 4;
+  int32 max_steps           = 5;
+  int32 max_wall_secs       = 6;
+  // Per workspace: questions running at once, and asked in an hour.
+  int32 concurrent_limit = 7;
+  int32 hourly_limit     = 8;
+}
+
+// FoundryUsageTask is a kind of model work a workspace's month of AI spend
+// is broken down by (FoundryUsage). Ontology drafts (generations and
+// revisions) are not among them: they record tokens, not dollars; nor are
+// generation titles, which record no spend at all.
+enum FoundryUsageTask {
+  FOUNDRY_USAGE_TASK_UNSPECIFIED = 0;
+  // Loads and extracts of the workspace's ontologies, created this month:
+  // reading documents into their graphs, which is all of a load's model
+  // spend (tables load at no model cost). Capped by foundry.graph.monthly_usd
+  // (config.FoundryGraphConfig.MonthBudget), the budget the graph worker
+  // checks.
+  FOUNDRY_USAGE_TASK_LOADS = 1;
+  // What work no person started (refreshes, and extracts no one asked for)
+  // spent extracting the workspace's API sources' pieces this month, its
+  // deleted sources' included. Capped by
+  // foundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,
+  // so FoundryUsage.total_usd_micros counts it once, there.
+  FOUNDRY_USAGE_TASK_API_SOURCES = 2;
+  // Questions charged this month (claimed in it, whenever asked), as the
+  // questions budget counts them (FoundryQuestionBudget). Capped by
+  // foundry.ask.monthly_usd.
+  FOUNDRY_USAGE_TASK_QUESTIONS = 3;
+}
+
+// FoundryUsageEntry is one task's month.
+message FoundryUsageEntry {
+  FoundryUsageTask task = 1;
+  // In millionths of a US dollar: what the task's work spent, a running
+  // job's spend so far included.
+  int64 spent_usd_micros = 2;
+  // What running work holds back of the cap beyond spent: only questions
+  // reserve (a running question's cap). Its cap refuses new work once
+  // spent, reserved and the work's own cap would pass it.
+  int64 reserved_usd_micros = 3;
+  // The month's cap; unset for a task that has none.
+  optional int64 cap_usd_micros = 4;
+}
+
+// FoundryUsage is a workspace's AI spend this calendar month (UTC), by task,
+// with each task's cap: the same sums the caps check. Spend on the
+// workspace's own model key counts as Helix's does, priced as its AI setting
+// prices it (nothing for a model on its own hardware): Helix's monthly caps
+// count it too, as no ledger of own-key spend exists apart from them.
+message FoundryUsage {
+  // The first of the month, 00:00 UTC.
+  google.protobuf.Timestamp month_start = 1;
+  // The first of the next month, 00:00 UTC, when every cap starts again.
+  google.protobuf.Timestamp resets_at = 2;
+  // What the month spent: every task's spent once (API_SOURCES is in
+  // LOADS), without questions' reservations.
+  int64 total_usd_micros = 3;
+  // One entry per task, in FoundryUsageTask's order.
+  repeated FoundryUsageEntry tasks = 4;
+}
+
+// FoundryQuestionEvent is one event of a question's run, in order from seq 1.
+message FoundryQuestionEvent {
+  int32 seq = 1;
+  // The agent's event as JSON (ask_event.json): started, tool_call,
+  // tool_result or finished. A retried question's events go on from where
+  // its last attempt's ended, from a new started.
+  string event_json = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message FoundryGraphJobProgress {
+  int32 chunks_done     = 1;
+  int32 documents_done  = 2;
+  int32 documents_total = 3;
+}
+
+// A user choice. Review identity is always derived by the backend.
+message FoundryReviewChoice {
+  reserved 2;
+  oneof choice {
+    FoundryResolveChoice resolve = 1;
+    FoundryPropValue prop = 3;
+  }
+}
+// A prop decision's value: null removes the property; any other must be of
+// the kind the property's type takes, as the engine reads it (no coercion).
+// integer is an int64, a JSON string in the REST API, so every digit of an
+// integer past 2^53 is kept.
+message FoundryPropValue {
+  oneof value {
+    // Removes the property; JSON null in the REST API ({"null": null}).
+    google.protobuf.NullValue null = 1;
+    // A string, date (YYYY, YYYY-MM or YYYY-MM-DD) or RFC 3339 datetime.
+    string text = 2;
+    int64 integer = 3;
+    double number = 4;
+    bool boolean = 5;
+  }
+}
+message FoundryResolveChoice {
+  oneof target {
+    string entity_key = 1;
+    // Must be true. This explicitly chooses "not in data".
+    bool not_in_data = 2;
+  }
+}
+
+// A durable ontology-wide override; applies from the next load.
+message FoundryReviewDecision {
+  string id = 1;
+  string kind = 2;
+  string type = 3;
+  optional string doc_id = 4;
+  optional string norm_name = 5;
+  optional string entity_key = 6;
+  optional string prop = 7;
+  reserved 8;
+  // A prop decision's value as stored. A whole number within int64 is an
+  // integer here, even a float property's (3.0 reads back as integer 3).
+  FoundryPropValue value = 11;
+  string decided_by_user_id = 9;
+  google.protobuf.Timestamp decided_at = 10;
+}
+
+// Helix Foundry model providers: where a workspace's model calls go
+// (Settings › AI models). Helix's Claude is the hosted default; an owner may
+// bring a key for a provider the deployment offers instead.
+
+// FoundryAIKind is a model provider kind. Every kind is declared; a
+// deployment offers those its agent implements (FoundryAI.offered).
+enum FoundryAIKind {
+  FOUNDRY_AI_KIND_UNSPECIFIED       = 0;
+  FOUNDRY_AI_KIND_ANTHROPIC         = 1;
+  FOUNDRY_AI_KIND_OPENAI            = 2;
+  FOUNDRY_AI_KIND_AZURE_OPENAI      = 3;
+  FOUNDRY_AI_KIND_BEDROCK           = 4;
+  FOUNDRY_AI_KIND_OLLAMA            = 5;
+  FOUNDRY_AI_KIND_OPENAI_COMPATIBLE = 6;
+}
+
+// FoundryAIProvider is where a workspace's model calls go: one message per
+// kind, holding that kind's endpoint settings and never a key.
+message FoundryAIProvider {
+  oneof kind {
+    FoundryAIAnthropic   anthropic         = 1;
+    FoundryAIOpenAI      openai            = 2;
+    FoundryAIAzureOpenAI azure_openai      = 3;
+    FoundryAIBedrock     bedrock           = 4;
+    FoundryAIOllama      ollama            = 5;
+    FoundryAICompatible  openai_compatible = 6;
+  }
+}
+// Claude at api.anthropic.com.
+message FoundryAIAnthropic {}
+// api.openai.com.
+message FoundryAIOpenAI {}
+// An Azure OpenAI resource; each model's name is a deployment's.
+message FoundryAIAzureOpenAI {
+  // https://<resource>.openai.azure.com, normalized to .../openai/v1.
+  string endpoint = 1;
+}
+// Amazon Bedrock, called with a Bedrock API key.
+message FoundryAIBedrock {
+  // An AWS region, like us-east-1.
+  string region = 1;
+  bool   fips   = 2;
+}
+// An Ollama server's native API, which takes no key.
+message FoundryAIOllama {
+  string base_url = 1;
+  // The context window models load with; 0 is 65536.
+  uint32 context_tokens = 2;
+}
+// FoundryAICompatAPI is the API an OpenAI-compatible server speaks.
+enum FoundryAICompatAPI {
+  FOUNDRY_AI_COMPAT_API_UNSPECIFIED      = 0;
+  FOUNDRY_AI_COMPAT_API_CHAT_COMPLETIONS = 1;
+  FOUNDRY_AI_COMPAT_API_RESPONSES        = 2;
+}
+// An OpenAI-compatible server.
+message FoundryAICompatible {
+  // Including its /v1.
+  string             base_url = 1;
+  FoundryAICompatAPI api      = 2;
+  // Calls sent at once; 0 is 4.
+  uint32 max_calls_in_flight = 3;
+}
+
+// FoundryAIModel is a model and how its calls are priced.
+message FoundryAIModel {
+  string name = 1;
+  oneof price {
+    // Helix's price table for the model (FAILED_PRECONDITION, reason
+    // FOUNDRY_AI_PRICE_REQUIRED, when it has none).
+    google.protobuf.Empty table = 2;
+    // Helix's price table for another model of the same kind: an Azure
+    // deployment's underlying model, or a Bedrock inference profile's.
+    string table_as = 3;
+    // The owner's own rates.
+    FoundryAIRates rates = 4;
+    // No cost counted: Ollama and OpenAI-compatible servers only.
+    google.protobuf.Empty free = 5;
+  }
+}
+// FoundryAIRates are prices in US dollars per million tokens, as decimal
+// strings with at most three decimals ("0.075").
+message FoundryAIRates {
+  string input_usd_per_mtok  = 1;
+  string output_usd_per_mtok = 2;
+  // Empty when cached input is not priced apart.
+  string cached_input_usd_per_mtok = 3;
+}
+// FoundryAIModels is a model per task: drafting ontologies, answering
+// questions, reading documents and checking the facts read.
+message FoundryAIModels {
+  FoundryAIModel draft   = 1;
+  FoundryAIModel ask     = 2;
+  FoundryAIModel extract = 3;
+  FoundryAIModel verify  = 4;
+}
+
+// FoundryAIProbeState is where a saved provider is in its test.
+enum FoundryAIProbeState {
+  FOUNDRY_AI_PROBE_STATE_UNSPECIFIED = 0;
+  FOUNDRY_AI_PROBE_STATE_QUEUED      = 1;
+  FOUNDRY_AI_PROBE_STATE_RUNNING     = 2;
+  FOUNDRY_AI_PROBE_STATE_PASSED      = 3;
+  FOUNDRY_AI_PROBE_STATE_FAILED      = 4;
+  // Replaced by a newer save, or by going back to the default, first.
+  FOUNDRY_AI_PROBE_STATE_SUPERSEDED = 5;
+}
+
+// FoundryAIConfig is a provider an owner saved.
+message FoundryAIConfig {
+  string            id       = 1;
+  FoundryAIKind     kind     = 2;
+  FoundryAIProvider provider = 3;
+  FoundryAIModels   models   = 4;
+  // Which key it was saved with, e.g. sk-ant…4f2a; empty for none.
+  string key_hint = 5;
+  // Whether the key is still stored: only the setting's and a pending one's are.
+  bool                has_key     = 6;
+  FoundryAIProbeState probe_state = 7;
+  // Why a failed probe failed: an agent ModelFailure (auth, not_found, ...)
+  // and its check's ProbeDetail (tools_rejected, ...).
+  string                    probe_failure   = 8;
+  string                    probe_detail    = 9;
+  google.protobuf.Timestamp created_at      = 10;
+  string                    created_by_name = 11;
+  // The provider as failure copy names it: "Claude", or a custom server's host.
+  string label = 12;
+}
+
+// FoundryAIDefault is the deployment's provider.
+message FoundryAIDefault {
+  FoundryAIKind   kind   = 1;
+  FoundryAIModels models = 2;
+  string          label  = 3;
+}
+
+// FoundryAIKey is whether a kind's calls carry an API key.
+enum FoundryAIKey {
+  FOUNDRY_AI_KEY_UNSPECIFIED = 0;
+  FOUNDRY_AI_KEY_REQUIRED    = 1;
+  FOUNDRY_AI_KEY_OPTIONAL    = 2;
+  // Ollama's native API takes none.
+  FOUNDRY_AI_KEY_NONE = 3;
+}
+
+// FoundryAIOffer is a kind an owner may choose.
+message FoundryAIOffer {
+  FoundryAIKind kind = 1;
+  // The models a save of the kind gets where it names none; unset for a
+  // kind whose owner names every model.
+  FoundryAIModels suggested = 2;
+  FoundryAIKey    key       = 3;
+}
+
+// FoundryAI is a workspace's AI setting.
+message FoundryAI {
+  // The provider in force; unset is the default.
+  FoundryAIConfig active = 1;
+  // The deployment's provider; unset is none, which only a local install
+  // has: model work is then refused (FOUNDRY_AI_NOT_CONFIGURED) until an
+  // owner chooses one.
+  FoundryAIDefault default = 2;
+  // A save waiting for or in its test.
+  FoundryAIConfig pending = 3;
+  // The newest save, when its test failed after the setting last changed.
+  FoundryAIConfig         last_failed = 4;
+  repeated FoundryAIOffer offered     = 5;
+  // Endpoints may be http and private addresses: a local install.
+  bool private_hosts_allowed = 6;
+  // The workspace's plan doesn't include bringing a key: saving one is
+  // refused (FAILED_PRECONDITION, reason FOUNDRY_PRO_REQUIRED) until it is
+  // on Foundry Pro or Max. Going back to the default never is.
+  bool pro_required = 7;
+}

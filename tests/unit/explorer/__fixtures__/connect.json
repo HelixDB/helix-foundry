@@ -1,0 +1,182 @@
+{
+  "args": {
+    "newDbIds": [705, 709, 727, 739, 884, 97, 102, 107, 112, 117],
+    "visibleDbIds": [97, 37, 535, 529, 243, 154, 224, 569]
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_connect",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "from_new",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "where": {
+                          "input": {
+                            "out_e": {
+                              "input": {
+                                "nodes": { "reference": { "param": "new_ids" } }
+                              }
+                            }
+                          },
+                          "predicate": {
+                            "is_in": {
+                              "value": { "property": "$to" },
+                              "values": { "param": "visible_ids" }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1000 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "into_new",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "where": {
+                          "input": {
+                            "in_e": {
+                              "input": {
+                                "nodes": { "reference": { "param": "new_ids" } }
+                              }
+                            }
+                          },
+                          "predicate": {
+                            "is_in": {
+                              "value": { "property": "$from" },
+                              "values": { "param": "visible_ids" }
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 1000 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["from_new", "into_new"]
+      }
+    },
+    "parameters": {
+      "new_ids": [705, 709, 727, 739, 884, 97, 102, 107, 112, 117],
+      "visible_ids": [
+        97, 37, 535, 529, 243, 154, 224, 569, 705, 709, 727, 739, 884, 102, 107,
+        112, 117
+      ]
+    },
+    "parameter_types": {
+      "new_ids": { "array": "i64" },
+      "visible_ids": { "array": "i64" }
+    }
+  },
+  "status": 200,
+  "response": {
+    "from_new": [
+      {
+        "$from": 97,
+        "$id": 0,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "Engineer",
+        "since": 2018
+      },
+      {
+        "$from": 97,
+        "$id": 600,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "note": "self-loop",
+        "since": "2023-08-15T20:30:13.760Z"
+      },
+      { "$from": 97, "$id": 872, "$label": "FOLLOWS", "$to": 535 },
+      { "$from": 97, "$id": 1407, "$label": "FOLLOWS", "$to": 529 },
+      {
+        "$from": 97,
+        "$id": 1465,
+        "$label": "FOLLOWS",
+        "$to": 243,
+        "since": "2024-05-17T16:41:11.929Z"
+      },
+      {
+        "$from": 102,
+        "$id": 5,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "CTO",
+        "since": 2024
+      },
+      {
+        "$from": 107,
+        "$id": 10,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "PM",
+        "since": 2013
+      },
+      {
+        "$from": 112,
+        "$id": 15,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "SRE",
+        "since": 2018
+      },
+      {
+        "$from": 117,
+        "$id": 20,
+        "$label": "WORKS_AT",
+        "$to": 37,
+        "role": "CTO",
+        "since": 2010
+      }
+    ],
+    "into_new": [
+      { "$from": 37, "$id": 3311, "$label": "OWNS", "$to": 705 },
+      { "$from": 37, "$id": 3315, "$label": "OWNS", "$to": 709 },
+      { "$from": 37, "$id": 3333, "$label": "OWNS", "$to": 727 },
+      { "$from": 37, "$id": 3345, "$label": "OWNS", "$to": 739 },
+      { "$from": 37, "$id": 3490, "$label": "OWNS", "$to": 884 },
+      {
+        "$from": 97,
+        "$id": 600,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "note": "self-loop",
+        "since": "2023-08-15T20:30:13.760Z"
+      },
+      {
+        "$from": 154,
+        "$id": 1357,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "since": "2023-01-22T14:06:29.518Z"
+      },
+      {
+        "$from": 224,
+        "$id": 1420,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "since": "2023-09-26T23:53:03.373Z"
+      },
+      { "$from": 569, "$id": 2033, "$label": "FOLLOWS", "$to": 97 }
+    ]
+  }
+}

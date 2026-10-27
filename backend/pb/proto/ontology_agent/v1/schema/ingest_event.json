@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IngestEvent",
+  "description": "One event of an Ingest stream.",
+  "oneOf": [
+    {
+      "description": "The load started.",
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "description": "The version of the contract it speaks, [`CONTRACT_VERSION`](crate::CONTRACT_VERSION).",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "ingest_started"
+        }
+      },
+      "required": [
+        "event",
+        "contract_version"
+      ]
+    },
+    {
+      "description": "The graph's indexes exist.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "indexes_ready"
+        }
+      },
+      "required": [
+        "event"
+      ]
+    },
+    {
+      "description": "One chunk was handled: written, found already stored, or empty.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "chunk"
+        },
+        "report": {
+          "description": "The chunk's report as the `ingest` crate writes it (`ingest::ChunkReport`): its\nmapping, pass, position, rows and outcome, with what it sent to review. For display\nand storage; its shape is not part of the contract.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "event",
+        "report"
+      ]
+    },
+    {
+      "description": "One page of the sweep of the created entities was checked.",
+      "type": "object",
+      "properties": {
+        "entities": {
+          "description": "Entities on the page.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "event": {
+          "type": "string",
+          "const": "sweep_page"
+        }
+      },
+      "required": [
+        "event",
+        "entities"
+      ]
+    },
+    {
+      "description": "The load ended; the result follows.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "ingest_finished"
+        }
+      },
+      "required": [
+        "event"
+      ]
+    }
+  ]
+}

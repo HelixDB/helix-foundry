@@ -1,0 +1,241 @@
+/* Records (records/index.tsx): an ontology's records by type. The type
+   legend (og-) and the table's cells, controls and Columns menu (rx-) are
+   helix-foundry's, from apps/web/src/areas/ontology/ontology.css, unchanged;
+   the record drawer's layout (rx-detail) is a Helix Cloud addition, over the
+   entity page's fact and evidence lists (explore.css). */
+.og-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.og-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-surface);
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  cursor: pointer;
+}
+.og-type:hover {
+  background: var(--hf-hover);
+}
+.og-count {
+  color: var(--hf-muted);
+  font-variant-numeric: tabular-nums;
+}
+.og-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--hf-faint);
+}
+.rx {
+  display: grid;
+  gap: 12px;
+}
+.og-type.is-current {
+  border-color: var(--hf-ink);
+  background: var(--hf-selected, var(--hf-hover));
+  font-weight: 600;
+}
+.rx-record {
+  display: grid;
+  min-width: 0;
+  line-height: 1.25;
+}
+.rx-record strong,
+.rx-record small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rx-record strong {
+  font-weight: 600;
+}
+.rx-record small {
+  color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+}
+.rx-blank {
+  color: var(--hf-faint);
+}
+.rx-value {
+  width: 180px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-field, var(--hf-surface));
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+}
+.og-link {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.rx-columns {
+  position: relative;
+}
+.rx-columns > summary {
+  list-style: none;
+}
+.rx-columns > summary::-webkit-details-marker {
+  display: none;
+}
+.rx-columns-menu {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  gap: 2px;
+  width: 240px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised, var(--hf-surface));
+  box-shadow: var(--hf-shadow-2);
+}
+.rx-columns-menu label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--hf-radius-sm);
+  font-size: var(--hf-text-sm);
+  cursor: pointer;
+}
+.rx-columns-menu label:hover {
+  background: var(--hf-hover);
+}
+.rx-columns-menu .og-link {
+  justify-self: start;
+  margin: 6px 6px 0;
+  font-size: var(--hf-text-sm);
+}
+.rx-pages {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+/* The field picker reads as its first option; its label stays for screen readers. */
+.rx-where > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.rx-hint {
+  margin: -4px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+
+/* The record drawer. */
+.rx-detail-body {
+  display: grid;
+  gap: 20px;
+}
+.rx-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rx-detail-body > section > h3 {
+  margin: 0 0 8px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+/* A link group's heading sits under "Links": the entity page's group
+   heading (explore.css .ex-group > h2, and the shell's h2 colour), one
+   level down. */
+.rx-links > h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.rx-links > h4 small {
+  margin-left: 4px;
+  color: var(--hf-muted);
+  font-family: var(--hf-font-sans);
+  font-weight: 400;
+}
+.rx-detail-body .rx-links + .rx-links {
+  margin-top: 12px;
+}
+.rx-other {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hf-text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.rx-other:hover {
+  text-decoration-color: currentColor;
+}
+
+/* The type list as the section's panel beside the sidebar: one type a row,
+   as the explorer's labels are listed. */
+.rx-types .og-legend {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 1px;
+  padding: 0 8px;
+}
+.rx-types .og-type {
+  display: flex;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--hf-radius);
+  background: none;
+  font-size: var(--hf-text-base);
+  text-align: left;
+}
+.rx-types .og-type:hover {
+  background: var(--hf-hover);
+}
+.rx-types .og-type.is-current {
+  background: var(--hf-selected);
+}
+.rx-types .og-count {
+  margin-left: auto;
+}

@@ -1,0 +1,69 @@
+/* The account menu's Usage section (account-menu.tsx): the month's total,
+   then a row per task, its spend beside its cap and, below, a thin bar of
+   the cap, drawn as Home's setup and type bars (home.css). It sits between
+   the menu's group labels, at their inset. */
+.wk-usage {
+  display: grid;
+  gap: 7px;
+  padding: 2px 9px 8px;
+  font-size: var(--hf-text-sm);
+  line-height: 1.3;
+}
+.wk-usage-total,
+.wk-usage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+.wk-usage-total span {
+  color: var(--hf-muted);
+}
+.wk-usage-total strong {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wk-usage-name {
+  overflow: hidden;
+  color: var(--hf-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Part of the row above's spend: API sources' within loads'. */
+.wk-usage-row.is-within {
+  padding-left: 10px;
+}
+.wk-usage-row.is-within .wk-usage-name {
+  color: var(--hf-muted);
+}
+.wk-usage-amount {
+  color: var(--hf-text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.wk-usage-amount small {
+  color: var(--hf-muted);
+  font-size: inherit;
+}
+.wk-usage-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--hf-sunken);
+  overflow: hidden;
+}
+.wk-usage-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--hf-accent);
+  transition: width var(--hf-duration) var(--hf-ease);
+}
+.wk-usage-bar.is-warn span {
+  background: var(--hf-warning);
+}
+.wk-usage-bar.is-full span {
+  background: var(--hf-danger);
+}

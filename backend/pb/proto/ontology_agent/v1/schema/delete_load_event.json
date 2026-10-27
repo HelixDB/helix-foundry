@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeleteLoadEvent",
+  "description": "One event of a DeleteLoad stream.",
+  "oneOf": [
+    {
+      "description": "The delete started.",
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "description": "The version of the contract it speaks, [`CONTRACT_VERSION`](crate::CONTRACT_VERSION).",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "delete_started"
+        }
+      },
+      "required": [
+        "event",
+        "contract_version"
+      ]
+    },
+    {
+      "description": "One request deleted a batch of the load's nodes or edges under one label.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "How many it deleted. Edges a node's deletion took with it aren't counted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "element": {
+          "description": "Whether they were nodes or edges.",
+          "$ref": "#/$defs/Element"
+        },
+        "event": {
+          "type": "string",
+          "const": "deleted"
+        },
+        "label": {
+          "description": "The label.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "label",
+        "element",
+        "count"
+      ]
+    },
+    {
+      "description": "The delete ended; the result follows.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "delete_finished"
+        }
+      },
+      "required": [
+        "event"
+      ]
+    }
+  ],
+  "$defs": {
+    "Element": {
+      "description": "What a graph element is.",
+      "oneOf": [
+        {
+          "description": "A node.",
+          "type": "string",
+          "const": "node"
+        },
+        {
+          "description": "An edge.",
+          "type": "string",
+          "const": "edge"
+        }
+      ]
+    }
+  }
+}

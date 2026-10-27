@@ -1,0 +1,41 @@
+# The backend's fast checks, on every change so they can be a required
+# check: build, vet, gofmt, golangci-lint and generated code. backend.yml
+# runs its tests and builds its image on changes to backend/.
+name: Backend check
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: backend
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+      # Built with this job's Go, so it accepts the module's Go version.
+      - name: golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout 5m ./...
+      # The generated code is committed: regenerating it changes nothing.
+      - name: generated code
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.47.2
+          buf="$(go env GOPATH)/bin/buf"
+          "$buf" generate
+          "$buf" generate --template buf.internal.gen.yaml
+          changed=$(git status --porcelain -- pb/gen)
+          if [ -n "$changed" ]; then echo "$changed"; exit 1; fi

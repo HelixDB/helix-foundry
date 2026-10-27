@@ -1,0 +1,579 @@
+{
+  "args": {
+    "nodeLabels": [
+      { "label": "Chunk", "count": 40 },
+      { "label": "Company", "count": 60 },
+      { "label": "Document", "count": 300 },
+      { "label": "Event", "count": 260 },
+      { "label": "Project", "count": 200 },
+      { "label": "Tag", "count": 80 },
+      { "label": "User", "count": 600 }
+    ],
+    "edgeLabels": [
+      { "label": "ABOUT", "count": 260 },
+      { "label": "AUTHORED", "count": 300 },
+      { "label": "FOLLOWS", "count": 1501 },
+      { "label": "MEMBER_OF", "count": 902 },
+      { "label": "OWNS", "count": 200 },
+      { "label": "PART_OF", "count": 40 },
+      { "label": "REFERENCES", "count": 312 },
+      { "label": "TAGGED", "count": 1230 },
+      { "label": "TRIGGERED", "count": 260 },
+      { "label": "WORKS_AT", "count": 600 }
+    ],
+    "shape": {
+      "keys": [
+        "name",
+        "active",
+        "address",
+        "age",
+        "archived",
+        "at",
+        "color",
+        "counts",
+        "created",
+        "description",
+        "domain",
+        "draft",
+        "event_id",
+        "founded",
+        "industry",
+        "joined",
+        "kind",
+        "languages",
+        "meta",
+        "metadata",
+        "model",
+        "position",
+        "profile",
+        "public",
+        "score",
+        "severity",
+        "slug",
+        "stars",
+        "tags",
+        "title",
+        "username",
+        "weight",
+        "word_count",
+        "email",
+        "published",
+        "rating"
+      ],
+      "heavyKeys": ["body", "embedding", "payload", "text"],
+      "heavyByLabel": {
+        "Chunk": ["embedding", "text"],
+        "Company": [],
+        "Document": ["body", "embedding"],
+        "Event": ["payload"],
+        "Project": [],
+        "Tag": [],
+        "User": []
+      },
+      "keysByLabel": {
+        "Chunk": ["model", "position"],
+        "Company": [
+          "address",
+          "domain",
+          "founded",
+          "industry",
+          "name",
+          "public",
+          "rating"
+        ],
+        "Document": ["draft", "metadata", "title", "word_count", "published"],
+        "Event": ["at", "counts", "event_id", "kind", "severity"],
+        "Project": [
+          "archived",
+          "created",
+          "description",
+          "languages",
+          "meta",
+          "name",
+          "slug",
+          "stars"
+        ],
+        "Tag": ["color", "name", "weight"],
+        "User": [
+          "active",
+          "age",
+          "joined",
+          "name",
+          "profile",
+          "score",
+          "tags",
+          "username",
+          "email"
+        ]
+      }
+    },
+    "nodeBudget": 20,
+    "edgeBudget": 40
+  },
+  "request": {
+    "request_type": "read",
+    "query_name": "explorer_sample",
+    "query": {
+      "read": {
+        "entries": [
+          {
+            "query": {
+              "name": "seed_0",
+              "root": {
+                "limit": {
+                  "input": {
+                    "nodes_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "User" } }
+                        }
+                      }
+                    }
+                  },
+                  "count": { "literal": 4 }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "seeds",
+              "root": {
+                "dedup": {
+                  "input": { "nodes": { "reference": { "var": "seed_0" } } }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_seed_0",
+              "root": {
+                "limit": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "TAGGED" } }
+                        }
+                      }
+                    }
+                  },
+                  "count": { "literal": 4 }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edge_seed_1",
+              "root": {
+                "limit": {
+                  "input": {
+                    "edges_where": {
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "$label" },
+                          "right": { "constant": { "string": "FOLLOWS" } }
+                        }
+                      }
+                    }
+                  },
+                  "count": { "literal": 4 }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "sampled_edges",
+              "root": {
+                "dedup": {
+                  "input": {
+                    "inject": {
+                      "input": {
+                        "edges": { "reference": { "var": "edge_seed_0" } }
+                      },
+                      "variable": "edge_seed_1"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "targets",
+              "root": {
+                "out_n": {
+                  "input": {
+                    "edges": { "reference": { "var": "sampled_edges" } }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "sources",
+              "root": {
+                "in_n": {
+                  "input": {
+                    "edges": { "reference": { "var": "sampled_edges" } }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "nodes",
+              "root": {
+                "values": {
+                  "input": {
+                    "limit": {
+                      "input": {
+                        "dedup": {
+                          "input": {
+                            "inject": {
+                              "input": {
+                                "inject": {
+                                  "input": {
+                                    "nodes": {
+                                      "reference": { "var": "sources" }
+                                    }
+                                  },
+                                  "variable": "targets"
+                                }
+                              },
+                              "variable": "seeds"
+                            }
+                          }
+                        }
+                      },
+                      "count": { "literal": 20 }
+                    }
+                  },
+                  "properties": [
+                    "$id",
+                    "$label",
+                    "foundry_load",
+                    "name",
+                    "active",
+                    "address",
+                    "age",
+                    "archived",
+                    "at",
+                    "color",
+                    "counts",
+                    "created",
+                    "description",
+                    "domain",
+                    "draft",
+                    "event_id",
+                    "founded",
+                    "industry",
+                    "joined",
+                    "kind",
+                    "languages",
+                    "meta",
+                    "metadata",
+                    "model",
+                    "position",
+                    "profile",
+                    "public",
+                    "score",
+                    "severity",
+                    "slug",
+                    "stars",
+                    "tags",
+                    "title",
+                    "username",
+                    "weight",
+                    "word_count",
+                    "email",
+                    "published",
+                    "rating"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "query": {
+              "name": "edges",
+              "root": {
+                "edge_properties": {
+                  "input": {
+                    "edges": { "reference": { "var": "sampled_edges" } }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "returns": ["nodes", "edges"]
+      }
+    },
+    "parameters": {},
+    "parameter_types": {}
+  },
+  "status": 200,
+  "response": {
+    "edges": [
+      {
+        "$from": 977,
+        "$id": 3503,
+        "$label": "TAGGED",
+        "$to": 897,
+        "weight": 0.25
+      },
+      {
+        "$from": 977,
+        "$id": 3504,
+        "$label": "TAGGED",
+        "$to": 901,
+        "weight": 0.11
+      },
+      {
+        "$from": 977,
+        "$id": 3505,
+        "$label": "TAGGED",
+        "$to": 908,
+        "weight": 0.12
+      },
+      {
+        "$from": 978,
+        "$id": 3506,
+        "$label": "TAGGED",
+        "$to": 897,
+        "weight": 0.39
+      },
+      {
+        "$from": 97,
+        "$id": 600,
+        "$label": "FOLLOWS",
+        "$to": 97,
+        "note": "self-loop",
+        "since": "2023-08-15T20:30:13.760Z"
+      },
+      {
+        "$from": 193,
+        "$id": 601,
+        "$label": "FOLLOWS",
+        "$to": 204,
+        "since": "2023-07-19T11:06:54.057Z"
+      },
+      { "$from": 188, "$id": 602, "$label": "FOLLOWS", "$to": 431 },
+      { "$from": 526, "$id": 603, "$label": "FOLLOWS", "$to": 200 }
+    ],
+    "nodes": [
+      {
+        "$id": 977,
+        "$label": "Document",
+        "draft": true,
+        "metadata": {
+          "checksum": "sha256:1067853555",
+          "lang": "en",
+          "source": "crawler"
+        },
+        "title": "Planner centrality degree merge (0)",
+        "word_count": 1606
+      },
+      {
+        "$id": 978,
+        "$label": "Document",
+        "draft": false,
+        "metadata": {
+          "checksum": "sha256:3318844922",
+          "lang": "en",
+          "source": "upload"
+        },
+        "published": "2024-08-05T08:31:19.007Z",
+        "title": "Cosine centrality score (1)",
+        "word_count": 1687
+      },
+      {
+        "$id": 97,
+        "$label": "User",
+        "active": true,
+        "age": 22,
+        "joined": "2025-01-11T11:24:00.072Z",
+        "name": "Katherine Lamport",
+        "profile": {
+          "location": { "city": "Osaka", "country": "JP" },
+          "prefs": { "notifications": false, "theme": "light" }
+        },
+        "score": 17.74,
+        "tags": [],
+        "username": "katherine0"
+      },
+      {
+        "$id": 193,
+        "$label": "User",
+        "active": true,
+        "age": 49,
+        "email": "adele.96@example.com",
+        "joined": "2024-07-28T21:55:15.697Z",
+        "name": "Adele Goldberg",
+        "profile": {
+          "location": { "city": "Berlin", "country": "DE" },
+          "prefs": { "notifications": true, "theme": "system" }
+        },
+        "score": 29.87,
+        "tags": ["trial"],
+        "username": "adele96"
+      },
+      {
+        "$id": 188,
+        "$label": "User",
+        "active": false,
+        "age": 69,
+        "email": "tim.91@example.com",
+        "joined": "2025-05-26T18:17:08.314Z",
+        "name": "Tim Stroustrup",
+        "profile": {
+          "location": { "city": "Bogotá", "country": "CO" },
+          "prefs": { "notifications": true, "theme": "dark" }
+        },
+        "score": 19.31,
+        "tags": [],
+        "username": "tim91"
+      },
+      {
+        "$id": 526,
+        "$label": "User",
+        "active": false,
+        "age": 42,
+        "joined": "2023-06-23T05:23:54.728Z",
+        "name": "Dennis Berners-Lee",
+        "profile": {
+          "location": { "city": "Bogotá", "country": "CO" },
+          "prefs": { "notifications": true, "theme": "dark" }
+        },
+        "score": 40.04,
+        "tags": ["admin", "trial", "vip"],
+        "username": "dennis429"
+      },
+      {
+        "$id": 897,
+        "$label": "Tag",
+        "color": "#dbd829",
+        "name": "general",
+        "weight": 1000
+      },
+      {
+        "$id": 901,
+        "$label": "Tag",
+        "color": "#c2652d",
+        "name": "ml",
+        "weight": 16
+      },
+      {
+        "$id": 908,
+        "$label": "Tag",
+        "color": "#97436f",
+        "name": "frontend",
+        "weight": 46
+      },
+      {
+        "$id": 204,
+        "$label": "User",
+        "active": true,
+        "age": 27,
+        "email": "grace.107@example.com",
+        "joined": "2023-02-18T12:50:02.622Z",
+        "name": "Grace Knuth",
+        "profile": {
+          "location": { "city": "Melbourne", "country": "AU" },
+          "prefs": { "notifications": true, "theme": "dark" }
+        },
+        "score": 21.24,
+        "tags": ["vip", "trial"],
+        "username": "grace107"
+      },
+      {
+        "$id": 431,
+        "$label": "User",
+        "active": true,
+        "age": 45,
+        "email": "mary.334@example.com",
+        "joined": "2023-05-25T05:38:55.102Z",
+        "name": "Mary Goldwasser",
+        "profile": {
+          "location": { "city": "Osaka", "country": "JP" },
+          "prefs": { "notifications": false, "theme": "system" }
+        },
+        "score": 81.58,
+        "tags": [],
+        "username": "mary334"
+      },
+      {
+        "$id": 200,
+        "$label": "User",
+        "active": true,
+        "age": 53,
+        "email": "donald.103@example.com",
+        "joined": "2024-01-08T21:23:01.364Z",
+        "name": "Donald Ritchie",
+        "profile": {
+          "location": { "city": "Austin", "country": "US" },
+          "prefs": { "notifications": false, "theme": "light" }
+        },
+        "score": 88.85,
+        "tags": ["admin", "beta"],
+        "username": "donald103"
+      },
+      {
+        "$id": 98,
+        "$label": "User",
+        "active": true,
+        "age": 40,
+        "email": "anita.1@example.com",
+        "joined": "2023-02-02T07:05:14.895Z",
+        "name": "Anita McCarthy",
+        "profile": {
+          "location": { "city": "Berlin", "country": "DE" },
+          "prefs": { "notifications": false, "theme": "system" }
+        },
+        "score": 1.32,
+        "tags": ["beta", "oss"],
+        "username": "anita1"
+      },
+      {
+        "$id": 99,
+        "$label": "User",
+        "active": true,
+        "age": 68,
+        "email": "grace.2@example.com",
+        "joined": "2023-12-01T03:40:43.517Z",
+        "name": "Grace Berners-Lee",
+        "profile": {
+          "location": { "city": "Nairobi", "country": "KE" },
+          "prefs": { "notifications": false, "theme": "dark" }
+        },
+        "score": 50.51,
+        "tags": [],
+        "username": "grace2"
+      },
+      {
+        "$id": 100,
+        "$label": "User",
+        "active": true,
+        "age": 52,
+        "email": "john.3@example.com",
+        "joined": "2024-03-31T09:44:51.410Z",
+        "name": "John Berners-Lee",
+        "profile": {
+          "location": { "city": "Seoul", "country": "KR" },
+          "prefs": { "notifications": true, "theme": "light" }
+        },
+        "score": 29.68,
+        "tags": ["staff"],
+        "username": "john3"
+      }
+    ]
+  }
+}

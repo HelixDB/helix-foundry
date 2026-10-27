@@ -1,0 +1,276 @@
+{
+  "format": "agent_bundle",
+  "status": "done",
+  "ontology_toml": "version = \"draft\"\n\n[types.Contract]\ndescription = \"An agreement signed with customers, known by its title.\"\nprops = { signed_on = \"date\", term_months = \"integer\" }\n\n[types.Customer]\ndescription = \"A Stripe customer, identified by its customer id and named by its company name.\"\nprops = { company_name = \"string\", currency = \"string\", customer_id = \"string\", email = \"string\" }\nkey = [\"customer_id\"]\nnames = [\"company_name\"]\nidentifiers = { customer_id = \"code\", email = \"email\" }\n\n[types.Invoice]\ndescription = \"A Stripe invoice, identified by its invoice id.\"\nprops = { amount_due = \"integer\", invoice_id = \"string\", status = \"string\" }\nkey = [\"invoice_id\"]\n\n[links.billed_to]\nfrom = \"Invoice\"\nto = \"Customer\"\ndescription = \"The invoice bills the customer.\"\ncardinality = \"one\"\nrequired = true\n\n[links.signed_with]\nfrom = \"Contract\"\nto = \"Customer\"\ndescription = \"The contract is an agreement with the customer.\"\ncardinality = \"many\"\n\n[relations.co_signed]\ndescription = \"The two customers signed the same contract.\"\nsymmetric = true\n\n[rules.co_signers]\ndescription = \"Customers named in one contract signed it together.\"\ndatalog = \"co_signed(a, b) :- signed_with(k, a), signed_with(k, b).\"\n\n[rules.contract_invoices]\ndescription = \"A contract covers the invoices billed to the customers it is signed with.\"\ndatalog = \"covers(k, i) :- signed_with(k, c), billed_to(i, c).\"\n\n[rules.invoiced]\ndescription = \"A customer is invoiced once an invoice bills it.\"\ndatalog = \"invoiced(c) :- billed_to(i, c).\"\n\n[rules.under_contract]\ndescription = \"A customer is under contract once a contract is signed with it.\"\ndatalog = \"under_contract(c) :- signed_with(k, c).\"\n\n[constraints.invoice_under_contract]\ndescription = \"Invoices bill customers under contract.\"\nseverity = \"warn\"\ndatalog = \"violation(i) :- billed_to(i, c), not under_contract(c).\"\n",
+  "mappings_toml": "version = \"draft\"\nontology = \"draft\"\n\n[mappings.customers]\nsource = \"src_d15a4b332975dac0\"\n\n[mappings.customers.bind.customer]\ntype = \"Customer\"\nkey = { customer_id = \"customer_id\" }\nprops = { company_name = \"name\", currency = \"currency\", email = \"email\" }\nmissing = \"create\"\n\n[mappings.invoices]\nsource = \"src_07e1ecea14a36bd9\"\nlinks = [\n  { link = \"billed_to\", from = \"invoice\", to = \"customer\" },\n]\n\n[mappings.invoices.bind.customer]\ntype = \"Customer\"\nkey = { customer_id = \"customer_id\" }\nmissing = \"report\"\n\n[mappings.invoices.bind.invoice]\ntype = \"Invoice\"\nkey = { invoice_id = \"invoice_id\" }\nprops = { amount_due = \"amount_due\", status = \"status\" }\nmissing = \"create\"\n\n[extractions.contracts]\ndocuments = [\"set_acme_general\"]\nlinks = [\"signed_with\"]\n\n[extractions.contracts.types.Contract]\ncreate = true\nprops = [\"signed_on\", \"term_months\"]\n\n[extractions.contracts.types.Customer]\nprops = [\"currency\"]\n",
+  "draft": {
+    "ontology_toml": "version = \"draft\"\n\n[types.Contract]\ndescription = \"An agreement signed with customers, known by its title.\"\nprops = { signed_on = \"date\", term_months = \"integer\" }\n\n[types.Customer]\ndescription = \"A Stripe customer, identified by its customer id and named by its company name.\"\nprops = { company_name = \"string\", currency = \"string\", customer_id = \"string\", email = \"string\" }\nkey = [\"customer_id\"]\nnames = [\"company_name\"]\nidentifiers = { customer_id = \"code\", email = \"email\" }\n\n[types.Invoice]\ndescription = \"A Stripe invoice, identified by its invoice id.\"\nprops = { amount_due = \"integer\", invoice_id = \"string\", status = \"string\" }\nkey = [\"invoice_id\"]\n\n[links.billed_to]\nfrom = \"Invoice\"\nto = \"Customer\"\ndescription = \"The invoice bills the customer.\"\ncardinality = \"one\"\nrequired = true\n\n[links.signed_with]\nfrom = \"Contract\"\nto = \"Customer\"\ndescription = \"The contract is an agreement with the customer.\"\ncardinality = \"many\"\n\n[relations.co_signed]\ndescription = \"The two customers signed the same contract.\"\nsymmetric = true\n\n[rules.co_signers]\ndescription = \"Customers named in one contract signed it together.\"\ndatalog = \"co_signed(a, b) :- signed_with(k, a), signed_with(k, b).\"\n\n[rules.contract_invoices]\ndescription = \"A contract covers the invoices billed to the customers it is signed with.\"\ndatalog = \"covers(k, i) :- signed_with(k, c), billed_to(i, c).\"\n\n[rules.invoiced]\ndescription = \"A customer is invoiced once an invoice bills it.\"\ndatalog = \"invoiced(c) :- billed_to(i, c).\"\n\n[rules.under_contract]\ndescription = \"A customer is under contract once a contract is signed with it.\"\ndatalog = \"under_contract(c) :- signed_with(k, c).\"\n\n[constraints.invoice_under_contract]\ndescription = \"Invoices bill customers under contract.\"\nseverity = \"warn\"\ndatalog = \"violation(i) :- billed_to(i, c), not under_contract(c).\"\n",
+    "mappings_toml": "version = \"draft\"\nontology = \"draft\"\n\n[mappings.customers]\nsource = \"src_d15a4b332975dac0\"\n\n[mappings.customers.bind.customer]\ntype = \"Customer\"\nkey = { customer_id = \"customer_id\" }\nprops = { company_name = \"name\", currency = \"currency\", email = \"email\" }\nmissing = \"create\"\n\n[mappings.invoices]\nsource = \"src_07e1ecea14a36bd9\"\nlinks = [\n  { link = \"billed_to\", from = \"invoice\", to = \"customer\" },\n]\n\n[mappings.invoices.bind.customer]\ntype = \"Customer\"\nkey = { customer_id = \"customer_id\" }\nmissing = \"report\"\n\n[mappings.invoices.bind.invoice]\ntype = \"Invoice\"\nkey = { invoice_id = \"invoice_id\" }\nprops = { amount_due = \"amount_due\", status = \"status\" }\nmissing = \"create\"\n\n[extractions.contracts]\ndocuments = [\"set_acme_general\"]\nlinks = [\"signed_with\"]\n\n[extractions.contracts.types.Contract]\ncreate = true\nprops = [\"signed_on\", \"term_months\"]\n\n[extractions.contracts.types.Customer]\nprops = [\"currency\"]\n",
+    "draft": {
+      "rev": 2,
+      "base_version": null,
+      "items": {
+        "type.Contract": {
+          "toml": "[types.Contract]\ndescription = \"An agreement signed with customers, known by its title.\"\nprops = { signed_on = \"date\", term_months = \"integer\" }\n",
+          "status": "proposed",
+          "rationale": "Contracts exist only in the uploaded documents, so they are known by their titles, and their documents state when each was signed and how long it runs; CQ1 asks which customers a contract is with.",
+          "serves": ["cq.CQ1"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "type.Customer": {
+          "toml": "[types.Customer]\ndescription = \"A Stripe customer, identified by its customer id and named by its company name.\"\nprops = { company_name = \"string\", currency = \"string\", customer_id = \"string\", email = \"string\" }\nkey = [\"customer_id\"]\nnames = [\"company_name\"]\nidentifiers = { customer_id = \"code\", email = \"email\" }\n",
+          "status": "proposed",
+          "rationale": "Stripe keys customers by their customer id. The company name is how contracts name them, so text can find them by it; a quoted customer id or billing email identifies one outright.",
+          "serves": ["key", "cq.CQ1", "cq.CQ2"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "type.Invoice": {
+          "toml": "[types.Invoice]\ndescription = \"A Stripe invoice, identified by its invoice id.\"\nprops = { amount_due = \"integer\", invoice_id = \"string\", status = \"string\" }\nkey = [\"invoice_id\"]\n",
+          "status": "proposed",
+          "rationale": "CQ2 asks what a contracted customer is billed; invoices are keyed by their invoice id.",
+          "serves": ["key", "cq.CQ2"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "link.billed_to": {
+          "toml": "[links.billed_to]\nfrom = \"Invoice\"\nto = \"Customer\"\ndescription = \"The invoice bills the customer.\"\ncardinality = \"one\"\nrequired = true\n",
+          "status": "proposed",
+          "rationale": "Declared as a foreign key: invoices.customer_id → customers.customer_id.",
+          "serves": ["join", "cq.CQ2"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "link.signed_with": {
+          "toml": "[links.signed_with]\nfrom = \"Contract\"\nto = \"Customer\"\ndescription = \"The contract is an agreement with the customer.\"\ncardinality = \"many\"\n",
+          "status": "proposed",
+          "rationale": "Contracts name the customers they are with; a contract can have several.",
+          "serves": ["cq.CQ1"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.customers": {
+          "toml": "[mappings.customers]\nsource = \"src_d15a4b332975dac0\"\n",
+          "status": "proposed",
+          "rationale": "Loads every Stripe customer, with its company name as the name text matches.",
+          "serves": ["key"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "mapping.invoices": {
+          "toml": "[mappings.invoices]\nsource = \"src_07e1ecea14a36bd9\"\n",
+          "status": "proposed",
+          "rationale": "Loads every Stripe invoice, linked to the customer it bills.",
+          "serves": ["key", "join"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "extraction.contracts": {
+          "toml": "[extractions.contracts]\ndocuments = [\"set_acme_general\"]\nlinks = [\"signed_with\"]\n\n[extractions.contracts.types.Contract]\ncreate = true\nprops = [\"signed_on\", \"term_months\"]\n\n[extractions.contracts.types.Customer]\nprops = [\"currency\"]\n",
+          "status": "proposed",
+          "rationale": "The General set holds the contracts: its documents create each Contract with its signing date and term, and link it to the Stripe customers it names, found by name or customer id; they also state the currency a customer is billed in, which the customers table holds too. Documents never create customers.",
+          "serves": ["cq.CQ1"],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "rule.co_signers": {
+          "toml": "[rules.co_signers]\ndescription = \"Customers named in one contract signed it together.\"\ndatalog = \"co_signed(a, b) :- signed_with(k, a), signed_with(k, b).\"\n",
+          "status": "proposed",
+          "rationale": "Customers named in one contract signed it together.",
+          "serves": ["cq.CQ2"],
+          "evidence_ids": [],
+          "basis": "definitional",
+          "pending": null,
+          "verdict": "rule",
+          "card": {
+            "rev": 2,
+            "added": 0,
+            "contradicted": 0,
+            "unmeasurable": false,
+            "review_facts": 0,
+            "unrepresentable": 0,
+            "counterexamples": [],
+            "unmeasured": null,
+            "sample": "Mock fixture: evidence written for the seeded draft, not measured.",
+            "instances": 2,
+            "confirmed": 2,
+            "precision": 1,
+            "failure_rate_bound": 0.2,
+            "violations": [],
+            "subjects": 2,
+            "violation_rate": null,
+            "reason": "The seeded contract names Globex and Initech, who signed it together."
+          }
+        },
+        "rule.contract_invoices": {
+          "toml": "[rules.contract_invoices]\ndescription = \"A contract covers the invoices billed to the customers it is signed with.\"\ndatalog = \"covers(k, i) :- signed_with(k, c), billed_to(i, c).\"\n",
+          "status": "proposed",
+          "rationale": "CQ2 asks what a contracted customer is billed: a contract covers its customers' invoices.",
+          "serves": ["cq.CQ2"],
+          "evidence_ids": [],
+          "basis": "definitional",
+          "pending": null,
+          "verdict": "rule",
+          "card": {
+            "rev": 2,
+            "added": 0,
+            "contradicted": 0,
+            "unmeasurable": false,
+            "review_facts": 0,
+            "unrepresentable": 0,
+            "counterexamples": [],
+            "unmeasured": null,
+            "sample": "Mock fixture: evidence written for the seeded draft, not measured.",
+            "instances": 3,
+            "confirmed": 3,
+            "precision": 1,
+            "failure_rate_bound": 0.2,
+            "violations": [],
+            "subjects": 2,
+            "violation_rate": null,
+            "reason": "Each invoice of a customer under contract is covered by that contract."
+          }
+        },
+        "rule.invoiced": {
+          "toml": "[rules.invoiced]\ndescription = \"A customer is invoiced once an invoice bills it.\"\ndatalog = \"invoiced(c) :- billed_to(i, c).\"\n",
+          "status": "proposed",
+          "rationale": "A customer an invoice bills is invoiced.",
+          "serves": ["cq.CQ2"],
+          "evidence_ids": [],
+          "basis": "definitional",
+          "pending": null,
+          "verdict": "rule",
+          "card": {
+            "rev": 2,
+            "added": 0,
+            "contradicted": 0,
+            "unmeasurable": false,
+            "review_facts": 0,
+            "unrepresentable": 0,
+            "counterexamples": [],
+            "unmeasured": null,
+            "sample": "Mock fixture: evidence written for the seeded draft, not measured.",
+            "instances": 3,
+            "confirmed": 3,
+            "precision": 1,
+            "failure_rate_bound": 0.2,
+            "violations": [],
+            "subjects": 3,
+            "violation_rate": null,
+            "reason": "Every billed customer is invoiced."
+          }
+        },
+        "rule.under_contract": {
+          "toml": "[rules.under_contract]\ndescription = \"A customer is under contract once a contract is signed with it.\"\ndatalog = \"under_contract(c) :- signed_with(k, c).\"\n",
+          "status": "proposed",
+          "rationale": "CQ1 asks which customers are under contract: those a contract is signed with.",
+          "serves": ["cq.CQ1"],
+          "evidence_ids": [],
+          "basis": "definitional",
+          "pending": null,
+          "verdict": "rule",
+          "card": {
+            "rev": 2,
+            "added": 0,
+            "contradicted": 0,
+            "unmeasurable": false,
+            "review_facts": 0,
+            "unrepresentable": 0,
+            "counterexamples": [],
+            "unmeasured": null,
+            "sample": "Mock fixture: evidence written for the seeded draft, not measured.",
+            "instances": 2,
+            "confirmed": 2,
+            "precision": 1,
+            "failure_rate_bound": 0.2,
+            "violations": [],
+            "subjects": 2,
+            "violation_rate": null,
+            "reason": "Globex and Initech are under the seeded contract."
+          }
+        },
+        "constraint.invoice_under_contract": {
+          "toml": "[constraints.invoice_under_contract]\ndescription = \"Invoices bill customers under contract.\"\nseverity = \"warn\"\ndatalog = \"violation(i) :- billed_to(i, c), not under_contract(c).\"\n",
+          "status": "proposed",
+          "rationale": "Invoices should bill customers under contract; a break is a warning to review.",
+          "serves": ["cq.CQ1"],
+          "evidence_ids": [],
+          "basis": "definitional",
+          "pending": null,
+          "verdict": "rule",
+          "card": {
+            "rev": 2,
+            "added": 0,
+            "contradicted": 0,
+            "unmeasurable": false,
+            "review_facts": 0,
+            "unrepresentable": 0,
+            "counterexamples": [],
+            "unmeasured": null,
+            "sample": "Mock fixture: evidence written for the seeded draft, not measured.",
+            "instances": 0,
+            "confirmed": 0,
+            "precision": null,
+            "failure_rate_bound": null,
+            "violations": [
+              {
+                "constraint": "invoice_under_contract",
+                "severity": "warn",
+                "before": 0,
+                "after": 0
+              }
+            ],
+            "subjects": 3,
+            "violation_rate": 0,
+            "reason": "An invoice billing a customer with no contract is flagged for review."
+          }
+        },
+        "cq.CQ1": {
+          "toml": "[cq.CQ1]\nquestion = \"Which customers are under contract, and which contracts are they signed with?\"\npath = [\"Customer\", \"<signed_with\", \"Contract\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 1: the customers each contract is with.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        },
+        "cq.CQ2": {
+          "toml": "[cq.CQ2]\nquestion = \"What is each customer under contract billed?\"\npath = [\"Contract\", \"signed_with>\", \"Customer\", \"<billed_to\", \"Invoice\"]\n",
+          "status": "proposed",
+          "rationale": "Goal 2: what the customers a contract is with are invoiced.",
+          "serves": [],
+          "evidence_ids": [],
+          "basis": null,
+          "pending": null
+        }
+      },
+      "left_out": [
+        {
+          "what": "src_07e1ecea14a36bd9 file.payment_intent_id",
+          "reason": "No question follows payments."
+        }
+      ],
+      "questions": [],
+      "acknowledged": [],
+      "lint": []
+    }
+  },
+  "questions": [],
+  "summary": "A draft for contracts with your customers: which customers each contract is with, and what they are billed. It has 2 competency questions and 3 types: Customer and Invoice from Stripe, and Contract from your uploaded documents.\n\n**Keys and names**\n- Customers are keyed by their Stripe customer id and named by their company name, so a contract that names a company finds its customer.\n- A contract is known by its title: it exists only in the documents.\n\n**Links**\n- Each invoice bills one customer (a declared foreign key).\n- A contract is with one or more customers, as its text says.\n\n**Documents**\n- The General set's documents create contracts, with the date each was signed and its term in months, and find the customers they name by company name, customer id or billing email.",
+  "usage": {
+    "input": 21,
+    "cache_read": 284112,
+    "cache_write": 30480,
+    "output": 7302,
+    "usd": 0.3184
+  }
+}

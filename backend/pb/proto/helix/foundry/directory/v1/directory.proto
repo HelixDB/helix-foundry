@@ -1,0 +1,198 @@
+syntax = "proto3";
+
+// The directory of a standalone Foundry install: its one owner, the
+// workspaces they make, and the projects and HelixDB databases (tenants)
+// ontologies load into. A hosted deployment serves the same routes from its
+// own control plane; these are the ones the Foundry site calls, with the same
+// paths, verbs and JSON, carrying the fields the site reads.
+package helix.foundry.directory.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+service DirectoryService {
+  // The owner, and every workspace as one of their memberships.
+  rpc Whoami(WhoamiRequest) returns (WhoamiResponse) {
+    option (google.api.http) = { get: "/v1/whoami" };
+  }
+  // The live workspaces, newest first.
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse) {
+    option (google.api.http) = { get: "/v1/workspaces" };
+  }
+  rpc CreateWorkspace(CreateWorkspaceRequest) returns (Workspace) {
+    option (google.api.http) = { post: "/v1/workspaces" body: "*" };
+  }
+  rpc GetWorkspace(GetWorkspaceRequest) returns (Workspace) {
+    option (google.api.http) = { get: "/v1/workspaces/{id}" };
+  }
+  // A workspace's live projects, newest first.
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse) {
+    option (google.api.http) = { get: "/v1/projects" };
+  }
+  rpc CreateProject(CreateProjectRequest) returns (Project) {
+    option (google.api.http) = { post: "/v1/projects" body: "*" };
+  }
+  // A project's databases, newest first, deleted ones included.
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse) {
+    option (google.api.http) = { get: "/v1/tenants" };
+  }
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse) {
+    option (google.api.http) = { post: "/v1/tenants" body: "*" };
+  }
+  // Runs a read query on a database and returns its answer as it gave it.
+  rpc ExecuteDatabaseReadQuery(ExecuteDatabaseReadQueryRequest) returns (ExecuteDatabaseReadQueryResponse) {
+    option (google.api.http) = { post: "/v1/databases:query-read" body: "*" };
+  }
+}
+
+message Timestamps {
+  google.protobuf.Timestamp created_at = 1;
+  google.protobuf.Timestamp updated_at = 2;
+  google.protobuf.Timestamp deleted_at = 3;
+}
+
+enum ResourceStatus {
+  RESOURCE_STATUS_UNSPECIFIED = 0;
+  RESOURCE_STATUS_ACTIVE      = 3;
+  RESOURCE_STATUS_DELETING    = 4;
+  RESOURCE_STATUS_DELETED     = 5;
+}
+
+enum WorkspaceRole {
+  WORKSPACE_ROLE_UNSPECIFIED = 0;
+  WORKSPACE_ROLE_OWNER       = 3;
+}
+
+// The query state of a database: a standalone install never pauses one.
+enum TenantQueryState {
+  TENANT_QUERY_STATE_UNSPECIFIED = 0;
+  TENANT_QUERY_STATE_ENABLED     = 1;
+}
+
+message Page {
+  int32  size  = 1;
+  string token = 2;
+}
+
+message User {
+  string     id           = 1;
+  string     email        = 2;
+  string     display_name = 3;
+  Timestamps timestamps   = 4;
+}
+
+message WorkspaceMember {
+  string        workspace_id = 2;
+  User          user         = 3;
+  WorkspaceRole role         = 4;
+  Timestamps    timestamps   = 5;
+}
+
+message Workspace {
+  string         id           = 1;
+  string         slug         = 2;
+  string         region       = 3;
+  ResourceStatus status       = 5;
+  Timestamps     timestamps   = 10;
+  string         display_name = 13;
+  string         icon_url     = 14;
+}
+
+message Project {
+  string     id           = 1;
+  string     workspace_id = 2;
+  string     slug         = 3;
+  Timestamps timestamps   = 4;
+  string     display_name = 6;
+}
+
+message Tenant {
+  string           id           = 1;
+  string           workspace_id = 3;
+  string           project_id   = 4;
+  string           name         = 5;
+  string           slug         = 6;
+  ResourceStatus   status       = 7;
+  Timestamps       timestamps   = 8;
+  TenantQueryState query_state  = 11;
+}
+
+message WhoamiRequest {}
+
+message WhoamiResponse {
+  User                     user       = 1;
+  repeated WorkspaceMember workspaces = 2;
+}
+
+message ListWorkspacesRequest {
+  Page page = 2;
+}
+
+message ListWorkspacesResponse {
+  repeated Workspace workspaces      = 1;
+  string             next_page_token = 2;
+}
+
+message CreateWorkspaceRequest {
+  string          slug         = 1;
+  string          region       = 2;
+  optional string display_name = 4;
+}
+
+message GetWorkspaceRequest {
+  string id = 1;
+}
+
+message ListProjectsRequest {
+  string workspace_id = 1;
+  Page   page         = 2;
+}
+
+message ListProjectsResponse {
+  repeated Project projects        = 1;
+  string           next_page_token = 2;
+}
+
+message CreateProjectRequest {
+  string workspace_id = 1;
+  string slug         = 2;
+  string display_name = 3;
+}
+
+message ListTenantsRequest {
+  string project_id = 1;
+  Page   page       = 4;
+}
+
+message ListTenantsResponse {
+  repeated Tenant tenants         = 1;
+  string          next_page_token = 2;
+}
+
+message CreateTenantRequest {
+  string project_id = 1;
+  string name       = 3;
+  string slug       = 4;
+}
+
+message CreateTenantResponse {
+  Tenant tenant = 1;
+}
+
+// A database, by its tenant id.
+message DatabaseReference {
+  string tenant_id = 2;
+}
+
+message ExecuteDatabaseReadQueryRequest {
+  DatabaseReference database = 1;
+  // A HelixDB query request: {"request_type": "read", "query": ...}.
+  bytes query_json = 2;
+}
+
+message ExecuteDatabaseReadQueryResponse {
+  // The database's body, status and content type, as it answered.
+  bytes  response_json = 1;
+  int32  status_code   = 2;
+  string content_type  = 3;
+}

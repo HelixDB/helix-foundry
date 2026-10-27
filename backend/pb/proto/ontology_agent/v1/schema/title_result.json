@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TitleResult",
+  "description": "What a title call came to, and what it cost.",
+  "type": "object",
+  "properties": {
+    "outcome": {
+      "description": "The model's text, or how it failed.",
+      "$ref": "#/$defs/TitleOutcome"
+    },
+    "usage": {
+      "description": "What the call spent, at the model's price.",
+      "$ref": "#/$defs/Usage"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "outcome",
+    "usage"
+  ],
+  "$defs": {
+    "ModelFailure": {
+      "description": "Why a model call failed for good, as the contract's model failures name it.",
+      "oneOf": [
+        {
+          "description": "The model declined the request.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "The provider was unavailable, overloaded or broke off, retries included.",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "description": "The provider refused the API key.",
+          "type": "string",
+          "const": "auth"
+        },
+        {
+          "description": "The key may not use the model.",
+          "type": "string",
+          "const": "permission"
+        },
+        {
+          "description": "The provider has no such model.",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The provider kept limiting the rate of calls, retries included.",
+          "type": "string",
+          "const": "rate_limited"
+        },
+        {
+          "description": "The account is out of credit or quota.",
+          "type": "string",
+          "const": "quota"
+        },
+        {
+          "description": "The request is too long for the model.",
+          "type": "string",
+          "const": "context_too_long"
+        },
+        {
+          "description": "The model or endpoint can't do what the request asks (tool calls, structured answers),\nor refused it as invalid.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "The answer hit the output limit.",
+          "type": "string",
+          "const": "truncated"
+        },
+        {
+          "description": "The answer couldn't be read: not the JSON asked for, or a stream that broke its\nprotocol.",
+          "type": "string",
+          "const": "malformed"
+        },
+        {
+          "description": "The call ran out of time.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The model's weights changed since it was tested.",
+          "type": "string",
+          "const": "model_changed"
+        },
+        {
+          "description": "The endpoint resolves to a private address.",
+          "type": "string",
+          "const": "private_host"
+        }
+      ]
+    },
+    "TitleOutcome": {
+      "description": "What a title call came to.",
+      "oneOf": [
+        {
+          "description": "The model ended its turn with this text, as it wrote it: the backend makes a title of\nits first line that is one.",
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "description": "The text.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "description": "The call failed.",
+          "type": "object",
+          "properties": {
+            "failed": {
+              "type": "object",
+              "properties": {
+                "failure": {
+                  "description": "How.",
+                  "$ref": "#/$defs/ModelFailure"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "failure"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "failed"
+          ]
+        }
+      ]
+    },
+    "Usage": {
+      "description": "What a turn spent.",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input tokens read from the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input tokens written to the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usd": {
+          "description": "The cost, in US dollars.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "usd"
+      ]
+    }
+  }
+}

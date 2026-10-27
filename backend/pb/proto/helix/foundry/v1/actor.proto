@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package helix.foundry.v1;
+
+option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1;foundryv1";
+
+// Actor is who calls Foundry's API, as the front end that authenticated and
+// authorized the caller resolved it. A front end sends it with each call in
+// the gRPC metadata key helix-foundry-actor-bin, never in a request body;
+// only Foundry's internal port reads it.
+message Actor {
+  Source source = 1;
+  // The user's id; empty for an event source.
+  string user_id = 2;
+  // The send token's id; set only for SOURCE_EVENT_SOURCE.
+  string event_source_token_id = 3;
+  // The workspace query_read and query_write are of: the request's.
+  string workspace_id = 4;
+  // The projects of workspace_id whose databases the caller may read and
+  // write with queries.
+  ProjectScope query_read  = 5;
+  ProjectScope query_write = 6;
+}
+
+// Source is the kind of caller an Actor is.
+enum Source {
+  // No caller; Foundry refuses it.
+  SOURCE_UNSPECIFIED = 0;
+  // A person signed in to the Foundry site.
+  SOURCE_USER = 1;
+  // An agent calling through an MCP server, for a user.
+  SOURCE_MCP = 2;
+  // An event source's sender, holding its send token.
+  SOURCE_EVENT_SOURCE = 3;
+}
+
+// ProjectScope is none, every or some of a workspace's projects.
+message ProjectScope {
+  enum Mode {
+    // No project.
+    MODE_UNSPECIFIED = 0;
+    // Every project of the workspace.
+    MODE_ALL = 1;
+    // The projects project_ids names.
+    MODE_SELECTED = 2;
+  }
+  Mode mode = 1;
+  repeated string project_ids = 2;
+}

@@ -1,0 +1,1 @@
+{"status":"refused","findings":[{"code":"EditNotAllowed","item_id":"binding.x","message":"Edit only extraction routes, rules, constraints, or an existing type's identifiers."}],"cards":[]}

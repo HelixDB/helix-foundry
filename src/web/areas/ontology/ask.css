@@ -1,0 +1,1085 @@
+/* Ask (prefix ak-): a chat app's layout in helix-foundry's look. The
+   threads sit in the shell's sidebar under its sections (ask-threads.tsx),
+   listed as the shell lists chats; the conversation is helix-foundry's Analyst
+   chat (apps/web/src/areas/analyst/analyst.css, its an- rules under ak-):
+   a slim bar, the conversation (the only part that scrolls) in one centred
+   column, and the composer pinned under it. */
+
+/* Threads: New thread, the threads by recency, and the month's spend. Only
+   the threads scroll. */
+.ak-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.ak-panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 14px 12px 8px;
+}
+.ak-new {
+  justify-content: flex-start;
+  width: 100%;
+}
+.ak-threads {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  padding: 6px 12px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.ak-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  min-width: 0;
+}
+.ak-group h2 {
+  margin: 0;
+  padding: 4px 10px;
+  color: var(--hf-muted);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+.ak-group ul {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ak-thread {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.4;
+  text-decoration: none;
+}
+.ak-thread:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.ak-thread.is-active {
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.ak-thread-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ak-thread.is-active .ak-thread-title {
+  font-weight: 550;
+}
+.ak-thread small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  white-space: nowrap;
+}
+.ak-thread-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hf-info);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hf-info) 20%, transparent);
+  animation: hf-pulse 1.6s ease-in-out infinite;
+}
+.ak-threads-note {
+  margin: 0;
+  padding: 5px 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.ak-retry {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--hf-accent-text);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+/* The month's spend in a line; the limits behind it. */
+.ak-budget {
+  flex: none;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--hf-border);
+}
+.ak-budget > summary,
+.ak-budget[open] > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--hf-radius);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+  list-style: none;
+}
+.ak-budget > summary::-webkit-details-marker {
+  display: none;
+}
+.ak-budget > summary:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.ak-budget > summary svg {
+  flex: none;
+}
+.ak-budget strong {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.ak-budget p {
+  margin: 4px 10px 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+
+/* The conversation: a slim bar, then the questions and their replies in
+   one readable column (the only part that scrolls), and the composer. */
+.ak-chat {
+  --ak-col: 760px;
+  --ak-gutter: var(--hf-space-3);
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+}
+.ak-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--hf-space-15);
+  min-height: 52px;
+  padding: 8px var(--hf-space-3);
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-bg);
+}
+.ak-bar-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ak-back {
+  display: none;
+  flex: none;
+  margin-left: -8px;
+}
+/* The Ontology and Load pickers shrink, cutting their values short, rather
+   than push past a narrow bar. */
+.ak-bar .hf-filter-select {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* Positioned, so absolutely placed descendants (screen reader text) stay
+   inside the scroller instead of stretching the page. */
+.ak-scroll {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.ak-chat--empty {
+  justify-content: center;
+  padding: var(--hf-space-4) var(--ak-gutter);
+}
+.ak-log,
+.ak-start,
+.ak-dock > .ak-ask {
+  width: 100%;
+  max-width: calc(var(--ak-col) + 2 * var(--ak-gutter));
+  margin: 0 auto;
+  padding-left: var(--ak-gutter);
+  padding-right: var(--ak-gutter);
+}
+.ak-log {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--hf-space-5);
+  padding-top: var(--hf-space-3);
+  padding-bottom: var(--hf-space-4);
+}
+/* A new thread: the question to answer, the composer centred under it. */
+.ak-start {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--hf-space-2);
+  padding-top: var(--hf-space-4);
+  padding-bottom: 12vh;
+}
+.ak-hello {
+  margin: 0 0 var(--hf-space-1);
+  color: var(--hf-text);
+  font-family: var(--hf-font-display);
+  font-size: var(--hf-text-2xl);
+  font-weight: 400;
+  letter-spacing: -0.4px;
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* A turn: the question, then the reply. */
+.ak-turn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-1);
+  min-width: 0;
+}
+.ak-question {
+  justify-self: end;
+  max-width: min(85%, 620px);
+  padding: 10px 15px;
+  border-radius: 18px 18px 4px 18px;
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.ak-question p {
+  margin: 0;
+  font-size: var(--hf-text-md);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.ak-question-meta {
+  justify-self: end;
+  max-width: min(85%, 620px);
+  margin: -4px 4px 4px 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.ak-reply {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+.ak-avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hf-accent-border);
+  border-radius: 50%;
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.ak-reply-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-15);
+  min-width: 0;
+  padding-top: 2px;
+}
+
+/* Trace: the steps as they happen, between two fine rules and quieter than
+   the answer under them. */
+.ak-trace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 0 10px;
+  border-top: 1px solid var(--hf-border);
+  border-bottom: 1px solid var(--hf-border);
+}
+.ak-trace-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 12px;
+  min-height: 30px;
+}
+.ak-trace-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  font-weight: 500;
+}
+.ak-trace-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hf-info);
+}
+.ak-trace.is-working .ak-trace-dot {
+  animation: hf-pulse 1.6s ease-in-out infinite;
+}
+.ak-trace.is-answered .ak-trace-dot {
+  background: var(--hf-success);
+}
+.ak-trace.is-waiting .ak-trace-dot,
+.ak-trace.is-unanswered .ak-trace-dot {
+  background: var(--hf-warning);
+}
+.ak-trace.is-failed .ak-trace-dot {
+  background: var(--hf-danger);
+}
+.ak-trace.is-cancelled .ak-trace-dot {
+  background: var(--hf-faint);
+}
+.ak-trace-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px 4px;
+  min-width: 0;
+  margin-left: auto;
+}
+.ak-trace-time {
+  padding-right: 4px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  overflow-wrap: anywhere;
+}
+.ak-trace-note {
+  margin: 6px 0 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+.ak-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 0 0;
+  list-style: none;
+  counter-reset: ak-step;
+}
+.ak-step {
+  counter-increment: ak-step;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  margin: 0 -6px;
+  padding: 3px 6px;
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 20px;
+  transition: background var(--hf-duration) var(--hf-ease);
+}
+.ak-step-mark {
+  margin-top: 3.5px;
+  color: var(--hf-faint);
+}
+.ak-step.is-done .ak-step-mark {
+  color: var(--hf-accent-text);
+}
+.ak-step.is-running {
+  color: var(--hf-text-2);
+}
+.ak-step.is-running .ak-step-mark {
+  color: var(--hf-info-text);
+}
+.ak-step.is-error .ak-step-mark {
+  color: var(--hf-danger-text);
+}
+/* A result citation lights the step that returned it. */
+.ak-step.is-lit {
+  background: var(--hf-accent-soft);
+  box-shadow: inset 2px 0 0 var(--hf-accent);
+}
+.ak-step-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  min-width: 0;
+}
+.ak-step-text {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ak-step-text strong {
+  color: var(--hf-text-2);
+  font-weight: 600;
+}
+.ak-step.is-running .ak-step-text strong {
+  color: var(--hf-text);
+}
+/* Steps are numbered, as an ordered list's markers are (a result citation
+   names the step that read it), and the numbers stay out of copied text. */
+.ak-step-text::before {
+  content: counter(ak-step);
+  display: inline-block;
+  min-width: 18px;
+  color: var(--hf-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ak-sep {
+  color: var(--hf-muted);
+}
+.ak-step.is-error .ak-result {
+  color: var(--hf-danger-text);
+}
+.ak-step-input {
+  margin: 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.ak-query {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.ak-query code {
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-sm);
+}
+.ak-json {
+  min-width: 0;
+  padding-left: 18px;
+}
+/* The engine's words to the model, lines kept, never sideways. */
+.ak-told {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ak-json > summary {
+  width: fit-content;
+  padding: 0;
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.ak-json .on-code {
+  max-height: 240px;
+  margin-top: 6px;
+}
+
+/* Answer: the model's words, plain, then where they come from. */
+.ak-answer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-15);
+  min-width: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  line-height: 1.6;
+}
+.ak-answer > p,
+.ak-answer > ul {
+  max-width: 68ch;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ak-answer > ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 1.2em;
+  list-style: disc;
+}
+.ak-chip {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin: 0 1px 0 3px;
+  padding: 0 4px;
+  border: 1px solid var(--hf-accent-border);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+  font: inherit;
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  vertical-align: 2px;
+  cursor: pointer;
+}
+.ak-chip:hover,
+.ak-chip:focus-visible {
+  border-color: var(--hf-accent);
+}
+.ak-chip:disabled {
+  cursor: default;
+}
+.ak-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.ak-foot-label {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.ak-sources {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin: -4px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+/* Numbered with the chip the answer cites it by. */
+.ak-sources li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.ak-sources li::before {
+  content: attr(data-n);
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--hf-accent-border);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+  font-size: var(--hf-text-xs);
+  font-weight: 600;
+  line-height: 1;
+}
+.ak-sources a {
+  color: var(--hf-text);
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+  text-underline-offset: 2px;
+}
+.ak-sources a:hover {
+  text-decoration-color: currentColor;
+}
+.ak-answer-meta {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+.ak-spent {
+  display: block;
+  margin-top: 4px;
+  color: var(--hf-muted);
+}
+/* Visuals: a query result right after the block that introduces it, as
+   wide as the conversation (the text keeps its measure), and a step's
+   Result. One series in --hf-chart-1; text in text tokens. */
+.ak-visual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  margin: 4px 0;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.ak-visual-wait {
+  display: block;
+  margin: 4px 0;
+  border-radius: var(--hf-radius-lg);
+}
+.ak-visual-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  min-width: 0;
+}
+.ak-visual-title {
+  min-width: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ak-visual-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 12px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.ak-visual-query {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  color: var(--hf-text-2);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ak-visual-query:hover {
+  text-decoration-color: currentColor;
+}
+.ak-visual-entity {
+  color: var(--hf-text);
+  text-decoration: underline;
+  text-decoration-color: var(--hf-border-strong);
+  text-underline-offset: 2px;
+}
+.ak-visual-entity:hover {
+  text-decoration-color: currentColor;
+}
+/* A value a document gave: data, set apart from the tables'. */
+.ak-untrusted {
+  color: var(--hf-text-2);
+  font-style: italic;
+}
+/* A count or an aggregate: the number is the visual. */
+.ak-figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 0;
+}
+.ak-figure-value {
+  color: var(--hf-text);
+  font-size: var(--hf-text-3xl);
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+.ak-figure-detail {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+/* A query step's Result and JSON, side by side until one opens. */
+.ak-step-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  min-width: 0;
+  padding-left: 18px;
+}
+.ak-step-more > .ak-json {
+  padding-left: 0;
+}
+.ak-step-more > details[open] {
+  flex-basis: 100%;
+}
+.ak-step-result > .ak-visual,
+.ak-step-result > .hf-skeleton,
+.ak-step-result > .ak-step-input {
+  margin-top: 6px;
+  padding-left: 0;
+}
+
+/* Charts (ask-chart.tsx): hairline recessive grid and axes, 20px bars with
+   a 4px end, a 2px line over a 10% wash, the hovered mark lifted. */
+.ak-viz {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.ak-viz .recharts-cartesian-grid line {
+  stroke: var(--hf-border);
+}
+.ak-viz .recharts-cartesian-axis-line {
+  stroke: var(--hf-border-strong);
+}
+.ak-viz .recharts-cartesian-axis-tick-value,
+.ak-viz .ak-viz-tick {
+  fill: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.ak-viz .recharts-label-list text {
+  fill: var(--hf-text-2);
+  font-size: var(--hf-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.ak-viz .ak-viz-bar .recharts-rectangle {
+  fill: var(--hf-chart-1);
+}
+.ak-viz .ak-viz-bar .recharts-bar-rectangle:hover .recharts-rectangle {
+  fill: var(--hf-accent-strong);
+}
+.ak-viz .is-linked .recharts-bar-rectangle {
+  cursor: pointer;
+}
+.ak-viz .recharts-tooltip-cursor {
+  fill: var(--hf-hover);
+}
+.ak-viz path.recharts-curve.recharts-tooltip-cursor {
+  fill: none;
+  stroke: var(--hf-border-strong);
+}
+.ak-viz .ak-viz-line .recharts-area-area {
+  fill: var(--hf-chart-1);
+  fill-opacity: 0.1;
+}
+.ak-viz .ak-viz-line .recharts-area-curve {
+  fill: none;
+  stroke: var(--hf-chart-1);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ak-viz .recharts-active-dot circle {
+  fill: var(--hf-chart-1);
+  stroke: var(--hf-raised);
+}
+.ak-viz .ak-viz-link .ak-viz-tick {
+  fill: var(--hf-text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ak-viz .ak-viz-link:hover .ak-viz-tick {
+  fill: var(--hf-accent-text);
+}
+.ak-viz .ak-viz-link:focus-visible,
+.ak-viz .recharts-surface:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.ak-viz .recharts-surface:focus:not(:focus-visible) {
+  outline: none;
+}
+/* The tooltip: the exact value first, then what it is. */
+.ak-viz-tip {
+  display: grid;
+  gap: 1px;
+  max-width: 280px;
+  padding: 6px 9px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-tooltip);
+  box-shadow: var(--hf-shadow-2);
+  color: var(--hf-on-tooltip-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ak-viz-tip-value {
+  color: var(--hf-on-tooltip);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ak-viz-tip-hint {
+  color: var(--hf-on-tooltip-muted);
+}
+
+/* A question the ontology can't answer drafts a version from its callout. */
+.ak-draft {
+  display: block;
+  margin-top: 10px;
+}
+
+/* Composer: helix-foundry's prompt box, its button inside. A thread's is
+   pinned under the conversation, which fades out behind it. */
+.ak-ask {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+.ak-dock {
+  position: relative;
+  flex: none;
+  padding: 0 0 var(--hf-space-15);
+  background: var(--hf-bg);
+}
+.ak-dock::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: 20px;
+  background: linear-gradient(transparent, var(--hf-bg));
+  pointer-events: none;
+}
+.ak-jump {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-2);
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+.ak-jump:hover {
+  background: var(--hf-hover);
+}
+.ak-focus {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 2px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.ak-focus-clear {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  color: var(--hf-muted);
+  cursor: pointer;
+}
+.ak-focus-clear:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.ak-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 7px 7px 16px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-xl);
+  background: var(--hf-field);
+  cursor: text;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    box-shadow var(--hf-duration) var(--hf-ease);
+}
+.ak-chat .ak-composer {
+  box-shadow: var(--hf-shadow-2);
+}
+.ak-composer:focus-within {
+  border-color: var(--hf-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hf-accent) 18%, transparent);
+}
+.ak-chat .ak-composer:focus-within {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--hf-accent) 18%, transparent),
+    var(--hf-shadow-2);
+}
+.ak-composer .ak-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 7px 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-md);
+  line-height: 22px;
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+  resize: none;
+}
+.ak-composer .ak-input:focus,
+.ak-composer .ak-input:focus-visible {
+  border: 0;
+  outline: none;
+}
+.ak-composer .ak-input::placeholder {
+  color: var(--hf-muted);
+}
+.ak-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-ink);
+  color: var(--hf-on-ink);
+  cursor: pointer;
+  transition: background var(--hf-duration) var(--hf-ease);
+}
+.ak-send:hover:not(:disabled) {
+  background: var(--hf-ink-hover);
+}
+.ak-send:disabled {
+  background: var(--hf-sunken);
+  color: var(--hf-faint);
+  cursor: default;
+}
+.ak-ask[aria-busy="true"] .ak-send {
+  background: var(--hf-ink);
+  color: var(--hf-on-ink);
+  cursor: progress;
+}
+.ak-hint {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ak-hint {
+  text-align: center;
+}
+.ak-drawer .ak-hint {
+  text-align: left;
+}
+.ak-hint.is-error {
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-sm);
+}
+
+/* Suggestions under a new thread's composer: helix-foundry's follow-up
+   chips. */
+.ak-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ak-suggestion {
+  max-width: 100%;
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: transparent;
+  color: var(--hf-text-2);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.ak-suggestion:hover {
+  border-color: var(--hf-border-strong);
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+
+/* "Ask about this": the same turn and composer in a drawer. */
+.ak-drawer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--hf-space-2);
+  min-width: 0;
+}
+.ak-open {
+  justify-self: start;
+}
+
+@media (max-width: 800px) {
+  .ak-chat {
+    --ak-gutter: var(--hf-space-2);
+    /* Under the mobile bar. */
+    height: calc(100dvh - 52px);
+  }
+  .ak-bar {
+    padding: 6px var(--hf-space-2);
+  }
+  .ak-back {
+    display: inline-flex;
+  }
+  .ak-log {
+    gap: var(--hf-space-4);
+    padding-top: var(--hf-space-2);
+  }
+  .ak-hello {
+    font-size: var(--hf-text-xl);
+  }
+}
+@media (max-width: 520px) {
+  .ak-question,
+  .ak-question-meta {
+    max-width: 90%;
+  }
+  .ak-reply {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .ak-avatar {
+    width: 24px;
+    height: 24px;
+  }
+  .ak-avatar svg {
+    width: 12px;
+    height: 12px;
+  }
+}

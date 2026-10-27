@@ -1,0 +1,598 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskRequest",
+  "description": "One question's request.",
+  "type": "object",
+  "properties": {
+    "as_of": {
+      "description": "When the question was asked, a date or an RFC 3339 time: the `today` its rules see.",
+      "type": "string"
+    },
+    "catalog": {
+      "description": "The version's sources by the names the user knows them by.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CatalogEntry"
+      }
+    },
+    "database": {
+      "description": "The graph the load is in.",
+      "type": "string"
+    },
+    "draft_json": {
+      "description": "The version's draft as JSON text: its items with their rationale (and, once rules are\nevaluated, their verdicts and cards).",
+      "type": "string"
+    },
+    "focus": {
+      "description": "The entity the user asked it about, if any. It is read before the first step: an\nentity the load holds is the question's first handle, `n1`; one it doesn't hold, or\nthat isn't an entity of the ontology, is said so in the question, which still runs.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "goal": {
+      "description": "What the ontology is for: the brief of the generation that drafted it.",
+      "type": "string"
+    },
+    "helix": {
+      "description": "The read-only proxy to the graph.",
+      "$ref": "#/$defs/HelixTarget"
+    },
+    "history": {
+      "description": "The thread's earlier questions and answers, oldest first, at most [`MAX_HISTORY`].",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/HistoryTurn"
+      }
+    },
+    "limits": {
+      "description": "Hard caps on the question.",
+      "$ref": "#/$defs/Limits"
+    },
+    "load": {
+      "description": "The load the agent reads: every read is bound to it.",
+      "$ref": "#/$defs/LoadId"
+    },
+    "mappings_toml": {
+      "description": "The version's `mappings.toml`.",
+      "type": "string"
+    },
+    "models": {
+      "description": "The model that answers. The endpoint's API key travels in the call's metadata, never\nhere.",
+      "$ref": "#/$defs/AskModels"
+    },
+    "ontology_toml": {
+      "description": "The version's `ontology.toml`.",
+      "type": "string"
+    },
+    "ontology_version": {
+      "description": "The version the load recorded; a load of another version isn't read.",
+      "type": "string"
+    },
+    "question": {
+      "description": "The user's question.",
+      "type": "string"
+    },
+    "questions_json": {
+      "description": "The version's questions to the user, as JSON text.",
+      "type": "string"
+    },
+    "request_id": {
+      "description": "The question's id, the same on every attempt.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "database",
+    "load",
+    "ontology_version",
+    "ontology_toml",
+    "mappings_toml",
+    "draft_json",
+    "questions_json",
+    "goal",
+    "catalog",
+    "question",
+    "helix",
+    "as_of",
+    "limits",
+    "models"
+  ],
+  "$defs": {
+    "AskModels": {
+      "description": "The model a question runs on.",
+      "type": "object",
+      "properties": {
+        "ask": {
+          "description": "Answers the question, with tools.",
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "endpoint": {
+          "description": "Where the question runs.",
+          "$ref": "#/$defs/Endpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "ask"
+      ]
+    },
+    "AwsRegion": {
+      "description": "An AWS region, such as `us-east-1` or `ap-southeast-2`: its endpoint's host is built from\nit, never typed.",
+      "type": "string"
+    },
+    "AzureEndpoint": {
+      "description": "An Azure OpenAI resource's endpoint: https on a host of `openai.azure.com`,\n`cognitiveservices.azure.com` or `services.ai.azure.com`, with no port, user, query or\nfragment, and no path but `/openai/v1`. It is kept as `{origin}/openai/v1`.",
+      "type": "string"
+    },
+    "CatalogEntry": {
+      "description": "A source of the version, named as the user knows it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The id mappings and routes name it by.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What it is.",
+          "$ref": "#/$defs/CatalogKind"
+        },
+        "name": {
+          "description": "What the user calls it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "name"
+      ]
+    },
+    "CatalogKind": {
+      "description": "What a catalog entry is.",
+      "oneOf": [
+        {
+          "description": "A table, ingested through mappings.",
+          "type": "string",
+          "const": "table"
+        },
+        {
+          "description": "A set of documents, extracted through routes.",
+          "type": "string",
+          "const": "document_set"
+        }
+      ]
+    },
+    "CompatApi": {
+      "description": "The OpenAI API an OpenAI-compatible server speaks.",
+      "oneOf": [
+        {
+          "description": "`{base_url}/chat/completions`.",
+          "type": "string",
+          "const": "chat_completions"
+        },
+        {
+          "description": "`{base_url}/responses`.",
+          "type": "string",
+          "const": "responses"
+        }
+      ]
+    },
+    "Endpoint": {
+      "description": "The endpoint every model of a request is called on.",
+      "type": "object",
+      "properties": {
+        "call_timeout_secs": {
+          "description": "One JSON or text call's attempt, from connecting to its last byte, in seconds. Turns\nare bounded by the request's wall time and an idle watchdog instead.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1
+        },
+        "max_calls_in_flight": {
+          "description": "Calls in flight on this endpoint at once, across every request, model and kind of call;\nnone for no endpoint-wide bound. A local server takes one or a few.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "provider": {
+          "description": "Who serves the models, and where.",
+          "$ref": "#/$defs/Provider"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "call_timeout_secs"
+      ]
+    },
+    "EntityRef": {
+      "description": "One entity of the load.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its identity in the load: the key's encoding for a keyed type, the normalized name for\na named one.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Its type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id"
+      ]
+    },
+    "HelixTarget": {
+      "description": "Where the graph is written: the backend's proxy for one Helix database.",
+      "type": "object",
+      "properties": {
+        "max_request_bytes": {
+          "description": "The largest request body the proxy takes; a write past it is refused before it is sent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "timeout_secs": {
+          "description": "How long one request may take, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "token": {
+          "description": "The job's bearer token for the proxy.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The proxy's base URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token",
+        "max_request_bytes",
+        "timeout_secs"
+      ]
+    },
+    "HistoryTurn": {
+      "description": "An earlier question of the thread and its answer as plain text.",
+      "type": "object",
+      "properties": {
+        "answer": {
+          "description": "Its answer.",
+          "type": "string"
+        },
+        "question": {
+          "description": "The question.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "question",
+        "answer"
+      ]
+    },
+    "Limits": {
+      "description": "Hard caps on one turn.",
+      "type": "object",
+      "properties": {
+        "max_steps": {
+          "description": "Model calls.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_usd": {
+          "description": "Spend, in US dollars.",
+          "type": "number",
+          "format": "double"
+        },
+        "max_wall_secs": {
+          "description": "Wall time, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_usd",
+        "max_steps",
+        "max_wall_secs"
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    },
+    "ModelName": {
+      "description": "A model's name as its provider takes it: 1 to 200 characters, none of them whitespace or a\ncontrol character.",
+      "type": "string"
+    },
+    "ModelSpec": {
+      "description": "What a request runs a role on.",
+      "type": "object",
+      "properties": {
+        "context_tokens": {
+          "description": "The context window: Ollama's `num_ctx`, elsewhere a bound the prompt is checked\nagainst.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "description": "The most output one response may write, under the task's own ceiling.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 1
+        },
+        "name": {
+          "description": "The model, as the provider names it (an Azure deployment's name, a Bedrock model or\ninference profile id).",
+          "$ref": "#/$defs/ModelName"
+        },
+        "price": {
+          "description": "What its tokens cost.",
+          "$ref": "#/$defs/Price"
+        },
+        "reasoning": {
+          "description": "Send the provider's reasoning knob (Anthropic's effort, OpenAI's reasoning effort).",
+          "type": "boolean",
+          "default": true
+        },
+        "revision": {
+          "description": "The Ollama model's digest the request was tested on.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OllamaDigest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "price"
+      ]
+    },
+    "ModelUrl": {
+      "description": "The base URL of a server the request names: http or https, with a host, and with no user,\npassword, query or fragment; a path is kept, without a trailing `/`. Whether plain http or\na private address may be called is the server's to say ([`TurnModels::check`]).",
+      "type": "string"
+    },
+    "OllamaDigest": {
+      "description": "An Ollama model's digest: `sha256:` and 64 lowercase hex digits.",
+      "type": "string"
+    },
+    "Price": {
+      "description": "What a model's tokens cost.",
+      "oneOf": [
+        {
+          "description": "The model's row in Helix's price table.",
+          "type": "string",
+          "const": "table"
+        },
+        {
+          "description": "Another model's row of the same provider kind: the model an Azure deployment runs, or\nthe model behind a Bedrock inference profile.",
+          "type": "object",
+          "properties": {
+            "table_as": {
+              "$ref": "#/$defs/ModelName"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "table_as"
+          ]
+        },
+        {
+          "description": "These rates.",
+          "type": "object",
+          "properties": {
+            "rates": {
+              "$ref": "#/$defs/Rates"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rates"
+          ]
+        },
+        {
+          "description": "Nothing: a local or self-hosted model.",
+          "type": "string",
+          "const": "free"
+        }
+      ]
+    },
+    "Provider": {
+      "description": "Who serves a request's models, and where. Anthropic, OpenAI, Azure OpenAI and Bedrock need\nan API key; an Ollama server takes none; an OpenAI-compatible server may.",
+      "oneOf": [
+        {
+          "description": "Anthropic's API, `https://api.anthropic.com`.",
+          "type": "string",
+          "const": "anthropic"
+        },
+        {
+          "description": "OpenAI's API, `https://api.openai.com/v1`.",
+          "type": "string",
+          "const": "openai"
+        },
+        {
+          "description": "An Azure OpenAI resource; each model is a deployment's name.",
+          "type": "object",
+          "properties": {
+            "azure_openai": {
+              "type": "object",
+              "properties": {
+                "endpoint": {
+                  "description": "The resource's endpoint.",
+                  "$ref": "#/$defs/AzureEndpoint"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "endpoint"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "azure_openai"
+          ]
+        },
+        {
+          "description": "Amazon Bedrock's runtime in a region, with a Bedrock API key.",
+          "type": "object",
+          "properties": {
+            "bedrock": {
+              "type": "object",
+              "properties": {
+                "fips": {
+                  "description": "The region's FIPS endpoint.",
+                  "type": "boolean",
+                  "default": false
+                },
+                "region": {
+                  "description": "The AWS region.",
+                  "$ref": "#/$defs/AwsRegion"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "region"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "bedrock"
+          ]
+        },
+        {
+          "description": "An Ollama server.",
+          "type": "object",
+          "properties": {
+            "ollama": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "description": "Where it listens, such as `http://127.0.0.1:11434`.",
+                  "$ref": "#/$defs/ModelUrl"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "base_url"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ollama"
+          ]
+        },
+        {
+          "description": "A server speaking an OpenAI API.",
+          "type": "object",
+          "properties": {
+            "openai_compatible": {
+              "type": "object",
+              "properties": {
+                "api": {
+                  "description": "Which API it speaks.",
+                  "$ref": "#/$defs/CompatApi"
+                },
+                "base_url": {
+                  "description": "Its base URL, the version path included, such as `https://llm.example.com/v1`.",
+                  "$ref": "#/$defs/ModelUrl"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "base_url",
+                "api"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "openai_compatible"
+          ]
+        }
+      ]
+    },
+    "Rates": {
+      "description": "Per-token rates, in nano-dollars ($1 per million tokens is 1,000).",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input read from the provider's prompt cache; the input rate when none.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input written to the provider's prompt cache; the input rate when none.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output, reasoning included.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "output"
+      ]
+    }
+  }
+}

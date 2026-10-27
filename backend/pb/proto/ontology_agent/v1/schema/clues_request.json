@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CluesRequest",
+  "description": "A request for People enrichment's Clues: the people a load of the version could look up.\nIt reads the tables and runs the create passes that make the people the `[enrichments]`\nitem enriches, as the load would, with no graph: every mapping with a create binding of the\nitem's type, and the mappings they look up. A row too large for a write\n(`max_request_bytes`, with the load's id) is left out as the load leaves it out.",
+  "type": "object",
+  "properties": {
+    "load": {
+      "description": "The load the people would be looked up for, which Ingest will create: a row's size\ncounts its id, as the load's chunks do.",
+      "$ref": "#/$defs/LoadId"
+    },
+    "mappings_toml": {
+      "description": "The approved `mappings.toml`, with its `[enrichments]` item.",
+      "type": "string"
+    },
+    "max_request_bytes": {
+      "description": "The largest request body the load's Helix proxy takes, as Ingest's\n`helix.max_request_bytes`: a row whose write wouldn't fit is left out.",
+      "type": "integer",
+      "format": "uint",
+      "minimum": 1
+    },
+    "ontology_toml": {
+      "description": "The approved `ontology.toml`.",
+      "type": "string"
+    },
+    "request_id": {
+      "description": "The idempotency key: a retry sends the same one.",
+      "type": "string"
+    },
+    "sources": {
+      "description": "The tables, as the load's Ingest will be sent them; file paths are under the files\nroot. Sources routed to extraction are left out.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceDescriptor"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "load",
+    "ontology_toml",
+    "mappings_toml",
+    "sources",
+    "max_request_bytes"
+  ],
+  "$defs": {
+    "DocumentFile": {
+      "description": "One staged document of a document set ([`SourceAccess::Documents`](crate::SourceAccess::Documents)).",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The backend's document id.",
+          "type": "string"
+        },
+        "media_type": {
+          "description": "How the text is written.",
+          "$ref": "#/$defs/MediaType"
+        },
+        "path": {
+          "description": "The staged text, under the files root.",
+          "type": "string"
+        },
+        "title": {
+          "description": "The document's title, as the backend shows it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "doc_id",
+        "path",
+        "media_type",
+        "title"
+      ]
+    },
+    "FileFormat": {
+      "description": "How a file is written.",
+      "oneOf": [
+        {
+          "description": "CSV.",
+          "type": "object",
+          "properties": {
+            "csv": {
+              "type": "object",
+              "properties": {
+                "delimiter": {
+                  "description": "The field delimiter, one ASCII character.",
+                  "type": "string",
+                  "maxLength": 1,
+                  "minLength": 1
+                },
+                "header": {
+                  "description": "Whether the first row names the fields.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "delimiter",
+                "header"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "csv"
+          ]
+        },
+        {
+          "description": "One JSON document.",
+          "type": "string",
+          "const": "json"
+        },
+        {
+          "description": "One JSON value per line.",
+          "type": "string",
+          "const": "jsonl"
+        },
+        {
+          "description": "Text for extraction.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    },
+    "MediaType": {
+      "description": "Document formats that take the LLM path. Tables and code take deterministic routes and are\nnot documents.",
+      "oneOf": [
+        {
+          "description": "Markdown: sections break at headings too.",
+          "type": "string",
+          "const": "markdown"
+        },
+        {
+          "description": "Plain text.",
+          "type": "string",
+          "const": "plain_text"
+        }
+      ]
+    },
+    "Observed": {
+      "description": "When a source's data was observed, as the caller pinned the source: the connector's sync\nits snapshot was taken at, or the upload of its file. The transactions of the source's rows\nrecord it ([`Origin::Rows`]), so a load tells when what its rows say held at the source.",
+      "oneOf": [
+        {
+          "description": "A connector's sync of the source's table.",
+          "type": "object",
+          "properties": {
+            "sync": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "description": "When the sync observed the table.",
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "change_seq": {
+                  "description": "The table's change sequence number the snapshot holds every change up to.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "sync_id": {
+                  "description": "The sync, by the backend's id.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "at",
+                "sync_id",
+                "change_seq"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "sync"
+          ]
+        },
+        {
+          "description": "The upload of the source's file.",
+          "type": "object",
+          "properties": {
+            "upload": {
+              "type": "object",
+              "properties": {
+                "document_id": {
+                  "description": "The uploaded document, by the backend's id.",
+                  "type": "string"
+                },
+                "uploaded_at": {
+                  "description": "When it was uploaded.",
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "document_id",
+                "uploaded_at"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "upload"
+          ]
+        }
+      ]
+    },
+    "Route": {
+      "description": "How a source's data enters the graph.",
+      "oneOf": [
+        {
+          "description": "Through mappings; its facts carry this confidence.",
+          "type": "object",
+          "properties": {
+            "mapping": {
+              "type": "object",
+              "properties": {
+                "trust": {
+                  "description": "How far to trust what its rows state; 1 unless the user says otherwise.",
+                  "type": "number",
+                  "format": "double",
+                  "default": 1.0,
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "mapping"
+          ]
+        },
+        {
+          "description": "Through text extraction.",
+          "type": "string",
+          "const": "extraction"
+        }
+      ]
+    },
+    "SourceAccess": {
+      "description": "How to read a source. A presigned URL for a file is not taken yet: the readers read local\npaths.",
+      "oneOf": [
+        {
+          "description": "A Postgres database, through a short-lived read-only role.",
+          "type": "object",
+          "properties": {
+            "postgres": {
+              "type": "object",
+              "properties": {
+                "dsn_env": {
+                  "description": "The environment variable that holds the connection string.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "dsn_env"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "postgres"
+          ]
+        },
+        {
+          "description": "A local file.",
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "object",
+              "properties": {
+                "format": {
+                  "description": "How it is written.",
+                  "$ref": "#/$defs/FileFormat"
+                },
+                "path": {
+                  "description": "Where it is; a relative path is taken from the base directory the caller gives.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "format"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "file"
+          ]
+        },
+        {
+          "description": "A document set: some of its documents, staged as local text files. Extraction reads the\nset's documents through `mappings.toml`'s `[extractions]` routes, not through the table\nreaders.",
+          "type": "object",
+          "properties": {
+            "documents": {
+              "type": "object",
+              "properties": {
+                "files": {
+                  "description": "The documents staged.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/DocumentFile"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "files"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "documents"
+          ]
+        }
+      ]
+    },
+    "SourceDescriptor": {
+      "description": "A source the turn may read; see [`TurnRequest`] for one in JSON.",
+      "type": "object",
+      "properties": {
+        "access": {
+          "description": "How to read it.",
+          "$ref": "#/$defs/SourceAccess"
+        },
+        "description": {
+          "description": "What it holds, in the user's words.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "display_name": {
+          "description": "What the user calls it; kept out of the artifacts by the leak guard.",
+          "type": "string"
+        },
+        "fingerprint": {
+          "description": "What identifies its data: a file's content hash, or the backend's snapshot id of a\ndatabase. Seeds and the tools' memo depend on it, so changed data is measured afresh.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The opaque id artifacts name it by.",
+          "type": "string"
+        },
+        "observed": {
+          "description": "When its data was observed, if the backend knows: the connector sync its snapshot was\ntaken at, or the upload of its file. An Ingest records it on the transaction of each\nchunk of the source's rows; a turn reads nothing of it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Observed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "route": {
+          "description": "How its data enters the graph, as the backend decides.",
+          "$ref": "#/$defs/Route"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "display_name",
+        "route",
+        "access",
+        "fingerprint"
+      ]
+    }
+  }
+}

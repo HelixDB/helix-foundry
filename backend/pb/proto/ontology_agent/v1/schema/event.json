@@ -1,0 +1,685 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event",
+  "description": "One line of a turn's NDJSON stream.",
+  "oneOf": [
+    {
+      "description": "The turn started.",
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "description": "The version of the contract the turn speaks, [`CONTRACT_VERSION`].",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "turn_started"
+        },
+        "model": {
+          "description": "The model the turn drafts with.",
+          "$ref": "#/$defs/ModelRef"
+        }
+      },
+      "required": [
+        "event",
+        "contract_version",
+        "model"
+      ]
+    },
+    {
+      "description": "Progress text from the model's thinking updates.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "progress"
+        },
+        "text": {
+          "description": "The text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "text"
+      ]
+    },
+    {
+      "description": "A tool was called.",
+      "type": "object",
+      "properties": {
+        "args_summary": {
+          "description": "Its arguments, summarized.",
+          "type": "string"
+        },
+        "event": {
+          "type": "string",
+          "const": "tool_call"
+        },
+        "name": {
+          "description": "The tool.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "name",
+        "args_summary"
+      ]
+    },
+    {
+      "description": "A tool returned.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "tool_result"
+        },
+        "name": {
+          "description": "The tool.",
+          "type": "string"
+        },
+        "ok": {
+          "description": "Whether it succeeded.",
+          "type": "boolean"
+        },
+        "summary": {
+          "description": "Its result, summarized.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "name",
+        "ok",
+        "summary"
+      ]
+    },
+    {
+      "description": "The draft changed.",
+      "type": "object",
+      "properties": {
+        "changed_items": {
+          "description": "The items that changed.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          }
+        },
+        "event": {
+          "type": "string",
+          "const": "draft"
+        },
+        "rev": {
+          "description": "The new revision.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "rev",
+        "changed_items"
+      ]
+    },
+    {
+      "description": "A rule or constraint proposal got its verdict.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "proposal"
+        },
+        "evidence": {
+          "description": "The evidence behind it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          }
+        },
+        "id": {
+          "description": "The proposal's item.",
+          "$ref": "#/$defs/ItemId"
+        },
+        "verdict": {
+          "description": "The harness's verdict.",
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "event",
+        "id",
+        "verdict",
+        "evidence"
+      ]
+    },
+    {
+      "description": "A question for the user.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "question"
+        },
+        "question": {
+          "description": "The question.",
+          "$ref": "#/$defs/Question"
+        }
+      },
+      "required": [
+        "event",
+        "question"
+      ]
+    },
+    {
+      "description": "What the turn spent so far.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "usage"
+        },
+        "usage": {
+          "description": "The usage.",
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "event",
+        "usage"
+      ]
+    },
+    {
+      "description": "Something the backend should know.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "warning"
+        },
+        "text": {
+          "description": "What.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "text"
+      ]
+    },
+    {
+      "description": "The turn ended.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "turn_finished"
+        },
+        "status": {
+          "description": "How.",
+          "$ref": "#/$defs/Status"
+        },
+        "summary": {
+          "description": "What the model said of the turn, when it ended it with `finish`\n([`TurnResult::summary`]).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "event",
+        "status"
+      ]
+    }
+  ],
+  "$defs": {
+    "ErrorKind": {
+      "description": "What kind of check refused an item.",
+      "oneOf": [
+        {
+          "description": "The snippet doesn't define exactly its item, or the draft's structure breaks: a part\nwithout its link, a gap in a link's chains, a reference to a CQ that isn't there, a\nrepeated id.",
+          "type": "string",
+          "const": "shape"
+        },
+        {
+          "description": "The item isn't in the draft (or the question isn't open).",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The user locked the item.",
+          "type": "string",
+          "const": "locked"
+        },
+        {
+          "description": "The user removed the item, so it can't come back without asking.",
+          "type": "string",
+          "const": "absent"
+        },
+        {
+          "description": "A name, description or rationale carries data: an email or phone pattern, a source's\ndisplay name, or a sampled value.",
+          "type": "string",
+          "const": "leak"
+        },
+        {
+          "description": "A policy gate refused it, before any evidence: a rule's basis, a `block` constraint's\nbasis, a raw rule a declaration expresses.",
+          "type": "string",
+          "const": "policy"
+        },
+        {
+          "description": "It cites an evidence id the session doesn't hold.",
+          "type": "string",
+          "const": "evidence"
+        },
+        {
+          "description": "`schema::Ontology::from_toml` refused the rendered ontology.",
+          "type": "string",
+          "const": "schema"
+        },
+        {
+          "description": "`rules::Program::compile` refused it.",
+          "type": "string",
+          "const": "compile"
+        },
+        {
+          "description": "`mapping::Mappings::from_toml` or `validate` refused the rendered mappings.",
+          "type": "string",
+          "const": "mapping"
+        },
+        {
+          "description": "A competency question's path doesn't follow the ontology's links.",
+          "type": "string",
+          "const": "cq"
+        },
+        {
+          "description": "The session state would pass its size bound.",
+          "type": "string",
+          "const": "too_large"
+        }
+      ]
+    },
+    "EvidenceId": {
+      "description": "The id of a stored tool result, such as `e17`: every number the user sees cites one.\nIds order by number.",
+      "type": "string"
+    },
+    "ItemError": {
+      "description": "One reason a write was refused.",
+      "type": "object",
+      "properties": {
+        "hint": {
+          "description": "How to fix it.",
+          "type": "string"
+        },
+        "item": {
+          "description": "The item that caused it; `None` when the error names none, so the batch as a whole.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "description": "Which check refused it.",
+          "$ref": "#/$defs/ErrorKind"
+        },
+        "message": {
+          "description": "What is wrong, as the check put it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "kind",
+        "message",
+        "hint"
+      ]
+    },
+    "ItemId": {
+      "description": "One item of a draft: a piece of `ontology.toml` or `mappings.toml`, or a competency question\nor gap of the review. Together the items cover both files, each piece in exactly one item:\n\n| Item | Owns |\n|---|---|\n| `type.T` | all of `[types.T]` |\n| `link.l` | `from`, `to`, `description`, `props` and `identity` of `[links.l]` |\n| `link.l.cardinality` | `cardinality = \"one\"` (the default `many` is no item) |\n| `link.l.required` | `required = true` |\n| `link.l.implies.t` | `t` in `implies` |\n| `link.l.inverse_of` | `inverse_of` |\n| `link.l.symmetric`, `link.l.transitive` | `symmetric = true`, `transitive = true` |\n| `link.l.chain.a.b` | the chain `[\"a\", \"b\"]` in `chain` |\n| `relation.r` | `description` of `[relations.r]`; its declarations are `relation.r.implies.t` and so on, as for links |\n| `rule.r`, `constraint.c` | all of `[rules.r]`, `[constraints.c]` |\n| `mapping.m` | all of `[mappings.m]`, its bindings included |\n| `extraction.name` | all of `[extractions.name]`, its document selector, types and links |\n| `enrichment.name` | all of `[enrichments.name]`: People enrichment of one type |\n| `cq.ID`, `gap.ID` | a competency question, a gap (review data, in no file) |\n\nThe file headers (`version`, and `ontology` in `mappings.toml`) belong to no item: the\nharness sets them.",
+      "type": "string"
+    },
+    "ModelFailure": {
+      "description": "Why a model call failed for good, as the contract's model failures name it.",
+      "oneOf": [
+        {
+          "description": "The model declined the request.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "The provider was unavailable, overloaded or broke off, retries included.",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "description": "The provider refused the API key.",
+          "type": "string",
+          "const": "auth"
+        },
+        {
+          "description": "The key may not use the model.",
+          "type": "string",
+          "const": "permission"
+        },
+        {
+          "description": "The provider has no such model.",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The provider kept limiting the rate of calls, retries included.",
+          "type": "string",
+          "const": "rate_limited"
+        },
+        {
+          "description": "The account is out of credit or quota.",
+          "type": "string",
+          "const": "quota"
+        },
+        {
+          "description": "The request is too long for the model.",
+          "type": "string",
+          "const": "context_too_long"
+        },
+        {
+          "description": "The model or endpoint can't do what the request asks (tool calls, structured answers),\nor refused it as invalid.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "The answer hit the output limit.",
+          "type": "string",
+          "const": "truncated"
+        },
+        {
+          "description": "The answer couldn't be read: not the JSON asked for, or a stream that broke its\nprotocol.",
+          "type": "string",
+          "const": "malformed"
+        },
+        {
+          "description": "The call ran out of time.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The model's weights changed since it was tested.",
+          "type": "string",
+          "const": "model_changed"
+        },
+        {
+          "description": "The endpoint resolves to a private address.",
+          "type": "string",
+          "const": "private_host"
+        }
+      ]
+    },
+    "ModelRef": {
+      "description": "A model that ran, as events and results name it.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The model, as the request named it.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "The kind of provider that served it.",
+          "$ref": "#/$defs/ProviderKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "name"
+      ]
+    },
+    "ProviderKind": {
+      "description": "The kind of provider a workspace's models run on: which API they are reached through, and\nso which wire, catalog rows and failure copy apply. Every kind the contract declares is\nhere, whether or not this build can reach it yet.",
+      "oneOf": [
+        {
+          "description": "Anthropic's Messages API.",
+          "type": "string",
+          "const": "anthropic"
+        },
+        {
+          "description": "OpenAI's Responses API.",
+          "type": "string",
+          "const": "openai"
+        },
+        {
+          "description": "An Azure OpenAI resource's v1 API.",
+          "type": "string",
+          "const": "azure_openai"
+        },
+        {
+          "description": "Amazon Bedrock's Converse API.",
+          "type": "string",
+          "const": "bedrock"
+        },
+        {
+          "description": "An Ollama server's native API.",
+          "type": "string",
+          "const": "ollama"
+        },
+        {
+          "description": "A server speaking OpenAI's Chat Completions or Responses API.",
+          "type": "string",
+          "const": "openai_compatible"
+        }
+      ]
+    },
+    "Question": {
+      "description": "A question the agent asked the user. Its `default`, when it has options, is one of them.",
+      "type": "object",
+      "properties": {
+        "blocking": {
+          "type": "boolean"
+        },
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "id": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemId"
+          }
+        },
+        "options": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "items",
+        "text",
+        "options",
+        "default",
+        "blocking"
+      ]
+    },
+    "Status": {
+      "description": "How a turn ended.",
+      "oneOf": [
+        {
+          "description": "The agent finished.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "The agent asked questions.",
+          "type": "string",
+          "const": "needs_input"
+        },
+        {
+          "description": "The revision was approved and the bundle emitted; the state's draft builds on the\nbundle's version from then on, so a later approval is its child.",
+          "type": "string",
+          "const": "approved"
+        },
+        {
+          "description": "A cap was hit; the last valid draft is kept and `Continue` resumes.",
+          "type": "string",
+          "const": "budget_exhausted"
+        },
+        {
+          "description": "A source kept failing; the backend may refresh its credentials.",
+          "type": "object",
+          "properties": {
+            "source_unavailable": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "description": "The source.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "source"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "source_unavailable"
+          ]
+        },
+        {
+          "description": "The model failed.",
+          "type": "object",
+          "properties": {
+            "model_failed": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "description": "How.",
+                  "$ref": "#/$defs/ModelFailure"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "model_failed"
+          ]
+        },
+        {
+          "description": "The input was invalid: nothing changed.",
+          "type": "object",
+          "properties": {
+            "invalid_input": {
+              "type": "object",
+              "properties": {
+                "errors": {
+                  "description": "Every problem found.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/ItemError"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "errors"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "invalid_input"
+          ]
+        },
+        {
+          "description": "The input was for another revision: nothing changed.",
+          "type": "string",
+          "const": "stale_draft"
+        }
+      ]
+    },
+    "Usage": {
+      "description": "What a turn spent.",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input tokens read from the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input tokens written to the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usd": {
+          "description": "The cost, in US dollars.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "usd"
+      ]
+    },
+    "Verdict": {
+      "description": "The verdict the harness assigns a rule or constraint proposal; the model can't override it.",
+      "oneOf": [
+        {
+          "description": "It passed every gate and goes to the user as a proposal.",
+          "type": "string",
+          "const": "proposed"
+        },
+        {
+          "description": "It is refused, with its numbers.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "It is downgraded: a `block` constraint the evidence caps at `warn`, which the harness\nrewrote to `severity = \"warn\"`.",
+          "type": "string",
+          "const": "downgraded"
+        }
+      ]
+    }
+  }
+}

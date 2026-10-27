@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeleteLoadRequest",
+  "description": "A request to remove one load from a graph: its edges, then its nodes, a batch per request,\nthen its marker. It is idempotent and resumes where an earlier attempt stopped.\n\nDeleting a load's nodes also deletes every edge attached to them, edges the graph's own\ndata attached included. Nodes and edges without the load's `foundry_load` are untouched.",
+  "type": "object",
+  "properties": {
+    "batch": {
+      "description": "The most nodes or edges one request deletes.",
+      "type": "integer",
+      "default": 1000,
+      "maximum": 5000,
+      "minimum": 1
+    },
+    "database": {
+      "description": "The graph the load is in; one request at a time writes to it.",
+      "type": "string"
+    },
+    "helix": {
+      "description": "Where the graph is written.",
+      "$ref": "#/$defs/HelixTarget"
+    },
+    "load": {
+      "description": "The load removed.",
+      "$ref": "#/$defs/LoadId"
+    },
+    "request_id": {
+      "description": "The idempotency key: a retry sends the same one.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "database",
+    "load",
+    "helix"
+  ],
+  "$defs": {
+    "HelixTarget": {
+      "description": "Where the graph is written: the backend's proxy for one Helix database.",
+      "type": "object",
+      "properties": {
+        "max_request_bytes": {
+          "description": "The largest request body the proxy takes; a write past it is refused before it is sent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "timeout_secs": {
+          "description": "How long one request may take, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "token": {
+          "description": "The job's bearer token for the proxy.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The proxy's base URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token",
+        "max_request_bytes",
+        "timeout_secs"
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    }
+  }
+}

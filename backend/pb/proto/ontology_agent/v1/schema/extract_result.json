@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExtractResult",
+  "description": "How an Extract ended. Documents committed before it stay committed.",
+  "oneOf": [
+    {
+      "description": "Every document reached a final state.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "done"
+        },
+        "totals": {
+          "description": "The run's totals.",
+          "$ref": "#/$defs/ExtractTotals"
+        }
+      },
+      "required": [
+        "status",
+        "totals"
+      ]
+    },
+    {
+      "description": "`limits.max_usd` was reached; documents without a `document` event weren't finished.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "budget_exhausted"
+        },
+        "totals": {
+          "description": "The run's totals.",
+          "$ref": "#/$defs/ExtractTotals"
+        }
+      },
+      "required": [
+        "status",
+        "totals"
+      ]
+    },
+    {
+      "description": "The load's marker records another ontology version: nothing was written.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "load_mismatch"
+        },
+        "stored_version": {
+          "description": "The version the marker records.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "stored_version"
+      ]
+    },
+    {
+      "description": "The graph holds no such load, or it is being deleted: nothing was written.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "load_unknown"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    {
+      "description": "Building an index over data the graph already holds outlasted `helix.timeout_secs`:\nnothing was written. Retry; the attempt doesn't count.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "The node or edge label whose index was still building.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "indexes_pending"
+        }
+      },
+      "required": [
+        "status",
+        "label"
+      ]
+    },
+    {
+      "description": "The call was cancelled; the commit in flight finished first.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "cancelled"
+        },
+        "totals": {
+          "description": "The run's totals.",
+          "$ref": "#/$defs/ExtractTotals"
+        }
+      },
+      "required": [
+        "status",
+        "totals"
+      ]
+    },
+    {
+      "description": "A commit may or may not have landed. Retry the same request once the store has\nsettled: it finds the document if it did.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The document.",
+          "type": "string"
+        },
+        "error": {
+          "description": "What failed.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "outcome_unknown"
+        }
+      },
+      "required": [
+        "status",
+        "doc_id",
+        "error"
+      ]
+    },
+    {
+      "description": "Reading or writing the store failed, and nothing was left in doubt.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "What failed.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "const": "store_failed"
+        }
+      },
+      "required": [
+        "status",
+        "error"
+      ]
+    }
+  ],
+  "$defs": {
+    "DocumentCounts": {
+      "description": "What one document put in the graph, or would have.",
+      "type": "object",
+      "properties": {
+        "attribute_reviews": {
+          "description": "Property values the verifier was unsure of, written as reviews.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "attributes": {
+          "description": "Property values it stated that were written as evidence.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "attributes_over_entries": {
+          "description": "Accepted property values left out because its write had no room for them.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "created": {
+          "description": "Entities it created, as its routes let it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "entities": {
+          "description": "Entities it names that resolved to the graph's.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "facts": {
+          "description": "Facts written or given evidence.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "identifiers_unverified": {
+          "description": "Identifiers it gave entities that the verifier didn't accept, or that its text doesn't\nwrite: none resolved an entity.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "mentions": {
+          "description": "Mentions written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "prop_conflicts": {
+          "description": "Properties whose evidence now disagrees, with each other or with a row's value: each a\nreview.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "rejected": {
+          "description": "Facts the verifier rejected, kept only in the artifact.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "resolved": {
+          "description": "How its entities resolved, by rung.",
+          "$ref": "#/$defs/ResolvedCounts"
+        },
+        "reviews": {
+          "description": "Reviews written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unresolved": {
+          "description": "Names that resolved to no entity, or to several.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entities",
+        "mentions",
+        "facts",
+        "reviews",
+        "unresolved",
+        "rejected",
+        "attributes",
+        "attribute_reviews",
+        "prop_conflicts",
+        "created",
+        "identifiers_unverified",
+        "attributes_over_entries",
+        "resolved"
+      ]
+    },
+    "ExtractTotals": {
+      "description": "The sums of one Extract's `document` events.",
+      "type": "object",
+      "properties": {
+        "already_ingested": {
+          "description": "Documents the graph already held.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "counts": {
+          "description": "What they put in the graph.",
+          "$ref": "#/$defs/DocumentCounts"
+        },
+        "duplicate": {
+          "description": "Documents whose text the graph holds under another id.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "failed": {
+          "description": "Documents that failed.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "ingested": {
+          "description": "Documents committed.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "description": "Input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "out_of_scope": {
+          "description": "Documents stored unread: no route reads their set.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stale_decisions": {
+          "description": "Settled decisions that no longer fit the run's ontology version, which they outlived:\ntheir type or property is gone, the property is now part of the key, the type's\nidentity doesn't read their `entity_key`, or their value isn't of the property's type.\nThey are left out, except a resolve decision whose type remains: its name is reviewed\nagain rather than matched another way.",
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "swept": {
+          "description": "Entities the documents created, or whose properties or facts they changed, swept for\nviolations once every document had reached its end: those of every document of the\nload no sweep had checked, this run's and those an earlier run that stopped early\ncommitted.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unchecked": {
+          "description": "Of those, entities whose violations needed more reading than the sweep's budget: their\nrecords are as they were.",
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "usd_micros": {
+          "description": "The cost, in millionths of a US dollar.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ingested",
+        "out_of_scope",
+        "already_ingested",
+        "duplicate",
+        "failed",
+        "counts",
+        "swept",
+        "unchecked",
+        "stale_decisions",
+        "usd_micros",
+        "input_tokens",
+        "output_tokens"
+      ]
+    },
+    "ResolvedCounts": {
+      "description": "How many of a document's entities each rung of the resolution ladder resolved.",
+      "type": "object",
+      "properties": {
+        "adjudicated": {
+          "description": "Linked by independently verified adjudication, when explicitly enabled.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "alias": {
+          "description": "By another of its names, its fullest naming none.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "created": {
+          "description": "Created by the document.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "identifier": {
+          "description": "By an identifier the verifier accepted, that a row gave one stored entity.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "name": {
+          "description": "By its fullest name.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "user": {
+          "description": "Linked by a settled resolve decision.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "user",
+        "adjudicated",
+        "identifier",
+        "name",
+        "alias",
+        "created"
+      ]
+    }
+  }
+}

@@ -1,0 +1,1045 @@
+syntax = "proto3";
+
+package helix.foundry.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+import "helix/foundry/v1/types.proto";
+
+option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1;foundryv1";
+
+// FoundryService is Foundry's API: its plans, connectors and event sources,
+// documents and document sets, ontologies, their versions, generations,
+// loads, reviews and questions, and the workspace's usage, People
+// enrichment and model provider. Every call is of one workspace
+// (workspace_id), made for the Actor (actor.proto) the front end that
+// authenticated and authorized the caller sends with it.
+service FoundryService {
+
+  // Helix Foundry plan
+  rpc GetFoundryPlan(GetFoundryPlanRequest) returns (FoundryPlanResponse) {
+    option (google.api.http) = { get: "/v1/foundry/plan" };
+  }
+  rpc CreateFoundryProCheckout(CreateFoundryProCheckoutRequest) returns (CreateFoundryProCheckoutResponse) {
+    option (google.api.http) = { post: "/v1/foundry/plan:checkout" body: "*" };
+  }
+  rpc CancelFoundryPro(CancelFoundryProRequest) returns (FoundryPlanResponse) {
+    option (google.api.http) = { post: "/v1/foundry/plan:cancel" body: "*" };
+  }
+  rpc ResumeFoundryPro(ResumeFoundryProRequest) returns (FoundryPlanResponse) {
+    option (google.api.http) = { post: "/v1/foundry/plan:resume" body: "*" };
+  }
+  rpc ListFoundryPlans(ListFoundryPlansRequest) returns (ListFoundryPlansResponse) {
+    option (google.api.http) = { get: "/v1/foundry/plans" };
+  }
+
+  // Helix Foundry connectors
+  rpc ListConnectorKinds(ListConnectorKindsRequest) returns (ListConnectorKindsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connector-kinds" };
+  }
+  rpc TestConnector(TestConnectorRequest) returns (TestConnectorResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/connectors:test" body: "*" };
+  }
+  rpc CreateConnector(CreateConnectorRequest) returns (ConnectorResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/connectors" body: "*" };
+  }
+  rpc ListConnectors(ListConnectorsRequest) returns (ListConnectorsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connectors" };
+  }
+  rpc GetConnector(GetConnectorRequest) returns (ConnectorResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connectors/{id}" };
+  }
+  rpc UpdateConnector(UpdateConnectorRequest) returns (ConnectorResponse) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/foundry/connectors/{id}" body: "*" };
+  }
+  rpc DeleteConnector(DeleteConnectorRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/connectors/{id}" };
+  }
+  rpc SyncConnector(SyncConnectorRequest) returns (ConnectorSyncResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/connectors/{id}:sync" body: "*" };
+  }
+  rpc GetConnectorSync(GetConnectorSyncRequest) returns (ConnectorSyncResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connector-syncs/{id}" };
+  }
+  rpc ListConnectorSyncs(ListConnectorSyncsRequest) returns (ListConnectorSyncsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/syncs" };
+  }
+
+  // Helix Foundry event sources: connectors of kind events, made, changed and
+  // deleted through the connector routes. No route sends pieces.
+  rpc CreateFoundryEventSourceToken(CreateFoundryEventSourceTokenRequest) returns (CreateFoundryEventSourceTokenResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/tokens" body: "*" };
+  }
+  rpc ListFoundryEventSourceTokens(ListFoundryEventSourceTokensRequest) returns (ListFoundryEventSourceTokensResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/tokens" };
+  }
+  rpc RevokeFoundryEventSourceToken(RevokeFoundryEventSourceTokenRequest) returns (FoundryEventSourceTokenResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/tokens/{id}:revoke" body: "*" };
+  }
+  rpc ListFoundryEventBatches(ListFoundryEventBatchesRequest) returns (ListFoundryEventBatchesResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/event-batches" };
+  }
+
+  // Helix Foundry documents and document sets, the workspace's: the Data
+  // area.
+  rpc ListFoundryDocuments(ListFoundryDocumentsRequest) returns (ListFoundryDocumentsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/documents" };
+  }
+  rpc CreateFoundryDocument(CreateFoundryDocumentRequest) returns (CreateFoundryDocumentResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/documents" body: "*" };
+  }
+  rpc GetFoundryDocument(GetFoundryDocumentRequest) returns (FoundryDocumentResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/documents/{id}" };
+  }
+  rpc UpdateFoundryDocument(UpdateFoundryDocumentRequest) returns (FoundryDocumentResponse) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/foundry/documents/{id}" body: "*" };
+  }
+  rpc DeleteFoundryDocument(DeleteFoundryDocumentRequest) returns (FoundryDocumentResponse) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/documents/{id}" };
+  }
+  rpc GetFoundryDocumentContent(GetFoundryDocumentContentRequest) returns (GetFoundryDocumentContentResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/documents/{id}:content" };
+  }
+  rpc GetFoundryDocumentBytes(GetFoundryDocumentBytesRequest) returns (GetFoundryDocumentBytesResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/documents/{id}:bytes" };
+  }
+  rpc CompleteFoundryDocumentUpload(CompleteFoundryDocumentUploadRequest) returns (FoundryDocumentReadsResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/documents/{id}:complete" body: "*" };
+  }
+  rpc MoveFoundryDocument(MoveFoundryDocumentRequest) returns (FoundryDocumentReadsResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/documents/{id}:move" body: "*" };
+  }
+  rpc ListFoundryDocumentSets(ListFoundryDocumentSetsRequest) returns (ListFoundryDocumentSetsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/document-sets" };
+  }
+  rpc CreateFoundryDocumentSet(CreateFoundryDocumentSetRequest) returns (FoundryDocumentSetResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/document-sets" body: "*" };
+  }
+  rpc UpdateFoundryDocumentSet(UpdateFoundryDocumentSetRequest) returns (FoundryDocumentSetResponse) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/foundry/document-sets/{set_id}" body: "*" };
+  }
+  rpc DeleteFoundryDocumentSet(DeleteFoundryDocumentSetRequest) returns (DeleteFoundryDocumentSetResponse) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/document-sets/{set_id}" };
+  }
+  // The ontology-scoped document and set writes, and the set list, from
+  // before documents were the workspace's: aliases of the routes above,
+  // with the same workspace semantics, kept for the website still on them
+  // until release 2 of workspace documents removes them.
+  rpc CreateFoundryOntologyDocument(CreateFoundryOntologyDocumentRequest) returns (CreateFoundryOntologyDocumentResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/documents" body: "*" };
+  }
+  rpc DeleteFoundryOntologyDocument(DeleteFoundryOntologyDocumentRequest) returns (FoundryDocumentResponse) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/documents/{id}" };
+  }
+  rpc CompleteFoundryOntologyDocumentUpload(CompleteFoundryOntologyDocumentUploadRequest) returns (FoundryDocumentReadsResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/documents/{id}:complete" body: "*" };
+  }
+  rpc MoveFoundryOntologyDocument(MoveFoundryOntologyDocumentRequest) returns (FoundryDocumentReadsResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/documents/{id}:move" body: "*" };
+  }
+  rpc ListFoundryOntologyDocumentSets(ListFoundryOntologyDocumentSetsRequest) returns (ListFoundryDocumentSetsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/document-sets" };
+  }
+  rpc CreateFoundryOntologyDocumentSet(CreateFoundryOntologyDocumentSetRequest) returns (FoundryDocumentSetResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/document-sets" body: "*" };
+  }
+  rpc UpdateFoundryOntologyDocumentSet(UpdateFoundryOntologyDocumentSetRequest) returns (FoundryDocumentSetResponse) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/document-sets/{set_id}" body: "*" };
+  }
+  rpc DeleteFoundryOntologyDocumentSet(DeleteFoundryOntologyDocumentSetRequest) returns (DeleteFoundryDocumentSetResponse) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/document-sets/{set_id}" };
+  }
+  rpc GetFoundryDataLayout(GetFoundryDataLayoutRequest) returns (FoundryDataLayoutResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/data-layout" };
+  }
+  rpc PutFoundryDataLayout(PutFoundryDataLayoutRequest) returns (FoundryDataLayoutResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/data-layout" body: "*" };
+  }
+
+  // Helix Foundry ontologies, each bound to one tenant database. Deleting one
+  // leaves its database as it is.
+  rpc CreateFoundryOntology(CreateFoundryOntologyRequest) returns (FoundryOntologyResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies" body: "*" };
+  }
+  rpc ListFoundryOntologies(ListFoundryOntologiesRequest) returns (ListFoundryOntologiesResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies" };
+  }
+  rpc GetFoundryOntology(GetFoundryOntologyRequest) returns (FoundryOntologyResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}" };
+  }
+  rpc DeleteFoundryOntology(DeleteFoundryOntologyRequest) returns (FoundryOntologyResponse) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}" };
+  }
+  rpc UpdateFoundryOntology(UpdateFoundryOntologyRequest) returns (FoundryOntologyResponse) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}" body: "*" };
+  }
+  rpc GetCurrentOntologyVersion(GetCurrentOntologyVersionRequest) returns (OntologyVersionResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/current" };
+  }
+  rpc ListOntologyVersions(ListOntologyVersionsRequest) returns (ListOntologyVersionsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/versions" };
+  }
+  rpc GetOntologyVersion(GetOntologyVersionRequest) returns (OntologyVersionResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/versions/{id}" };
+  }
+  rpc CreateOntologyVersion(CreateOntologyVersionRequest) returns (OntologyVersionResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/versions" body: "*" };
+  }
+  rpc SetCurrentOntologyVersion(SetCurrentOntologyVersionRequest) returns (OntologyVersionResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}:set-current" body: "*" };
+  }
+  rpc ReviseOntologyVersion(ReviseOntologyVersionRequest) returns (OntologyGenerationResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/versions/{version_id}:revise" body: "*" };
+  }
+  rpc GenerateOntology(GenerateOntologyRequest) returns (OntologyGenerationResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}:generate" body: "*" };
+  }
+  rpc GetOntologyGeneration(GetOntologyGenerationRequest) returns (OntologyGenerationResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations/{id}" };
+  }
+  rpc ListOntologyGenerations(ListOntologyGenerationsRequest) returns (ListOntologyGenerationsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/generations" };
+  }
+  rpc SettleFoundryReview(SettleFoundryReviewRequest) returns (FoundryReviewDecisionResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/reviews/{review_id}:settle"
+      body: "*"
+    };
+  }
+  rpc ListFoundryReviewDecisions(ListFoundryReviewDecisionsRequest) returns (ListFoundryReviewDecisionsResponse) {
+    option (google.api.http) = {get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-decisions"};
+  }
+  rpc DeleteFoundryReviewDecision(DeleteFoundryReviewDecisionRequest) returns (DeleteFoundryReviewDecisionResponse) {
+    option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-decisions/{id}"};
+  }
+  // An ontology's documents, read only: what its current load holds and
+  // what its reading version's scope holds, each with its extraction there.
+  rpc ListFoundryOntologyDocuments(ListFoundryOntologyDocumentsRequest) returns (ListFoundryDocumentsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/documents" };
+  }
+  rpc GetFoundryOntologyDocument(GetFoundryOntologyDocumentRequest) returns (FoundryDocumentResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/documents/{id}" };
+  }
+  rpc CreateFoundryLoad(CreateFoundryLoadRequest) returns (FoundryLoadResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads" body: "*" };
+  }
+  rpc ListFoundryLoads(ListFoundryLoadsRequest) returns (ListFoundryLoadsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads" };
+  }
+  rpc GetFoundryLoad(GetFoundryLoadRequest) returns (FoundryLoadResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads/{id}" };
+  }
+  rpc SetCurrentFoundryLoad(SetCurrentFoundryLoadRequest) returns (FoundryLoadResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads/{id}:set-current" body: "*" };
+  }
+  rpc DeleteFoundryLoad(DeleteFoundryLoadRequest) returns (FoundryLoadResponse) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads/{id}" };
+  }
+  rpc ReadFoundryGraph(ReadFoundryGraphRequest) returns (ReadFoundryGraphResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads/{load_id}:read" body: "*" };
+  }
+  rpc AskFoundryQuestion(AskFoundryQuestionRequest) returns (FoundryQuestionResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/questions" body: "*" };
+  }
+  rpc GetFoundryQuestion(GetFoundryQuestionRequest) returns (FoundryQuestionResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/questions/{id}" };
+  }
+  rpc ListFoundryQuestions(ListFoundryQuestionsRequest) returns (ListFoundryQuestionsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/questions" };
+  }
+  rpc ListFoundryQuestionEvents(ListFoundryQuestionEventsRequest) returns (ListFoundryQuestionEventsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/questions/{id}/events" };
+  }
+  rpc CancelFoundryQuestion(CancelFoundryQuestionRequest) returns (FoundryQuestionResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/questions/{id}:cancel" body: "*" };
+  }
+  rpc StopFoundryLoadEnrichment(StopFoundryLoadEnrichmentRequest) returns (FoundryLoadResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/loads/{id}:stop-enrichment" body: "*" };
+  }
+
+  // Helix Foundry usage: the workspace's AI spend this month, by task
+  //
+  // The UTC calendar month's spend of loads, of API sources' extraction no
+  // person started, and of questions, each with its cap: the sums the caps
+  // check. Spend on the workspace's own model key counts, as Helix's monthly
+  // caps count it. Any member may read it.
+  rpc GetFoundryUsage(GetFoundryUsageRequest) returns (FoundryUsageResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/usage" };
+  }
+
+  // Helix Foundry People enrichment
+  rpc GetFoundryEnrichment(GetFoundryEnrichmentRequest) returns (FoundryEnrichmentResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/enrichment" };
+  }
+  rpc UpdateFoundryEnrichment(UpdateFoundryEnrichmentRequest) returns (FoundryEnrichmentResponse) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/foundry/enrichment" body: "*" };
+  }
+
+  // Helix Foundry model providers
+  rpc GetFoundryAI(GetFoundryAIRequest) returns (FoundryAIResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ai" };
+  }
+  rpc UpdateFoundryAI(UpdateFoundryAIRequest) returns (FoundryAIResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/ai" body: "*" };
+  }
+}
+
+// GetFoundryUsageRequest reads the workspace's AI spend this calendar month
+// (UTC) by task, with each task's cap; any member may read it, as every
+// member sees the questions budget.
+message GetFoundryUsageRequest {
+  string workspace_id = 1;
+}
+message FoundryUsageResponse {
+  FoundryUsage usage = 1;
+}
+
+// GetFoundryEnrichmentRequest reads the workspace's People enrichment
+// setting and month; any member may read it.
+message GetFoundryEnrichmentRequest {
+  string workspace_id = 1;
+}
+// UpdateFoundryEnrichmentRequest records an owner's change, kept as history
+// with the notice they were shown. Turning it on needs Helix's flag
+// (FAILED_PRECONDITION) and Foundry Pro (FAILED_PRECONDITION, reason
+// FOUNDRY_PRO_REQUIRED); turning it off is always allowed: running lookups
+// are cancelled, stored profiles deleted, and each ontology whose loads
+// applied some is loaded again without them.
+message UpdateFoundryEnrichmentRequest {
+  string workspace_id = 1;
+  bool   enabled      = 2;
+  // At most 100,000.
+  int64 monthly_credit_cap = 3;
+  // The notice the owner was shown.
+  string notice_version = 4;
+}
+message FoundryEnrichmentResponse {
+  FoundryEnrichment enrichment = 1;
+}
+// StopFoundryLoadEnrichmentRequest stops a load's lookups: a queued step
+// ends at once, a running one after its batch; the load then applies what
+// was found. NOT_FOUND when the load has no step.
+message StopFoundryLoadEnrichmentRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+
+// GetFoundryAIRequest reads where the workspace's model calls go; any
+// member may read it.
+message GetFoundryAIRequest {
+  string workspace_id = 1;
+}
+// UpdateFoundryAIRequest is an owner's change: back to the default at once,
+// or a provider saved and tested before it is used (FoundryAI.pending);
+// the setting in force stays until the test passes. Bringing a key needs
+// Foundry Pro or Max when hosted (FAILED_PRECONDITION, reason
+// FOUNDRY_PRO_REQUIRED); a model Helix can't price needs rates
+// (FAILED_PRECONDITION, reason FOUNDRY_AI_PRICE_REQUIRED); saves are capped
+// per hour (RESOURCE_EXHAUSTED).
+message UpdateFoundryAIRequest {
+  string workspace_id = 1;
+  oneof choice {
+    google.protobuf.Empty            use_default = 2;
+    FoundryAIProvider provider    = 3;
+  }
+  // Unset models get the kind's suggestions.
+  FoundryAIModels models = 4;
+  // Blank keeps the setting's key where it still belongs to the endpoint.
+  string api_key = 5 [debug_redact = true];
+}
+message FoundryAIResponse {
+  FoundryAI ai = 1;
+}
+
+message GetFoundryPlanRequest {
+  string workspace_id = 1;
+}
+message FoundryPlanResponse {
+  FoundryPlan plan = 1;
+}
+message CreateFoundryProCheckoutRequest {
+  string workspace_id = 1;
+  // Per-click token. Two calls carrying the same token are one purchase.
+  string client_token = 2;
+  // Stripe promotion code the customer typed; optional.
+  string promo_code = 3;
+  // The tier to buy: FOUNDRY_TIER_PRO when unset, or FOUNDRY_TIER_MAX.
+  // Asking for the tier already held returns the plan and charges nothing;
+  // asking for the other paid tier switches to it.
+  FoundryTier tier = 4;
+  // A catalog plan's code, from ListFoundryPlans; wins over tier when set.
+  string plan_code = 5;
+}
+message ListFoundryPlansRequest {
+  string workspace_id = 1;
+}
+message ListFoundryPlansResponse {
+  // In rank order, Free first.
+  repeated FoundryCatalogPlan plans = 1;
+}
+message CreateFoundryProCheckoutResponse {
+  // The checkout page to send the customer to; empty when the billing system
+  // charged a card on file.
+  string checkout_url = 1;
+  // The plan now. It can read FREE for a moment after a charge; read
+  // GetFoundryPlan again.
+  FoundryPlan plan = 2;
+}
+message CancelFoundryProRequest {
+  string workspace_id = 1;
+}
+message ResumeFoundryProRequest {
+  string workspace_id = 1;
+}
+
+message ListConnectorKindsRequest {
+  string workspace_id = 1;
+}
+message ListConnectorKindsResponse {
+  repeated ConnectorKind kinds = 1;
+}
+message TestConnectorRequest {
+  string                         workspace_id = 1;
+  ConnectorConfig config       = 2;
+}
+message TestConnectorResponse {
+  ConnectorDiscovery discovery = 1;
+  // The settings as they would be stored, write-only fields empty.
+  ConnectorConfig config = 2;
+}
+message CreateConnectorRequest {
+  string                         workspace_id = 1;
+  string                         name         = 2;
+  ConnectorConfig config       = 3;
+}
+// ConnectorResponse carries discovery only when the call tested the credential.
+message ConnectorResponse {
+  Connector          connector = 1;
+  ConnectorDiscovery discovery = 2;
+}
+message ListConnectorsRequest {
+  string workspace_id = 1;
+}
+message ListConnectorsResponse {
+  repeated Connector connectors = 1;
+}
+message GetConnectorRequest {
+  string workspace_id = 1;
+  string id           = 2;
+}
+message UpdateConnectorRequest {
+  string          workspace_id = 1;
+  string          id           = 2;
+  optional string name         = 3;
+  // Replaces settings and credentials together; they are tested before saving.
+  ConnectorConfig config = 4;
+  // 0 returns to the plan's interval, -1 turns automatic syncs off, and a
+  // positive value syncs that often, never below the plan's shortest.
+  optional int64 sync_every_seconds = 5;
+}
+message DeleteConnectorRequest {
+  string workspace_id = 1;
+  string id           = 2;
+}
+message SyncConnectorRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  // Read every table in full, even where changes could be read.
+  bool full = 3;
+}
+message ConnectorSyncResponse {
+  ConnectorSync sync = 1;
+}
+message GetConnectorSyncRequest {
+  string workspace_id = 1;
+  string id           = 2;
+}
+message ListConnectorSyncsRequest {
+  string workspace_id = 1;
+  string connector_id = 2;
+  // At most 100; 0 means 20.
+  int32 limit = 3;
+}
+message ListConnectorSyncsResponse {
+  repeated ConnectorSync syncs = 1;
+}
+
+message CreateFoundryEventSourceTokenRequest {
+  string workspace_id = 1;
+  string connector_id = 2;
+}
+message CreateFoundryEventSourceTokenResponse {
+  FoundryEventSourceToken token = 1;
+  // The token, hx_ev_ and 64 hex digits: returned this once and never stored.
+  string secret = 2;
+}
+message ListFoundryEventSourceTokensRequest {
+  string workspace_id = 1;
+  string connector_id = 2;
+}
+// Newest first, revoked ones included, at most 50.
+message ListFoundryEventSourceTokensResponse {
+  repeated FoundryEventSourceToken tokens = 1;
+}
+message RevokeFoundryEventSourceTokenRequest {
+  string workspace_id = 1;
+  string connector_id = 2;
+  string id           = 3;
+}
+message FoundryEventSourceTokenResponse {
+  FoundryEventSourceToken token = 1;
+}
+message ListFoundryEventBatchesRequest {
+  string workspace_id = 1;
+  string connector_id = 2;
+  // At most 100; 0 means 20. Newest first.
+  int32 limit = 3;
+}
+message ListFoundryEventBatchesResponse {
+  repeated FoundryEventBatch batches = 1;
+  // Pieces in batches no sync has read yet.
+  int64 pending_pieces = 2;
+  EventSourceCapacity capacity = 3;
+}
+
+message GetCurrentOntologyVersionRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+}
+// OntologyVersionResponse leaves version unset when the ontology has no current version.
+message OntologyVersionResponse {
+  OntologyVersion version = 1;
+}
+message ListOntologyVersionsRequest {
+  string workspace_id = 1;
+  // At most 100; 0 means 20.
+  int32  limit       = 2;
+  string ontology_id = 3;
+}
+message ListOntologyVersionsResponse {
+  repeated OntologyVersion versions = 1;
+}
+message GetOntologyVersionRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  string ontology_id  = 3;
+}
+message CreateOntologyVersionRequest {
+  string                 workspace_id = 1;
+  google.protobuf.Struct definition   = 2;
+  string                 ontology_id  = 3;
+}
+message SetCurrentOntologyVersionRequest {
+  string workspace_id = 1;
+  string version_id   = 2;
+  // The version the caller saw as current; empty for none. A mismatch is FailedPrecondition.
+  string expected_current_version_id = 3;
+  string ontology_id                 = 4;
+}
+message ReviseOntologyVersionRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  string version_id = 3;
+  repeated OntologyEdit edits = 4;
+  bool dry_run = 5;
+}
+
+message GenerateOntologyRequest {
+  string workspace_id = 1;
+  // What the ontology should serve, in the user's words; at most 2000 characters.
+  string goal = 2;
+  // The connectors whose synced tables to draft from; empty means all,
+  // unless no_connectors.
+  repeated string connector_ids = 3;
+  string          ontology_id   = 4;
+  // The document sets the draft reads, which become its version's scope;
+  // empty means none. At most 20: INVALID_ARGUMENT past that. Each set's
+  // table files that have been read (CSV, TSV, JSON, JSONL, Parquet) are
+  // tables beside the connectors' (files still being read are left out),
+  // and its Markdown, MDX and text may be routed to extraction.
+  // A generation needs at least one source: a synced table, a table file,
+  // or a set holding text (FAILED_PRECONDITION without one). Tables and
+  // table files together count toward the deployment's cap on tables.
+  repeated string document_set_ids = 5;
+  // Draft from the document sets alone, with no connector, even when the
+  // workspace has some; connector_ids must then be empty (INVALID_ARGUMENT
+  // otherwise).
+  bool no_connectors = 6;
+  // Event sources to draft from, each with how this ontology reads it.
+  // connector_ids names no event source, and its empty default never
+  // includes one. Extraction reads the source's own document set, which
+  // counts as one of the 20 sets, and needs the source to have a
+  // text_field and a synced piece (FAILED_PRECONDITION without either).
+  repeated FoundryEventSourcePick event_sources = 7;
+}
+message OntologyGenerationResponse {
+  OntologyGeneration generation = 1;
+}
+message GetOntologyGenerationRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  string ontology_id  = 3;
+}
+message ListOntologyGenerationsRequest {
+  string workspace_id = 1;
+  // At most 100; 0 means 20.
+  int32  limit       = 2;
+  string ontology_id = 3;
+}
+message ListOntologyGenerationsResponse {
+  repeated OntologyGeneration generations = 1;
+}
+
+message CreateFoundryOntologyRequest {
+  string workspace_id = 1;
+  // 1 to 120 characters.
+  string name = 2;
+  // A live tenant of one of the workspace's projects, which the caller may
+  // write: one from GET /v1/tenants, or one just made with POST /v1/tenants.
+  string tenant_id = 3;
+  // Makes the create idempotent: the same token returns the same ontology.
+  string client_token = 4;
+}
+message FoundryOntologyResponse {
+  FoundryOntology ontology = 1;
+}
+message ListFoundryOntologiesRequest {
+  string workspace_id = 1;
+  string page_token   = 2;
+}
+message ListFoundryOntologiesResponse {
+  repeated FoundryOntology ontologies      = 1;
+  string                                  next_page_token = 2;
+}
+message GetFoundryOntologyRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+}
+message DeleteFoundryOntologyRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+}
+message UpdateFoundryOntologyRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  // Whether a changed table reloads the current version by itself.
+  optional bool auto_refresh = 3;
+}
+message CreateFoundryDocumentRequest {
+  string workspace_id = 1;
+  reserved 2;
+  // 1 to 255 characters once trimmed, with no slash, backslash or control
+  // character; its extension must agree with media_type: .md or .markdown
+  // text/markdown, .mdx text/mdx, .txt text/plain, .json application/json,
+  // .csv text/csv, .tsv text/tab-separated-values, .jsonl or .ndjson
+  // application/x-ndjson, .parquet application/vnd.apache.parquet, .pdf
+  // application/pdf.
+  string name       = 3;
+  string media_type = 4;
+  int64  size_bytes = 5;
+  string sha256     = 6;
+  // Makes the create idempotent per workspace.
+  string client_token = 7;
+  // A live document set of the workspace.
+  string set_id = 8;
+}
+message CreateFoundryDocumentResponse {
+  FoundryDocument document = 1;
+  // Unset when the document is already uploaded.
+  FoundryDocumentUpload upload = 2;
+  reserved 3;
+  // The workspace already had this document: the same client token, or the
+  // same bytes in whatever set it is (document.set_id), which may not be the
+  // set asked for.
+  bool existing = 4;
+}
+// CompleteFoundryDocumentUploadRequest checks the bytes PUT to the upload
+// URL and marks the document uploaded. Every ontology whose live or current
+// load reads its set then reads it, where the caller may write the
+// ontology's database; reads says what happened for each.
+message CompleteFoundryDocumentUploadRequest {
+  string workspace_id = 1;
+  reserved 2;
+  string id = 3;
+}
+message FoundryDocumentResponse {
+  FoundryDocument document = 1;
+}
+message FoundryDocumentReadsResponse {
+  FoundryDocument document = 1;
+  // One per ontology whose live or current load reads the document's set.
+  repeated FoundryDocumentRead reads = 2;
+}
+// ListFoundryDocumentsRequest lists the workspace's documents that are not
+// deleted, newest first (a connector's by their time at the source). With
+// neither set_id nor ids, that is its uploads only: a connector's documents
+// are listed by their set.
+message ListFoundryDocumentsRequest {
+  string workspace_id = 1;
+  reserved 2;
+  string page_token = 3;
+  // Only this set's documents, uploads or a connector's, when set.
+  string set_id = 4;
+  // Only these documents, uploads or a connector's, deleted or not, in this
+  // order, on one page: at most 100, with no set_id or page_token
+  // (INVALID_ARGUMENT otherwise). An id the workspace has no document for
+  // is left out.
+  repeated string ids = 5;
+}
+message ListFoundryDocumentsResponse {
+  repeated FoundryDocument documents       = 1;
+  string                                  next_page_token = 2;
+}
+// GetFoundryDocumentRequest reads a document of the workspace with the
+// ontologies it is associated with.
+message GetFoundryDocumentRequest {
+  string workspace_id = 1;
+  reserved 2;
+  string id = 3;
+}
+// UpdateFoundryDocumentRequest renames a document that is not deleted.
+message UpdateFoundryDocumentRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  // 1 to 255 characters once trimmed, with no slash, backslash or control
+  // character.
+  string name = 3;
+}
+// DeleteFoundryDocumentRequest removes the original, then marks the document
+// deleted. What it put in databases stays.
+message DeleteFoundryDocumentRequest {
+  string workspace_id = 1;
+  reserved 2;
+  string id = 3;
+}
+// GetFoundryDocumentContentRequest reads an uploaded document's text: a
+// text or table file's bytes as text, or the text a PDF's read stored. A
+// PDF whose read has not succeeded (read.state is not READY), and
+// application/vnd.apache.parquet, are FAILED_PRECONDITION; read their bytes
+// with GetFoundryDocumentBytes.
+message GetFoundryDocumentContentRequest {
+  string workspace_id = 1;
+  string id           = 2;
+}
+message GetFoundryDocumentContentResponse {
+  // As uploaded, at most the type's cap; bytes that are not UTF-8 read as
+  // U+FFFD. A PDF's is its text as ontologies read it: each page's, with a
+  // form feed (U+000C) between pages, at most 1 MiB.
+  string text = 1;
+}
+// GetFoundryDocumentBytesRequest reads an uploaded document's bytes, of any
+// type.
+message GetFoundryDocumentBytesRequest {
+  string workspace_id = 1;
+  string id           = 2;
+}
+message GetFoundryDocumentBytesResponse {
+  // The document's type, as uploaded: what data is.
+  string media_type = 1;
+  // As uploaded, at most foundry.documents.max_bytes (1 MiB); base64 in
+  // JSON.
+  bytes data = 2;
+}
+// MoveFoundryDocumentRequest puts a document in another live set of the
+// workspace. A load keeps what it read: the move applies to it from the next
+// load. An uploaded document is then read as an upload into the set is.
+message MoveFoundryDocumentRequest {
+  string workspace_id = 1;
+  reserved 2;
+  string id     = 3;
+  string set_id = 4;
+}
+// ListFoundryOntologyDocumentsRequest lists what an ontology reads, newest
+// first: the documents of its current load, and the uploaded documents of
+// its reading version's scope (the current load's version, else the current
+// version), each with its extraction in the current load.
+message ListFoundryOntologyDocumentsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string page_token   = 3;
+  // Only those the current load holds so: waiting (not extracted yet),
+  // extracted, review (extracted, with reviews), duplicate, failed or
+  // out_of_scope; empty for all.
+  string status = 4;
+}
+// GetFoundryOntologyDocumentRequest reads any document of the workspace with
+// its extraction in the ontology's current load, if any: citations of a
+// document moved out of scope still open.
+message GetFoundryOntologyDocumentRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+message CreateFoundryDocumentSetRequest {
+  string workspace_id = 1;
+  reserved 2;
+  // 1 to 120 characters, unique among the workspace's live sets (case and
+  // accents aside).
+  string name = 3;
+  // What its documents hold, in the user's words; at most 1000 characters.
+  // The ontology agent reads it.
+  string description = 4;
+}
+message FoundryDocumentSetResponse {
+  FoundryDocumentSet set = 1;
+}
+message ListFoundryDocumentSetsRequest {
+  string workspace_id = 1;
+  reserved 2;
+}
+message ListFoundryDocumentSetsResponse {
+  // Oldest first, each with read_by.
+  repeated FoundryDocumentSet sets = 1;
+}
+// UpdateFoundryDocumentSetRequest changes what is set of name and description.
+message UpdateFoundryDocumentSetRequest {
+  string workspace_id = 1;
+  reserved 2;
+  string          set_id      = 3;
+  optional string name        = 4;
+  optional string description = 5;
+}
+// DeleteFoundryDocumentSetRequest deletes a set with no document:
+// FAILED_PRECONDITION while it holds one.
+message DeleteFoundryDocumentSetRequest {
+  string workspace_id = 1;
+  reserved 2;
+  string set_id = 3;
+}
+message DeleteFoundryDocumentSetResponse {}
+
+// The ontology-scoped aliases' requests (until release 2 of workspace
+// documents): as the workspace routes', with the ontology of the route,
+// which must be a live ontology of the workspace (NOT_FOUND otherwise), as
+// before documents were the workspace's.
+message CreateFoundryOntologyDocumentRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string name         = 3;
+  string media_type   = 4;
+  int64  size_bytes   = 5;
+  string sha256       = 6;
+  string client_token = 7;
+  string set_id       = 8;
+}
+message CreateFoundryOntologyDocumentResponse {
+  FoundryDocument       document = 1;
+  FoundryDocumentUpload upload   = 2;
+  // Whether the ontology's reading version has the document's set in scope
+  // and its routes name it. The set list's read_by says it for every
+  // ontology.
+  bool routed   = 3;
+  bool existing = 4;
+}
+message CompleteFoundryOntologyDocumentUploadRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+message DeleteFoundryOntologyDocumentRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+message MoveFoundryOntologyDocumentRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+  string set_id       = 4;
+}
+message ListFoundryOntologyDocumentSetsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+}
+message CreateFoundryOntologyDocumentSetRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string name         = 3;
+  string description  = 4;
+}
+message UpdateFoundryOntologyDocumentSetRequest {
+  string          workspace_id = 1;
+  string          ontology_id  = 2;
+  string          set_id       = 3;
+  optional string name         = 4;
+  optional string description  = 5;
+}
+message DeleteFoundryOntologyDocumentSetRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string set_id       = 3;
+}
+message GetFoundryDataLayoutRequest {
+  string workspace_id = 1;
+}
+// PutFoundryDataLayoutRequest replaces the layout the caller read:
+// FAILED_PRECONDITION when expected_revision is no longer the workspace's.
+message PutFoundryDataLayoutRequest {
+  string workspace_id = 1;
+  // The website's JSON object, at most 64 KiB; stored as it is.
+  google.protobuf.Struct layout = 2;
+  // The revision read; 0 for a workspace with none yet.
+  int64 expected_revision = 3;
+}
+// FoundryDataLayoutResponse is how the workspace's Data tree is arranged.
+message FoundryDataLayoutResponse {
+  // {} for a workspace with none yet.
+  google.protobuf.Struct layout = 1;
+  // How many writes it has had: 0 for none.
+  int64 revision = 2;
+}
+// CreateFoundryLoadRequest writes an agent draft whose status is done into
+// the ontology's database as a new load, beside the loads already there. A
+// delete in progress gives way and resumes after it; FAILED_PRECONDITION while
+// a load or extract is live, or the month's budget is spent.
+message CreateFoundryLoadRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string version_id   = 3;
+  string client_token = 4;
+}
+message FoundryLoadResponse {
+  FoundryLoad load = 1;
+}
+// ListFoundryLoadsRequest lists every load not yet deleted, newest first.
+message ListFoundryLoadsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+}
+message ListFoundryLoadsResponse {
+  repeated FoundryLoad loads = 1;
+}
+// GetFoundryLoadRequest: NOT_FOUND once the load is deleted.
+message GetFoundryLoadRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+// SetCurrentFoundryLoadRequest points the ontology's reads and uploads at a
+// ready or partial load (FAILED_PRECONDITION otherwise). Documents it lacks
+// are extracted into it: at once, or after the live job.
+message SetCurrentFoundryLoadRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+// AskFoundryQuestionRequest queues a question of a ready or partial load
+// (FAILED_PRECONDITION otherwise, or when the workspace has spent this
+// month's questions budget; RESOURCE_EXHAUSTED past its questions an hour).
+// The same client_token returns the question it queued.
+message AskFoundryQuestionRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  // The load to ask; empty asks the current one.
+  string load_id = 3;
+  // A question of this ontology starting the thread to continue; empty starts one.
+  string thread_id = 4;
+  // At most 4,000 characters.
+  string question = 5;
+  // The entity the question is about, {"type": ..., "id": ...} as reads name
+  // one (the id is its key's encoding or its normalized name), at most 4 KiB;
+  // empty for none.
+  string focus_json   = 6;
+  string client_token = 7;
+}
+message FoundryQuestionResponse {
+  FoundryQuestion question = 1;
+}
+message GetFoundryQuestionRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+// ListFoundryQuestionsRequest lists questions newest first, 50 a page, with
+// the workspace's questions budget.
+message ListFoundryQuestionsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  // Only this thread's questions; empty lists all.
+  string thread_id  = 3;
+  string page_token = 4;
+}
+message ListFoundryQuestionsResponse {
+  repeated FoundryQuestion questions = 1;
+  string next_page_token = 2;
+  // The workspace's questions budget this month.
+  FoundryQuestionBudget budget = 3;
+}
+// ListFoundryQuestionEventsRequest returns up to 200 events after after_seq.
+message ListFoundryQuestionEventsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+  int32  after_seq    = 4;
+}
+message ListFoundryQuestionEventsResponse {
+  repeated FoundryQuestionEvent events = 1;
+  // The question's status when read: once it is not queued or running and
+  // the events reach last_seq, none follows.
+  string status   = 2;
+  int32  last_seq = 3;
+}
+// CancelFoundryQuestionRequest ends a queued or running question; a running
+// one is charged what it reserved. One that ended otherwise is
+// FAILED_PRECONDITION.
+message CancelFoundryQuestionRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+// DeleteFoundryLoadRequest deletes a ready, partial, failed or delete_failed
+// load from the database in the background; it is deleting until then.
+// Deleting a load's nodes also deletes the edges anyone attached to them.
+// The current load, or one a job is writing, is FAILED_PRECONDITION.
+message DeleteFoundryLoadRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string id           = 3;
+}
+// ReadFoundryGraphRequest reads a load of the ontology's database: entities
+// with the facts its version's rules derive, patterns, explanations ("why"),
+// rule breaks and evidence. reads_json is a JSON array of 1 to 20 reads, each
+// the `reads` item of the ontology agent's read_request.json. NOT_FOUND for a
+// load of another ontology or one deleted; FAILED_PRECONDITION while it is
+// being deleted; RESOURCE_EXHAUSTED while the workspace has as many reads
+// running as it may.
+message ReadFoundryGraphRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string load_id      = 3;
+  string reads_json   = 4;
+}
+// ReadFoundryGraphResponse is the agent's ReadResult (read_result.json): one
+// result per read, in order, each its value or its own error.
+message ReadFoundryGraphResponse {
+  string result_json = 1;
+}
+
+// Reads the current load's review. Stores a decision for the next load only.
+message SettleFoundryReviewRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  string review_id = 3;
+  FoundryReviewChoice decision = 4;
+}
+message FoundryReviewDecisionResponse {
+  FoundryReviewDecision decision = 1;
+}
+message ListFoundryReviewDecisionsRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  // Last decision id from a previous page.
+  string page_token = 3;
+}
+message ListFoundryReviewDecisionsResponse {
+  repeated FoundryReviewDecision decisions = 1;
+  string next_page_token = 2;
+}
+message DeleteFoundryReviewDecisionRequest {
+  string workspace_id = 1;
+  string ontology_id = 2;
+  string id = 3;
+}
+message DeleteFoundryReviewDecisionResponse {}
