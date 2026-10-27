@@ -11,7 +11,8 @@ defaults:
   run:
     working-directory: backend
 jobs:
-  check:
+  # A branch protection check: named apart from the site CI's `check`.
+  backend-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
