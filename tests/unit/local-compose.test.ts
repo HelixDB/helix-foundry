@@ -299,7 +299,7 @@ describe.skipIf(!compose)("local/compose.yaml's AI default", () => {
 describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
   it("runs the foundry image, FOUNDRY_IMAGE's when set", () => {
     expect(composed({}).services.foundry.image).toBe(
-      "helix-foundry/foundry:local",
+      "ghcr.io/helixdb/foundry:0.1.0",
     );
     expect(
       composed({ FOUNDRY_IMAGE: "ghcr.io/helixdb/foundry:1.2.3" }).services

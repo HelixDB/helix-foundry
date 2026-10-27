@@ -16,15 +16,14 @@ You need Docker with Compose v2.
 git clone https://github.com/helixdb/helix-foundry.git
 cd helix-foundry/local
 ./setup.sh                  # once: writes .env with this installation's secrets, and asks how AI should run
-docker compose build        # the site's and the backend's images, from this checkout
 docker compose up -d --wait
 ```
-
-Foundry's first release, 0.1.0, will publish its images. Until then the ontology agent's image is not public, and the stack does not start without it.
 
 Open http://localhost:3000. There is no sign-in: one owner, every connector and feature on.
 
 AI runs where you choose: a local model with Ollama (in Docker or on your computer), Claude, OpenAI, Azure OpenAI or Amazon Bedrock with your own key, or any OpenAI-compatible server (LM Studio, vLLM, a gateway). `setup.sh` asks once; **Settings › AI models** tests and switches it later. [local/README.md](local/README.md) says what runs, where data lives, how each provider is set up and how to reach databases on this machine.
+
+`docker compose up` pulls Foundry's release images. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
 
 ## Develop
 
