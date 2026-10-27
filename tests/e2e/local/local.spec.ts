@@ -34,10 +34,18 @@ const holds = (form: Locator, text: string) =>
     .toContain(text);
 const configure = (config: {
   refuseLocalToken?: boolean;
-  // false: the install has no AI provider in its .env (mock/routes/ai.ts);
-  // "ollama": its .env chose Ollama.
+  // The install's AI provider (mock/routes/ai.ts), found on its machine
+  // unless its .env names it (aiDefaultNamed): false, none; "ollama",
+  // Ollama's. aiDetect is what looking again finds.
   aiDefault?: boolean;
   aiDefaultKind?: "ollama";
+  aiDefaultNamed?: boolean;
+  aiDetect?: "anthropic" | "ollama" | "none";
+  // false: the bundled Ollama isn't running.
+  ollamaBundled?: boolean;
+  // Ada's one workspace is a new install's, "My workspace", with nothing in
+  // it (mock/state.ts).
+  freshInstall?: boolean;
   aiProbeMs?: number;
   loadStepMs?: number;
   askStepMs?: number;
@@ -127,6 +135,35 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
   // No sign-in page: it opens the main page.
   await page.goto("/login?return_to=/data");
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
+});
+
+test("opens a new install in its workspace's onboarding, never the workspace picker", async ({
+  page,
+}) => {
+  await configure({ freshInstall: true });
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Workspace: My workspace" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Create your first workspace" }),
+  ).toHaveCount(0);
+
+  // Another workspace is still made from the switcher, and opens on its own
+  // onboarding.
+  await page.getByRole("button", { name: "Workspace: My workspace" }).click();
+  await page.getByRole("menuitem", { name: "Create workspace" }).click();
+  const create = page.getByRole("dialog", { name: "Create a workspace" });
+  await create.getByLabel("Workspace name").fill("Globex");
+  await create.getByRole("button", { name: "Create workspace" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+  await expect(
+    page.getByRole("button", { name: "Workspace: Globex" }),
+  ).toBeVisible();
 });
 
 test("keeps only settings and the theme in the account menu", async ({
@@ -247,9 +284,10 @@ test("runs AI on the install's default, or the owner's Claude key without a plan
   await expect(
     setting.getByRole("radio", { name: "Install default", exact: true }),
   ).toBeChecked();
+  // How the install found it.
   await holds(
     setting,
-    "Claude, from .env. Sent to Anthropic under your API key.",
+    "Using Claude: Foundry was started with an ANTHROPIC_API_KEY. Sent to Anthropic under your API key.",
   );
   await expect(
     page.getByRole("radio", { name: "Install default", exact: true }),
@@ -292,7 +330,7 @@ test("runs AI on OpenAI or an Azure OpenAI resource without a plan, from no prov
   const setting = page.locator(".hf-panel").filter({
     has: page.getByRole("heading", { name: "Choose where AI runs" }),
   });
-  await expect(setting).toContainText("No AI provider is set up.");
+  await expect(setting).toContainText("No AI provider was found.");
 
   // Nothing runs yet, so nothing to confirm.
   await page.getByRole("radio", { name: "OpenAI", exact: true }).check();
@@ -430,9 +468,9 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
     .filter({ hasText: "Your current settings stay active." });
   // First of the providers, on the bundled server, with no key to enter.
   const ollama = page.getByRole("radio", { name: "Ollama", exact: true });
-  const model = page
-    .getByRole("group", { name: "Model", exact: true })
-    .getByRole("textbox");
+  const field = page.getByRole("group", { name: "Model", exact: true });
+  const model = field.getByRole("combobox", { name: "Model" }),
+    named = field.getByLabel("Model name");
   await expect(ollama).toBeChecked();
   await expect(
     page.getByRole("group", { name: "Where AI runs" }).getByRole("radio"),
@@ -440,7 +478,14 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
   await expect(page.getByRole("combobox", { name: "Server" })).toContainText(
     "Bundled",
   );
-  await expect(model).toHaveValue("qwen3.5:4b");
+  await expect(
+    page.getByText(
+      "The Ollama that runs with Foundry, from the compose file’s ollama profile: docker compose --profile ollama up -d.",
+    ),
+  ).toBeVisible();
+  // The server's models, with their sizes: the one Foundry runs is chosen.
+  await expect(model).toHaveText("qwen3.5:4b · 3.4 GB");
+  await expect(field).toContainText("No cost is counted.");
   await expect(page.getByLabel("API key")).toHaveCount(0);
   await expect(
     page.getByText("a small local model may stop a draft early"),
@@ -448,6 +493,21 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
   await expect(
     page.getByText("Runs on this machine; nothing leaves it."),
   ).toBeVisible();
+  // One it can't run is listed with why, and can't be chosen.
+  await model.click();
+  const unusable = page
+    .getByRole("listbox")
+    .getByRole("option", { name: /^embeddinggemma · 621 MB/ });
+  await expect(unusable).toContainText("Not a chat model.");
+  await expect(unusable).toBeDisabled();
+  await expect(
+    page.getByRole("listbox").getByRole("option", { name: /^qwen2\.5:0\.5b/ }),
+  ).toContainText(
+    "Its context window, 32,768 tokens, is under the 65,536 drafting needs.",
+  );
+  await unusable.click({ force: true });
+  await page.keyboard.press("Escape");
+  await expect(model).toHaveText("qwen3.5:4b · 3.4 GB");
 
   // A window drafting can't run in can't be saved, as the WFE refuses it.
   const window = page.getByLabel("Context window");
@@ -468,33 +528,41 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
   ).toBeDisabled();
   await window.fill("65536");
 
-  // A model whose own window is smaller fails its test.
-  await model.fill("qwen3.5-short");
+  // Another model by name, which the server hasn't pulled: one whose own
+  // window is smaller fails its test.
+  await choose(model, /^Another model/);
+  await expect(named).toHaveValue("");
+  await named.fill("qwen3.5-short");
+  await expect(field).toContainText(
+    "The server hasn’t pulled qwen3.5-short. Pull it there with ollama pull qwen3.5-short before testing it.",
+  );
   await page.getByRole("button", { name: "Test and save" }).click();
   await expect(failure).toContainText(
     "The context window is too small for Foundry’s tasks: drafting needs 65,536 tokens, questions 32,768 and the others 16,384.",
   );
-  await expect(setting).toContainText("No AI provider is set up.");
+  await expect(setting).toContainText("No AI provider was found.");
 
   // So does a model the server hasn't pulled.
-  await model.fill("qwen3.5-missing");
+  await named.fill("qwen3.5-missing");
   await page.getByRole("button", { name: "Test and save" }).click();
   await expect(failure).toContainText(
     "Ollama has no model qwen3.5-missing. Pull it on the server with ollama pull qwen3.5-missing, or choose one it has.",
   );
 
-  await model.fill("qwen3.5:4b");
+  await choose(model, /^qwen3\.5:4b/);
+  await expect(named).toHaveCount(0);
   await page.getByRole("button", { name: "Test and save" }).click();
   await expect(page.getByText("AI models now run on Ollama.")).toBeVisible();
   await expect(
     setting.getByRole("radio", { name: "Ollama", exact: true }),
   ).toBeChecked();
   await holds(setting, "Runs on this machine; nothing leaves it.");
-  await holds(setting, "qwen3.5:4b");
+  await expect(model).toHaveText("qwen3.5:4b · 3.4 GB");
   await expect(failure).toHaveCount(0);
 
   // On this computer, on Linux, needs Ollama listening for Docker, and
-  // only for Docker: its API takes no key.
+  // only for Docker: its API takes no key. Its most capable model is
+  // chosen; its cloud model isn't one Foundry runs here.
   await choose(
     page.getByRole("combobox", { name: "Server" }),
     /^On this computer/,
@@ -504,6 +572,17 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
       "Ollama installed on this computer; on Linux, start it with OLLAMA_HOST=172.17.0.1, Docker’s bridge address, so Docker can reach it and your network can’t.",
     ),
   ).toBeVisible();
+  await expect(model).toHaveText("qwen3.5:9b · 6.6 GB");
+  await model.click();
+  await expect(
+    page
+      .getByRole("listbox")
+      .getByRole("option", { name: /^gpt-oss:120b-cloud/ }),
+  ).toContainText(
+    "Runs on ollama.com, so what it is sent would leave this computer.",
+  );
+  await page.keyboard.press("Escape");
+
   // Another server, which the work is sent to.
   await choose(page.getByRole("combobox", { name: "Server" }), /^Other/);
   const address = page.getByLabel("Server address");
@@ -526,10 +605,26 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
   await expect(
     page.getByRole("button", { name: "Test and save" }),
   ).toBeDisabled();
+  // One that doesn't answer, or is too old to say which models call
+  // tools, says so; a model is still named by hand.
+  await address.fill("http://gpu.invalid:11434");
+  await expect(field).toContainText(
+    "Nothing answered at http://gpu.invalid:11434. Check the address and that Ollama runs there.",
+  );
+  await expect(named).toHaveValue("qwen3.5:9b");
+  await address.fill("http://old-gpu.lan:11434");
+  await expect(field).toContainText(
+    "This Ollama (0.5.7) is too old to say which models call tools. Update it from ollama.com.",
+  );
+  await choose(model, /^qwen3\.5:4b · 3\.4 GB/);
+  await expect(field).toContainText(
+    "This Ollama (0.5.7) is too old to say which models call tools.",
+  );
   await address.fill("http://gpu.lan:11434");
   await expect(
     page.getByText("Sent to the Ollama server at gpu.lan."),
   ).toBeVisible();
+  await expect(model).toHaveText("qwen3.5:4b · 3.4 GB");
   // The same kind and models: nothing to confirm.
   await page.getByRole("button", { name: "Test and save" }).click();
   await expect(setting).toContainText("Sent to the Ollama server at gpu.lan.", {
@@ -539,10 +634,19 @@ test("runs AI on Ollama with no key, once a test on a window and model it can ru
   await expect(page.getByLabel("Server address")).toHaveValue(
     "http://gpu.lan:11434",
   );
+  await expect(model).toHaveText("qwen3.5:4b · 3.4 GB");
+
+  // The bundled server, once it stops, says how to start it.
+  await configure({ ollamaBundled: false });
+  await choose(page.getByRole("combobox", { name: "Server" }), /^Bundled/);
+  await expect(field).toContainText(
+    "The bundled Ollama isn't running. Start it with docker compose --profile ollama up -d.",
+  );
+  await expect(named).toBeVisible();
 });
 
-test("names an install default of Ollama", async ({ page }) => {
-  await configure({ aiDefaultKind: "ollama" });
+test("names an install default of Ollama its .env names", async ({ page }) => {
+  await configure({ aiDefaultKind: "ollama", aiDefaultNamed: true });
   await page.goto("/settings/ai");
   const setting = page.locator(".hf-panel").filter({
     has: page.getByRole("heading", { name: "Choose where AI runs" }),
@@ -552,6 +656,40 @@ test("names an install default of Ollama", async ({ page }) => {
   ).toBeChecked();
   // The default's own models aren't listed: only where its work goes.
   await holds(setting, "Ollama, from .env. Sent to your Ollama server.");
+  await expect(setting).not.toContainText("Using ");
+});
+
+test("finds a model pulled since the install started once Settings › AI models opens", async ({
+  page,
+}) => {
+  // Nothing was found as the install started; a model has been pulled
+  // since.
+  await configure({ aiDefault: false, aiDetect: "ollama" });
+  await page.goto("/ontology/ont_acme_contracts/generate");
+  const gate = page.getByRole("note").filter({
+    hasText: "Generating an ontology needs an AI provider",
+  });
+  await expect(gate).toBeVisible();
+  await gate.getByRole("link", { name: "Choose a provider" }).click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  // Opening the page looks again, and the form starts from what it found.
+  const setting = page.locator(".hf-panel").filter({
+    has: page.getByRole("heading", { name: "Choose where AI runs" }),
+  });
+  await expect(
+    setting.getByRole("radio", { name: "Install default", exact: true }),
+  ).toBeChecked();
+  await holds(
+    setting,
+    "Using qwen3.5:4b from the bundled Ollama: the most capable model it has that calls tools. Sent to your Ollama server.",
+  );
+  await expect(setting).not.toContainText("No AI provider was found.");
+  // Drafts run on it, without a restart.
+  await page.goto("/ontology/ont_acme_contracts/generate");
+  await expect(
+    page.getByRole("button", { name: "Generate", exact: true }),
+  ).toBeEnabled();
+  await expect(gate).toHaveCount(0);
 });
 
 test("runs AI on Amazon Bedrock without a plan, from no provider", async ({
@@ -562,7 +700,7 @@ test("runs AI on Amazon Bedrock without a plan, from no provider", async ({
   const setting = page.locator(".hf-panel").filter({
     has: page.getByRole("heading", { name: "Choose where AI runs" }),
   });
-  await expect(setting).toContainText("No AI provider is set up.");
+  await expect(setting).toContainText("No AI provider was found.");
   await page
     .getByRole("radio", { name: "Amazon Bedrock", exact: true })
     .check();
@@ -667,7 +805,7 @@ test("gates drafts and uploads until an AI provider is chosen", async ({
   await gate.getByRole("link", { name: "Choose a provider" }).click();
   await expect(page).toHaveURL(/\/settings\/ai$/);
   await expect(
-    page.getByText("No AI provider is set up.", { exact: false }).first(),
+    page.getByText("No AI provider was found.", { exact: false }).first(),
   ).toBeVisible();
   await expect(
     page.getByRole("radio", { name: "Install default" }),
@@ -749,7 +887,7 @@ test("says so when the API refuses the site's token", async ({ page }) => {
   await configure({ refuseLocalToken: true });
   await page.goto("/data");
   await expect(page.locator("p[role=alert]")).toHaveText(
-    "The Foundry API refused this site’s local token. Give both the same FOUNDRY_LOCAL_TOKEN.",
+    "The Foundry API refused this site’s local token. Start both from the same install, with docker compose up -d.",
   );
   await expect(page).toHaveURL(/\/data$/);
   await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);

@@ -13,6 +13,8 @@ import type {
   FoundryAiProviderKind,
   FoundryAiRates,
   FoundryAiRole,
+  FoundryOllamaModel,
+  FoundryOllamaServer,
   UpdateFoundryAiBody,
 } from "../../src/shared/wfe";
 import {
@@ -27,6 +29,7 @@ import {
   canReuseKey,
   contextProblem,
   endpointProblem,
+  ollamaServer,
   pricedRow,
   privateHost,
   providerKind,
@@ -50,7 +53,11 @@ import { isFoundryPro, proRequired } from "./billing";
 // bringing a key needs Foundry Pro or Max, as does running on it (model
 // work on a key is refused once the workspace leaves Pro: aiRefusal); a
 // local API's default is the install's (MOCK_AI_DEFAULT, "anthropic" in
-// localMockEnv), or none.
+// localMockEnv), or none, found on its machine: the setting says how
+// (`detected`, in the backend's words), and DetectFoundryAIDefault looks
+// again. A local API also lists an Ollama server's models by its base URL,
+// in the backend's order and words (ollamaModels); hosted, both routes are
+// FAILED_PRECONDITION.
 //
 // A save runs the WFE's checks in its order: the kind is offered (and,
 // hosted, the plan has own keys), every model has a name that isn't a key
@@ -91,16 +98,32 @@ import { isFoundryPro, proRequired } from "./billing";
 // Knobs, through POST /__mock/config: `aiProbeMs`, `aiProbeOutcome`,
 // `aiDefault: false` (a local API without a default: model work is
 // refused with FOUNDRY_AI_NOT_CONFIGURED), `aiDefaultKind: "ollama"` (a
-// local API whose .env chose Ollama, as setup.sh's Ollama in Docker does)
-// and `aiKinds`, the kinds offered (Claude, OpenAI, Azure OpenAI, custom
-// OpenAI-compatible servers and Amazon Bedrock, and in a local API Ollama,
-// which is never offered hosted).
+// local API whose default is Ollama's qwen3.5:4b, from the bundled server),
+// `aiDefaultNamed: true` (a local API whose .env names its default,
+// FOUNDRY_AI_PROVIDER: no `detected`, and DetectFoundryAIDefault refused),
+// `aiDetect: "anthropic" | "ollama" | "none"` (what DetectFoundryAIDefault
+// finds from then on, as `aiDefault` and `aiDefaultKind` set it: a key
+// given, or a model pulled, since the install started; unset, it finds
+// what it found), `ollamaBundled: false` (the bundled Ollama isn't
+// running) and `aiKinds`, the kinds offered (Claude, OpenAI, Azure OpenAI,
+// custom OpenAI-compatible servers and Amazon Bedrock, and in a local API
+// Ollama, which is never offered hosted).
+// Ollama servers, by base URL: the bundled one has qwen3.5:4b, which
+// Foundry runs, then embeddinggemma and qwen2.5:0.5b, which it can't; the
+// one on this computer also qwen3.5:9b (first, the most capable), gemma3:4b
+// and a cloud model, gpt-oss:120b-cloud; another has the bundled one's
+// models, but one whose host ends in ".invalid" doesn't answer, one whose
+// host contains "notollama" isn't Ollama, and one whose host contains
+// "old" is Ollama 0.5.7, too old to say which models call tools.
 
 type Knobs = {
   aiProbeMs?: number;
   aiProbeOutcome?: "timeout";
   aiDefault?: boolean;
   aiDefaultKind?: "ollama";
+  aiDefaultNamed?: boolean;
+  aiDetect?: "anthropic" | "ollama" | "none";
+  ollamaBundled?: boolean;
   aiKinds?: FoundryAiProviderKind[];
 };
 const knobs = config as typeof config & Knobs;
@@ -129,7 +152,13 @@ type Activation = {
   at: number;
 };
 
-const state = { configs: [] as Config[], activations: [] as Activation[] };
+const state = {
+  configs: [] as Config[],
+  activations: [] as Activation[],
+  // When a local API last looked for its default: as it started, then on
+  // each DetectFoundryAIDefault.
+  detectedAt: Date.now(),
+};
 const PER_HOUR = 10;
 const MAX_KEY = 512;
 const COMPAT = "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE";
@@ -137,10 +166,14 @@ const COMPAT = "FOUNDRY_AI_KIND_OPENAI_COMPATIBLE";
 onReset(() => {
   state.configs.length = 0;
   state.activations.length = 0;
+  state.detectedAt = Date.now();
   delete knobs.aiProbeMs;
   delete knobs.aiProbeOutcome;
   delete knobs.aiDefault;
   delete knobs.aiDefaultKind;
+  delete knobs.aiDefaultNamed;
+  delete knobs.aiDetect;
+  delete knobs.ollamaBundled;
   delete knobs.aiKinds;
 });
 
@@ -189,12 +222,9 @@ const free = (names: Record<FoundryAiRole, string>): FoundryAiModels =>
 function deploymentDefault():
   | { kind: FoundryAiProviderKind; models: Record<FoundryAiRole, string> }
   | undefined {
-  if (
-    LOCAL_TOKEN &&
-    (knobs.aiDefault === false || !process.env.MOCK_AI_DEFAULT)
-  )
+  if (LOCAL_TOKEN && !(knobs.aiDefault ?? !!process.env.MOCK_AI_DEFAULT))
     return undefined;
-  // Its Ollama's model for every task, as setup.sh writes it.
+  // Its Ollama's model for every task.
   if (LOCAL_TOKEN && knobs.aiDefaultKind === "ollama")
     return {
       kind: "FOUNDRY_AI_KIND_OLLAMA",
@@ -205,6 +235,103 @@ function deploymentDefault():
   return {
     kind: "FOUNDRY_AI_KIND_ANTHROPIC" as const,
     models: SUGGESTED.FOUNDRY_AI_KIND_ANTHROPIC!,
+  };
+}
+
+/**
+ * How a local API that names no default found the one it has, or that it
+ * found none, in the backend's words; undefined hosted or where its .env
+ * names it.
+ */
+function detected(): FoundryAi["detected"] {
+  if (!LOCAL_TOKEN || knobs.aiDefaultNamed) return undefined;
+  const kind = deploymentDefault()?.kind;
+  return {
+    summary:
+      kind === "FOUNDRY_AI_KIND_OLLAMA"
+        ? `Using ${OLLAMA_MODEL} from the bundled Ollama: the most capable model it has that calls tools.`
+        : kind
+          ? "Using Claude: Foundry was started with an ANTHROPIC_API_KEY."
+          : "No AI provider was found. Foundry looks for an ANTHROPIC_API_KEY or OPENAI_API_KEY where it was started, a model that calls tools in Ollama, and a model LM Studio serves on this computer.",
+    detectedAt: new Date(state.detectedAt).toISOString(),
+  };
+}
+
+// Ollama servers' models, in the backend's order: those Foundry runs, the
+// most capable first, then the rest by name. Sizes are int64 strings.
+const QWEN_4B: FoundryOllamaModel = {
+  name: "qwen3.5:4b",
+  sizeBytes: "3389725347",
+  parameterSize: "4.7B",
+};
+const CANT_RUN: FoundryOllamaModel[] = [
+  {
+    name: "embeddinggemma",
+    sizeBytes: "621875047",
+    parameterSize: "307.58M",
+    unusable: "Not a chat model.",
+  },
+  {
+    name: "qwen2.5:0.5b",
+    sizeBytes: "397821319",
+    parameterSize: "494.03M",
+    unusable:
+      "Its context window, 32,768 tokens, is under the 65,536 drafting needs.",
+  },
+];
+const BUNDLED_MODELS = [QWEN_4B, ...CANT_RUN];
+const HOST_MODELS: FoundryOllamaModel[] = [
+  { name: "qwen3.5:9b", sizeBytes: "6591893504", parameterSize: "9.7B" },
+  QWEN_4B,
+  CANT_RUN[0]!,
+  {
+    name: "gemma3:4b",
+    sizeBytes: "3338801804",
+    parameterSize: "4.3B",
+    unusable: "Calls no tools.",
+  },
+  {
+    name: "gpt-oss:120b-cloud",
+    sizeBytes: "384",
+    parameterSize: "116.8B",
+    unusable:
+      "Runs on ollama.com, so what it is sent would leave this computer.",
+  },
+  CANT_RUN[1]!,
+];
+
+/** What the Ollama server at a base URL (as baseUrl() keeps it) has. */
+function ollamaModels(url: string): FoundryOllamaServer {
+  const which = ollamaServer(url),
+    host = new URL(url).hostname;
+  if (which === "bundled" && knobs.ollamaBundled === false)
+    return {
+      problem:
+        "The bundled Ollama isn't running. Start it with docker compose --profile ollama up -d.",
+    };
+  if (host.endsWith(".invalid"))
+    return {
+      problem: `Nothing answered at ${url}. Check the address and that Ollama runs there.`,
+    };
+  if (host.includes("notollama"))
+    return {
+      problem: `Something answered at ${url}, but not Ollama's API. Check the address.`,
+    };
+  // Too old to say which call tools: listed by name, none ruled out.
+  if (host.includes("old"))
+    return {
+      version: "0.5.7",
+      problem:
+        "This Ollama (0.5.7) is too old to say which models call tools. Update it from ollama.com.",
+      models: BUNDLED_MODELS.map(({ name, sizeBytes, parameterSize }) => ({
+        name,
+        sizeBytes,
+        parameterSize,
+      })).sort((a, b) => a.name!.localeCompare(b.name!)),
+    };
+  return {
+    version: "0.13.0",
+    models: structuredClone(which === "host" ? HOST_MODELS : BUNDLED_MODELS),
   };
 }
 
@@ -362,7 +489,8 @@ function view(ws: string, owner = true): FoundryAi {
     mine = ofWorkspace(state.configs, ws),
     newest = mine.at(-1),
     pending = mine.find((c) => c.probe === "queued" || c.probe === "running"),
-    def = deploymentDefault();
+    def = deploymentDefault(),
+    found = detected();
   return {
     ...(now && { active: configView(now, owner) }),
     ...(def && {
@@ -387,6 +515,7 @@ function view(ws: string, owner = true): FoundryAi {
     })),
     privateHostsAllowed: !!LOCAL_TOKEN,
     proRequired: !LOCAL_TOKEN && !isFoundryPro(ws),
+    ...(found && { detected: found }),
   };
 }
 
@@ -760,6 +889,49 @@ export const aiRoutes: MockRoute[] = [
       if (!("provider" in req))
         return fail("INVALID_ARGUMENT", "choose use_default or a provider");
       return save(ws, user.id, req);
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ai/detect",
+    handle: ({ params, principal: { user } }) => {
+      const m = membership(params.workspaceId!, user.id);
+      if (isReply(m)) return m;
+      if (m.role !== "WORKSPACE_ROLE_OWNER")
+        return fail("PERMISSION_DENIED", "permission denied");
+      if (!LOCAL_TOKEN)
+        return fail(
+          "FAILED_PRECONDITION",
+          "only a local install looks for its default AI provider",
+        );
+      if (knobs.aiDefaultNamed)
+        return fail(
+          "FAILED_PRECONDITION",
+          "this install names its default AI provider (FOUNDRY_AI_PROVIDER)",
+        );
+      if (knobs.aiDetect) {
+        knobs.aiDefault = knobs.aiDetect !== "none";
+        if (knobs.aiDetect === "ollama") knobs.aiDefaultKind = "ollama";
+        else delete knobs.aiDefaultKind;
+      }
+      state.detectedAt = Date.now();
+      return ok({ ai: view(m.workspaceId) });
+    },
+  },
+  {
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ai/ollama-models",
+    handle: ({ params, query, principal: { user } }) => {
+      const m = membership(params.workspaceId!, user.id);
+      if (isReply(m)) return m;
+      if (m.role !== "WORKSPACE_ROLE_OWNER")
+        return fail("PERMISSION_DENIED", "permission denied");
+      if (!LOCAL_TOKEN)
+        return fail("FAILED_PRECONDITION", "Ollama is not offered here");
+      const raw = query.get("baseUrl") || "";
+      const problem = endpointProblem("FOUNDRY_AI_KIND_OLLAMA", raw, true);
+      if (problem) return fail("INVALID_ARGUMENT", problem);
+      return ok({ server: ollamaModels(baseUrl(raw)!) });
     },
   },
 ];

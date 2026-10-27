@@ -321,7 +321,7 @@ function Authenticated() {
   if (me.error instanceof ApiError && me.error.status === 401 && LOCAL)
     return (
       <GateError
-        text="The Foundry API refused this site’s local token. Give both the same FOUNDRY_LOCAL_TOKEN."
+        text="The Foundry API refused this site’s local token. Start both from the same install, with docker compose up -d."
         retry={() => void me.refetch()}
       />
     );

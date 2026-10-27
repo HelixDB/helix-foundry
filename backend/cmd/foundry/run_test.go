@@ -150,13 +150,16 @@ func TestServeStopsWhenAPartFails(t *testing.T) {
 }
 
 // The image's configuration builds foundry-read and every worker an install
-// runs, from only what an install provides them.
+// runs, from only what an install provides them. foundry-read listens as it
+// is built: on loopback addresses of the test's own, as another package's
+// tests may hold the image's, and only until the test ends.
 func TestBuildWorkers(t *testing.T) {
 	secrets(t)
 	cfg, err := load("foundry.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.Foundry.Read.GRPC.Listen, cfg.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	parts, err := buildWorkers(cfg.foundry(), logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
 		local.Databases{HelixURL: cfg.Local.HelixURL})
@@ -166,6 +169,9 @@ func TestBuildWorkers(t *testing.T) {
 	var names []string
 	for _, p := range parts {
 		names = append(names, p.Name())
+		if p.Name() == "foundry-read" {
+			t.Cleanup(func() { _ = p.Stop(context.Background()) })
+		}
 	}
 	slices.Sort(names)
 	want := []string{"foundry-ask-worker", "foundry-document-worker", "foundry-graph-worker", "foundry-ontology-worker", "foundry-read", "foundry-sync-worker"}

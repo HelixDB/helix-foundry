@@ -31,7 +31,16 @@ type Config struct {
 	AWS   AWSConfig   `koanf:"aws"`
 	Local LocalConfig `koanf:"local"`
 	Log   LogConfig   `koanf:"log"`
+
+	// detectedAI is the default found on this machine, set when
+	// foundry.ai.default names no provider (load).
+	detectedAI *foundryconfig.LiveAIDefault
 }
+
+// noAI is the foundry.ai.default.provider that means none, and no look for
+// one either (FOUNDRY_AI_PROVIDER=none): model work waits for an owner's
+// choice.
+const noAI = "none"
 
 // BillingConfig holds billing.autumn.foundry: the plan catalog. An install
 // sells none, so its one plan is every workspace's.
@@ -71,6 +80,11 @@ type LocalConfig struct {
 	S3 local.S3 `koanf:"s3"`
 	// Listen is where the install serves.
 	Listen ListenConfig `koanf:"listen"`
+	// SecretsDir, when set, is the directory `foundry init-secrets` wrote
+	// the install's secrets to: the site token, the store's secret, the
+	// database's password (for a db.dsn without one) and the connector key
+	// are read from it unless configured otherwise, which wins.
+	SecretsDir string `koanf:"secrets_dir"`
 }
 
 // ListenConfig is the install's listeners: the site calls REST, and gRPC
@@ -104,7 +118,7 @@ func defaults() Config {
 func (c *Config) foundry() *foundryconfig.Config {
 	return &foundryconfig.Config{
 		Foundry: c.Foundry, Billing: c.Billing.Autumn.Foundry, Read: c.Backend.FoundryRead,
-		Host: foundryconfig.Host{Local: true},
+		Host: foundryconfig.Host{Local: true, DetectedAI: c.detectedAI},
 	}
 }
 
@@ -112,7 +126,9 @@ func (c *Config) foundry() *foundryconfig.Config {
 // the YAML file at path (if any), then HELIX_ environment variables. A
 // variable names a key by its segments joined with "_" (HELIX_DB_DSN is
 // db.dsn) or, for keys with underscores of their own, with "__"
-// (HELIX_LOCAL__SITE_TOKEN is local.site_token).
+// (HELIX_LOCAL__SITE_TOKEN is local.site_token). Secrets it still lacks come
+// from local.secrets_dir. A foundry.ai.default with no provider is one found
+// on this machine as the install starts (package ai/detect); "none" is none.
 func load(path string) (*Config, error) {
 	k := koanf.New(".")
 	if err := k.Load(structs.Provider(defaults(), "koanf"), nil); err != nil {
@@ -152,6 +168,16 @@ func load(path string) (*Config, error) {
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+	if err := cfg.fillSecrets(); err != nil {
+		return nil, err
+	}
+	// No provider is one found on this machine; "none" is none at all.
+	switch cfg.Foundry.AI.Default.Provider {
+	case "":
+		cfg.detectedAI = &foundryconfig.LiveAIDefault{}
+	case noAI:
+		cfg.Foundry.AI.Default = foundryconfig.AIDefault{}
 	}
 	if err := validator.New().Struct(cfg); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)

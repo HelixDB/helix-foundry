@@ -1,6 +1,13 @@
-# Helix Foundry on one machine. Run ./setup.sh once, then:
-#   docker compose up -d
-# and open http://localhost:3000 (that name: the site answers no other host).
+# Helix Foundry on one machine, with nothing to set up first:
+#   docker compose up -d --wait
+# from the repository's root (its compose.yaml includes this file) or from
+# here, then open http://localhost:3000 (that name: the site answers no
+# other host). local/README.md says what runs and what may be overridden.
+#
+# The first start writes this install's secrets into the `secrets` volume
+# (init-secrets, below), and every start reads them from there. Keep that
+# volume: its connector key seals every database password and API key given
+# to Foundry. `docker compose down -v` deletes it with the data.
 #
 # The site is the only way in. foundry (Foundry's API, its directory and its
 # workers), the ontology agent and the S3-compatible store share one network
@@ -18,16 +25,54 @@ x-images:
   helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.12}
   ollama: &ollama-image ollama/ollama:0.40.10@sha256:4c5b27871a3239a717048f9b93057680a51b60c8119a7016aebb57f938e25e35
 
+# Every service starts once init-secrets has.
+x-secrets-first: &secrets-first
+  init-secrets: { condition: service_completed_successfully }
+
 services:
+  # Before anything else, every start: writes the secrets the volume lacks,
+  # once (foundry init-secrets, in the foundry image), and never again. An
+  # install from before this file (set up with setup.sh) keeps its own: the
+  # FOUNDRY_* secrets its local/.env sets are written rather than new ones,
+  # so MySQL's password and the key that sealed its credentials still match.
+  # Each file is foundry's (65532) and only foundry's, but for the site's
+  # token, which the site's user's group (node, 1000) reads too, and MySQL's
+  # password, its group's (mysql, 999). No network: it makes them from the
+  # kernel's randomness, and never prints one.
+  init-secrets:
+    image: *foundry-image
+    user: "0:0"
+    command:
+      - init-secrets
+      - --dir
+      - /secrets
+      - --owner
+      - "65532:65532"
+      - --reader
+      - site-token=1000
+      - --reader
+      - mysql-password=999
+    environment:
+      FOUNDRY_LOCAL_TOKEN: ${FOUNDRY_LOCAL_TOKEN:-}
+      FOUNDRY_S3_SECRET: ${FOUNDRY_S3_SECRET:-}
+      FOUNDRY_MYSQL_PASSWORD: ${FOUNDRY_MYSQL_PASSWORD:-}
+      FOUNDRY_CONNECTOR_KEY: ${FOUNDRY_CONNECTOR_KEY:-}
+    volumes: ["secrets:/secrets"]
+    network_mode: none
+    healthcheck: { disable: true }
+    restart: "no"
+
   site:
     image: *site-image
     build: ..
     environment:
       HELIX_WFE_ORIGIN: http://pod:8081
       FOUNDRY_ORIGIN: http://localhost:3000
-      FOUNDRY_LOCAL_TOKEN: ${FOUNDRY_LOCAL_TOKEN:?run ./setup.sh}
+      FOUNDRY_LOCAL_TOKEN_FILE: /secrets/site-token
+    volumes: ["secrets:/secrets:ro"]
     ports: ["127.0.0.1:3000:3000"]
     depends_on:
+      <<: *secrets-first
       foundry: { condition: service_healthy }
     restart: unless-stopped
 
@@ -38,6 +83,7 @@ services:
     # Connectors reach a database on this machine as host.docker.internal,
     # on Linux as on Docker Desktop.
     extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: *secrets-first
     restart: unless-stopped
 
   foundry:
@@ -45,17 +91,24 @@ services:
     build: ../backend
     network_mode: service:pod
     environment:
-      HELIX_DB_DSN: helix:${FOUNDRY_MYSQL_PASSWORD:?run ./setup.sh}@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true
-      HELIX_LOCAL__SITE_TOKEN: ${FOUNDRY_LOCAL_TOKEN:?run ./setup.sh}
-      HELIX_LOCAL__S3__SECRET_ACCESS_KEY: ${FOUNDRY_S3_SECRET:?run ./setup.sh}
-      HELIX_FOUNDRY__CONNECTORS__CURRENT_KEY: ${FOUNDRY_CONNECTOR_KEY:?run ./setup.sh}
-      # The install's AI provider (.env.example): drafts, document reads and
-      # questions run on it until an owner chooses another in Settings › AI
-      # models. An empty FOUNDRY_AI_PROVIDER is none, and passes none of the
-      # other FOUNDRY_AI_* (foundry refuses settings without a provider), so
-      # emptying it alone switches the default off: model work waits for an
-      # owner's choice. An empty value is unset; each task's model falls back
-      # to FOUNDRY_AI_MODEL.
+      # The secrets, and MySQL's password in the DSN, from the volume
+      # (local.secrets_dir).
+      HELIX_DB_DSN: helix@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true
+      HELIX_LOCAL__SECRETS_DIR: /secrets
+      # The install's AI provider, when FOUNDRY_AI_PROVIDER names one (in
+      # this shell or local/.env; local/.env.example): drafts, document reads
+      # and questions run on it until an owner chooses another in Settings ›
+      # AI models. With none named, foundry finds one as it starts, and
+      # again as Settings › AI models opens: Claude on the ANTHROPIC_API_KEY,
+      # else OpenAI on the OPENAI_API_KEY, of the shell that started it;
+      # else an Ollama with a model that calls tools (the bundled one, then
+      # this computer's); else LM Studio on this computer. none is none at
+      # all: model work waits for an owner's choice. An empty
+      # FOUNDRY_AI_PROVIDER passes none of the other FOUNDRY_AI_* (foundry
+      # refuses settings without a provider). An empty value is unset; each
+      # task's model falls back to FOUNDRY_AI_MODEL.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       HELIX_FOUNDRY__AI__DEFAULT__PROVIDER: ${FOUNDRY_AI_PROVIDER:-}
       HELIX_FOUNDRY__AI__DEFAULT__API_KEY: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_API_KEY:-}}
       HELIX_FOUNDRY__AI__DEFAULT__BASE_URL: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_BASE_URL:-}}
@@ -67,11 +120,12 @@ services:
       HELIX_FOUNDRY__AI__DEFAULT__MODELS__ASK: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_ASK_MODEL:-${FOUNDRY_AI_MODEL:-}}}
       HELIX_FOUNDRY__AI__DEFAULT__MODELS__EXTRACT: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_EXTRACT_MODEL:-${FOUNDRY_AI_MODEL:-}}}
       HELIX_FOUNDRY__AI__DEFAULT__MODELS__VERIFY: ${FOUNDRY_AI_PROVIDER:+${FOUNDRY_AI_VERIFY_MODEL:-${FOUNDRY_AI_MODEL:-}}}
-    volumes: ["work:/work"]
+    volumes: ["work:/work", "secrets:/secrets:ro"]
     # As the chart's pods: time for a load or question in flight to finish or
     # be handed back uncounted (the graph worker waits up to about 115 s).
     stop_grace_period: 2m
     depends_on:
+      <<: *secrets-first
       mysql: { condition: service_healthy }
       storage: { condition: service_healthy }
       helix: { condition: service_started }
@@ -110,54 +164,59 @@ services:
     # No keys: foundry sends each call's key with it, over loopback.
     volumes: ["work:/work:ro"]
     stop_grace_period: 2m
+    depends_on: *secrets-first
     restart: unless-stopped
 
   storage:
     image: chrislusf/seaweedfs:4.47
     network_mode: service:pod
-    environment:
-      S3_SECRET: ${FOUNDRY_S3_SECRET:?run ./setup.sh}
     entrypoint: ["/bin/sh", "-c"]
-    # One identity, for foundry, written from the secret at start. Only the
-    # S3 API listens beyond loopback (for uploads); the master, volume and
-    # filer servers, which check no credentials, do not. Volumes of 1 GB, as
-    # many as the disk holds: with the default 30 GB the first collection to
-    # grow can take every slot and leave the bucket none.
+    # One identity, for foundry, written at start from the secret in the
+    # volume (it runs as root, which reads it). Only the S3 API listens
+    # beyond loopback (for uploads); the master, volume and filer servers,
+    # which check no credentials, do not. Volumes of 1 GB, as many as the
+    # disk holds: with the default 30 GB the first collection to grow can
+    # take every slot and leave the bucket none.
     command:
       - >-
-        printf '{"identities":[{"name":"foundry","credentials":[{"accessKey":"foundry","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' "$$S3_SECRET" > /tmp/s3.json
+        secret=$$(cat /secrets/s3-secret) && [ -n "$$secret" ]
+        && printf '{"identities":[{"name":"foundry","credentials":[{"accessKey":"foundry","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' "$$secret" > /tmp/s3.json
         && exec weed server -dir=/data -ip=127.0.0.1 -ip.bind=127.0.0.1
         -s3 -s3.ip.bind=0.0.0.0 -s3.port=8333 -s3.config=/tmp/s3.json
         -s3.allowedOrigins=http://localhost:3000
         -master.volumeSizeLimitMB=1024 -volume.max=0
-    volumes: ["storage:/data"]
+    volumes: ["storage:/data", "secrets:/secrets:ro"]
+    depends_on: *secrets-first
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "8333"]
       interval: 5s
       retries: 60
     restart: unless-stopped
 
+  # Its password from the volume: the image reads MYSQL_PASSWORD_FILE as
+  # root and again as mysql, whose group the file is.
   mysql:
     image: mysql:8.0
     environment:
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
       MYSQL_DATABASE: helix
       MYSQL_USER: helix
-      MYSQL_PASSWORD: ${FOUNDRY_MYSQL_PASSWORD:?run ./setup.sh}
+      MYSQL_PASSWORD_FILE: /secrets/mysql-password
     command:
       [
         "--character-set-server=utf8mb4",
         "--collation-server=utf8mb4_unicode_ci",
       ]
-    volumes: ["mysql:/var/lib/mysql"]
+    volumes: ["mysql:/var/lib/mysql", "secrets:/secrets:ro"]
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          'mysqladmin ping -h 127.0.0.1 -uhelix -p"$$MYSQL_PASSWORD" --silent',
+          'mysqladmin ping -h 127.0.0.1 -uhelix -p"$$(cat /secrets/mysql-password)" --silent',
         ]
       interval: 5s
       retries: 60
+    depends_on: *secrets-first
     restart: unless-stopped
 
   # HelixDB: the public helix-db image, one database on a local volume. It
@@ -170,15 +229,18 @@ services:
       HELIX_DATA_DIR: /var/lib/helix
       HELIX_TELEMETRY_LEVEL: "off"
     volumes: ["helix:/var/lib/helix"]
+    depends_on: *secrets-first
     restart: unless-stopped
 
-  # Ollama, with the ollama profile (setup.sh's "Ollama in Docker" sets
-  # COMPOSE_PROFILES=ollama in .env). In the pod's network namespace and
+  # Ollama, with the ollama profile (docker compose --profile ollama up -d,
+  # or COMPOSE_PROFILES=ollama). In the pod's network namespace and
   # listening on its loopback only (the image's own OLLAMA_HOST is 0.0.0.0),
   # so the agent reaches it at http://127.0.0.1:11434 and no other container
-  # does: its API takes no key. It loads models with the window the install's
-  # default asks for (FOUNDRY_AI_CONTEXT_TOKENS, else drafting's 65536, the AI
-  # models card's default), so a call never reloads the model; runs one call
+  # does: its API takes no key. Without FOUNDRY_AI_PROVIDER, foundry finds
+  # it once its model is pulled (at start, or as Settings › AI models
+  # opens). It loads models with the window the install's default asks for
+  # (FOUNDRY_AI_CONTEXT_TOKENS, else drafting's 65536, the AI models card's
+  # default), so a call never reloads the model; runs one call
   # and keeps one model loaded at a time, for 10 minutes after the last call;
   # and runs no cloud models, so nothing it is sent leaves this machine.
   # compose.gpu.yaml gives it the NVIDIA GPUs.
@@ -201,6 +263,7 @@ services:
       test: ["CMD", "ollama", "list"]
       interval: 5s
       retries: 60
+    depends_on: *secrets-first
     restart: unless-stopped
 
   # Once each start, with the ollama profile: pulls FOUNDRY_OLLAMA_MODEL
@@ -241,17 +304,20 @@ services:
           have=$$(listed)
         fi
         if [ -n "$$want" ] && [ "$$have" != "$$want" ]; then
-          echo "$$MODEL is sha256:$$have, not FOUNDRY_OLLAMA_DIGEST's sha256:$$want: set FOUNDRY_OLLAMA_DIGEST in .env to the new one, or empty it." >&2
+          echo "$$MODEL is sha256:$$have, not FOUNDRY_OLLAMA_DIGEST's sha256:$$want: set FOUNDRY_OLLAMA_DIGEST in local/.env to the new one, or empty it." >&2
           exit 1
         fi
         api POST /api/generate "{\"model\":\"$$MODEL\"}" | grep -q '"done":true' ||
           { echo "Ollama couldn't load $$MODEL." >&2; exit 1; }
         echo "$$MODEL (sha256:$$have) is ready."
     depends_on:
+      <<: *secrets-first
       ollama: { condition: service_healthy }
     restart: "no"
 
 volumes:
+  # This install's secrets (init-secrets): keep it with the data.
+  secrets:
   work:
   storage:
   mysql:

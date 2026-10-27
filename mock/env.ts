@@ -30,8 +30,9 @@ export function localMockEnv({ mock, app }: MockPorts): Record<string, string> {
     FOUNDRY_ORIGIN: `http://localhost:${app}`,
     FOUNDRY_LOCAL_TOKEN: token,
     MOCK_LOCAL_TOKEN: token,
-    // The install's AI provider, as local/.env's FOUNDRY_AI_PROVIDER sets it
-    // (mock/routes/ai.ts); `aiDefault: false` takes it away.
+    // The install's AI provider, found on its machine (FoundryAI.detected),
+    // or named by local/.env's FOUNDRY_AI_PROVIDER with `aiDefaultNamed:
+    // true` (mock/routes/ai.ts); `aiDefault: false` takes it away.
     MOCK_AI_DEFAULT: "anthropic",
     MOCK_PORT: String(mock),
     MOCK_ORIGIN: mockOrigin,

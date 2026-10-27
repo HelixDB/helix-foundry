@@ -74,6 +74,10 @@ export const config = {
   // The WFE's auth.allowed_emails: exact addresses and "@domain" rules. Empty
   // lets everyone sign in.
   allowedEmails: [] as string[],
+  // A local install as it first starts: Ada's one workspace is "My
+  // workspace", with nothing in it, in place of Acme (applyConfig), as the
+  // local API seeds it. A reset brings Acme back.
+  freshInstall: false,
 };
 
 const resets: (() => void)[] = [];
@@ -102,6 +106,7 @@ export function resetState() {
   config.allowedRegions = LOCAL_TOKEN ? ["local"] : [REGION];
   config.checkoutCardOnFile = false;
   config.allowedEmails = [];
+  config.freshInstall = false;
   const ada: MockUser = {
     id: "usr_ada",
     workosId: "user_01ADA",
@@ -127,6 +132,30 @@ export function resetState() {
     createdAt: SEED_TIME,
   });
   for (const reset of resets) reset();
+}
+
+/** What a POST /__mock/config does beyond setting its knobs. */
+export function applyConfig() {
+  if (!config.freshInstall || !db.workspaces.has("ws_acme")) return;
+  db.workspaces.delete("ws_acme");
+  const kept = db.memberships.filter((m) => m.workspaceId !== "ws_acme");
+  db.memberships.splice(0, db.memberships.length, ...kept);
+  const at = new Date().toISOString();
+  db.workspaces.set("ws_my", {
+    id: "ws_my",
+    slug: "my-workspace",
+    displayName: "My workspace",
+    region: config.allowedRegions[0],
+    status: "RESOURCE_STATUS_ACTIVE",
+    timestamps: { createdAt: at, updatedAt: at },
+  });
+  db.memberships.push({
+    id: "mem_ada_my",
+    workspaceId: "ws_my",
+    userId: "usr_ada",
+    role: "WORKSPACE_ROLE_OWNER",
+    createdAt: at,
+  });
 }
 
 export const displayName = (u: MockUser) =>

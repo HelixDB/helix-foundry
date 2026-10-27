@@ -145,12 +145,11 @@ func (r *Resolver) Resolve(ctx context.Context, workspaceID string) (Resolved, e
 	c, err := r.DB.GetActiveFoundryAIConfig(ctx, workspaceID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		if r.Deployment.Default == nil {
+		def := r.Deployment.Current()
+		if def == nil {
 			return Resolved{}, ErrNotConfigured
 		}
-		return Resolved{
-			Source: SourceDefault, Settings: r.Deployment.Default.Settings, Key: r.Deployment.Default.Key, CallTimeout: r.Deployment.CallTimeout,
-		}, nil
+		return Resolved{Source: SourceDefault, Settings: def.Settings, Key: def.Key, CallTimeout: r.Deployment.CallTimeout}, nil
 	case err != nil:
 		return Resolved{}, fmt.Errorf("read the workspace's AI setting: %w", err)
 	}
@@ -212,7 +211,7 @@ func (r *Resolver) Usable(ctx context.Context, workspaceID string) error {
 	_, err := r.DB.GetActiveFoundryAIConfig(ctx, workspaceID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		if r.Deployment.Default == nil {
+		if r.Deployment.Current() == nil {
 			return ErrNotConfigured
 		}
 		return nil

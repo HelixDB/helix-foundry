@@ -98,6 +98,8 @@ const (
 	FoundryService_UpdateFoundryEnrichment_FullMethodName               = "/helix.foundry.v1.FoundryService/UpdateFoundryEnrichment"
 	FoundryService_GetFoundryAI_FullMethodName                          = "/helix.foundry.v1.FoundryService/GetFoundryAI"
 	FoundryService_UpdateFoundryAI_FullMethodName                       = "/helix.foundry.v1.FoundryService/UpdateFoundryAI"
+	FoundryService_DetectFoundryAIDefault_FullMethodName                = "/helix.foundry.v1.FoundryService/DetectFoundryAIDefault"
+	FoundryService_ListFoundryOllamaModels_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryOllamaModels"
 )
 
 // FoundryServiceClient is the client API for FoundryService service.
@@ -211,6 +213,13 @@ type FoundryServiceClient interface {
 	// Helix Foundry model providers
 	GetFoundryAI(ctx context.Context, in *GetFoundryAIRequest, opts ...grpc.CallOption) (*FoundryAIResponse, error)
 	UpdateFoundryAI(ctx context.Context, in *UpdateFoundryAIRequest, opts ...grpc.CallOption) (*FoundryAIResponse, error)
+	// A local install's only (FAILED_PRECONDITION elsewhere): looks again for
+	// the install's default on its machine (FoundryAI.detected), as Settings ›
+	// AI models opens, so a model pulled since is used without a restart.
+	DetectFoundryAIDefault(ctx context.Context, in *DetectFoundryAIDefaultRequest, opts ...grpc.CallOption) (*FoundryAIResponse, error)
+	// A local install's only (FAILED_PRECONDITION elsewhere): the models an
+	// Ollama server has, for the Ollama card's model choice.
+	ListFoundryOllamaModels(ctx context.Context, in *ListFoundryOllamaModelsRequest, opts ...grpc.CallOption) (*ListFoundryOllamaModelsResponse, error)
 }
 
 type foundryServiceClient struct {
@@ -1001,6 +1010,26 @@ func (c *foundryServiceClient) UpdateFoundryAI(ctx context.Context, in *UpdateFo
 	return out, nil
 }
 
+func (c *foundryServiceClient) DetectFoundryAIDefault(ctx context.Context, in *DetectFoundryAIDefaultRequest, opts ...grpc.CallOption) (*FoundryAIResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryAIResponse)
+	err := c.cc.Invoke(ctx, FoundryService_DetectFoundryAIDefault_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) ListFoundryOllamaModels(ctx context.Context, in *ListFoundryOllamaModelsRequest, opts ...grpc.CallOption) (*ListFoundryOllamaModelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryOllamaModelsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryOllamaModels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FoundryServiceServer is the server API for FoundryService service.
 // All implementations should embed UnimplementedFoundryServiceServer
 // for forward compatibility.
@@ -1112,6 +1141,13 @@ type FoundryServiceServer interface {
 	// Helix Foundry model providers
 	GetFoundryAI(context.Context, *GetFoundryAIRequest) (*FoundryAIResponse, error)
 	UpdateFoundryAI(context.Context, *UpdateFoundryAIRequest) (*FoundryAIResponse, error)
+	// A local install's only (FAILED_PRECONDITION elsewhere): looks again for
+	// the install's default on its machine (FoundryAI.detected), as Settings ›
+	// AI models opens, so a model pulled since is used without a restart.
+	DetectFoundryAIDefault(context.Context, *DetectFoundryAIDefaultRequest) (*FoundryAIResponse, error)
+	// A local install's only (FAILED_PRECONDITION elsewhere): the models an
+	// Ollama server has, for the Ollama card's model choice.
+	ListFoundryOllamaModels(context.Context, *ListFoundryOllamaModelsRequest) (*ListFoundryOllamaModelsResponse, error)
 }
 
 // UnimplementedFoundryServiceServer should be embedded to have
@@ -1354,6 +1390,12 @@ func (UnimplementedFoundryServiceServer) GetFoundryAI(context.Context, *GetFound
 }
 func (UnimplementedFoundryServiceServer) UpdateFoundryAI(context.Context, *UpdateFoundryAIRequest) (*FoundryAIResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateFoundryAI not implemented")
+}
+func (UnimplementedFoundryServiceServer) DetectFoundryAIDefault(context.Context, *DetectFoundryAIDefaultRequest) (*FoundryAIResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DetectFoundryAIDefault not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryOllamaModels(context.Context, *ListFoundryOllamaModelsRequest) (*ListFoundryOllamaModelsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryOllamaModels not implemented")
 }
 func (UnimplementedFoundryServiceServer) testEmbeddedByValue() {}
 
@@ -2779,6 +2821,42 @@ func _FoundryService_UpdateFoundryAI_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_DetectFoundryAIDefault_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DetectFoundryAIDefaultRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DetectFoundryAIDefault(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DetectFoundryAIDefault_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DetectFoundryAIDefault(ctx, req.(*DetectFoundryAIDefaultRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_ListFoundryOllamaModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryOllamaModelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryOllamaModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryOllamaModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryOllamaModels(ctx, req.(*ListFoundryOllamaModelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FoundryService_ServiceDesc is the grpc.ServiceDesc for FoundryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3097,6 +3175,14 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateFoundryAI",
 			Handler:    _FoundryService_UpdateFoundryAI_Handler,
+		},
+		{
+			MethodName: "DetectFoundryAIDefault",
+			Handler:    _FoundryService_DetectFoundryAIDefault_Handler,
+		},
+		{
+			MethodName: "ListFoundryOllamaModels",
+			Handler:    _FoundryService_ListFoundryOllamaModels_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

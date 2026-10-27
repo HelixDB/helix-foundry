@@ -24,7 +24,7 @@ buf generate && buf generate --template buf.internal.gen.yaml
 
 ## Run it
 
-[`../local`](../local) runs Foundry on one machine: the site, this backend, the ontology agent, MySQL, SeaweedFS and HelixDB. It runs Foundry's release images; with `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in its `.env`, `docker compose build` there builds the site and the backend from this checkout instead.
+[`../local`](../local) runs Foundry on one machine: the site, this backend, the ontology agent, MySQL, SeaweedFS and HelixDB. It runs Foundry's release images; with `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in its `.env`, `docker compose build` there builds the site and the backend from this checkout instead. The image's `foundry init-secrets --dir DIR` writes an install's secrets once (the compose file's first service), and `local.secrets_dir` (`HELIX_LOCAL__SECRETS_DIR`) reads them; with no `foundry.ai.default.provider`, `foundry` finds its AI default on the machine (package `ai/detect`).
 
 ## Hosted Helix
 

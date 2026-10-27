@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -21,6 +22,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 
+	"github.com/helixdb/helix-foundry/backend/ai"
+	"github.com/helixdb/helix-foundry/backend/ai/detect"
 	"github.com/helixdb/helix-foundry/backend/api"
 	foundryconfig "github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/document"
@@ -69,11 +72,14 @@ var workers = []any{
 // SIGTERM arrives, or a part exits, returning the first error.
 //
 //  1. Open the database, migrate it (the directory's set, then Foundry's) and
-//     write the owner's row and the bucket.
-//  2. Build the front end (the directory and FoundryService, behind the site
+//     write the owner's row, their first workspace (until they have one)
+//     and the bucket.
+//  2. Without a configured AI provider, look for one on this machine
+//     (package ai/detect), so model work starts on it.
+//  3. Build the front end (the directory and FoundryService, behind the site
 //     token), foundry-read and the workers.
-//  3. Start them, then report ready on the health listener.
-//  4. On shutdown, stop the workers, then the front end, within shutdownGrace.
+//  4. Start them, then report ready on the health listener.
+//  5. On shutdown, stop the workers, then the front end, within shutdownGrace.
 func run(parent context.Context, cfg *Config) error {
 	ctx, stop := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -97,14 +103,28 @@ func run(parent context.Context, cfg *Config) error {
 	if err := dir.SeedOwner(ctx); err != nil {
 		return err
 	}
+	directorySvc := directory.NewService(dir, cfg.Local.HelixURL, helixgateway.NewHTTPClient(directory.QueryTimeout))
+	switch seeded, err := directorySvc.SeedWorkspace(ctx); {
+	case err != nil:
+		return err
+	case seeded != nil:
+		logger.Info("created the owner's first workspace", "workspace", seeded.GetId(), "name", seeded.GetDisplayName())
+	}
 	awsCfg := local.AWSConfig(cfg.AWS.Region, cfg.Local.S3)
 	if err := local.CreateBucket(ctx, s3.NewFromConfig(awsCfg), fcfg.Foundry.Sync.DataBucket); err != nil {
 		return err
 	}
+	detector, err := newDetector(fcfg, logger, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if detector != nil {
+		detector.Detect(ctx)
+	}
 
 	st := store.NewMySQL(db, local.Workspaces{})
 	probes := newProbes(db.PingContext, logger)
-	f, err := newFront(ctx, cfg, logger, probes, dir, st, awsCfg)
+	f, err := newFront(ctx, cfg, logger, probes, directorySvc, dir, st, awsCfg, detector)
 	if err != nil {
 		return err
 	}
@@ -120,6 +140,23 @@ func run(parent context.Context, cfg *Config) error {
 		return fmt.Errorf("health listen %s: %w", cfg.Local.Listen.Health, err)
 	}
 	return serve(ctx, logger, probes, healthLn, append([]component{f}, parts...))
+}
+
+// newDetector is the look for an AI default on this machine, of an install
+// that configures none (Host.DetectedAI), or nil: the keys foundry was
+// started with, the bundled Ollama, this computer's, and LM Studio.
+func newDetector(fcfg *foundryconfig.Config, logger *slog.Logger, getenv func(string) string) (*detect.Detector, error) {
+	if fcfg.Host.DetectedAI == nil {
+		return nil, nil
+	}
+	d, err := ai.NewDeployment(fcfg)
+	if err != nil {
+		return nil, err
+	}
+	return &detect.Detector{
+		AnthropicKey: getenv("ANTHROPIC_API_KEY"), OpenAIKey: getenv("OPENAI_API_KEY"),
+		Check: d.CheckDefault, Live: fcfg.Host.DetectedAI, Logger: logger.With("component", "ai-detect"),
+	}, nil
 }
 
 // openDB opens the MySQL database at dsn as Foundry's store expects it.
@@ -167,23 +204,24 @@ type front struct {
 }
 
 // newFront builds the front end over the install's directory and Foundry's
-// store, its objects kept in the install's bucket (foundry.sync.data_bucket).
+// store, its objects kept in the install's bucket (foundry.sync.data_bucket),
+// with the look for an AI default, if the install has one.
 // The site token's interceptor sets each call's Actor, so FoundryService is
 // served without api.ActorInterceptor: nothing stands between the site and
 // it.
-func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *probes, dir *directory.Store, st store.Store,
-	awsCfg aws.Config) (*front, error) {
+func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *probes, directorySvc *directory.Service, dir *directory.Store,
+	st store.Store, awsCfg aws.Config, detector *detect.Detector) (*front, error) {
 	auth, err := local.NewAuthenticator(cfg.Local.SiteToken, dir, st, logger.With("component", "auth"))
 	if err != nil {
 		return nil, err
 	}
-	directorySvc := directory.NewService(dir, cfg.Local.HelixURL, helixgateway.NewHTTPClient(directory.QueryTimeout))
 	fcfg := cfg.foundry()
 	foundrySvc, err := api.New(api.Deps{
 		Cfg: fcfg, Logger: logger.With("service", "foundry"), DB: st, AWS: awsCfg,
 		Documents: document.New(s3.NewFromConfig(awsCfg), fcfg.Foundry.Sync.DataBucket),
 		Databases: local.Databases{Directory: dir, HelixURL: cfg.Local.HelixURL},
 		Graph:     local.GraphReader{Directory: directorySvc}, People: local.People{Directory: dir},
+		LocalAI: detector,
 	})
 	if err != nil {
 		return nil, err

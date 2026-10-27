@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/base64"
+	"io"
+	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -201,9 +204,15 @@ func TestValidate(t *testing.T) {
 		"an ask listener":   {func(c *Config) { c.Foundry.Ask.HTTP.Listen = "" }, "foundry.ask"},
 		// The AI default, before the install migrates anything.
 		"an AI default's stray field": {func(c *Config) {
+			c.detectedAI = nil
 			c.Foundry.AI.Default = foundryconfig.AIDefault{Provider: "anthropic", APIKey: "test", BaseURL: "http://127.0.0.1:1",
 				Models: foundryconfig.AIModels{Draft: "claude-opus-5-5", Ask: "claude-sonnet-5-5", Extract: "claude-haiku-5-5", Verify: "claude-sonnet-5-5"}}
 		}, "foundry.ai.default.base_url is not used by anthropic"},
+		// A default configured and one found exclude each other.
+		"a default and a look for one": {func(c *Config) {
+			c.Foundry.AI.Default = foundryconfig.AIDefault{Provider: "anthropic", APIKey: "test",
+				Models: foundryconfig.AIModels{Draft: "claude-opus-5-5", Ask: "claude-sonnet-5-5", Extract: "claude-haiku-5-5", Verify: "claude-sonnet-5-5"}}
+		}, "a local install finds its default only when it sets none"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := valid()
@@ -212,5 +221,53 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// No provider configured is a look for one on this machine, shared by every
+// part of the install; "none" is none at all, whatever else is set; a
+// provider is that provider, and no look.
+func TestAIDefaultDetection(t *testing.T) {
+	secrets(t)
+	cfg, err := load("foundry.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every part's configuration holds the one the look stores into.
+	if first, again := cfg.foundry(), cfg.foundry(); cfg.detectedAI == nil || first.Host.DetectedAI != cfg.detectedAI || again.Host.DetectedAI != cfg.detectedAI {
+		t.Fatalf("detected = %v", cfg.detectedAI)
+	}
+	d, err := newDetector(cfg.foundry(), slog.New(slog.NewTextHandler(io.Discard, nil)), func(k string) string {
+		return map[string]string{"ANTHROPIC_API_KEY": "sk-ant-x", "OPENAI_API_KEY": "sk-x"}[k]
+	})
+	if err != nil || d == nil || d.AnthropicKey != "sk-ant-x" || d.OpenAIKey != "sk-x" || d.Live != cfg.detectedAI || d.Check == nil {
+		t.Fatalf("detector = %+v, %v", d, err)
+	}
+	// What it finds is checked as the configured default would be.
+	if err := d.Check(foundryconfig.AIDefault{Provider: "ollama", BaseURL: "http://127.0.0.1:11434/v1", Models: foundryconfig.AIModels{
+		Draft: "m", Ask: "m", Extract: "m", Verify: "m"}}); err == nil {
+		t.Fatal("checked an Ollama default at /v1")
+	}
+
+	t.Setenv("HELIX_FOUNDRY__AI__DEFAULT__PROVIDER", "none")
+	t.Setenv("HELIX_FOUNDRY__AI__DEFAULT__MODELS__DRAFT", "ignored")
+	cfg, err = load("foundry.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.detectedAI != nil || cfg.Foundry.AI.Default != (foundryconfig.AIDefault{}) {
+		t.Fatalf("none: detected %v, default %+v", cfg.detectedAI, cfg.Foundry.AI.Default)
+	}
+	if d, err := newDetector(cfg.foundry(), slog.Default(), os.Getenv); err != nil || d != nil {
+		t.Fatalf("none: detector %v, %v", d, err)
+	}
+
+	t.Setenv("HELIX_FOUNDRY__AI__DEFAULT__PROVIDER", "openai")
+	t.Setenv("HELIX_FOUNDRY__AI__DEFAULT__API_KEY", "sk-configured")
+	for _, role := range []string{"DRAFT", "ASK", "EXTRACT", "VERIFY"} {
+		t.Setenv("HELIX_FOUNDRY__AI__DEFAULT__MODELS__"+role, "gpt-6.1-sol")
+	}
+	if cfg, err = load("foundry.yaml"); err != nil || cfg.detectedAI != nil || cfg.Foundry.AI.Default.Provider != "openai" {
+		t.Fatalf("configured: %+v, %v", cfg, err)
 	}
 }

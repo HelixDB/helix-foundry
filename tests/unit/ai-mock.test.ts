@@ -935,7 +935,7 @@ describe("Ollama", () => {
     }
   });
 
-  it("is the install's default when its .env chose it", async () => {
+  it("is the install's default when it finds Ollama's, or its .env names it", async () => {
     const { read, config, ai } = await load(true);
     config({ aiDefaultKind: "ollama" });
     expect((await read()).default).toEqual({
@@ -943,6 +943,12 @@ describe("Ollama", () => {
       label: "Ollama",
       models: free("qwen3.5:4b"),
     });
+    expect((await read()).detected?.summary).toBe(
+      "Using qwen3.5:4b from the bundled Ollama: the most capable model it has that calls tools.",
+    );
+    config({ aiDefaultNamed: true });
+    expect((await read()).default?.kind).toBe("FOUNDRY_AI_KIND_OLLAMA");
+    expect((await read()).detected).toBeUndefined();
     expect(ai.aiSource("ws_acme")).toBe("default");
     expect(ai.aiLabel("ws_acme")).toBe("Ollama");
     expect(ai.aiProvider("ws_acme")).toBe("ollama");
@@ -1249,6 +1255,203 @@ describe("a local API", () => {
     tested();
     expect(ai.aiSource("ws_acme")).toBe("workspace");
     expect(ai.aiRefusal("ws_acme")).toBeUndefined();
+  });
+});
+
+describe("a local API's own default", () => {
+  const DETECT = `${AI_PATH}/detect`;
+  const NONE =
+    "No AI provider was found. Foundry looks for an ANTHROPIC_API_KEY or OPENAI_API_KEY where it was started, a model that calls tools in Ollama, and a model LM Studio serves on this computer.";
+
+  it("says how it found it, or what it looked for", async () => {
+    const { read, config } = await load(true);
+    expect((await read()).detected).toEqual({
+      summary: "Using Claude: Foundry was started with an ANTHROPIC_API_KEY.",
+      detectedAt: "2026-10-23T10:00:00.000Z",
+    });
+    config({ aiDefault: false });
+    const none = await read();
+    expect(none.default).toBeUndefined();
+    expect(none.detected?.summary).toBe(NONE);
+  });
+
+  it("looks again on DetectFoundryAIDefault, finding what aiDetect says", async () => {
+    const { call, read, config, ai } = await load(true);
+    config({ aiDefault: false });
+    vi.advanceTimersByTime(60_000);
+    // Nothing new on the machine: the same, looked for again.
+    const again = await call("POST", DETECT, {});
+    expect(again.status).toBe(200);
+    expect(again.body.ai.default).toBeUndefined();
+    expect(again.body.ai.detected).toEqual({
+      summary: NONE,
+      detectedAt: "2026-10-23T10:01:00.000Z",
+    });
+    // A model pulled since: found, and used from then on.
+    config({ aiDetect: "ollama" });
+    const found = await call("POST", DETECT, {});
+    expect(found.body.ai.default).toMatchObject({
+      kind: "FOUNDRY_AI_KIND_OLLAMA",
+      label: "Ollama",
+    });
+    expect(found.body.ai.detected.summary).toBe(
+      "Using qwen3.5:4b from the bundled Ollama: the most capable model it has that calls tools.",
+    );
+    expect(await read()).toEqual(found.body.ai);
+    expect(ai.aiSource("ws_acme")).toBe("default");
+    expect(ai.aiProvider("ws_acme")).toBe("ollama");
+    config({ aiDetect: "anthropic" });
+    expect((await call("POST", DETECT, {})).body.ai.default.kind).toBe(
+      "FOUNDRY_AI_KIND_ANTHROPIC",
+    );
+    expect(ai.aiLabel("ws_acme")).toBe("Claude");
+    config({ aiDetect: "none" });
+    expect((await call("POST", DETECT, {})).body.ai.default).toBeUndefined();
+    expect(ai.aiSource("ws_acme")).toBe("none");
+  });
+
+  it("doesn't look where the install names its default, hosted, or for a member", async () => {
+    const { call, read, config } = await load(true);
+    // Only owners manage AI.
+    expect((await call("POST", DETECT, {}, "usr_alan")).status).toBe(403);
+    config({ aiDefaultNamed: true, aiDetect: "none" });
+    const named = await call("POST", DETECT, {});
+    expect(named.status).toBe(400);
+    expect(named.body.code).toBe(9);
+    expect((await read()).default?.kind).toBe("FOUNDRY_AI_KIND_ANTHROPIC");
+    expect((await read()).detected).toBeUndefined();
+    // Named as none: no default, and nothing said of looking.
+    config({ aiDefault: false });
+    expect(await read()).not.toHaveProperty("detected");
+    expect((await read()).default).toBeUndefined();
+
+    const hosted = await load();
+    const refused = await hosted.call("POST", DETECT, {});
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe(9);
+    expect((await hosted.read()).detected).toBeUndefined();
+  });
+});
+
+describe("an Ollama server's models", () => {
+  const models = (baseUrl: string) =>
+    `${AI_PATH}/ollama-models?baseUrl=${encodeURIComponent(baseUrl)}`;
+  const names = (r: MockReply & { body: any }) =>
+    (r.body.server.models as wfe.FoundryOllamaModel[]).map((m) => m.name);
+
+  it("lists the bundled server's and this computer's, those Foundry runs first", async () => {
+    const { call } = await load(true);
+    const bundled = await call("GET", models("http://127.0.0.1:11434/"));
+    expect(bundled.status).toBe(200);
+    expect(bundled.body.server.version).toBe("0.13.0");
+    expect(bundled.body.server.problem).toBeUndefined();
+    expect(bundled.body.server.models).toEqual([
+      { name: "qwen3.5:4b", sizeBytes: "3389725347", parameterSize: "4.7B" },
+      {
+        name: "embeddinggemma",
+        sizeBytes: "621875047",
+        parameterSize: "307.58M",
+        unusable: "Not a chat model.",
+      },
+      {
+        name: "qwen2.5:0.5b",
+        sizeBytes: "397821319",
+        parameterSize: "494.03M",
+        unusable:
+          "Its context window, 32,768 tokens, is under the 65,536 drafting needs.",
+      },
+    ]);
+    const host = await call("GET", models("http://host.docker.internal:11434"));
+    expect(names(host)).toEqual([
+      "qwen3.5:9b",
+      "qwen3.5:4b",
+      "embeddinggemma",
+      "gemma3:4b",
+      "gpt-oss:120b-cloud",
+      "qwen2.5:0.5b",
+    ]);
+    expect(
+      (host.body.server.models as wfe.FoundryOllamaModel[]).find(
+        (m) => m.name === "gpt-oss:120b-cloud",
+      )?.unusable,
+    ).toBe("Runs on ollama.com, so what it is sent would leave this computer.");
+    // Another server has the bundled one's.
+    expect(names(await call("GET", models("http://gpu.lan:11434")))).toEqual(
+      names(bundled),
+    );
+  });
+
+  it("says why a server's models can't be listed, or told apart", async () => {
+    const { call, config } = await load(true);
+    const server = async (url: string) =>
+      (await call("GET", models(url))).body.server as wfe.FoundryOllamaServer;
+    expect(await server("http://gpu.invalid:11434")).toEqual({
+      problem:
+        "Nothing answered at http://gpu.invalid:11434. Check the address and that Ollama runs there.",
+    });
+    expect((await server("http://notollama.lan:8080")).problem).toBe(
+      "Something answered at http://notollama.lan:8080, but not Ollama's API. Check the address.",
+    );
+    // Too old to say which call tools: listed by name, none ruled out.
+    const old = await server("http://old-gpu.lan:11434");
+    expect(old.version).toBe("0.5.7");
+    expect(old.problem).toBe(
+      "This Ollama (0.5.7) is too old to say which models call tools. Update it from ollama.com.",
+    );
+    expect(old.models?.map((m) => m.name)).toEqual([
+      "embeddinggemma",
+      "qwen2.5:0.5b",
+      "qwen3.5:4b",
+    ]);
+    expect(old.models?.every((m) => !m.unusable)).toBe(true);
+    // The bundled server, not running.
+    config({ ollamaBundled: false });
+    expect(await server("http://127.0.0.1:11434")).toEqual({
+      problem:
+        "The bundled Ollama isn't running. Start it with docker compose --profile ollama up -d.",
+    });
+    expect(
+      (await server("http://host.docker.internal:11434")).models,
+    ).toHaveLength(6);
+  });
+
+  it("refuses an address a save would, hosted, and for a member", async () => {
+    const { call } = await load(true);
+    for (const [url, message] of [
+      [
+        "",
+        "Use an http:// or https:// address with no user, query or fragment.",
+      ],
+      [
+        "ftp://127.0.0.1:11434",
+        "Use an http:// or https:// address with no user, query or fragment.",
+      ],
+      [
+        "http://gpu.lan:11434/v1",
+        "Use the Ollama server’s address, like http://127.0.0.1:11434, without /api or /v1.",
+      ],
+    ] as const) {
+      const r = await call("GET", models(url));
+      expect(r.status, url).toBe(400);
+      expect(r.body.message).toBe(message);
+    }
+    expect(
+      (await call("GET", `${AI_PATH}/ollama-models`)).body.message,
+    ).toMatch(/^Use an http/);
+    expect(
+      (
+        await call(
+          "GET",
+          models("http://127.0.0.1:11434"),
+          undefined,
+          "usr_alan",
+        )
+      ).status,
+    ).toBe(403);
+    const hosted = await load();
+    const refused = await hosted.call("GET", models("http://127.0.0.1:11434"));
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe(9);
   });
 });
 
