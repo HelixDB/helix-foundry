@@ -44,4 +44,4 @@ The mock stands in for the API and sign-in, so no account or secret is needed. B
 
 ## License
 
-This repository, the site and the backend, is [Apache 2.0](LICENSE), and the `foundry-site` and `foundry` images are built from it. Of the other images `local/compose.yaml` runs, HelixDB is open source ([Apache 2.0](https://github.com/HelixDB/helix-db)); `ontology-agent` is not open source yet and is free to run under the [Helix Foundry Images License](LICENSE-IMAGES.md).
+Everything in this repository, the site and the backend, is [Apache 2.0](LICENSE), and so are Foundry's three images: `foundry-site` and `foundry`, built from it, and `ontology-agent`, the ontology agent's. HelixDB, which `local/compose.yaml` runs beside them, is [Apache 2.0](https://github.com/HelixDB/helix-db) too.
