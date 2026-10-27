@@ -2,10 +2,12 @@
 # Runs tests/stack against a fresh local stack on this machine: wipes the
 # stack's volumes, starts it with the sample database, waits for the site,
 # then runs the suite in Playwright's image on the host network, its results
-# in test-results/stack. Needs the images built from source
-# (helix-foundry/{site,foundry,ontology-agent}:local) unless FOUNDRY_*IMAGE
-# names others, and local/.env (local/setup.sh). It builds the foundry image
-# from backend/ first. Without models it bills nothing:
+# in test-results/stack. Needs local/.env (local/setup.sh). It runs the site
+# and foundry built from source, helix-foundry/{site,foundry}:local (it
+# builds foundry's from backend/ first; Compose builds the site's when it is
+# missing), and the release's ontology agent, whose source is not here.
+# FOUNDRY_SITE_IMAGE, FOUNDRY_IMAGE and FOUNDRY_AGENT_IMAGE run others as
+# they are. Without models it bills nothing:
 #   FOUNDRY_STACK_MODELS=1  Claude is the install's provider, on the
 #                           ANTHROPIC_API_KEY of this shell;
 #   FOUNDRY_STACK_OLLAMA=1  Ollama in Docker (the ollama profile) with
@@ -22,12 +24,14 @@ if docker compose ls -q | grep -qx helix-foundry; then
   echo "Helix Foundry is running here (project helix-foundry); stop it first." >&2
   exit 1
 fi
-# Images built from source unless FOUNDRY_*IMAGE names others.
+# The site and foundry from source unless FOUNDRY_*IMAGE names others; the
+# agent is local/compose.yaml's unless FOUNDRY_AGENT_IMAGE names one.
 export FOUNDRY_SITE_IMAGE="${FOUNDRY_SITE_IMAGE:-helix-foundry/site:local}"
-export FOUNDRY_IMAGE="${FOUNDRY_IMAGE:-helix-foundry/foundry:local}"
-export FOUNDRY_AGENT_IMAGE="${FOUNDRY_AGENT_IMAGE:-helix-foundry/ontology-agent:local}"
+if [ -z "${FOUNDRY_IMAGE:-}" ]; then
+  export FOUNDRY_IMAGE=helix-foundry/foundry:local
+  docker build -t "$FOUNDRY_IMAGE" backend
+fi
 compose="docker compose -p helix-foundry-stack -f local/compose.yaml -f tests/stack/compose.yaml"
-docker build -t "${FOUNDRY_IMAGE:-helix-foundry/foundry:local}" backend
 # Ollama's profile, overriding local/.env's.
 export COMPOSE_PROFILES=
 if [ -n "${FOUNDRY_STACK_OLLAMA:-}" ]; then
