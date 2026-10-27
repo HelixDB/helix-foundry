@@ -160,6 +160,13 @@ func (s *Store) ListWorkspaces(ctx context.Context, after string, limit int) ([]
 		`deleted_at IS NULL AND status NOT IN ('deleting', 'deleted')`, after, limit)
 }
 
+// AnyWorkspace reports whether the install has a workspace, deleted or not.
+func (s *Store) AnyWorkspace(ctx context.Context) (bool, error) {
+	var has bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM workspaces)`).Scan(&has)
+	return has, err
+}
+
 // CreateWorkspace inserts w, active: store.ErrConflict when its slug is taken.
 func (s *Store) CreateWorkspace(ctx context.Context, w Workspace) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO workspaces (id, slug, display_name, region, status) VALUES (?, ?, ?, ?, ?)`,
