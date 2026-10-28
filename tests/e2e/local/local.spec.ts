@@ -121,6 +121,10 @@ async function createGlobex(page: Page) {
 }
 
 test("opens straight into the workspace's main page, Ask", async ({ page }) => {
+  // No landing page: / is the app, keeping the link's query.
+  const home = await page.request.get("/?a=1", { maxRedirects: 0 });
+  expect(home.status()).toBe(307);
+  expect(home.headers().location).toBe("/ask?a=1");
   await page.goto("/");
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
   await expect(
