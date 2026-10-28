@@ -97,6 +97,20 @@
 .nav-right a:not(.btn):hover {
   color: var(--ink);
 }
+/* The repository on GitHub: its mark, Star and its stars, with no arrow. */
+.gh-stars::after {
+  content: none;
+}
+.gh-stars svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  fill: currentColor;
+}
+.gh-count {
+  padding-left: 0.6rem;
+  border-left: 1px solid;
+  opacity: 0.75;
+}
 @media (max-width: 1100px) {
   .tabs {
     display: none;
@@ -104,6 +118,9 @@
 }
 @media (max-width: 760px) {
   .nav-right a:not(.btn) {
+    display: none;
+  }
+  .gh-label {
     display: none;
   }
 }
