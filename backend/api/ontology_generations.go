@@ -17,6 +17,7 @@ import (
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -38,6 +39,11 @@ const maxOntologyGoalChars = 2000
 // starts at most foundry.ontology.per_hour of them an hour. A local install
 // with no AI provider refuses it (FOUNDRY_AI_NOT_CONFIGURED).
 //
+// A sample generation drafts from the sample company's set alone, and the
+// worker stores the sample's ready-made draft (package sample) in place of
+// the AI's: the set must hold each of its table files, read. Its title is
+// the draft's, with no model called.
+//
 // Event sources are never among the connectors, chosen or by default: each
 // comes in event_sources, with how this ontology reads it. Structured mode
 // adds its events table, one of the tables, once its first sync has given it
@@ -58,6 +64,13 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	}
 	if req.GetNoConnectors() && len(req.GetConnectorIds()) > 0 {
 		return nil, status.Error(codes.InvalidArgument, "connector_ids must be empty with no_connectors")
+	}
+	switch name := req.GetSample(); {
+	case name == "":
+	case name != sample.Kestrel:
+		return nil, status.Errorf(codes.InvalidArgument, "no sample is called %q", name)
+	case len(req.GetDocumentSetIds()) != 1 || !req.GetNoConnectors() || len(req.GetEventSources()) > 0:
+		return nil, status.Error(codes.InvalidArgument, "a sample is drafted from its document set alone: name that one set, with no_connectors and no event source")
 	}
 	if err := s.requireAI(ctx, ws); err != nil {
 		return nil, err
@@ -183,6 +196,14 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	for _, f := range files {
 		gen.Input.Documents = append(gen.Input.Documents, foundrymodel.OntologyGenerationDocument{ID: f.ID, SetID: f.SetID})
 	}
+	if name := req.GetSample(); name != "" {
+		for _, t := range sample.Tables {
+			if !slices.ContainsFunc(files, func(f *foundrymodel.FoundryDocument) bool { return f.Name == t }) {
+				return nil, status.Errorf(codes.FailedPrecondition, "the sample's %s isn't in its set, read: wait for its files to be read, or add the sample again", t)
+			}
+		}
+		gen.Input.Sample = name
+	}
 	tables := len(gen.Input.Tables) + len(gen.Input.Documents)
 	if tables == 0 {
 		text, err := s.deps.DB.CountReadableFoundryTextDocuments(ctx, ws, gen.Input.DocumentSetIDs)
@@ -224,8 +245,12 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	}
 	// Titled once queued, so a request the cap refuses never pays for a title.
 	// Waits on the title model at most ontologygen.TitleTimeout, and never
-	// fails the generation.
-	if gen.Goal != nil {
+	// fails the generation. A sample's title is its draft's.
+	if gen.Input.Sample != "" {
+		if err := s.deps.DB.SetOntologyGenerationTitle(ctx, gen.ID, sample.Title); err != nil {
+			log.From(ctx).Warn("title ontology generation failed", "generation", gen.ID, "err", err)
+		}
+	} else if gen.Goal != nil {
 		if title := s.deps.GenerationTitles.Title(ctx, ws, gen.ID, *gen.Goal); title != "" {
 			if err := s.deps.DB.SetOntologyGenerationTitle(ctx, gen.ID, title); err != nil {
 				log.From(ctx).Warn("title ontology generation failed", "generation", gen.ID, "err", err)
@@ -293,6 +318,7 @@ func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bo
 		Id: gen.ID, WorkspaceId: gen.WorkspaceID, OntologyId: gen.OntologyID, Status: generationStatusToProto[gen.Status],
 		Attempts:      int32(gen.Attempts),
 		BaseVersionId: gen.Input.BaseVersionID,
+		Sample:        gen.Input.Sample,
 		CreatedAt:     timestamppb.New(gen.CreatedAt), NextAttemptAt: timestamppb.New(gen.NextAttemptAt),
 	}
 	for _, t := range gen.Input.Tables {

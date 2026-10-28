@@ -23,6 +23,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	"github.com/helixdb/helix-foundry/backend/server/tasks"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
@@ -66,7 +67,9 @@ type Task struct {
 	cfg       config.OntologyConfig
 	queue     generationQueue
 	generator generator
-	reviser   *reviser
+	// tables reads a sample generation's table files.
+	tables  ontologyagent.DocumentTableStore
+	reviser *reviser
 	// closeGenerator releases the agent client and the read-only proxy.
 	closeGenerator func() error
 	workerID       string
@@ -84,7 +87,7 @@ func New(d Deps) (*Task, error) {
 	cfg := d.Cfg.Foundry.Ontology
 	client := s3.NewFromConfig(d.AWS)
 	snapshots := snapshot.NewS3(client, d.Cfg.Foundry.Sync.DataBucket)
-	t := &Task{deps: d, cfg: cfg, queue: d.DB, workerID: id.NewWorkerID(), now: time.Now}
+	t := &Task{deps: d, cfg: cfg, queue: d.DB, tables: d.DB, workerID: id.NewWorkerID(), now: time.Now}
 	resolver, err := ai.NewResolver(d.Cfg, d.DB, d.Plans)
 	if err != nil {
 		return nil, fmt.Errorf("foundry-ontology-worker: %w", err)
@@ -167,6 +170,8 @@ func (t *Task) process(ctx context.Context, gen *model.OntologyGeneration) {
 			revision, err = t.reviser.run(runCtx, gen)
 			result.Format, result.Definition = model.OntologyFormatAgentBundle, revision.definition
 		}
+	} else if gen.Input.Sample != "" {
+		result, err = sampleDraft(runCtx, t.tables, gen)
 	} else {
 		result, err = t.generator.Run(runCtx, gen)
 	}
@@ -221,6 +226,29 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, genID 
 		close(done)
 		wg.Wait()
 	}
+}
+
+// sampleDraft is a sample generation's result, with no model called: the
+// sample's draft, its table files named by the ids of the workspace's
+// copies still read in its set. A file gone since fails it for good.
+func sampleDraft(ctx context.Context, db ontologyagent.DocumentTableStore, gen *model.OntologyGeneration) (ontologygen.Result, error) {
+	result := ontologygen.Result{Format: model.OntologyFormatAgentBundle}
+	present, _, err := ontologyagent.ResolveDocumentTables(ctx, db, gen.WorkspaceID, gen.Input.Documents, gen.Input.DocumentSetIDs)
+	if err != nil {
+		return result, &ontologygen.Failure{Message: "could not read the sample's files; Helix will retry", Err: err}
+	}
+	files := map[string]string{}
+	for _, d := range present {
+		files[d.Document.Name] = d.Document.ID
+	}
+	set := ""
+	if len(gen.Input.DocumentSetIDs) > 0 {
+		set = gen.Input.DocumentSetIDs[0]
+	}
+	if result.Definition, err = sample.Draft(gen.Input.Sample, files, set); err != nil {
+		return result, &ontologygen.Failure{Message: "the sample's files were deleted or moved: add the sample again", Permanent: true, Err: err}
+	}
+	return result, nil
 }
 
 // outcome decides what an attempt leaves behind: a draft version, a retry

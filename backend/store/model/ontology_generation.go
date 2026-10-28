@@ -65,6 +65,10 @@ type OntologyGenerationInput struct {
 	// BaseVersionID is the version that was current when the generation was
 	// requested; the draft extends it.
 	BaseVersionID string `json:"base_version_id,omitempty"`
+	// Sample is the sample company (sample.Kestrel) whose ready-made draft
+	// the generation stores in place of the AI's, mapped to Documents; empty
+	// for an AI draft.
+	Sample string `json:"sample,omitempty"`
 }
 
 type OntologyGenerationTable struct {

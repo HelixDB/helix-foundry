@@ -565,6 +565,9 @@ message OntologyGeneration {
   // each is a table of its own, which mappings name by its document id. A
   // revision's are its parent's.
   repeated OntologyGenerationDocument documents = 20;
+  // The sample it drafts from in place of the AI
+  // (GenerateOntologyRequest.sample); empty for an AI draft.
+  string sample = 21;
 }
 
 message OntologyGenerationTable {

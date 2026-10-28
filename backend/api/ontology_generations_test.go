@@ -25,6 +25,7 @@ import (
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	foundryreadv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundryread/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -436,6 +437,61 @@ func TestFoundryOntologyGenerationRPCs(t *testing.T) {
 		if got := store.generations[0].Input.Documents; !slices.Equal(got, want) || len(gen.GetTables()) != 0 ||
 			len(gen.GetDocuments()) != 1 || gen.GetDocuments()[0].GetId() != "doc-csv" || gen.GetDocuments()[0].GetSetId() != "set-files" {
 			t.Fatalf("documents = %v, shown %v", got, gen.GetDocuments())
+		}
+	})
+	// The sample company drafts from its set alone, each of its table files
+	// read there, titled as its draft is, with no model called.
+	kestrel := func(store *generationStore, except string) {
+		store.tables = nil
+		store.sets = []*foundrymodel.FoundryDocumentSet{{ID: "set-k", WorkspaceID: "ws-1", Name: "Kestrel sample"}, {ID: "set-x", WorkspaceID: "ws-1", Name: "Other"}}
+		for _, name := range sample.Tables {
+			if name != except {
+				store.files = append(store.files, &foundrymodel.FoundryDocument{ID: "doc-" + name, WorkspaceID: "ws-1", SetID: "set-k", Name: name})
+			}
+		}
+	}
+	sampleRequest := func() *foundryv1.GenerateOntologyRequest {
+		return &foundryv1.GenerateOntologyRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Goal: "Kestrel's customers",
+			DocumentSetIds: []string{"set-k"}, NoConnectors: true, Sample: sample.Kestrel}
+	}
+	t.Run("queues the sample from its set's table files, titled with no model", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		titles, calls := titleModel("A model's title", nil)
+		s.deps.GenerationTitles = titles
+		kestrel(store, "")
+		gen, err := generate(s, sampleRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gen.GetSample() != sample.Kestrel || store.generations[0].Input.Sample != sample.Kestrel || len(gen.GetDocuments()) != len(sample.Tables) ||
+			gen.GetTitle() != sample.Title || calls.calls.Load() != 0 {
+			t.Fatalf("generation = %+v after %d title requests", gen, calls.calls.Load())
+		}
+	})
+	t.Run("refuses another sample, or the sample beside other sources", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		kestrel(store, "")
+		other := sampleRequest()
+		other.Sample = "acme"
+		connectors := sampleRequest()
+		connectors.NoConnectors = false
+		sets := sampleRequest()
+		sets.DocumentSetIds = []string{"set-k", "set-x"}
+		for _, req := range []*foundryv1.GenerateOntologyRequest{other, connectors, sets} {
+			if _, err := generate(s, req); status.Code(err) != codes.InvalidArgument {
+				t.Errorf("GenerateOntology(%v) = %v, want InvalidArgument", req, err)
+			}
+		}
+		if len(store.generations) != 0 {
+			t.Fatalf("queued %d generations", len(store.generations))
+		}
+	})
+	t.Run("waits for each of the sample's table files to be read", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		kestrel(store, "invoices.csv")
+		_, err := generate(s, sampleRequest())
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(status.Convert(err).Message(), "invoices.csv") || len(store.generations) != 0 {
+			t.Fatalf("GenerateOntology = %v, %d queued", err, len(store.generations))
 		}
 	})
 	// A set holding text is enough on its own: the draft routes it to
