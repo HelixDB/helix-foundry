@@ -1,6 +1,7 @@
 import "./workspace.css";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   Cloud,
   LoaderCircle,
@@ -26,6 +27,7 @@ import {
   cx,
 } from "../../kit";
 import { sentence } from "../../api";
+import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import * as AI from "./ai-api";
 import { OwnKeyGate } from "./ai-gate";
@@ -37,8 +39,11 @@ import { isProRequired } from "./pro-gate";
 // provider its .env names, else the one it found on its machine (it looks
 // again as the page opens), or none. An owner's save is tested before it
 // is used: the page reads the setting every 1.5 s until the test ends, and
-// says so when it passes or why it failed (the setting in force stays).
-// Owners see what runs as the form's choice; everyone else reads one line.
+// says so when it passes or why it failed (the setting in force stays). The
+// key typed stays in the field, as the form starts from the new setting too,
+// until another page. A workspace still onboarding goes back to its wizard
+// once its AI runs. Owners see what runs as the form's choice; everyone
+// else reads one line.
 
 // The kinds this site has a form for, and the provider message each sends
 // given the Azure endpoint typed (normalized, or empty until it is one) and
@@ -104,8 +109,9 @@ type CardFields = {
 type Picks = Record<FoundryAiRole, AI.ModelPick>;
 
 export function AiTab() {
-  const { id, role, notify } = useWorkspace(),
-    qc = useQueryClient();
+  const { id, role, notify, onboarding } = useWorkspace(),
+    qc = useQueryClient(),
+    navigate = useNavigate();
   const query = useQuery(AI.aiQuery(id));
   const ai = query.data;
   // A local install that finds its own default looks again once as the
@@ -127,7 +133,8 @@ export function AiTab() {
       () => {},
     );
   }, [ai, id, role, qc]);
-  // The save this tab saw being tested: once it is the setting, say so.
+  // The save this tab saw being tested: once it is the setting, say so, and
+  // take a workspace still onboarding back to its wizard.
   const watched = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!ai) return;
@@ -135,10 +142,15 @@ export function AiTab() {
       watched.current = ai.pending.id;
       return;
     }
-    if (watched.current && ai.active?.id === watched.current)
+    if (watched.current && ai.active?.id === watched.current) {
       notify(`AI models now run on ${ai.active.label || "the new provider"}.`);
+      if (onboarding) navigate(paths.newOntology());
+    }
     watched.current = undefined;
   }, [ai, notify]);
+  // The key this tab saved, with the save it went with: the form that
+  // starts from that save, once it is the setting, holds it still.
+  const [saved, setSaved] = useState<{ id: string; key: string }>();
   if (query.isPending)
     return (
       <Panel title="AI models">
@@ -165,6 +177,8 @@ export function AiTab() {
     <OwnerForm
       key={`${ai.active?.id ?? "default"} ${ai.default?.kind ?? "none"}`}
       ai={ai}
+      typed={saved && saved.id === ai.active?.id ? saved.key : ""}
+      onSaved={setSaved}
     />
   ) : (
     <Status ai={ai} />
@@ -224,10 +238,23 @@ const defaultDisclosure = (ai: FoundryAi) => AI.defaultDisclosure(ai.default);
 
 type Card = "default" | FoundryAiProviderKind;
 
-/** The owner's choice of provider, its models and key, and its save. */
-function OwnerForm({ ai }: { ai: FoundryAi }) {
-  const { id, name, notify } = useWorkspace(),
-    qc = useQueryClient();
+/**
+ * The owner's choice of provider, its models and key, and its save. `typed`
+ * is the key the field starts with: the one this tab saved, once that save
+ * is the setting; `onSaved` hears of each key saved, with its save's id.
+ */
+function OwnerForm({
+  ai,
+  typed,
+  onSaved,
+}: {
+  ai: FoundryAi;
+  typed: string;
+  onSaved: (saved: { id: string; key: string }) => void;
+}) {
+  const { id, name, notify, onboarding } = useWorkspace(),
+    qc = useQueryClient(),
+    navigate = useNavigate();
   const now = AI.inForce(ai);
   // Ollama only in a local install, and first there: hosted, a native
   // Ollama server, which takes no key, would have to be public.
@@ -331,7 +358,7 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
           }
         : NO_REGION,
     ),
-    [apiKey, setApiKey] = useState(""),
+    [apiKey, setApiKey] = useState(typed),
     [confirming, setConfirming] = useState(false),
     [pending, setPending] = useState(false),
     [error, setError] = useState<unknown>(null);
@@ -498,11 +525,14 @@ function OwnerForm({ ai }: { ai: FoundryAi }) {
               ...(apiKey.trim() && { apiKey: apiKey.trim() }),
             },
       );
-      setApiKey("");
+      if (next.pending && apiKey.trim())
+        onSaved({ id: next.pending.id, key: apiKey.trim() });
       setConfirming(false);
       qc.setQueryData(AI.aiKey(id), next);
-      if (!choice)
+      if (!choice) {
         notify(`AI models now run on ${AI.runsOn("default", LOCAL)}.`);
+        if (onboarding) navigate(paths.newOntology());
+      }
     } catch (e) {
       setError(e);
     } finally {

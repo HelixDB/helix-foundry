@@ -187,18 +187,45 @@ test("drafts a new install's first ontology from the sample company", async ({
   await createdOntology(page);
 });
 
-test("asks for an AI provider before adding the sample company", async ({
+// With no provider, the sample asks for one; Settings has the way back to
+// the onboarding in its sidebar, and a provider whose test passes goes
+// back by itself, where the sample adds.
+test("asks for an AI provider before adding the sample company, then goes back to it", async ({
   page,
 }) => {
-  await configure({ freshInstall: true, aiDefault: false });
+  await configure({ freshInstall: true, aiDefault: false, aiProbeMs: 600 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Use the sample" }).click();
-  await expect(
-    page.getByRole("note").filter({
+  const sample = page.getByRole("button", { name: "Use the sample" }),
+    gate = page.getByRole("note").filter({
       hasText: "Adding the sample needs an AI provider",
     }),
-  ).toBeVisible();
+    first = page.getByRole("heading", {
+      level: 1,
+      name: "Create your first ontology",
+    });
+  await sample.click();
+  await expect(gate).toBeVisible();
   await expect(page).toHaveURL(/\/ontology\/new$/);
+
+  await gate.getByRole("link", { name: "Choose a provider" }).click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(nav.getByRole("link")).toHaveCount(1);
+  await nav.getByRole("link", { name: "Get started" }).click();
+  await expect(first).toBeVisible();
+
+  await sample.click();
+  await gate.getByRole("link", { name: "Choose a provider" }).click();
+  await page.getByRole("radio", { name: "Claude", exact: true }).check();
+  await page.getByLabel("API key").fill("sk-ant-api03-local-0123456789abcd");
+  await page.getByRole("button", { name: "Test and save" }).click();
+  await expect(page.getByText("AI models now run on Claude.")).toBeVisible();
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+  await expect(first).toBeVisible();
+  await sample.click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=review$/, {
+    timeout: 30_000,
+  });
 });
 
 test("keeps only settings and the theme in the account menu", async ({

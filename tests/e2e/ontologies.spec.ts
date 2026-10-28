@@ -274,15 +274,16 @@ test("gives a new workspace only the wizard until its first ontology", async ({
   page,
 }) => {
   await signInToNewWorkspace(page);
-  // No sections and no Ontologies panel: every page leads to the wizard,
-  // titled for the first ontology, with no way back to Ontologies.
+  // No Ontologies panel and one section, Get started: every page leads to
+  // the wizard, titled for the first ontology, with no way back to
+  // Ontologies.
   const nav = page.getByRole("navigation", { name: "Main navigation" }),
     wizard = page.getByRole("heading", {
       level: 1,
       name: "Create your first ontology",
     });
   await expect(page).toHaveURL(/\/ontology\/new$/);
-  await expect(nav).toHaveCount(0);
+  await expect(nav.getByRole("link")).toHaveText(["Get started"]);
   await expect(panelOf(page)).toHaveCount(0);
   for (const path of ["/", "/ontology", "/explore", "/ask", "/data", "/x"]) {
     await page.goto(path);
@@ -336,9 +337,13 @@ test("goes back to the wizard once the last ontology is deleted, and tells a mem
   await expect(
     page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("navigation", { name: "Main navigation" }),
-  ).toHaveCount(0);
+  // The sidebar's one section is the onboarding.
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(nav.getByRole("link")).toHaveCount(1);
+  await expect(nav.getByRole("link", { name: "Get started" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 
   // A member can't create one: the wizard says who sets the workspace up.
   await page.context().clearCookies();
