@@ -19,7 +19,7 @@ name: helix-foundry
 # One Foundry release's images; FOUNDRY_*IMAGE runs others, such as ones
 # built from source.
 x-images:
-  site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.1}
+  site: &site-image ${FOUNDRY_SITE_IMAGE:-ghcr.io/helixdb/foundry-site:0.1.2}
   foundry: &foundry-image ${FOUNDRY_IMAGE:-ghcr.io/helixdb/foundry:0.1.1}
   agent: &agent-image ${FOUNDRY_AGENT_IMAGE:-ghcr.io/helixdb/ontology-agent:0.1.0}
   helix: &helix-image ${FOUNDRY_HELIX_IMAGE:-ghcr.io/helixdb/helixdb:v0.0.12}
