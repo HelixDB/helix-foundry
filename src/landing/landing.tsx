@@ -13,14 +13,29 @@ import {
 // to the app goes through sign-in (/login), which a signed-in visitor never
 // sees: / sends them to the app (src/app/(landing)/page.tsx). Set up with
 // your agent copies the app's onboarding prompt, written in the browser
-// (./behaviours.tsx).
+// (./behaviours.tsx). The header's GitHub button shows the repository's
+// stars, read from GitHub at most once an hour.
 const SIGN_IN = "/login";
 const SOURCE = "https://github.com/helixdb/helix-foundry";
 const DOCS = `${SOURCE}#readme`;
 const SETUP = `git clone ${SOURCE}.git
 cd helix-foundry && docker compose up -d --wait`;
 
-export function Landing() {
+export async function Landing() {
+  // Without an answer within 1.5 s, the button shows no count.
+  const stars: number | null = await fetch(
+    "https://api.github.com/repos/helixdb/helix-foundry",
+    {
+      headers: { Accept: "application/vnd.github+json" },
+      next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(1500),
+    },
+  )
+    .then((res) => (res.ok ? res.json() : null))
+    .then((repo) =>
+      typeof repo?.stargazers_count === "number" ? repo.stargazers_count : null,
+    )
+    .catch(() => null);
   return (
     <>
       {/* One drawing behind the whole page: the graph in the hero, the dots
@@ -54,8 +69,28 @@ export function Landing() {
               </a>
             </nav>
             <div className="nav-right m">
-              <a href={DOCS}>Docs</a>
-              <a href={SOURCE}>Source</a>
+              <a
+                className="btn gh-stars"
+                href={SOURCE}
+                aria-label={
+                  stars === null
+                    ? "Helix Foundry on GitHub"
+                    : `Helix Foundry on GitHub: ${stars} stars`
+                }
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+                </svg>
+                <span className="gh-label">Star</span>
+                {stars !== null && (
+                  <span className="gh-count">
+                    {new Intl.NumberFormat("en", {
+                      notation: "compact",
+                      maximumFractionDigits: 1,
+                    }).format(stars)}
+                  </span>
+                )}
+              </a>
               <a className="btn btn-solid" href={SIGN_IN}>
                 Start free
               </a>

@@ -15,6 +15,10 @@ test("shows the landing page to a visitor who isn't signed in", async ({
   await expect(
     page.getByRole("heading", { level: 1, name: HEADING }),
   ).toBeVisible();
+  // The header links the repository, with its stars when GitHub answers.
+  await expect(
+    page.getByRole("link", { name: /^Helix Foundry on GitHub/ }),
+  ).toHaveAttribute("href", "https://github.com/helixdb/helix-foundry");
   // Its own document: none of the app's shell.
   await expect(
     page.getByRole("navigation", { name: "Main navigation" }),
