@@ -52,21 +52,25 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+/* Each group's threads hang off a rule, as the sidebar's subnav does; the
+   open one is marked on it in the accent. */
 .ak-group ul {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1px;
-  margin: 0;
+  margin: 0 0 0 10px;
   padding: 0;
+  border-left: 1px solid var(--hf-border-strong);
   list-style: none;
 }
 .ak-thread {
+  position: relative;
   display: grid;
   gap: 1px;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 6px 10px 6px 13px;
   border-radius: var(--hf-radius);
-  color: var(--hf-text-2);
+  color: var(--hf-muted);
   font-size: var(--hf-text-base);
   line-height: 1.4;
   text-decoration: none;
@@ -76,8 +80,16 @@
   color: var(--hf-text);
 }
 .ak-thread.is-active {
-  background: var(--hf-selected);
   color: var(--hf-text);
+}
+.ak-thread.is-active::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: -1px;
+  width: 2px;
+  background: var(--hf-accent);
 }
 .ak-thread-title {
   overflow: hidden;
