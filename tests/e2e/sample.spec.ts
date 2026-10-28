@@ -1,57 +1,63 @@
 import {
-  createdOntology,
   expect,
   explorer,
+  mock,
   signInToNewWorkspace,
   test,
 } from "./support/mock";
 
-// A new workspace's onboarding offers the sample company: one click uploads
-// its files into Data, waits until Foundry has read them, then fills in the
-// wizard up to its review, kept in the tab like any choice.
+// A new workspace's onboarding offers the sample company. This build is the
+// dev stamp's, which has Kestrel's database (next.config.ts), so the sample
+// opens its own page: it connects the database over TLS, uploads the
+// documents, shows the goal and the ontology made from its ready-made draft
+// on a new Helix database, loads it, and offers its questions. A reload
+// carries on with what it made, and nothing is made twice.
 
-test("drafts a new workspace's first ontology from the sample company", async ({
+test("walks a new workspace through the sample company, from its database to Ask", async ({
   page,
 }) => {
+  await mock.configure({
+    ontologyStepMs: 300,
+    loadStepMs: 200,
+    checkoutCardOnFile: true,
+  });
   await signInToNewWorkspace(page);
+  // The mock still sells databases with Pro; both stamps offer them on every
+  // plan, Free included.
+  await page.goto("/settings/billing");
+  await page.getByRole("button", { name: "Upgrade", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Upgrade Foundry" })
+    .getByRole("button", { name: "Continue to payment" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: /Foundry Pro/ }),
+  ).toContainText("Active", { timeout: 15_000 });
+  await page.goto("/");
   await page.getByRole("button", { name: "Use the sample" }).click();
-  await expect(page.getByText("Adding the sample company")).toBeVisible();
-  await expect(page).toHaveURL(/\/ontology\/new\?step=review$/, {
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Kestrel, a sample company" }),
+  ).toBeVisible();
+  const steps = page.getByRole("list", { name: "Steps" });
+  await expect(steps).toContainText("6 tables, 1,121 rows", {
     timeout: 30_000,
   });
-  const steps = page.getByRole("list", { name: "Steps" });
-  await expect(steps).toContainText("Kestrel customers");
-  await expect(steps).toContainText(
-    "Kestrel sample: 6 table files and 9 documents",
-  );
-  await expect(
-    page.getByText("Drafting from the sample company"),
-  ).toBeVisible();
-
-  // A refresh keeps it.
+  await expect(steps).toContainText("Foundry models Kestrel as 9 types", {
+    timeout: 30_000,
+  });
   await page.reload();
+  const ask = page.getByRole("link", { name: "Ask a question" });
+  await expect(ask).toBeVisible({ timeout: 60_000 });
+  await ask.click();
   await expect(
-    page.getByText("Drafting from the sample company"),
+    page.getByRole("group", { name: "Suggested questions" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Create and generate" }).click();
-  await createdOntology(page);
 
-  // Its files are in Data, in their own set.
+  // One Kestrel database in Data, and one set of its documents.
   await page.goto("/data");
   await expect(explorer(page).getByText("Kestrel sample")).toBeVisible();
-});
-
-test("adds the sample once, however often it is used", async ({ page }) => {
-  await signInToNewWorkspace(page);
-  await page.getByRole("button", { name: "Use the sample" }).click();
-  await expect(page).toHaveURL(/\?step=review$/, { timeout: 30_000 });
-  // A new tab starts the wizard afresh, and the sample again finds the
-  // documents the workspace already has.
-  await page.evaluate(() => sessionStorage.clear());
-  await page.goto("/ontology/new");
-  await page.getByRole("button", { name: "Use the sample" }).click();
-  await expect(page).toHaveURL(/\?step=review$/, { timeout: 30_000 });
-  await expect(page.getByRole("list", { name: "Steps" })).toContainText(
-    "Kestrel sample: 6 table files and 9 documents",
-  );
+  await expect(
+    explorer(page).getByText("Kestrel", { exact: true }),
+  ).toHaveCount(1);
 });

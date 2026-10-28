@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileProblem, formatOfName } from "@/web/areas/documents/model";
 import { MAX_GOAL, MAX_TABLES } from "@/web/areas/ontology/model";
 import { SAMPLE } from "@/web/areas/ontology/sample";
@@ -176,5 +176,86 @@ describe("the sample company", () => {
       expect(text).toContain(person);
       expect(contacts!.map((c) => c.full_name)).toContain(person);
     }
+  });
+});
+
+// Where the sample's database runs: a local stack's kestrel-db with no TLS,
+// or a stamp's RDS, trusted through public/samples/rds-ca.pem.
+describe("the sample company's database", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+  const load = async (env: Record<string, string>) => {
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+    vi.resetModules();
+    return import("@/web/areas/ontology/sample");
+  };
+
+  it("is the stack's kestrel-db in a local build, with no TLS", async () => {
+    const sample = await load({
+      NEXT_PUBLIC_FOUNDRY_MODE: "local",
+      NEXT_PUBLIC_SAMPLE_DB_HOST: "kestrel-db",
+    });
+    expect(sample.SAMPLE_TOUR).toBe(true);
+    expect(await sample.sampleDatabaseConfig()).toEqual({
+      postgres: {
+        host: "kestrel-db",
+        port: 5432,
+        database: "kestrel",
+        user: "kestrel_reader",
+        password: "kestrel",
+        disableTls: true,
+      },
+    });
+  });
+
+  it("is the stamp's RDS when hosted, trusting Amazon's RDS roots", async () => {
+    const host = "helix-dev-kestrel.example.us-east-2.rds.amazonaws.com";
+    const sample = await load({ NEXT_PUBLIC_SAMPLE_DB_HOST: host });
+    const pem = readFileSync(join(DIR, "..", "rds-ca.pem"), "utf8");
+    const fetch = vi.fn(async (url: string) =>
+      url === "/samples/rds-ca.pem"
+        ? new Response(pem)
+        : new Response("", { status: 404 }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const config = await sample.sampleDatabaseConfig();
+    if (!("postgres" in config)) throw new Error("not a PostgreSQL config");
+    expect(config.postgres).toMatchObject({ host, ca: pem });
+    expect(config.postgres).not.toHaveProperty("disableTls");
+    // us-east-1's and us-east-2's roots: RSA2048, RSA4096 and ECC384 each.
+    expect(pem.match(/BEGIN CERTIFICATE/g)).toHaveLength(6);
+  });
+
+  it("says so when the certificate can't be read", async () => {
+    const sample = await load({ NEXT_PUBLIC_SAMPLE_DB_HOST: "db.example" });
+    vi.stubGlobal("fetch", async () => new Response("", { status: 503 }));
+    await expect(sample.sampleDatabaseConfig()).rejects.toThrow(
+      "couldn’t read the sample database’s certificate",
+    );
+  });
+
+  it("isn't offered on a stamp with none", async () => {
+    const sample = await load({ NEXT_PUBLIC_SAMPLE_DB_HOST: "" });
+    expect(sample.SAMPLE_TOUR).toBe(false);
+  });
+
+  it("is set per build: local, dev and none yet for prod", async () => {
+    const host = async (env: Record<string, string>) => {
+      vi.unstubAllEnvs();
+      for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+      vi.resetModules();
+      const config = (await import("../../next.config")).default;
+      return config.env?.NEXT_PUBLIC_SAMPLE_DB_HOST;
+    };
+    expect(await host({ NEXT_PUBLIC_FOUNDRY_MODE: "local" })).toBe(
+      "kestrel-db",
+    );
+    expect(await host({ NEXT_PUBLIC_APP_ENV: "prod" })).toBe("");
+    expect(await host({ NEXT_PUBLIC_APP_ENV: "dev" })).toMatch(
+      /^helix-dev-kestrel\.[a-z0-9]+\.us-east-2\.rds\.amazonaws\.com$/,
+    );
   });
 });

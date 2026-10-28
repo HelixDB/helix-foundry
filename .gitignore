@@ -14,6 +14,8 @@ docs-media
 .DS_Store
 # mkcert certificates for `pnpm dev`
 *.pem
+# Amazon's public RDS roots, which the sample's connector trusts.
+!public/samples/rds-ca.pem
 coverage
 # pdf.js run-time files, copied on install (scripts/pdfjs-assets.mjs)
 /public/pdfjs
