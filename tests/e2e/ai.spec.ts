@@ -149,12 +149,15 @@ test("runs on the workspace's Claude key once its test passes", async ({
   ).toBeVisible();
   await expect(page.getByText("AI models now run on Claude.")).toBeVisible();
   await expect(radio(page, "Claude")).toBeChecked();
+  // The field keeps the key typed until another page; the key is never
+  // shown again, nor answered.
+  await expect(page.getByLabel("API key")).toHaveValue(KEY);
+  await page.reload();
+  await expect(page.getByLabel("API key")).toHaveValue("");
   await expect(page.getByLabel("API key")).toHaveAttribute(
     "placeholder",
     "Leave blank to keep sk-ant…abcd",
   );
-  // The key is never shown again, nor answered.
-  await expect(page.getByLabel("API key")).toHaveValue("");
   const read = await page.request.get("/papi/v1/workspaces/ws_acme/foundry/ai");
   expect(await read.text()).not.toContain(KEY);
 
@@ -180,6 +183,11 @@ test("keeps the default when a key fails its test, after a reload too", async ({
   await expect(failed).toHaveText(
     "Claude refused the API key. Your current settings stay active.",
   );
+  // The key typed stays, to correct or test again.
+  await expect(radio(page, "Claude")).toBeChecked();
+  await expect(page.getByLabel("API key")).toHaveValue(
+    "sk-ant-bad-0123456789abcd",
+  );
   await page.reload();
   await expect(radio(page, "Default")).toBeChecked();
   await expect(failed).toBeVisible();
@@ -194,9 +202,12 @@ test("keeps the saved key when Claude's models change, and goes back to the defa
   await bringClaude(page, KEY, "claude-sonnet-5-5");
   await expect(page.getByText("AI models now run on Claude.")).toBeVisible();
 
-  // The form starts from the setting: Claude, its model, its key kept.
+  // Opened again, the form starts from the setting: Claude, its model, its
+  // key kept, the field blank.
+  await page.reload();
   await expect(radio(page, "Claude")).toBeChecked();
   const key = page.getByLabel("API key");
+  await expect(key).toHaveValue("");
   await expect(key).toHaveAttribute(
     "placeholder",
     "Leave blank to keep sk-ant…abcd",
@@ -993,7 +1004,7 @@ test("runs on Amazon Bedrock in a region, an inference profile priced as its mod
     "placeholder",
     "Leave blank to keep …wxyz",
   );
-  await expect(page.getByLabel("API key")).toHaveValue("");
+  await expect(page.getByLabel("API key")).toHaveValue(BEDROCK_KEY);
 
   // A new draft runs on it.
   await page.goto(`${O}/generate`);
