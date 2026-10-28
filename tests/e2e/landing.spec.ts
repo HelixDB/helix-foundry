@@ -1,4 +1,4 @@
-import { expect, signIn, test } from "./support/mock";
+import { APP_ORIGIN, expect, signIn, test } from "./support/mock";
 
 // The hosted site's / (src/app/(landing)): the landing page for a visitor who
 // isn't signed in, and the app, on Ask, for anyone with a session.
@@ -58,6 +58,32 @@ test("copies the local setup", async ({ page, context }) => {
     "git clone https://github.com/helixdb/helix-foundry.git\n" +
       "cd helix-foundry && docker compose up -d --wait",
   );
+});
+
+test("copies the prompt that sets Foundry up with your agent", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveClass(/has-field/);
+  // Its own button, by its place, since its label changes.
+  const copy = page.locator('[data-copy="agent-prompt"]');
+  await expect(copy).toHaveText("Set up with your agent");
+  await copy.click();
+  await expect(copy).toHaveText("Copied");
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  // The app's onboarding prompt, for someone without a workspace yet, on this
+  // site and the stamp's Helix MCP.
+  expect(prompt.startsWith("# Set up Helix Foundry with me\n")).toBe(true);
+  expect(prompt).toContain(
+    `Foundry is at ${APP_ORIGIN}. Every Foundry link takes`,
+  );
+  expect(prompt).toContain(
+    "`claude mcp add --transport http helix https://mcp.dev.helix-db.com/mcp`",
+  );
+  expect(prompt).toContain("Then call `helix_list_workspaces`");
+  expect(prompt).toContain("### 1. Create the ontology");
 });
 
 test("starts on Helix Cloud through sign-in, then opens the app", async ({

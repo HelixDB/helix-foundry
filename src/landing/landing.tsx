@@ -9,9 +9,11 @@ import {
 
 // The hosted site's landing page: static markup, with React rendering only
 // the four product figures and the grid of connectors, and running the field
-// drawn behind it and the page's small behaviours (./figures). Every way in to the app goes through
-// sign-in (/login), which a signed-in visitor never sees: / sends them to
-// the app (src/app/(landing)/page.tsx).
+// drawn behind it and the page's small behaviours (./figures). Every way in
+// to the app goes through sign-in (/login), which a signed-in visitor never
+// sees: / sends them to the app (src/app/(landing)/page.tsx). Set up with
+// your agent copies the app's onboarding prompt, written in the browser
+// (./behaviours.tsx).
 const SIGN_IN = "/login";
 const SOURCE = "https://github.com/helixdb/helix-foundry";
 const DOCS = `${SOURCE}#readme`;
@@ -73,9 +75,13 @@ export function Landing() {
               </p>
               <div className="cta">
                 <div className="row">
-                  <a className="btn btn-solid" href="#cloud">
-                    Talk to Sales
-                  </a>
+                  <button
+                    className="btn btn-solid"
+                    type="button"
+                    data-copy="agent-prompt"
+                  >
+                    <span className="label">Set up with your agent</span>
+                  </button>
                   <a className="btn" href={SIGN_IN}>
                     Start on Helix Cloud
                   </a>
@@ -111,6 +117,7 @@ export function Landing() {
               <pre id="setup-text" hidden>
                 {SETUP}
               </pre>
+              <pre id="agent-prompt" hidden />
             </div>
           </section>
 
