@@ -32,6 +32,7 @@
     "@tanstack/react-query": "5.103.2",
     "@workos-inc/authkit-nextjs": "4.3.1",
     "d3-force": "3.0.0",
+    "geist": "^1.8.2",
     "hyparquet": "1.31.5",
     "hyparquet-compressors": "1.1.2",
     "lucide-react": "0.544.0",
@@ -47,7 +48,8 @@
     "remark-frontmatter": "5.0.0",
     "remark-gfm": "4.0.1",
     "server-only": "0.0.1",
-    "smol-toml": "1.9.0"
+    "smol-toml": "1.9.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

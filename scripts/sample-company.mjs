@@ -1,7 +1,7 @@
 // Builds the sample company the new-ontology wizard offers
-// (src/web/areas/ontology/sample.ts) into public/samples/acme, and its
-// tables as PostgreSQL into local/acme/acme.sql, which a local
-// install's acme-db serves (local/compose.yaml): Acme Corp, a
+// (src/web/areas/ontology/sample.ts): its documents into public/samples/acme,
+// and its tables as PostgreSQL into local/acme/acme.sql, which a local
+// install's acme-db and each stamp's sample database serve: Acme Corp, a
 // made-up field-service scheduling software company, as its own records
 // would hold it. Six tables (accounts, contacts, subscriptions, invoices,
 // support tickets, monthly usage) and nine documents (three contracts as
@@ -69,20 +69,6 @@ const usd = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-
-function csv(rows) {
-  const cols = Object.keys(rows[0]);
-  const cell = (v) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  return (
-    [
-      cols.join(","),
-      ...rows.map((r) => cols.map((c) => cell(r[c])).join(",")),
-    ].join("\n") + "\n"
-  );
-}
 
 // ---------------------------------------------------------------- Acme Corp
 
@@ -1255,11 +1241,10 @@ const contracts = {
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const write = (name, body) => writeFileSync(join(OUT, name), body);
-// Each table's rows, as its CSV holds them, for acme.sql.
+// Each table's rows, for acme.sql.
 const rowsOf = {};
 const table = (name, rows) => {
   rowsOf[name] = rows;
-  write(`${name}.csv`, csv(rows));
 };
 
 table(
@@ -1345,7 +1330,7 @@ try {
 // ---------------------------------------------------------------- SQL
 
 // The tables as acme-db serves them: typed, each keyed, and linked by
-// foreign keys as the CSVs' ids link them. An empty cell is NULL. Foundry
+// foreign keys as their ids link them. An empty value is NULL. Foundry
 // reads them as acme_reader, which can only select.
 const SCHEMA = {
   accounts: {

@@ -108,7 +108,7 @@
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 2px;
+  border-radius: var(--hf-radius-sm);
   /* Where a page is still being drawn, its outline holds its place. */
   outline: 1px solid var(--hf-border);
   background: var(--hf-surface);

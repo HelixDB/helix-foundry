@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shapes, Trash2 } from "lucide-react";
 import type { ListOntologiesResponse } from "../../../shared/wfe";
@@ -28,8 +28,10 @@ import { lastOntology, ontologyName, useOntology } from "./scope";
  * /ontology, /explore and /ask: the section's page of the ontology last
  * opened in this browser while it still exists, else of the workspace's
  * first ontology (in the list's order). It replaces its own entry, so Back
- * skips it. A workspace without one is onboarding, which main.tsx sends to
- * /ontology/new, as this does while the routes catch up.
+ * skips it, and only while the address is still its own: a link followed
+ * while the list loads isn't taken back. A workspace without one is
+ * onboarding, which main.tsx sends to /ontology/new, as this does while the
+ * routes catch up.
  */
 export function OpenOntology({
   title,
@@ -43,8 +45,16 @@ export function OpenOntology({
   const ontologies = list.data?.ontologies || [],
     last = lastOntology(ws);
   const open = ontologies.find((o) => o.id === last) ?? ontologies[0];
-  if (open) return <Navigate to={to(open.id)} replace />;
-  if (list.data) return <Navigate to={paths.newOntology()} replace />;
+  const target = open ? to(open.id) : list.data ? paths.newOntology() : null;
+  const { pathname } = useLocation(),
+    navigate = useNavigate();
+  // The router renders a followed link's route in a transition, so this page
+  // can still render after the address has moved on: compare the address.
+  useEffect(() => {
+    if (target && window.location.pathname === pathname)
+      navigate(target, { replace: true });
+  }, [target, pathname, navigate]);
+  if (target) return null;
   return (
     <Page>
       <PageHeader title={title} />

@@ -1,0 +1,153 @@
+/* The connectors section: every connector and AI provider as one grid, each
+   mark lying on a small placard like the setup scene's tiles, and named
+   underneath. */
+
+.site-marks {
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+.marks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.marks li {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 0.75rem;
+  min-height: 7.5rem;
+  padding: 1rem 0.4rem 0.85rem;
+  text-align: center;
+}
+.marks .placard {
+  display: block;
+  width: 5.25rem;
+  height: auto;
+  overflow: visible;
+}
+.placard path {
+  stroke: rgba(255, 255, 255, 0.3);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+.placard-t {
+  fill: #262626;
+}
+.placard-l {
+  fill: #1c1c1c;
+}
+.placard-r {
+  fill: #161616;
+}
+.placard-rim {
+  fill: none;
+  stroke: var(--mint);
+  stroke-width: 1;
+  stroke-dasharray: 1.5 3;
+  opacity: 0;
+}
+
+/* The wave: each placard hops up and its top lights green with a dotted green
+   rim, one diagonal after another, every few seconds. */
+.marks.is-in .placard,
+.marks.is-in .placard-t,
+.marks.is-in .placard-rim {
+  animation: 3.6s ease-in-out infinite;
+  animation-delay: calc(var(--d) * 140ms + 700ms);
+}
+.marks.is-in .placard {
+  animation-name: placard-jump;
+}
+.marks.is-in .placard-t {
+  animation-name: placard-lit;
+}
+.marks.is-in .placard-rim {
+  animation-name: placard-rim;
+}
+@keyframes placard-lit {
+  0%,
+  30%,
+  100% {
+    fill: #262626;
+  }
+  10%,
+  18% {
+    fill: #20391c;
+  }
+}
+@keyframes placard-rim {
+  0%,
+  30%,
+  100% {
+    opacity: 0;
+  }
+  10%,
+  18% {
+    opacity: 1;
+  }
+}
+@keyframes placard-jump {
+  0%,
+  22%,
+  100% {
+    transform: none;
+  }
+  9% {
+    transform: translateY(-6px);
+  }
+}
+.marks span {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Each mark rises in once, the first time the grid is seen. */
+.marks li {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 500ms var(--ease),
+    transform 500ms var(--ease);
+  transition-delay: calc(var(--i) * 35ms);
+}
+.marks.is-in li {
+  opacity: 1;
+  transform: none;
+}
+
+@media (max-width: 560px) {
+  .marks {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .marks li {
+    min-height: 6.25rem;
+    gap: 0.6rem;
+  }
+  .marks .placard {
+    width: 4.25rem;
+  }
+  .marks span {
+    font-size: 0.5625rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marks li {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .marks.is-in .placard,
+  .marks.is-in .placard-t,
+  .marks.is-in .placard-rim {
+    animation: none;
+  }
+}

@@ -185,10 +185,11 @@
 .hf-eyebrow {
   margin-bottom: 6px;
   font-size: var(--hf-text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--hf-muted);
+  font-family: var(--hf-font-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 .hf-page-header-subtitle {
   margin: 6px 0 0;
@@ -255,7 +256,7 @@
   right: 8px;
   bottom: -1px;
   height: 2px;
-  border-radius: 2px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-ink);
 }
 .hf-tab:disabled {
@@ -339,7 +340,7 @@
   display: inline-block;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--tone);
 }
 .hf-status-dot.is-live {
@@ -507,11 +508,12 @@
 }
 .hf-section-head h2 {
   margin: 0;
-  font-family: var(--hf-font-sans);
-  font-size: var(--hf-text-md);
-  font-weight: 600;
-  letter-spacing: 0;
-  color: var(--hf-text);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-family: var(--hf-font-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 .hf-section-head p,
 .hf-panel-head p {
@@ -776,7 +778,7 @@
   display: inline-grid;
   place-items: center;
   border: 1px solid var(--hf-border);
-  border-radius: 28%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-logo-bg);
   color: var(--hf-text-2);
   overflow: hidden;
@@ -1156,7 +1158,8 @@
   padding: 8px 9px 4px;
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
-  font-weight: 600;
+  font-family: var(--hf-font-mono);
+  font-weight: 500;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }

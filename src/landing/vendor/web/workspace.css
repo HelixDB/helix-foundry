@@ -1,0 +1,563 @@
+/* Workspace design system: tokens, base styles for the app shell, and a bridge
+   that lets pre-overhaul pages follow the tokens. Onboarding renders outside
+   .hf-app, so none of this changes its look. */
+:root {
+  --hf-font-sans:
+    Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --hf-font-display: Georgia, "Times New Roman", serif;
+  --hf-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --hf-text-xs: 11px;
+  --hf-text-sm: 12px;
+  --hf-text-base: 13px;
+  --hf-text-md: 14px;
+  --hf-text-lg: 16px;
+  --hf-text-xl: 20px;
+  --hf-text-2xl: 26px;
+  --hf-text-3xl: 34px;
+
+  --hf-space-05: 4px;
+  --hf-space-1: 8px;
+  --hf-space-15: 12px;
+  --hf-space-2: 16px;
+  --hf-space-3: 24px;
+  --hf-space-4: 32px;
+  --hf-space-5: 40px;
+  --hf-space-6: 48px;
+  --hf-space-8: 64px;
+
+  --hf-radius-sm: 6px;
+  --hf-radius: 8px;
+  --hf-radius-lg: 12px;
+  --hf-radius-xl: 16px;
+  --hf-radius-pill: 999px;
+
+  --hf-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --hf-duration: 160ms;
+  --hf-sidebar-width: 236px;
+  --hf-sidebar-collapsed: 60px;
+
+  /* Warm paper surfaces, olive ink and the onboarding mint. */
+  --hf-bg: #f8f7f3;
+  --hf-surface: #f8f7f3;
+  --hf-raised: #fdfcf9;
+  --hf-sunken: #f0efe9;
+  --hf-sidebar: #f1f0ea;
+  --hf-hover: #eceae2;
+  --hf-selected: #e5e7da;
+  --hf-overlay: rgba(41, 42, 38, 0.28);
+  --hf-border: #e4e2da;
+  --hf-border-strong: #d4d2c7;
+  --hf-text: #292a26;
+  --hf-text-2: #4f534a;
+  /* Secondary text; 4.5:1 or better on every surface, hover and selected. */
+  --hf-muted: #65675e;
+  /* Icons, borders and decoration only: too light for text. */
+  --hf-faint: #9b9d93;
+  --hf-ink: #343932;
+  --hf-ink-hover: #232721;
+  --hf-on-ink: #fbfaf6;
+  --hf-field: #fcfbf8;
+  /* 3:1 or better against every surface. */
+  --hf-focus: #2a8f69;
+
+  --hf-accent: #36b98a;
+  --hf-accent-strong: #2a9b72;
+  --hf-accent-soft: #e5f4ea;
+  --hf-accent-border: #c3e2cf;
+  --hf-accent-text: #2d6a4b;
+
+  --hf-success: #36b98a;
+  --hf-success-soft: #e5f4ea;
+  --hf-success-text: #2d6a4b;
+  --hf-warning: #c99a3e;
+  --hf-warning-soft: #f6efdd;
+  --hf-warning-text: #87662e;
+  --hf-danger: #b5503b;
+  --hf-danger-soft: #f7e9e4;
+  --hf-danger-text: #a44a36;
+  /* Text on solid danger fills (buttons, error toasts). */
+  --hf-on-danger: #ffffff;
+  --hf-info: #4f82b3;
+  --hf-info-soft: #e7eef6;
+  --hf-info-text: #36608a;
+
+  /* Categorical chart palette, in order. */
+  --hf-chart-1: #36b98a;
+  --hf-chart-2: #4f82b3;
+  --hf-chart-3: #c99a3e;
+  --hf-chart-4: #8a6fb0;
+  --hf-chart-5: #c85a43;
+  --hf-chart-6: #6f7a4f;
+
+  --hf-shadow-1: 0 1px 2px rgba(34, 35, 24, 0.05);
+  --hf-shadow-2:
+    0 1px 2px rgba(34, 35, 24, 0.04), 0 8px 24px rgba(34, 35, 24, 0.07);
+  --hf-shadow-3:
+    0 2px 6px rgba(34, 35, 24, 0.06), 0 24px 64px rgba(34, 35, 24, 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --hf-bg: #161713;
+    --hf-surface: #161713;
+    --hf-raised: #1e1f1a;
+    --hf-sunken: #121310;
+    --hf-sidebar: #1a1b17;
+    --hf-hover: #26281f;
+    --hf-selected: #2c3026;
+    --hf-overlay: rgba(0, 0, 0, 0.5);
+    --hf-border: #2e3029;
+    --hf-border-strong: #3d4036;
+    --hf-text: #ecebe4;
+    --hf-text-2: #c9c8be;
+    --hf-muted: #9c9d92;
+    --hf-faint: #6f7168;
+    --hf-ink: #e9e8df;
+    --hf-ink-hover: #ffffff;
+    --hf-on-ink: #1a1b16;
+    --hf-field: #1a1b17;
+    --hf-focus: #4fd0a0;
+    --hf-accent: #4fd0a0;
+    --hf-accent-strong: #6fdcb2;
+    --hf-accent-soft: #19362a;
+    --hf-accent-border: #28543f;
+    --hf-accent-text: #8fe3c4;
+    --hf-success: #4fd0a0;
+    --hf-success-soft: #19362a;
+    --hf-success-text: #8fe3c4;
+    --hf-warning: #e0b35a;
+    --hf-warning-soft: #3a2f18;
+    --hf-warning-text: #eac77f;
+    --hf-danger: #e47a62;
+    --hf-danger-soft: #3d201a;
+    --hf-danger-text: #f0a08d;
+    --hf-on-danger: #1a1b16;
+    --hf-info: #74a6d8;
+    --hf-info-soft: #1b2a3a;
+    --hf-info-text: #a3c6ea;
+    --hf-chart-1: #4fd0a0;
+    --hf-chart-2: #74a6d8;
+    --hf-chart-3: #e0b35a;
+    --hf-chart-4: #a98fd0;
+    --hf-chart-5: #e47a62;
+    --hf-chart-6: #a3ad7e;
+    --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --hf-shadow-3:
+      0 2px 6px rgba(0, 0, 0, 0.35), 0 24px 64px rgba(0, 0, 0, 0.55);
+  }
+}
+:root[data-theme="dark"] {
+  --hf-bg: #161713;
+  --hf-surface: #161713;
+  --hf-raised: #1e1f1a;
+  --hf-sunken: #121310;
+  --hf-sidebar: #1a1b17;
+  --hf-hover: #26281f;
+  --hf-selected: #2c3026;
+  --hf-overlay: rgba(0, 0, 0, 0.5);
+  --hf-border: #2e3029;
+  --hf-border-strong: #3d4036;
+  --hf-text: #ecebe4;
+  --hf-text-2: #c9c8be;
+  --hf-muted: #9c9d92;
+  --hf-faint: #6f7168;
+  --hf-ink: #e9e8df;
+  --hf-ink-hover: #ffffff;
+  --hf-on-ink: #1a1b16;
+  --hf-field: #1a1b17;
+  --hf-focus: #4fd0a0;
+  --hf-accent: #4fd0a0;
+  --hf-accent-strong: #6fdcb2;
+  --hf-accent-soft: #19362a;
+  --hf-accent-border: #28543f;
+  --hf-accent-text: #8fe3c4;
+  --hf-success: #4fd0a0;
+  --hf-success-soft: #19362a;
+  --hf-success-text: #8fe3c4;
+  --hf-warning: #e0b35a;
+  --hf-warning-soft: #3a2f18;
+  --hf-warning-text: #eac77f;
+  --hf-danger: #e47a62;
+  --hf-danger-soft: #3d201a;
+  --hf-danger-text: #f0a08d;
+  --hf-on-danger: #1a1b16;
+  --hf-info: #74a6d8;
+  --hf-info-soft: #1b2a3a;
+  --hf-info-text: #a3c6ea;
+  --hf-chart-1: #4fd0a0;
+  --hf-chart-2: #74a6d8;
+  --hf-chart-3: #e0b35a;
+  --hf-chart-4: #a98fd0;
+  --hf-chart-5: #e47a62;
+  --hf-chart-6: #a3ad7e;
+  --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --hf-shadow-3: 0 2px 6px rgba(0, 0, 0, 0.35), 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+/* The document behind the shell (scrollbars, overscroll) follows the theme.
+   Shell adds .hf-root to <html> while mounted; onboarding and sign-in keep
+   their own light page. */
+html.hf-root,
+html.hf-root body {
+  background: var(--hf-bg);
+}
+html.hf-root {
+  color-scheme: light;
+}
+:root.hf-root[data-theme="dark"] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root.hf-root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+/* App root: everything inside the workspace shell. */
+.hf-app {
+  /* Legacy tokens used by minimal.css follow the theme inside the shell. */
+  --border: var(--hf-border);
+  --muted: var(--hf-muted);
+  --green: var(--hf-ink);
+  --purple: var(--hf-muted);
+  min-height: 100dvh;
+  background: var(--hf-bg);
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-md);
+  color-scheme: light;
+  -webkit-font-smoothing: antialiased;
+}
+:root[data-theme="dark"] .hf-app {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .hf-app {
+    color-scheme: dark;
+  }
+}
+.hf-app :focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.hf-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.hf-mono {
+  font-family: var(--hf-font-mono);
+  font-size: 0.92em;
+}
+.hf-num {
+  font-variant-numeric: tabular-nums;
+}
+@keyframes hf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes hf-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes hf-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes hf-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.hf-spin {
+  animation: hf-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hf-app *,
+  .hf-app *::before,
+  .hf-app *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Legacy bridge: pre-overhaul pages (minimal.css) read the tokens inside the
+   shell. :where() keeps each rule at the legacy selector's own specificity,
+   so more specific legacy rules (e.g. .button.primary) still win. */
+:where(.hf-app) h1,
+:where(.hf-app) h2 {
+  color: var(--hf-text);
+}
+:where(.hf-app) label {
+  color: var(--hf-text-2);
+}
+:where(.hf-app) input,
+:where(.hf-app) select,
+:where(.hf-app) textarea {
+  color: var(--hf-text);
+  background: var(--hf-field);
+  border-color: var(--hf-border-strong);
+}
+:where(.hf-app) pre {
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+}
+:where(.hf-app) code {
+  color: var(--hf-text-2);
+}
+:where(.hf-app) summary {
+  color: var(--hf-muted);
+}
+:where(.hf-app) .button {
+  background: var(--hf-raised);
+  border-color: var(--hf-border-strong);
+  color: var(--hf-text);
+}
+:where(.hf-app) .panel,
+:where(.hf-app) .simple-list,
+:where(.hf-app) .modal,
+:where(.hf-app) .menu-content,
+:where(.hf-app) .table-scroll,
+:where(.hf-app) .widget,
+:where(.hf-app) .issues {
+  background: var(--hf-raised);
+  border-color: var(--hf-border);
+  color: var(--hf-text);
+}
+:where(.hf-app) .simple-row {
+  border-color: var(--hf-border);
+  color: var(--hf-text);
+}
+:where(.hf-app) .simple-row:hover {
+  background: var(--hf-hover);
+}
+:where(.hf-app) th {
+  color: var(--hf-muted);
+  background: var(--hf-raised);
+  border-color: var(--hf-border);
+}
+:where(.hf-app) td {
+  border-color: var(--hf-border);
+}
+:where(.hf-app) .page-heading p,
+:where(.hf-app) .simple-row p {
+  color: var(--hf-muted);
+}
+:where(.hf-app) td {
+  color: var(--hf-text);
+}
+:where(.hf-app) .button:hover {
+  background: var(--hf-hover);
+}
+:where(.hf-app) .button.primary {
+  background: var(--hf-ink);
+  border-color: var(--hf-ink);
+  color: var(--hf-on-ink);
+}
+:where(.hf-app) .button.primary:hover {
+  background: var(--hf-ink-hover);
+}
+:where(.hf-app) .text-button,
+:where(.hf-app) .icon-btn,
+:where(.hf-app) .checkbox {
+  color: var(--hf-text-2);
+}
+:where(.hf-app) .badge,
+:where(.hf-app) .badge.green,
+:where(.hf-app) .badge.purple {
+  background: var(--hf-sunken);
+  border-color: var(--hf-border);
+  color: var(--hf-text-2);
+}
+:where(.hf-app) .badge:empty {
+  display: none;
+}
+:where(.hf-app) .badge.amber {
+  background: var(--hf-warning-soft);
+  color: var(--hf-warning-text);
+}
+:where(.hf-app) .badge.red {
+  background: var(--hf-danger-soft);
+  color: var(--hf-danger-text);
+}
+:where(.hf-app) .tabs {
+  border-color: var(--hf-border);
+}
+:where(.hf-app) .tabs button {
+  color: var(--hf-muted);
+}
+:where(.hf-app) .tabs button.active {
+  color: var(--hf-text);
+  border-color: var(--hf-accent);
+}
+:where(.hf-app) .panel-title {
+  border-color: var(--hf-border);
+}
+:where(.hf-app) .panel-title h3,
+:where(.hf-app) .metric-value,
+:where(.hf-app) .preview-value {
+  color: var(--hf-text);
+}
+:where(.hf-app) .panel-title > a,
+:where(.hf-app) .metric-value > span,
+:where(.hf-app) .simple-row small,
+:where(.hf-app) .dataset-meta {
+  color: var(--hf-muted);
+}
+:where(.hf-app) .sql-block {
+  background: var(--hf-sunken);
+  border-color: var(--hf-border);
+  color: var(--hf-text-2);
+}
+:where(.hf-app) .graph-fields {
+  border-color: var(--hf-border);
+}
+:where(.hf-app) .issue-row a,
+:where(.hf-app) .edit-mark,
+:where(.hf-app) .edit-label {
+  color: var(--hf-accent-text);
+}
+:where(.hf-app) .records-table .record-link {
+  color: var(--hf-text);
+  text-decoration-color: var(--hf-border-strong);
+}
+:where(.hf-app) .attention {
+  color: var(--hf-warning-text);
+}
+:where(.hf-app) .notice {
+  background: var(--hf-sunken);
+  border-color: var(--hf-border);
+  color: var(--hf-text-2);
+}
+:where(.hf-app) .error-box {
+  background: var(--hf-danger-soft);
+  border-color: color-mix(in srgb, var(--hf-danger) 25%, transparent);
+  color: var(--hf-danger-text);
+}
+:where(.hf-app) .preview-grid > div,
+:where(.hf-app) .modal-head,
+:where(.hf-app) .graph-node {
+  background: var(--hf-raised);
+  border-color: var(--hf-border);
+}
+:where(.hf-app) .menu-content > a:hover,
+:where(.hf-app) .menu-content > button:hover,
+:where(.hf-app) .clickable:hover,
+:where(.hf-app) a.simple-row:hover,
+:where(.hf-app) button.simple-row:hover {
+  background: var(--hf-hover);
+}
+:where(.hf-app) .graph-node-top strong {
+  color: var(--hf-text);
+}
+:where(.hf-app) .graph-node-top small,
+:where(.hf-app) .graph-fields {
+  color: var(--hf-muted);
+}
+:where(.hf-app) .resource-icon {
+  background: var(--hf-sunken);
+  border-color: var(--hf-border);
+  color: var(--hf-text-2);
+}
+/* Provider cards in Settings (onboarding renders outside .hf-app). */
+:where(.hf-app) .choice-card {
+  background: var(--hf-raised);
+  border-color: var(--hf-border-strong);
+  color: var(--hf-text);
+}
+:where(.hf-app) .choice-card.selected {
+  background: var(--hf-raised);
+  border-color: var(--hf-text-2);
+  box-shadow: inset 0 0 0 1px var(--hf-text-2);
+}
+:where(.hf-app) .choice-card-description {
+  color: var(--hf-muted);
+}
+:where(.hf-app) .choice-card-heading input[type="radio"] {
+  background: var(--hf-field);
+  border-color: var(--hf-border-strong);
+}
+:where(.hf-app) .choice-card-heading input:checked {
+  border-color: var(--hf-text);
+}
+/* React Flow canvases (pipelines, ontology graph). */
+:where(.hf-app) .graph-canvas,
+:where(.hf-app) .ontology-canvas {
+  background: var(--hf-sunken);
+}
+:where(.hf-app) .react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: var(--hf-border-strong);
+  --xy-controls-button-background-color: var(--hf-raised);
+  --xy-controls-button-background-color-hover: var(--hf-hover);
+  --xy-controls-button-color: var(--hf-text-2);
+  --xy-controls-button-color-hover: var(--hf-text);
+  --xy-controls-button-border-color: var(--hf-border);
+  --xy-controls-box-shadow: var(--hf-shadow-1);
+  --xy-attribution-background-color: transparent;
+  --xy-edge-label-background-color: var(--hf-raised);
+  --xy-edge-label-color: var(--hf-text-2);
+  color: var(--hf-text);
+}
+:where(.hf-app) .react-flow__attribution a {
+  color: var(--hf-muted);
+}
+.hf-app .react-flow__handle {
+  border-color: var(--hf-raised) !important;
+}
+
+/* One page width and header pattern inside the shell: legacy reading-width
+   columns take the Page width, and the sidebar replaces "← Back" links. */
+.hf-page .reading-width {
+  max-width: none;
+  margin: 0;
+}
+.hf-page a.back-link {
+  display: none;
+}
+:where(.hf-app) .page-heading {
+  margin-bottom: var(--hf-space-3);
+}
+:where(.hf-app) .page-heading h1 {
+  font-family: var(--hf-font-display);
+  font-size: var(--hf-text-2xl);
+  letter-spacing: -0.5px;
+  line-height: 1.2;
+}
+:where(.hf-app) .page-heading p {
+  margin-top: 6px;
+}
+:where(.hf-app) .heading-actions {
+  flex-wrap: wrap;
+}
+@media (max-width: 800px) {
+  :where(.hf-app) .page-heading h1 {
+    font-size: 23px;
+  }
+}
+/* Legacy action rows wrap on phones instead of pushing buttons off-screen. */
+:where(.hf-page) .toolbar,
+:where(.hf-page) .record-actions {
+  flex-wrap: wrap;
+}

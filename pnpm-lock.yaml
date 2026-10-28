@@ -23,6 +23,9 @@ importers:
       d3-force:
         specifier: 3.0.0
         version: 3.0.0
+      geist:
+        specifier: ^1.8.2
+        version: 1.8.2(next@16.3.8(@playwright/test@1.62.0)(@types/node@24.19.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))
       hyparquet:
         specifier: 1.31.5
         version: 1.31.5
@@ -71,6 +74,9 @@ importers:
       smol-toml:
         specifier: 1.9.0
         version: 1.9.0
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@eslint/js':
         specifier: ^9.39.0
@@ -1514,6 +1520,11 @@ packages:
   fzstd@0.1.1:
     resolution: {integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==}
 
+  geist@1.8.2:
+    resolution: {integrity: sha512-fRF4sbJ9qcCxPb35cVtKBAwYlTt1IbU9nkbPi0a+xyZqPIjCJ2BY8ekGhx6/SGSZKrR7/UuL57r/eeDQ1Xy11g==}
+    peerDependencies:
+      next: '>=13.2.0'
+
   get-caller-file@2.0.5:
     resolution: {integrity: sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==}
     engines: {node: 6.* || 8.* || >= 10.*}
@@ -2564,6 +2575,9 @@ packages:
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
+
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
@@ -3752,6 +3766,10 @@ snapshots:
     optional: true
 
   fzstd@0.1.1: {}
+
+  geist@1.8.2(next@16.3.8(@playwright/test@1.62.0)(@types/node@24.19.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)):
+    dependencies:
+      next: 16.3.8(@playwright/test@1.62.0)(@types/node@24.19.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
 
   get-caller-file@2.0.5: {}
 
@@ -4990,5 +5008,7 @@ snapshots:
       yargs-parser: 21.1.1
 
   yocto-queue@0.1.0: {}
+
+  zod@4.6.7: {}
 
   zwitch@2.0.4: {}

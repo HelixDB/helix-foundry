@@ -1,0 +1,220 @@
+/* The app's schema view (vendor/web/suggested-ontology.css) in the page's
+   dark ground. Only colours change, and the stage's dotted ground: the field
+   draws those dots, so the stage itself is clear once the field runs. */
+
+.site-schema {
+  padding: 1.25rem 1.25rem 1.5rem;
+}
+@media (min-width: 768px) {
+  .site-schema {
+    padding: 1.75rem 1.75rem 2rem;
+  }
+}
+
+.site-schema .so-view {
+  --so-mint: rgba(133, 237, 117, 0.08);
+  --so-mint-border: rgba(133, 237, 117, 0.32);
+  --so-mint-ink: var(--mint);
+  --so-line: rgba(255, 255, 255, 0.3);
+  --so-hot: #ffffff;
+  color: var(--ink);
+}
+
+.site-schema .so-stats {
+  color: var(--ink-2);
+}
+.site-schema .so-stats strong {
+  color: var(--ink);
+}
+
+.site-schema .so-stage {
+  border-color: var(--line);
+  border-radius: 0;
+  background: radial-gradient(
+      circle,
+      rgba(255, 255, 255, 0.16) 1px,
+      transparent 1.3px
+    )
+    0 0 / 20px 20px;
+}
+.has-field .site-schema .so-stage {
+  background: none;
+}
+
+.site-schema .so-node {
+  border-color: #2c2c2c;
+  background: var(--card);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 14px 30px -18px rgba(0, 0, 0, 0.8);
+}
+.site-schema .so-node.is-hub {
+  border-color: #3a3a3a;
+}
+.site-schema .so-node.is-merged {
+  border-color: var(--so-mint-border);
+  background: linear-gradient(
+    180deg,
+    rgba(133, 237, 117, 0.07) 0,
+    var(--card) 56px
+  );
+  box-shadow:
+    0 0 0 3px rgba(133, 237, 117, 0.06),
+    0 14px 30px -18px rgba(0, 0, 0, 0.8);
+}
+.site-schema .so-node.is-hot,
+.site-schema .so-node:focus-within {
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.site-schema .so-node.is-activity {
+  border-color: #3a3a3a;
+  background: #121212;
+}
+
+.site-schema .so-meta {
+  color: rgba(255, 255, 255, 0.42);
+}
+.site-schema .so-meta code {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink-2);
+  font-family: var(--mono);
+}
+.site-schema .so-desc {
+  color: rgba(255, 255, 255, 0.6);
+}
+.site-schema .so-fields {
+  color: var(--ink-3);
+  font-family: var(--mono);
+}
+.site-schema .so-merged:hover {
+  background: rgba(133, 237, 117, 0.14);
+}
+.site-schema .so-kind {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: transparent;
+  color: var(--ink-2);
+}
+.site-schema .so-table {
+  color: rgba(255, 255, 255, 0.82);
+}
+.site-schema .so-source {
+  color: var(--ink-3);
+}
+/* Source logos stand on the dark ground as they are, bigger, side by side
+   rather than overlapping chips. The all-black PlanetScale mark is drawn
+   solid white (a filter, which every browser applies to an image), and
+   PostHog's takes the site's copy with its black shape in white. */
+.site-schema .so-logo,
+.site-schema .so-stack .so-logo,
+.site-schema .so-node-stack .so-logo {
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+.site-schema .so-stack,
+.site-schema .so-node-stack {
+  gap: 7px;
+}
+.site-schema .so-stack .so-logo + .so-logo,
+.site-schema .so-node-stack .so-logo + .so-logo {
+  margin-left: 0;
+}
+.site-schema .so-logo img {
+  width: 16px;
+  height: 16px;
+}
+.site-schema .so-node-stack .so-logo img {
+  width: 18px;
+  height: 18px;
+}
+.site-schema .so-stack .so-logo img {
+  width: 20px;
+  height: 20px;
+}
+.site-schema .so-logo svg {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-2);
+}
+.site-schema .so-logo img[src$="/planetscale.svg"] {
+  filter: brightness(0) invert(1);
+}
+.site-schema .so-logo img[src="/connectors/posthog.svg"] {
+  content: url("/landing/connectors/posthog.svg");
+}
+
+.site-schema .so-pill {
+  border-color: #333;
+  background: var(--card);
+  color: var(--ink-2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.site-schema .so-pill:hover,
+.site-schema .so-pills .so-pill.is-hot {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: var(--ink);
+}
+.site-schema .so-pop,
+.site-schema .so-tip {
+  background: #1f1f1f;
+  border: 1px solid #333;
+  box-shadow: 0 14px 30px -10px rgba(0, 0, 0, 0.8);
+}
+
+/* The legend under the stage (its hint and the key) stays in the app. */
+.site-schema .so-legend {
+  display: none;
+}
+
+.site-schema .so-node-links {
+  border-top-color: #242424;
+}
+.site-schema .so-node-links li {
+  color: var(--ink-2);
+}
+.site-schema .so-node-links strong {
+  color: var(--ink);
+}
+.site-schema .so-node-links svg,
+.site-schema .so-node-links small {
+  color: var(--ink-3);
+}
+
+/* The notes under the stage (what was merged) stay in the app. */
+.site-schema .so-notes {
+  display: none;
+}
+
+.site-schema .so-minimap {
+  border-color: var(--line);
+  border-radius: 0;
+  background: radial-gradient(
+      circle,
+      rgba(255, 255, 255, 0.14) 1px,
+      transparent 1.3px
+    )
+    0 0 / 16px 16px;
+}
+.site-schema .so-minimap line {
+  stroke: rgba(255, 255, 255, 0.3);
+}
+.site-schema .so-mini-node {
+  border-color: #333;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+/* Cards wait for their dots: they rise and their links draw once the field
+   has settled the hero's graph into the stage. */
+.has-field .site-schema:not(.is-live) .so-node,
+.has-field .site-schema:not(.is-live) .so-pill,
+.has-field .site-schema:not(.is-live) .so-line,
+.has-field .site-schema:not(.is-live) .so-arrow {
+  animation: none;
+  opacity: 0;
+}

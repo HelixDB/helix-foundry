@@ -1,0 +1,55 @@
+/* Fig. 1: the top of the app's setup scene (vendor/web/ontology-scene.css),
+   the ontology and the apps above it, on the page's dark ground. The data
+   and models plates and their flows up into the ontology are hidden, and the
+   frame crops the drawing where they were. */
+
+.site-scene {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 15rem;
+}
+.site-scene-frame {
+  width: 100%;
+  max-width: 32rem;
+  aspect-ratio: 780 / 590;
+  overflow: hidden;
+}
+
+.site-scene .ontology-scene {
+  --os-ink: rgba(255, 255, 255, 0.55);
+  --os-ink-2: rgba(255, 255, 255, 0.38);
+  --os-line: #3a3a3a;
+  --os-top: #1b1b1b;
+  --os-left: #151515;
+  --os-right: #101010;
+  --os-lit: #1b2a19;
+  --os-mint: #85ed75;
+  --os-mint-soft: #2c4a27;
+  --os-mint-ink: #6fd760;
+  --os-mint-text: #0e0e0e;
+  font-family: var(--mono);
+}
+.site-scene .os-data,
+.site-scene .os-models,
+.site-scene .os-flows-data,
+.site-scene .os-flows-models {
+  display: none;
+}
+
+.site-scene .os-flow-line {
+  stroke: #444;
+}
+.site-scene .is-done .os-flows-apps .os-flow-line {
+  stroke: var(--os-mint-ink);
+}
+.site-scene .os-pill.is-skeleton .os-pill-bar {
+  fill: #333;
+}
+.site-scene .os-screen-frame {
+  fill: #181818;
+}
+.site-scene .os-screen-fill {
+  fill: #3a3a3a;
+}

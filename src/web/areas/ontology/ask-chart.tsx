@@ -328,7 +328,6 @@ export function AskChart({
           dataKey="value"
           className="ak-viz-bar"
           maxBarSize={BAR}
-          radius={across ? [0, 4, 4, 0] : [4, 4, 0, 0]}
           isAnimationActive={false}
           onClick={(item, _, e) =>
             open(item.payload as Datum | undefined, e, false)

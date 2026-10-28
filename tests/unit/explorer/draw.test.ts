@@ -12,7 +12,7 @@ import type { SimNode } from "@/web/areas/explore/explorer/canvas/useGraphSimula
 interface Op {
   op: "fill" | "stroke";
   style: unknown;
-  /** The rects and arcs of the path that was filled or stroked. */
+  /** The rects and arcs of the path that was filled or stroked, by centre. */
   shapes: { kind: "rect" | "arc"; x: number; y: number }[];
 }
 
@@ -25,8 +25,8 @@ function recordingContext() {
     beginPath: () => {
       shapes = [];
     },
-    rect: (x: number, y: number) => {
-      shapes.push({ kind: "rect", x, y });
+    rect: (x: number, y: number, w: number, h: number) => {
+      shapes.push({ kind: "rect", x: x + w / 2, y: y + h / 2 });
     },
     arc: (x: number, y: number) => {
       shapes.push({ kind: "arc", x, y });
@@ -99,15 +99,10 @@ function scene(overrides: Partial<SceneInput>): SceneInput {
 function notchFills(ops: Op[]) {
   return ops
     .map((op, index) => ({ op, index }))
-    .filter(
-      ({ op }) =>
-        op.op === "fill" &&
-        op.style === CANVAS_THEME.pinned &&
-        op.shapes.every((s) => s.kind === "rect"),
-    );
+    .filter(({ op }) => op.op === "fill" && op.style === CANVAS_THEME.pinned);
 }
 
-/** The notch sits up and to the right of its node: which node (by screen x 100 or 160) a rect belongs to. */
+/** The notch sits on its node's upper right corner: which node (by screen x 100 or 160) a rect belongs to. */
 function nodeOf(rectX: number): number {
   return rectX < 130 ? 0 : 1;
 }
@@ -174,7 +169,7 @@ describe("drawScene nodes outside the load", () => {
         (op) =>
           op.op === "stroke" &&
           op.shapes.length === 1 &&
-          op.shapes[0]!.kind === "arc" &&
+          op.shapes[0]!.kind === "rect" &&
           op.shapes[0]!.x === 160,
       );
     expect(rings(ops)).toHaveLength(1);

@@ -76,7 +76,7 @@
   padding: 12px 14px 8px;
   background: var(--hf-raised);
   border: 1px solid var(--hf-border);
-  border-radius: 10px;
+  border-radius: var(--hf-radius-lg);
 }
 .ds-group h3 {
   display: flex;
@@ -96,7 +96,7 @@
 .ds-tag {
   padding: 1px 6px;
   border: 1px solid var(--hf-border);
-  border-radius: 999px;
+  border-radius: var(--hf-radius-pill);
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
   font-weight: 500;
@@ -396,7 +396,7 @@
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   background: none;
   color: var(--hf-muted);
   opacity: 0;
@@ -427,7 +427,7 @@
   margin: 0 0 0 -5px;
   padding: 0 5px;
   border: 1px solid var(--hf-faint);
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-raised);
   color: var(--hf-text);
   font: inherit;
@@ -473,7 +473,7 @@
   width: 16px;
   height: 22px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   color: var(--hf-muted);
   opacity: 0;
   cursor: grab;
@@ -693,7 +693,7 @@
    them. */
 .connect-data .hf-select-trigger {
   padding: 9px 11px;
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   line-height: inherit;
 }
 

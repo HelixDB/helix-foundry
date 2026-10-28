@@ -26,6 +26,17 @@ import type { ForceLayout } from "./useGraphSimulation";
 import type { ViewTransform } from "./usePanZoom";
 
 const TAU = Math.PI * 2;
+
+/** Adds a square of half-side `r` centred on (x, y) to the path: nodes, and
+ *  the rings around them, are square, as the rest of the app's marks are. */
+function square(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+) {
+  ctx.rect(x - r, y - r, r * 2, r * 2);
+}
 const GRID_DOT_PX = 1.5;
 const CAPTION_HEIGHT = 14;
 
@@ -461,13 +472,7 @@ function drawNodes(
     ctx.beginPath();
     for (let k = starts[b]; k < starts[b + 1]; k++) {
       const i = order[k];
-      const ri = radius[i];
-      if (fast) {
-        ctx.rect(sx[i] - ri, sy[i] - ri, ri * 2, ri * 2);
-      } else {
-        ctx.moveTo(sx[i] + ri, sy[i]);
-        ctx.arc(sx[i], sy[i], ri, 0, TAU);
-      }
+      square(ctx, sx[i], sy[i], radius[i]);
     }
     ctx.globalAlpha = faint ? CANVAS_THEME.dimAlpha : 1;
     ctx.fillStyle = palette[b % colorCount];
@@ -486,9 +491,7 @@ function drawNodes(
       ctx.strokeStyle = withAlpha(CANVAS_THEME.selection, 0.6);
       ctx.beginPath();
       for (const i of [e.source, e.target]) {
-        if (!visible[i]) continue;
-        ctx.moveTo(sx[i] + radius[i] + 3, sy[i]);
-        ctx.arc(sx[i], sy[i], radius[i] + 3, 0, TAU);
+        if (visible[i]) square(ctx, sx[i], sy[i], radius[i] + 3);
       }
       ctx.stroke();
     }
@@ -507,11 +510,11 @@ function drawNodes(
     ctx.lineWidth = 3;
     ctx.strokeStyle = withAlpha(color, CANVAS_THEME.hoverRingAlpha);
     ctx.beginPath();
-    ctx.arc(x, y, ri + 4.5, 0, TAU);
+    square(ctx, x, y, ri + 4.5);
     ctx.stroke();
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(x, y, ri + 1.5, 0, TAU);
+    square(ctx, x, y, ri + 1.5);
     ctx.fill();
     ctx.globalAlpha = 1;
   }
@@ -523,7 +526,7 @@ function drawNodes(
       radius[selectedNode] + (selectedNode === hoveredNode ? 1.5 : 0.75);
     ctx.fillStyle = palette[colorIds[selectedNode]];
     ctx.beginPath();
-    ctx.arc(x, y, ri, 0, TAU);
+    square(ctx, x, y, ri);
     ctx.fill();
     ctx.lineWidth = 1;
     ctx.strokeStyle = CANVAS_THEME.nodeOutline;
@@ -531,7 +534,7 @@ function drawNodes(
     ctx.lineWidth = 2;
     ctx.strokeStyle = CANVAS_THEME.selection;
     ctx.beginPath();
-    ctx.arc(x, y, ri + 3.5, 0, TAU);
+    square(ctx, x, y, ri + 3.5);
     ctx.stroke();
   }
 
@@ -561,8 +564,7 @@ function drawOutsideRings(
     for (const id of scene.outside) {
       const i = scene.layout.indexById.get(id);
       if (i === undefined || !visible[i] || dimmed(i) !== faint) continue;
-      ctx.moveTo(sx[i] + radius[i] + 2.5, sy[i]);
-      ctx.arc(sx[i], sy[i], radius[i] + 2.5, 0, TAU);
+      square(ctx, sx[i], sy[i], radius[i] + 2.5);
       drawn++;
     }
     if (drawn === 0) continue;
@@ -597,7 +599,7 @@ function drawPinnedMarkers(
       if (isHighlighted !== highlighted) continue;
       const grow = isHighlighted ? 1.5 : 0;
       const size = Math.max(3, radius[i] * 0.6);
-      const offset = (radius[i] + grow) * 0.72;
+      const offset = radius[i] + grow;
       ctx.rect(
         sx[i] + offset - size / 2,
         sy[i] - offset - size / 2,

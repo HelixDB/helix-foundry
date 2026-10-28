@@ -50,14 +50,14 @@
 .wk-usage-bar {
   grid-column: 1 / -1;
   height: 3px;
-  border-radius: 3px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-sunken);
   overflow: hidden;
 }
 .wk-usage-bar span {
   display: block;
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-accent);
   transition: width var(--hf-duration) var(--hf-ease);
 }

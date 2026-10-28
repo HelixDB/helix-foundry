@@ -1,0 +1,118 @@
+/* Fig. 2: the app's Analyst chat (vendor/web/areas/analyst/analyst.css) in
+   the page's colours and fonts, playing by itself. Nothing in it takes the
+   pointer. */
+
+.site-analyst {
+  --hf-font-sans: var(--sans);
+  --hf-font-display: var(--sans);
+  --hf-font-mono: var(--mono);
+  --hf-bg: var(--bg);
+  --hf-surface: var(--bg);
+  --hf-raised: var(--card);
+  --hf-sunken: var(--card-2);
+  --hf-hover: #1c1c1c;
+  --hf-selected: #222222;
+  --hf-border: var(--line);
+  --hf-border-strong: #3a3a3a;
+  --hf-text: var(--ink);
+  --hf-text-2: rgba(255, 255, 255, 0.72);
+  --hf-muted: var(--ink-2);
+  --hf-faint: rgba(255, 255, 255, 0.32);
+  --hf-ink: #ffffff;
+  --hf-ink-hover: #ffffff;
+  --hf-on-ink: #0e0e0e;
+  --hf-field: #141414;
+  --hf-accent: var(--mint);
+  --hf-accent-soft: #1b2a19;
+  --hf-accent-border: #2c4a27;
+  --hf-accent-text: var(--mint);
+  --hf-success: var(--mint);
+  --hf-chart-1: var(--mint);
+  --h: 27rem;
+  position: relative;
+  height: var(--h);
+  overflow: hidden;
+  background: var(--hf-bg);
+  pointer-events: none;
+  user-select: none;
+}
+.site-analyst .an-chat {
+  height: 100%;
+  --an-gutter: 14px;
+}
+.site-analyst .an-scroll {
+  overflow-y: hidden;
+}
+
+/* Only the status line of the work shows, without the list of steps, the
+   toggle that opens them, or a time: the demo answers at once. */
+.site-analyst .an-trace .an-steps,
+.site-analyst .an-trace .an-toggle,
+.site-analyst .an-trace-time {
+  display: none;
+}
+.site-analyst .an-trace {
+  padding: 4px 0;
+}
+
+/* Questions sit on the left, at the top, and type themselves out. The newest
+   turn is at least as tall as the chat, so it can scroll to the top before
+   its answer is in. */
+.site-analyst .an-turn:last-child {
+  min-height: calc(var(--h) - 2rem);
+  align-content: start;
+}
+.site-analyst .an-question {
+  justify-self: start;
+  border-radius: 18px 18px 18px 4px;
+}
+.site-analyst .an-question.is-typing p::after {
+  content: "";
+  display: inline-block;
+  width: 1.5px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  animation: an-caret 0.9s steps(1) infinite;
+}
+@keyframes an-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .site-analyst {
+    --h: 30rem;
+  }
+}
+
+/* An answer writes itself in: each word of its head fades in from a soft
+   blur, one after another, then the chart and sources rise in under it. */
+.site-analyst .an-word {
+  animation: an-word 0.45s var(--ease) both;
+  animation-delay: calc(var(--w) * 24ms);
+}
+.site-analyst .an-answer[data-written] > :not(.an-answer-head) {
+  animation: an-rise 0.5s var(--ease) both;
+  animation-delay: calc(var(--words, 0) * 24ms + 120ms);
+}
+@keyframes an-word {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+  }
+}
+@keyframes an-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-analyst .an-word,
+  .site-analyst .an-answer > * {
+    animation: none !important;
+  }
+}

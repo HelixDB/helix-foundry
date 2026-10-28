@@ -14,8 +14,8 @@ export const THEME_KEY = "foundry.theme";
 
 /** Each theme's --hf-bg, for the browser chrome (meta theme-color). */
 export const THEME_BACKGROUNDS: Record<Theme, string> = {
-  light: "#f8f7f3",
-  dark: "#161713",
+  light: "#fbfbfb",
+  dark: "#0e0e0e",
 };
 
 /** A stored value as a preference: anything but light or dark is System. */

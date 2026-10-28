@@ -45,28 +45,32 @@
   margin: 0;
   padding: 4px 10px;
   color: var(--hf-muted);
-  font-family: var(--hf-font-sans);
   font-size: var(--hf-text-xs);
-  font-weight: 600;
-  letter-spacing: 0.05em;
   line-height: 1.4;
+  font-family: var(--hf-font-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+/* Each group's threads hang off a rule, as the sidebar's subnav does; the
+   open one is marked on it in the accent. */
 .ak-group ul {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1px;
-  margin: 0;
+  margin: 0 0 0 10px;
   padding: 0;
+  border-left: 1px solid var(--hf-border-strong);
   list-style: none;
 }
 .ak-thread {
+  position: relative;
   display: grid;
   gap: 1px;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 6px 10px 6px 13px;
   border-radius: var(--hf-radius);
-  color: var(--hf-text-2);
+  color: var(--hf-muted);
   font-size: var(--hf-text-base);
   line-height: 1.4;
   text-decoration: none;
@@ -76,8 +80,16 @@
   color: var(--hf-text);
 }
 .ak-thread.is-active {
-  background: var(--hf-selected);
   color: var(--hf-text);
+}
+.ak-thread.is-active::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: -1px;
+  width: 2px;
+  background: var(--hf-accent);
 }
 .ak-thread-title {
   overflow: hidden;
@@ -101,7 +113,7 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-info);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--hf-info) 20%, transparent);
   animation: hf-pulse 1.6s ease-in-out infinite;
@@ -275,7 +287,7 @@
   justify-self: end;
   max-width: min(85%, 620px);
   padding: 10px 15px;
-  border-radius: 18px 18px 4px 18px;
+  border-radius: var(--hf-radius-xl);
   background: var(--hf-selected);
   color: var(--hf-text);
 }
@@ -307,7 +319,7 @@
   width: 28px;
   height: 28px;
   border: 1px solid var(--hf-accent-border);
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-accent-soft);
   color: var(--hf-accent-text);
 }
@@ -351,7 +363,7 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-info);
 }
 .ak-trace.is-working .ak-trace-dot {

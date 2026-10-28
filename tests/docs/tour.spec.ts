@@ -28,9 +28,13 @@ test("tour: video", async ({ browser }) => {
   const page = await videoPage(browser, "Helix Foundry in two minutes");
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { level: 1, name: "Ask" }),
+    page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
-  await caption(page, "Foundry opens on Ask: questions about your data", 2500);
+  await caption(
+    page,
+    "Foundry opens on the Analyst: questions about your data",
+    2500,
+  );
 
   await caption(page, "1. Connect and sync your data, and upload documents");
   await click(
@@ -102,7 +106,7 @@ test("tour: video", async ({ browser }) => {
   await click(
     page
       .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("link", { name: "Ask" }),
+      .getByRole("link", { name: "Analyst" }),
   );
   const suggestion = page
     .getByRole("group", { name: "Suggested questions" })
