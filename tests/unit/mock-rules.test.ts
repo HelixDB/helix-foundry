@@ -355,12 +355,11 @@ describe("mock rules", () => {
     ).toMatchObject({ error: { code: "invalid" } });
   });
 
-  it("refuses datalog it can't read and negation through a cycle", () => {
+  it("leaves out datalog with values, and refuses negation through a cycle", () => {
     const rule = (datalog: string) =>
       `version = "x"\n[types.T]\ndescription = "t"\n[rules.r]\ndescription = "r"\ndatalog = ${JSON.stringify(datalog)}\n`;
-    expect(() => compile(rule('a(x) :- b(x, "London").'))).toThrow(
-      /can't read/,
-    );
+    // A rule comparing a value is the engine's alone.
+    expect(compile(rule('a(x) :- b(x, "London").')).rules).toEqual([]);
     expect(() =>
       evaluate(
         new MockGraph().view("l"),
