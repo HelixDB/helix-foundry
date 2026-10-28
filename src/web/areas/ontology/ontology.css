@@ -1128,3 +1128,36 @@
   color: var(--hf-warning-text);
   font-weight: 600;
 }
+
+/* The sample's steps (./sample-tour.tsx): its database and documents, a
+   line each, and the questions it suggests. */
+.on-tour-sources {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.on-tour-sources li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.on-tour-sources li > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--hf-text-2);
+}
+.on-tour-sources span {
+  display: grid;
+  gap: 2px;
+}
+.on-tour-sources small {
+  color: var(--hf-text-2);
+}
+.on-tour-questions {
+  margin: 4px 0 14px;
+  padding-left: 18px;
+  color: var(--hf-text-2);
+  line-height: 1.6;
+}

@@ -457,22 +457,26 @@ export function generationsEnded(ontologyId: string) {
 }
 
 // The sample company's ready-made draft (backend/sample/kestrel.json), which
-// a sample generation stores in place of the AI's: its table files, by the
-// names its placeholders give, and its title, as the WFE's.
+// a sample generation stores in place of the AI's: its tables, by the names
+// its placeholders give, and its title, as the WFE's.
 const KESTREL = JSON.stringify(kestrel),
   KESTREL_TABLES = [
     ...new Set(
-      [...KESTREL.matchAll(/\{\{file:([^{}]+)\}\}/g)].map((m) => m[1]!),
+      [...KESTREL.matchAll(/\{\{table:([^{}]+)\}\}/g)].map((m) => m[1]!),
     ),
   ],
   KESTREL_TITLE = "Kestrel customer accounts, contracts and renewal risk";
-/** The sample's draft for a workspace's copies of its table files in `set`. */
+/** The sample's draft for the connector tables it drafts from, `set` its documents'. */
 function sampleDraft(
-  files: { id: string; name: string }[],
+  tables: { connectorId?: string; table?: string }[],
   set: string,
 ): Record<string, unknown> {
   let text = KESTREL.replaceAll("{{set}}", set);
-  for (const f of files) text = text.replaceAll(`{{file:${f.name}}}`, f.id);
+  for (const t of tables)
+    text = text.replaceAll(
+      `{{table:${t.table}}}`,
+      sourceId(t.connectorId || "", t.table || ""),
+    );
   return JSON.parse(text);
 }
 
@@ -598,14 +602,14 @@ function advance(g: StoredGeneration) {
   const texts = scope
     .filter((id) => textDocumentCount(g.workspaceId!, [id]) > 0)
     .map((id) => ({ id, name: setName(id) }));
-  // As the WFE's worker: a sample whose table file is gone fails for good.
+  // As the WFE's worker: a sample missing a table fails for good.
   if (
     g.sample &&
-    KESTREL_TABLES.some((t) => !files.some((f) => f.name === t))
+    KESTREL_TABLES.some((t) => !(g.tables || []).some((x) => x.table === t))
   ) {
     Object.assign(g, {
       status: "ONTOLOGY_GENERATION_STATUS_FAILED",
-      error: "the sample's files were deleted or moved: add the sample again",
+      error: "the sample's database is missing a table: add the sample again",
       finishedAt,
     });
     return;
@@ -636,7 +640,7 @@ function advance(g: StoredGeneration) {
     // With the operators' flag and the owner's consent, the agent sees
     // People enrichment. A sample's draft is ready-made.
     definition: g.sample
-      ? sampleDraft(files, scope[0] || "")
+      ? sampleDraft(g.tables || [], scope[0] || "")
       : draftFromTables(
           picked,
           g.goal || "",
@@ -941,13 +945,13 @@ export const ontologyRoutes: MockRoute[] = [
         );
       if (
         sample &&
-        ((body.documentSetIds || []).length !== 1 ||
-          !none ||
+        (wanted.length !== 1 ||
+          (body.documentSetIds || []).length !== 1 ||
           (body.eventSources || []).length)
       )
         return fail(
           "INVALID_ARGUMENT",
-          "a sample is drafted from its document set alone: name that one set, with no_connectors and no event source",
+          "a sample is drafted from its database and its documents: name its one connector and its one document set, and no event source",
         );
       // As the WFE checks: a live generation, the connectors and their
       // tables, then the sets.
@@ -1062,16 +1066,11 @@ export const ontologyRoutes: MockRoute[] = [
       );
       const missing =
         sample &&
-        KESTREL_TABLES.find(
-          (t) =>
-            !readTableFiles(m.workspaceId, documentSetIds).some(
-              (f) => f.name === t,
-            ),
-        );
+        KESTREL_TABLES.find((t) => !tables.some((x) => x.table === t));
       if (missing)
         return fail(
           "FAILED_PRECONDITION",
-          `the sample's ${missing} isn't in its set, read: wait for its files to be read, or add the sample again`,
+          `the sample's table ${missing} isn't synced: wait for its database's first sync`,
         );
       const count = tables.length + documents.length;
       if (!count && !textDocumentCount(m.workspaceId, documentSetIds))

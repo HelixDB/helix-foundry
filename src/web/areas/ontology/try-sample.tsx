@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   CircleCheck,
   FlaskConical,
   LoaderCircle,
   RotateCcw,
 } from "lucide-react";
+import { LOCAL } from "../../../shared/deployment";
 import { Button } from "../../kit";
+import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import {
   createDocumentSet,
@@ -20,17 +27,62 @@ import { AiGate, useAiConfigured } from "../workspace/ai-gate";
 import { Callout } from "./parts";
 import { SAMPLE } from "./sample";
 
-// "Try it on a sample company", on the first ontology's wizard. One click
-// uploads the sample's files (./sample.ts) into its set, found by name or
-// made, as any upload is; waits until Foundry has read its tables and PDFs,
-// so none is left out; then hands the sets they are in to the wizard
-// (`onReady`), which fills in what is still empty and creates the ontology
-// on the sample's ready-made draft (`creating` while it does), current and
-// loading, with no wait for an AI draft. The workspace keeps one copy of
-// any bytes, so adding the sample again finds its documents, wherever they
-// were moved. Once the wizard drafts from the sample's set otherwise
-// (`chosen`), the card says so. Locally, uploads need an AI provider: until
-// one is set up, it says that instead.
+// "Try it on a sample company", on the first ontology's wizard. A local
+// install opens the sample's own page (./sample-tour.tsx), which connects
+// Kestrel's database and shows each step. Hosted, one click uploads the
+// sample's files (./sample.ts) into its set, waits until Foundry has read
+// its tables and PDFs, so a draft started next leaves none out, then hands
+// the sets they are in to the wizard (`onReady`), which fills in what is
+// still empty and opens its review; once the wizard drafts from the
+// sample's set (`chosen`), the card says so. Either way, uploads need an AI
+// provider: until one is set up, it says that instead.
+
+/**
+ * Uploads the sample's files named `names` into its set, found by name or
+ * made, as any upload is, telling `onUploaded` how many are done. The
+ * workspace keeps one copy of any bytes, so adding them again finds the
+ * documents it has, wherever they were moved: the result is their ids and
+ * the sets they are in.
+ */
+export async function addSampleFiles(
+  qc: QueryClient,
+  ws: string,
+  names: readonly string[],
+  onUploaded: (done: number) => void,
+): Promise<{ ids: string[]; setIds: string[] }> {
+  const sets = await qc.fetchQuery({
+    ...documentSetQueries.list(ws),
+    staleTime: 0,
+  });
+  const set =
+    sets.find((s) => !s.connector && s.name === SAMPLE.set.name) ??
+    (await createDocumentSet(ws, SAMPLE.set)).set;
+  let done = 0;
+  const ends = await Promise.all(
+    names.map(async (name) => {
+      const res = await fetch(SAMPLE.base + encodeURIComponent(name));
+      if (!res.ok) throw new Error(`couldn’t fetch ${name}`);
+      const end = await uploadDocument(
+        ws,
+        new File([await res.blob()], name),
+        set.id,
+        crypto.randomUUID(),
+        () => {},
+      );
+      onUploaded(++done);
+      return end;
+    }),
+  );
+  await documentsChanged(qc, ws);
+  const docs = ends.map((e) => {
+    if (e.step !== "done") throw new Error(e.step === "failed" ? e.error : "");
+    return e.document;
+  });
+  return {
+    ids: docs.map((d) => d.id),
+    setIds: [...new Set(docs.map((d) => d.setId || set.id))],
+  };
+}
 
 type Run =
   | { step: "idle" }
@@ -40,15 +92,14 @@ type Run =
 
 export function TrySample({
   chosen,
-  creating,
   onReady,
 }: {
   chosen: boolean;
-  creating: boolean;
   onReady: (setIds: string[]) => void;
 }) {
   const { id } = useWorkspace(),
     qc = useQueryClient(),
+    navigate = useNavigate(),
     aiReady = useAiConfigured();
   const [run, setRun] = useState<Run>({ step: "idle" }),
     [gated, setGated] = useState(false);
@@ -68,43 +119,13 @@ export function TrySample({
 
   const add = async () => {
     if (aiReady === false) return setGated(true);
+    if (LOCAL) return navigate(paths.sampleTour());
     setRun({ step: "adding", done: 0 });
     try {
-      const sets = await qc.fetchQuery({
-        ...documentSetQueries.list(id),
-        staleTime: 0,
-      });
-      const set =
-        sets.find((s) => !s.connector && s.name === SAMPLE.set.name) ??
-        (await createDocumentSet(id, SAMPLE.set)).set;
-      const ends = await Promise.all(
-        SAMPLE.files.map(async (name) => {
-          const res = await fetch(SAMPLE.base + encodeURIComponent(name));
-          if (!res.ok) throw new Error(`couldn’t fetch ${name}`);
-          const end = await uploadDocument(
-            id,
-            new File([await res.blob()], name),
-            set.id,
-            crypto.randomUUID(),
-            () => {},
-          );
-          setRun((r) =>
-            r.step === "adding" ? { step: "adding", done: r.done + 1 } : r,
-          );
-          return end;
-        }),
+      const added = await addSampleFiles(qc, id, SAMPLE.files, (done) =>
+        setRun({ step: "adding", done }),
       );
-      await documentsChanged(qc, id);
-      const docs = ends.map((e) => {
-        if (e.step !== "done")
-          throw new Error(e.step === "failed" ? e.error : "");
-        return e.document;
-      });
-      setRun({
-        step: "reading",
-        ids: docs.map((d) => d.id),
-        setIds: [...new Set(docs.map((d) => d.setId || set.id))],
-      });
+      setRun({ step: "reading", ...added });
     } catch (e) {
       setRun({ step: "failed", error: (e as Error).message });
     }
@@ -127,16 +148,6 @@ export function TrySample({
             Try again
           </Button>
         }
-      />
-    );
-  if (creating)
-    return (
-      <Callout
-        icon={LoaderCircle}
-        live
-        tone="muted"
-        title="Setting up Kestrel’s ontology"
-        text="Its ontology is ready-made, so there is no draft to wait for: Foundry makes it current and starts loading Kestrel’s data."
       />
     );
   if (run.step !== "idle")
@@ -167,7 +178,11 @@ export function TrySample({
       icon={FlaskConical}
       tone="muted"
       title="Try it on a sample company"
-      text="Kestrel is a made-up software company: its customers, subscriptions, invoices, support tickets and usage as tables, with contracts, call notes and an incident report as documents. Its ontology is ready-made: it opens in seconds, loads them as linked records, and is ready for your questions."
+      text={
+        LOCAL
+          ? "Kestrel is a made-up software company: its customers, subscriptions, invoices and support tickets in a PostgreSQL database, and its contracts and call notes as documents. See Foundry turn them into an ontology you can ask questions of, step by step, in about a minute."
+          : "Kestrel is a made-up software company: its customers, subscriptions, invoices, support tickets and usage as tables, with contracts, call notes and an incident report as documents. Foundry’s agent drafts an ontology that links them."
+      }
       action={
         <Button size="sm" variant="primary" onClick={() => void add()}>
           Use the sample

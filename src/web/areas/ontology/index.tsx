@@ -12,6 +12,7 @@ import { LoadRuleBreaksPage } from "./load-rule-breaks";
 import { LoadPage } from "./loads";
 import { NewOntologyPage } from "./new-ontology";
 import { OpenOntology } from "./ontologies";
+import { SampleTour } from "./sample-tour";
 import { OntologyScope } from "./scope";
 import { VersionPage } from "./version";
 
@@ -70,6 +71,7 @@ export function OntologyRoutes() {
         element={<OpenOntology title="Ontologies" to={paths.ontology} />}
       />
       <Route path="new" element={<NewOntologyPage />} />
+      <Route path="sample" element={<SampleTour />} />
       <Route path=":ontologyId" element={<OntologyScope />}>
         <Route index element={<OntologyHome />} />
         <Route path="versions/:versionId" element={<OntologyVersionPage />} />

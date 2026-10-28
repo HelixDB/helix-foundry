@@ -31,17 +31,36 @@ describe("the sample company", () => {
       );
   });
 
-  it("is the files the backend's ready-made draft maps", () => {
+  it("is the tables kestrel-db serves and the backend's ready-made draft maps", async () => {
+    const root = join(__dirname, "..", "..");
     const draft = readFileSync(
-      join(__dirname, "..", "..", "backend", "sample", "kestrel.json"),
+      join(root, "backend", "sample", "kestrel.json"),
       "utf8",
     );
     const named = new Set(
-      [...draft.matchAll(/\{\{file:([^{}]+)\}\}/g)].map((m) => m[1]),
+      [...draft.matchAll(/\{\{table:([^{}]+)\}\}/g)].map((m) => m[1]),
     );
-    expect([...named].sort()).toEqual(
-      SAMPLE.files.filter((f) => formatOfName(f)?.kind === "table").sort(),
+    expect([...named].sort()).toEqual([...SAMPLE.database.tables].sort());
+    // kestrel.sql holds each CSV's rows, and no other table.
+    const sql = readFileSync(
+      join(root, "local", "kestrel", "kestrel.sql"),
+      "utf8",
     );
+    const created = [...sql.matchAll(/CREATE TABLE (\w+) \(/g)].map(
+      (m) => m[1],
+    );
+    expect(created.sort()).toEqual([...SAMPLE.database.tables].sort());
+    for (const t of SAMPLE.database.tables) {
+      const inserted = sql
+        .slice(sql.indexOf(`INSERT INTO ${t} `))
+        .split(";")[0]!
+        .split("\n")
+        .filter((l) => l.startsWith("  (")).length;
+      expect(inserted, t).toBe((await table(`${t}.csv`)).length);
+    }
+    expect(SAMPLE.files.filter((f) => !f.endsWith(".csv"))).toEqual([
+      ...SAMPLE.documents,
+    ]);
     expect(SAMPLE.id).toBe("kestrel");
   });
 

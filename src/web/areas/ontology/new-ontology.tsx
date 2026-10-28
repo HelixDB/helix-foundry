@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import {
-  useQuery,
-  useQueryClient,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   CreditCard,
@@ -51,19 +47,16 @@ import {
   slugify,
   stepSummary,
   type DatabasePick,
-  type WizardRequest,
   type WizardStepId,
 } from "./model";
 import { Callout, FlowStep, canManage, type Arrival } from "./parts";
 import { SAMPLE } from "./sample";
 import { TrySample } from "./try-sample";
 import {
-  createLoad,
   createOntology,
   generateOntology,
   isLive,
   ontologyQueries,
-  setCurrentVersion,
 } from "./queries";
 
 // /ontology/new: a new ontology and its first draft, step by step on one
@@ -89,52 +82,14 @@ import {
 //
 // While the workspace has no ontology, this page is its onboarding, all the
 // shell offers (main.tsx): it has no way back to Ontologies, and offers the
-// sample company (./try-sample.tsx), which fills in what is still empty,
-// opens the review and creates the ontology at once on the sample's
-// ready-made draft, made current and loaded (loadSample), opening its
-// overview as the load runs; and Set up with your agent. A connector link sent here (?add=<kind>) opens its
+// sample company (./try-sample.tsx: a local install's opens its own page;
+// hosted, it fills in what is still empty and opens the review) and Set up
+// with your agent. A connector link sent here (?add=<kind>) opens its
 // form over the wizard once, and the new connection stays here. An API
 // source's token link (?event_source=<id>&token=new, forwarded from its
 // Data page by main.tsx) opens its send panel over the wizard once, at
 // whatever step it is on: a link from an agent opens a new tab, whose
 // wizard (kept per tab) starts afresh at Name.
-
-// How long the sample's generation may take to store its draft: the worker
-// claims it within seconds.
-const SAMPLE_WAIT_MS = 60_000;
-
-/**
- * Makes the sample's draft current and loads it, once generation
- * `generationId` of ontology `o` has stored it. Throws when the generation
- * fails or takes longer than SAMPLE_WAIT_MS.
- */
-async function loadSample(
-  qc: QueryClient,
-  ws: string,
-  o: string,
-  generationId: string,
-) {
-  for (const until = Date.now() + SAMPLE_WAIT_MS; Date.now() < until; ) {
-    const { generation: g } = await qc.fetchQuery({
-      ...ontologyQueries.generation(ws, o, generationId),
-      staleTime: 0,
-    });
-    if (g?.resultVersionId) {
-      await setCurrentVersion(ws, o, {
-        versionId: g.resultVersionId,
-        expectedCurrentVersionId: "",
-      });
-      await createLoad(ws, o, {
-        versionId: g.resultVersionId,
-        clientToken: crypto.randomUUID(),
-      });
-      return;
-    }
-    if (!isLive(g)) throw new Error(g?.error || "the sample’s draft failed");
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error("the sample’s draft is taking longer than it should");
-}
 
 // What an earlier attempt created: reused while the choice that made it
 // stands.
@@ -280,9 +235,7 @@ export function NewOntologyPage() {
     [goal, setGoal] = useState(saved.goal),
     [made, setMade] = useState(saved.made);
   const [pending, setPending] = useState(false),
-    [error, setError] = useState<unknown>(null),
-    // Set while Create runs on the sample's ready-made draft.
-    [sampling, setSampling] = useState(false);
+    [error, setError] = useState<unknown>(null);
   // Locally, the first draft waits for an AI provider: the ontology is
   // still created, and its page says why its draft didn't start.
   const aiReady = useAiConfigured();
@@ -364,7 +317,8 @@ export function NewOntologyPage() {
     navigate(paths.ontologies());
   };
 
-  const create = async (request = wizard.request) => {
+  const create = async () => {
+    const request = wizard.request;
     if (!request) return;
     setPending(true);
     setError(null);
@@ -415,12 +369,11 @@ export function NewOntologyPage() {
         arrival: Arrival = { newDatabase: pick.kind === "new" };
       // Until its generation starts, the choices are the ontology's.
       keep(id, { ...entry, ontologyId: o });
-      let started = "";
       const [to, state] = await generateOntology(id, o, request.generate).then(
-        (res): [string, Arrival] => {
-          started = res.generation!.id;
-          return [paths.generation(o, started), arrival];
-        },
+        (res): [string, Arrival] => [
+          paths.generation(o, res.generation!.id),
+          arrival,
+        ],
         async (e): Promise<[string, Arrival]> => {
           // An earlier attempt's generation is live: follow it.
           const live =
@@ -448,16 +401,7 @@ export function NewOntologyPage() {
         },
       );
       if (!state.generateFailed) forgetNewOntology(id);
-      // The sample's draft, current and loading, opens on its overview; a
-      // draft that failed or a step that didn't, on its generation.
-      const landing =
-        request.generate.sample && started
-          ? await loadSample(qc, id, o, started).then(
-              () => paths.ontology(o),
-              () => to,
-            )
-          : to;
-      navigate(landing, { state });
+      navigate(to, { state });
       // Only once this page is left: the new ontology uses its database, so
       // read here it would send the wizard back to the database step.
       for (const key of ["ontologies", "databases", "projects"])
@@ -467,7 +411,6 @@ export function NewOntologyPage() {
       void qc.invalidateQueries({ queryKey: [id, "databases"] });
     } finally {
       setPending(false);
-      setSampling(false);
     }
   };
 
@@ -554,42 +497,24 @@ export function NewOntologyPage() {
           chosen={(sets.data || []).some(
             (s) => s.name === SAMPLE.set.name && chosenSets?.has(s.id),
           )}
-          creating={sampling}
           onReady={(setIds) => {
             // Only the sample: its own name, goal and a new database, unless
             // already chosen.
-            const named = name.trim() || SAMPLE.ontology,
-              pick =
-                database ??
-                (databases.data &&
-                  newDatabase(
-                    named,
-                    workspace,
-                    databases.data.map((p) => p.project),
-                  )),
-              aim = goal.trim() || SAMPLE.goal;
+            const named = name.trim() || SAMPLE.ontology;
             setName(named);
-            if (pick) setDatabase(pick);
+            if (!database && databases.data)
+              setDatabase(
+                newDatabase(
+                  named,
+                  workspace,
+                  databases.data.map((p) => p.project),
+                ),
+              );
             setChosen(new Set());
             setChosenEvents(new Map());
             setChosenSets(new Set(setIds));
-            setGoal(aim);
+            if (!goal.trim()) setGoal(SAMPLE.goal);
             go("review");
-            // Its files in one set, as added: created at once on the
-            // sample's draft. Moved apart, the review drafts from them.
-            if (!pick || setIds.length !== 1) return;
-            const request: WizardRequest = {
-              name: named,
-              database: pick,
-              generate: {
-                noConnectors: true,
-                documentSetIds: setIds,
-                goal: aim,
-                sample: SAMPLE.id,
-              },
-            };
-            setSampling(true);
-            void create(request);
           }}
         />
       )}

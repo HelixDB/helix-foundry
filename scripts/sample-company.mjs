@@ -1411,7 +1411,8 @@ const sql = [
         ),
         `  PRIMARY KEY (${t.key.join(", ")})`,
         ...Object.entries(t.refs ?? {}).map(
-          ([c, ref]) => `  FOREIGN KEY (${c}) REFERENCES ${ref} (${keyOf(ref)})`,
+          ([c, ref]) =>
+            `  FOREIGN KEY (${c}) REFERENCES ${ref} (${keyOf(ref)})`,
         ),
       ].join(",\n"),
       ");",

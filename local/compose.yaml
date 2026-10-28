@@ -230,12 +230,14 @@ services:
       POSTGRES_DB: kestrel
       POSTGRES_USER: kestrel
       POSTGRES_PASSWORD: kestrel
-    volumes: ["./kestrel/kestrel.sql:/docker-entrypoint-initdb.d/kestrel.sql:ro"]
+    volumes:
+      ["./kestrel/kestrel.sql:/docker-entrypoint-initdb.d/kestrel.sql:ro"]
     tmpfs: ["/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kestrel -d kestrel"]
       interval: 2s
       retries: 30
+    depends_on: *secrets-first
     restart: unless-stopped
 
   # HelixDB: the public helix-db image, one database on a local volume. It

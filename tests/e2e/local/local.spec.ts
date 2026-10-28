@@ -47,6 +47,7 @@ const configure = (config: {
   // it (mock/state.ts).
   freshInstall?: boolean;
   aiProbeMs?: number;
+  ontologyStepMs?: number;
   loadStepMs?: number;
   askStepMs?: number;
 }) =>
@@ -166,20 +167,47 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   ).toBeVisible();
 });
 
-// The first run: a new install's onboarding drafts from the sample company
-// on the provider the install found, into a database in this computer's
-// Helix.
-test("drafts a new install's first ontology from the sample company", async ({
+// The first run: a new install's onboarding opens the sample company's
+// page, which connects Kestrel's PostgreSQL database (the stack's
+// kestrel-db), uploads its documents, shows the goal and the ontology made
+// from its ready-made draft, loads it, and offers its questions. A reload
+// carries on with what it made.
+test("walks a new install through the sample company, from its database to Ask", async ({
   page,
 }) => {
-  await configure({ freshInstall: true });
+  await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
   await page.getByRole("button", { name: "Use the sample" }).click();
-  await expect(page).toHaveURL(/\/ontology\/ont_\w+$/, { timeout: 30_000 });
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Kestrel customers" }),
+    page.getByRole("heading", { level: 1, name: "Kestrel, a sample company" }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Version 1" })).toBeVisible();
+  const steps = page.getByRole("list", { name: "Steps" });
+  await expect(steps).toContainText("6 tables, 1,121 rows", {
+    timeout: 30_000,
+  });
+  await expect(steps).toContainText("which renewals are at risk", {
+    timeout: 30_000,
+  });
+  await expect(steps).toContainText("Foundry models Kestrel as 9 types", {
+    timeout: 30_000,
+  });
+  await page.reload();
+  const ask = page.getByRole("link", { name: "Ask a question" });
+  await expect(ask).toBeVisible({ timeout: 60_000 });
+  await expect(steps).toContainText(
+    "Who are each account's people, and what role does each play?",
+  );
+  await ask.click();
+  await expect(
+    page.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible();
+
+  // Kestrel's database is a connection in Data, like any other.
+  await page.goto("/data");
+  await expect(
+    page.getByText("Kestrel", { exact: true }).first(),
+  ).toBeVisible();
 });
 
 // With no provider, the sample asks for one; Settings has the way back to
@@ -188,7 +216,13 @@ test("drafts a new install's first ontology from the sample company", async ({
 test("asks for an AI provider before adding the sample company, then goes back to it", async ({
   page,
 }) => {
-  await configure({ freshInstall: true, aiDefault: false, aiProbeMs: 600 });
+  await configure({
+    freshInstall: true,
+    aiDefault: false,
+    aiProbeMs: 600,
+    ontologyStepMs: 300,
+    loadStepMs: 200,
+  });
   await page.goto("/");
   const sample = page.getByRole("button", { name: "Use the sample" }),
     gate = page.getByRole("note").filter({
@@ -218,7 +252,10 @@ test("asks for an AI provider before adding the sample company, then goes back t
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(first).toBeVisible();
   await sample.click();
-  await expect(page).toHaveURL(/\/ontology\/ont_\w+$/, { timeout: 30_000 });
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await expect(page.getByRole("link", { name: "Ask a question" })).toBeVisible({
+    timeout: 60_000,
+  });
 });
 
 test("keeps only settings and the theme in the account menu", async ({

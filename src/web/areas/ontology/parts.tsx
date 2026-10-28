@@ -179,11 +179,11 @@ export function Callout({
 }
 
 /**
- * One step of a step-by-step flow: the new-ontology wizard's and an
- * unfinished ontology's overview's. Done, it is
- * a line of what it chose (`summary`), with Edit when `onEdit` is given;
- * current or running, it is open on `children`; upcoming, it says what it
- * asks.
+ * One step of a step-by-step flow: the new-ontology wizard's, an
+ * unfinished ontology's overview's and the sample's. Done, it is a line of
+ * what it chose (`summary`), with Edit when `onEdit` is given, and stays
+ * open on `children` when `kept`; current or running, it is open on
+ * `children`; upcoming, it says what it asks.
  */
 export function FlowStep({
   number,
@@ -193,6 +193,7 @@ export function FlowStep({
   state,
   summary,
   onEdit,
+  kept,
   children,
 }: {
   number: number;
@@ -202,14 +203,17 @@ export function FlowStep({
   state: "done" | "current" | "running" | "upcoming";
   summary?: string;
   onEdit?: () => void;
+  kept?: boolean;
   children?: ReactNode;
 }) {
   const done = state === "done",
-    open = state === "current" || state === "running";
+    open = state === "current" || state === "running" || (done && !!kept);
   return (
     <li
       className={cx("on-wizard-step", `is-${state}`)}
-      aria-current={open ? "step" : undefined}
+      aria-current={
+        state === "current" || state === "running" ? "step" : undefined
+      }
     >
       <div className="on-wizard-head">
         <span className="on-wizard-number" aria-hidden>
