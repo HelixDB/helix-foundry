@@ -1,0 +1,463 @@
+/* Each section is its own bordered box with space around it, which is how
+   Prime Intellect stacks them, rather than one continuous hairline grid. */
+
+.box {
+  border: 1px solid var(--line);
+  margin-bottom: var(--gap);
+}
+.box:last-of-type {
+  margin-bottom: 0;
+}
+.pad {
+  padding: 1.25rem;
+}
+@media (min-width: 768px) {
+  .pad {
+    padding: 1.75rem;
+  }
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1024px) {
+  .split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .split > * + * {
+    border-left: 1px solid var(--line);
+  }
+}
+@media (max-width: 1023px) {
+  .split > * + * {
+    border-top: 1px solid var(--line);
+  }
+}
+
+/* Navigation */
+
+/* Near-opaque rather than blurred: a backdrop blur over the field would be
+   recomputed every frame. */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+}
+.nav .wrap {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  height: 3.25rem;
+}
+.nav .mark img {
+  height: 0.95rem;
+  width: auto;
+  display: block;
+}
+.tabs {
+  display: flex;
+}
+.tabs a {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--line);
+  border-right-width: 0;
+  text-decoration: none;
+  color: var(--ink-2);
+  transition:
+    background-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.tabs a:last-child {
+  border-right-width: 1px;
+}
+.tabs a:hover {
+  background: var(--card);
+  color: var(--ink);
+}
+.tabs i {
+  font-style: normal;
+  color: var(--ink-3);
+}
+.nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+}
+.nav-right a:not(.btn) {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.nav-right a:not(.btn):hover {
+  color: var(--ink);
+}
+@media (max-width: 1100px) {
+  .tabs {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .nav-right a:not(.btn) {
+    display: none;
+  }
+}
+
+/* Hero: the field's graph turns on the right, the words sit over the left. */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+}
+.hero .scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(14, 14, 14, 0.78) 0%,
+    rgba(14, 14, 14, 0.4) 34%,
+    rgba(14, 14, 14, 0) 56%
+  );
+}
+@media (max-width: 899px) {
+  .hero .scrim {
+    background: linear-gradient(
+      0deg,
+      rgba(14, 14, 14, 0.92) 0%,
+      rgba(14, 14, 14, 0.6) 45%,
+      rgba(14, 14, 14, 0) 75%
+    );
+  }
+}
+.hero .wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  min-height: min(46rem, 90vh);
+  padding-top: 7rem;
+  padding-bottom: 2.25rem;
+}
+.hero .wrap > * {
+  max-width: 100%;
+}
+.hero .wrap > h1 {
+  max-width: 21ch;
+  margin-bottom: 0.9rem;
+  text-shadow: 0 0 44px rgba(133, 237, 117, 0.18);
+}
+.hero .sub {
+  max-width: 30rem;
+  color: var(--ink-2);
+  margin-bottom: 1.4rem;
+}
+/* The calls to action: two buttons sharing the width of the box under them,
+   which holds the local setup commands and sets that width. The whole box is
+   one button that copies them. */
+.hero .cta {
+  display: inline-grid;
+  gap: 0.5rem;
+}
+.hero .cta .row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.hero .cta .btn {
+  justify-content: space-between;
+}
+/* The secondary highlights as the setup box does, not with the primary's fill. */
+.hero .cta .btn:not(.btn-solid):hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: #1d1d1d;
+  color: var(--ink);
+}
+@media (max-width: 520px) {
+  .hero .cta .row {
+    grid-template-columns: 1fr;
+  }
+}
+.setup {
+  appearance: none;
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--ease),
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.setup:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  background-color: #1d1d1d;
+}
+.setup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  height: 2.5rem;
+  padding: 0 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.setup svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.setup .i-copy {
+  color: var(--ink-2);
+  transition: color 150ms var(--ease);
+}
+.setup:hover .i-copy {
+  color: var(--ink);
+}
+.setup .i-check {
+  display: none;
+}
+.setup[data-copied="true"] {
+  border-color: var(--mint);
+}
+.setup[data-copied="true"] .setup-head {
+  color: var(--mint);
+}
+.setup[data-copied="true"] .i-copy {
+  display: none;
+}
+.setup[data-copied="true"] .i-check {
+  display: block;
+}
+.hero .setup .cmd {
+  display: block;
+  margin: 0;
+  padding: 0 0.9rem 0.65rem;
+  font-size: 0.75rem;
+}
+.setup:hover .cmd {
+  color: var(--ink);
+}
+.hero .cmd {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.9;
+  color: var(--ink-2);
+  overflow-x: auto;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.hero .cmd b {
+  color: var(--mint);
+  font-weight: 400;
+}
+@media (max-width: 620px) {
+  .hero .cmd {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    overflow-x: visible;
+  }
+}
+
+/* The product: real views of it, not screenshots (schema.css, explorer.css). */
+
+.demo {
+  margin: 0;
+}
+
+/* A figure cell: label, moving drawing, then the numbered block */
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem;
+}
+@media (min-width: 768px) {
+  .cell {
+    padding: 1.75rem;
+  }
+}
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 1.4rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.lead-block {
+  border-top: 1px solid var(--line);
+  padding-top: 1.2rem;
+}
+.lead-block h2 {
+  font-size: 1rem;
+  letter-spacing: 0;
+  margin-bottom: 0.5rem;
+}
+.lead-block h2 span {
+  color: var(--ink-3);
+  margin-right: 0.55rem;
+  font-variant-numeric: tabular-nums;
+}
+.lead-block .say {
+  font-size: 1.125rem;
+  line-height: 1.22;
+  letter-spacing: -0.02em;
+}
+
+.prose {
+  color: var(--ink-2);
+  max-width: 34rem;
+}
+.prose + .row {
+  margin-top: 1.3rem;
+}
+
+/* Closing band */
+
+/* The nav's ground, a little more see-through, so it sits over the footer's
+   graph as the nav does but lets a trace of it show. */
+.close {
+  position: relative;
+  overflow: hidden;
+  background: rgba(14, 14, 14, 0.72);
+}
+.close .pad {
+  position: relative;
+  padding-top: 3.5rem;
+  padding-bottom: 3.5rem;
+}
+.close h2 {
+  max-width: 22ch;
+  margin-bottom: 1.1rem;
+}
+.close h2 span {
+  color: var(--ink-2);
+}
+
+/* The foot of the page: the field draws the hero's graph again on the
+   footer's own canvas, so it is part of the page and moves exactly with it,
+   overscroll bounce included. It reaches up under the closing section, which
+   sits on top of it, and the footer's line sits over it. */
+.foot {
+  position: relative;
+  padding: 1.5rem 0 2.25rem;
+}
+/* Behind everything on the page, since it reaches up under the closing
+   section; the field sets its top and height. */
+.foot-graph {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+.foot::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: auto 0 0;
+  height: 6rem;
+  background: linear-gradient(0deg, rgba(14, 14, 14, 0.8), rgba(14, 14, 14, 0));
+  pointer-events: none;
+}
+.foot .wrap {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem 1.4rem;
+  align-items: center;
+  justify-content: space-between;
+}
+.foot nav {
+  display: flex;
+  gap: 1.1rem;
+}
+.foot a {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.foot a:hover {
+  color: var(--ink);
+}
+
+.stack {
+  padding: var(--gap) 0;
+}
+
+/* One bright block, so the eye has somewhere to land. It fills with green
+   from where Fig. 2's answer reaches it: the field sets --fill, --fx and
+   is-filled as you scroll. Without the field it is simply green. */
+.shout {
+  position: relative;
+  overflow: hidden;
+  color: var(--ink);
+  border-color: var(--line);
+  transition:
+    color 300ms var(--ease),
+    border-color 300ms var(--ease);
+}
+.shout::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--mint);
+  clip-path: circle(calc(var(--fill, 1) * 150%) at var(--fx, 100%) 0);
+}
+.shout > * {
+  position: relative;
+}
+.shout h2 {
+  letter-spacing: -0.03em;
+  max-width: 20ch;
+}
+.shout p {
+  color: var(--ink-2);
+  max-width: 32rem;
+  transition: color 300ms var(--ease);
+}
+.shout .m {
+  color: var(--ink-3);
+}
+.shout.is-filled {
+  color: #08210a;
+  border-color: var(--mint);
+}
+.shout.is-filled p {
+  color: rgba(8, 33, 10, 0.72);
+}
+.shout.is-filled .m {
+  color: rgba(8, 33, 10, 0.55);
+}
+.shout.is-filled .btn {
+  border-color: rgba(8, 33, 10, 0.4);
+  color: #08210a;
+}
+.shout.is-filled .btn:hover {
+  background: #08210a;
+  border-color: #08210a;
+  color: var(--mint);
+}

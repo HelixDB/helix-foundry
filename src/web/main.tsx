@@ -49,7 +49,7 @@ import {
   workspacesQuery,
 } from "./workspaces";
 
-// The Foundry single-page app, mounted client-only by src/app/[[...slug]].
+// The Foundry single-page app, mounted client-only by src/app/(app)/[...slug].
 // Signed out: the sign-in page. Signed in: the workspace picker until a
 // workspace is chosen, then the shell and each area's routes, or, while the
 // workspace has no ontology, only the onboarding's. A local build

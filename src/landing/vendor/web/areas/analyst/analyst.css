@@ -1,0 +1,962 @@
+/* Analyst area styles (prefix an-). */
+
+/* Chat page: a header, the conversation (the only part that scrolls) and the
+   composer pinned under it, in one readable column. */
+.an-chat {
+  --an-col: 760px;
+  --an-gutter: var(--hf-space-3);
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+}
+.an-chat-head {
+  flex: none;
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-bg);
+}
+.an-chat-head-inner,
+.an-log,
+.an-dock-inner {
+  width: 100%;
+  max-width: calc(var(--an-col) + 2 * var(--an-gutter));
+  margin: 0 auto;
+  padding-left: var(--an-gutter);
+  padding-right: var(--an-gutter);
+}
+.an-chat-head-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--hf-space-15);
+  padding-top: 14px;
+  padding-bottom: 12px;
+}
+.an-chat-title {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+}
+.an-chat-title h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--hf-text);
+  font-family: var(--hf-font-display);
+  font-size: var(--hf-text-xl);
+  font-weight: 400;
+  letter-spacing: -0.3px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-chat-title p {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+}
+.an-chat-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.an-chat-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: var(--hf-space-4) var(--an-gutter);
+}
+
+/* Conversation */
+/* Positioned, so absolutely placed descendants (screen reader text, chart
+   tips) stay inside the scroller instead of stretching the page. */
+.an-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.an-log {
+  display: grid;
+  gap: var(--hf-space-5);
+  padding-top: var(--hf-space-3);
+  padding-bottom: var(--hf-space-4);
+}
+.an-turn {
+  display: grid;
+  gap: var(--hf-space-2);
+  min-width: 0;
+}
+.an-question {
+  justify-self: end;
+  max-width: min(85%, 620px);
+  padding: 10px 15px;
+  border-radius: 18px 18px 4px 18px;
+  background: var(--hf-selected);
+  color: var(--hf-text);
+}
+.an-question p {
+  margin: 0;
+  font-size: var(--hf-text-md);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.an-question.is-sending {
+  opacity: 0.7;
+}
+.an-question.is-loading {
+  padding: 14px 16px;
+  background: var(--hf-sunken);
+}
+.an-reply {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+.an-avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hf-accent-border);
+  border-radius: 50%;
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.an-reply-body {
+  display: grid;
+  gap: var(--hf-space-15);
+  min-width: 0;
+  padding-top: 2px;
+}
+.an-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-md);
+  line-height: 1.55;
+}
+
+/* Sending: a quiet pulse until the question has a run. */
+.an-working {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 28px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-md);
+}
+.an-dots {
+  display: inline-flex;
+  gap: 4px;
+  padding: 0 2px;
+}
+.an-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hf-accent);
+  animation: an-dot 1.2s ease-in-out infinite;
+}
+.an-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.an-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes an-dot {
+  0%,
+  70%,
+  100% {
+    opacity: 0.3;
+    transform: none;
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .an-dots span {
+    opacity: 0.7;
+    animation: none;
+  }
+}
+
+/* Trace: the analysis as it happens, between two fine rules and quieter than
+   the answer under it. Each step is one line: its name in bold, then what it
+   did. Folded, a step never wraps; expanded, every line wraps. */
+.an-trace {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 0 10px;
+  border-top: 1px solid var(--hf-border);
+  border-bottom: 1px solid var(--hf-border);
+}
+.an-trace-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 12px;
+  min-height: 30px;
+}
+.an-trace-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  font-weight: 500;
+}
+.an-trace-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hf-info);
+}
+.an-trace.is-working .an-trace-dot {
+  animation: an-pulse 1.6s ease-in-out infinite;
+}
+.an-trace.is-succeeded .an-trace-dot,
+.an-trace.is-awaiting_review .an-trace-dot {
+  background: var(--hf-success);
+}
+.an-trace.is-slow .an-trace-dot,
+.an-trace.is-offline .an-trace-dot {
+  background: var(--hf-warning);
+}
+.an-trace.is-failed .an-trace-dot {
+  background: var(--hf-danger);
+}
+.an-trace.is-canceled .an-trace-dot {
+  background: var(--hf-faint);
+}
+@keyframes an-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.an-trace-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px 4px;
+  margin-left: auto;
+}
+.an-trace-time {
+  padding-right: 4px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  white-space: nowrap;
+}
+.an-steps {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.an-step {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 20px;
+}
+.an-step-mark {
+  margin-top: 3.5px;
+  color: var(--hf-faint);
+}
+.an-step.is-done .an-step-mark {
+  color: var(--hf-accent-text);
+}
+.an-step.is-running {
+  color: var(--hf-text-2);
+}
+.an-step.is-running .an-step-mark {
+  color: var(--hf-info-text);
+}
+.an-step.is-failed .an-step-mark {
+  color: var(--hf-danger-text);
+}
+.an-step-text {
+  min-width: 0;
+  margin: 0;
+}
+.an-step-text strong {
+  color: var(--hf-text-2);
+  font-weight: 600;
+}
+.an-step.is-running .an-step-text strong {
+  color: var(--hf-text);
+}
+.an-steps.is-compact .an-step-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-trace-full {
+  display: grid;
+  min-width: 0;
+  padding-top: 6px;
+}
+.an-trace-full .an-steps {
+  gap: 8px;
+}
+.an-trace-full .an-step-text {
+  overflow-wrap: anywhere;
+}
+.an-step-time {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.an-query {
+  min-width: 0;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hf-border);
+}
+.an-query > summary {
+  width: fit-content;
+  padding: 0;
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+}
+.an-query .an-sql {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-sunken);
+}
+.an-trace-note {
+  margin: 10px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+
+/* Answer */
+.an-answer {
+  display: grid;
+  gap: var(--hf-space-15);
+  min-width: 0;
+}
+/* The answer's statement leads, in bold on the page itself (no card, tint or
+   accent); then the rest of the summary, whose backed quantities are bold. */
+.an-answer-head {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.an-answer-head h2 {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--hf-text);
+  font-family: var(--hf-font-sans);
+  font-size: var(--hf-text-xl);
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.an-lead {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-md);
+  line-height: 1.6;
+}
+.an-lead strong,
+.an-highlights strong {
+  color: var(--hf-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.an-highlights {
+  display: grid;
+  gap: 4px;
+  max-width: 68ch;
+  margin: 0;
+  padding-left: 1.2em;
+  list-style: disc;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  line-height: 1.55;
+}
+.an-answer-meta {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.5;
+}
+/* The rows: a heading and a Chart/Table switch, then one of the two. */
+.an-result {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.an-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.an-result-head h3 {
+  flex: 1;
+  min-width: min(200px, 100%);
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.an-result-head .hf-segmented {
+  margin-left: auto;
+}
+.an-result-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin-top: -2px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.an-chart {
+  --wk-series: var(--hf-chart-1);
+  min-width: 0;
+  margin: 0;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.an-chart figcaption {
+  margin-bottom: 10px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+}
+.an-chart .wk-chart-focus:focus-visible {
+  outline-offset: 5px;
+}
+.an-chart .wk-bars {
+  margin: -2px -8px;
+}
+/* A ranking: places beside the names, and first place at full strength. */
+.an-chart .wk-bar-rank {
+  display: inline-block;
+  min-width: 2ch;
+  margin-right: 8px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  text-align: right;
+}
+.an-chart .wk-bars.is-ranked .wk-bar-row:not(.is-first) .wk-bar {
+  background: color-mix(in oklab, var(--wk-series) 55%, var(--hf-raised));
+}
+.an-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.an-stat {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.an-stat dt {
+  overflow: hidden;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-stat dd {
+  margin: 4px 0 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.an-stat dd.hf-num {
+  font-family: var(--hf-font-display);
+  font-size: var(--hf-text-2xl);
+  font-weight: 400;
+  letter-spacing: -0.4px;
+  line-height: 1.15;
+}
+/* Keys say which record this is; they are not the answer. */
+.an-stat.is-key {
+  background: transparent;
+}
+.an-stat.is-key dd {
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  font-weight: 400;
+}
+/* Columns share the card's width (the grid's own sizing makes every column
+   as wide as the widest, which pushes the last ones out of view); a narrow
+   card still scrolls sideways past the columns' minimum widths. */
+.an-table .hf-grid-inner {
+  width: auto;
+}
+.an-table .hf-grid-foot {
+  padding: 4px 6px;
+}
+/* The measure stands out; keys and codes stay quieter. */
+.an-table .hf-grid-td.is-measure {
+  color: var(--hf-text);
+  font-weight: 600;
+}
+.an-table .hf-grid-td.is-key {
+  color: var(--hf-muted);
+}
+
+/* Footer: sources, then quiet toggles for the rest. */
+.an-foot {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.an-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.an-foot-label {
+  margin-right: 2px;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.an-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-raised);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-chip:hover {
+  border-color: var(--hf-border-strong);
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.an-chip svg {
+  flex: none;
+  color: var(--hf-muted);
+}
+.an-foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-left: -8px;
+}
+.an-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--hf-radius-sm);
+  background: none;
+  color: var(--hf-muted);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.an-toggle:hover,
+.an-toggle.is-open {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.an-toggle svg {
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.an-toggle.is-open svg {
+  transform: rotate(180deg);
+}
+.an-foot-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.an-foot-panel {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-sunken);
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  animation: hf-pop 160ms var(--hf-ease);
+}
+.an-assumptions {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.5;
+}
+.an-sql-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -6px -8px 6px 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.an-sql pre {
+  max-height: 280px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  border-radius: 0;
+  background: none;
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-sm);
+  line-height: 1.6;
+  white-space: pre;
+}
+.an-sql pre code {
+  color: inherit;
+  font-size: inherit;
+}
+/* Cards: prepared changes, and what went wrong. */
+.an-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-raised);
+}
+.an-card-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--hf-radius);
+  background: var(--hf-accent-soft);
+  color: var(--hf-accent-text);
+}
+.an-card-text {
+  flex: 1;
+  min-width: min(240px, 100%);
+}
+.an-card-text strong {
+  display: block;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.an-card-text p {
+  margin: 2px 0 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+  line-height: 1.5;
+}
+.an-card > .hf-btn {
+  align-self: center;
+}
+.an-card.is-danger {
+  border-color: color-mix(in srgb, var(--hf-danger) 30%, var(--hf-border));
+  background: var(--hf-danger-soft);
+}
+.an-card.is-danger .an-card-icon {
+  background: color-mix(in srgb, var(--hf-danger) 14%, transparent);
+  color: var(--hf-danger-text);
+}
+.an-card.is-muted {
+  background: var(--hf-sunken);
+}
+.an-card.is-muted .an-card-icon {
+  background: var(--hf-hover);
+  color: var(--hf-muted);
+}
+.an-card-detail > summary {
+  margin: 0;
+  padding: 6px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.an-card-detail[open] > summary {
+  margin-bottom: 0;
+}
+.an-card-detail pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised);
+  color: var(--hf-text-2);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* Composer: pinned under the conversation, which fades out behind it. */
+.an-dock {
+  position: relative;
+  flex: none;
+  padding-bottom: 10px;
+  background: var(--hf-bg);
+}
+.an-dock::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: 20px;
+  background: linear-gradient(transparent, var(--hf-bg));
+  pointer-events: none;
+}
+.an-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 7px 7px 7px 16px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-xl);
+  background: var(--hf-field);
+  box-shadow: var(--hf-shadow-2);
+  cursor: text;
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    box-shadow var(--hf-duration) var(--hf-ease);
+}
+.an-composer:focus-within {
+  border-color: var(--hf-accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--hf-accent) 18%, transparent),
+    var(--hf-shadow-2);
+}
+.an-composer .an-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 7px 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-md);
+  line-height: 22px;
+  resize: none;
+}
+.an-composer .an-input:focus,
+.an-composer .an-input:focus-visible {
+  border: 0;
+  outline: none;
+}
+.an-composer .an-input::placeholder {
+  color: var(--hf-muted);
+}
+.an-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--hf-radius-lg);
+  background: var(--hf-ink);
+  color: var(--hf-on-ink);
+  cursor: pointer;
+  transition: background var(--hf-duration) var(--hf-ease);
+}
+.an-send:hover:not(:disabled) {
+  background: var(--hf-ink-hover);
+}
+.an-send:disabled {
+  background: var(--hf-sunken);
+  color: var(--hf-faint);
+  cursor: default;
+}
+.an-hint {
+  margin: 6px 0 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+  text-align: center;
+}
+.an-jump {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-raised);
+  box-shadow: var(--hf-shadow-2);
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+.an-jump:hover {
+  background: var(--hf-hover);
+}
+
+/* Ask panel: the same composer, a little taller, inside a dialog. */
+.an-ask .an-composer {
+  box-shadow: none;
+}
+.an-ask .an-hint {
+  text-align: left;
+}
+
+@media (max-width: 800px) {
+  .an-chat {
+    --an-gutter: var(--hf-space-2);
+    /* Under the mobile bar. */
+    height: calc(100dvh - 52px);
+  }
+  .an-log {
+    gap: var(--hf-space-4);
+    padding-top: var(--hf-space-2);
+  }
+}
+@media (max-width: 520px) {
+  .an-question {
+    max-width: 90%;
+  }
+  .an-answer-head h2 {
+    font-size: var(--hf-text-lg);
+  }
+  .an-reply {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .an-avatar {
+    width: 24px;
+    height: 24px;
+  }
+  .an-avatar svg {
+    width: 12px;
+    height: 12px;
+  }
+  .an-new-chat {
+    width: 28px;
+    padding: 0;
+  }
+  .an-new-chat-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .an-card > .hf-btn {
+    margin-left: 42px;
+  }
+  .an-chat .an-hint {
+    display: none;
+  }
+}
+
+/* The next investigation stays below the latest answer, out of hero space. */
+.an-followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0 36px;
+}
+.an-followup {
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius-pill);
+  background: transparent;
+  color: var(--hf-muted);
+  font: inherit;
+  font-size: var(--hf-text-xs);
+  line-height: 1.4;
+  min-height: 28px;
+  padding: 5px 10px;
+  text-align: left;
+  max-width: 100%;
+  cursor: pointer;
+}
+.an-followup:hover {
+  background: var(--hf-hover);
+  color: var(--hf-text);
+}
+.an-followup:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: 2px;
+}
+.an-completion-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.an-composer .an-completion-field .an-input {
+  display: block;
+  width: 100%;
+}
+.an-completion {
+  position: absolute;
+  inset: 7px 0 auto;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-md);
+  line-height: 22px;
+  opacity: 0.7;
+}
+.an-completion > span {
+  visibility: hidden;
+}

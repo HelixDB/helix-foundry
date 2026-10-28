@@ -396,7 +396,7 @@ describe("goalPrompt", () => {
   it("lists the newest documents the agent reads and counts the older", () => {
     const text = goalPrompt(input());
     expect(text).toContain(
-      `Foundry reads up to ${DOCUMENTS_PER_SET} of the newest text documents (Markdown, MDX, text, and PDFs whose text it has read) in each set, and each table file (CSV, TSV, Parquet, JSON, JSONL) as a table of its own.`,
+      `Foundry’s agent looks at up to ${DOCUMENTS_PER_SET} of each set’s newest text documents (Markdown, MDX, text, and PDFs whose text it has read) to see what the set holds; loads read every document of a set its version reads. Each table file (CSV, TSV, Parquet, JSON, JSONL) is a table of its own.`,
     );
     expect(text).toContain("**General**, 7 documents. Supplier contracts.");
     expect(text).toContain(
@@ -424,7 +424,7 @@ describe("goalPrompt", () => {
     expect(text).toContain(
       "**Granola / Notes**, 418 documents. Each Granola meeting note.\n\n",
     );
-    expect(text).not.toContain("older");
+    expect(text).not.toMatch(/- and [\d,]+ older/);
   });
 
   it("lists every document of a small set, without a description", () => {
@@ -434,7 +434,7 @@ describe("goalPrompt", () => {
       }),
     );
     expect(text).toContain("**General**, 1 document.\n- a.md\n\n");
-    expect(text).not.toContain("older");
+    expect(text).not.toMatch(/- and [\d,]+ older/);
   });
 
   it("lists a set's table files after its text documents", () => {

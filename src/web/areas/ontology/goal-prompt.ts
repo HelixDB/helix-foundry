@@ -288,7 +288,7 @@ export function inventory({
     : [];
   const documents = read.length
     ? [
-        `Foundry reads up to ${DOCUMENTS_PER_SET} of the newest text documents (Markdown, MDX, text, and PDFs whose text it has read) in each set, and each table file (CSV, TSV, Parquet, JSON, JSONL) as a table of its own.`,
+        `Foundry’s agent looks at up to ${DOCUMENTS_PER_SET} of each set’s newest text documents (Markdown, MDX, text, and PDFs whose text it has read) to see what the set holds; loads read every document of a set its version reads. Each table file (CSV, TSV, Parquet, JSON, JSONL) is a table of its own.`,
         "",
         ...read.flatMap((s) => {
           const listed = s.names.slice(0, DOCUMENTS_PER_SET);
@@ -331,7 +331,7 @@ export function inventory({
  * itself, then write. A numbered list, in the user's voice.
  */
 export const GOAL_APPROACH: readonly string[] = [
-  "1. Start from what you already know about me and my work: our past conversations, your memory, and any files or notes you can see. Look for:",
+  "1. Start from what you already know about me and my work: our past conversations, your memory, and files or notes I point you to or that are in the folder we’re working in. Look for:",
   "   - what the business does, who its customers are and how it makes money;",
   "   - my role, my team, and who else will ask questions of this ontology (people or AI agents);",
   "   - the decisions they make and the questions they keep asking: recurring reports, metrics, reviews, investigations;",

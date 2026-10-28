@@ -1,0 +1,797 @@
+/* AI-working scene: isometric layers from data to apps, driven by the root stage class. */
+.ontology-scene {
+  --os-ink: #30342c;
+  --os-ink-2: #8d9085;
+  --os-line: #bdbfb3;
+  --os-top: #fdfcf8;
+  --os-left: #f1efe7;
+  --os-right: #e2e0d6;
+  --os-lit: #e6f6ee;
+  --os-mint: #8fe3c4;
+  --os-mint-soft: #d4f3e5;
+  --os-mint-ink: #36b98a;
+  --os-mint-text: #174a37;
+  --os-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  width: 100%;
+  max-width: 780px;
+  margin-inline: auto;
+  container: ontology-scene / inline-size;
+}
+.ontology-scene > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  font-family: inherit;
+}
+/* Only for CSS-animated transforms; fill-box would also re-base the matrix attributes. */
+.os-tile-wrap,
+.os-node-body,
+.os-node-glow,
+.os-pill,
+.os-pill-body,
+.os-bar {
+  transform-box: fill-box;
+}
+
+.os-stop {
+  stop-color: var(--os-mint);
+}
+.os-slab path {
+  stroke: var(--os-ink);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  transition: fill 0.8s var(--os-ease);
+}
+.os-face-t {
+  fill: var(--os-top);
+}
+.os-face-l {
+  fill: var(--os-left);
+}
+.os-face-r {
+  fill: var(--os-right);
+}
+.os-rim {
+  fill: none;
+  stroke: var(--os-ink);
+  stroke-width: 0.7;
+  stroke-dasharray: 1.5 3;
+  opacity: 0.3;
+  transition:
+    stroke 0.8s,
+    opacity 0.8s;
+}
+.os-plate-label {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-anchor: middle;
+  fill: var(--os-ink-2);
+  transition: fill 0.8s;
+}
+.os-grid path {
+  fill: none;
+  stroke: var(--os-ink);
+  stroke-width: 0.6;
+  opacity: 0.07;
+}
+
+/* Tiles on the base plates. */
+.os-tile path {
+  stroke-width: 0.8;
+}
+.os-tile-wrap {
+  transition: translate 0.7s var(--os-ease);
+  animation: os-drop 0.6s var(--os-ease) both;
+  animation-delay: calc(var(--i) * 110ms + 120ms);
+  transform-origin: 50% 100%;
+}
+.os-glyph,
+.os-glyph path,
+.os-glyph circle,
+.os-glyph ellipse {
+  fill: none;
+  stroke: var(--os-ink);
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    stroke 0.6s,
+    fill 0.6s;
+}
+.os-more {
+  font-size: 9px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: var(--os-ink);
+}
+
+/* Connectors between layers. */
+.os-flow path {
+  fill: none;
+  stroke-linecap: round;
+}
+.os-flow-line {
+  stroke: #a6a89c;
+  stroke-width: 1.2;
+  stroke-dasharray: 2 4;
+  transition: stroke 0.6s;
+}
+.os-flow-packet {
+  stroke: var(--os-mint-ink);
+  stroke-width: 2.4;
+  stroke-dasharray: 5 200;
+  stroke-dashoffset: 5;
+  opacity: 0;
+}
+.is-reading .os-flows-data .os-flow-line,
+.is-matching .os-flows-data .os-flow-line,
+.is-matching .os-flows-models .os-flow-line,
+.is-proposing .os-flows-models .os-flow-line,
+.is-describing .os-flows-models .os-flow-line,
+.is-proposing .os-flows-apps .os-flow-line,
+.is-describing .os-flows-apps .os-flow-line {
+  stroke: var(--os-mint-ink);
+  animation: os-flow 0.9s linear infinite;
+}
+.is-reading .os-flows-data .os-flow-packet,
+.is-matching .os-flows-data .os-flow-packet,
+.is-matching .os-flows-models .os-flow-packet,
+.is-proposing .os-flows-models .os-flow-packet,
+.is-describing .os-flows-models .os-flow-packet,
+.is-proposing .os-flows-apps .os-flow-packet,
+.is-describing .os-flows-apps .os-flow-packet,
+.is-done .os-flows-apps .os-flow-packet {
+  opacity: 1;
+  animation: os-packet 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation-delay: calc(var(--i) * 0.37s);
+}
+/* Once the ontology is proposed it keeps feeding analytics, workflows and integrations. */
+.is-done .os-flow-line {
+  stroke: #9fd9c2;
+}
+.is-done .os-flows-apps .os-flow-line {
+  stroke: #6fcaa6;
+  animation: os-flow 2.4s linear infinite;
+}
+.is-done .os-flows-apps .os-flow-packet {
+  animation-duration: 4s;
+}
+
+/* Which plate is doing the work. */
+.is-reading .os-data .os-face-t,
+.is-matching .os-models .os-face-t,
+.is-proposing .os-models .os-face-t,
+.is-describing .os-models .os-face-t,
+.reached-proposing .os-onto .os-face-t {
+  fill: var(--os-lit);
+}
+.is-reading .os-data .os-rim,
+.is-matching .os-models .os-rim,
+.is-proposing .os-models .os-rim,
+.is-describing .os-models .os-rim,
+.reached-proposing .os-onto .os-rim {
+  stroke: var(--os-mint-ink);
+  opacity: 0.8;
+}
+.is-reading .os-data .os-plate-label,
+.is-matching .os-models .os-plate-label,
+.is-proposing .os-models .os-plate-label,
+.reached-proposing .os-onto .os-plate-label {
+  fill: var(--os-mint-ink);
+}
+.is-reading .os-data .os-tile .os-face-t {
+  fill: #fff;
+}
+.reached-matching .os-model .os-glyph,
+.reached-matching .os-model .os-glyph * {
+  stroke: var(--os-mint-ink);
+}
+.is-matching .os-model .os-glyph,
+.is-proposing .os-model .os-glyph,
+.is-describing .os-model .os-glyph {
+  animation: os-think 1.8s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * 0.45s);
+}
+
+/* Ontology plate: scanning light while records are matched. */
+/* Always running so it can fade out rather than snap when matching ends. */
+.os-sweep {
+  opacity: 0;
+  animation: os-sweep 3.4s ease-in-out infinite;
+  transition: opacity 1s;
+}
+.is-reading .os-sweep,
+.is-matching .os-sweep {
+  opacity: 1;
+}
+
+.os-links path {
+  fill: none;
+  stroke: var(--os-ink);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+  transition:
+    stroke 0.8s,
+    opacity 0.8s;
+}
+.reached-proposing .os-links path {
+  stroke: var(--os-mint-ink);
+  opacity: 1;
+}
+.os-draw {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 8;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.reached-matching .os-draw {
+  stroke-dashoffset: 0;
+  animation: os-draw 0.9s var(--os-ease) both;
+  animation-delay: calc(var(--i) * 150ms + 350ms);
+}
+
+/* Entity nodes. */
+.os-node-body {
+  opacity: 0.55;
+  transform-origin: 50% 100%;
+  transition: opacity 0.6s;
+}
+.os-node-top {
+  fill: var(--os-top);
+  stroke: var(--os-ink-2);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  transition:
+    fill 0.8s,
+    stroke 0.8s;
+}
+.os-node-side {
+  fill: var(--os-right);
+  stroke: var(--os-ink);
+  stroke-width: 1;
+  opacity: 0;
+  transition:
+    fill 0.8s,
+    opacity 0.6s;
+}
+.os-node-ring {
+  fill: none;
+  stroke: var(--os-line);
+  stroke-width: 0.8;
+  opacity: 0;
+  transition:
+    stroke 0.8s,
+    opacity 0.6s;
+}
+.os-icon {
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+.os-icon path,
+.os-icon circle,
+.os-icon ellipse {
+  fill: var(--os-top);
+  stroke: var(--os-ink);
+  stroke-width: 0.9;
+  stroke-linejoin: round;
+  transition: fill 0.8s;
+}
+.os-icon .os-icon-line {
+  fill: none;
+}
+.os-icon .os-face-l {
+  fill: var(--os-left);
+}
+.os-icon .os-face-r {
+  fill: var(--os-right);
+}
+.is-reading .os-node-body {
+  animation: os-breathe 2.2s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * 0.28s);
+}
+.reached-matching .os-node-body {
+  opacity: 1;
+  animation: os-pop 0.75s cubic-bezier(0.3, 1.45, 0.45, 1) both;
+  animation-delay: calc(var(--i) * 110ms);
+}
+.reached-matching .os-node-top {
+  stroke: var(--os-ink);
+  stroke-dasharray: none;
+}
+.reached-matching .os-node-side,
+.reached-matching .os-node-ring,
+.reached-matching .os-icon {
+  opacity: 1;
+}
+.reached-proposing .os-node-side {
+  fill: var(--os-mint);
+}
+.reached-proposing .os-node-ring {
+  stroke: var(--os-mint-ink);
+}
+.reached-proposing .os-icon .os-face-t,
+.reached-proposing .os-icon ellipse,
+.reached-proposing .os-icon circle {
+  fill: var(--os-mint-soft);
+}
+.os-node-glow {
+  opacity: 0;
+}
+.reached-proposing .os-node-glow {
+  animation: os-flash 1.6s ease-out both;
+  animation-delay: calc(var(--i) * 120ms + 100ms);
+}
+.reached-proposing .is-hub .os-node-glow {
+  opacity: 0.8;
+  animation: os-glow 2.8s ease-in-out infinite alternate;
+}
+
+.os-pill {
+  opacity: 0;
+  transform-origin: 50% 100%;
+}
+.os-pill-body {
+  transform-origin: 50% 100%;
+}
+.os-pill.is-below .os-pill-body {
+  transform-origin: 50% 0;
+}
+.os-pill.is-right .os-pill-body {
+  transform-origin: 0 50%;
+}
+.os-pill.is-left .os-pill-body {
+  transform-origin: 100% 50%;
+}
+.os-pill-short {
+  display: none;
+}
+.os-pill rect {
+  fill: var(--os-mint);
+  stroke: var(--os-mint-ink);
+  stroke-width: 0.8;
+}
+.os-pill text {
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: var(--os-mint-text);
+}
+.os-pill-stem {
+  fill: none;
+  stroke: var(--os-mint-ink);
+  stroke-width: 0.9;
+  stroke-dasharray: 1.5 2;
+}
+.os-pill.is-skeleton rect {
+  fill: var(--os-top);
+  stroke: var(--os-line);
+}
+.os-pill.is-skeleton .os-pill-bar {
+  fill: #dcdcd2;
+  stroke: none;
+}
+.os-pill.is-skeleton .os-pill-stem {
+  stroke: var(--os-line);
+}
+.reached-matching .os-pill.is-skeleton {
+  opacity: 1;
+  animation: os-rise 0.5s var(--os-ease) both;
+  animation-delay: calc(var(--i) * 110ms + 450ms);
+}
+.reached-matching .os-pill.is-skeleton .os-pill-bar {
+  animation: os-shimmer 1.4s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * 0.2s);
+}
+.reached-matching .os-pill.is-skeleton.is-replaced {
+  opacity: 0;
+  animation: os-fade-out 0.3s ease both;
+}
+.reached-proposing .os-pill:not(.is-skeleton) {
+  opacity: 1;
+  animation: os-rise 0.55s var(--os-ease) both;
+  animation-delay: calc(var(--i) * 120ms + 150ms);
+}
+
+/* Apps light up once entities are being described. */
+.os-screen-frame {
+  fill: #fff;
+  stroke: var(--os-ink);
+  stroke-width: 0.9;
+}
+.os-screen-bar,
+.os-screen-stand {
+  fill: none;
+  stroke: var(--os-ink);
+  stroke-width: 0.8;
+}
+.os-screen-foot {
+  fill: var(--os-right);
+  stroke: var(--os-ink);
+  stroke-width: 0.8;
+}
+.os-screen-dot {
+  fill: var(--os-line);
+}
+.os-screen-fill {
+  fill: #e4e3dc;
+  transition: fill 0.8s;
+}
+.os-screen-box {
+  fill: none;
+  stroke: var(--os-line);
+  stroke-width: 0.9;
+}
+.os-screen-line {
+  fill: none;
+  stroke: var(--os-line);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 0.8s;
+}
+/* Apps light up one after another. */
+.ontology-scene .os-app * {
+  transition-delay: calc(var(--i) * 300ms);
+}
+.reached-describing .os-app .os-face-t {
+  fill: var(--os-lit);
+}
+.reached-describing .os-app .os-rim {
+  stroke: var(--os-mint-ink);
+  opacity: 0.8;
+}
+.reached-describing .os-app .os-plate-label {
+  fill: var(--os-mint-ink);
+}
+.reached-describing .os-screen-fill {
+  fill: var(--os-mint);
+}
+.reached-describing .os-screen-line {
+  stroke: var(--os-mint-ink);
+}
+.is-describing .os-bar {
+  transform-origin: 50% 100%;
+  animation: os-bars 1.5s ease-in-out infinite alternate;
+  animation-delay: calc(var(--j, 0) * 0.18s + var(--i) * 0.3s);
+}
+
+/* Phones: keep entity names and plate names readable as the scene scales down. The
+   pill's body scales, not the pill, so the entrance animation's transform keeps it. */
+@container ontology-scene (max-width: 520px) {
+  .os-pill-body {
+    scale: 1.3;
+  }
+  .os-pill-long {
+    display: none;
+  }
+  .os-pill-short {
+    display: inline;
+  }
+  .os-plate-label {
+    font-size: 22px;
+    letter-spacing: 0.12em;
+  }
+}
+
+@keyframes os-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+}
+@keyframes os-flow {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+@keyframes os-packet {
+  from {
+    stroke-dashoffset: 5;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+@keyframes os-think {
+  from {
+    opacity: 0.45;
+  }
+}
+@keyframes os-sweep {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(450px);
+  }
+}
+@keyframes os-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes os-breathe {
+  from {
+    opacity: 0.3;
+  }
+  to {
+    opacity: 0.65;
+  }
+}
+@keyframes os-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.6);
+  }
+}
+@keyframes os-flash {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+@keyframes os-glow {
+  from {
+    opacity: 0.45;
+  }
+}
+@keyframes os-rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+@keyframes os-fade-out {
+  from {
+    opacity: 1;
+  }
+}
+@keyframes os-shimmer {
+  from {
+    opacity: 0.35;
+  }
+}
+@keyframes os-bars {
+  from {
+    transform: scaleY(0.55);
+  }
+}
+
+/* Incoming data feed. */
+.data-feed {
+  container: data-feed / inline-size;
+  width: 100%;
+  --feed-mint: #36b98a;
+  --feed-mint-soft: #dcf4e9;
+  --feed-border: #e4e2da;
+  --feed-muted: #73756d;
+  color: #292a26;
+  font-size: 13px;
+}
+.feed-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.feed-grid {
+  display: grid;
+  gap: 18px;
+}
+@container data-feed (min-width: 600px) {
+  .feed-grid {
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+.feed-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.feed-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  line-height: 18px;
+  color: #9a9c92;
+  transition: color 0.4s;
+}
+.feed-step-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1.5px solid #d6d6cc;
+  border-radius: 50%;
+  color: #fff;
+  transition:
+    background-color 0.3s,
+    border-color 0.3s;
+}
+.feed-step.is-active {
+  color: #292a26;
+  font-weight: 500;
+}
+.feed-step.is-active .feed-step-mark {
+  border-color: var(--feed-mint);
+  border-right-color: transparent;
+  animation: feed-spin 0.9s linear infinite;
+}
+.feed-step.is-done {
+  color: #52564d;
+}
+.feed-step.is-done .feed-step-mark {
+  background: var(--feed-mint);
+  border-color: var(--feed-mint);
+  animation: feed-pop 0.35s var(--os-ease, ease) both;
+}
+/* Columns rather than a grid, so sources with more tables leave no holes. */
+.feed-sources {
+  columns: 2 200px;
+  column-gap: 10px;
+}
+.feed-source {
+  break-inside: avoid;
+  margin-bottom: 10px;
+  padding: 10px 11px 7px;
+  background: #fcfbf8;
+  border: 1px solid var(--feed-border);
+  border-radius: 10px;
+  animation: feed-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.feed-source h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.feed-source h4 img,
+.feed-source h4 svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  color: #52564d;
+}
+.feed-source h4 small {
+  margin-left: auto;
+  animation: feed-fade 0.4s ease both;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--feed-muted);
+}
+.feed-source ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.feed-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 24px;
+  border-top: 1px solid #efede6;
+  animation: feed-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+.feed-item-mark {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.2px dashed #cfcfc5;
+  border-radius: 50%;
+  color: var(--feed-mint);
+}
+.feed-item.is-loading .feed-item-mark {
+  border: 1.5px solid var(--feed-mint);
+  border-right-color: transparent;
+  animation: feed-spin 0.9s linear infinite;
+}
+.feed-item.is-ready .feed-item-mark {
+  border: 0;
+  background: var(--feed-mint-soft);
+  animation: feed-pop 0.35s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+.feed-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #3a3d35;
+}
+.feed-item.is-pending .feed-item-name {
+  color: #a0a298;
+}
+.feed-item-rows {
+  font-size: 11.5px;
+  color: var(--feed-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.feed-item.is-pending .feed-item-rows {
+  color: #b2b4aa;
+}
+.feed-item.is-ready .feed-item-rows {
+  animation: feed-fade 0.4s ease both;
+}
+.feed-shimmer {
+  display: block;
+  width: 58px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ecebe4 0%, #f8f7f2 50%, #ecebe4 100%);
+  background-size: 200% 100%;
+  animation: feed-shimmer 1.2s linear infinite;
+}
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes feed-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes feed-pop {
+  from {
+    transform: scale(0.4);
+  }
+}
+@keyframes feed-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes feed-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ontology-scene *,
+  .data-feed * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .ontology-scene .os-flow-packet,
+  .ontology-scene .os-sweep {
+    display: none;
+  }
+  .feed-step.is-active .feed-step-mark,
+  .feed-item.is-loading .feed-item-mark {
+    border-right-color: var(--feed-mint);
+    border-style: dotted;
+  }
+}

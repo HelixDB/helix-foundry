@@ -1,0 +1,230 @@
+/* Ground, lettering and controls. Section boxes live in sections.css, and
+   each figure in a file of its own.
+   A near-black ground rather than pure black, text and rules as white at an
+   opacity rather than separate greys, and no corner radius anywhere. Geist
+   loads from index.html. */
+
+:root {
+  --bg: #0e0e0e;
+  --card: #151515;
+  --card-2: #101010;
+  --line: #2a2a2a;
+  /* The nav's ground, near-opaque so the field barely shows through it. */
+  --bar: rgba(14, 14, 14, 0.94);
+
+  --ink: rgba(255, 255, 255, 0.92);
+  --ink-2: rgba(255, 255, 255, 0.5);
+  --ink-3: rgba(255, 255, 255, 0.25);
+  --rule: rgba(255, 255, 255, 0.16);
+
+  --mint: #85ed75;
+
+  --sans:
+    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --max: 80rem;
+  --gut: 1.25rem;
+  --gap: 1.25rem;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (min-width: 768px) {
+  :root {
+    --gap: 2rem;
+  }
+}
+@media (min-width: 1024px) {
+  :root {
+    --gap: 4.375rem;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* The field is one fixed canvas behind every section; the page sits above it,
+   so a section without a background shows the field through it. */
+.field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+.page {
+  position: relative;
+  z-index: 1;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+h1 {
+  font-size: clamp(1.9rem, 3.2vw, 2.75rem);
+  line-height: 1.05;
+}
+h2 {
+  font-size: clamp(1.5rem, 2.4vw, 2.25rem);
+  line-height: 1.12;
+}
+h3 {
+  font-size: 1.125rem;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0 0 0.9em;
+}
+p:last-child {
+  margin-bottom: 0;
+}
+a {
+  color: inherit;
+}
+
+/* Micro-lettering: uppercase mono at a quarter opacity. */
+.m {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 var(--gut);
+}
+
+/* Controls: square, bordered, no radius. */
+
+.btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  height: 2.25rem;
+  padding: 0 0.9rem;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--ease),
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+
+.btn::after {
+  content: "\203A";
+  font-size: 1.1em;
+  line-height: 1;
+  opacity: 0.6;
+}
+.btn:hover {
+  background: #fff;
+  border-color: #fff;
+  color: #0e0e0e;
+}
+.btn-solid {
+  background: #fff;
+  border-color: #fff;
+  color: #0e0e0e;
+}
+.btn-solid:hover {
+  background: var(--mint);
+  border-color: var(--mint);
+  color: #08210a;
+}
+.btn[data-copied="true"] {
+  background: var(--mint);
+  border-color: var(--mint);
+  color: #08210a;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+:focus-visible {
+  outline: 1px solid var(--mint);
+  outline-offset: 2px;
+}
+
+.up {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 500ms var(--ease),
+    transform 500ms var(--ease);
+}
+.up.in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .up {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

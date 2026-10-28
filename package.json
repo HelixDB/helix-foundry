@@ -47,7 +47,8 @@
     "remark-frontmatter": "5.0.0",
     "remark-gfm": "4.0.1",
     "server-only": "0.0.1",
-    "smol-toml": "1.9.0"
+    "smol-toml": "1.9.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

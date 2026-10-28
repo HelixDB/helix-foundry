@@ -1,0 +1,280 @@
+/* The Explorer demo: the local app's ObjectGraph chrome (og-* in its
+   areas/ontology/ontology.css, not vendored) in the page's dark ground. The
+   stage is clear: the field draws the records through it. It is a picture of
+   the product, so nothing in it takes the pointer. */
+
+.site-explorer {
+  padding: 1.25rem;
+  pointer-events: none;
+  user-select: none;
+}
+@media (min-width: 768px) {
+  .site-explorer {
+    padding: 1.75rem;
+  }
+}
+
+.site-explorer .og {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+.site-explorer .og-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.site-explorer .og-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--ink-3);
+}
+.site-explorer .og-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.site-explorer .og-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  transition:
+    border-color 250ms var(--ease),
+    color 250ms var(--ease),
+    background-color 250ms var(--ease);
+}
+.site-explorer .og-type.is-current {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: #1c1c1c;
+  color: var(--ink);
+}
+.site-explorer .og-count {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.site-explorer .og-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  background: #6f7168;
+}
+.site-explorer .og-scope {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.site-explorer .og-stage {
+  position: relative;
+  height: clamp(440px, 68vh, 600px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+/* The field draws the settled records here, so they move with the stage. */
+.site-explorer .og-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.site-explorer .og-panel {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: 300px;
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid #2c2c2c;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.9);
+  animation: og-panel-in 320ms var(--ease);
+}
+.site-explorer:not(.is-live) .og-panel {
+  opacity: 0;
+  transform: translateX(12px);
+}
+.site-explorer.is-live .og-panel {
+  transition:
+    opacity 400ms var(--ease),
+    transform 400ms var(--ease);
+}
+@keyframes og-panel-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(4px);
+  }
+}
+.site-explorer .og-panel header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.site-explorer .og-panel header .og-dot {
+  margin-top: 5px;
+  box-shadow: 0 0 10px currentColor;
+}
+.site-explorer .og-panel header > div {
+  flex: 1;
+  min-width: 0;
+}
+.site-explorer .og-panel h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+.site-explorer .og-panel header p {
+  margin: 2px 0 0;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+.site-explorer .og-close {
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+.site-explorer .og-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 4px;
+}
+.site-explorer .og-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+.site-explorer .og-button.is-primary {
+  border-color: #fff;
+  background: #fff;
+  color: #0e0e0e;
+}
+.site-explorer .og-panel section {
+  margin-top: 12px;
+}
+.site-explorer .og-panel h3 {
+  margin: 0 0 5px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.site-explorer .og-panel h3 span {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.site-explorer .og-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.site-explorer .og-panel li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.site-explorer .og-panel li .og-dot {
+  width: 8px;
+  height: 8px;
+}
+.site-explorer .og-panel li small {
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-size: 11px;
+}
+.site-explorer .og-match-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-explorer .og-more {
+  color: var(--ink-3) !important;
+  font-size: 11px !important;
+}
+.site-explorer .og-props dl {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+.site-explorer .og-props dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.site-explorer .og-props dt {
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-explorer .og-props dd {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.82);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .site-explorer .og-search {
+    width: 100%;
+  }
+  .site-explorer .og-legend {
+    display: none;
+  }
+  .site-explorer .og-stage {
+    height: 560px;
+  }
+  .site-explorer .og-panel {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 43%;
+  }
+}

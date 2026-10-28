@@ -1,0 +1,1115 @@
+/* Suggested ontology: a schema of the consolidated entities before the build. */
+.so-view {
+  --so-canvas: min(1120px, calc(100vw - 64px));
+  --so-mint: #e5f4ea;
+  --so-mint-border: #c3e2cf;
+  --so-mint-ink: #2d6a4b;
+  --so-line: #b4b1a5;
+  --so-hot: #5b6651;
+  color: #292a26;
+}
+/* Four or more columns need a wider canvas for cards to stay readable. */
+.so-view.is-wide {
+  --so-canvas: min(1320px, calc(100vw - 64px));
+}
+.so-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Also heads the loading page, outside .so-view. */
+.so-eyebrow {
+  --so-mint: #e5f4ea;
+  --so-mint-border: #c3e2cf;
+  --so-mint-ink: #2d6a4b;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--so-mint-border);
+  border-radius: 999px;
+  background: var(--so-mint);
+  color: var(--so-mint-ink);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 18px;
+}
+.so-head h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: -0.7px;
+  line-height: 1.2;
+  margin: 0 0 12px;
+}
+/* Focused only so screen readers announce the suggestion when it replaces the scene. */
+.so-head h1:focus {
+  outline: none;
+}
+.so-summary {
+  max-width: 620px;
+  margin: 0 0 18px;
+  color: #6f6c64;
+  font-size: 15px;
+  line-height: 1.65;
+}
+.so-summary .so-skeleton {
+  height: 12px;
+  margin: 7px 0 11px;
+}
+.so-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #5f625a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.so-stats strong {
+  color: #292a26;
+  font-weight: 600;
+}
+.so-stack {
+  display: inline-flex;
+  flex: none;
+}
+.so-stack .so-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  box-shadow: 0 0 0 2px #f8f7f3;
+}
+.so-stack .so-logo + .so-logo {
+  margin-left: -5px;
+}
+.so-stack .so-logo img {
+  width: 14px;
+  height: 14px;
+}
+.so-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+  margin: 10px 0 0;
+  color: #77746c;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.so-hint:empty {
+  min-height: 0;
+  margin: 0;
+}
+.so-spin {
+  animation: so-spin 1s linear infinite;
+}
+
+/* Canvas: breaks out of the setup column so the schema has room to breathe. */
+.so-canvas {
+  position: relative;
+  width: var(--so-canvas);
+  margin: 18px calc((100% - var(--so-canvas)) / 2) 0;
+}
+.so-stage {
+  position: relative;
+  box-sizing: content-box;
+  border: 1px solid #e4e2da;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle, #dedbd1 1px, transparent 1.3px) 0 0 / 20px 20px,
+    #f4f3ee;
+}
+.so-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.so-edge {
+  transition: opacity 0.2s;
+}
+.so-line {
+  fill: none;
+  stroke: var(--so-line);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  transition:
+    stroke 0.15s,
+    stroke-width 0.15s;
+}
+.so-arrow {
+  fill: var(--so-line);
+  transition: fill 0.15s;
+}
+.so-edge.is-activity .so-line {
+  stroke-dasharray: 4 4;
+}
+.so-edges.has-hot .so-edge {
+  opacity: 0.25;
+}
+.so-edges .so-edge.is-hot {
+  opacity: 1;
+}
+.so-edge.is-hot .so-line {
+  stroke: var(--so-hot);
+  stroke-width: 2;
+}
+.so-edge.is-hot .so-arrow {
+  fill: var(--so-hot);
+}
+.so-edges .so-edge.is-hidden {
+  opacity: 0;
+}
+
+.so-nodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* Every row inside a card has a fixed height; cardHeight() in the view matches it. */
+.so-node {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 13px;
+  border: 1px solid #dedbd2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow:
+    0 1px 2px rgba(41, 42, 38, 0.04),
+    0 8px 20px -14px rgba(41, 42, 38, 0.18);
+  transition:
+    opacity 0.2s,
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background-color 0.2s;
+  animation: so-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.so-node > * {
+  flex: none;
+}
+.so-node.is-hub {
+  border-color: #cbc8bb;
+  box-shadow:
+    0 1px 2px rgba(41, 42, 38, 0.05),
+    0 16px 32px -18px rgba(41, 42, 38, 0.28);
+}
+/* Consolidated across sources: the same mint as the legend swatch. */
+.so-node.is-merged {
+  border-color: var(--so-mint-border);
+  background: linear-gradient(180deg, #f1f9f4 0, #fff 56px);
+  box-shadow:
+    0 0 0 3px rgba(195, 226, 207, 0.35),
+    0 8px 20px -14px rgba(41, 42, 38, 0.18);
+}
+.so-node:hover,
+.so-node:focus-within {
+  z-index: 3;
+}
+.so-node.is-hot,
+.so-node:focus-within {
+  border-color: #8d9780;
+}
+.so-node.is-activity {
+  border-style: dashed;
+  border-color: #c3c0b3;
+  background: #fcfbf8;
+}
+.so-node.is-excluded {
+  border-style: dashed;
+  background: #faf9f5;
+  box-shadow: none;
+  opacity: 0.5;
+}
+.so-node.is-excluded .so-logo {
+  filter: grayscale(1);
+}
+.so-node-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  height: calc(22px * var(--lines, 1));
+}
+.so-node-head h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: -0.15px;
+}
+.so-name {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: calc(100% + 5px);
+  min-height: 22px;
+  margin-left: -5px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 22px;
+  text-align: left;
+  cursor: text;
+}
+.so-name > span:first-child {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--lines, 1);
+  overflow-wrap: anywhere;
+}
+.so-name svg {
+  margin-top: 5px;
+}
+.so-node-stack {
+  margin-top: 1px;
+}
+.so-node-stack .so-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px #fff;
+}
+.so-node-stack .so-logo img {
+  width: 12px;
+  height: 12px;
+}
+.so-node-stack .so-logo + .so-logo {
+  margin-left: -6px;
+}
+.so-name svg {
+  flex: none;
+  color: #9a978d;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.so-name:hover:not(:disabled) {
+  background: #f3f2ec;
+}
+.so-name:hover svg,
+.so-name:focus-visible svg {
+  opacity: 1;
+}
+.so-name:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.so-name:focus-visible {
+  outline: 2px solid #777f55;
+  outline-offset: 1px;
+}
+@media (hover: none) {
+  .so-name svg {
+    opacity: 0.55;
+  }
+}
+.so-name-input {
+  display: block;
+  width: calc(100% + 5px);
+  height: 24px;
+  margin: 0 0 0 -5px;
+  padding: 0 5px;
+  border: 1px solid #9aa38d;
+  border-radius: 6px;
+  background: #fff;
+  color: #292a26;
+  font: inherit;
+}
+.so-name-input:focus,
+.so-name-input:focus-visible {
+  border-color: #747c69;
+  outline: 3px solid rgba(116, 124, 105, 0.2);
+  outline-offset: 0;
+}
+.so-switch {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  flex-direction: row;
+  gap: 0;
+  width: 30px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+.so-switch input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.so-switch > span {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d8d5cb;
+  transition: background-color 0.15s;
+}
+.so-switch > span::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(41, 42, 38, 0.3);
+  transition: transform 0.15s;
+}
+.so-switch input:checked + span {
+  background: #56604c;
+}
+.so-switch input:checked + span::after {
+  transform: translateX(12px);
+}
+.so-switch input:focus-visible + span {
+  outline: 2px solid #777f55;
+  outline-offset: 2px;
+}
+.so-switch input:disabled {
+  cursor: not-allowed;
+}
+.so-switch input:disabled + span {
+  opacity: 0.55;
+}
+.so-meta {
+  height: 17px;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: #8a877e;
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.so-meta code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #f3f2ec;
+  color: #5f625a;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.so-desc {
+  display: -webkit-box;
+  height: 51px;
+  margin: 7px 0 0;
+  overflow: hidden;
+  color: #5f625a;
+  font-size: 12.5px;
+  line-height: 17px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.so-fields {
+  color: #9a978d;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.so-skeleton {
+  display: block;
+  height: 9px;
+  margin: 4px 0 8px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #eeede6 30%, #f9f8f4 50%, #eeede6 70%) 0
+    0 / 300% 100%;
+  animation: so-shimmer 1.6s linear infinite;
+}
+.so-skeleton.short {
+  width: 62%;
+}
+.is-describing .so-writing {
+  background: linear-gradient(
+      100deg,
+      currentColor 40%,
+      #c9c6bb 50%,
+      currentColor 60%
+    )
+    0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: so-shimmer 2.4s linear infinite;
+}
+.so-members {
+  margin-top: 10px;
+}
+.so-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin-bottom: 4px;
+}
+.so-merge {
+  position: relative;
+  display: inline-flex;
+}
+.so-merged {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border: 1px solid var(--so-mint-border);
+  border-radius: 999px;
+  background: var(--so-mint);
+  color: var(--so-mint-ink);
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: help;
+}
+.so-merged:hover {
+  background: #d9efe1;
+}
+.so-merged:focus-visible {
+  outline: 2px solid #777f55;
+  outline-offset: 2px;
+}
+.so-kind {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px dashed #c3c0b4;
+  border-radius: 999px;
+  background: #f6f5f0;
+  color: #6c6f65;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.so-members ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.so-members li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 20px;
+  font-size: 12.5px;
+}
+.so-table {
+  min-width: 0;
+  overflow: hidden;
+  color: #3b3d37;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.so-source {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: #9a978d;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.so-logo {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid #e6e4dc;
+  border-radius: 5px;
+  background: #fff;
+  color: #77746c;
+}
+.so-logo img {
+  width: 11px;
+  height: 11px;
+  object-fit: contain;
+}
+.so-logo.is-wordmark,
+.so-stack .so-logo.is-wordmark {
+  width: 30px;
+}
+.so-logo.is-wordmark img,
+.so-stack .so-logo.is-wordmark img {
+  width: 24px;
+  height: 12px;
+}
+
+/* Dark popovers for per-member match counts and link details. */
+.so-pop,
+.so-tip {
+  position: absolute;
+  z-index: 10;
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: #2b2d28;
+  color: #f4f3ee;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 14px 30px -10px rgba(20, 22, 18, 0.45);
+  pointer-events: none;
+}
+/* Hidden popovers stay out of layout so they never widen the page. */
+.so-pop:not(.is-open),
+.so-pill:not(:hover):not(:focus-visible):not([aria-pressed="true"]) .so-tip {
+  display: none;
+}
+.so-pop {
+  top: calc(100% + 8px);
+  left: -8px;
+  gap: 8px;
+  max-width: 320px;
+  animation: so-show 0.15s ease;
+}
+.so-node.is-right .so-pop {
+  right: -8px;
+  left: auto;
+}
+.so-merge:hover .so-pop,
+.so-merged:focus-visible + .so-pop {
+  display: grid;
+}
+.so-pop-title {
+  color: #c9c7bd;
+  font-size: 11.5px;
+}
+.so-pop-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.so-pop-row small {
+  display: block;
+  color: #a9a79d;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 10.5px;
+}
+.so-pop-row b {
+  color: #bfe3cc;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.so-pills {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.so-pill {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid #dcd9cf;
+  border-radius: 999px;
+  background: #fff;
+  color: #5b5f55;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+  pointer-events: auto;
+  box-shadow: 0 1px 2px rgba(41, 42, 38, 0.06);
+  transform: translate(-50%, -50%);
+  transition:
+    opacity 0.2s,
+    border-color 0.15s,
+    color 0.15s,
+    visibility 0.2s;
+  animation: so-pill-in 0.35s ease backwards;
+  animation-delay: var(--d, 0ms);
+}
+.so-pills.has-hot .so-pill {
+  opacity: 0.45;
+}
+.so-pill:hover,
+.so-pills .so-pill.is-hot {
+  z-index: 4;
+  opacity: 1;
+  border-color: #8d9780;
+  color: #2f362b;
+}
+.so-pill:focus-visible {
+  outline: 2px solid #777f55;
+  outline-offset: 2px;
+}
+.so-pill.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+.so-tip {
+  bottom: calc(100% + 8px);
+  left: 50%;
+  max-width: 280px;
+  transform: translateX(-50%);
+  animation: so-show 0.15s ease;
+}
+.so-tip strong {
+  font-weight: 600;
+}
+.so-tip em {
+  color: #f0d9a8;
+  font-style: normal;
+}
+.so-tip code {
+  color: #c9c7bd;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 10.5px;
+}
+.so-tip small {
+  color: #a9a79d;
+  font-size: 11px;
+}
+.so-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 18px;
+  margin-top: 10px;
+  padding: 0 4px;
+  color: #8a877e;
+  font-size: 12px;
+}
+.so-keys {
+  display: flex;
+  gap: 16px;
+}
+.so-keys > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.so-key-line {
+  width: 18px;
+  border-top: 1.5px solid #a9a69a;
+}
+.so-key-line.is-dashed {
+  border-top-style: dashed;
+}
+.so-key-merge {
+  width: 14px;
+  height: 12px;
+  border: 1px solid var(--so-mint-border);
+  border-radius: 4px;
+  background: linear-gradient(180deg, #e2f3e8, #fff);
+  box-shadow: 0 0 0 2px rgba(195, 226, 207, 0.35);
+}
+.so-node-links {
+  display: none;
+  gap: 7px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 11px 0 0;
+  border-top: 1px solid #eeede6;
+}
+.so-node-links li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 6px;
+  color: #5f625a;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.so-node-links svg {
+  margin-top: 2px;
+  color: #9a978d;
+}
+.so-node-links strong {
+  color: #292a26;
+  font-weight: 600;
+}
+.so-node-links small {
+  display: block;
+  color: #9a978d;
+  font-size: 11.5px;
+}
+
+.so-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px 40px;
+  margin-top: 36px;
+}
+.so-notes h2 {
+  margin: 0 0 12px;
+  color: #292a26;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.so-notes ul {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.so-notes li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 10px;
+  color: #5f625a;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.so-notes li svg {
+  margin-top: 3px;
+  color: #b08a45;
+}
+.so-notes li svg.is-merged {
+  color: #3f8a60;
+}
+/* The question floats over the schema so it stays in reach while scrolling. */
+.so-confirm {
+  position: sticky;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 24px;
+  width: var(--so-canvas);
+  margin: 36px calc((100% - var(--so-canvas)) / 2) 0;
+  padding: 16px 18px 16px 24px;
+  border: 1px solid #e0ddd4;
+  border-radius: 14px;
+  background: rgba(252, 251, 248, 0.94);
+  box-shadow:
+    0 2px 6px rgba(41, 42, 38, 0.05),
+    0 18px 40px -20px rgba(41, 42, 38, 0.35);
+  backdrop-filter: blur(8px);
+}
+.so-confirm h2 {
+  margin: 0 0 2px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.4px;
+  line-height: 1.3;
+}
+.so-confirm p {
+  margin: 0;
+  color: #77746c;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.so-error {
+  flex-basis: 100%;
+}
+.so-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@keyframes so-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@keyframes so-draw {
+  from {
+    stroke-dashoffset: var(--len);
+  }
+}
+@keyframes so-show {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+@keyframes so-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes so-pill-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+}
+@keyframes so-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@keyframes so-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .so-edge:not(.is-activity) .so-line {
+    stroke-dasharray: var(--len);
+    animation: so-draw 0.7s cubic-bezier(0.4, 0, 0.2, 1) backwards;
+    animation-delay: var(--d);
+  }
+  .so-edge.is-activity .so-line,
+  .so-arrow {
+    animation: so-fade 0.35s ease backwards;
+    animation-delay: calc(var(--d) + 420ms);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .so-view *,
+  .so-view *::before,
+  .so-view *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .is-describing .so-writing {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+/* Stacked when there are more than MAX_DRAWN entities or cards would be too narrow
+   to read (MIN_CARD in the view): cards list their links, under a small map. */
+.so-canvas.is-stacked {
+  width: auto;
+  margin: 20px 0 0;
+}
+.so-canvas.is-stacked .so-stage {
+  border: 0;
+  background: none;
+}
+.so-canvas.is-stacked .so-nodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
+  align-items: start;
+  gap: 12px;
+}
+.so-canvas.is-stacked .so-node {
+  position: relative;
+}
+.so-canvas.is-stacked .so-node-head {
+  height: auto;
+}
+.so-canvas.is-stacked .so-name > span:first-child {
+  -webkit-line-clamp: 3;
+}
+.so-canvas.is-stacked .so-desc {
+  height: auto;
+  max-height: 68px;
+  -webkit-line-clamp: 4;
+}
+.so-canvas.is-stacked .so-node-links {
+  display: grid;
+}
+.so-canvas.is-stacked .so-keys {
+  display: none;
+}
+.so-canvas.is-stacked .so-legend {
+  padding: 0;
+}
+
+.so-minimap {
+  position: relative;
+  max-width: 420px;
+  margin: 0 auto 18px;
+  aspect-ratio: 340 / 220;
+  border: 1px solid #e4e2da;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle, #dedbd1 1px, transparent 1.3px) 0 0 / 16px 16px,
+    #f4f3ee;
+}
+.so-minimap svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.so-minimap line {
+  stroke: #a9a69a;
+  stroke-width: 1.2;
+  stroke-dasharray: 3 3;
+  transition: opacity 0.2s;
+}
+.so-minimap line.is-off {
+  opacity: 0.25;
+}
+.so-minimap ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.so-minimap li {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+.so-mini-node {
+  display: block;
+  max-width: 122px;
+  overflow: hidden;
+  padding: 3px 9px;
+  border: 1px solid #dcd9cf;
+  border-radius: 999px;
+  background: #fff;
+  color: #3b3d37;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(41, 42, 38, 0.06);
+}
+.so-mini-node.is-hub {
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.so-mini-node.is-merged {
+  border-color: var(--so-mint-border);
+  background: var(--so-mint);
+  color: var(--so-mint-ink);
+}
+.so-mini-node.is-activity {
+  border-style: dashed;
+}
+.so-mini-node.is-excluded {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+.so-mini-node:focus-visible {
+  outline: 2px solid #777f55;
+  outline-offset: 2px;
+}
+
+/* Tablets: one row, so the floating bar covers less of the cards. */
+@media (min-width: 700px) and (max-width: 959px) {
+  .so-confirm p {
+    display: none;
+  }
+}
+/* On short laptop screens the floating question keeps to one slim row, so the
+   schema's first cards stay visible above it. */
+@media (min-width: 700px) and (max-height: 880px) {
+  .so-eyebrow {
+    margin-bottom: 10px;
+  }
+  .so-summary {
+    margin: 0 0 12px;
+  }
+  .so-canvas {
+    margin-top: 12px;
+  }
+  .so-confirm {
+    bottom: 12px;
+    padding: 10px 12px 10px 20px;
+  }
+  .so-confirm h2 {
+    margin: 0;
+    font-size: 18px;
+  }
+  .so-confirm p {
+    display: none;
+  }
+}
+.so-back {
+  display: none;
+  margin-top: 28px;
+}
+/* Phones: the question stays in reach as a compact bar pinned to the bottom. */
+@media (max-width: 699px) {
+  .so-head h1 {
+    font-size: 28px;
+  }
+  .so-stats {
+    align-items: flex-start;
+  }
+  .so-back {
+    display: inline-flex;
+  }
+  .so-confirm {
+    bottom: 0;
+    gap: 8px;
+    width: auto;
+    margin: 20px -40px 0;
+    padding: 12px 40px calc(12px + env(safe-area-inset-bottom));
+    border: 0;
+    border-top: 1px solid #e4e2da;
+    border-radius: 0;
+    background: rgba(252, 251, 248, 0.96);
+    box-shadow: 0 -10px 24px -20px rgba(41, 42, 38, 0.4);
+  }
+  .so-confirm > div:first-child {
+    width: 100%;
+  }
+  .so-confirm h2 {
+    margin: 0;
+    font-size: 17px;
+  }
+  .so-confirm p,
+  .so-actions .button:not(.primary) {
+    display: none;
+  }
+  .so-actions {
+    width: 100%;
+  }
+  .so-actions .button.primary {
+    flex: 1;
+    justify-content: center;
+  }
+}
+@media (max-width: 600px) {
+  .so-confirm {
+    margin-inline: -22px;
+    padding-inline: 22px;
+  }
+}
+
+/* Read-only inside the workspace: the canvas fits the page, not the window. */
+.so-view.is-readonly .so-canvas {
+  width: 100%;
+  margin: 12px 0 0;
+}
+.so-view.is-readonly .so-stats {
+  margin: 0;
+}
+.so-view.is-readonly a.so-name {
+  color: inherit;
+  text-decoration: none;
+}
+.so-view.is-readonly a.so-name:hover,
+.so-view.is-readonly a.so-name:focus-visible {
+  text-decoration: underline;
+}
