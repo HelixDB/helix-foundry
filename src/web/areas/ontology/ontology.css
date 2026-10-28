@@ -330,7 +330,7 @@
 .on-item {
   padding: 14px 16px;
   border: 1px solid var(--hf-border);
-  border-radius: 10px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-raised);
   scroll-margin-top: 16px;
 }
@@ -609,7 +609,7 @@
 .on-question {
   padding: 14px 16px;
   border: 1px solid var(--hf-border);
-  border-radius: 10px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-raised);
 }
 .on-question > p {
@@ -844,7 +844,7 @@
   width: 22px;
   height: 22px;
   border: 1px solid var(--hf-border-strong);
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
 }

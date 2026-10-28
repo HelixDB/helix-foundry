@@ -54,7 +54,7 @@
   height: 16px;
   margin-top: 1px;
   border: 1.5px solid var(--hf-border-strong);
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   color: var(--hf-on-accent);
   transition:
     background-color 0.3s,
@@ -88,7 +88,7 @@
   padding: 10px 11px 7px;
   background: var(--hf-raised);
   border: 1px solid var(--feed-border);
-  border-radius: 10px;
+  border-radius: var(--hf-radius-lg);
   animation: feed-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .feed-source h4 {
@@ -135,7 +135,7 @@
   width: 14px;
   height: 14px;
   border: 1.2px dashed var(--hf-border-strong);
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   color: var(--feed-mint);
 }
 .feed-item.is-loading .feed-item-mark {
@@ -174,7 +174,7 @@
   display: block;
   width: 58px;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   background: linear-gradient(
     90deg,
     var(--hf-hover) 0%,

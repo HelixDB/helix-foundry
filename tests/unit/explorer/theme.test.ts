@@ -73,7 +73,7 @@ describe("color helpers", () => {
   });
 
   it("reads the light theme without a document, every key a color or an alpha", () => {
-    expect(CANVAS_THEME.background).toBe("#F8F7F3");
+    expect(CANVAS_THEME.background).toBe("#FBFBFB");
     for (const [key, value] of Object.entries(CANVAS_THEME))
       expect(value, key).toEqual(
         typeof value === "number"

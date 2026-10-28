@@ -45,11 +45,11 @@
   margin: 0;
   padding: 4px 10px;
   color: var(--hf-muted);
-  font-family: var(--hf-font-sans);
   font-size: var(--hf-text-xs);
-  font-weight: 600;
-  letter-spacing: 0.05em;
   line-height: 1.4;
+  font-family: var(--hf-font-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 .ak-group ul {
@@ -101,7 +101,7 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-info);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--hf-info) 20%, transparent);
   animation: hf-pulse 1.6s ease-in-out infinite;
@@ -275,7 +275,7 @@
   justify-self: end;
   max-width: min(85%, 620px);
   padding: 10px 15px;
-  border-radius: 18px 18px 4px 18px;
+  border-radius: var(--hf-radius-xl);
   background: var(--hf-selected);
   color: var(--hf-text);
 }
@@ -307,7 +307,7 @@
   width: 28px;
   height: 28px;
   border: 1px solid var(--hf-accent-border);
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-accent-soft);
   color: var(--hf-accent-text);
 }
@@ -351,7 +351,7 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-info);
 }
 .ak-trace.is-working .ak-trace-dot {

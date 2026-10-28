@@ -63,12 +63,7 @@
   padding-top: 16px;
 }
 :root {
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--hf-font-sans);
   color: var(--hf-text);
   background: var(--hf-bg);
   font-synthesis: none;
@@ -150,7 +145,7 @@ small {
 input,
 textarea {
   border: 1px solid var(--hf-border);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   background: var(--hf-raised);
   padding: 10px 12px;
   color: var(--hf-text);
@@ -182,7 +177,7 @@ label {
 }
 pre,
 code {
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--hf-font-mono);
   font-size: 11px;
 }
 pre {
@@ -226,7 +221,7 @@ hr {
   justify-content: center;
   gap: 8px;
   border: 1px solid var(--hf-border);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   background: var(--hf-raised);
   padding: 10px 15px;
   font-size: 12px;
@@ -259,7 +254,7 @@ hr {
 .icon-btn {
   display: inline-flex;
   padding: 6px;
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   align-items: center;
   justify-content: center;
 }
@@ -272,7 +267,7 @@ hr {
   gap: 4px;
   border: 1px solid var(--hf-border);
   background: var(--hf-bg);
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   padding: 3px 7px;
   color: var(--hf-muted);
   font-size: 10px;
@@ -310,7 +305,7 @@ hr {
 .status-dot {
   height: 6px;
   width: 6px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-accent);
   display: inline-block;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--hf-accent) 7.5%, transparent);
@@ -362,7 +357,7 @@ hr {
   gap: 9px;
   align-items: center;
   border: 1px solid color-mix(in srgb, var(--hf-text-2) 40%, transparent);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   background: color-mix(in srgb, var(--hf-raised) 1.2%, transparent);
   padding: 11px;
   margin: 4px 0 27px;
@@ -373,7 +368,7 @@ hr {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   background: color-mix(in srgb, var(--hf-faint) 13.3%, transparent);
   color: var(--hf-on-ink);
   font-size: 13px;
@@ -408,7 +403,7 @@ hr {
   gap: 12px;
   align-items: center;
   padding: 11px 12px;
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   font-size: 12px;
   color: var(--hf-muted);
   transition: background 0.15s;
@@ -457,7 +452,7 @@ hr {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-ink);
   color: var(--hf-on-ink);
   font-size: 11px;
@@ -529,7 +524,7 @@ hr {
   background: var(--hf-sunken);
   border: 1px solid var(--hf-border);
   padding: 7px 11px;
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
 }
 .assistant-toggle.selected {
   background: var(--hf-selected);
@@ -566,7 +561,7 @@ main {
 }
 .goal-card {
   position: relative;
-  border-radius: 10px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-ink);
   color: var(--hf-on-ink);
   overflow: hidden;
@@ -592,7 +587,7 @@ main {
   margin-left: 8px;
 }
 .goal-card h2 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--hf-font-display);
   font-size: 33px;
   line-height: 1.16;
   font-weight: 400;
@@ -612,7 +607,7 @@ main {
   background: color-mix(in srgb, var(--hf-raised) 4.3%, transparent);
   border: 1px solid
     color-mix(in srgb, var(--hf-border-strong) 18.4%, transparent);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   padding: 8px 8px 8px 14px;
   margin-top: 23px;
   max-width: 685px;
@@ -643,7 +638,7 @@ main {
   color: var(--hf-text);
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   width: 30px;
   height: 29px;
   flex-shrink: 0;
@@ -667,7 +662,7 @@ main {
   font-size: 8px;
   color: var(--hf-on-ink);
   border: 1px solid color-mix(in srgb, var(--hf-raised) 8.6%, transparent);
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   padding: 5px 7px;
 }
 .goal-suggestions button:hover {
@@ -740,7 +735,7 @@ main {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   background: var(--hf-raised);
   margin-bottom: 27px;
   overflow: hidden;
@@ -786,7 +781,7 @@ main {
 .panel {
   background: var(--hf-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   overflow: hidden;
 }
 .panel-title {
@@ -851,7 +846,7 @@ main {
   justify-content: center;
   width: 35px;
   height: 36px;
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   border: 1px solid var(--hf-border);
   background: var(--hf-bg);
   color: var(--hf-muted);
@@ -883,7 +878,7 @@ main {
   border: 1px dashed var(--hf-border);
   width: 61px;
   height: 61px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   margin-bottom: 13px;
   background: var(--hf-field);
   color: var(--hf-on-ink);
@@ -936,7 +931,7 @@ main {
   color: var(--hf-muted);
   width: 26px;
   height: 26px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-sunken);
   flex-shrink: 0;
 }
@@ -1004,7 +999,7 @@ main {
 .empty-icon {
   width: 57px;
   height: 57px;
-  border-radius: 12px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-bg);
   border: 1px solid var(--hf-border);
   display: flex;
@@ -1058,7 +1053,7 @@ main {
   align-items: center;
   gap: 8px;
   border: 1px solid var(--hf-border);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   background: var(--hf-raised);
   padding: 0 11px;
   max-width: 320px;
@@ -1193,7 +1188,7 @@ tr:last-child td {
   border: 1px solid var(--border);
   padding: 24px 21px;
   text-align: left;
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   transition:
     transform 0.15s,
     box-shadow 0.15s;
@@ -1211,7 +1206,7 @@ tr:last-child td {
   border: 1px solid var(--hf-border);
   background: var(--hf-bg);
   color: var(--hf-muted);
-  border-radius: 9px;
+  border-radius: var(--hf-radius-lg);
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -1px;
@@ -1276,7 +1271,7 @@ tr:last-child td {
 }
 .modal {
   background: var(--hf-raised);
-  border-radius: 12px;
+  border-radius: var(--hf-radius-lg);
   box-shadow: 0 30px 90px
     color-mix(in srgb, var(--hf-shadow-color) 18%, transparent);
   width: 680px;
@@ -1328,7 +1323,7 @@ tr:last-child td {
   padding: 15px 17px;
   background: var(--hf-bg);
   border: 1px solid var(--hf-border);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   color: var(--hf-muted);
   display: flex;
   align-items: center;
@@ -1369,7 +1364,7 @@ tr:last-child td {
 }
 .proposal-list > button {
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   text-align: left;
   background: var(--hf-raised);
   padding: 17px;
@@ -1414,7 +1409,7 @@ tr:last-child td {
   grid-template-columns: repeat(4, 1fr);
   background: var(--hf-bg);
   border: 1px solid var(--hf-border);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
 }
 .bundle-stats > div {
   padding: 17px;
@@ -1474,7 +1469,7 @@ details > summary {
   background: var(--hf-bg);
   border: 1px solid var(--hf-border);
   padding: 15px;
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
 }
 .definition-preview pre {
   font-size: 10px;
@@ -1503,7 +1498,7 @@ details > summary {
   flex: 1;
 }
 .code-editor {
-  font-family: SFMono-Regular, Consolas, monospace;
+  font-family: var(--hf-font-mono);
   min-height: 180px;
   resize: vertical;
   border: 0;
@@ -1522,7 +1517,7 @@ details > summary {
 .sql-block {
   background: var(--hf-bg);
   border: 1px solid var(--hf-border);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   padding: 18px;
   line-height: 1.8;
   font-size: 11px;
@@ -1537,7 +1532,7 @@ details > summary {
   background: var(--hf-raised);
   min-width: 230px;
   border: 1px solid var(--hf-border);
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   box-shadow: 0 5px 15px color-mix(in srgb, var(--hf-text-2) 6.3%, transparent);
 }
 .graph-node-top {
@@ -1681,7 +1676,7 @@ details > summary {
   text-align: left;
   padding: 21px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   color: var(--hf-muted);
 }
 .provider-option.selected {
@@ -1727,7 +1722,7 @@ details > summary {
   display: flex;
   align-items: center;
   gap: 10px;
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
 }
 .copy-box code {
   font-size: 10px;
@@ -1814,7 +1809,7 @@ details > summary {
     color-mix(in srgb, var(--hf-selected) 50.2%, transparent),
     var(--hf-field)
   );
-  border-radius: 14px;
+  border-radius: var(--hf-radius-xl);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1825,7 +1820,7 @@ details > summary {
   align-items: center;
   justify-content: space-between;
   border: 1px solid var(--hf-border);
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   padding: 12px;
   width: 100%;
   text-align: left;
@@ -1836,7 +1831,7 @@ details > summary {
 .assistant-compose {
   margin: 20px;
   border: 1px solid var(--hf-border);
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   padding: 10px;
 }
 .assistant-compose textarea {
@@ -1860,7 +1855,7 @@ details > summary {
   padding: 13px;
   font-size: 11px;
   line-height: 1.8;
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   margin-bottom: 16px;
   color: var(--hf-muted);
   background: var(--hf-bg);
@@ -1882,7 +1877,7 @@ details > summary {
   display: flex;
   align-items: center;
   gap: 12px;
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   box-shadow: 0 8px 30px color-mix(in srgb, var(--hf-text) 18.8%, transparent);
   z-index: 200;
   font-size: 12px;
@@ -1901,7 +1896,7 @@ details > summary {
   border: 1px solid var(--hf-border);
   background: var(--hf-bg);
   color: var(--hf-danger);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   font-size: 11px;
   margin: 12px 0;
 }
@@ -1941,12 +1936,12 @@ details > summary {
   padding: 32px 35px;
   background: var(--hf-raised);
   border: 1px solid var(--hf-border);
-  border-radius: 12px;
+  border-radius: var(--hf-radius-lg);
   box-shadow: 0 20px 70px
     color-mix(in srgb, var(--hf-accent-text) 3.9%, transparent);
 }
 .auth-card h1 {
-  font-family: Georgia, serif;
+  font-family: var(--hf-font-display);
   font-size: 29px;
   line-height: 1.3;
   letter-spacing: -0.8px;

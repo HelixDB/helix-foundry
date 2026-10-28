@@ -1,10 +1,5 @@
 :root {
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--hf-font-sans);
   font-size: 14px;
   color: var(--hf-text);
   background: var(--hf-bg);
@@ -18,7 +13,7 @@ body {
 }
 h1,
 h2 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--hf-font-display);
   font-weight: 400;
   letter-spacing: -0.6px;
   color: var(--hf-text);
@@ -67,7 +62,7 @@ textarea {
   color: var(--hf-text);
   background: var(--hf-field);
   border: 1px solid var(--hf-border);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   padding: 9px 11px;
 }
 input::placeholder,
@@ -93,7 +88,7 @@ code {
 pre {
   padding: 14px;
   background: var(--hf-sunken);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   max-width: 100%;
   overflow: auto;
 }
@@ -128,7 +123,7 @@ details > h3 {
   font-size: 13px;
 }
 .button {
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   border-color: var(--hf-border);
   background: var(--hf-field);
   color: var(--hf-text);
@@ -230,7 +225,7 @@ details > h3 {
   align-items: center;
   gap: 8px;
   padding: 8px 9px;
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   color: var(--hf-text-2);
   font-size: 13px;
   list-style: none;
@@ -251,7 +246,7 @@ details > h3 {
   min-width: 240px;
   background: var(--hf-field);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   box-shadow: 0 8px 24px
     color-mix(in srgb, var(--hf-shadow-color) 8.2%, transparent);
   padding: 14px;
@@ -277,7 +272,7 @@ details > h3 {
   gap: 10px;
   align-items: center;
   padding: 9px 10px;
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   border: 0;
   font-size: 13px;
   font-weight: 450;
@@ -394,7 +389,7 @@ main {
   background: transparent;
 }
 .empty h3 {
-  font-family: Georgia, serif;
+  font-family: var(--hf-font-display);
   font-size: 23px;
   font-weight: 400;
 }
@@ -453,7 +448,7 @@ button.simple-row:hover {
 .search-field {
   background: transparent;
   border-color: var(--hf-border);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   min-width: 150px;
 }
 .search-field input {
@@ -501,7 +496,7 @@ button.simple-row:hover {
   background: var(--hf-field);
   border: 1px solid var(--border);
   box-shadow: none;
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
 }
 .panel-title {
   padding: 18px 20px;
@@ -556,7 +551,7 @@ button.simple-row:hover {
 .notice {
   border: 1px solid var(--hf-border);
   background: var(--hf-sunken);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   padding: 16px;
   color: var(--hf-text-2);
   font-size: 13px;
@@ -569,7 +564,7 @@ button.simple-row:hover {
   background: var(--hf-sunken);
   color: var(--hf-danger-text);
   border: 1px solid var(--hf-border);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   padding: 14px;
 }
 .error-box p {
@@ -609,7 +604,7 @@ button.simple-row:hover {
   list-style: none;
   padding: 7px;
   min-width: 32px;
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
 }
 .menu[open] > summary {
   margin: 0;
@@ -624,7 +619,7 @@ button.simple-row:hover {
   padding: 6px;
   background: var(--hf-field);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   box-shadow: 0 8px 28px
     color-mix(in srgb, var(--hf-shadow-color) 8.2%, transparent);
 }
@@ -640,7 +635,7 @@ button.simple-row:hover {
 .menu-content > a:hover,
 .menu-content > button:hover {
   background: var(--hf-sunken);
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
 }
 .menu-content .checkbox {
   padding: 4px 8px;
@@ -656,7 +651,7 @@ button.simple-row:hover {
   background: var(--hf-field);
   color: var(--hf-text);
   border: 1px solid var(--hf-border);
-  border-radius: 12px;
+  border-radius: var(--hf-radius-lg);
   box-shadow: 0 20px 65px
     color-mix(in srgb, var(--hf-shadow-color) 14.9%, transparent);
   width: 650px;
@@ -677,7 +672,7 @@ button.simple-row:hover {
   border-bottom: 1px solid var(--border);
 }
 .modal-head h2 {
-  font-family: Georgia, serif;
+  font-family: var(--hf-font-display);
   font-size: 23px;
   max-width: 90%;
   overflow-wrap: anywhere;
@@ -711,7 +706,7 @@ button.simple-row:hover {
 .preview-grid > div {
   border: 1px solid var(--border);
   padding: 16px;
-  border-radius: 8px;
+  border-radius: var(--hf-radius);
   background: var(--hf-field);
   min-width: 0;
 }
@@ -763,7 +758,7 @@ td {
   overflow: auto;
   max-width: 100%;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
 }
 .table-scroll td {
   max-width: 300px;
@@ -957,7 +952,7 @@ td {
 .toast {
   background: var(--hf-ink);
   color: var(--hf-on-ink);
-  border-radius: 9px;
+  border-radius: var(--hf-radius-lg);
   max-width: calc(100vw - 32px);
   font-size: 13px;
 }
@@ -1233,7 +1228,7 @@ td {
   width: 20px;
   height: 20px;
   border: 1px solid var(--hf-border);
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   text-align: center;
   line-height: 18px;
 }
@@ -1243,7 +1238,7 @@ td {
   border-color: var(--hf-ink);
 }
 .setup-content > h1 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--hf-font-display);
   font-size: 34px;
   font-weight: 400;
   letter-spacing: -0.7px;
@@ -1289,7 +1284,7 @@ td {
   min-height: 100px;
   padding: 16px 12px 14px;
   border: 1px solid var(--hf-border);
-  border-radius: 9px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-field);
   cursor: pointer;
   text-align: left;
@@ -1438,7 +1433,7 @@ td {
   height: 18px;
   flex-shrink: 0;
   border: 1.5px solid var(--hf-border-strong);
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   font-size: 11px;
   font-weight: 600;
 }
