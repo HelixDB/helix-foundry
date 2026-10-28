@@ -327,6 +327,7 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
       "foundry",
       "helix",
       "init-secrets",
+      "kestrel-db",
       "mysql",
       "ontology-agent",
       "pod",

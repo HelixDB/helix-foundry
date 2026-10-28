@@ -39,10 +39,10 @@ const maxOntologyGoalChars = 2000
 // starts at most foundry.ontology.per_hour of them an hour. A local install
 // with no AI provider refuses it (FOUNDRY_AI_NOT_CONFIGURED).
 //
-// A sample generation drafts from the sample company's set alone, and the
-// worker stores the sample's ready-made draft (package sample) in place of
-// the AI's: the set must hold each of its table files, read. Its title is
-// the draft's, with no model called.
+// A sample generation drafts from the sample company's database (one
+// connector, each of the sample's tables synced) and its documents' set,
+// and the worker stores the sample's ready-made draft (package sample) in
+// place of the AI's. Its title is the draft's, with no model called.
 //
 // Event sources are never among the connectors, chosen or by default: each
 // comes in event_sources, with how this ontology reads it. Structured mode
@@ -69,8 +69,8 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	case name == "":
 	case name != sample.Kestrel:
 		return nil, status.Errorf(codes.InvalidArgument, "no sample is called %q", name)
-	case len(req.GetDocumentSetIds()) != 1 || !req.GetNoConnectors() || len(req.GetEventSources()) > 0:
-		return nil, status.Error(codes.InvalidArgument, "a sample is drafted from its document set alone: name that one set, with no_connectors and no event source")
+	case len(req.GetConnectorIds()) != 1 || len(req.GetDocumentSetIds()) != 1 || len(req.GetEventSources()) > 0:
+		return nil, status.Error(codes.InvalidArgument, "a sample is drafted from its database and its documents: name its one connector and its one document set, and no event source")
 	}
 	if err := s.requireAI(ctx, ws); err != nil {
 		return nil, err
@@ -198,8 +198,8 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	}
 	if name := req.GetSample(); name != "" {
 		for _, t := range sample.Tables {
-			if !slices.ContainsFunc(files, func(f *foundrymodel.FoundryDocument) bool { return f.Name == t }) {
-				return nil, status.Errorf(codes.FailedPrecondition, "the sample's %s isn't in its set, read: wait for its files to be read, or add the sample again", t)
+			if !slices.ContainsFunc(gen.Input.Tables, func(g foundrymodel.OntologyGenerationTable) bool { return g.Table == t }) {
+				return nil, status.Errorf(codes.FailedPrecondition, "the sample's table %s isn't synced: wait for its database's first sync", t)
 			}
 		}
 		gen.Input.Sample = name

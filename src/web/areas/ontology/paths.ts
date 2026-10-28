@@ -26,6 +26,8 @@ export const ontologyPaths = {
   // The workspace's ontologies, and creating one.
   ontologies: () => "/ontology",
   newOntology: () => "/ontology/new",
+  // The sample company, step by step (a local install's).
+  sampleTour: () => "/ontology/sample",
   // An ontology: its current version, drawn, then its schema versions and
   // data loads, each a section of the page.
   ontology: (ontologyId: string) => at(ontologyId),

@@ -2412,14 +2412,8 @@ export type GenerateSources = {
   | { noConnectors: true; connectorIds?: never }
 );
 
-/**
- * What a generation is asked to draft from; `sample` drafts from the
- * sample company's set on its ready-made draft (./sample.ts).
- */
-export type GenerateChoices = GenerateSources & {
-  goal?: string;
-  sample?: string;
-};
+/** What a generation is asked to draft from. */
+export type GenerateChoices = GenerateSources & { goal?: string };
 
 /** What creating the ontology and its first generation sends. */
 export type WizardRequest = {

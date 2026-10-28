@@ -219,6 +219,27 @@ services:
     depends_on: *secrets-first
     restart: unless-stopped
 
+  # Kestrel, the sample company's PostgreSQL database (kestrel/kestrel.sql,
+  # written by scripts/sample-company.mjs): the first ontology's Use the
+  # sample connects to it as to any database, at kestrel-db:5432 as
+  # kestrel_reader, who can only select. Its data is made up and starts
+  # afresh with the container (no volume); it publishes no port.
+  kestrel-db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: kestrel
+      POSTGRES_USER: kestrel
+      POSTGRES_PASSWORD: kestrel
+    volumes:
+      ["./kestrel/kestrel.sql:/docker-entrypoint-initdb.d/kestrel.sql:ro"]
+    tmpfs: ["/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kestrel -d kestrel"]
+      interval: 2s
+      retries: 30
+    depends_on: *secrets-first
+    restart: unless-stopped
+
   # HelixDB: the public helix-db image, one database on a local volume. It
   # keeps no tenants apart, so every ontology's loads share it; the engine
   # scopes each read and write to its load. It checks no key, and has no

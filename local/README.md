@@ -25,6 +25,7 @@ It opens in your first workspace, **My workspace**, made as the install first st
 | `storage`        | S3-compatible store (SeaweedFS) for synced tables and documents, on 127.0.0.1:8333 for uploads. |
 | `mysql`          | Foundry's database.                                                                             |
 | `helix`          | HelixDB (the public helix-db image): one database every ontology's loads share.                 |
+| `kestrel-db`     | PostgreSQL holding Kestrel, the made-up sample company Use the sample connects to; no volume.   |
 | `ollama`         | Ollama, and `ollama-pull`, which downloads its model: with the `ollama` profile only.           |
 | `init-secrets`   | Writes the install's secrets into the `secrets` volume once, then exits, before the rest start. |
 

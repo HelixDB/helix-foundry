@@ -12,6 +12,7 @@ import type {
   S3ConnectorConfig,
   S3ConnectorSetup,
 } from "../../src/shared/wfe";
+import { readFileSync } from "node:fs";
 import { columnsOf, textFieldProblem } from "../event-pieces";
 import { PEOPLE, PEOPLE_COLUMNS } from "../fixtures/sales-graph";
 import { config, onReset } from "../state";
@@ -35,7 +36,9 @@ import { layout, type Listed } from "./data-files";
 // - Databases: the password "wrong" fails authentication, a host ending in
 //   ".invalid" cannot be reached, and private or loopback hosts are refused
 //   as the connector guard refuses them. Every database holds the same small
-//   shop schema (in `public` for PostgreSQL); other schemas are empty.
+//   shop schema (in `public` for PostgreSQL); other schemas are empty. But
+//   kestrel-db, the local stack's sample company database, holds Kestrel's
+//   tables as local/kestrel/kestrel.sql creates them.
 // - Syncs: PostHog with more than 90 event days fails on the row limit.
 // - Documents (`documentStreams`): a Granola sync reads each of its 418
 //   notes into a Notes set, and its transcript into a Transcripts set when
@@ -1003,6 +1006,46 @@ const shop: DbTable[] = [
   },
 ];
 
+// Kestrel's tables, as local/kestrel/kestrel.sql creates and fills them:
+// "  name type[ NOT NULL]" columns, its keys, and a row per value line.
+const KESTREL_HOST = "kestrel-db";
+const kestrel: DbTable[] = (() => {
+  const sql = readFileSync(
+    new URL("../../local/kestrel/kestrel.sql", import.meta.url),
+    "utf8",
+  );
+  return [...sql.matchAll(/CREATE TABLE (\w+) \(\n([\s\S]*?)\n\);/g)].map(
+    ([, name, body]) => {
+      const lines = body!.split(",\n").map((l) => l.trim());
+      const values = sql
+        .slice(sql.indexOf(`INSERT INTO ${name} `))
+        .split(";")[0]!;
+      return {
+        name: name!,
+        columns: lines
+          .filter((l) => !/^(PRIMARY|FOREIGN) KEY/.test(l))
+          .map((l): DbTable["columns"][number] => {
+            const [column, type] = l.split(" ");
+            return l.endsWith("NOT NULL")
+              ? [column!, type!, type!]
+              : [column!, type!, type!, true];
+          }),
+        primaryKey: /PRIMARY KEY \(([^)]+)\)/.exec(body!)![1]!.split(", "),
+        foreignKeys: [
+          ...body!.matchAll(
+            /FOREIGN KEY \((\w+)\) REFERENCES (\w+) \((\w+)\)/g,
+          ),
+        ].map(([, column, table, referenced]) => [
+          column!,
+          table!,
+          referenced!,
+        ]),
+        rows: values.split("\n").filter((l) => l.startsWith("  (")).length,
+      };
+    },
+  );
+})();
+
 function dbTable(t: DbTable, kind: "postgres" | "mysql"): ConnectorTable {
   return {
     name: t.name,
@@ -1082,7 +1125,7 @@ function discoverDatabase(
     );
   const all =
     kind === "mysql" || s.schema === "public"
-      ? shop
+      ? (s.host === KESTREL_HOST ? kestrel : shop)
           .map((t) => dbTable(t, kind))
           .sort((a, b) => a.name.localeCompare(b.name))
       : [];
@@ -1817,7 +1860,9 @@ export function syncTables(src: Source): SyncedSnapshot[] | string {
   const db = "postgres" in s ? s.postgres : "mysql" in s ? s.mysql : undefined;
   const chosen = db?.tables?.length ? new Set(db.tables) : undefined;
   const objects = db
-    ? shop
+    ? db.host === KESTREL_HOST
+      ? kestrel
+      : shop
     : {
         stripe: stripeObjects,
         workos: workosObjects,

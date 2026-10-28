@@ -1,5 +1,7 @@
 // Builds the sample company the new-ontology wizard offers
-// (src/web/areas/ontology/sample.ts) into public/samples/kestrel: Kestrel, a
+// (src/web/areas/ontology/sample.ts) into public/samples/kestrel, and its
+// tables as PostgreSQL into local/kestrel/kestrel.sql, which a local
+// install's kestrel-db serves (local/compose.yaml): Kestrel, a
 // made-up field-service scheduling software company, as its own records
 // would hold it. Six tables (accounts, contacts, subscriptions, invoices,
 // support tickets, monthly usage) and nine documents (three contracts as
@@ -20,6 +22,7 @@ import process from "node:process";
 import { chromium } from "@playwright/test";
 
 const OUT = join(import.meta.dirname, "..", "public", "samples", "kestrel");
+const SQL = join(import.meta.dirname, "..", "local", "kestrel", "kestrel.sql");
 const TODAY = "2026-10-27";
 
 // ---------------------------------------------------------------- Helpers
@@ -1252,77 +1255,75 @@ const contracts = {
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const write = (name, body) => writeFileSync(join(OUT, name), body);
+// Each table's rows, as its CSV holds them, for kestrel.sql.
+const rowsOf = {};
+const table = (name, rows) => {
+  rowsOf[name] = rows;
+  write(`${name}.csv`, csv(rows));
+};
 
-write(
-  "accounts.csv",
-  csv(
-    accounts.map((a) => ({
-      account_id: a.id,
-      name: a.name,
-      industry: a.industry,
-      country: a.country,
-      city: a.city,
-      employees: a.employees,
-      segment: segment(a.employees),
-      account_manager: a.manager.email,
-      customer_since: a.since,
-    })),
-  ),
+table(
+  "accounts",
+  accounts.map((a) => ({
+    account_id: a.id,
+    name: a.name,
+    industry: a.industry,
+    country: a.country,
+    city: a.city,
+    employees: a.employees,
+    segment: segment(a.employees),
+    account_manager: a.manager.email,
+    customer_since: a.since,
+  })),
 );
-write("contacts.csv", csv(contacts));
-write(
-  "subscriptions.csv",
-  csv(
-    subscriptions.map((s) => ({
-      subscription_id: s.id,
-      account_id: s.account.id,
-      plan: s.plan,
-      seats: s.seats,
-      price_per_seat_usd: money(s.price),
-      discount_pct: s.discount,
-      monthly_amount_usd: money(monthly(s)),
-      billing: s.plan === "Enterprise" ? "quarterly" : "monthly",
-      status: s.status,
-      started_on: s.started_on,
-      term_months: s.term,
-      current_term_end: s.term_end ?? "",
-      ended_on: s.ended_on,
-      cancel_reason: s.cancel_reason,
-    })),
-  ),
+table("contacts", contacts);
+table(
+  "subscriptions",
+  subscriptions.map((s) => ({
+    subscription_id: s.id,
+    account_id: s.account.id,
+    plan: s.plan,
+    seats: s.seats,
+    price_per_seat_usd: money(s.price),
+    discount_pct: s.discount,
+    monthly_amount_usd: money(monthly(s)),
+    billing: s.plan === "Enterprise" ? "quarterly" : "monthly",
+    status: s.status,
+    started_on: s.started_on,
+    term_months: s.term,
+    current_term_end: s.term_end ?? "",
+    ended_on: s.ended_on,
+    cancel_reason: s.cancel_reason,
+  })),
 );
-write(
-  "invoices.csv",
-  csv(
-    invoices.map((v) => ({
-      invoice_id: v.id,
-      subscription_id: v.sub.id,
-      account_id: v.sub.account.id,
-      issued_on: v.issued_on,
-      due_on: v.due_on,
-      amount_usd: v.amount_usd,
-      status: v.status,
-      paid_on: v.paid_on,
-    })),
-  ),
+table(
+  "invoices",
+  invoices.map((v) => ({
+    invoice_id: v.id,
+    subscription_id: v.sub.id,
+    account_id: v.sub.account.id,
+    issued_on: v.issued_on,
+    due_on: v.due_on,
+    amount_usd: v.amount_usd,
+    status: v.status,
+    paid_on: v.paid_on,
+  })),
 );
-write(
-  "support_tickets.csv",
-  csv(
-    tickets.map((t) => ({
-      ticket_id: t.id,
-      account_id: t.account.id,
-      requester_id: t.contact.contact_id,
-      opened_at: t.opened_at,
-      closed_at: t.status === "solved" ? t.closed_at : "",
-      priority: t.priority,
-      status: t.status,
-      category: t.category,
-      subject: t.subject,
-    })),
-  ),
+table(
+  "support_tickets",
+  tickets.map((t) => ({
+    ticket_id: t.id,
+    account_id: t.account.id,
+    requester_id: t.contact.contact_id,
+    opened_at: t.opened_at,
+    closed_at: t.status === "solved" ? t.closed_at : "",
+    priority: t.priority,
+    status: t.status,
+    category: t.category,
+    subject: t.subject,
+  })),
 );
-write("product_usage.csv", csv(usage));
+table("product_usage", usage);
 write("Kestrel plans and pricing 2026.md", pricing);
 write("Pinecrest QBR 2026-09-15.md", pinecrestQbr);
 write("Halvorsen expansion call 2026-10-06.md", halvorsenCall);
@@ -1340,6 +1341,95 @@ try {
 } finally {
   await browser.close();
 }
+
+// ---------------------------------------------------------------- SQL
+
+// The tables as kestrel-db serves them: typed, each keyed, and linked by
+// foreign keys as the CSVs' ids link them. An empty cell is NULL. Foundry
+// reads them as kestrel_reader, which can only select.
+const SCHEMA = {
+  accounts: {
+    key: ["account_id"],
+    types: { employees: "integer", customer_since: "date" },
+  },
+  contacts: { key: ["contact_id"], refs: { account_id: "accounts" } },
+  subscriptions: {
+    key: ["subscription_id"],
+    refs: { account_id: "accounts" },
+    types: {
+      seats: "integer",
+      price_per_seat_usd: "numeric(10,2)",
+      discount_pct: "integer",
+      monthly_amount_usd: "numeric(12,2)",
+      started_on: "date",
+      term_months: "integer",
+      current_term_end: "date",
+      ended_on: "date",
+    },
+  },
+  invoices: {
+    key: ["invoice_id"],
+    refs: { subscription_id: "subscriptions", account_id: "accounts" },
+    types: {
+      issued_on: "date",
+      due_on: "date",
+      amount_usd: "numeric(12,2)",
+      paid_on: "date",
+    },
+  },
+  support_tickets: {
+    key: ["ticket_id"],
+    refs: { account_id: "accounts", requester_id: "contacts" },
+    types: { opened_at: "timestamptz", closed_at: "timestamptz" },
+  },
+  product_usage: {
+    key: ["account_id", "month"],
+    refs: { account_id: "accounts" },
+    types: { active_users: "integer", jobs_scheduled: "integer" },
+  },
+};
+const literal = (v, type) =>
+  v === null || v === undefined || v === ""
+    ? "NULL"
+    : type === "integer" || type.startsWith("numeric")
+      ? String(v)
+      : `'${String(v).replace(/'/g, "''")}'`;
+const sql = [
+  "-- Kestrel, the sample company, as a local install's kestrel-db serves it.",
+  "-- Written by scripts/sample-company.mjs; edit that, not this.",
+  "",
+  ...Object.entries(SCHEMA).flatMap(([name, t]) => {
+    const rows = rowsOf[name],
+      cols = Object.keys(rows[0]),
+      type = (c) => t.types?.[c] ?? "text";
+    const keyOf = (ref) => SCHEMA[ref].key[0];
+    return [
+      `CREATE TABLE ${name} (`,
+      [
+        ...cols.map(
+          (c) => `  ${c} ${type(c)}${t.key.includes(c) ? " NOT NULL" : ""}`,
+        ),
+        `  PRIMARY KEY (${t.key.join(", ")})`,
+        ...Object.entries(t.refs ?? {}).map(
+          ([c, ref]) =>
+            `  FOREIGN KEY (${c}) REFERENCES ${ref} (${keyOf(ref)})`,
+        ),
+      ].join(",\n"),
+      ");",
+      `INSERT INTO ${name} (${cols.join(", ")}) VALUES`,
+      rows
+        .map((r) => `  (${cols.map((c) => literal(r[c], type(c))).join(", ")})`)
+        .join(",\n") + ";",
+      "",
+    ];
+  }),
+  "CREATE ROLE kestrel_reader LOGIN PASSWORD 'kestrel';",
+  "GRANT USAGE ON SCHEMA public TO kestrel_reader;",
+  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO kestrel_reader;",
+  "",
+].join("\n");
+mkdirSync(join(SQL, ".."), { recursive: true });
+writeFileSync(SQL, sql);
 
 process.stdout.write(
   `${accounts.length} accounts, ${contacts.length} contacts, ${subscriptions.length} subscriptions, ${invoices.length} invoices, ${tickets.length} tickets, ${usage.length} usage rows, ${Object.keys(contracts).length} contracts → ${OUT}\n`,

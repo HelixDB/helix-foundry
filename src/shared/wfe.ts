@@ -877,10 +877,11 @@ export type GenerateOntologyRequest = {
   eventSources?: FoundryEventSourcePick[];
   // Foundry's sample company ("kestrel", the only one) to draft from in
   // place of the AI: the generation stores its ready-made draft, mapped to
-  // this workspace's copies of its files, with no model call. It needs
-  // exactly one set in documentSetIds, noConnectors and no eventSources
-  // (INVALID_ARGUMENT otherwise), and each of the sample's table files in
-  // that set, read (FAILED_PRECONDITION until then).
+  // this workspace's connection to the sample's database, with no model
+  // call. It needs exactly that connector in connectorIds and the set of
+  // the sample's documents in documentSetIds, with no eventSources
+  // (INVALID_ARGUMENT otherwise), and each of the sample's tables synced
+  // (FAILED_PRECONDITION until then).
   sample?: string;
 };
 
