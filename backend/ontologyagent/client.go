@@ -131,6 +131,16 @@ func (c *Client) Read(ctx context.Context, request []byte) (json.RawMessage, err
 	return json.RawMessage(resp.GetResultJson()), nil
 }
 
+// Compare compares two loads of one version (a CompareRequest): one unary
+// call, which returns the CompareResult or the agent's gRPC status.
+func (c *Client) Compare(ctx context.Context, request []byte) (json.RawMessage, error) {
+	resp, err := c.agent.Compare(ctx, &agentv1.CompareRequest{RequestJson: string(request)})
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(resp.GetResultJson()), nil
+}
+
 // Ask answers one question over a load on its request's model, key its
 // endpoint's, as Ingest loads tables: each event goes to onEvent, and the
 // result ends the stream. Cancelling stops it before its next model call.

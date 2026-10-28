@@ -39,6 +39,11 @@
       "description": "The version the graph records, in place of the one `ontology_toml` declares.",
       "type": "string"
     },
+    "reload": {
+      "description": "What to do with a stream the load holds from other data.",
+      "$ref": "#/$defs/Reload",
+      "default": "refuse"
+    },
     "request_id": {
       "description": "The idempotency key: a retry sends the same one.",
       "type": "string"
@@ -267,6 +272,21 @@
         }
       ]
     },
+    "Reload": {
+      "description": "What an Ingest does with a stream (a source read through one mapping) the load holds from\nother data than the request's.",
+      "oneOf": [
+        {
+          "description": "Nothing is written (`sources_changed`): a new load reads the new data.",
+          "type": "string",
+          "const": "refuse"
+        },
+        {
+          "description": "Brings the existing load up to the request's sources, writing only what changed. The\nload's marker must exist with `ontology_version`: no marker, or one being deleted, ends\n`load_unknown`, another version `load_mismatch`. A stream whose source's `fingerprint`\nis the one the load holds is skipped unread (`stream_skipped`); one whose data changed\nis diffed by row key and row hash against what the load holds (added rows staged,\nchanged rows retracted and staged, removed rows retracted), as is a stream that looks\nup into one that changed; a `changes` source's upserts are diffed and its deletes\nretracted; a stream new to the load is loaded; and one the load holds but the request\nno longer reads is retracted entirely. A load that can't be diffed ends\n`diff_unsupported`, and changes that don't continue from the load's position\n`position_mismatch`, either with nothing written. An apply interrupted and run again\nwrites the rest.",
+          "type": "string",
+          "const": "diff"
+        }
+      ]
+    },
     "Route": {
       "description": "How a source's data enters the graph.",
       "oneOf": [
@@ -379,6 +399,43 @@
           "additionalProperties": false,
           "required": [
             "documents"
+          ]
+        },
+        {
+          "description": "A table's changes since a load's position, in place of its whole snapshot: taken only by\nan Ingest with `reload: \"diff\"`. A JSON Lines file of one change per key, in any order:\n`{\"op\": \"upsert\", \"key\": {..}, \"row\": {..}}`, the row as a snapshot holds it, or `{\"op\":\n\"delete\", \"key\": {..}}`, where `key` holds the table's primary-key columns. The source's\n`fingerprint` is that of the snapshot the changes lead to, and its `observed` sync's\n`change_seq` is `to_seq`.",
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "object",
+              "properties": {
+                "from_seq": {
+                  "description": "The change sequence the load's position in the table must hold: the file holds every\nchange after it.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "path": {
+                  "description": "Where the file is; a relative path is taken from the base directory the caller gives.",
+                  "type": "string"
+                },
+                "to_seq": {
+                  "description": "The change sequence the file holds every change up to.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "from_seq",
+                "to_seq"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "changes"
           ]
         }
       ]

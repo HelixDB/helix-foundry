@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompareRequest",
+  "description": "A request to compare two loads of one version.",
+  "type": "object",
+  "properties": {
+    "database": {
+      "description": "The graph read.",
+      "type": "string"
+    },
+    "helix": {
+      "description": "Where the graph is read: the backend's read-only proxy.",
+      "$ref": "#/$defs/HelixTarget"
+    },
+    "load_a": {
+      "description": "The first load.",
+      "$ref": "#/$defs/LoadId"
+    },
+    "load_b": {
+      "description": "The second load.",
+      "$ref": "#/$defs/LoadId"
+    },
+    "max_keys": {
+      "description": "How many differing keys to list per kind, at most.",
+      "type": "integer",
+      "format": "uint",
+      "default": 20,
+      "minimum": 0
+    },
+    "ontology_toml": {
+      "description": "The loads' version's `ontology.toml`, which types what they hold.",
+      "type": "string"
+    },
+    "ontology_version": {
+      "description": "The version both loads record; a load of another version is refused.",
+      "type": "string"
+    },
+    "request_id": {
+      "description": "The idempotency key; a compare writes nothing, so a retry simply reads again.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "database",
+    "load_a",
+    "load_b",
+    "ontology_toml",
+    "ontology_version",
+    "helix"
+  ],
+  "$defs": {
+    "HelixTarget": {
+      "description": "Where the graph is written: the backend's proxy for one Helix database.",
+      "type": "object",
+      "properties": {
+        "max_request_bytes": {
+          "description": "The largest request body the proxy takes; a write past it is refused before it is sent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "timeout_secs": {
+          "description": "How long one request may take, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "token": {
+          "description": "The job's bearer token for the proxy.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The proxy's base URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token",
+        "max_request_bytes",
+        "timeout_secs"
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    }
+  }
+}

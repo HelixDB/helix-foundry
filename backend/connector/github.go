@@ -154,7 +154,7 @@ func (k *githubKind) Discover(ctx context.Context, src Source) (Discovery, error
 	}, githubForeignKeys)
 	for i := range d.Tables {
 		// Reviews are read for pull requests updated within review_days only.
-		d.Tables[i].Windowed = d.Tables[i].Name == "pull_request_reviews"
+		d.Tables[i].Windowed = WindowedTable("github", d.Tables[i].Name)
 	}
 	return d, nil
 }

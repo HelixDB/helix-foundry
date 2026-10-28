@@ -143,6 +143,10 @@ func (u Unimplemented) ListConnectorChangeBatches(context.Context, string, strin
 	u.unimplemented("ListConnectorChangeBatches")
 	return nil, nil
 }
+func (u Unimplemented) ListConnectorChangeBatchesAfter(context.Context, string, string, string, int64, int64) ([]*model.ConnectorChangeBatch, error) {
+	u.unimplemented("ListConnectorChangeBatchesAfter")
+	return nil, nil
+}
 func (u Unimplemented) ListExpiredChangeBatches(context.Context, time.Time, int) ([]*model.ConnectorChangeBatch, error) {
 	u.unimplemented("ListExpiredChangeBatches")
 	return nil, nil
@@ -408,6 +412,14 @@ func (u Unimplemented) ListPendingFoundryDocuments(context.Context, string) ([]*
 	u.unimplemented("ListPendingFoundryDocuments")
 	return nil, nil
 }
+func (u Unimplemented) ListRemovedFoundryDocuments(context.Context, string) ([]string, error) {
+	u.unimplemented("ListRemovedFoundryDocuments")
+	return nil, nil
+}
+func (u Unimplemented) RecordFoundryDocumentRemoval(context.Context, string, string, string) error {
+	u.unimplemented("RecordFoundryDocumentRemoval")
+	return nil
+}
 func (u Unimplemented) ListUploadedFoundryDocuments(context.Context, string, string, int) ([]*model.FoundryDocument, error) {
 	u.unimplemented("ListUploadedFoundryDocuments")
 	return nil, nil
@@ -622,6 +634,10 @@ func (u Unimplemented) GetFoundryLoadEnrichment(context.Context, string) (*model
 }
 func (u Unimplemented) ListFoundryLoadEnrichments(context.Context, []string) (map[string]*model.FoundryLoadEnrichment, error) {
 	u.unimplemented("ListFoundryLoadEnrichments")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryLoadSources(context.Context, []string) (map[string][]model.FoundryLoadSource, error) {
+	u.unimplemented("ListFoundryLoadSources")
 	return nil, nil
 }
 func (u Unimplemented) GetLatestFoundryEnrichmentResults(context.Context, string) (*model.FoundryLoadEnrichment, error) {

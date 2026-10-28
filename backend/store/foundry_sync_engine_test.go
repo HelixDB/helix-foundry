@@ -358,6 +358,25 @@ func TestConnectorChangeBatches(t *testing.T) {
 		assert.Len(t, batches, 2)
 	})
 
+	// An apply replays exactly the batches between the load's position and the
+	// snapshot it pinned, in order, and none of another table's.
+	t.Run("lists a table's batches between two positions", func(t *testing.T) {
+		ctx := context.Background()
+		db := newStore(t)
+		for _, tag := range []string{"p1", "p2", "p3"} {
+			sync := claim(t, db, tag)
+			require.NoError(t, db.UpsertConnectorTable(ctx, table(sync, tag), batch(sync, tag), "w1"))
+			finish(t, db, sync)
+		}
+		got, err := db.ListConnectorChangeBatchesAfter(ctx, workspaceID, connectorID, "customers", 1, 3)
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, []int64{2, 3}, []int64{got[0].Seq, got[1].Seq})
+		none, err := db.ListConnectorChangeBatchesAfter(ctx, workspaceID, connectorID, "orders", 0, 3)
+		require.NoError(t, err)
+		assert.Empty(t, none)
+	})
+
 	// An unchanged table keeps its snapshot, so a pinned load and the graph are left alone.
 	t.Run("touches an unchanged table without moving its snapshot", func(t *testing.T) {
 		ctx := context.Background()

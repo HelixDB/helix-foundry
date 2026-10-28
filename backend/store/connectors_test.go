@@ -155,8 +155,9 @@ func replacedKeys(t *testing.T, db store.Store) []string {
 }
 
 // Deleting a connector deletes what its syncs wrote: its tables' snapshots,
-// its documents and its change batches wait for the sweep, and what they put
-// in the graph goes with the refresh the delete owes.
+// its documents and its change batches wait for the sweep. What its tables
+// put in the graph goes with the refresh the delete owes, and what its
+// documents put there with an extract that takes them out.
 func TestDeleteConnector(t *testing.T) {
 	ctx := context.Background()
 	day := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
@@ -176,16 +177,16 @@ func TestDeleteConnector(t *testing.T) {
 	notes := []model.OntologyGenerationTable{{ConnectorID: c.connector.ID, Table: "notes"}}
 	// A's current load reads the connector's set, B's its table; C reads
 	// both with refresh off, and D reads only the other connection.
-	readsSet := c.currentReading(t, "A", nil, []string{c.setID}, n1)
+	setLoad := c.currentReading(t, "A", nil, []string{c.setID}, n1)
 	readsTable := foundryFixture{db: c.db, ontology: sampleOntology(t, c.db, ws, "DELB")}
-	readsTable.currentReading(t, "B", notes, []string{generalSetID(readsTable.ontology.ID)})
+	tableLoad := readsTable.currentReading(t, "B", notes, []string{generalSetID(readsTable.ontology.ID)})
 	off := foundryFixture{db: c.db, ontology: sampleOntology(t, c.db, ws, "DELC")}
 	off.currentReading(t, "C", notes, []string{c.setID}, n1)
 	require.NoError(t, c.db.SetFoundryOntologyAutoRefresh(ctx, ws, off.ontology.ID, false))
 	other := foundryFixture{db: c.db, ontology: sampleOntology(t, c.db, ws, "DELD")}
 	other.currentReading(t, "D", []model.OntologyGenerationTable{{ConnectorID: kept.Owner.ConnectorID, Table: "notes"}}, []string{kept.ID}, keptDoc)
-	// A refreshed ten minutes ago; a delete owes the next one now all the same.
-	_, err := testDB.Exec(`UPDATE foundry_loads SET origin='refresh', created_at=NOW(6) - INTERVAL 10 MINUTE WHERE id=?`, readsSet)
+	// B refreshed ten minutes ago; a delete owes the next one now all the same.
+	_, err := testDB.Exec(`UPDATE foundry_loads SET origin='refresh', created_at=NOW(6) - INTERVAL 10 MINUTE WHERE id=?`, tableLoad)
 	require.NoError(t, err)
 
 	start := time.Now().UTC()
@@ -210,12 +211,17 @@ func TestDeleteConnector(t *testing.T) {
 	assert.Equal(t, id26("CB-DEL-notes"), batches[0].ID)
 
 	due := func(f foundryFixture) *time.Time { return f.ontologyNow(t).RefreshDueAt }
-	require.NotNil(t, due(c.foundryFixture))
-	assert.WithinDuration(t, start, *due(c.foundryFixture), 5*time.Second, "its current load reads the set")
+	assert.Nil(t, due(c.foundryFixture), "its current load reads no table of the connector")
+	removal := c.liveJob(t)
+	require.NotNil(t, removal, "its current load holds a document of the connector")
+	assert.Equal(t, model.FoundryGraphJobExtract, removal.Kind)
+	assert.Equal(t, setLoad, removal.LoadID)
 	require.NotNil(t, due(readsTable))
 	assert.WithinDuration(t, start, *due(readsTable), 5*time.Second, "its current load reads the table")
 	assert.Nil(t, due(off), "refresh is off")
+	assert.Nil(t, off.liveJob(t), "refresh is off")
 	assert.Nil(t, due(other), "it reads neither")
+	assert.Nil(t, other.liveJob(t), "it holds none of the documents")
 
 	keptTables, err := c.db.ListConnectorTables(ctx, ws, kept.Owner.ConnectorID)
 	require.NoError(t, err)

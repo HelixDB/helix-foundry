@@ -533,7 +533,7 @@ func TestSyncerDocuments(t *testing.T) {
 			t.Fatalf("fanned = %v, publishes = %d, owed = %d", f.store.fanned, len(f.store.publishes), f.store.owed)
 		}
 		p := f.store.publishes[0]
-		if p.Grace != time.Hour || p.RefreshEvery != planRefreshEvery(t, "pro") || p.Fan.RequestedByUserID != nil || !p.Fan.CanWrite("any") ||
+		if p.Grace != time.Hour || p.Fan.RequestedByUserID != nil || !p.Fan.CanWrite("any") ||
 			p.Fan.Budget.CapFor(nil) != 40e6 || p.Fan.SystemOnly || f.store.spendReads != 0 {
 			t.Fatalf("publish = %+v", p)
 		}
@@ -721,12 +721,6 @@ func TestSyncerDocuments(t *testing.T) {
 			t.Fatalf("documents = %d, publishes = %d", len(got), len(f.store.publishes))
 		}
 	})
-}
-
-// planRefreshEvery is how often the default catalog's plan refreshes.
-func planRefreshEvery(t *testing.T, code string) time.Duration {
-	t.Helper()
-	return catalog(t).Get(code).Sync.RefreshEvery
 }
 
 // TestSyncerDocumentChanges covers each case of a change read's documents.

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompareResult",
+  "description": "How two loads compare.",
+  "type": "object",
+  "properties": {
+    "equal": {
+      "description": "Whether every kind holds the same in both: each element by key, with the same digest.",
+      "type": "boolean"
+    },
+    "kinds": {
+      "description": "Each kind: `entity` by type, `fact` by link, `evidence` of rows (`row`) and of documents\n(`quote`), and open `violation` records, with each load's count and hash and the keys\nthat differ.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/KindCompared"
+      }
+    }
+  },
+  "required": [
+    "equal",
+    "kinds"
+  ],
+  "$defs": {
+    "KindCompared": {
+      "description": "How two loads compare in one kind.",
+      "type": "object",
+      "properties": {
+        "a_count": {
+          "description": "The first load's elements of the kind.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "a_hash": {
+          "description": "A hash of the first load's elements, by key and digest in key order.",
+          "type": "string"
+        },
+        "b_count": {
+          "description": "The second's.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "b_hash": {
+          "description": "The second's.",
+          "type": "string"
+        },
+        "differing": {
+          "description": "Up to the caller's most of the keys that differ: held by one load only, or with\nanother digest.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "equal": {
+          "description": "Whether both hold the same elements, each with the same digest.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "`entity`, `fact`, `evidence` or `violation`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "The type, the link, `row` or `quote`, or `violation`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "a_count",
+        "b_count",
+        "equal",
+        "a_hash",
+        "b_hash",
+        "differing"
+      ]
+    }
+  }
+}

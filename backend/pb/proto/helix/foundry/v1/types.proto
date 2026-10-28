@@ -946,7 +946,7 @@ message FoundryGraphJob {
   google.protobuf.Timestamp created_at  = 8;
   google.protobuf.Timestamp started_at  = 9;
   google.protobuf.Timestamp finished_at = 10;
-  // load, extract or delete.
+  // load, extract, apply or delete.
   string kind = 11;
   // The load it writes or deletes.
   string load_id = 12;
@@ -985,6 +985,22 @@ message FoundryLoad {
   string origin = 12;
   // Its People enrichment step; unset when its version enriches no one.
   FoundryLoadEnrichment enrichment = 13;
+  // When a refresh last brought its tables up to date in place; unset until
+  // one has.
+  google.protobuf.Timestamp applied_at = 14;
+  // The snapshot of each table it holds; empty for a load written before
+  // Helix recorded them, or still writing its tables.
+  repeated FoundryLoadSource sources = 15;
+}
+
+// FoundryLoadSource is the snapshot of one synced table a load holds.
+message FoundryLoadSource {
+  string connector_id = 1;
+  string table        = 2;
+  // The sync that wrote the snapshot, and when it finished; both unset for a
+  // load written before Helix recorded them.
+  string                    sync_id   = 3;
+  google.protobuf.Timestamp synced_at = 4;
 }
 
 // FoundryLoadEnrichment is a load's People enrichment step: whom it looked up

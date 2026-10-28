@@ -65,6 +65,38 @@
       ]
     },
     {
+      "description": "A document of the request's `remove` was taken out of the load.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The document.",
+          "type": "string"
+        },
+        "entities_removed": {
+          "description": "Entities deleted, left with no row creating them, no document naming them and no\nfact.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "event": {
+          "type": "string",
+          "const": "document_removed"
+        },
+        "facts_removed": {
+          "description": "Facts deleted, left with no evidence.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "event",
+        "doc_id",
+        "facts_removed",
+        "entities_removed"
+      ]
+    },
+    {
       "description": "A document reached its final state.",
       "type": "object",
       "properties": {

@@ -173,22 +173,21 @@ func New(d Deps) (*Task, error) {
 		return nil, err
 	}
 	s := &syncer.Syncer{
-		DB:                         d.DB,
-		Catalog:                    catalog,
-		Keys:                       keys,
-		PlanCatalog:                planCatalog,
-		Refresh:                    d.DB,
-		Snapshots:                  snapshots,
-		MaxRows:                    d.Cfg.Foundry.Sync.MaxRowsPerTable,
-		MaxBytes:                   d.Cfg.Foundry.Sync.MaxTableBytes,
-		RefreshAfterPerMillionRows: ev.RefreshAfterPerMillionRows,
-		Documents:                  documents,
-		MaxDocumentBytes:           d.Cfg.Foundry.Documents.MaxBytes,
-		MaxPerStream:               d.Cfg.Foundry.Documents.MaxPerStream,
-		PurgeGrace:                 d.Cfg.Foundry.Sync.ReplacedSnapshotGrace,
-		MonthBudget:                d.Cfg.Foundry.Graph.MonthBudget,
-		Allowances:                 d.Cfg.Foundry.SetAllowances(),
-		Plans:                      d.Plans,
+		DB:               d.DB,
+		Catalog:          catalog,
+		Keys:             keys,
+		PlanCatalog:      planCatalog,
+		Refresh:          d.DB,
+		Snapshots:        snapshots,
+		MaxRows:          d.Cfg.Foundry.Sync.MaxRowsPerTable,
+		MaxBytes:         d.Cfg.Foundry.Sync.MaxTableBytes,
+		Documents:        documents,
+		MaxDocumentBytes: d.Cfg.Foundry.Documents.MaxBytes,
+		MaxPerStream:     d.Cfg.Foundry.Documents.MaxPerStream,
+		PurgeGrace:       d.Cfg.Foundry.Sync.ReplacedSnapshotGrace,
+		MonthBudget:      d.Cfg.Foundry.Graph.MonthBudget,
+		Allowances:       d.Cfg.Foundry.SetAllowances(),
+		Plans:            d.Plans,
 	}
 	return &Task{
 		deps: d, cfg: d.Cfg.Foundry.Sync, queue: d.DB, runner: s,
@@ -528,7 +527,11 @@ func (t *Task) refresh(ctx context.Context) {
 			return
 		}
 		for _, o := range due {
-			queued, err := t.queue.QueueFoundryRefresh(ctx, o.WorkspaceID, o.ID, &model.FoundryGraphJob{ID: id.New()})
+			job := &model.FoundryGraphJob{ID: id.New()}
+			if t.deps.Cfg.Foundry.Graph.Apply {
+				job.Kind = model.FoundryGraphJobApply
+			}
+			queued, err := t.queue.QueueFoundryRefresh(ctx, o.WorkspaceID, o.ID, job)
 			if err != nil {
 				log.From(ctx).Warn("queue foundry refresh failed", "ontology", o.ID, "err", err)
 				continue

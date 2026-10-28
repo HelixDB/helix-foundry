@@ -53,10 +53,15 @@ type store interface {
 	GetOntologyVersion(ctx context.Context, ontologyID, id string) (*model.OntologyVersion, error)
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
+	ListRemovedFoundryDocuments(ctx context.Context, loadID string) ([]string, error)
+	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	DeleteFoundryDocument(ctx context.Context, workspaceID, id string) error
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 	UpdateFoundryGraphJob(ctx context.Context, id, workerID string, update model.FoundryGraphJobUpdate) error
 	SetFoundryGraphJobSources(ctx context.Context, id, workerID string, sources []model.FoundryLoadSource) error
+	ListFoundryLoadSources(ctx context.Context, loadIDs []string) (map[string][]model.FoundryLoadSource, error)
+	ListConnectorChangeBatchesAfter(ctx context.Context, workspaceID, connectorID, table string, afterSeq, toSeq int64) (
+		[]*model.ConnectorChangeBatch, error)
 	RecordFoundryDocumentExtraction(ctx context.Context, jobID, workerID string, e *model.FoundryDocumentExtraction, keepExisting bool) error
 	RecordFoundryLoadEnrichmentIngest(ctx context.Context, loadID, jobWorker string, applied, unmatched int64) error
 	FoundryDocumentSetSpend(ctx context.Context, workspaceID string, setIDs []string, month time.Time) (map[string]model.FoundryDocumentSetSpend, error)
@@ -70,6 +75,7 @@ type agent interface {
 	Ingest(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 	Extract(ctx context.Context, request []byte, key ontologyagent.ModelKey, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 	DeleteLoad(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
+	Compare(ctx context.Context, request []byte) (json.RawMessage, error)
 	Clues(ctx context.Context, request []byte, onEvent func(json.RawMessage) error) (json.RawMessage, error)
 }
 
@@ -95,7 +101,9 @@ type failure struct {
 	Permanent bool
 	Budget    bool
 	Uncounted bool
-	Err       error
+	// Unsupported is an apply the agent can't do in place (unsupported).
+	Unsupported bool
+	Err         error
 }
 
 func (f *failure) Error() string {
@@ -122,15 +130,25 @@ func permanent(message string, err error) error {
 	return &failure{Message: message, Permanent: true, Err: err}
 }
 
+// unsupported ends an apply the agent can't bring up to date in place; the
+// finish queues a full refresh load instead (FinishFoundryGraphJob).
+func unsupported(reason string) error {
+	return &failure{Message: clip("Helix rebuilt the graph instead of updating it in place: " + reason), Permanent: true, Unsupported: true}
+}
+
 // attempt is what one attempt did, kept whether or not it succeeded.
 type attempt struct {
 	// ingestDone means the version's tables are in the load.
 	ingestDone bool
+	// applied is what an apply's Ingest did to each stream, once it is done.
+	applied []ontologyagent.AppliedStream
 	// ingestViolations is how many violation records this attempt's Ingest
 	// left open, once its report counted them: every update records it on
 	// the load (FoundryGraphJobUpdate.IngestViolations).
 	ingestViolations *uint64
 	progress         model.FoundryGraphJobProgress
+	// rows are the table rows the attempt's chunks covered, for its finish log.
+	rows uint64
 	// results are the agent's results by call, kept as the job's report.
 	results map[string]json.RawMessage
 	// spent is what the documents this attempt recorded spent, in
@@ -240,6 +258,7 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 		return a, permanent(fmt.Sprintf("the ontology agent speaks contract %s, not %s", info.GetContractVersion(), ontologyagent.ContractVersion), nil)
 	}
 	if job.Kind == model.FoundryGraphJobDelete {
+		defer r.timeStep("delete", r.now())
 		return a, r.deleteLoad(ctx, job, a)
 	}
 	version, err := r.db.GetOntologyVersion(ctx, job.OntologyID, job.VersionID)
@@ -259,6 +278,10 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 		if item, err = ontologyagent.ParseEnrichments(def.MappingsTOML); err != nil {
 			return a, permanent("the version's People enrichment item can't be read", err)
 		}
+		// Applying in place would reuse the profiles the load was built with.
+		if item != nil && job.Kind == model.FoundryGraphJobApply {
+			return a, unsupported("the version enriches people")
+		}
 		if item != nil {
 			if profiles, err = r.enrich(ctx, job, version, def, item); err != nil {
 				return a, err
@@ -277,7 +300,83 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 		}
 		a.ingestDone = true
 	}
-	return a, r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
+	extractStart := r.now()
+	err = r.extract(ctx, job, def, binding, target, ontologyVersion, info.GetProviders(), a)
+	r.timeStep("extract", extractStart)
+	if err == nil && job.Kind == model.FoundryGraphJobLoad && job.Origin == model.FoundryLoadByRefresh {
+		r.compareRebuild(ctx, job, def, binding, target, ontologyVersion)
+	}
+	return a, err
+}
+
+// compareRebuild compares a refresh load with the load it replaces when
+// applies brought that one up to date: a fresh load of the same version is
+// what an applied load should hold, so what differs is drift
+// (helix_foundry_graph_apply_drift_total). It runs before the refresh
+// finishes, while both loads are in the database, and never fails it.
+func (r *runner) compareRebuild(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
+	target ontologyagent.HelixTarget, ontologyVersion string) {
+	if job.RefreshesLoadID == nil {
+		return
+	}
+	logger := log.From(ctx).With("job", job.ID, "ontology", job.OntologyID)
+	replaced, err := r.db.GetFoundryLoad(ctx, job.OntologyID, *job.RefreshesLoadID)
+	if err != nil || replaced.AppliedAt == nil {
+		return
+	}
+	body, err := json.Marshal(ontologyagent.CompareRequest{
+		RequestID: job.ID + ":compare", Database: binding.TenantID, LoadA: replaced.ID, LoadB: job.LoadID,
+		OntologyTOML: def.OntologyTOML, OntologyVersion: ontologyVersion, Helix: target,
+	})
+	if err != nil {
+		return
+	}
+	start := r.now()
+	raw, err := r.agent.Compare(ctx, body)
+	r.timeStep("compare", start)
+	var result ontologyagent.CompareResult
+	if err == nil {
+		result, err = ontologyagent.DecodeCompareResult(raw)
+	}
+	if err != nil {
+		rebuilds.WithLabelValues("failed").Inc()
+		logger.Warn("graph job: compare the applied load with its rebuild failed", "applied", replaced.ID, "err", err)
+		return
+	}
+	if result.Equal {
+		rebuilds.WithLabelValues("equal").Inc()
+		logger.Info("graph job: the rebuild holds what applies left", "applied", replaced.ID)
+		return
+	}
+	rebuilds.WithLabelValues("drifted").Inc()
+	for _, k := range result.Kinds {
+		if k.Equal {
+			continue
+		}
+		applyDrift.WithLabelValues(k.Kind).Inc()
+		logger.Warn("graph job: applies drifted from a fresh load", "applied", replaced.ID, "kind", k.Kind, "label", k.Label,
+			"applied_count", k.ACount, "rebuilt_count", k.BCount, "differing", k.Differing)
+	}
+}
+
+func (r *runner) timeStep(step string, start time.Time) {
+	stepSeconds.WithLabelValues(step).Observe(r.now().Sub(start).Seconds())
+}
+
+// chunkCounts reads a chunk event's rows and outcome. The report's shape is
+// not part of the contract, so a report it can't read counts as no rows of an
+// unknown outcome rather than failing the load.
+func chunkCounts(event json.RawMessage) (rows uint64, outcome string) {
+	var chunk struct {
+		Report struct {
+			Rows    uint64 `json:"rows"`
+			Outcome string `json:"outcome"`
+		} `json:"report"`
+	}
+	if json.Unmarshal(event, &chunk) != nil || chunk.Report.Outcome == "" {
+		return chunk.Report.Rows, "unknown"
+	}
+	return chunk.Report.Rows, chunk.Report.Outcome
 }
 
 // enrich runs the load's People enrichment step (enrichment.Load.Step)
@@ -497,10 +596,12 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 	if err := r.update(ctx, job, model.FoundryGraphJobIngest, a); err != nil {
 		return err
 	}
+	tablesStart := r.now()
 	tables, err := r.tables(ctx, job, version, def)
 	if err != nil {
 		return err
 	}
+	r.timeStep("tables", tablesStart)
 	sources := tables
 	if profiles != nil {
 		dir := filepath.Join(jobsDir, job.ID, "enrichment")
@@ -514,30 +615,35 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 		}
 		sources = append(slices.Clip(tables), ontologyagent.EnrichmentSource(path, profiles.SHA256))
 	}
-	body, err := json.Marshal(ontologyagent.IngestRequest{
+	req := ontologyagent.IngestRequest{
 		RequestID: job.ID, Database: binding.TenantID, Load: job.LoadID, OntologyTOML: def.OntologyTOML, OntologyVersion: ontologyVersion,
 		Helix: target, MappingsTOML: def.MappingsTOML, Sources: sources, ChunkRows: uint64(r.cfg.Foundry.Graph.ChunkRows),
-	})
-	if err != nil {
-		return fmt.Errorf("encode ingest request: %w", err)
 	}
-	raw, err := r.agent.Ingest(ctx, body, func(e json.RawMessage) error {
-		if name, _ := ontologyagent.EventName(e); name != "chunk" {
-			return nil
+	if job.Kind == model.FoundryGraphJobApply {
+		req.Reload = ontologyagent.ReloadDiff
+		changes := filepath.Join(r.snapshots.WorkDir, jobsDir, job.ID, "changes")
+		defer func() { _ = os.RemoveAll(changes) }() // best-effort: the next attempt merges afresh
+		req.Sources = changeFiles(ctx, r.db, r.snapshots.Snapshots, r.snapshots.WorkDir, job, def.MappingsTOML, sources)
+	}
+	result, err := r.callIngest(ctx, job, req, a)
+	if err == nil && result.Status == ontologyagent.IngestPositionMismatch {
+		// The load holds those tables at other positions than their change files start from.
+		if req.Sources, err = withoutChanges(req.Sources, result.Positions); err != nil {
+			return permanent("the ontology agent returned a result Helix can't read", err)
 		}
-		a.progress.ChunksDone++
-		return r.update(ctx, job, model.FoundryGraphJobIngest, a)
-	})
-	if err != nil {
-		return callFailure("load the tables", err)
+		req.RequestID = job.ID + ":snapshots"
+		result, err = r.callIngest(ctx, job, req, a)
 	}
-	a.results["ingest"] = raw
-	result, err := ontologyagent.DecodeIngestResult(raw)
 	if err != nil {
-		return permanent("the ontology agent returned a result Helix can't read", err)
+		return err
 	}
 	switch result.Status {
 	case ontologyagent.IngestDone:
+		// An apply's report counts what it changed, not what the load holds.
+		if job.Kind == model.FoundryGraphJobApply {
+			a.applied = result.Applied
+			return nil
+		}
 		// The next update records it with the phase past Ingest, which no retry runs again.
 		a.ingestViolations = ontologyagent.IngestViolations(result.Report)
 		if item == nil {
@@ -574,9 +680,45 @@ func (r *runner) ingest(ctx context.Context, job *model.FoundryGraphJob, version
 			fmt.Errorf("mapping %s pass %s chunk %d: %s", result.Mapping, result.Pass, result.Chunk, result.Error))
 	case ontologyagent.IngestCancelled:
 		return retry("the load was stopped; Helix will retry", nil)
+	case ontologyagent.IngestDiffUnsupported:
+		return unsupported(fmt.Sprintf("%s (%s)", result.Reason, strings.Join(result.Unsupported, ", ")))
+	case ontologyagent.IngestPositionMismatch:
+		return unsupported("the graph holds the tables at other positions than their snapshots")
 	default:
 		return retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}
+}
+
+// callIngest sends req to Ingest, counting its chunks as they come, and
+// keeps its result as the job's ingest report.
+func (r *runner) callIngest(ctx context.Context, job *model.FoundryGraphJob, req ontologyagent.IngestRequest, a *attempt) (
+	ontologyagent.IngestResult, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return ontologyagent.IngestResult{}, fmt.Errorf("encode ingest request: %w", err)
+	}
+	ingestStart := r.now()
+	raw, err := r.agent.Ingest(ctx, body, func(e json.RawMessage) error {
+		if name, _ := ontologyagent.EventName(e); name != "chunk" {
+			return nil
+		}
+		rows, outcome := chunkCounts(e)
+		a.rows += rows
+		chunkRows.WithLabelValues(string(job.Kind)).Add(float64(rows))
+		chunks.WithLabelValues(string(job.Kind), outcome).Inc()
+		a.progress.ChunksDone++
+		return r.update(ctx, job, model.FoundryGraphJobIngest, a)
+	})
+	r.timeStep("ingest", ingestStart)
+	if err != nil {
+		return ontologyagent.IngestResult{}, callFailure("load the tables", err)
+	}
+	a.results["ingest"] = raw
+	result, err := ontologyagent.DecodeIngestResult(raw)
+	if err != nil {
+		return ontologyagent.IngestResult{}, permanent("the ontology agent returned a result Helix can't read", err)
+	}
+	return result, nil
 }
 
 // reachedBudget ends a run the job's or the month's budget stopped.
@@ -622,10 +764,14 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	if err != nil {
 		return retry("could not list the documents; Helix will retry", err)
 	}
+	removed, err := r.db.ListRemovedFoundryDocuments(ctx, job.LoadID)
+	if err != nil {
+		return retry("could not list the documents to remove; Helix will retry", err)
+	}
 	// A previous attempt in documents may have committed every document but
 	// stopped before Extract's final sweep. Any Extract finishes it.
 	needsSweep := job.Phase == model.FoundryGraphJobDocuments
-	if len(pending) == 0 && !needsSweep {
+	if len(pending) == 0 && len(removed) == 0 && !needsSweep {
 		return r.update(ctx, job, model.FoundryGraphJobFinishing, a)
 	}
 	free, sets, err := r.partition(ctx, job, pending)
@@ -655,6 +801,14 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	}
 	// swept means an Extract reached the run's end, where the engine sweeps.
 	swept := false
+	if len(removed) > 0 {
+		// Removals go first, in an Extract of their own: they spend nothing.
+		if _, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":remove", "remove", []ontologyagent.ExtractDocument{},
+			removed, 0, providers, a); err != nil {
+			return err
+		}
+		swept = true
+	}
 	if len(free) > 0 {
 		maxUSD, spent, err := r.budget(ctx, job, a)
 		if err != nil {
@@ -665,7 +819,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 			return err
 		}
 		if len(documents) > 0 {
-			exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", documents, maxUSD, providers, a)
+			exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", documents, nil, maxUSD, providers, a)
 			switch {
 			case err != nil:
 				return err
@@ -709,7 +863,7 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 			continue
 		}
 		remainingUSD := float64(remaining) / 1e6
-		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":"+set.id, "extract:"+set.id, documents,
+		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID+":"+set.id, "extract:"+set.id, documents, nil,
 			min(maxUSD, remainingUSD), providers, a)
 		switch {
 		case err != nil:
@@ -727,7 +881,8 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 	}
 	if needsSweep && !swept {
 		// JSON [] even when staging found only deleted originals.
-		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", []ontologyagent.ExtractDocument{}, 0, providers, a)
+		exhausted, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "extract", []ontologyagent.ExtractDocument{}, nil, 0,
+			providers, a)
 		switch {
 		case err != nil:
 			return err
@@ -846,8 +1001,8 @@ func allowanceSpent(spend model.FoundryDocumentSetSpend, a model.FoundrySetAllow
 // have ended every document it was sent. Any other end is the attempt's
 // failure, and a request past the agent's message limit fails for good.
 func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
-	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument, maxUSD float64,
-	providers []string, a *attempt) (exhausted bool, err error) {
+	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument, remove []string,
+	maxUSD float64, providers []string, a *attempt) (exhausted bool, err error) {
 	a.progress.DocumentsTotal += len(documents)
 	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
 		return false, err
@@ -869,6 +1024,7 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 			MaxTextBytes: uint64(r.cfg.Foundry.Documents.MaxBytes),
 		},
 		Models: resolved.Extract(),
+		Remove: remove,
 	})
 	if err != nil {
 		return false, fmt.Errorf("encode extract request: %w", err)
@@ -884,12 +1040,26 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 	artifacts := map[string]string{}
 	done := a.progress.DocumentsDone
+	// removing are the documents of remove not yet recorded as taken out.
+	removing := map[string]bool{}
+	for _, docID := range remove {
+		removing[docID] = true
+	}
 	raw, err := r.agent.Extract(ctx, body, resolved.Key, func(e json.RawMessage) error {
 		switch name, _ := ontologyagent.EventName(e); name {
 		case "artifact":
 			r.saveArtifact(ctx, job, e, sent, artifacts)
 		case "document":
 			return r.recordDocument(ctx, job, e, sent, artifacts, resolved, a)
+		case "document_removed":
+			var removed ontologyagent.DocumentRemoved
+			if err := json.Unmarshal(e, &removed); err != nil || !removing[removed.DocID] {
+				log.From(ctx).Warn("graph job: the ontology agent removed a document Helix didn't send", "job", job.ID, "event", string(e))
+				return nil
+			}
+			log.From(ctx).Info("graph job: a document left the load", "job", job.ID, "document", removed.DocID,
+				"facts", removed.FactsRemoved, "entities", removed.EntitiesRemoved)
+			return r.recordRemoval(ctx, job, removed.DocID, removing)
 		}
 		return nil
 	})
@@ -903,6 +1073,12 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 	switch result.Status {
 	case ontologyagent.ExtractDone:
+		// Done took out every document of remove, those the load didn't hold included.
+		for _, docID := range remove {
+			if err := r.recordRemoval(ctx, job, docID, removing); err != nil {
+				return false, err
+			}
+		}
 		// Done means every document ended; one that didn't would be sent, and merged, forever.
 		if ended := a.progress.DocumentsDone - done; ended < len(documents) {
 			return false, retry("the ontology agent left documents unfinished; Helix will retry",
@@ -926,6 +1102,25 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	default:
 		return false, retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}
+}
+
+// recordRemoval forgets a document the agent took out of the job's load,
+// once: a lost lease ends the attempt, and any other failure leaves it for
+// the next extract to send again, which changes nothing in the graph.
+func (r *runner) recordRemoval(ctx context.Context, job *model.FoundryGraphJob, docID string, removing map[string]bool) error {
+	if !removing[docID] {
+		return nil
+	}
+	delete(removing, docID)
+	switch err := r.db.RecordFoundryDocumentRemoval(ctx, job.ID, r.workerID, docID); {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return retry("the job's lease was lost", err)
+	case err != nil:
+		log.From(ctx).Warn("graph job: record a document's removal failed", "job", job.ID, "document", docID, "err", err)
+		return nil
+	}
+	documentsRemoved.Inc()
+	return nil
 }
 
 // deleteLoad deletes the job's load from the ontology's database, a batch

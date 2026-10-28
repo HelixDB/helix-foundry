@@ -3,7 +3,10 @@ package snapshot
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -433,6 +436,68 @@ func TestMergeDense(t *testing.T) {
 		w := written(t, nil)
 		if _, err := Merge(snapshotFile(t, `{"a":1}`), set, w, newBatch(t), "", []string{"a"}); err == nil || !strings.Contains(err.Error(), "need the table's key") {
 			t.Fatalf("Merge = %v", err)
+		}
+	})
+}
+
+// memStore is a Store of gzipped objects held in memory.
+type memStore map[string][]byte
+
+func (m memStore) Put(_ context.Context, key string, body io.ReadSeeker) error {
+	b, err := io.ReadAll(body)
+	m[key] = b
+	return err
+}
+
+func (m memStore) Open(_ context.Context, key string) (io.ReadCloser, error) {
+	b, ok := m[key]
+	if !ok {
+		return nil, fmt.Errorf("no object %s", key)
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+func (m memStore) Delete(_ context.Context, key string) error {
+	delete(m, key)
+	return nil
+}
+
+// gzLines is lines as a stored change batch.
+func gzLines(lines ...string) []byte {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	for _, l := range lines {
+		_, _ = gz.Write([]byte(l + "\n"))
+	}
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
+func TestMergeBatches(t *testing.T) {
+	// An apply sends one change per key: what the table holds after the last batch.
+	t.Run("keeps each key's last change", func(t *testing.T) {
+		store := memStore{
+			"b1": gzLines(`{"op":"upsert","key":{"id":1},"row":{"id":1,"n":"a"}}`, `{"op":"upsert","key":{"id":2},"row":{"id":2,"n":"b"}}`),
+			"b2": gzLines(`{"op":"delete","key":{"id":1}}`, `{"op":"upsert","key":{"id":3},"row":{"id":3,"n":"c"}}`),
+			"b3": gzLines(`{"op":"upsert","key":{"id":2},"row":{"id":2,"n":"B"}}`),
+		}
+		dst := filepath.Join(t.TempDir(), "changes.jsonl")
+		n, err := MergeBatches(context.Background(), store, []string{"b1", "b2", "b3"}, dst)
+		if err != nil || n != 3 {
+			t.Fatalf("MergeBatches = (%d, %v)", n, err)
+		}
+		got, _ := os.ReadFile(dst)
+		want := `{"op":"delete","key":{"id":1}}` + "\n" + `{"op":"upsert","key":{"id":2},"row":{"id":2,"n":"B"}}` + "\n" +
+			`{"op":"upsert","key":{"id":3},"row":{"id":3,"n":"c"}}` + "\n"
+		if string(got) != want {
+			t.Fatalf("change file =\n%s", got)
+		}
+	})
+	// A batch swept since the position can't be replayed; the caller sends the snapshot.
+	t.Run("fails on a batch that is gone", func(t *testing.T) {
+		_, err := MergeBatches(context.Background(), memStore{}, []string{"gone"}, filepath.Join(t.TempDir(), "changes.jsonl"))
+		if err == nil {
+			t.Fatal("merged a batch that is gone")
 		}
 	})
 }

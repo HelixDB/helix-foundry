@@ -85,12 +85,8 @@ type Syncer struct {
 	MaxRows   int64
 	// MaxBytes caps a table's snapshot, uncompressed.
 	MaxBytes int64
-	// RefreshAfterPerMillionRows spaces a Pushed kind's graph refreshes this
-	// much further apart per million rows its tables hold: each refresh
-	// re-reads the whole table.
-	RefreshAfterPerMillionRows time.Duration
-	TempDir                    string
-	Now                        func() time.Time
+	TempDir  string
+	Now      func() time.Time
 	// Documents holds the originals of connectors' documents, beside
 	// uploads' (foundry.sync.data_bucket); a kind with streams needs it and
 	// MonthBudget.
@@ -260,7 +256,7 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	}
 	tables := selected(discovery, choice)
 	r := &run{s: s, sync: sync, kind: kind, src: src, previous: previous}
-	if r.docs, err = r.openDocuments(ctx, tables, plan.Sync.RefreshEvery); err != nil {
+	if r.docs, err = r.openDocuments(ctx, tables); err != nil {
 		return res, err
 	}
 	// An earlier attempt's changes still owe their refreshes, though this
@@ -328,11 +324,7 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	}
 	res = r.result(res)
 	if len(res.Changed) > 0 && s.Refresh != nil {
-		refreshEvery := plan.Sync.RefreshEvery
-		if isPushed {
-			refreshEvery += time.Duration(float64(s.RefreshAfterPerMillionRows) * float64(res.Rows) / 1e6)
-		}
-		if err := s.Refresh.OweFoundryRefreshes(ctx, c.WorkspaceID, c.ID, res.Changed, refreshEvery); err != nil {
+		if err := s.Refresh.OweFoundryRefreshes(ctx, c.WorkspaceID, c.ID, res.Changed, plan.Sync.RefreshEvery); err != nil {
 			return res, retryable(fmt.Errorf("mark graph refreshes: %w", err))
 		}
 	}

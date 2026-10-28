@@ -71,7 +71,7 @@ func (c connectorSync) note(tag, externalID, version string, at time.Time) *mode
 func (c connectorSync) publish(tag string, add []*model.FoundryDocument, update []model.ConnectorDocumentUpdate, remove ...string) model.ConnectorDocumentsPublish {
 	return model.ConnectorDocumentsPublish{
 		WorkspaceID: c.ontology.WorkspaceID, ConnectorID: c.connector.ID, SetID: c.setID, Add: add, Update: update, Remove: remove,
-		Grace: time.Hour, RefreshEvery: time.Hour, Fan: c.fan(tag),
+		Grace: time.Hour, Fan: c.fan(tag),
 	}
 }
 
@@ -472,57 +472,6 @@ func TestConnectorDocumentFanOut(t *testing.T) {
 	})
 }
 
-// What a removed document put in the graph stays until a load without it
-// is current: a removal owes a refresh of each ontology with refresh on
-// that reads the set, spaced as a table change's is.
-func TestConnectorDocumentRemovalRefresh(t *testing.T) {
-	ctx := context.Background()
-	day := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	c := newConnectorSync(t, newFoundryFixture(t, "RRF"), "RRF")
-	ws := c.ontology.WorkspaceID
-	c.published(t, c.publish("RRF-a", []*model.FoundryDocument{
-		c.note("n1", "not_1", "1|a", day), c.note("n2", "not_2", "1|a", day), c.note("n3", "not_3", "1|a", day),
-	}, nil))
-	notes := []string{id26("FD-n1"), id26("FD-n2"), id26("FD-n3")}
-	reads := c.loadReading(t, "LA", c.setID)
-	c.loaded(t, "w1", notes...)
-	elsewhere := foundryFixture{db: c.db, ontology: sampleOntology(t, c.db, ws, "RRFB")}
-	elsewhere.loadReading(t, "LB", generalSetID(elsewhere.ontology.ID))
-	elsewhere.loaded(t, "w1")
-	off := foundryFixture{db: c.db, ontology: sampleOntology(t, c.db, ws, "RRFC")}
-	off.loadReading(t, "LC", c.setID)
-	off.loaded(t, "w1", notes...)
-	require.NoError(t, c.db.SetFoundryOntologyAutoRefresh(ctx, ws, off.ontology.ID, false))
-	// D's current load reads another set; the load being written reads this one.
-	writing := foundryFixture{db: c.db, ontology: sampleOntology(t, c.db, ws, "RRFD")}
-	writing.loadReading(t, "LD1", generalSetID(writing.ontology.ID))
-	writing.loaded(t, "w1")
-	writing.loadReading(t, "LD2", c.setID)
-	due := func(f foundryFixture) *time.Time { return f.ontologyNow(t).RefreshDueAt }
-
-	c.published(t, c.publish("RRF-b", []*model.FoundryDocument{c.note("n4", "not_4", "1|a", day)},
-		[]model.ConnectorDocumentUpdate{{ID: id26("FD-n1"), Name: "n1.md", Version: "1|b", At: day}}))
-	assert.Nil(t, due(c.foundryFixture), "adds and updates owe none")
-
-	start := time.Now().UTC()
-	c.published(t, c.publish("RRF-c", nil, nil, id26("FD-n2")))
-	require.NotNil(t, due(c.foundryFixture))
-	assert.WithinDuration(t, start, *due(c.foundryFixture), 5*time.Second, "due now: it never refreshed")
-	assert.Nil(t, due(elsewhere), "its loads don't read the set")
-	assert.Nil(t, due(off), "refresh is off")
-	assert.NotNil(t, due(writing), "the load being written reads the set")
-
-	// A refresh started ten minutes ago spaces the next one by the interval.
-	_, err := testDB.Exec(`UPDATE foundry_ontologies SET refresh_due_at=NULL WHERE id=?`, c.ontology.ID)
-	require.NoError(t, err)
-	_, err = testDB.Exec(`UPDATE foundry_loads SET origin='refresh', created_at=NOW(6) - INTERVAL 10 MINUTE WHERE id=?`, reads)
-	require.NoError(t, err)
-	start = time.Now().UTC()
-	c.published(t, c.publish("RRF-d", nil, nil, id26("FD-n3")))
-	require.NotNil(t, due(c.foundryFixture))
-	assert.WithinDuration(t, start.Add(50*time.Minute), *due(c.foundryFixture), 5*time.Second)
-}
-
 func TestFoundryDocumentPurges(t *testing.T) {
 	// The sweep takes what is older than the grace, oldest first, and keeps
 	// the original of a document a live job's load holds until the job ends.
@@ -558,7 +507,13 @@ func TestFoundryDocumentPurges(t *testing.T) {
 		assert.Equal(t, []string{older, old}, listed(10), "the live load holds the removed one; the fresh one waits")
 		assert.Equal(t, []string{older}, listed(1))
 		c.ended(t, "w1", job.ID, model.FoundryGraphJobSucceeded, next("PRG"))
-		assert.Equal(t, []string{n1, older, old}, listed(10), "the job ended")
+		removal := c.liveJob(t)
+		require.NotNil(t, removal, "the load holds the removed document: an extract takes it out")
+		assert.Equal(t, []string{older, old}, listed(10), "the extract's load holds it")
+		c.claimed(t, "w1", removal.ID)
+		require.NoError(t, c.db.RecordFoundryDocumentRemoval(ctx, removal.ID, "w1", n1))
+		c.ended(t, "w1", removal.ID, model.FoundryGraphJobSucceeded, next("PRG2"))
+		assert.Equal(t, []string{n1, older, old}, listed(10), "the jobs ended")
 		require.NoError(t, c.db.DeleteFoundryDocumentPurge(ctx, older))
 		assert.Equal(t, []string{n1, old}, listed(10))
 	})

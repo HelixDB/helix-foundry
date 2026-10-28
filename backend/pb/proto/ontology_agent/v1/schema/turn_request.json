@@ -1153,6 +1153,43 @@
           "required": [
             "documents"
           ]
+        },
+        {
+          "description": "A table's changes since a load's position, in place of its whole snapshot: taken only by\nan Ingest with `reload: \"diff\"`. A JSON Lines file of one change per key, in any order:\n`{\"op\": \"upsert\", \"key\": {..}, \"row\": {..}}`, the row as a snapshot holds it, or `{\"op\":\n\"delete\", \"key\": {..}}`, where `key` holds the table's primary-key columns. The source's\n`fingerprint` is that of the snapshot the changes lead to, and its `observed` sync's\n`change_seq` is `to_seq`.",
+          "type": "object",
+          "properties": {
+            "changes": {
+              "type": "object",
+              "properties": {
+                "from_seq": {
+                  "description": "The change sequence the load's position in the table must hold: the file holds every\nchange after it.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "path": {
+                  "description": "Where the file is; a relative path is taken from the base directory the caller gives.",
+                  "type": "string"
+                },
+                "to_seq": {
+                  "description": "The change sequence the file holds every change up to.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "from_seq",
+                "to_seq"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "changes"
+          ]
         }
       ]
     },

@@ -41,8 +41,10 @@ type queue struct {
 	expired    []*model.ConnectorChangeBatch
 	refreshes  []*model.FoundryOntology
 	queueable  map[string]bool
-	// offered are the ontologies a refresh was offered to the queue for.
+	// offered are the ontologies a refresh was offered to the queue for, and
+	// kinds the job each was offered as.
 	offered  []string
+	kinds    []model.FoundryGraphJobKind
 	stranded []*model.Connector
 	// strandedKinds are the kinds the release tick asked about.
 	strandedKinds []string
@@ -184,8 +186,9 @@ func (q *queue) ListDueFoundryRefreshes(_ context.Context, afterDue time.Time, a
 	return out, nil
 }
 
-func (q *queue) QueueFoundryRefresh(_ context.Context, _, ontologyID string, _ *model.FoundryGraphJob) (bool, error) {
+func (q *queue) QueueFoundryRefresh(_ context.Context, _, ontologyID string, job *model.FoundryGraphJob) (bool, error) {
 	q.offered = append(q.offered, ontologyID)
+	q.kinds = append(q.kinds, job.Kind)
 	return q.queueable[ontologyID], nil
 }
 
@@ -833,6 +836,28 @@ func TestFoundrySyncRefresh(t *testing.T) {
 		newTask(q, nil).refresh(context.Background())
 		if !slices.Equal(q.offered, []string{"o1", "o2"}) {
 			t.Fatalf("offered = %v", q.offered)
+		}
+	})
+	// With apply off in a deployment, every refresh builds a new load.
+	t.Run("builds every refresh with apply off", func(t *testing.T) {
+		q := newQueue()
+		due := now.Add(-time.Minute)
+		q.refreshes = []*model.FoundryOntology{{ID: "o1", WorkspaceID: "w", RefreshDueAt: &due}}
+		newTask(q, nil).refresh(context.Background())
+		if !slices.Equal(q.kinds, []model.FoundryGraphJobKind{""}) {
+			t.Fatalf("kinds = %v", q.kinds)
+		}
+	})
+	// With apply on, the tick asks for an apply; the queue decides if it can.
+	t.Run("asks for an apply with apply on", func(t *testing.T) {
+		q := newQueue()
+		due := now.Add(-time.Minute)
+		q.refreshes = []*model.FoundryOntology{{ID: "o1", WorkspaceID: "w", RefreshDueAt: &due}}
+		task := newTask(q, nil)
+		task.deps.Cfg.Foundry.Graph.Apply = true
+		task.refresh(context.Background())
+		if !slices.Equal(q.kinds, []model.FoundryGraphJobKind{model.FoundryGraphJobApply}) {
+			t.Fatalf("kinds = %v", q.kinds)
 		}
 	})
 	// Held-back refreshes stay due; a full page of them must not hide the rest.

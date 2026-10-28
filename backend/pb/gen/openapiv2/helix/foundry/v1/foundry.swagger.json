@@ -5320,7 +5320,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "load, extract or delete."
+          "description": "load, extract, apply or delete."
         },
         "loadId": {
           "type": "string",
@@ -5406,6 +5406,19 @@
         "enrichment": {
           "$ref": "#/definitions/v1FoundryLoadEnrichment",
           "description": "Its People enrichment step; unset when its version enriches no one."
+        },
+        "appliedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a refresh last brought its tables up to date in place; unset until\none has."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryLoadSource"
+          },
+          "description": "The snapshot of each table it holds; empty for a load written before\nHelix recorded them, or still writing its tables."
         }
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
@@ -5507,6 +5520,26 @@
           "$ref": "#/definitions/v1FoundryLoad"
         }
       }
+    },
+    "v1FoundryLoadSource": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "syncId": {
+          "type": "string",
+          "description": "The sync that wrote the snapshot, and when it finished; both unset for a\nload written before Helix recorded them."
+        },
+        "syncedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryLoadSource is the snapshot of one synced table a load holds."
     },
     "v1FoundryOllamaModel": {
       "type": "object",
