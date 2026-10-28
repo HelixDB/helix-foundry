@@ -33,15 +33,16 @@ import {
   ontologyQueries,
   setCurrentVersion,
 } from "./queries";
-import { SAMPLE } from "./sample";
+import { SAMPLE, sampleDatabaseConfig } from "./sample";
 import { OntologySchema } from "./suggested-ontology";
 import { addSampleFiles } from "./try-sample";
 
-// /ontology/sample: the sample company, Kestrel, step by step, for a local
-// install (./try-sample.tsx opens it). Opening it runs the whole setup with
-// no AI draft to wait for:
-//  1. Kestrel's data: its PostgreSQL database (the stack's kestrel-db)
-//     connected and synced, and its documents uploaded and read;
+// /ontology/sample: the sample company, Kestrel, step by step, wherever its
+// database runs (./sample.ts's SAMPLE_TOUR; ./try-sample.tsx opens it).
+// Opening it runs the whole setup with no AI draft to wait for:
+//  1. Kestrel's data: its PostgreSQL database (a local stack's kestrel-db,
+//     or the stamp's) connected and synced, and its documents uploaded and
+//     read;
 //  2. the goal the ontology serves;
 //  3. the ontology: created on a new database, from the sample's ready-made
 //     draft (GenerateOntologyRequest's sample), made current, and drawn;
@@ -100,7 +101,7 @@ export function SampleTour() {
         (
           await createConnector(id, {
             name: SAMPLE.database.name,
-            config: SAMPLE.database.config,
+            config: await sampleDatabaseConfig(),
           })
         ).connector;
       if (!connector.lastSync) await syncConnector(id, connector.id);

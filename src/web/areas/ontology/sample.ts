@@ -1,3 +1,4 @@
+import { LOCAL } from "../../../shared/deployment";
 import type { ConnectorConfig } from "../../../shared/wfe";
 
 // Kestrel's documents: three contracts as PDFs, call notes, a support
@@ -20,13 +21,14 @@ const DOCUMENTS = [
  * hold it. scripts/sample-company.mjs writes its files into public/, served
  * at `base`, and its tables into local/kestrel/kestrel.sql.
  *
- * A local install connects its kestrel-db (`database`, local/compose.yaml)
- * as a PostgreSQL database, uploads the `documents` into a set named
- * `set.name`, and creates `ontology` toward `goal` on the sample's
- * ready-made draft (GenerateOntologyRequest's `sample`, `id`;
- * backend/sample/kestrel.json), all on its own page (./sample-tour.tsx).
- * Hosted, the wizard uploads every one of its `files`, the tables as CSV,
- * and drafts from them.
+ * Where its database runs (`database.host`: a local install's kestrel-db,
+ * local/compose.yaml, or the stamp's own), the sample's own page
+ * (./sample-tour.tsx) connects it as a PostgreSQL database, uploads the
+ * `documents` into a set named `set.name`, and creates `ontology` toward
+ * `goal` on the sample's ready-made draft (GenerateOntologyRequest's
+ * `sample`, `id`; backend/sample/kestrel.json). A stamp with no sample
+ * database has the wizard upload every one of its `files`, the tables as
+ * CSV, and draft from them.
  */
 export const SAMPLE = {
   id: "kestrel",
@@ -41,17 +43,16 @@ export const SAMPLE = {
   goal: "Understand Kestrel's customers: each account with its people, plan and subscription, contract terms, invoices, support tickets, usage and what was said on calls, so we can see which renewals are at risk, what we have promised, and what we owe.",
   database: {
     name: "Kestrel",
-    // kestrel-db's read-only login; its data is made up.
-    config: {
-      postgres: {
-        host: "kestrel-db",
-        port: 5432,
-        database: "kestrel",
-        user: "kestrel_reader",
-        password: "kestrel",
-        disableTls: true,
-      },
-    } satisfies ConnectorConfig,
+    // next.config.ts; empty where the stamp has none.
+    host: process.env.NEXT_PUBLIC_SAMPLE_DB_HOST ?? "",
+    // Its read-only login, public: the data is made up, and a stamp's
+    // database lets in only the stamp's own connectors.
+    login: {
+      port: 5432,
+      database: "kestrel",
+      user: "kestrel_reader",
+      password: "kestrel",
+    },
     tables: [
       "accounts",
       "contacts",
@@ -73,3 +74,21 @@ export const SAMPLE = {
     ...DOCUMENTS,
   ],
 } as const;
+
+/** Whether this build connects the sample's database, on its own page. */
+export const SAMPLE_TOUR = SAMPLE.database.host !== "";
+
+/**
+ * The sample's database as a PostgreSQL connector's config. A local
+ * kestrel-db has no TLS; a stamp's is an RDS whose certificate chains to
+ * Amazon's RDS root for its region, which no system store holds, so the
+ * connector trusts public/samples/rds-ca.pem (both stamps' regions) too.
+ */
+export async function sampleDatabaseConfig(): Promise<ConnectorConfig> {
+  const { host, login } = SAMPLE.database;
+  if (LOCAL) return { postgres: { host, ...login, disableTls: true } };
+  const res = await fetch("/samples/rds-ca.pem");
+  if (!res.ok)
+    throw new Error("couldn’t read the sample database’s certificate");
+  return { postgres: { host, ...login, ca: await res.text() } };
+}

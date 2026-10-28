@@ -11,7 +11,6 @@ import {
   LoaderCircle,
   RotateCcw,
 } from "lucide-react";
-import { LOCAL } from "../../../shared/deployment";
 import { Button } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
@@ -25,12 +24,13 @@ import {
 import { fileRead } from "../documents/model";
 import { AiGate, useAiConfigured } from "../workspace/ai-gate";
 import { Callout } from "./parts";
-import { SAMPLE } from "./sample";
+import { SAMPLE, SAMPLE_TOUR } from "./sample";
 
-// "Try it on a sample company", on the first ontology's wizard. A local
-// install opens the sample's own page (./sample-tour.tsx), which connects
-// Kestrel's database and shows each step. Hosted, one click uploads the
-// sample's files (./sample.ts) into its set, waits until Foundry has read
+// "Try it on a sample company", on the first ontology's wizard. Where the
+// sample's database runs (SAMPLE_TOUR: a local install, or a stamp with
+// its own), it opens the sample's own page (./sample-tour.tsx), which
+// connects Kestrel's database and shows each step. Elsewhere, one click
+// uploads the sample's files (./sample.ts) into its set, waits until Foundry has read
 // its tables and PDFs, so a draft started next leaves none out, then hands
 // the sets they are in to the wizard (`onReady`), which fills in what is
 // still empty and opens its review; once the wizard drafts from the
@@ -119,7 +119,7 @@ export function TrySample({
 
   const add = async () => {
     if (aiReady === false) return setGated(true);
-    if (LOCAL) return navigate(paths.sampleTour());
+    if (SAMPLE_TOUR) return navigate(paths.sampleTour());
     setRun({ step: "adding", done: 0 });
     try {
       const added = await addSampleFiles(qc, id, SAMPLE.files, (done) =>
@@ -179,7 +179,7 @@ export function TrySample({
       tone="muted"
       title="Try it on a sample company"
       text={
-        LOCAL
+        SAMPLE_TOUR
           ? "Kestrel is a made-up software company: its customers, subscriptions, invoices and support tickets in a PostgreSQL database, and its contracts and call notes as documents. See Foundry turn them into an ontology you can ask questions of, step by step, in about a minute."
           : "Kestrel is a made-up software company: its customers, subscriptions, invoices, support tickets and usage as tables, with contracts, call notes and an incident report as documents. Foundry’s agent drafts an ontology that links them."
       }
