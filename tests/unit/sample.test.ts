@@ -239,7 +239,7 @@ describe("the sample company's database", () => {
     expect(sample.SAMPLE_TOUR).toBe(false);
   });
 
-  it("is set per build: local, dev and none yet for prod", async () => {
+  it("is set per build: local, dev and prod", async () => {
     const host = async (env: Record<string, string>) => {
       vi.unstubAllEnvs();
       for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
@@ -248,7 +248,9 @@ describe("the sample company's database", () => {
       return config.env?.NEXT_PUBLIC_SAMPLE_DB_HOST;
     };
     expect(await host({ NEXT_PUBLIC_FOUNDRY_MODE: "local" })).toBe("acme-db");
-    expect(await host({ NEXT_PUBLIC_APP_ENV: "prod" })).toBe("");
+    expect(await host({ NEXT_PUBLIC_APP_ENV: "prod" })).toMatch(
+      /^helix-prod-sample\.[a-z0-9]+\.us-east-1\.rds\.amazonaws\.com$/,
+    );
     expect(await host({ NEXT_PUBLIC_APP_ENV: "dev" })).toMatch(
       /^helix-dev-sample\.[a-z0-9]+\.us-east-2\.rds\.amazonaws\.com$/,
     );
