@@ -9,6 +9,7 @@ import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import {
   activeSection,
   childActive,
+  onboardingNav,
   primaryNav,
   sectionSidebars,
   type NavItem,
@@ -119,8 +120,8 @@ function NavLinks({
 // the open section has no panel: Rail.tsx): the mark and search, the
 // workspace, the sections with their names, what the open section shows
 // under them (Ask's threads), then the account and settings. While the
-// workspace is onboarding it holds only the mark, the workspace and the
-// account.
+// workspace is onboarding it holds only the mark, the workspace, the way
+// back to the onboarding and the account.
 export function Sidebar({
   workspaces,
   current,
@@ -177,17 +178,17 @@ export function Sidebar({
         current={current}
         onSwitch={onSwitch}
       />
-      {onboarding ? (
-        <div className="hf-nav-spacer" />
-      ) : (
-        <nav
-          aria-label="Main navigation"
-          className={cx("hf-nav", extra && "has-section")}
-        >
-          <NavLinks items={primaryNav} label="Workspace" onNavigate={onClose} />
-          {!extra && <div className="hf-nav-spacer" />}
-        </nav>
-      )}
+      <nav
+        aria-label="Main navigation"
+        className={cx("hf-nav", extra && "has-section")}
+      >
+        <NavLinks
+          items={onboarding ? onboardingNav : primaryNav}
+          label="Workspace"
+          onNavigate={onClose}
+        />
+        {!extra && <div className="hf-nav-spacer" />}
+      </nav>
       {extra && (
         <section
           key={section}
