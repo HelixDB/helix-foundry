@@ -12,18 +12,18 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-// ids are a workspace's document ids for the sample's table files.
+// ids are a connector's source ids for the sample's tables.
 func ids() map[string]string {
-	files := map[string]string{}
-	for i, t := range Tables {
-		files[t] = fmt.Sprintf("01JDOC%020d", i)
+	sources := map[string]string{}
+	for _, t := range Tables {
+		sources[t] = ontologyagent.TableSourceID("conn-kestrel", t)
 	}
-	return files
+	return sources
 }
 
 func TestDraft(t *testing.T) {
-	files := ids()
-	raw, err := Draft(Kestrel, files, "01JSET00000000000000000000")
+	sources := ids()
+	raw, err := Draft(Kestrel, sources, "01JSET00000000000000000000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,9 +43,9 @@ func TestDraft(t *testing.T) {
 	if err != nil || refusal != "" {
 		t.Fatalf("refused: %q %v", refusal, err)
 	}
-	// Each table file is mapped by its document id.
+	// Each table is mapped by its source id.
 	for _, t2 := range Tables {
-		if !strings.Contains(def.MappingsTOML, fmt.Sprintf("source = %q", files[t2])) {
+		if !strings.Contains(def.MappingsTOML, fmt.Sprintf("source = %q", sources[t2])) {
 			t.Errorf("%s is not mapped by its id", t2)
 		}
 	}
@@ -67,17 +67,17 @@ func TestDraftRefuses(t *testing.T) {
 	if _, err := Draft("acme", ids(), "set"); err == nil {
 		t.Error("another sample was drafted")
 	}
-	files := ids()
-	delete(files, "invoices.csv")
-	if _, err := Draft(Kestrel, files, "set"); err == nil || !strings.Contains(err.Error(), "invoices.csv") {
-		t.Errorf("a missing table file: %v", err)
+	sources := ids()
+	delete(sources, "invoices")
+	if _, err := Draft(Kestrel, sources, "set"); err == nil || !strings.Contains(err.Error(), "invoices") {
+		t.Errorf("a missing table: %v", err)
 	}
 }
 
-// The draft names exactly the sample's table files.
-func TestTablesAreTheDraftsFiles(t *testing.T) {
+// The draft names exactly the sample's tables.
+func TestTablesAreTheDraftsTables(t *testing.T) {
 	named := []string{}
-	for _, m := range regexp.MustCompile(`\{\{file:([^{}]+)\}\}`).FindAllStringSubmatch(kestrel, -1) {
+	for _, m := range regexp.MustCompile(`\{\{table:([^{}]+)\}\}`).FindAllStringSubmatch(kestrel, -1) {
 		if !slices.Contains(named, m[1]) {
 			named = append(named, m[1])
 		}
@@ -91,13 +91,13 @@ func TestTablesAreTheDraftsFiles(t *testing.T) {
 
 func ExampleDraft() {
 	raw, _ := Draft(Kestrel, map[string]string{
-		"accounts.csv": "doc-accounts", "contacts.csv": "doc-contacts", "subscriptions.csv": "doc-subscriptions",
-		"invoices.csv": "doc-invoices", "support_tickets.csv": "doc-tickets", "product_usage.csv": "doc-usage",
+		"accounts": "src-accounts", "contacts": "src-contacts", "subscriptions": "src-subscriptions",
+		"invoices": "src-invoices", "support_tickets": "src-tickets", "product_usage": "src-usage",
 	}, "set-kestrel")
 	var def struct {
 		MappingsTOML string `json:"mappings_toml"`
 	}
 	_ = json.Unmarshal(raw, &def)
 	fmt.Println(strings.Split(def.MappingsTOML, "\n")[4])
-	// Output: source = "doc-accounts"
+	// Output: source = "src-accounts"
 }
