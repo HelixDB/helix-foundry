@@ -23,6 +23,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	"github.com/helixdb/helix-foundry/backend/server/tasks"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
@@ -167,6 +168,8 @@ func (t *Task) process(ctx context.Context, gen *model.OntologyGeneration) {
 			revision, err = t.reviser.run(runCtx, gen)
 			result.Format, result.Definition = model.OntologyFormatAgentBundle, revision.definition
 		}
+	} else if gen.Input.Sample != "" {
+		result, err = sampleDraft(gen)
 	} else {
 		result, err = t.generator.Run(runCtx, gen)
 	}
@@ -221,6 +224,27 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, genID 
 		close(done)
 		wg.Wait()
 	}
+}
+
+// sampleDraft is a sample generation's result, with no model called: the
+// sample's draft, each of its tables named by its source id in the
+// connector the generation drafts from. A generation that recorded one
+// missing fails for good.
+func sampleDraft(gen *model.OntologyGeneration) (ontologygen.Result, error) {
+	result := ontologygen.Result{Format: model.OntologyFormatAgentBundle}
+	sources := map[string]string{}
+	for _, t := range gen.Input.Tables {
+		sources[t.Table] = ontologyagent.TableSourceID(t.ConnectorID, t.Table)
+	}
+	set := ""
+	if len(gen.Input.DocumentSetIDs) > 0 {
+		set = gen.Input.DocumentSetIDs[0]
+	}
+	var err error
+	if result.Definition, err = sample.Draft(gen.Input.Sample, sources, set); err != nil {
+		return result, &ontologygen.Failure{Message: "the sample's database is missing a table: add the sample again", Permanent: true, Err: err}
+	}
+	return result, nil
 }
 
 // outcome decides what an attempt leaves behind: a draft version, a retry

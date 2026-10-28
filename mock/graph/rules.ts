@@ -25,7 +25,8 @@ import type { LoadGraph, MockNode } from "./store";
 //
 // The datalog it reads is the engine's without values: `head(x, y) :- a(x,
 // z), not b(z, y).`, variables and `_` only, type atoms (`Customer(c)`), one
-// or more clauses per rule. A link or relation is declared `inverse_of`,
+// or more clauses per rule. A rule or constraint with values (a property
+// compared, a date) is the engine's alone: the mock leaves it out. A link or relation is declared `inverse_of`,
 // `symmetric`, `transitive` or `implies`; each declaration is a rule of its
 // own, named as the engine names it (`decl:in.transitive`,
 // `decl:contains.inverse_of.in`, `decl:based_in.implies.located`). A
@@ -245,27 +246,43 @@ export function compile(ontologyToml: string): Program {
     rules: [
       ...declared,
       ...tables(doc.rules).flatMap(([name, r]) =>
-        clauses(`rule:${name}`, String(r.datalog || "")),
+        readable(() => clauses(`rule:${name}`, String(r.datalog || ""))),
       ),
     ],
     constraints: [
-      ...tables(doc.constraints).map(
-        ([name, c]): Constraint => ({
-          name,
-          severity:
-            c.severity === "block" || c.severity === "info"
-              ? c.severity
-              : "warn",
-          rules: clauses(
+      ...tables(doc.constraints).flatMap(([name, c]): Constraint[] => {
+        const rules = readable(() =>
+          clauses(
             `constraint:${name}`,
             String(c.datalog || ""),
             `violation:${name}`,
           ),
-        }),
-      ),
+        );
+        return rules.length
+          ? [
+              {
+                name,
+                severity:
+                  c.severity === "block" || c.severity === "info"
+                    ? c.severity
+                    : "warn",
+                rules,
+              },
+            ]
+          : [];
+      }),
       ...cardinality,
     ],
   };
+}
+
+/** `read`'s rules, or none when their datalog has values the mock can't read. */
+function readable(read: () => Rule[]): Rule[] {
+  try {
+    return read();
+  } catch {
+    return [];
+  }
 }
 
 /** Each derived pred's stratum: after what it reads, past what it negates. */

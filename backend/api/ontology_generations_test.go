@@ -25,6 +25,7 @@ import (
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	foundryreadv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundryread/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -436,6 +437,62 @@ func TestFoundryOntologyGenerationRPCs(t *testing.T) {
 		if got := store.generations[0].Input.Documents; !slices.Equal(got, want) || len(gen.GetTables()) != 0 ||
 			len(gen.GetDocuments()) != 1 || gen.GetDocuments()[0].GetId() != "doc-csv" || gen.GetDocuments()[0].GetSetId() != "set-files" {
 			t.Fatalf("documents = %v, shown %v", got, gen.GetDocuments())
+		}
+	})
+	// The sample company drafts from its database's connector, each of its
+	// tables synced, and its documents' set, titled as its draft is, with no
+	// model called.
+	acme := func(store *generationStore, except string) {
+		store.sets = []*foundrymodel.FoundryDocumentSet{{ID: "set-k", WorkspaceID: "ws-1", Name: "Acme Corp sample"}, {ID: "set-x", WorkspaceID: "ws-1", Name: "Other"}}
+		store.rows["conn-k"] = &foundrymodel.Connector{ID: "conn-k", WorkspaceID: "ws-1", Kind: "postgres", Name: "Acme Corp", Config: []byte(`{}`)}
+		for _, name := range sample.Tables {
+			if name != except {
+				store.tables = append(store.tables, &foundrymodel.ConnectorTable{WorkspaceID: "ws-1", ConnectorID: "conn-k", TableName: name, SyncID: "sync-k"})
+			}
+		}
+	}
+	sampleRequest := func() *foundryv1.GenerateOntologyRequest {
+		return &foundryv1.GenerateOntologyRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Goal: "Acme Corp's customers",
+			ConnectorIds: []string{"conn-k"}, DocumentSetIds: []string{"set-k"}, Sample: sample.Acme}
+	}
+	t.Run("queues the sample from its database's tables, titled with no model", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		titles, calls := titleModel("A model's title", nil)
+		s.deps.GenerationTitles = titles
+		acme(store, "")
+		gen, err := generate(s, sampleRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gen.GetSample() != sample.Acme || store.generations[0].Input.Sample != sample.Acme || len(gen.GetTables()) != len(sample.Tables) ||
+			gen.GetTitle() != sample.Title || calls.calls.Load() != 0 {
+			t.Fatalf("generation = %+v after %d title requests", gen, calls.calls.Load())
+		}
+	})
+	t.Run("refuses another sample, or the sample beside other sources", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		acme(store, "")
+		other := sampleRequest()
+		other.Sample = "globex"
+		every := sampleRequest()
+		every.ConnectorIds = nil
+		sets := sampleRequest()
+		sets.DocumentSetIds = []string{"set-k", "set-x"}
+		for _, req := range []*foundryv1.GenerateOntologyRequest{other, every, sets} {
+			if _, err := generate(s, req); status.Code(err) != codes.InvalidArgument {
+				t.Errorf("GenerateOntology(%v) = %v, want InvalidArgument", req, err)
+			}
+		}
+		if len(store.generations) != 0 {
+			t.Fatalf("queued %d generations", len(store.generations))
+		}
+	})
+	t.Run("waits for each of the sample's tables to be synced", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		acme(store, "invoices")
+		_, err := generate(s, sampleRequest())
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(status.Convert(err).Message(), "invoices") || len(store.generations) != 0 {
+			t.Fatalf("GenerateOntology = %v, %d queued", err, len(store.generations))
 		}
 	})
 	// A set holding text is enough on its own: the draft routes it to

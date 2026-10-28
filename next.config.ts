@@ -41,6 +41,15 @@ const nextConfig: NextConfig = {
       appEnv === "prod"
         ? "https://mcp.helix-db.com/mcp"
         : "https://mcp.dev.helix-db.com/mcp",
+    // Acme Corp's PostgreSQL database, which "Use the sample" connects
+    // (src/web/areas/ontology/sample.ts): the local stack's acme-db, or
+    // the stamp's own (helix-hyperscale backend/infra/sample-db).
+    NEXT_PUBLIC_SAMPLE_DB_HOST:
+      mode === "local"
+        ? "acme-db"
+        : appEnv === "prod"
+          ? "helix-prod-sample.csf4assug8lo.us-east-1.rds.amazonaws.com"
+          : "helix-dev-sample.cdmqgow4207f.us-east-2.rds.amazonaws.com",
     // Where API sources take pieces over HTTP (Foundry's foundry-events
     // role), an origin with no trailing slash. Empty in local
     // mode: hides HTTP.

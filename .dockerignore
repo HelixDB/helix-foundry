@@ -9,5 +9,7 @@ docs-media
 public/pdfjs
 **/.env*
 !**/.env.example
-# The site image's context; the backend's image builds from backend/
+# The site image's context; the backend's image builds from backend/,
+# but for the sample's draft, which the mock reads.
 backend
+!backend/sample/acme.json

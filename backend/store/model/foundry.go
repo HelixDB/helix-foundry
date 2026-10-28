@@ -110,6 +110,9 @@ type FoundryLoad struct {
 	Origin    FoundryLoadOrigin
 	// RefreshesLoadID is the current load a refresh replaces.
 	RefreshesLoadID *string
+	// AppliedAt is when an apply job last brought the load's tables up to
+	// date in place; nil until one has.
+	AppliedAt *time.Time
 }
 
 // OntologyVersion is the version the graph records the load under.
@@ -403,9 +406,6 @@ type ConnectorDocumentsPublish struct {
 	// older than Grace/2 is refused, so the sweep never deletes the bytes
 	// of a document being published.
 	Grace time.Duration
-	// RefreshEvery spaces the refreshes a removal owes, as a table change's
-	// do (OweFoundryRefreshes).
-	RefreshEvery time.Duration
 	// Fan reads Add into the ontologies that read the set. A sync's has no
 	// requester and may write every database: the trust a refresh has. A
 	// stream whose kind has an allowance flushes with Fan.SystemOnly.
@@ -627,6 +627,10 @@ const (
 	FoundryGraphJobExtract FoundryGraphJobKind = "extract"
 	// FoundryGraphJobDelete deletes a load from the database.
 	FoundryGraphJobDelete FoundryGraphJobKind = "delete"
+	// FoundryGraphJobApply brings the current load up to its tables' newest
+	// snapshots in place, writing only what changed, then extracts the
+	// documents it waits for. A refresh queues it instead of a new load.
+	FoundryGraphJobApply FoundryGraphJobKind = "apply"
 )
 
 // FoundryGraphJobStatus is where a graph job is in its run.
@@ -757,7 +761,7 @@ type FoundryGraphJob struct {
 	// Sources are the snapshots a load job reads, pinned on its first attempt.
 	Sources []FoundryLoadSource
 	// Origin and RefreshesLoadID are written to the load a load job creates;
-	// a claim reads Origin back from the job's load.
+	// a claim reads both back from the job's load.
 	Origin          FoundryLoadOrigin
 	RefreshesLoadID *string
 }
@@ -808,10 +812,16 @@ type FoundryGraphJobOutcome struct {
 // current load it owes (within Budget) or else a delete of the oldest load
 // being deleted, with the id given here.
 type FoundryGraphNext struct {
-	ExtractID   string
-	DeleteID    string
-	Budget      FoundryGraphBudget
-	RetainLoads int
+	ExtractID string
+	DeleteID  string
+	// RefreshID is the id of the full refresh load an apply queues: in its
+	// place when it failed before its tables were in, or after it when the
+	// load it brought up to date was built before RebuildBefore (a rebuild of
+	// the same snapshots, which the rebuild then compares it with).
+	RefreshID     string
+	RebuildBefore time.Time
+	Budget        FoundryGraphBudget
+	RetainLoads   int
 }
 
 // FoundryGraphJobFinish is what finishing an attempt did.

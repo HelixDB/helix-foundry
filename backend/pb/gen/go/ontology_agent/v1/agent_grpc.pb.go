@@ -6,6 +6,7 @@
 // `ingest_{request,event,result}.json`, `extract_{request,event,result}.json` and
 // `delete_load_{request,event,result}.json` for a graph build, `clues_{request,event}.json`
 // for People enrichment's Clues, `read_{request,result}.json` for a read,
+// `compare_{request,result}.json` for a comparison of two loads,
 // `ask_{request,event,result}.json` for a question, `title_{request,result}.json` for a
 // title, `probe_{request,result}.json` for a probe, `catalog.json` for the models Helix prices,
 // and `schema/VERSION` holds the contract version they describe.
@@ -54,6 +55,7 @@ const (
 	Agent_DeleteLoad_FullMethodName = "/ontology_agent.v1.Agent/DeleteLoad"
 	Agent_Clues_FullMethodName      = "/ontology_agent.v1.Agent/Clues"
 	Agent_Read_FullMethodName       = "/ontology_agent.v1.Agent/Read"
+	Agent_Compare_FullMethodName    = "/ontology_agent.v1.Agent/Compare"
 	Agent_Ask_FullMethodName        = "/ontology_agent.v1.Agent/Ask"
 )
 
@@ -177,6 +179,17 @@ type AgentClient interface {
 	//
 	// Cancelling the call stops the read: its evaluation and its graph requests.
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error)
+	// Compares two loads of one version, kind by kind: each entity type, each link, rows' and
+	// documents' evidence, and open violation records, by key and a digest of what each holds,
+	// with each load's count and hash and up to `max_keys` keys that differ. It writes nothing;
+	// it reads both loads whole. What checks a load brought up to new data in place (Ingest's
+	// `reload: "diff"`) against a fresh load of the same data.
+	//
+	// The errors are Read's: INVALID_ARGUMENT (`request_json` is not a CompareRequest, an empty
+	// `database`, an ontology that doesn't compile, a Helix URL that isn't one),
+	// FAILED_PRECONDITION `load_unknown` or `load_mismatch` (either load), RESOURCE_EXHAUSTED
+	// (it shares Read's limit), and UNAVAILABLE. Cancelling the call stops it.
+	Compare(ctx context.Context, in *CompareRequest, opts ...grpc.CallOption) (*CompareResponse, error)
 	// Answers one question over a load, read-only, through `helix` (a read-only proxy). The
 	// stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
 	// `finished`), then exactly one result, last; a question that runs always ends with a result
@@ -350,6 +363,16 @@ func (c *agentClient) Read(ctx context.Context, in *ReadRequest, opts ...grpc.Ca
 	return out, nil
 }
 
+func (c *agentClient) Compare(ctx context.Context, in *CompareRequest, opts ...grpc.CallOption) (*CompareResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompareResponse)
+	err := c.cc.Invoke(ctx, Agent_Compare_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentClient) Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Agent_ServiceDesc.Streams[5], Agent_Ask_FullMethodName, cOpts...)
@@ -489,6 +512,17 @@ type AgentServer interface {
 	//
 	// Cancelling the call stops the read: its evaluation and its graph requests.
 	Read(context.Context, *ReadRequest) (*ReadResponse, error)
+	// Compares two loads of one version, kind by kind: each entity type, each link, rows' and
+	// documents' evidence, and open violation records, by key and a digest of what each holds,
+	// with each load's count and hash and up to `max_keys` keys that differ. It writes nothing;
+	// it reads both loads whole. What checks a load brought up to new data in place (Ingest's
+	// `reload: "diff"`) against a fresh load of the same data.
+	//
+	// The errors are Read's: INVALID_ARGUMENT (`request_json` is not a CompareRequest, an empty
+	// `database`, an ontology that doesn't compile, a Helix URL that isn't one),
+	// FAILED_PRECONDITION `load_unknown` or `load_mismatch` (either load), RESOURCE_EXHAUSTED
+	// (it shares Read's limit), and UNAVAILABLE. Cancelling the call stops it.
+	Compare(context.Context, *CompareRequest) (*CompareResponse, error)
 	// Answers one question over a load, read-only, through `helix` (a read-only proxy). The
 	// stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
 	// `finished`), then exactly one result, last; a question that runs always ends with a result
@@ -545,6 +579,9 @@ func (UnimplementedAgentServer) Clues(*CluesRequest, grpc.ServerStreamingServer[
 }
 func (UnimplementedAgentServer) Read(context.Context, *ReadRequest) (*ReadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Read not implemented")
+}
+func (UnimplementedAgentServer) Compare(context.Context, *CompareRequest) (*CompareResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Compare not implemented")
 }
 func (UnimplementedAgentServer) Ask(*AskRequest, grpc.ServerStreamingServer[AskEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method Ask not implemented")
@@ -714,6 +751,24 @@ func _Agent_Read_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Agent_Compare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompareRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).Compare(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_Compare_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).Compare(ctx, req.(*CompareRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Agent_Ask_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(AskRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -751,6 +806,10 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Read",
 			Handler:    _Agent_Read_Handler,
+		},
+		{
+			MethodName: "Compare",
+			Handler:    _Agent_Compare_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

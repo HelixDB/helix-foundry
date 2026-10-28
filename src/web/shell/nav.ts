@@ -1,5 +1,6 @@
 import {
   Cable,
+  Rocket,
   Settings,
   Shapes,
   Sparkles,
@@ -50,6 +51,11 @@ export const primaryNav: NavItem[] = [
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
   item("explore", "/explore", "Explorer", Waypoints, ["/explore"]),
   item("data", "/data", "Connectors", Cable, ["/data"]),
+];
+// While the workspace is onboarding, its one section: the wizard, so Settings
+// (where an AI provider is chosen) has a way back.
+export const onboardingNav: NavItem[] = [
+  item("ontology", "/ontology/new", "Get started", Rocket, ["/ontology"]),
 ];
 export const secondaryNav: NavItem[] = [
   item("settings", "/settings", "Settings", Settings, ["/settings"]),

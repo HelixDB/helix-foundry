@@ -60,6 +60,14 @@
       "description": "The version the graph records, in place of the one `ontology_toml` declares.",
       "type": "string"
     },
+    "remove": {
+      "description": "Documents to take out of the load before the request's are extracted, by id: each one's\nsections, mentions, quotes and reviews, each fact's confidence recomputed from what is\nleft, and the facts and entities left with nothing are deleted (`document_removed`). A\ndocument the load doesn't hold is skipped, so a retry removes nothing twice. Ignored on\na dry run.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
     "request_id": {
       "description": "The idempotency key: a retry sends the same one.",
       "type": "string"

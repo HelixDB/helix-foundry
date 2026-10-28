@@ -324,6 +324,7 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
   it("runs from a fresh clone with nothing set", () => {
     const { services, volumes } = composed({});
     expect(Object.keys(services).sort()).toEqual([
+      "acme-db",
       "foundry",
       "helix",
       "init-secrets",

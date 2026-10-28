@@ -12,6 +12,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -164,6 +165,51 @@ type noDatabases struct{ ports.Databases }
 
 // The worker drafts with the agent, on its settings, and resolves each
 // workspace's AI setting.
+// sampleGeneration asks for the sample from connector conn-k's tables and
+// its documents' set.
+func sampleGeneration(tables ...string) *model.OntologyGeneration {
+	gen := &model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
+		Input: model.OntologyGenerationInput{Sample: sample.Acme, DocumentSetIDs: []string{"set-k"}}}
+	for _, name := range tables {
+		gen.Input.Tables = append(gen.Input.Tables, model.OntologyGenerationTable{ConnectorID: "conn-k", Table: name, SyncID: "sync-1"})
+	}
+	return gen
+}
+
+func TestFoundryOntologyWorkerSample(t *testing.T) {
+	never := func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+		t.Fatal("the sample called the agent")
+		return ontologygen.Result{}, nil
+	}
+	// The sample's draft is stored at once, naming the connector's tables.
+	t.Run("stores the sample's draft for its tables, with no model", func(t *testing.T) {
+		q := newQueue(sampleGeneration(sample.Tables...))
+		newTask(q, never).drain(context.Background())
+		got := q.outcomes["g1"]
+		v := got.Result
+		if got.Status != model.OntologyGenerationSucceeded || v == nil || v.Format != model.OntologyFormatAgentBundle ||
+			v.Source != model.OntologySourceGenerated || strings.Join(*v.DocumentSetIDs, ",") != "set-k" {
+			t.Fatalf("outcome = %+v, version = %+v", got, v)
+		}
+		accounts := ontologyagent.TableSourceID("conn-k", "accounts")
+		if !strings.Contains(string(v.Definition), `source = \"`+accounts+`\"`) || strings.Contains(string(v.Definition), "{{") {
+			t.Fatalf("definition does not name the connector's tables")
+		}
+		if got.Model != "" || got.InputTokens != 0 || got.OutputTokens != 0 {
+			t.Fatalf("usage = %+v", got)
+		}
+	})
+	// A table the generation didn't record fails the sample for good.
+	t.Run("fails a sample missing a table, for good", func(t *testing.T) {
+		q := newQueue(sampleGeneration("accounts", "contacts"))
+		newTask(q, never).drain(context.Background())
+		got := q.outcomes["g1"]
+		if got.Status != model.OntologyGenerationFailed || got.RetryAt != nil || got.Error != "the sample's database is missing a table: add the sample again" {
+			t.Fatalf("outcome = %+v", got)
+		}
+	})
+}
+
 func TestFoundryOntologyWorkerGenerator(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Foundry.AI.Default = config.AIDefault{Provider: "anthropic", APIKey: "sk-test", Models: config.AIModels{

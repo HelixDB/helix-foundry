@@ -73,6 +73,7 @@ type ReadStore interface {
 	ListConnectorSyncs(ctx context.Context, workspaceID, connectorID string, limit int) ([]*model.ConnectorSync, error)
 	ListConnectorTables(ctx context.Context, workspaceID, connectorID string) ([]*model.ConnectorTable, error)
 	ListConnectorChangeBatches(ctx context.Context, workspaceID, syncID string) ([]*model.ConnectorChangeBatch, error)
+	ListConnectorChangeBatchesAfter(ctx context.Context, workspaceID, connectorID, table string, afterSeq, toSeq int64) ([]*model.ConnectorChangeBatch, error)
 	ListExpiredChangeBatches(ctx context.Context, before time.Time, limit int) ([]*model.ConnectorChangeBatch, error)
 	ListReplacedSnapshots(ctx context.Context, before time.Time, limit int) ([]*model.ReplacedSnapshot, error)
 	ListPinnedSnapshotKeys(ctx context.Context) ([]string, error)
@@ -131,6 +132,7 @@ type ReadStore interface {
 		pageToken string, limit int) ([]*model.FoundryDocument, string, error)
 	FoundryLoadHoldsDocument(ctx context.Context, loadID, documentID string) (bool, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
+	ListRemovedFoundryDocuments(ctx context.Context, loadID string) ([]string, error)
 	GetFoundryDocumentExtraction(ctx context.Context, loadID, documentID string) (*model.FoundryDocumentExtraction, error)
 	ListFoundryDocumentExtractions(ctx context.Context, loadID string, documentIDs []string) (map[string]*model.FoundryDocumentExtraction, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
@@ -153,6 +155,7 @@ type ReadStore interface {
 	GetFoundryEnrichmentSettings(ctx context.Context, workspaceID string, since time.Time) (model.FoundryEnrichmentSettings, error)
 	GetFoundryLoadEnrichment(ctx context.Context, loadID string) (*model.FoundryLoadEnrichment, error)
 	ListFoundryLoadEnrichments(ctx context.Context, loadIDs []string) (map[string]*model.FoundryLoadEnrichment, error)
+	ListFoundryLoadSources(ctx context.Context, loadIDs []string) (map[string][]model.FoundryLoadSource, error)
 	GetLatestFoundryEnrichmentResults(ctx context.Context, ontologyID string) (*model.FoundryLoadEnrichment, error)
 	GetLatestFoundryEnrichmentApplied(ctx context.Context, ontologyID string) (*model.FoundryLoadEnrichment, error)
 	GetFoundryEnrichmentLedger(ctx context.Context, workspaceID string, since time.Time) (model.FoundryEnrichmentLedger, error)
@@ -241,6 +244,7 @@ type Store interface {
 	RenewFoundryGraphJobLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	UpdateFoundryGraphJob(ctx context.Context, id, workerID string, update model.FoundryGraphJobUpdate) error
 	RecordFoundryDocumentExtraction(ctx context.Context, jobID, workerID string, e *model.FoundryDocumentExtraction, keepExisting bool) error
+	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	FinishFoundryGraphJob(ctx context.Context, jobID, workerID string, outcome model.FoundryGraphJobOutcome) (model.FoundryGraphJobFinish, error)
 	CreateFoundryQuestion(ctx context.Context, q *model.FoundryQuestion, limits model.FoundryQuestionLimits) error
 	ClaimFoundryQuestion(ctx context.Context, workerID string, claim model.FoundryQuestionClaim) (*model.FoundryQuestion, error)

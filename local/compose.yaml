@@ -219,6 +219,26 @@ services:
     depends_on: *secrets-first
     restart: unless-stopped
 
+  # Acme Corp, the sample company's PostgreSQL database (acme/acme.sql,
+  # written by scripts/sample-company.mjs): the first ontology's Use the
+  # sample connects to it as to any database, at acme-db:5432 as
+  # acme_reader, who can only select. Its data is made up and starts
+  # afresh with the container (no volume); it publishes no port.
+  acme-db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: acme
+      POSTGRES_USER: acme
+      POSTGRES_PASSWORD: acme
+    volumes: ["./acme/acme.sql:/docker-entrypoint-initdb.d/acme.sql:ro"]
+    tmpfs: ["/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acme -d acme"]
+      interval: 2s
+      retries: 30
+    depends_on: *secrets-first
+    restart: unless-stopped
+
   # HelixDB: the public helix-db image, one database on a local volume. It
   # keeps no tenants apart, so every ontology's loads share it; the engine
   # scopes each read and write to its load. It checks no key, and has no

@@ -193,7 +193,7 @@ func shapePostHogTables(tables []Table) {
 		if pk, ok := posthogPrimaryKeys[tables[i].Name]; ok {
 			tables[i].PrimaryKey = pk
 		}
-		tables[i].Windowed = tables[i].Name == "events" || tables[i].Name == "daily_event_counts"
+		tables[i].Windowed = WindowedTable("posthog", tables[i].Name)
 	}
 }
 

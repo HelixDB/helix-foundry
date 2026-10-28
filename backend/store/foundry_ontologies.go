@@ -241,8 +241,7 @@ WHERE id=? AND workspace_id=? AND deleted_at IS NULL`, on, on, id, workspaceID)
 // due at the later of now and its last refresh's start plus refreshEvery, or
 // earlier if one was already due.
 func (s *mysqlDB) OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID string, tables []string, refreshEvery time.Duration) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT o.id, g.input,
-  (SELECT MAX(r.created_at) FROM foundry_loads r WHERE r.ontology_id = o.id AND r.origin = 'refresh')
+	rows, err := s.db.QueryContext(ctx, `SELECT o.id, g.input
 FROM foundry_ontologies o
 JOIN foundry_loads l ON l.id = o.current_load_id
 JOIN foundry_ontology_versions v ON v.id = l.version_id
@@ -251,15 +250,10 @@ WHERE o.workspace_id=? AND o.deleted_at IS NULL AND o.auto_refresh`, workspaceID
 	if err != nil {
 		return fmt.Errorf("list ontologies to refresh: %w", err)
 	}
-	type owed struct {
-		id   string
-		last sql.NullTime
-	}
-	var marks []owed
+	var marks []string
 	for rows.Next() {
 		var id, input string
-		var lastRefresh sql.NullTime
-		if err := rows.Scan(&id, &input, &lastRefresh); err != nil {
+		if err := rows.Scan(&id, &input); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan ontology to refresh: %w", err)
 		}
@@ -273,18 +267,35 @@ WHERE o.workspace_id=? AND o.deleted_at IS NULL AND o.auto_refresh`, workspaceID
 		}) {
 			continue
 		}
-		marks = append(marks, owed{id, lastRefresh})
+		marks = append(marks, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("list ontologies to refresh: %w", err)
 	}
-	for _, m := range marks {
-		if err := s.oweFoundryRefresh(ctx, m.id, m.last, refreshEvery); err != nil {
+	for _, id := range marks {
+		last, err := s.lastFoundryRefresh(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.oweFoundryRefresh(ctx, id, last, refreshEvery); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// lastFoundryRefresh is when the ontology last started a refresh, a refresh
+// load or an apply job; invalid when it has had neither.
+func (s *mysqlDB) lastFoundryRefresh(ctx context.Context, ontologyID string) (sql.NullTime, error) {
+	var last sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(started) FROM (
+  SELECT MAX(created_at) AS started FROM foundry_loads WHERE ontology_id=? AND origin='refresh'
+  UNION ALL
+  SELECT MAX(created_at) FROM foundry_load_jobs WHERE ontology_id=? AND kind='apply') refreshes`, ontologyID, ontologyID).Scan(&last); err != nil {
+		return last, fmt.Errorf("read last refresh of ontology %s: %w", ontologyID, err)
+	}
+	return last, nil
 }
 
 // oweFoundryRefresh makes a live ontology with refresh on owe a refresh, due

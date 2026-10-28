@@ -159,7 +159,7 @@ func TestSyncerConnectorDocuments(t *testing.T) {
 	first := index(set.ID)
 
 	// An ontology's current load reads the set: new documents fan out to it,
-	// and a replaced or removed one owes it a refresh.
+	// and a replaced or removed one leaves it through the same extract.
 	held, err := f.db.ListConnectorDocuments(ctx, ws, set.ID, "", 100)
 	require.NoError(t, err)
 	load := f.loadReading(t, "L1", set.ID)
@@ -172,11 +172,14 @@ func TestSyncerConnectorDocuments(t *testing.T) {
 	require.NoError(t, run("3", syncWorker))
 	assert.Equal(t, []string{"n2@2|b=second, edited", "n3@1|a=third"}, index(set.ID))
 	assert.Len(t, purgeRows(t), 2, "the replaced and the removed document wait for the sweep")
-	assert.NotNil(t, f.ontologyNow(t).RefreshDueAt)
+	assert.Nil(t, f.ontologyNow(t).RefreshDueAt, "no refresh is owed for documents")
 	job := f.liveJob(t)
 	require.NotNil(t, job, "the new documents queued an extract into the current load")
 	assert.Equal(t, model.FoundryGraphJobExtract, job.Kind)
 	assert.Len(t, members(t, load), 4, "the load holds the two it read and the two added")
+	removed, err := f.db.ListRemovedFoundryDocuments(ctx, load)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{held[0].ID, held[1].ID}, removed, "the extract takes the replaced and the removed one out")
 
 	// A sync that lost its lease writes nothing.
 	kind.notes = [][3]string{{"n4", "1|a", "fourth"}}

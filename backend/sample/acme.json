@@ -1,0 +1,923 @@
+{
+  "draft": {
+    "draft": {
+      "acknowledged": [],
+      "base_version": null,
+      "items": {
+        "constraint.ended_after_started": {
+          "basis": "definitional",
+          "card": {
+            "added": 0,
+            "confirmed": 0,
+            "contradicted": 0,
+            "counterexamples": [],
+            "failure_rate_bound": 0.06666666666666667,
+            "instances": 0,
+            "precision": null,
+            "reason": "definitional constraint with measured subjects, no violations and no sampled review effect",
+            "rev": 5,
+            "review_facts": 0,
+            "sample": "sample only: 761 entities, 1090 stated facts, as of 2026-10-28; preview sets: []; no full-data sampling ratio; review_facts replays the sampled row statements with this constraint set to block",
+            "subjects": 45,
+            "unmeasurable": false,
+            "unrepresentable": 0,
+            "violation_rate": 0,
+            "violations": [
+              {
+                "after": 0,
+                "before": 0,
+                "constraint": "ended_after_started",
+                "severity": "block"
+              }
+            ]
+          },
+          "evidence_ids": [
+            "e3",
+            "e30",
+            "e35",
+            "e38"
+          ],
+          "pending": null,
+          "rationale": "A subscription can't end before it starts, so a violation is a data error in CQ2's terms.",
+          "serves": [
+            "cq.CQ2"
+          ],
+          "status": "proposed",
+          "toml": "[constraints.ended_after_started]\ndescription = \"A subscription ends no earlier than it starts.\"\nseverity = \"block\"\ndatalog = \"violation(s) :- Subscription(s), s.ended_on < s.started_on.\"\n",
+          "verdict": "rule"
+        },
+        "constraint.ticket_closed_after_opened": {
+          "basis": "definitional",
+          "card": {
+            "added": 0,
+            "confirmed": 0,
+            "contradicted": 0,
+            "counterexamples": [],
+            "failure_rate_bound": 0.009174311926605503,
+            "instances": 0,
+            "precision": null,
+            "reason": "definitional constraint with measured subjects, no violations and no sampled review effect",
+            "rev": 5,
+            "review_facts": 0,
+            "sample": "sample only: 761 entities, 1090 stated facts, as of 2026-10-28; preview sets: []; no full-data sampling ratio; review_facts replays the sampled row statements with this constraint set to block",
+            "subjects": 327,
+            "unmeasurable": false,
+            "unrepresentable": 0,
+            "violation_rate": 0,
+            "violations": [
+              {
+                "after": 0,
+                "before": 0,
+                "constraint": "ticket_closed_after_opened",
+                "severity": "block"
+              }
+            ]
+          },
+          "evidence_ids": [
+            "e6",
+            "e30",
+            "e35",
+            "e38"
+          ],
+          "pending": null,
+          "rationale": "A ticket can't close before it opens, so a violation is a data error in CQ4's tickets.",
+          "serves": [
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[constraints.ticket_closed_after_opened]\ndescription = \"A ticket closes no earlier than it opens.\"\nseverity = \"block\"\ndatalog = \"violation(t) :- Ticket(t), t.closed_at < t.opened_at.\"\n",
+          "verdict": "rule"
+        },
+        "cq.CQ1": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's account with its people.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ1]\nquestion = \"Who are each account's people, and what role does each play?\"\npath = [\"Account\", \"<contact_at\", \"Contact\"]\n"
+        },
+        "cq.CQ2": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's plan and subscription.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ2]\nquestion = \"Which subscription and plan does each account have, and when does its term end?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"on_plan>\", \"Plan\"]\n"
+        },
+        "cq.CQ3": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's invoices, and what is owed.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ3]\nquestion = \"Which invoices has each account's subscription been billed, and which are unpaid or overdue?\"\npath = [\"Account\", \"<subscription_of\", \"Subscription\", \"<invoice_for\", \"Invoice\"]\n"
+        },
+        "cq.CQ4": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's support tickets.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ4]\nquestion = \"Which support tickets has each account opened, and who raised them?\"\npath = [\"Account\", \"<ticket_for\", \"Ticket\", \"requested_by>\", \"Contact\"]\n"
+        },
+        "cq.CQ5": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's usage, a renewal-risk signal.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ5]\nquestion = \"How have each account's active users and scheduled jobs moved month by month?\"\npath = [\"Account\", \"<usage_of\", \"MonthlyUsage\"]\n"
+        },
+        "cq.CQ6": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's what was said on calls.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ6]\nquestion = \"What was said in calls and emails with each account, and who took part?\"\npath = [\"Account\", \"<conversation_with\", \"Conversation\", \"attended_by>\", \"Contact\"]\n"
+        },
+        "cq.CQ7": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "Ties call notes to the tickets behind a renewal risk.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ7]\nquestion = \"Which support tickets came up in each conversation?\"\npath = [\"Conversation\", \"discussed>\", \"Ticket\"]\n"
+        },
+        "cq.CQ8": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's what we have promised and what we owe.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ8]\nquestion = \"What have we promised or do we owe each account, and by when?\"\npath = [\"Account\", \"<promised_to\", \"Commitment\"]\n"
+        },
+        "cq.CQ9": {
+          "basis": null,
+          "evidence_ids": [],
+          "pending": null,
+          "rationale": "The goal's renewals at risk, starting from the term end.",
+          "serves": [],
+          "status": "proposed",
+          "toml": "[cq.CQ9]\nquestion = \"Which active subscriptions come up for renewal soon, and for which accounts?\"\npath = [\"Subscription\", \"subscription_of>\", \"Account\"]\n"
+        },
+        "extraction.customer_documents": {
+          "basis": null,
+          "evidence_ids": [
+            "e22",
+            "e23",
+            "e24",
+            "e25",
+            "e26"
+          ],
+          "pending": null,
+          "rationale": "Call notes, emails and reports are the only record of conversations and commitments (e22 to e26), so documents create those and resolve row-loaded accounts, contacts and tickets by name, email or ticket id. Contract notice and credit terms fill the account (e22, e26).",
+          "serves": [
+            "cq.CQ6",
+            "cq.CQ7",
+            "cq.CQ8"
+          ],
+          "status": "proposed",
+          "toml": "[extractions.customer_documents]\ndocuments = \"all\"\nlinks = [\"conversation_with\", \"attended_by\", \"discussed\", \"promised_to\"]\n\n[extractions.customer_documents.types.Account]\nprops = [\"notice_days\", \"service_credit_terms\"]\n\n[extractions.customer_documents.types.Commitment]\ncreate = true\nprops = [\"due_on\", \"amount_usd\"]\n\n[extractions.customer_documents.types.Contact]\n\n[extractions.customer_documents.types.Conversation]\ncreate = true\nprops = [\"held_on\", \"summary\", \"risks\"]\n\n[extractions.customer_documents.types.Ticket]\n"
+        },
+        "link.attended_by": {
+          "basis": null,
+          "evidence_ids": [
+            "e22",
+            "e25"
+          ],
+          "pending": null,
+          "rationale": "CQ6 asks who took part; notes list attendees (e22, e25).",
+          "serves": [
+            "cq.CQ6"
+          ],
+          "status": "proposed",
+          "toml": "[links.attended_by]\nfrom = \"Conversation\"\nto = \"Contact\"\ndescription = \"The contact took part in the conversation.\"\n"
+        },
+        "link.contact_at": {
+          "basis": null,
+          "evidence_ids": [
+            "e16"
+          ],
+          "pending": null,
+          "rationale": "CQ1; every contact finds its account (e16).",
+          "serves": [
+            "join",
+            "cq.CQ1"
+          ],
+          "status": "proposed",
+          "toml": "[links.contact_at]\nfrom = \"Contact\"\nto = \"Account\"\ndescription = \"The contact works at the account.\"\n"
+        },
+        "link.contact_at.cardinality": {
+          "basis": null,
+          "evidence_ids": [
+            "e4"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Each contact row names one account (e4).",
+          "serves": [
+            "cq.CQ1"
+          ],
+          "status": "proposed",
+          "toml": "[links.contact_at]\ncardinality = \"one\"\n"
+        },
+        "link.contact_at.required": {
+          "basis": null,
+          "evidence_ids": [
+            "e16"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Every contact finds its account (e16).",
+          "serves": [
+            "cq.CQ1"
+          ],
+          "status": "proposed",
+          "toml": "[links.contact_at]\nrequired = true\n"
+        },
+        "link.conversation_with": {
+          "basis": null,
+          "evidence_ids": [
+            "e22",
+            "e23"
+          ],
+          "pending": null,
+          "rationale": "CQ6; call notes and emails name the account (e22, e23).",
+          "serves": [
+            "cq.CQ6"
+          ],
+          "status": "proposed",
+          "toml": "[links.conversation_with]\nfrom = \"Conversation\"\nto = \"Account\"\ndescription = \"The conversation was held with the account.\"\n"
+        },
+        "link.discussed": {
+          "basis": null,
+          "evidence_ids": [
+            "e22",
+            "e23",
+            "e26"
+          ],
+          "pending": null,
+          "rationale": "CQ7; notes and emails cite ticket ids (e22, e23, e26).",
+          "serves": [
+            "cq.CQ7"
+          ],
+          "status": "proposed",
+          "toml": "[links.discussed]\nfrom = \"Conversation\"\nto = \"Ticket\"\ndescription = \"The ticket came up in the conversation.\"\n"
+        },
+        "link.invoice_for": {
+          "basis": null,
+          "evidence_ids": [
+            "e17",
+            "e28"
+          ],
+          "pending": null,
+          "rationale": "CQ3; every invoice finds its subscription (e17), and its account always matches the subscription's (e28), so no separate invoice-to-account link.",
+          "serves": [
+            "join",
+            "cq.CQ3"
+          ],
+          "status": "proposed",
+          "toml": "[links.invoice_for]\nfrom = \"Invoice\"\nto = \"Subscription\"\ndescription = \"The invoice bills the subscription.\"\n"
+        },
+        "link.invoice_for.cardinality": {
+          "basis": null,
+          "evidence_ids": [
+            "e5"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Each invoice row names one subscription (e5).",
+          "serves": [
+            "cq.CQ3"
+          ],
+          "status": "proposed",
+          "toml": "[links.invoice_for]\ncardinality = \"one\"\n"
+        },
+        "link.invoice_for.required": {
+          "basis": null,
+          "evidence_ids": [
+            "e17"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Every invoice finds its subscription (e17).",
+          "serves": [
+            "cq.CQ3"
+          ],
+          "status": "proposed",
+          "toml": "[links.invoice_for]\nrequired = true\n"
+        },
+        "link.on_plan": {
+          "basis": null,
+          "evidence_ids": [
+            "e29"
+          ],
+          "pending": null,
+          "rationale": "CQ2; every subscription names a plan (e29).",
+          "serves": [
+            "cq.CQ2"
+          ],
+          "status": "proposed",
+          "toml": "[links.on_plan]\nfrom = \"Subscription\"\nto = \"Plan\"\ndescription = \"The subscription is on the plan.\"\n"
+        },
+        "link.on_plan.cardinality": {
+          "basis": null,
+          "evidence_ids": [
+            "e22",
+            "e29"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "An account can't split seats between plans (e22); each row names one plan.",
+          "serves": [
+            "cq.CQ2"
+          ],
+          "status": "proposed",
+          "toml": "[links.on_plan]\ncardinality = \"one\"\n"
+        },
+        "link.on_plan.required": {
+          "basis": null,
+          "evidence_ids": [
+            "e29"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Every subscription row names a plan (e29).",
+          "serves": [
+            "cq.CQ2"
+          ],
+          "status": "proposed",
+          "toml": "[links.on_plan]\nrequired = true\n"
+        },
+        "link.promised_to": {
+          "basis": null,
+          "evidence_ids": [
+            "e24",
+            "e26"
+          ],
+          "pending": null,
+          "rationale": "CQ8; documents state promises and credits per account (e24, e26).",
+          "serves": [
+            "cq.CQ8"
+          ],
+          "status": "proposed",
+          "toml": "[links.promised_to]\nfrom = \"Commitment\"\nto = \"Account\"\ndescription = \"The commitment is owed to the account.\"\n"
+        },
+        "link.requested_by": {
+          "basis": null,
+          "evidence_ids": [
+            "e20"
+          ],
+          "pending": null,
+          "rationale": "CQ4 asks who raised each ticket; every requester is a known contact (e20).",
+          "serves": [
+            "join",
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[links.requested_by]\nfrom = \"Ticket\"\nto = \"Contact\"\ndescription = \"The ticket was raised by the contact.\"\n"
+        },
+        "link.requested_by.cardinality": {
+          "basis": null,
+          "evidence_ids": [
+            "e6"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Each ticket row names one requester (e6).",
+          "serves": [
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[links.requested_by]\ncardinality = \"one\"\n"
+        },
+        "link.requested_by.required": {
+          "basis": null,
+          "evidence_ids": [
+            "e20"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Every ticket's requester is a known contact (e20).",
+          "serves": [
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[links.requested_by]\nrequired = true\n"
+        },
+        "link.subscription_of": {
+          "basis": null,
+          "evidence_ids": [
+            "e15"
+          ],
+          "pending": null,
+          "rationale": "CQ2, CQ3, CQ9; every subscription finds its account (e15).",
+          "serves": [
+            "join",
+            "cq.CQ2",
+            "cq.CQ3",
+            "cq.CQ9"
+          ],
+          "status": "proposed",
+          "toml": "[links.subscription_of]\nfrom = \"Subscription\"\nto = \"Account\"\ndescription = \"The subscription is held by the account.\"\n"
+        },
+        "link.subscription_of.cardinality": {
+          "basis": null,
+          "evidence_ids": [
+            "e3"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "A subscription belongs to one account; each row names one (e3).",
+          "serves": [
+            "cq.CQ2"
+          ],
+          "status": "proposed",
+          "toml": "[links.subscription_of]\ncardinality = \"one\"\n"
+        },
+        "link.subscription_of.required": {
+          "basis": null,
+          "evidence_ids": [
+            "e15"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Every subscription finds its account (e15).",
+          "serves": [
+            "cq.CQ2"
+          ],
+          "status": "proposed",
+          "toml": "[links.subscription_of]\nrequired = true\n"
+        },
+        "link.ticket_for": {
+          "basis": null,
+          "evidence_ids": [
+            "e19"
+          ],
+          "pending": null,
+          "rationale": "CQ4; every ticket finds its account (e19).",
+          "serves": [
+            "join",
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[links.ticket_for]\nfrom = \"Ticket\"\nto = \"Account\"\ndescription = \"The ticket was raised for the account.\"\n"
+        },
+        "link.ticket_for.cardinality": {
+          "basis": null,
+          "evidence_ids": [
+            "e6"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Each ticket row names one account (e6).",
+          "serves": [
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[links.ticket_for]\ncardinality = \"one\"\n"
+        },
+        "link.ticket_for.required": {
+          "basis": null,
+          "evidence_ids": [
+            "e19"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Every ticket finds its account (e19).",
+          "serves": [
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[links.ticket_for]\nrequired = true\n"
+        },
+        "link.usage_of": {
+          "basis": null,
+          "evidence_ids": [
+            "e21"
+          ],
+          "pending": null,
+          "rationale": "CQ5; every usage row finds its account (e21).",
+          "serves": [
+            "join",
+            "cq.CQ5"
+          ],
+          "status": "proposed",
+          "toml": "[links.usage_of]\nfrom = \"MonthlyUsage\"\nto = \"Account\"\ndescription = \"The usage figures are the account's.\"\n"
+        },
+        "link.usage_of.cardinality": {
+          "basis": null,
+          "evidence_ids": [
+            "e13"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "A usage month is one account's by its key (e13).",
+          "serves": [
+            "cq.CQ5"
+          ],
+          "status": "proposed",
+          "toml": "[links.usage_of]\ncardinality = \"one\"\n"
+        },
+        "link.usage_of.required": {
+          "basis": null,
+          "evidence_ids": [
+            "e21"
+          ],
+          "pending": "dry_run_counts",
+          "rationale": "Every usage row finds its account (e21).",
+          "serves": [
+            "cq.CQ5"
+          ],
+          "status": "proposed",
+          "toml": "[links.usage_of]\nrequired = true\n"
+        },
+        "mapping.accounts": {
+          "basis": null,
+          "evidence_ids": [
+            "e2",
+            "e8"
+          ],
+          "pending": null,
+          "rationale": "Creates accounts by their unique id (e8), upper-cased so every file's references agree.",
+          "serves": [
+            "key",
+            "cq.CQ1"
+          ],
+          "status": "proposed",
+          "toml": "[mappings.accounts]\nsource = \"{{table:accounts}}\"\nrow_key = [\"account_id\"]\n\n[mappings.accounts.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nprops = { account_name = { field = \"name\", transform = [\"collapse_ws\"] }, country = \"country\", customer_since = \"customer_since\", industry = \"industry\", segment = \"segment\" }\nmissing = \"create\"\n"
+        },
+        "mapping.contacts": {
+          "basis": null,
+          "evidence_ids": [
+            "e4",
+            "e10",
+            "e14",
+            "e16"
+          ],
+          "pending": null,
+          "rationale": "Creates contacts by unique id (e10) with the names and emails documents resolve them by (e14), and links each to its account (e16).",
+          "serves": [
+            "key",
+            "join",
+            "cq.CQ1"
+          ],
+          "status": "proposed",
+          "toml": "[mappings.contacts]\nsource = \"{{table:contacts}}\"\nrow_key = [\"contact_id\"]\nlinks = [\n  { link = \"contact_at\", from = \"contact\", to = \"account\" },\n]\n\n[mappings.contacts.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.contacts.bind.contact]\ntype = \"Contact\"\nkey = { contact_id = { field = \"contact_id\", transform = [\"upper\"] } }\nprops = { email = { field = \"email\", transform = [\"lower\"] }, full_name = { field = \"full_name\", transform = [\"collapse_ws\"] }, role = \"role\", title = \"title\" }\nmissing = \"create\"\n"
+        },
+        "mapping.invoices": {
+          "basis": null,
+          "evidence_ids": [
+            "e5",
+            "e11",
+            "e17"
+          ],
+          "pending": null,
+          "rationale": "Creates invoices by unique id (e11) and links each to its subscription (e17).",
+          "serves": [
+            "key",
+            "join",
+            "cq.CQ3"
+          ],
+          "status": "proposed",
+          "toml": "[mappings.invoices]\nsource = \"{{table:invoices}}\"\nrow_key = [\"invoice_id\"]\nlinks = [\n  { link = \"invoice_for\", from = \"invoice\", to = \"subscription\" },\n]\n\n[mappings.invoices.bind.invoice]\ntype = \"Invoice\"\nkey = { invoice_id = { field = \"invoice_id\", transform = [\"upper\"] } }\nprops = { amount_usd = \"amount_usd\", due_on = \"due_on\", issued_on = \"issued_on\", paid_on = \"paid_on\", status = \"status\" }\nmissing = \"create\"\n\n[mappings.invoices.bind.subscription]\ntype = \"Subscription\"\nkey = { subscription_id = { field = \"subscription_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n"
+        },
+        "mapping.subscriptions": {
+          "basis": null,
+          "evidence_ids": [
+            "e3",
+            "e9",
+            "e15",
+            "e29"
+          ],
+          "pending": null,
+          "rationale": "Creates subscriptions by unique id (e9) with ISO dates (e29), their account (e15) and their plan, which this mapping creates by name.",
+          "serves": [
+            "key",
+            "join",
+            "cq.CQ2",
+            "cq.CQ9"
+          ],
+          "status": "proposed",
+          "toml": "[mappings.subscriptions]\nsource = \"{{table:subscriptions}}\"\nrow_key = [\"subscription_id\"]\nlinks = [\n  { link = \"subscription_of\", from = \"subscription\", to = \"account\" },\n  { link = \"on_plan\", from = \"subscription\", to = \"plan\" },\n]\n\n[mappings.subscriptions.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.subscriptions.bind.plan]\ntype = \"Plan\"\nname = { field = \"plan\", transform = [\"collapse_ws\"] }\nmissing = \"create\"\n\n[mappings.subscriptions.bind.subscription]\ntype = \"Subscription\"\nkey = { subscription_id = { field = \"subscription_id\", transform = [\"upper\"] } }\nprops = { cancel_reason = \"cancel_reason\", current_term_end = \"current_term_end\", discount_pct = \"discount_pct\", ended_on = \"ended_on\", monthly_amount_usd = \"monthly_amount_usd\", price_per_seat_usd = \"price_per_seat_usd\", seats = \"seats\", started_on = \"started_on\", status = \"status\", term_months = \"term_months\" }\nmissing = \"create\"\n"
+        },
+        "mapping.tickets": {
+          "basis": null,
+          "evidence_ids": [
+            "e6",
+            "e12",
+            "e19",
+            "e20"
+          ],
+          "pending": null,
+          "rationale": "Creates tickets by unique id (e12) with RFC 3339 times (e6), and links each to its account (e19) and requester (e20).",
+          "serves": [
+            "key",
+            "join",
+            "cq.CQ4"
+          ],
+          "status": "proposed",
+          "toml": "[mappings.tickets]\nsource = \"{{table:support_tickets}}\"\nrow_key = [\"ticket_id\"]\nlinks = [\n  { link = \"ticket_for\", from = \"ticket\", to = \"account\" },\n  { link = \"requested_by\", from = \"ticket\", to = \"requester\" },\n]\n\n[mappings.tickets.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.tickets.bind.requester]\ntype = \"Contact\"\nkey = { contact_id = { field = \"requester_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.tickets.bind.ticket]\ntype = \"Ticket\"\nkey = { ticket_id = { field = \"ticket_id\", transform = [\"upper\"] } }\nprops = { category = \"category\", closed_at = \"closed_at\", opened_at = \"opened_at\", priority = \"priority\", status = \"status\", subject = \"subject\" }\nmissing = \"create\"\n"
+        },
+        "mapping.usage": {
+          "basis": null,
+          "evidence_ids": [
+            "e7",
+            "e13",
+            "e21"
+          ],
+          "pending": null,
+          "rationale": "Creates one usage record per account and month (e13) and links it to its account (e21).",
+          "serves": [
+            "key",
+            "join",
+            "cq.CQ5"
+          ],
+          "status": "proposed",
+          "toml": "[mappings.usage]\nsource = \"{{table:product_usage}}\"\nrow_key = [\"account_id\", \"month\"]\nlinks = [\n  { link = \"usage_of\", from = \"usage\", to = \"account\" },\n]\n\n[mappings.usage.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.usage.bind.usage]\ntype = \"MonthlyUsage\"\nkey = { account_ref = { field = \"account_id\", transform = [\"upper\"] }, month = \"month\" }\nprops = { active_users = \"active_users\", jobs_scheduled = \"jobs_scheduled\" }\nmissing = \"create\"\n"
+        },
+        "rule.renewal_due": {
+          "basis": "definitional",
+          "card": {
+            "added": 12,
+            "confirmed": 0,
+            "contradicted": 0,
+            "counterexamples": [],
+            "failure_rate_bound": null,
+            "instances": 12,
+            "precision": null,
+            "reason": "definitional/process basis, no contradictions or new blocking violations",
+            "rev": 5,
+            "review_facts": 0,
+            "sample": "sample only: 761 entities, 1090 stated facts, as of 2026-10-28; preview sets: []; no full-data sampling ratio",
+            "subjects": 0,
+            "unmeasurable": true,
+            "unrepresentable": 0,
+            "violation_rate": null,
+            "violations": []
+          },
+          "evidence_ids": [
+            "e29",
+            "e30",
+            "e35",
+            "e38"
+          ],
+          "pending": null,
+          "rationale": "CQ9 asks which renewals come up soon: a subscription not canceled whose current term ends within the window. The ninety-day window is an assumption put to the user.",
+          "serves": [
+            "cq.CQ9"
+          ],
+          "status": "proposed",
+          "toml": "[rules.renewal_due]\ndescription = \"A subscription is due for renewal when it is not canceled and its current term ends within ninety days.\"\ndatalog = 'renewal_due(s) :- Subscription(s), s.status != \"canceled\", s.current_term_end != null, s.current_term_end <= today + 90d.'\n",
+          "verdict": "rule"
+        },
+        "type.Account": {
+          "basis": null,
+          "evidence_ids": [
+            "e2",
+            "e8",
+            "e22",
+            "e26"
+          ],
+          "pending": null,
+          "rationale": "Every CQ meets at the account; its id is unique (e8). The name lets documents resolve accounts; notice and credit terms are contract terms documents state (e25, e26).",
+          "serves": [
+            "key",
+            "cq.CQ1",
+            "cq.CQ2",
+            "cq.CQ3",
+            "cq.CQ4",
+            "cq.CQ5",
+            "cq.CQ6",
+            "cq.CQ8",
+            "cq.CQ9"
+          ],
+          "status": "proposed",
+          "toml": "[types.Account]\ndescription = \"A customer organisation that buys Acme Corp's software, identified by its account id.\"\nprops = { account_id = \"string\", account_name = \"string\", country = \"string\", customer_since = \"date\", industry = \"string\", notice_days = \"integer\", segment = \"string\", service_credit_terms = \"string\" }\nkey = [\"account_id\"]\nnames = [\"account_name\"]\n"
+        },
+        "type.Commitment": {
+          "basis": null,
+          "evidence_ids": [
+            "e23",
+            "e24",
+            "e26"
+          ],
+          "pending": null,
+          "rationale": "CQ8 asks what we promised and owe; documents state promises with dates and credits with amounts (e24, e26). No table holds them, so documents create them.",
+          "serves": [
+            "cq.CQ8"
+          ],
+          "status": "proposed",
+          "toml": "[types.Commitment]\ndescription = \"Something Acme Corp has promised or owes a customer account, such as a feature, a deliverable, a price term or a credit, identified by what it promises.\"\nprops = { amount_usd = \"float\", due_on = \"date\" }\n"
+        },
+        "type.Contact": {
+          "basis": null,
+          "evidence_ids": [
+            "e4",
+            "e10",
+            "e14",
+            "e22",
+            "e23"
+          ],
+          "pending": null,
+          "rationale": "CQ1, CQ4 and CQ6 reach the account's people; the contact id is unique (e10). Name and email are personal data kept only so call notes and emails resolve attendees (e22, e23); email is unique (e14).",
+          "serves": [
+            "key",
+            "cq.CQ1",
+            "cq.CQ4",
+            "cq.CQ6"
+          ],
+          "status": "proposed",
+          "toml": "[types.Contact]\ndescription = \"A person at a customer account whom Acme Corp deals with, identified by their contact id.\"\nprops = { contact_id = \"string\", email = \"string\", full_name = \"string\", role = \"string\", title = \"string\" }\nkey = [\"contact_id\"]\nnames = [\"full_name\"]\nidentifiers = { email = \"email\" }\n"
+        },
+        "type.Conversation": {
+          "basis": null,
+          "evidence_ids": [
+            "e22",
+            "e23",
+            "e25",
+            "e26"
+          ],
+          "pending": null,
+          "rationale": "CQ6 and CQ7 need what was said; only documents record conversations (e22, e23, e25, e26), so they create them by name.",
+          "serves": [
+            "cq.CQ6",
+            "cq.CQ7"
+          ],
+          "status": "proposed",
+          "toml": "[types.Conversation]\ndescription = \"A call, meeting or email exchange between Acme Corp and a customer account, identified by its title.\"\nprops = { held_on = \"date\", risks = \"string\", summary = \"string\" }\n"
+        },
+        "type.Invoice": {
+          "basis": null,
+          "evidence_ids": [
+            "e5",
+            "e11",
+            "e22"
+          ],
+          "pending": null,
+          "rationale": "CQ3 asks which invoices are unpaid; the id is unique (e11). Call notes quote invoice ids (e22), so it is an identifier.",
+          "serves": [
+            "key",
+            "cq.CQ3"
+          ],
+          "status": "proposed",
+          "toml": "[types.Invoice]\ndescription = \"A bill issued for a subscription, identified by its invoice id.\"\nprops = { amount_usd = \"float\", due_on = \"date\", invoice_id = \"string\", issued_on = \"date\", paid_on = \"date\", status = \"string\" }\nkey = [\"invoice_id\"]\nidentifiers = { invoice_id = \"code\" }\n"
+        },
+        "type.MonthlyUsage": {
+          "basis": null,
+          "evidence_ids": [
+            "e7",
+            "e13"
+          ],
+          "pending": null,
+          "rationale": "CQ5 tracks usage by month; account and month together are unique (e13). A month alone repeats across accounts.",
+          "serves": [
+            "key",
+            "cq.CQ5"
+          ],
+          "status": "proposed",
+          "toml": "[types.MonthlyUsage]\ndescription = \"One account's product usage in one calendar month, identified by the account and the month.\"\nprops = { account_ref = \"string\", active_users = \"integer\", jobs_scheduled = \"integer\", month = \"date\" }\nkey = [\"account_ref\", \"month\"]\n"
+        },
+        "type.Plan": {
+          "basis": null,
+          "evidence_ids": [
+            "e23",
+            "e29"
+          ],
+          "pending": null,
+          "rationale": "CQ2 asks for the plan; plans are shared by many subscriptions and named in documents (e23, e29), so a named entity rather than a string.",
+          "serves": [
+            "cq.CQ2"
+          ],
+          "status": "proposed",
+          "toml": "[types.Plan]\ndescription = \"A product tier Acme Corp sells, identified by its name.\"\n"
+        },
+        "type.Subscription": {
+          "basis": null,
+          "evidence_ids": [
+            "e3",
+            "e9",
+            "e15",
+            "e29"
+          ],
+          "pending": null,
+          "rationale": "CQ2, CQ3 and CQ9 need seats, price, status and term end; the id is unique (e9) and dates are ISO (e29). An account can hold more than one (e15), so this is its own entity.",
+          "serves": [
+            "key",
+            "cq.CQ2",
+            "cq.CQ3",
+            "cq.CQ9"
+          ],
+          "status": "proposed",
+          "toml": "[types.Subscription]\ndescription = \"An account's paid subscription to a plan for a number of seats over a term, identified by its subscription id.\"\nprops = { cancel_reason = \"string\", current_term_end = \"date\", discount_pct = \"integer\", ended_on = \"date\", monthly_amount_usd = \"float\", price_per_seat_usd = \"float\", seats = \"integer\", started_on = \"date\", status = \"string\", subscription_id = \"string\", term_months = \"integer\" }\nkey = [\"subscription_id\"]\nidentifiers = { subscription_id = \"code\" }\n"
+        },
+        "type.Ticket": {
+          "basis": null,
+          "evidence_ids": [
+            "e6",
+            "e12",
+            "e22",
+            "e26"
+          ],
+          "pending": null,
+          "rationale": "CQ4 and CQ7 end at tickets; the id is unique (e12) and times are RFC 3339 (e6). Documents quote ticket ids (e22, e26), so it is an identifier.",
+          "serves": [
+            "key",
+            "cq.CQ4",
+            "cq.CQ7"
+          ],
+          "status": "proposed",
+          "toml": "[types.Ticket]\ndescription = \"A support request raised by a customer contact, identified by its ticket id.\"\nprops = { category = \"string\", closed_at = \"datetime\", opened_at = \"datetime\", priority = \"string\", status = \"string\", subject = \"string\", ticket_id = \"string\" }\nkey = [\"ticket_id\"]\nidentifiers = { ticket_id = \"code\" }\n"
+        }
+      },
+      "left_out": [
+        {
+          "reason": "Acme Corp staff email (personal data); no question asks which Acme Corp employee owns an account.",
+          "what": "{{table:accounts}} file.account_manager"
+        },
+        {
+          "reason": "No question needs the account's city; country is kept.",
+          "what": "{{table:accounts}} file.city"
+        },
+        {
+          "reason": "Company size serves no question.",
+          "what": "{{table:accounts}} file.employees"
+        },
+        {
+          "reason": "Billing frequency serves no question; invoices carry what is billed.",
+          "what": "{{table:subscriptions}} file.billing"
+        },
+        {
+          "reason": "Always the subscription's account (e28), so it is reached through invoice_for and subscription_of.",
+          "what": "{{table:invoices}} file.account_id"
+        },
+        {
+          "reason": "No question asks about incidents themselves; the credits and follow-ups they create are captured as commitments owed to accounts.",
+          "what": "{{set}} incident and its affected accounts"
+        }
+      ],
+      "lint": [],
+      "rev": 7
+    },
+    "mappings_toml": "version = \"draft\"\nontology = \"draft\"\n\n[mappings.accounts]\nsource = \"{{table:accounts}}\"\nrow_key = [\"account_id\"]\n\n[mappings.accounts.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nprops = { account_name = { field = \"name\", transform = [\"collapse_ws\"] }, country = \"country\", customer_since = \"customer_since\", industry = \"industry\", segment = \"segment\" }\nmissing = \"create\"\n\n[mappings.contacts]\nsource = \"{{table:contacts}}\"\nrow_key = [\"contact_id\"]\nlinks = [\n  { link = \"contact_at\", from = \"contact\", to = \"account\" },\n]\n\n[mappings.contacts.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.contacts.bind.contact]\ntype = \"Contact\"\nkey = { contact_id = { field = \"contact_id\", transform = [\"upper\"] } }\nprops = { email = { field = \"email\", transform = [\"lower\"] }, full_name = { field = \"full_name\", transform = [\"collapse_ws\"] }, role = \"role\", title = \"title\" }\nmissing = \"create\"\n\n[mappings.invoices]\nsource = \"{{table:invoices}}\"\nrow_key = [\"invoice_id\"]\nlinks = [\n  { link = \"invoice_for\", from = \"invoice\", to = \"subscription\" },\n]\n\n[mappings.invoices.bind.invoice]\ntype = \"Invoice\"\nkey = { invoice_id = { field = \"invoice_id\", transform = [\"upper\"] } }\nprops = { amount_usd = \"amount_usd\", due_on = \"due_on\", issued_on = \"issued_on\", paid_on = \"paid_on\", status = \"status\" }\nmissing = \"create\"\n\n[mappings.invoices.bind.subscription]\ntype = \"Subscription\"\nkey = { subscription_id = { field = \"subscription_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.subscriptions]\nsource = \"{{table:subscriptions}}\"\nrow_key = [\"subscription_id\"]\nlinks = [\n  { link = \"subscription_of\", from = \"subscription\", to = \"account\" },\n  { link = \"on_plan\", from = \"subscription\", to = \"plan\" },\n]\n\n[mappings.subscriptions.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.subscriptions.bind.plan]\ntype = \"Plan\"\nname = { field = \"plan\", transform = [\"collapse_ws\"] }\nmissing = \"create\"\n\n[mappings.subscriptions.bind.subscription]\ntype = \"Subscription\"\nkey = { subscription_id = { field = \"subscription_id\", transform = [\"upper\"] } }\nprops = { cancel_reason = \"cancel_reason\", current_term_end = \"current_term_end\", discount_pct = \"discount_pct\", ended_on = \"ended_on\", monthly_amount_usd = \"monthly_amount_usd\", price_per_seat_usd = \"price_per_seat_usd\", seats = \"seats\", started_on = \"started_on\", status = \"status\", term_months = \"term_months\" }\nmissing = \"create\"\n\n[mappings.tickets]\nsource = \"{{table:support_tickets}}\"\nrow_key = [\"ticket_id\"]\nlinks = [\n  { link = \"ticket_for\", from = \"ticket\", to = \"account\" },\n  { link = \"requested_by\", from = \"ticket\", to = \"requester\" },\n]\n\n[mappings.tickets.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.tickets.bind.requester]\ntype = \"Contact\"\nkey = { contact_id = { field = \"requester_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.tickets.bind.ticket]\ntype = \"Ticket\"\nkey = { ticket_id = { field = \"ticket_id\", transform = [\"upper\"] } }\nprops = { category = \"category\", closed_at = \"closed_at\", opened_at = \"opened_at\", priority = \"priority\", status = \"status\", subject = \"subject\" }\nmissing = \"create\"\n\n[mappings.usage]\nsource = \"{{table:product_usage}}\"\nrow_key = [\"account_id\", \"month\"]\nlinks = [\n  { link = \"usage_of\", from = \"usage\", to = \"account\" },\n]\n\n[mappings.usage.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.usage.bind.usage]\ntype = \"MonthlyUsage\"\nkey = { account_ref = { field = \"account_id\", transform = [\"upper\"] }, month = \"month\" }\nprops = { active_users = \"active_users\", jobs_scheduled = \"jobs_scheduled\" }\nmissing = \"create\"\n\n[extractions.customer_documents]\ndocuments = \"all\"\nlinks = [\"conversation_with\", \"attended_by\", \"discussed\", \"promised_to\"]\n\n[extractions.customer_documents.types.Account]\nprops = [\"notice_days\", \"service_credit_terms\"]\n\n[extractions.customer_documents.types.Commitment]\ncreate = true\nprops = [\"due_on\", \"amount_usd\"]\n\n[extractions.customer_documents.types.Contact]\n\n[extractions.customer_documents.types.Conversation]\ncreate = true\nprops = [\"held_on\", \"summary\", \"risks\"]\n\n[extractions.customer_documents.types.Ticket]\n",
+    "ontology_toml": "version = \"draft\"\n\n[types.Account]\ndescription = \"A customer organisation that buys Acme Corp's software, identified by its account id.\"\nprops = { account_id = \"string\", account_name = \"string\", country = \"string\", customer_since = \"date\", industry = \"string\", notice_days = \"integer\", segment = \"string\", service_credit_terms = \"string\" }\nkey = [\"account_id\"]\nnames = [\"account_name\"]\n\n[types.Commitment]\ndescription = \"Something Acme Corp has promised or owes a customer account, such as a feature, a deliverable, a price term or a credit, identified by what it promises.\"\nprops = { amount_usd = \"float\", due_on = \"date\" }\n\n[types.Contact]\ndescription = \"A person at a customer account whom Acme Corp deals with, identified by their contact id.\"\nprops = { contact_id = \"string\", email = \"string\", full_name = \"string\", role = \"string\", title = \"string\" }\nkey = [\"contact_id\"]\nnames = [\"full_name\"]\nidentifiers = { email = \"email\" }\n\n[types.Conversation]\ndescription = \"A call, meeting or email exchange between Acme Corp and a customer account, identified by its title.\"\nprops = { held_on = \"date\", risks = \"string\", summary = \"string\" }\n\n[types.Invoice]\ndescription = \"A bill issued for a subscription, identified by its invoice id.\"\nprops = { amount_usd = \"float\", due_on = \"date\", invoice_id = \"string\", issued_on = \"date\", paid_on = \"date\", status = \"string\" }\nkey = [\"invoice_id\"]\nidentifiers = { invoice_id = \"code\" }\n\n[types.MonthlyUsage]\ndescription = \"One account's product usage in one calendar month, identified by the account and the month.\"\nprops = { account_ref = \"string\", active_users = \"integer\", jobs_scheduled = \"integer\", month = \"date\" }\nkey = [\"account_ref\", \"month\"]\n\n[types.Plan]\ndescription = \"A product tier Acme Corp sells, identified by its name.\"\n\n[types.Subscription]\ndescription = \"An account's paid subscription to a plan for a number of seats over a term, identified by its subscription id.\"\nprops = { cancel_reason = \"string\", current_term_end = \"date\", discount_pct = \"integer\", ended_on = \"date\", monthly_amount_usd = \"float\", price_per_seat_usd = \"float\", seats = \"integer\", started_on = \"date\", status = \"string\", subscription_id = \"string\", term_months = \"integer\" }\nkey = [\"subscription_id\"]\nidentifiers = { subscription_id = \"code\" }\n\n[types.Ticket]\ndescription = \"A support request raised by a customer contact, identified by its ticket id.\"\nprops = { category = \"string\", closed_at = \"datetime\", opened_at = \"datetime\", priority = \"string\", status = \"string\", subject = \"string\", ticket_id = \"string\" }\nkey = [\"ticket_id\"]\nidentifiers = { ticket_id = \"code\" }\n\n[links.attended_by]\nfrom = \"Conversation\"\nto = \"Contact\"\ndescription = \"The contact took part in the conversation.\"\n\n[links.contact_at]\nfrom = \"Contact\"\nto = \"Account\"\ndescription = \"The contact works at the account.\"\ncardinality = \"one\"\nrequired = true\n\n[links.conversation_with]\nfrom = \"Conversation\"\nto = \"Account\"\ndescription = \"The conversation was held with the account.\"\n\n[links.discussed]\nfrom = \"Conversation\"\nto = \"Ticket\"\ndescription = \"The ticket came up in the conversation.\"\n\n[links.invoice_for]\nfrom = \"Invoice\"\nto = \"Subscription\"\ndescription = \"The invoice bills the subscription.\"\ncardinality = \"one\"\nrequired = true\n\n[links.on_plan]\nfrom = \"Subscription\"\nto = \"Plan\"\ndescription = \"The subscription is on the plan.\"\ncardinality = \"one\"\nrequired = true\n\n[links.promised_to]\nfrom = \"Commitment\"\nto = \"Account\"\ndescription = \"The commitment is owed to the account.\"\n\n[links.requested_by]\nfrom = \"Ticket\"\nto = \"Contact\"\ndescription = \"The ticket was raised by the contact.\"\ncardinality = \"one\"\nrequired = true\n\n[links.subscription_of]\nfrom = \"Subscription\"\nto = \"Account\"\ndescription = \"The subscription is held by the account.\"\ncardinality = \"one\"\nrequired = true\n\n[links.ticket_for]\nfrom = \"Ticket\"\nto = \"Account\"\ndescription = \"The ticket was raised for the account.\"\ncardinality = \"one\"\nrequired = true\n\n[links.usage_of]\nfrom = \"MonthlyUsage\"\nto = \"Account\"\ndescription = \"The usage figures are the account's.\"\ncardinality = \"one\"\nrequired = true\n\n[rules.renewal_due]\ndescription = \"A subscription is due for renewal when it is not canceled and its current term ends within ninety days.\"\ndatalog = 'renewal_due(s) :- Subscription(s), s.status != \"canceled\", s.current_term_end != null, s.current_term_end <= today + 90d.'\n\n[constraints.ended_after_started]\ndescription = \"A subscription ends no earlier than it starts.\"\nseverity = \"block\"\ndatalog = \"violation(s) :- Subscription(s), s.ended_on < s.started_on.\"\n\n[constraints.ticket_closed_after_opened]\ndescription = \"A ticket closes no earlier than it opens.\"\nseverity = \"block\"\ndatalog = \"violation(t) :- Ticket(t), t.closed_at < t.opened_at.\"\n"
+  },
+  "format": "agent_bundle",
+  "mappings_toml": "version = \"draft\"\nontology = \"draft\"\n\n[mappings.accounts]\nsource = \"{{table:accounts}}\"\nrow_key = [\"account_id\"]\n\n[mappings.accounts.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nprops = { account_name = { field = \"name\", transform = [\"collapse_ws\"] }, country = \"country\", customer_since = \"customer_since\", industry = \"industry\", segment = \"segment\" }\nmissing = \"create\"\n\n[mappings.contacts]\nsource = \"{{table:contacts}}\"\nrow_key = [\"contact_id\"]\nlinks = [\n  { link = \"contact_at\", from = \"contact\", to = \"account\" },\n]\n\n[mappings.contacts.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.contacts.bind.contact]\ntype = \"Contact\"\nkey = { contact_id = { field = \"contact_id\", transform = [\"upper\"] } }\nprops = { email = { field = \"email\", transform = [\"lower\"] }, full_name = { field = \"full_name\", transform = [\"collapse_ws\"] }, role = \"role\", title = \"title\" }\nmissing = \"create\"\n\n[mappings.invoices]\nsource = \"{{table:invoices}}\"\nrow_key = [\"invoice_id\"]\nlinks = [\n  { link = \"invoice_for\", from = \"invoice\", to = \"subscription\" },\n]\n\n[mappings.invoices.bind.invoice]\ntype = \"Invoice\"\nkey = { invoice_id = { field = \"invoice_id\", transform = [\"upper\"] } }\nprops = { amount_usd = \"amount_usd\", due_on = \"due_on\", issued_on = \"issued_on\", paid_on = \"paid_on\", status = \"status\" }\nmissing = \"create\"\n\n[mappings.invoices.bind.subscription]\ntype = \"Subscription\"\nkey = { subscription_id = { field = \"subscription_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.subscriptions]\nsource = \"{{table:subscriptions}}\"\nrow_key = [\"subscription_id\"]\nlinks = [\n  { link = \"subscription_of\", from = \"subscription\", to = \"account\" },\n  { link = \"on_plan\", from = \"subscription\", to = \"plan\" },\n]\n\n[mappings.subscriptions.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.subscriptions.bind.plan]\ntype = \"Plan\"\nname = { field = \"plan\", transform = [\"collapse_ws\"] }\nmissing = \"create\"\n\n[mappings.subscriptions.bind.subscription]\ntype = \"Subscription\"\nkey = { subscription_id = { field = \"subscription_id\", transform = [\"upper\"] } }\nprops = { cancel_reason = \"cancel_reason\", current_term_end = \"current_term_end\", discount_pct = \"discount_pct\", ended_on = \"ended_on\", monthly_amount_usd = \"monthly_amount_usd\", price_per_seat_usd = \"price_per_seat_usd\", seats = \"seats\", started_on = \"started_on\", status = \"status\", term_months = \"term_months\" }\nmissing = \"create\"\n\n[mappings.tickets]\nsource = \"{{table:support_tickets}}\"\nrow_key = [\"ticket_id\"]\nlinks = [\n  { link = \"ticket_for\", from = \"ticket\", to = \"account\" },\n  { link = \"requested_by\", from = \"ticket\", to = \"requester\" },\n]\n\n[mappings.tickets.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.tickets.bind.requester]\ntype = \"Contact\"\nkey = { contact_id = { field = \"requester_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.tickets.bind.ticket]\ntype = \"Ticket\"\nkey = { ticket_id = { field = \"ticket_id\", transform = [\"upper\"] } }\nprops = { category = \"category\", closed_at = \"closed_at\", opened_at = \"opened_at\", priority = \"priority\", status = \"status\", subject = \"subject\" }\nmissing = \"create\"\n\n[mappings.usage]\nsource = \"{{table:product_usage}}\"\nrow_key = [\"account_id\", \"month\"]\nlinks = [\n  { link = \"usage_of\", from = \"usage\", to = \"account\" },\n]\n\n[mappings.usage.bind.account]\ntype = \"Account\"\nkey = { account_id = { field = \"account_id\", transform = [\"upper\"] } }\nmissing = \"report\"\n\n[mappings.usage.bind.usage]\ntype = \"MonthlyUsage\"\nkey = { account_ref = { field = \"account_id\", transform = [\"upper\"] }, month = \"month\" }\nprops = { active_users = \"active_users\", jobs_scheduled = \"jobs_scheduled\" }\nmissing = \"create\"\n\n[extractions.customer_documents]\ndocuments = \"all\"\nlinks = [\"conversation_with\", \"attended_by\", \"discussed\", \"promised_to\"]\n\n[extractions.customer_documents.types.Account]\nprops = [\"notice_days\", \"service_credit_terms\"]\n\n[extractions.customer_documents.types.Commitment]\ncreate = true\nprops = [\"due_on\", \"amount_usd\"]\n\n[extractions.customer_documents.types.Contact]\n\n[extractions.customer_documents.types.Conversation]\ncreate = true\nprops = [\"held_on\", \"summary\", \"risks\"]\n\n[extractions.customer_documents.types.Ticket]\n",
+  "ontology_toml": "version = \"draft\"\n\n[types.Account]\ndescription = \"A customer organisation that buys Acme Corp's software, identified by its account id.\"\nprops = { account_id = \"string\", account_name = \"string\", country = \"string\", customer_since = \"date\", industry = \"string\", notice_days = \"integer\", segment = \"string\", service_credit_terms = \"string\" }\nkey = [\"account_id\"]\nnames = [\"account_name\"]\n\n[types.Commitment]\ndescription = \"Something Acme Corp has promised or owes a customer account, such as a feature, a deliverable, a price term or a credit, identified by what it promises.\"\nprops = { amount_usd = \"float\", due_on = \"date\" }\n\n[types.Contact]\ndescription = \"A person at a customer account whom Acme Corp deals with, identified by their contact id.\"\nprops = { contact_id = \"string\", email = \"string\", full_name = \"string\", role = \"string\", title = \"string\" }\nkey = [\"contact_id\"]\nnames = [\"full_name\"]\nidentifiers = { email = \"email\" }\n\n[types.Conversation]\ndescription = \"A call, meeting or email exchange between Acme Corp and a customer account, identified by its title.\"\nprops = { held_on = \"date\", risks = \"string\", summary = \"string\" }\n\n[types.Invoice]\ndescription = \"A bill issued for a subscription, identified by its invoice id.\"\nprops = { amount_usd = \"float\", due_on = \"date\", invoice_id = \"string\", issued_on = \"date\", paid_on = \"date\", status = \"string\" }\nkey = [\"invoice_id\"]\nidentifiers = { invoice_id = \"code\" }\n\n[types.MonthlyUsage]\ndescription = \"One account's product usage in one calendar month, identified by the account and the month.\"\nprops = { account_ref = \"string\", active_users = \"integer\", jobs_scheduled = \"integer\", month = \"date\" }\nkey = [\"account_ref\", \"month\"]\n\n[types.Plan]\ndescription = \"A product tier Acme Corp sells, identified by its name.\"\n\n[types.Subscription]\ndescription = \"An account's paid subscription to a plan for a number of seats over a term, identified by its subscription id.\"\nprops = { cancel_reason = \"string\", current_term_end = \"date\", discount_pct = \"integer\", ended_on = \"date\", monthly_amount_usd = \"float\", price_per_seat_usd = \"float\", seats = \"integer\", started_on = \"date\", status = \"string\", subscription_id = \"string\", term_months = \"integer\" }\nkey = [\"subscription_id\"]\nidentifiers = { subscription_id = \"code\" }\n\n[types.Ticket]\ndescription = \"A support request raised by a customer contact, identified by its ticket id.\"\nprops = { category = \"string\", closed_at = \"datetime\", opened_at = \"datetime\", priority = \"string\", status = \"string\", subject = \"string\", ticket_id = \"string\" }\nkey = [\"ticket_id\"]\nidentifiers = { ticket_id = \"code\" }\n\n[links.attended_by]\nfrom = \"Conversation\"\nto = \"Contact\"\ndescription = \"The contact took part in the conversation.\"\n\n[links.contact_at]\nfrom = \"Contact\"\nto = \"Account\"\ndescription = \"The contact works at the account.\"\ncardinality = \"one\"\nrequired = true\n\n[links.conversation_with]\nfrom = \"Conversation\"\nto = \"Account\"\ndescription = \"The conversation was held with the account.\"\n\n[links.discussed]\nfrom = \"Conversation\"\nto = \"Ticket\"\ndescription = \"The ticket came up in the conversation.\"\n\n[links.invoice_for]\nfrom = \"Invoice\"\nto = \"Subscription\"\ndescription = \"The invoice bills the subscription.\"\ncardinality = \"one\"\nrequired = true\n\n[links.on_plan]\nfrom = \"Subscription\"\nto = \"Plan\"\ndescription = \"The subscription is on the plan.\"\ncardinality = \"one\"\nrequired = true\n\n[links.promised_to]\nfrom = \"Commitment\"\nto = \"Account\"\ndescription = \"The commitment is owed to the account.\"\n\n[links.requested_by]\nfrom = \"Ticket\"\nto = \"Contact\"\ndescription = \"The ticket was raised by the contact.\"\ncardinality = \"one\"\nrequired = true\n\n[links.subscription_of]\nfrom = \"Subscription\"\nto = \"Account\"\ndescription = \"The subscription is held by the account.\"\ncardinality = \"one\"\nrequired = true\n\n[links.ticket_for]\nfrom = \"Ticket\"\nto = \"Account\"\ndescription = \"The ticket was raised for the account.\"\ncardinality = \"one\"\nrequired = true\n\n[links.usage_of]\nfrom = \"MonthlyUsage\"\nto = \"Account\"\ndescription = \"The usage figures are the account's.\"\ncardinality = \"one\"\nrequired = true\n\n[rules.renewal_due]\ndescription = \"A subscription is due for renewal when it is not canceled and its current term ends within ninety days.\"\ndatalog = 'renewal_due(s) :- Subscription(s), s.status != \"canceled\", s.current_term_end != null, s.current_term_end <= today + 90d.'\n\n[constraints.ended_after_started]\ndescription = \"A subscription ends no earlier than it starts.\"\nseverity = \"block\"\ndatalog = \"violation(s) :- Subscription(s), s.ended_on < s.started_on.\"\n\n[constraints.ticket_closed_after_opened]\ndescription = \"A ticket closes no earlier than it opens.\"\nseverity = \"block\"\ndatalog = \"violation(t) :- Ticket(t), t.closed_at < t.opened_at.\"\n",
+  "questions": [
+    {
+      "blocking": false,
+      "default": "90 days",
+      "id": "Q1",
+      "items": [
+        "rule.renewal_due"
+      ],
+      "options": [
+        "90 days",
+        "60 days",
+        "120 days"
+      ],
+      "text": "How far ahead should a renewal count as coming up soon?"
+    },
+    {
+      "blocking": false,
+      "default": "both",
+      "id": "Q2",
+      "items": [
+        "cq.CQ8",
+        "cq.CQ3",
+        "type.Commitment"
+      ],
+      "options": [
+        "both",
+        "only what Acme Corp owes customers",
+        "only unpaid invoices"
+      ],
+      "text": "By 'what we owe', do you mean what Acme Corp owes customers (credits, promised features, deliverables), what customers owe Acme Corp (unpaid invoices), or both? The draft covers both: commitments for the first, invoice status for the second."
+    },
+    {
+      "blocking": false,
+      "default": "keep on the account",
+      "id": "Q3",
+      "items": [
+        "type.Account",
+        "extraction.customer_documents"
+      ],
+      "options": [
+        "keep on the account",
+        "move to the subscription"
+      ],
+      "text": "Contract terms (notice period, service credits) are filled on the account from documents. Should they belong to the subscription instead, if contracts name subscriptions?"
+    }
+  ],
+  "rules": {
+    "count": 3,
+    "evaluated": 3
+  },
+  "status": "done",
+  "summary": "This is a first draft of the ontology and mappings: 9 competency questions (CQ1–CQ9), 9 types, 12 links, 6 table mappings, one document route, one rule and two constraints. The final check passes with no findings and nothing acknowledged.\n\n**What it covers**\n- **Accounts, people and products:** accounts, their contacts, subscriptions, plans, invoices, support tickets and monthly usage are built from the six tables. Each one is identified by its own ID, and each ID is unique (e8–e13).\n- **Joins:** every reference between tables matches a record (e15–e21). Each invoice's account always matches its subscription's account (e28), so an invoice reaches its account through its subscription.\n- **Sample load:** a sample load of all 40 accounts loaded every row without errors, duplicate IDs or broken references (e37). The paths for people, plans, tickets, usage and upcoming renewals (CQ1, CQ2, CQ4, CQ5, CQ9) are complete or nearly complete. Every link I marked one-per-record and required holds in the sample loads (e36, e37).\n- **Invoices (CQ3):** a load seeded from accounts doesn't reach invoices, because they sit two steps away, so that run shows CQ3 as empty. A separate run seeded from invoices loaded them all, each linked to its subscription (e36).\n- **Documents:** call notes, emails and reports are the only record of conversations and commitments, so the documents create those. Accounts, contacts and tickets are only matched to existing records, by name, email or ticket ID. Documents also fill each account's notice period and service-credit terms. A test run on 3 documents matched accounts by name and tickets and emails by ID, and created 4 new records (e34).\n- **Not yet tested:** the conversation and commitment questions (CQ6–CQ8) depend on that extraction, and the sample load doesn't include it, so they still show empty. The test run made no conversations, commitments or document links into the graph.\n- **Rule and constraints:**\n  - `renewal_due` marks subscriptions that aren't canceled and whose term ends within 90 days; the 90-day window is my assumption (question 1).\n  - One constraint says a ticket can't close before it opens; the other says a subscription can't end before it starts.\n  - All three were accepted when tested, and the sample shows no violations (e38).\n- **People enrichment:** not used, because the workspace has no enrichment source.",
+  "usage": {
+    "cache_read": 0,
+    "cache_write": 0,
+    "input": 0,
+    "output": 0,
+    "usd": 0
+  }
+}

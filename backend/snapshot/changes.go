@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 )
@@ -687,3 +688,52 @@ func olderVersion(change, stored json.RawMessage) bool {
 
 // maxSpoolLine bounds one spooled change; a row past it is refused.
 const maxSpoolLine = 64 << 20
+
+// MergeBatches writes the change batches at keys, oldest first, to dst as one
+// uncompressed file of the same lines: each key's last change, once, in the
+// order keys first changed. It returns how many lines it wrote.
+func MergeBatches(ctx context.Context, store Store, keys []string, dst string) (int, error) {
+	last := map[string][]byte{}
+	var order []string
+	for _, key := range keys {
+		path, err := Download(ctx, store, key, filepath.Dir(dst))
+		if err != nil {
+			return 0, err
+		}
+		err = eachLine(path, func(line []byte) error {
+			var change struct {
+				Key json.RawMessage `json:"key"`
+			}
+			if err := json.Unmarshal(line, &change); err != nil || len(change.Key) == 0 {
+				return fmt.Errorf("change batch %s holds a line with no key", key)
+			}
+			k := string(change.Key)
+			if _, seen := last[k]; !seen {
+				order = append(order, k)
+			}
+			last[k] = slices.Clone(line)
+			return nil
+		})
+		_ = os.Remove(path) // best-effort: a temp copy
+		if err != nil {
+			return 0, err
+		}
+	}
+	f, err := os.Create(dst)
+	if err != nil {
+		return 0, fmt.Errorf("create change file: %w", err)
+	}
+	w := bufio.NewWriterSize(f, 1<<16)
+	for _, k := range order {
+		_, _ = w.Write(last[k]) // bufio keeps the first error for WriteByte to return
+		if err := w.WriteByte('\n'); err != nil {
+			_ = f.Close()
+			return 0, fmt.Errorf("write change file: %w", err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		_ = f.Close()
+		return 0, fmt.Errorf("write change file: %w", err)
+	}
+	return len(order), f.Close()
+}

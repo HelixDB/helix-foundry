@@ -328,9 +328,9 @@ test("offers a new workspace only its switcher and account until it has an ontol
   const nav = page.getByRole("navigation", { name: "Main navigation" }),
     search = page.getByRole("button", { name: "Search", exact: true }),
     palette = page.getByRole("dialog", { name: "Search your workspace" });
-  // No sections, no search and no Settings link: the sidebar holds the
-  // workspace and the account.
-  await expect(nav).toHaveCount(0);
+  // No search, no Settings link and one section, Get started, back to the
+  // onboarding: the sidebar holds it, the workspace and the account.
+  await expect(nav.getByRole("link")).toHaveText(["Get started"]);
   await expect(search).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(

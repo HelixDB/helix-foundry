@@ -17,6 +17,7 @@ import type {
 // constraint given fixture evidence, as a finished draft has (the run
 // predates evaluation); and a Definition v1 version on the seeded Stripe
 // account.
+import acme from "../../backend/sample/acme.json";
 import agentBundle from "../fixtures/agent-bundle.json";
 // An agent draft for contracts with the Stripe customers, with a Contract
 // type that only documents fill: what the graph mock loads (./graph.ts).
@@ -455,6 +456,28 @@ export function generationsEnded(ontologyId: string) {
     }
 }
 
+// The sample company's ready-made draft (backend/sample/acme.json), which
+// a sample generation stores in place of the AI's: its tables, by the names
+// its placeholders give, and its title, as the WFE's.
+const ACME = JSON.stringify(acme),
+  ACME_TABLES = [
+    ...new Set([...ACME.matchAll(/\{\{table:([^{}]+)\}\}/g)].map((m) => m[1]!)),
+  ],
+  ACME_TITLE = "Acme Corp customer accounts, contracts and renewal risk";
+/** The sample's draft for the connector tables it drafts from, `set` its documents'. */
+function sampleDraft(
+  tables: { connectorId?: string; table?: string }[],
+  set: string,
+): Record<string, unknown> {
+  let text = ACME.replaceAll("{{set}}", set);
+  for (const t of tables)
+    text = text.replaceAll(
+      `{{table:${t.table}}}`,
+      sourceId(t.connectorId || "", t.table || ""),
+    );
+  return JSON.parse(text);
+}
+
 // Moves a generation along its plan: queued, running, then done; a retry
 // runs a second time after waiting a step.
 function advance(g: StoredGeneration) {
@@ -577,6 +600,18 @@ function advance(g: StoredGeneration) {
   const texts = scope
     .filter((id) => textDocumentCount(g.workspaceId!, [id]) > 0)
     .map((id) => ({ id, name: setName(id) }));
+  // As the WFE's worker: a sample missing a table fails for good.
+  if (
+    g.sample &&
+    ACME_TABLES.some((t) => !(g.tables || []).some((x) => x.table === t))
+  ) {
+    Object.assign(g, {
+      status: "ONTOLOGY_GENERATION_STATUS_FAILED",
+      error: "the sample's database is missing a table: add the sample again",
+      finishedAt,
+    });
+    return;
+  }
   // As the agent generator: nothing left to read fails for good.
   if (!picked.length && !texts.length) {
     Object.assign(g, {
@@ -601,13 +636,15 @@ function advance(g: StoredGeneration) {
       ) + 1,
     format: "ONTOLOGY_FORMAT_AGENT_BUNDLE",
     // With the operators' flag and the owner's consent, the agent sees
-    // People enrichment.
-    definition: draftFromTables(
-      picked,
-      g.goal || "",
-      texts,
-      enrichmentFlagOn() && enrichmentAllowed(g.workspaceId!),
-    ),
+    // People enrichment. A sample's draft is ready-made.
+    definition: g.sample
+      ? sampleDraft(g.tables || [], scope[0] || "")
+      : draftFromTables(
+          picked,
+          g.goal || "",
+          texts,
+          enrichmentFlagOn() && enrichmentAllowed(g.workspaceId!),
+        ),
     source: "ONTOLOGY_SOURCE_GENERATED",
     generationId: g.id,
     createdByUserId: g.requestedByUserId,
@@ -619,7 +656,7 @@ function advance(g: StoredGeneration) {
     status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED",
     error: "",
     resultVersionId: version.id,
-    model: aiModel(g.workspaceId!, "draft") || MODEL,
+    model: g.sample ? "" : aiModel(g.workspaceId!, "draft") || MODEL,
     finishedAt,
   });
 }
@@ -683,6 +720,7 @@ const generationOut = (
   nextAttemptAt: g.nextAttemptAt || null,
   documentSetIds: [...(g.documentSetIds || [])],
   documents: (g.documents || []).map((d) => ({ ...d })),
+  sample: g.sample || "",
   revision: g.revision
     ? {
         parentVersionId: g.revision.parentVersionId || "",
@@ -897,6 +935,22 @@ export const ontologyRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           "connector_ids must be empty with no_connectors",
         );
+      const sample = body.sample || "";
+      if (sample && sample !== "acme")
+        return fail(
+          "INVALID_ARGUMENT",
+          `no sample is called ${JSON.stringify(sample)}`,
+        );
+      if (
+        sample &&
+        (wanted.length !== 1 ||
+          (body.documentSetIds || []).length !== 1 ||
+          (body.eventSources || []).length)
+      )
+        return fail(
+          "INVALID_ARGUMENT",
+          "a sample is drafted from its database and its documents: name its one connector and its one document set, and no event source",
+        );
       // As the WFE checks: a live generation, the connectors and their
       // tables, then the sets.
       const mine = state.generations.filter((g) => g.ontologyId === o.id);
@@ -1008,6 +1062,13 @@ export const ontologyRoutes: MockRoute[] = [
       const documents = readTableFiles(m.workspaceId, documentSetIds).map(
         (f) => ({ id: f.id, setId: f.setId }),
       );
+      const missing =
+        sample && ACME_TABLES.find((t) => !tables.some((x) => x.table === t));
+      if (missing)
+        return fail(
+          "FAILED_PRECONDITION",
+          `the sample's table ${missing} isn't synced: wait for its database's first sync`,
+        );
       const count = tables.length + documents.length;
       if (!count && !textDocumentCount(m.workspaceId, documentSetIds))
         return fail(
@@ -1026,6 +1087,7 @@ export const ontologyRoutes: MockRoute[] = [
         ontologyId: o.id,
         status: "ONTOLOGY_GENERATION_STATUS_QUEUED",
         ...(goal ? { goal, title: draftTitle(goal) } : {}),
+        ...(sample ? { sample, title: ACME_TITLE } : {}),
         tables,
         documentSetIds,
         documents,

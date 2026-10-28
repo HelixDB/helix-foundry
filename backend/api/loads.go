@@ -117,9 +117,13 @@ func (s *Service) ListFoundryLoads(ctx context.Context, req *foundryv1.ListFound
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list load enrichments: %v", err)
 	}
+	sources, err := s.deps.DB.ListFoundryLoadSources(ctx, ids)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list load sources: %v", err)
+	}
 	resp := &foundryv1.ListFoundryLoadsResponse{}
 	for _, l := range loads {
-		resp.Loads = append(resp.Loads, foundryLoadToProto(l, o, jobs[l.ID], steps[l.ID]))
+		resp.Loads = append(resp.Loads, foundryLoadToProto(l, o, jobs[l.ID], steps[l.ID], sources[l.ID]))
 	}
 	return resp, nil
 }
@@ -211,12 +215,17 @@ func (s *Service) foundryLoadResponse(ctx context.Context, o *foundrymodel.Found
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list load enrichments: %v", err)
 	}
-	return &foundryv1.FoundryLoadResponse{Load: foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID])}, nil
+	sources, err := s.deps.DB.ListFoundryLoadSources(ctx, []string{load.ID})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list load sources: %v", err)
+	}
+	return &foundryv1.FoundryLoadResponse{Load: foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID], sources[load.ID])}, nil
 }
 
-// foundryLoadToProto is a load with its newest jobs and, when its version
-// enriches people, its step (nil otherwise).
-func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOntology, jobs foundrymodel.FoundryLoadJobs, step *foundrymodel.FoundryLoadEnrichment) *foundryv1.FoundryLoad {
+// foundryLoadToProto is a load with its newest jobs, the snapshots it holds
+// and, when its version enriches people, its step (nil otherwise).
+func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOntology, jobs foundrymodel.FoundryLoadJobs, step *foundrymodel.FoundryLoadEnrichment,
+	sources []foundrymodel.FoundryLoadSource) *foundryv1.FoundryLoad {
 	out := &foundryv1.FoundryLoad{
 		Id: l.ID, VersionId: l.VersionID, Version: l.OntologyVersion(), Status: string(l.Status),
 		Current: o.CurrentLoadID != nil && *o.CurrentLoadID == l.ID, CreatedAt: timestamppb.New(l.CreatedAt),
@@ -224,6 +233,16 @@ func foundryLoadToProto(l *foundrymodel.FoundryLoad, o *foundrymodel.FoundryOnto
 	}
 	if l.FinishedAt != nil {
 		out.FinishedAt = timestamppb.New(*l.FinishedAt)
+	}
+	if l.AppliedAt != nil {
+		out.AppliedAt = timestamppb.New(*l.AppliedAt)
+	}
+	for _, src := range sources {
+		s := &foundryv1.FoundryLoadSource{ConnectorId: src.ConnectorID, Table: src.Table, SyncId: src.SyncID}
+		if !src.SyncedAt.IsZero() {
+			s.SyncedAt = timestamppb.New(src.SyncedAt)
+		}
+		out.Sources = append(out.Sources, s)
 	}
 	for _, job := range jobs.Newest {
 		out.Jobs = append(out.Jobs, foundryJobToProto(job))

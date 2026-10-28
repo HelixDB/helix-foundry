@@ -21,8 +21,63 @@ var loadDeletes = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Delete job attempts by outcome: done, retried, or failed (the load is left delete_failed; alert on it).",
 }, []string{"outcome"})
 
+// durationBuckets span a small extract (seconds) to a load that uses its whole attempt (2h).
+var durationBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200}
+
+var jobSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "helix_foundry_graph_job_seconds",
+	Help:    "How long a graph job attempt took, by kind (load, extract, apply, delete), the origin of the load it works on (user or refresh) and outcome.",
+	Buckets: durationBuckets,
+}, []string{"kind", "origin", "outcome"})
+
+var stepSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "helix_foundry_graph_step_seconds",
+	Help:    "How long a step of a graph job attempt took: tables (pinning and downloading snapshots), ingest, extract, compare or delete.",
+	Buckets: durationBuckets,
+}, []string{"step"})
+
+var chunkRows = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_rows_total",
+	Help: "Table rows the ontology agent handled in its chunks, by job kind.",
+}, []string{"kind"})
+
+var chunks = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_chunks_total",
+	Help: "Chunks the ontology agent handled, by job kind and outcome: loaded, already_loaded (a retry found it stored), empty, or unknown.",
+}, []string{"kind", "outcome"})
+
 var documentsHeld = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_documents_held_total",
 	Help: "Documents a job no person started held back unsent, by reason: set_allowance (the month's allowance of their set, or of its " +
 		"workspace's sets of its kind, is spent: config.FoundryConfig.SetAllowances). They wait for next month or a load a person starts.",
 }, []string{"reason"})
+
+var applies = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_applies_total",
+	Help: "Apply jobs that ended, by outcome: done (the tables are up to date), unsupported (a full refresh load replaces it) or failed.",
+}, []string{"outcome"})
+
+var applyRows = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_apply_rows_total",
+	Help: "Table rows an apply wrote, by change: added, changed or removed. Rows it found unchanged are not counted.",
+}, []string{"change"})
+
+var changeFileRows = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_change_file_rows_total",
+	Help: "Changes an apply sent as change files in place of whole snapshots, one per changed key.",
+})
+
+var documentsRemoved = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_documents_removed_total",
+	Help: "Deleted documents a job took out of its load's graph: their sections, mentions and quotes, and what they alone held up.",
+})
+
+var rebuilds = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_rebuilds_total",
+	Help: "Refresh loads that replaced a load applies had brought up to date, by what comparing the two found: equal, drifted (alert on it) or failed.",
+}, []string{"outcome"})
+
+var applyDrift = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_apply_drift_total",
+	Help: "Labels that differ between an applied load and the rebuild that replaced it, by kind: entity, fact, evidence or violation.",
+}, []string{"kind"})

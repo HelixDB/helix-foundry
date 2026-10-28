@@ -414,6 +414,15 @@ func (s *mysqlDB) ListConnectorChangeBatches(ctx context.Context, workspaceID, s
 WHERE b.workspace_id=? AND b.sync_id=? ORDER BY b.table_name`, workspaceID, syncID)
 }
 
+// ListConnectorChangeBatchesAfter returns the table's batches numbered after
+// afterSeq up to toSeq, by seq, through the table's unique seq key.
+func (s *mysqlDB) ListConnectorChangeBatchesAfter(ctx context.Context, workspaceID, connectorID, table string, afterSeq, toSeq int64) (
+	[]*model.ConnectorChangeBatch, error) {
+	return s.queryChangeBatches(ctx, "SELECT "+changeBatchColumns+` FROM connector_change_batches b
+WHERE b.connector_id=? AND b.table_name=? AND b.seq > ? AND b.seq <= ? AND b.workspace_id=? ORDER BY b.seq`,
+		connectorID, table, afterSeq, toSeq, workspaceID)
+}
+
 // ListExpiredChangeBatches returns up to limit batches nothing reads again,
 // oldest first: those created before before, and those of a deleted
 // connector, whatever their age. Each half reads an index: the batches' age,

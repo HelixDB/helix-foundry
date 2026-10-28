@@ -47,6 +47,7 @@ const configure = (config: {
   // it (mock/state.ts).
   freshInstall?: boolean;
   aiProbeMs?: number;
+  ontologyStepMs?: number;
   loadStepMs?: number;
   askStepMs?: number;
 }) =>
@@ -164,6 +165,100 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await expect(
     page.getByRole("button", { name: "Workspace: Globex" }),
   ).toBeVisible();
+});
+
+// The first run: a new install's onboarding opens the sample company's
+// page, which connects Acme Corp's PostgreSQL database (the stack's
+// acme-db), uploads its documents, shows the goal and the ontology made
+// from its ready-made draft, loads it, and offers its questions. A reload
+// carries on with what it made.
+test("walks a new install through the sample company, from its database to Ask", async ({
+  page,
+}) => {
+  await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use the sample" }).click();
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "Acme Corp, a sample company",
+    }),
+  ).toBeVisible();
+  const steps = page.getByRole("list", { name: "Steps" });
+  await expect(steps).toContainText("6 tables, 1,121 rows", {
+    timeout: 30_000,
+  });
+  await expect(steps).toContainText("which renewals are at risk", {
+    timeout: 30_000,
+  });
+  await expect(steps).toContainText("Foundry models Acme Corp as 9 types", {
+    timeout: 30_000,
+  });
+  await page.reload();
+  const ask = page.getByRole("link", { name: "Ask a question" });
+  await expect(ask).toBeVisible({ timeout: 60_000 });
+  await expect(steps).toContainText(
+    "Who are each account's people, and what role does each play?",
+  );
+  await ask.click();
+  await expect(
+    page.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible();
+
+  // Acme Corp's database is a connection in Data, like any other.
+  await page.goto("/data");
+  await expect(
+    page.getByText("Acme Corp", { exact: true }).first(),
+  ).toBeVisible();
+});
+
+// With no provider, the sample asks for one; Settings has the way back to
+// the onboarding in its sidebar, and a provider whose test passes goes
+// back by itself, where the sample adds.
+test("asks for an AI provider before adding the sample company, then goes back to it", async ({
+  page,
+}) => {
+  await configure({
+    freshInstall: true,
+    aiDefault: false,
+    aiProbeMs: 600,
+    ontologyStepMs: 300,
+    loadStepMs: 200,
+  });
+  await page.goto("/");
+  const sample = page.getByRole("button", { name: "Use the sample" }),
+    gate = page.getByRole("note").filter({
+      hasText: "Adding the sample needs an AI provider",
+    }),
+    first = page.getByRole("heading", {
+      level: 1,
+      name: "Create your first ontology",
+    });
+  await sample.click();
+  await expect(gate).toBeVisible();
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+
+  await gate.getByRole("link", { name: "Choose a provider" }).click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(nav.getByRole("link")).toHaveCount(1);
+  await nav.getByRole("link", { name: "Get started" }).click();
+  await expect(first).toBeVisible();
+
+  await sample.click();
+  await gate.getByRole("link", { name: "Choose a provider" }).click();
+  await page.getByRole("radio", { name: "Claude", exact: true }).check();
+  await page.getByLabel("API key").fill("sk-ant-api03-local-0123456789abcd");
+  await page.getByRole("button", { name: "Test and save" }).click();
+  await expect(page.getByText("AI models now run on Claude.")).toBeVisible();
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+  await expect(first).toBeVisible();
+  await sample.click();
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await expect(page.getByRole("link", { name: "Ask a question" })).toBeVisible({
+    timeout: 60_000,
+  });
 });
 
 test("keeps only settings and the theme in the account menu", async ({

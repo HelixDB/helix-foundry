@@ -50,7 +50,18 @@ type IngestRequest struct {
 	// Sources are the tables the mappings read, as the generation named them.
 	Sources   []Source `json:"sources"`
 	ChunkRows uint64   `json:"chunk_rows"`
+	// Reload is how a load that already exists is treated: ReloadDiff brings
+	// it up to Sources in place, writing only what changed. Empty refuses.
+	Reload Reload `json:"reload,omitempty"`
 }
+
+// Reload is what Ingest does with a load the database already holds.
+type Reload string
+
+// ReloadDiff diffs each stream against what the load holds by row key and
+// row hash: unchanged streams are skipped, changed rows retracted and
+// written again, and removed rows retracted with what they alone supported.
+const ReloadDiff Reload = "diff"
 
 // MediaType is how a document's text is written, for Extract.
 type MediaType string
@@ -129,6 +140,9 @@ type ExtractRequest struct {
 	// Models are the extraction's models, resolved for the workspace; the
 	// key goes in the call's metadata.
 	Models ExtractModels `json:"models"`
+	// Remove are documents to take out of the load before Documents are
+	// extracted; one the load doesn't hold is nothing to remove.
+	Remove []string `json:"remove,omitempty"`
 }
 
 // ExtractDecision is one settled review, internally tagged by kind.
@@ -167,7 +181,30 @@ const (
 	IngestOutcomeUnknown    IngestStatus = "outcome_unknown"
 	IngestCancelled         IngestStatus = "cancelled"
 	IngestStoreFailed       IngestStatus = "store_failed"
+	// IngestDiffUnsupported is a ReloadDiff the agent can't apply in place;
+	// nothing was written, and a full load gives the same graph.
+	IngestDiffUnsupported IngestStatus = "diff_unsupported"
+	// IngestPositionMismatch is a changes source whose from_seq isn't where
+	// the load holds its stream; nothing was written for those streams.
+	IngestPositionMismatch IngestStatus = "position_mismatch"
 )
+
+// AppliedStream is what a ReloadDiff did to one stream the request named:
+// zero counts for a stream it skipped as unchanged.
+type AppliedStream struct {
+	Stream    string `json:"stream"`
+	Snapshot  string `json:"snapshot"`
+	ChangeSeq *int64 `json:"change_seq"`
+	Added     uint64 `json:"added"`
+	Changed   uint64 `json:"changed"`
+	Removed   uint64 `json:"removed"`
+}
+
+// StoredPosition is where the load holds a stream a changes source didn't start from.
+type StoredPosition struct {
+	Stream          string `json:"stream"`
+	StoredChangeSeq *int64 `json:"stored_change_seq"`
+}
 
 // SourceChange is a stream the database holds from another snapshot or
 // mapping version than the request asks for.
@@ -180,14 +217,16 @@ type SourceChange struct {
 }
 
 // IngestResult is how an Ingest ended (schema/ingest_result.json). Which
-// fields are set follows Status: Report for done and cancelled,
-// StoredVersion for load_mismatch, Label for indexes_pending, Streams for
-// sources_changed, Errors for invalid_mappings, Source for
-// source_unavailable, Mapping, Pass, Chunk and Error for outcome_unknown, and
-// Error for store_failed.
+// fields are set follows Status: Report for done and cancelled, with Applied
+// for a done ReloadDiff; StoredVersion for load_mismatch, Label for
+// indexes_pending, Streams for sources_changed, Errors for invalid_mappings,
+// Source for source_unavailable, Mapping, Pass, Chunk and Error for
+// outcome_unknown, Error for store_failed, Reason and Unsupported for
+// diff_unsupported, and Positions for position_mismatch.
 type IngestResult struct {
 	Status        IngestStatus
 	Report        json.RawMessage
+	Applied       []AppliedStream
 	StoredVersion string
 	Label         string
 	Streams       []SourceChange
@@ -197,6 +236,9 @@ type IngestResult struct {
 	Pass          string
 	Chunk         uint32
 	Error         string
+	Reason        string
+	Unsupported   []string
+	Positions     []StoredPosition
 }
 
 // DecodeIngestResult reads a result, refusing one whose status this contract
@@ -205,24 +247,32 @@ func DecodeIngestResult(data []byte) (IngestResult, error) {
 	var raw struct {
 		Status        IngestStatus    `json:"status"`
 		Report        json.RawMessage `json:"report"`
+		Applied       []AppliedStream `json:"applied"`
 		StoredVersion *string         `json:"stored_version"`
 		Label         *string         `json:"label"`
-		Streams       *[]SourceChange `json:"streams"`
-		Errors        *[]string       `json:"errors"`
-		Source        *string         `json:"source"`
-		Mapping       *string         `json:"mapping"`
-		Pass          *string         `json:"pass"`
-		Chunk         *uint32         `json:"chunk"`
-		Error         *string         `json:"error"`
+		// Streams' shape follows the status: sources_changed's changes,
+		// diff_unsupported's names, position_mismatch's positions.
+		Streams json.RawMessage `json:"streams"`
+		Reason  *string         `json:"reason"`
+		Errors  *[]string       `json:"errors"`
+		Source  *string         `json:"source"`
+		Mapping *string         `json:"mapping"`
+		Pass    *string         `json:"pass"`
+		Chunk   *uint32         `json:"chunk"`
+		Error   *string         `json:"error"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return IngestResult{}, fmt.Errorf("read ingest result: %w", err)
 	}
 	r := IngestResult{Status: raw.Status, Report: raw.Report}
+	streams := func(into any) bool {
+		return len(raw.Streams) > 0 && raw.Streams[0] == '[' && json.Unmarshal(raw.Streams, into) == nil
+	}
 	missing := false
 	switch raw.Status {
 	case IngestDone, IngestCancelled:
 		missing = len(raw.Report) == 0 || raw.Report[0] != '{'
+		r.Applied = raw.Applied
 	case IngestLoadMismatch:
 		missing = raw.StoredVersion == nil
 		if !missing {
@@ -235,10 +285,7 @@ func DecodeIngestResult(data []byte) (IngestResult, error) {
 			r.Label = *raw.Label
 		}
 	case IngestSourcesChanged:
-		missing = raw.Streams == nil
-		if !missing {
-			r.Streams = *raw.Streams
-		}
+		missing = !streams(&r.Streams)
 	case IngestInvalidMappings:
 		missing = raw.Errors == nil
 		if !missing {
@@ -259,6 +306,13 @@ func DecodeIngestResult(data []byte) (IngestResult, error) {
 		if !missing {
 			r.Error = *raw.Error
 		}
+	case IngestDiffUnsupported:
+		missing = raw.Reason == nil || !streams(&r.Unsupported)
+		if !missing {
+			r.Reason = *raw.Reason
+		}
+	case IngestPositionMismatch:
+		missing = !streams(&r.Positions)
 	default:
 		return IngestResult{}, fmt.Errorf("unknown ingest status %q", raw.Status)
 	}
@@ -387,6 +441,14 @@ const (
 	// names: stored with its sections, with no model call.
 	OutcomeOutOfScope OutcomeKind = "out_of_scope"
 )
+
+// DocumentRemoved is a document of an Extract's Remove taken out of its load
+// (event document_removed), with the facts and entities it alone held up.
+type DocumentRemoved struct {
+	DocID           string `json:"doc_id"`
+	FactsRemoved    uint64 `json:"facts_removed"`
+	EntitiesRemoved uint64 `json:"entities_removed"`
+}
 
 // DocumentOutcome is how one document ended: Of is set for duplicate, Code
 // and Retryable for failed, and ModelFailure for a failed code "model".
