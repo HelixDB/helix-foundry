@@ -77,7 +77,11 @@ test("copies the prompt that sets Foundry up with your agent", async ({
   // site and the stamp's Helix MCP.
   expect(prompt.startsWith("# Set up Helix Foundry with me\n")).toBe(true);
   expect(prompt).toContain(
-    `Foundry is at ${APP_ORIGIN}. Every Foundry link takes`,
+    `It runs on Helix Cloud, at ${APP_ORIGIN}, or on my own computer.`,
+  );
+  // Its agent can sign me up, with no dashboard.
+  expect(prompt).toContain(
+    "https://mcp.dev.helix-db.com/auth.md says: an anonymous registration",
   );
   expect(prompt).toContain(
     "`claude mcp add --transport http helix https://mcp.dev.helix-db.com/mcp`",

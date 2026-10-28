@@ -121,7 +121,7 @@ describe("onboardingPrompt without an ontology", () => {
     expect(text).toContain("target `workspace:ws1`");
     expect(text).toContain("at most 63");
     expect(text).toContain(
-      "after only the project, retry with that `project_id`",
+      "after only the project, prepare it again with that `project_id`",
     );
     expect(text).toContain('"project_name": "<name>"');
     expect(text).toContain("target `ontology:ws1/<ontology id>`");
@@ -186,7 +186,7 @@ describe("onboardingPrompt without an ontology", () => {
       'or from documents alone `{"goal": "<the goal>", "no_connectors": true, "document_set_ids": ["<set id>"]}`',
     );
     expect(text).toContain(
-      "a synced table, an API source whose table has rows or, for extraction, whose `extraction.documents` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text or a PDF Helix has read",
+      "a synced table, an API source whose table has rows or, for extraction, whose `event_source.extraction.documents` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text or a PDF Helix has read",
     );
   });
 
@@ -207,23 +207,63 @@ describe("onboardingPrompt without a workspace", () => {
     workspace: null,
   });
 
-  it("has the agent find the workspace, or have me make one", () => {
+  it("defaults to Helix Cloud, and follows the skill once signed in", () => {
     expect(text).toContain(
-      "I want to set up Helix Foundry, and I’d like you to do it with me through the Helix MCP’s tools. If you have the `helix-foundry-onboarding` skill (from HelixDB/skills), follow it. If you don’t",
+      "follow it on Helix Cloud once you have the Helix MCP’s tools, signed in as me; until then, follow “Before you start” below, which can sign me up and the skill can’t.",
     );
     expect(text).toContain(
-      "Foundry is at https://foundry.example.com. Every Foundry link takes `?workspace=<workspace id>`.\n",
+      "It runs on Helix Cloud, at https://foundry.example.com, or on my own computer. Use Helix Cloud unless I’ve told you I want it on my computer",
     );
     expect(text).not.toContain("this workspace opens at");
+  });
+
+  it("asks whether I have an account, and signs in through the MCP if I do", () => {
+    expect(text).toContain(
+      "First ask me whether I already have a Helix or Foundry account.",
+    );
+    expect(text).toContain("### If I have a Helix account");
     expect(text).toContain(
       "`claude mcp add --transport http helix https://mcp.example.com/mcp`",
     );
+    expect(text).toContain("`claude --continue`, `codex resume --last`");
     expect(text).toContain(
-      "Then call `helix_list_workspaces` and use my workspace: the only one, or ask me which. If it lists none, I haven’t used Foundry yet: have me sign in at https://foundry.example.com/login and create one",
+      "Then call `helix_list_workspaces` and use my workspace: the only one, or ask me which. Its `id` is the `<workspace id>` below.",
+    );
+    expect(text).toContain("`identity_not_found`");
+  });
+
+  it("signs me up with no dashboard: its own sandbox, my claim, then me", () => {
+    expect(text).toContain("### If I don’t have one yet");
+    expect(text).toContain(
+      "unless I’d rather sign up at https://foundry.example.com/login myself",
+    );
+    expect(text).toContain("your sandbox is a one-month trial");
+    // Agent registration beside the MCP, its token bound to it.
+    expect(text).toContain(
+      "exactly as https://mcp.example.com/auth.md says: an anonymous registration, then an access token with `resource` set to https://mcp.example.com/mcp.",
+    );
+    expect(text).toContain("in the system keychain: never in the chat");
+    expect(text).toContain(
+      'POST `{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "helix_get_started", "arguments": {}}}` to https://mcp.example.com/mcp',
+    );
+    expect(text).toContain("`Accept: application/json, text/event-stream`");
+    expect(text).toContain(
+      "Its answer is in `result.structuredContent`: `workspace_id`, `project_id`, `database` (`tenant:<id>`) and `trial_ends_at`.",
+    );
+    expect(text).toContain("for `unavailable`, wait a few seconds");
+    expect(text).toContain(
+      "Only once `helix_get_started` has answered, claim the sandbox",
+    );
+    expect(text).toContain("That code isn’t a credential");
+    expect(text).toContain(
+      "your registration can’t use Foundry’s tools; only I can.",
+    );
+    expect(text).toContain(
+      "In “Create the ontology”, don’t ask me which database: use the sandbox’s, with target `tenant:<id>`.",
     );
   });
 
-  it("reads where things stand with the tools, carrying on an unfinished ontology", () => {
+  it("reads where things stand with the tools, asking before carrying an ontology on", () => {
     expect(text).toContain("## Where things stand\n\nRead it with the tools");
     for (const tool of [
       "`helix_foundry_list_ontologies`",
@@ -232,16 +272,31 @@ describe("onboardingPrompt without a workspace", () => {
       "`helix_foundry_get_ontology`",
     ])
       expect(text).toContain(`- ${tool}`);
-    expect(text).toContain("carry it on rather than create another");
+    expect(text).toContain(
+      "tell me its name and ask whether to carry it on rather than create another",
+    );
+    for (const step of [
+      "  - “Generate a draft”, following it, when a generation is `queued` or `running`;",
+      "  - “Review the draft” when its newest generation `succeeded` and no version is current;",
+      "  - “Load it” when a version is current",
+      "  - “Connect your data or upload documents” otherwise.",
+    ])
+      expect(text).toContain(step);
+    expect(text).toContain(
+      "`document_sets` (those its current version reads) and `other_document_sets` (the rest)",
+    );
     expect(text).not.toContain("When I copied this prompt");
     expect(text).not.toContain("### Tables");
     expect(text).not.toContain("### Not connected yet");
+    expect(text).toContain(
+      "This prompt doesn’t list my tables and documents: read them first",
+    );
     expect(text).toContain(
       "If what’s there already serves the questions, go on; if nothing is connected or uploaded yet, add at least one.",
     );
   });
 
-  it("walks every step with the workspace's id to fill in, and links without one", () => {
+  it("walks every step with the workspace's id to fill in", () => {
     expect(steps(text)).toEqual([
       "Create the ontology",
       "Connect your data or upload documents",
@@ -258,9 +313,87 @@ describe("onboardingPrompt without a workspace", () => {
       '`{"workspace_id": "<workspace id>", "kind": "<kind>"}`',
     );
     expect(text).toContain(
-      "Give me https://foundry.example.com/settings/billing to upgrade",
+      "Give me https://foundry.example.com/settings/billing?workspace=<workspace id> to upgrade",
     );
-    expect(text).not.toContain("?workspace=%3C");
+    expect(text).not.toContain("%3C");
+  });
+
+  it("runs it on my computer only when I ask, keeping keys and volumes safe", () => {
+    expect(text).toContain(
+      "## Run it on my computer\n\nOnly if I asked for it.",
+    );
+    expect(text).toContain(
+      "`git clone https://github.com/helixdb/helix-foundry.git`",
+    );
+    expect(text).toContain("`docker compose up -d --wait`");
+    expect(text).toContain(
+      "`env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY docker compose up -d --wait`",
+    );
+    expect(text).toContain("`docker compose --profile ollama up -d --wait`");
+    expect(text).toContain(
+      "http://localhost:3000/settings/ai): never in the chat, a file or your shell.",
+    );
+    expect(text).toContain(
+      "Never delete its volumes: no `docker compose down -v`",
+    );
+    expect(text).toContain("Open http://localhost:3000 for me.");
+    expect(text).toContain("Copy prompt for your agent");
+  });
+});
+
+describe("onboardingPrompt with a workspace", () => {
+  it("leaves out sign-up and running it on my computer", () => {
+    const text = onboardingPrompt(input());
+    expect(text).not.toContain("### If I don’t have one yet");
+    expect(text).not.toContain("helix_get_started");
+    expect(text).not.toContain("## Run it on my computer");
+    expect(text).not.toContain("This prompt doesn’t list my tables");
+  });
+});
+
+describe("onboardingPrompt's review, load and failures", () => {
+  const text = onboardingPrompt(input());
+
+  it("reads the draft's goal, drafts again on request, and asks before a load", () => {
+    expect(text).toContain(
+      "and the goal it was drafted from with `helix_foundry_get_generation` (its `generation_id`).",
+    );
+    expect(text).toContain(
+      "If I want changes, ask me what, write the new goal with me, and generate again",
+    );
+    expect(text).toContain(
+      "ask me whether to make it current and load it: a load spends from the workspace’s monthly budget.",
+    );
+    expect(text).toContain("It spends on models: say so");
+  });
+
+  it("prepares one operation at a time, and says what every code means", () => {
+    expect(text).toContain(
+      "Prepare one operation at a time, and execute it before preparing the next.",
+    );
+    for (const rule of [
+      "`confirmation is already consumed` means it ran, so read the state back.",
+      "from `create_document_set`, a set has that name: use it",
+      "a confirmation that is expired or doesn’t match: prepare it again",
+      "From `create_load`, a load or extract already running: follow it",
+      "- `not_found`: the id is wrong, or I can’t do that there",
+      "- `invalid_arguments`: fix what its message says, and prepare again.",
+      "- `backend_unavailable` or `internal_error`: read the state back",
+      "tell Helix with `helix_feedback`",
+    ])
+      expect(text).toContain(rule);
+  });
+
+  it("suggests a new database, and uploads only what I point to", () => {
+    expect(text).toContain(
+      "Ask me which database it goes in, and suggest a new one.",
+    );
+    expect(text).toContain(
+      "If I choose one, tell me a load writes the ontology beside whatever that database already holds.",
+    );
+    expect(text).toContain(
+      "Upload only files I point you to, and ask me before each batch.",
+    );
   });
 });
 
@@ -358,18 +491,22 @@ describe("onboardingPrompt with API sources", () => {
 describe("onboardingPrompt's API source steps and rules", () => {
   const text = onboardingPrompt(input());
   it("makes a source with create_event_source, sends as me, and links its tokens", () => {
-    expect(text).toContain("#### Send pieces from your agents\n\n1. ");
+    expect(text).toContain("#### Send pieces from my apps and agents\n\n1. ");
     expect(text).toContain(
       "Work out with me what a piece is, what its id is, and which mode fits it: strictly structured JSON suits structured mappings, and a piece whose body is text (an agent’s reply, a note) suits entity extraction, with the text in one top-level field. Extraction suits a few hundred pieces a month, not a steady stream.",
     );
     expect(text).toContain(
-      '2. Make one with `create_event_source`, target `workspace:ws1`, payload `{"name": "<name>", "description": "<what each piece is>"}`, adding `"text_field": "<the field holding each piece’s text>"` when the pieces carry text: every piece must then send that field as a string. Its result has the source’s `id` and a `token_url`. If it says `already_exists`, the source is there: use the id it names.',
+      '2. Make one with `create_event_source`, target `workspace:ws1`, payload `{"name": "<name>", "description": "<what each piece is>"}`, adding `"text_field": "<the field holding each piece’s text>"` when the pieces carry text: every piece must then send that field as a string. Its result has the source’s `event_source.id` and a `token_url`. If it says `already_exists`, the source is there: use the id it names.',
     );
     expect(text).toContain(
       '`helix_foundry_send_pieces` (`{"workspace_id": "ws1", "event_source_id": "<its id>", "client_token": "<a new UUID>", "pieces": [{"id": "<the piece’s id>", "data_json": "<the piece, a JSON object as text>"}]}`); you send as me.',
     );
+    // A piece's id and time go beside its data, never in it.
     expect(text).toContain(
-      "give me `token_url`: I make a send token there and put it in their config. Never ask me for it.",
+      "`data_json` holds the rest, and never has a top-level `id`, `received_at` or `occurred_at`. One bad piece refuses the whole call.",
+    );
+    expect(text).toContain(
+      "give me `token_url`: I make a send token there and put it in their config. Never ask me for it. If you write their config, have it read the token from an environment variable (`HELIX_EVENT_TOKEN`), never hold it.",
     );
     // The prompt never holds a send token.
     expect(text).not.toContain("hx_ev_");
@@ -393,8 +530,7 @@ describe("onboardingPrompt's API source steps and rules", () => {
     const out = onboardingPrompt(
       input({ eventsUrl: "https://ingest.example.com" }),
     );
-    const step3 =
-      "put it in their config. Never ask me for it." + SEND_URL + "\n";
+    const step3 = "never hold it." + SEND_URL + "\n";
     expect(out).toContain(step3);
     expect(out.split("send_url")).toHaveLength(2);
     expect(out.replace(SEND_URL, "")).toBe(text);
@@ -405,16 +541,16 @@ describe("onboardingPrompt's API source steps and rules", () => {
 
   it("waits for its rows, and never syncs it by hand", () => {
     expect(text).toContain(
-      "4. It counts once `helix_foundry_list_connectors` shows its `events` table with rows, about a minute after the first send; for entity extraction, once its `extraction.documents` is above 0, which takes a text field and a sync after it. Never `sync_connector` an API source: it syncs when pieces arrive.",
+      "4. It counts once `helix_foundry_list_connectors` shows its `events` table with rows, about a minute after the first send; for entity extraction, once its `event_source.extraction.documents` is above 0, which takes a text field and a sync after it. Never `sync_connector` an API source: it syncs when pieces arrive.",
     );
     expect(text).toContain(
-      "Only if it has no `last_sync`, and it isn’t an API source, start one: `sync_connector`",
+      "If it has no `last_sync` yet, wait a minute and list again. Only if it still has none, and it isn’t an API source, start one: `sync_connector`",
     );
   });
 
   it("generates by extraction from the source's own set, one of the 20, once it holds documents", () => {
     expect(text).toContain(
-      "Extraction reads the source’s newest 500 pieces as documents of its own set, one of the 20 sets, which `document_set_ids` never names; it needs the source’s `text_field` and `helix_foundry_list_connectors` to show its `extraction.documents` above 0.",
+      "Extraction reads the source’s newest 500 pieces as documents of its own set, one of the 20 sets, which `document_set_ids` never names; it needs the source’s `text_field` and `helix_foundry_list_connectors` to show its `event_source.extraction.documents` above 0.",
     );
     expect(text).toContain(
       "- `document_set_ids`: the sets whose documents serve the goal, at most 20 with the API sources read by extraction.",
@@ -457,7 +593,7 @@ describe("onboardingPrompt's API source steps and rules", () => {
       "From `helix_foundry_send_pieces`, wait as it says, then retry with the same `client_token`.",
     );
     expect(text).toContain(
-      "or, from `create_event_source`, the API source exists: use the id it names (find it with `helix_foundry_list_connectors`).",
+      "or, from `create_event_source`, the API source exists: use the id it names (find it with `helix_foundry_list_connectors`);",
     );
   });
 });
@@ -648,7 +784,8 @@ describe("onboardingPrompt for an ontology under way", () => {
       "its current version (`v3`) is loading now, as load `l1`.",
     );
     expect(text).toContain("`active_job.load_id` (`l1`).");
-    expect(text).not.toContain("`create_load`");
+    // It follows the load under way: no new one (the failures name create_load).
+    expect(text).not.toContain("1. `create_load`");
     const unknown = onboardingPrompt(
       input({ ontology: ontology({ step: "load", state: "running" }) }),
     );
