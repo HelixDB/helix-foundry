@@ -16,14 +16,14 @@ import (
 func ids() map[string]string {
 	sources := map[string]string{}
 	for _, t := range Tables {
-		sources[t] = ontologyagent.TableSourceID("conn-kestrel", t)
+		sources[t] = ontologyagent.TableSourceID("conn-acme", t)
 	}
 	return sources
 }
 
 func TestDraft(t *testing.T) {
 	sources := ids()
-	raw, err := Draft(Kestrel, sources, "01JSET00000000000000000000")
+	raw, err := Draft(Acme, sources, "01JSET00000000000000000000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,12 +64,12 @@ func TestDraft(t *testing.T) {
 }
 
 func TestDraftRefuses(t *testing.T) {
-	if _, err := Draft("acme", ids(), "set"); err == nil {
+	if _, err := Draft("globex", ids(), "set"); err == nil {
 		t.Error("another sample was drafted")
 	}
 	sources := ids()
 	delete(sources, "invoices")
-	if _, err := Draft(Kestrel, sources, "set"); err == nil || !strings.Contains(err.Error(), "invoices") {
+	if _, err := Draft(Acme, sources, "set"); err == nil || !strings.Contains(err.Error(), "invoices") {
 		t.Errorf("a missing table: %v", err)
 	}
 }
@@ -77,7 +77,7 @@ func TestDraftRefuses(t *testing.T) {
 // The draft names exactly the sample's tables.
 func TestTablesAreTheDraftsTables(t *testing.T) {
 	named := []string{}
-	for _, m := range regexp.MustCompile(`\{\{table:([^{}]+)\}\}`).FindAllStringSubmatch(kestrel, -1) {
+	for _, m := range regexp.MustCompile(`\{\{table:([^{}]+)\}\}`).FindAllStringSubmatch(acme, -1) {
 		if !slices.Contains(named, m[1]) {
 			named = append(named, m[1])
 		}
@@ -90,10 +90,10 @@ func TestTablesAreTheDraftsTables(t *testing.T) {
 }
 
 func ExampleDraft() {
-	raw, _ := Draft(Kestrel, map[string]string{
+	raw, _ := Draft(Acme, map[string]string{
 		"accounts": "src-accounts", "contacts": "src-contacts", "subscriptions": "src-subscriptions",
 		"invoices": "src-invoices", "support_tickets": "src-tickets", "product_usage": "src-usage",
-	}, "set-kestrel")
+	}, "set-acme")
 	var def struct {
 		MappingsTOML string `json:"mappings_toml"`
 	}

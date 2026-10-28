@@ -168,8 +168,8 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
 });
 
 // The first run: a new install's onboarding opens the sample company's
-// page, which connects Kestrel's PostgreSQL database (the stack's
-// kestrel-db), uploads its documents, shows the goal and the ontology made
+// page, which connects Acme Corp's PostgreSQL database (the stack's
+// acme-db), uploads its documents, shows the goal and the ontology made
 // from its ready-made draft, loads it, and offers its questions. A reload
 // carries on with what it made.
 test("walks a new install through the sample company, from its database to Ask", async ({
@@ -180,7 +180,10 @@ test("walks a new install through the sample company, from its database to Ask",
   await page.getByRole("button", { name: "Use the sample" }).click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Kestrel, a sample company" }),
+    page.getByRole("heading", {
+      level: 1,
+      name: "Acme Corp, a sample company",
+    }),
   ).toBeVisible();
   const steps = page.getByRole("list", { name: "Steps" });
   await expect(steps).toContainText("6 tables, 1,121 rows", {
@@ -189,7 +192,7 @@ test("walks a new install through the sample company, from its database to Ask",
   await expect(steps).toContainText("which renewals are at risk", {
     timeout: 30_000,
   });
-  await expect(steps).toContainText("Foundry models Kestrel as 9 types", {
+  await expect(steps).toContainText("Foundry models Acme Corp as 9 types", {
     timeout: 30_000,
   });
   await page.reload();
@@ -203,10 +206,10 @@ test("walks a new install through the sample company, from its database to Ask",
     page.getByRole("group", { name: "Suggested questions" }),
   ).toBeVisible();
 
-  // Kestrel's database is a connection in Data, like any other.
+  // Acme Corp's database is a connection in Data, like any other.
   await page.goto("/data");
   await expect(
-    page.getByText("Kestrel", { exact: true }).first(),
+    page.getByText("Acme Corp", { exact: true }).first(),
   ).toBeVisible();
 });
 

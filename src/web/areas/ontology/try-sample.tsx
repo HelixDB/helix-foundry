@@ -29,7 +29,7 @@ import { SAMPLE, SAMPLE_TOUR } from "./sample";
 // "Try it on a sample company", on the first ontology's wizard. Where the
 // sample's database runs (SAMPLE_TOUR: a local install, or a stamp with
 // its own), it opens the sample's own page (./sample-tour.tsx), which
-// connects Kestrel's database and shows each step. Elsewhere, one click
+// connects Acme Corp's database and shows each step. Elsewhere, one click
 // uploads the sample's files (./sample.ts) into its set, waits until Foundry has read
 // its tables and PDFs, so a draft started next leaves none out, then hands
 // the sets they are in to the wizard (`onReady`), which fills in what is
@@ -159,8 +159,8 @@ export function TrySample({
         title="Adding the sample company"
         text={
           run.step === "adding"
-            ? `Uploading Kestrel’s files into Data: ${run.done} of ${SAMPLE.files.length}.`
-            : "Reading Kestrel’s tables and contracts."
+            ? `Uploading Acme Corp’s files into Data: ${run.done} of ${SAMPLE.files.length}.`
+            : "Reading Acme Corp’s tables and contracts."
         }
       />
     );
@@ -170,7 +170,7 @@ export function TrySample({
         icon={CircleCheck}
         tone="muted"
         title="Drafting from the sample company"
-        text={`Kestrel’s files are in Data, in ${SAMPLE.set.name}, and chosen below. Change anything, then create the ontology.`}
+        text={`Acme Corp’s files are in Data, in ${SAMPLE.set.name}, and chosen below. Change anything, then create the ontology.`}
       />
     );
   return (
@@ -180,8 +180,8 @@ export function TrySample({
       title="Try it on a sample company"
       text={
         SAMPLE_TOUR
-          ? "Kestrel is a made-up software company: its customers, subscriptions, invoices and support tickets in a PostgreSQL database, and its contracts and call notes as documents. See Foundry turn them into an ontology you can ask questions of, step by step, in about a minute."
-          : "Kestrel is a made-up software company: its customers, subscriptions, invoices, support tickets and usage as tables, with contracts, call notes and an incident report as documents. Foundry’s agent drafts an ontology that links them."
+          ? "Acme Corp is a made-up software company: its customers, subscriptions, invoices and support tickets in a PostgreSQL database, and its contracts and call notes as documents. See Foundry turn them into an ontology you can ask questions of, step by step, in about a minute."
+          : "Acme Corp is a made-up software company: its customers, subscriptions, invoices, support tickets and usage as tables, with contracts, call notes and an incident report as documents. Foundry’s agent drafts an ontology that links them."
       }
       action={
         <Button size="sm" variant="primary" onClick={() => void add()}>

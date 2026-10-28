@@ -2,11 +2,11 @@
 
 **Date:** 21 October 2026
 **Brightmoor:** Priya Natarajan (Head of Operations), Gareth Lloyd (Finance Director)
-**Kestrel:** Sam Whitfield (account manager)
+**Acme Corp:** Sam Whitfield (account manager)
 
 ## Summary
 
-Brightmoor's renewal is at risk. They lost their largest hospital facilities contract in August, and Gareth has to cut software spend by 30%. They want to stay on Kestrel, but smaller and at the same discount.
+Brightmoor's renewal is at risk. They lost their largest hospital facilities contract in August, and Gareth has to cut software spend by 30%. They want to stay on Acme Corp, but smaller and at the same discount.
 
 ## What they asked for
 
@@ -24,4 +24,4 @@ Brightmoor's renewal is at risk. They lost their largest hospital facilities con
 
 - Sam Whitfield: ask Elena Vasquez whether the 10% can carry into the renewal at 80 seats, and answer Gareth by 24 October.
 - Gareth Lloyd: pay the October invoice once the terms are agreed.
-- Priya Natarajan: name who owns Kestrel at Brightmoor after she leaves.
+- Priya Natarajan: name who owns Acme Corp at Brightmoor after she leaves.

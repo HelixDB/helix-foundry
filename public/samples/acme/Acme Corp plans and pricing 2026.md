@@ -1,6 +1,6 @@
-# Kestrel plans and pricing, 2026
+# Acme Corp plans and pricing, 2026
 
-Kestrel is scheduling and dispatch software for field-service teams: the office plans jobs on the dispatch board, and technicians get them in the Kestrel mobile app. Prices are per technician seat per month, in US dollars.
+Acme Corp is scheduling and dispatch software for field-service teams: the office plans jobs on the dispatch board, and technicians get them in the Acme mobile app. Prices are per technician seat per month, in US dollars.
 
 | Plan | Price | Seats | Billing | Support | Uptime commitment |
 | --- | --- | --- | --- | --- | --- |

@@ -219,22 +219,21 @@ services:
     depends_on: *secrets-first
     restart: unless-stopped
 
-  # Kestrel, the sample company's PostgreSQL database (kestrel/kestrel.sql,
+  # Acme Corp, the sample company's PostgreSQL database (acme/acme.sql,
   # written by scripts/sample-company.mjs): the first ontology's Use the
-  # sample connects to it as to any database, at kestrel-db:5432 as
-  # kestrel_reader, who can only select. Its data is made up and starts
+  # sample connects to it as to any database, at acme-db:5432 as
+  # acme_reader, who can only select. Its data is made up and starts
   # afresh with the container (no volume); it publishes no port.
-  kestrel-db:
+  acme-db:
     image: postgres:17.11-alpine
     environment:
-      POSTGRES_DB: kestrel
-      POSTGRES_USER: kestrel
-      POSTGRES_PASSWORD: kestrel
-    volumes:
-      ["./kestrel/kestrel.sql:/docker-entrypoint-initdb.d/kestrel.sql:ro"]
+      POSTGRES_DB: acme
+      POSTGRES_USER: acme
+      POSTGRES_PASSWORD: acme
+    volumes: ["./acme/acme.sql:/docker-entrypoint-initdb.d/acme.sql:ro"]
     tmpfs: ["/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kestrel -d kestrel"]
+      test: ["CMD-SHELL", "pg_isready -U acme -d acme"]
       interval: 2s
       retries: 30
     depends_on: *secrets-first

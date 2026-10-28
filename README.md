@@ -20,7 +20,7 @@ docker compose up -d --wait
 
 Open http://localhost:3000. There is no sign-in and nothing to set up: one owner, every connector and feature on, and a workspace to start in. The first start writes the install's secrets into a Docker volume; keep it (`docker compose down -v` deletes it with your data).
 
-No data to hand? The first page offers **Use the sample**: Kestrel, a made-up software company, as tables (customers, subscriptions, invoices, support tickets, usage) and documents (contracts, call notes, an incident report). One click adds it and fills in your first ontology, ready to draft.
+No data to hand? The first page offers **Use the sample**: Acme Corp, a made-up software company, as tables (customers, subscriptions, invoices, support tickets, usage) and documents (contracts, call notes, an incident report). One click adds it and fills in your first ontology, ready to draft.
 
 AI runs where it finds it: Claude or OpenAI when the shell you ran `docker compose up` from has an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, else a model that calls tools in Ollama (`docker compose --profile ollama up -d` runs one beside Foundry, or use Ollama on your computer), else LM Studio on your computer. **Settings › AI models** says which it chose and why, and switches to Ollama, Claude, OpenAI, Azure OpenAI or Amazon Bedrock with your own key, or any OpenAI-compatible server (vLLM, a gateway). [local/README.md](local/README.md) says what runs, where data lives, what may be overridden, how each provider is set up and how to reach databases on this machine.
 

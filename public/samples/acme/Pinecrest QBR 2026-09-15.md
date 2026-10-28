@@ -2,11 +2,11 @@
 
 **Date:** 15 September 2026, video call
 **Pinecrest:** Dana Okafor (VP Operations), Raj Patel (IT Manager), Miguel Serrano (CFO, last 20 minutes)
-**Kestrel:** Jordan Reyes (account manager), Elena Vasquez (Chief Revenue Officer), Hana Lee (solutions engineer)
+**Acme Corp:** Jordan Reyes (account manager), Elena Vasquez (Chief Revenue Officer), Hana Lee (solutions engineer)
 
 ## Summary
 
-A hard quarter. Usage fell after a run of SSO sign-in failures in August, and Pinecrest is looking at a competitor before their renewal on 31 December. Dana still backs Kestrel, but Miguel wants a price that reflects the problems.
+A hard quarter. Usage fell after a run of SSO sign-in failures in August, and Pinecrest is looking at a competitor before their renewal on 31 December. Dana still backs Acme Corp, but Miguel wants a price that reflects the problems.
 
 ## Usage
 
@@ -15,7 +15,7 @@ Active nurses and schedulers fell from 372 in July to 298 in August: on the wors
 ## Issues raised
 
 - **SSO sign-in.** Nurses were locked out on three mornings in August: tickets T-4331 (5 August), T-4334 (11 August) and T-4345 (19 August). Raj says nobody at Pinecrest was told about the SAML certificate rotation on 4 August, which caused the first two. Jordan apologised and committed to a written post-mortem.
-- **Audit logs.** Pinecrest's order form commits Kestrel to audit logs by 31 December 2026. Dana needs them for a state audit in January and asked for early access. Hana offered the beta.
+- **Audit logs.** Pinecrest's order form commits Acme Corp to audit logs by 31 December 2026. Dana needs them for a state audit in January and asked for early access. Hana offered the beta.
 - **Scheduling.** Leah Whitcombe's team wants recurring visits that skip public holidays. Logged as a feature request.
 
 ## Commercial

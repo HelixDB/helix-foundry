@@ -41,16 +41,16 @@ const nextConfig: NextConfig = {
       appEnv === "prod"
         ? "https://mcp.helix-db.com/mcp"
         : "https://mcp.dev.helix-db.com/mcp",
-    // Kestrel's PostgreSQL database, which "Use the sample" connects
-    // (src/web/areas/ontology/sample.ts): the local stack's kestrel-db, or
+    // Acme Corp's PostgreSQL database, which "Use the sample" connects
+    // (src/web/areas/ontology/sample.ts): the local stack's acme-db, or
     // the stamp's own (helix-hyperscale backend/infra/sample-db). Prod has
     // none yet, so its sample uploads the tables as files.
     NEXT_PUBLIC_SAMPLE_DB_HOST:
       mode === "local"
-        ? "kestrel-db"
+        ? "acme-db"
         : appEnv === "prod"
           ? ""
-          : "helix-dev-kestrel.cdmqgow4207f.us-east-2.rds.amazonaws.com",
+          : "helix-dev-sample.cdmqgow4207f.us-east-2.rds.amazonaws.com",
     // Where API sources take pieces over HTTP (Foundry's foundry-events
     // role), an origin with no trailing slash. Empty in local
     // mode: hides HTTP.
