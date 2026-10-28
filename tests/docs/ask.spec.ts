@@ -38,7 +38,7 @@ test("ask: a new thread and a thread", async ({ page }) => {
   ).toBeVisible();
   await page
     .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("link", { name: "Ask" })
+    .getByRole("link", { name: "Analyst" })
     .click();
   await newThread(page);
   const suggestions = page.getByRole("group", { name: "Suggested questions" });

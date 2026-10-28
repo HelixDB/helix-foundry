@@ -58,7 +58,7 @@ async function loadContract(page: Page) {
 }
 
 async function ask(page: Page, question: string) {
-  await page.getByRole("link", { name: "Ask", exact: true }).click();
+  await page.getByRole("link", { name: "Analyst", exact: true }).click();
   await expect(
     page.getByRole("heading", {
       level: 1,
@@ -190,7 +190,7 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
   // Spend shows against the questions budget, under the threads, with the
   // limits behind it.
   const budget = page
-    .getByRole("region", { name: "Ask threads" })
+    .getByRole("region", { name: "Analyst threads" })
     .getByRole("group", { name: "Questions budget" });
   await expect(budget).toContainText("$0.07 of $30.00 this month");
   await expect(budget.getByText(/A question spends at most/)).toBeHidden();
@@ -543,7 +543,7 @@ test("says why a question is refused, in the WFE's words", async ({ page }) => {
   await mock.configure({ loadStepMs: 200, askSpentUsdMicros: 29_600_000 });
   await signIn(page);
   await loadContract(page);
-  await page.getByRole("link", { name: "Ask", exact: true }).click();
+  await page.getByRole("link", { name: "Analyst", exact: true }).click();
   const form = page.getByRole("form", { name: "Ask a question" });
   await form.getByRole("textbox", { name: /^Question/ }).fill("Who signed it?");
   await form.getByRole("button", { name: "Ask", exact: true }).click();
@@ -575,7 +575,7 @@ test("asks about an entity from its page, in a drawer", async ({ page }) => {
     "Globex Corporation",
     { timeout: 10_000 },
   );
-  await drawer.getByRole("link", { name: "Open in Ask" }).click();
+  await drawer.getByRole("link", { name: "Open in Analyst" }).click();
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts\?thread=q_/);
   await expect(
     page.getByRole("article", { name: "Question: What did they sign?" }),
@@ -591,7 +591,7 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
   await loadContract(page);
   // The load's version was read on the way: its draft's competency
   // questions are suggestions, under a composer with nothing in it.
-  await page.getByRole("link", { name: "Ask", exact: true }).click();
+  await page.getByRole("link", { name: "Analyst", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "What do you want to know about Customer contracts?",
   );
@@ -621,7 +621,7 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
     "What is each customer under contract billed?",
   );
   const threads = page
-    .getByRole("region", { name: "Ask threads" })
+    .getByRole("region", { name: "Analyst threads" })
     .getByRole("navigation", { name: "Threads" });
   await expect(threads.getByRole("heading", { level: 2 })).toHaveText([
     "Today",
@@ -747,7 +747,7 @@ test("groups the threads by when they were last asked in", async ({ page }) => {
   await signIn(page);
   await page.goto("/ask/ont_acme_contracts");
   const threads = page
-    .getByRole("region", { name: "Ask threads" })
+    .getByRole("region", { name: "Analyst threads" })
     .getByRole("navigation", { name: "Threads" });
   await expect(threads.getByRole("heading", { level: 2 })).toHaveText([
     "Today",
@@ -784,10 +784,10 @@ test("on a phone, shows the threads as the page and in the drawer's sidebar", as
   await page.goto("/ask/ont_acme_contracts");
   // No sidebar beside the page: the threads are the page until one is
   // chosen.
-  await expect(page.getByRole("region", { name: "Ask threads" })).toHaveCount(
-    0,
-  );
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Ask");
+  await expect(
+    page.getByRole("region", { name: "Analyst threads" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Analyst");
   const main = page.getByRole("main");
   await expect(
     main.getByRole("navigation", { name: "Threads" }).getByRole("link"),
@@ -809,14 +809,14 @@ test("on a phone, shows the threads as the page and in the drawer's sidebar", as
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   const sections = drawer.getByRole("navigation", { name: "Main navigation" });
   await expect(sections.getByRole("link")).toHaveCount(4);
-  await expect(sections.getByRole("link", { name: "Ask" })).toHaveAttribute(
+  await expect(sections.getByRole("link", { name: "Analyst" })).toHaveAttribute(
     "aria-current",
     "page",
   );
   await expect(
     drawer.getByRole("button", { name: "Close navigation" }),
   ).toBeFocused();
-  const threads = drawer.getByRole("region", { name: "Ask threads" });
+  const threads = drawer.getByRole("region", { name: "Analyst threads" });
   await expect(threads.getByRole("link", { name: "New thread" })).toBeVisible();
   await threads
     .getByRole("link", { name: /^Who signed the services agreement\?/ })

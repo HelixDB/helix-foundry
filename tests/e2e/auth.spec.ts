@@ -45,7 +45,7 @@ test("explains a sign-in that did not finish", async ({ page }) => {
   await signIn(page);
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Ask" }),
+    page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
 });
 
@@ -80,7 +80,7 @@ test("refreshes an expired session once for parallel calls", async ({
   await mock.configure({ accessTokenTtlSeconds: 1 });
   await signIn(page);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Ask" }),
+    page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
   // Let the access token expire, then call the BFF six times at once.
   await page.waitForTimeout(2500);
@@ -103,7 +103,7 @@ test("the app takes turns to refresh an expired session", async ({ page }) => {
   await mock.configure({ accessTokenTtlSeconds: 1 });
   await signIn(page);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Ask" }),
+    page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
   await page.waitForTimeout(2500);
   await mock.configure({ accessTokenTtlSeconds: 300 });

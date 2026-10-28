@@ -128,7 +128,7 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Ask" }),
+    page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
 
   // The picker names no dashboard and no team.

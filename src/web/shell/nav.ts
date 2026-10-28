@@ -47,7 +47,7 @@ export const primaryNav: NavItem[] = [
   // Questions about an ontology's database, the main page (/ opens it), and
   // the database itself: each opens the ontology last opened, and picks
   // another in its header.
-  item("ask", "/ask", "Ask", Sparkles, ["/ask"]),
+  item("ask", "/ask", "Analyst", Sparkles, ["/ask"]),
   item("ontology", "/ontology", "Ontologies", Shapes, ["/ontology"]),
   item("explore", "/explore", "Explorer", Waypoints, ["/explore"]),
   item("data", "/data", "Connectors", Cable, ["/data"]),

@@ -167,7 +167,7 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
   await nav.getByRole("link", { name: "Ontologies" }).click();
   await expect(page).toHaveURL(/\/ontology\/ont_acme_contracts$/);
   await expect(nav.locator(".hf-nav-link")).toHaveText([
-    "Ask",
+    "Analyst",
     "Ontologies",
     "Explorer",
     "Connectors",

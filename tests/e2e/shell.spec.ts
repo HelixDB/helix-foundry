@@ -98,7 +98,7 @@ test("shows the WFE's reason when a workspace cannot be created", async ({
 test("creates, switches and chooses workspaces", async ({ page }) => {
   await signIn(page);
   // Acme opens on its main page, Ask.
-  const ask = page.getByRole("heading", { level: 1, name: "Ask" });
+  const ask = page.getByRole("heading", { level: 1, name: "Analyst" });
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect(ask).toBeVisible();
   await page.getByRole("button", { name: "Workspace: Acme" }).click();
@@ -198,7 +198,7 @@ test("opens the Explorer and Ask as sections of their own, on the ontology last 
   // browser, and remembers it.
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect(
-    page.getByRole("heading", { level: 1, name: "Ask" }),
+    page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
   const orders = await addOrders(page);
   // The app read the ontologies as it opened, before Orders was made, and
@@ -213,7 +213,7 @@ test("opens the Explorer and Ask as sections of their own, on the ontology last 
     picker = page.getByRole("combobox", { name: "Ontology" });
   await expect
     .poll(() => sectionNames(nav))
-    .toEqual(["Ask", "Ontologies", "Explorer", "Connectors"]);
+    .toEqual(["Analyst", "Ontologies", "Explorer", "Connectors"]);
   // None opened yet: the list's first, now Orders.
   await expect(page).toHaveURL(new RegExp(`/ask/${orders}$`));
 
@@ -250,17 +250,17 @@ test("opens the Explorer and Ask as sections of their own, on the ontology last 
   await expect(
     page.getByRole("heading", { level: 1, name: "Customer contracts" }),
   ).toBeVisible();
-  await nav.getByRole("link", { name: "Ask" }).click();
+  await nav.getByRole("link", { name: "Analyst" }).click();
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   // Nothing is loaded yet: Ask says so, and offers to load data.
   await expect(
-    page.getByRole("heading", { level: 1, name: "Ask" }),
+    page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
   await expect(
     page.getByRole("main").getByRole("link", { name: "Load data" }),
   ).toBeVisible();
   await expect(picker).toHaveText("Customer contracts");
-  await expect(nav.getByRole("link", { name: "Ask" })).toHaveAttribute(
+  await expect(nav.getByRole("link", { name: "Analyst" })).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -367,15 +367,15 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
 }) => {
   await signIn(page);
   const nav = page.getByRole("navigation", { name: "Main navigation" }),
-    threads = page.getByRole("region", { name: "Ask threads" }),
+    threads = page.getByRole("region", { name: "Analyst threads" }),
     panel = page.locator(".hf-section-panel");
   // The main page is Ask, the sidebar's first section: each section a link
   // with its name, the open one current, and Ask's threads under them, in
   // the sidebar itself. Nothing collapses or hides it.
-  const sections = ["Ask", "Ontologies", "Explorer", "Connectors"];
+  const sections = ["Analyst", "Ontologies", "Explorer", "Connectors"];
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect.poll(() => sectionNames(nav)).toEqual(sections);
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Ask");
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("Analyst");
   await expect(threads.getByRole("link", { name: "New thread" })).toBeVisible();
   await expect(panel).toHaveCount(0);
   await expect(
@@ -444,6 +444,6 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
   await page.keyboard.press("Escape");
   await page.getByRole("link", { name: "Helix Foundry home" }).click();
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Ask");
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("Analyst");
   await expect(threads.getByRole("link", { name: "New thread" })).toBeVisible();
 });

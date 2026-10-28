@@ -49,7 +49,7 @@ const TASKS: readonly {
   {
     task: "FOUNDRY_USAGE_TASK_QUESTIONS",
     label: "Questions",
-    hint: "Answering questions in Ask",
+    hint: "Answering questions in the Analyst",
     within: false,
   },
 ];
@@ -95,7 +95,7 @@ const PLACEHOLDER = "—";
  *     reservedUsdMicros: "500000", capUsdMicros: "15000000" }],
  * });
  * // { total: "$4.25", resets: "November 1", rows: [{ task: "FOUNDRY_USAGE_TASK_QUESTIONS",
- * //   label: "Questions", hint: "Answering questions in Ask", within: false, spent: "$0.25",
+ * //   label: "Questions", hint: "Answering questions in the Analyst", within: false, spent: "$0.25",
  * //   cap: { of: "of $15.00", fill: 0.05, level: "room" }, held: "$0.50" }] }
  */
 export function usageView(usage: FoundryUsage | undefined): UsageView {
