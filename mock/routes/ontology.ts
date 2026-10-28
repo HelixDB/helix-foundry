@@ -17,7 +17,7 @@ import type {
 // constraint given fixture evidence, as a finished draft has (the run
 // predates evaluation); and a Definition v1 version on the seeded Stripe
 // account.
-import kestrel from "../../backend/sample/kestrel.json";
+import acme from "../../backend/sample/acme.json";
 import agentBundle from "../fixtures/agent-bundle.json";
 // An agent draft for contracts with the Stripe customers, with a Contract
 // type that only documents fill: what the graph mock loads (./graph.ts).
@@ -456,22 +456,20 @@ export function generationsEnded(ontologyId: string) {
     }
 }
 
-// The sample company's ready-made draft (backend/sample/kestrel.json), which
+// The sample company's ready-made draft (backend/sample/acme.json), which
 // a sample generation stores in place of the AI's: its tables, by the names
 // its placeholders give, and its title, as the WFE's.
-const KESTREL = JSON.stringify(kestrel),
-  KESTREL_TABLES = [
-    ...new Set(
-      [...KESTREL.matchAll(/\{\{table:([^{}]+)\}\}/g)].map((m) => m[1]!),
-    ),
+const ACME = JSON.stringify(acme),
+  ACME_TABLES = [
+    ...new Set([...ACME.matchAll(/\{\{table:([^{}]+)\}\}/g)].map((m) => m[1]!)),
   ],
-  KESTREL_TITLE = "Kestrel customer accounts, contracts and renewal risk";
+  ACME_TITLE = "Acme Corp customer accounts, contracts and renewal risk";
 /** The sample's draft for the connector tables it drafts from, `set` its documents'. */
 function sampleDraft(
   tables: { connectorId?: string; table?: string }[],
   set: string,
 ): Record<string, unknown> {
-  let text = KESTREL.replaceAll("{{set}}", set);
+  let text = ACME.replaceAll("{{set}}", set);
   for (const t of tables)
     text = text.replaceAll(
       `{{table:${t.table}}}`,
@@ -605,7 +603,7 @@ function advance(g: StoredGeneration) {
   // As the WFE's worker: a sample missing a table fails for good.
   if (
     g.sample &&
-    KESTREL_TABLES.some((t) => !(g.tables || []).some((x) => x.table === t))
+    ACME_TABLES.some((t) => !(g.tables || []).some((x) => x.table === t))
   ) {
     Object.assign(g, {
       status: "ONTOLOGY_GENERATION_STATUS_FAILED",
@@ -938,7 +936,7 @@ export const ontologyRoutes: MockRoute[] = [
           "connector_ids must be empty with no_connectors",
         );
       const sample = body.sample || "";
-      if (sample && sample !== "kestrel")
+      if (sample && sample !== "acme")
         return fail(
           "INVALID_ARGUMENT",
           `no sample is called ${JSON.stringify(sample)}`,
@@ -1065,8 +1063,7 @@ export const ontologyRoutes: MockRoute[] = [
         (f) => ({ id: f.id, setId: f.setId }),
       );
       const missing =
-        sample &&
-        KESTREL_TABLES.find((t) => !tables.some((x) => x.table === t));
+        sample && ACME_TABLES.find((t) => !tables.some((x) => x.table === t));
       if (missing)
         return fail(
           "FAILED_PRECONDITION",
@@ -1090,7 +1087,7 @@ export const ontologyRoutes: MockRoute[] = [
         ontologyId: o.id,
         status: "ONTOLOGY_GENERATION_STATUS_QUEUED",
         ...(goal ? { goal, title: draftTitle(goal) } : {}),
-        ...(sample ? { sample, title: KESTREL_TITLE } : {}),
+        ...(sample ? { sample, title: ACME_TITLE } : {}),
         tables,
         documentSetIds,
         documents,

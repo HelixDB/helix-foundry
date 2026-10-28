@@ -3,8 +3,8 @@
 ---
 
 **From:** Marcus Bell <marcus.bell@sablesolar.example>
-**To:** Kestrel Support <support@kestrel.example>
-**Cc:** Aisha Karimi <aisha.karimi@kestrel.example>
+**To:** Acme Support <support@acme.example>
+**Cc:** Aisha Karimi <aisha.karimi@acme.example>
 **Date:** 8 October 2026, 07:55 MST
 **Subject:** Yesterday's outage (T-4401, T-4404)
 
@@ -19,7 +19,7 @@ Operations Director, Sable Solar
 
 ---
 
-**From:** Nora Quinn <nora.quinn@kestrel.example>
+**From:** Nora Quinn <nora.quinn@acme.example>
 **To:** Marcus Bell
 **Cc:** Aisha Karimi
 **Date:** 8 October 2026, 10:40 PDT
@@ -31,7 +31,7 @@ I'm sorry. Sable Solar was the account hit hardest by yesterday's incident: job 
 On credits: your Growth plan has no service credits, but I have asked our CRO, Elena Vasquez, to approve a goodwill credit of one month for 20 seats. I'll keep T-4404 open until you have an answer.
 
 Nora Quinn
-Support Lead, Kestrel
+Support Lead, Acme Corp
 
 ---
 

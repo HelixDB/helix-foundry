@@ -7,7 +7,7 @@ import {
 } from "./support/mock";
 
 // A new workspace's onboarding offers the sample company. This build is the
-// dev stamp's, which has Kestrel's database (next.config.ts), so the sample
+// dev stamp's, which has Acme Corp's database (next.config.ts), so the sample
 // opens its own page: it connects the database over TLS, uploads the
 // documents, shows the goal and the ontology made from its ready-made draft
 // on a new Helix database, loads it, and offers its questions. A reload
@@ -37,13 +37,16 @@ test("walks a new workspace through the sample company, from its database to Ask
   await page.getByRole("button", { name: "Use the sample" }).click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Kestrel, a sample company" }),
+    page.getByRole("heading", {
+      level: 1,
+      name: "Acme Corp, a sample company",
+    }),
   ).toBeVisible();
   const steps = page.getByRole("list", { name: "Steps" });
   await expect(steps).toContainText("6 tables, 1,121 rows", {
     timeout: 30_000,
   });
-  await expect(steps).toContainText("Foundry models Kestrel as 9 types", {
+  await expect(steps).toContainText("Foundry models Acme Corp as 9 types", {
     timeout: 30_000,
   });
   await page.reload();
@@ -54,10 +57,10 @@ test("walks a new workspace through the sample company, from its database to Ask
     page.getByRole("group", { name: "Suggested questions" }),
   ).toBeVisible();
 
-  // One Kestrel database in Data, and one set of its documents.
+  // One Acme Corp database in Data, and one set of its documents.
   await page.goto("/data");
-  await expect(explorer(page).getByText("Kestrel sample")).toBeVisible();
+  await expect(explorer(page).getByText("Acme Corp sample")).toBeVisible();
   await expect(
-    explorer(page).getByText("Kestrel", { exact: true }),
+    explorer(page).getByText("Acme Corp", { exact: true }),
   ).toHaveCount(1);
 });

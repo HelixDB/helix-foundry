@@ -2909,7 +2909,7 @@ type GenerateOntologyRequest struct {
 	// counts as one of the 20 sets, and needs the source to have a
 	// text_field and a synced piece (FAILED_PRECONDITION without either).
 	EventSources []*FoundryEventSourcePick `protobuf:"bytes,7,rep,name=event_sources,json=eventSources,proto3" json:"event_sources,omitempty"`
-	// Foundry's sample company to draft from in place of the AI: "kestrel" is
+	// Foundry's sample company to draft from in place of the AI: "acme" is
 	// the only one (INVALID_ARGUMENT for another). The generation stores the
 	// sample's ready-made draft, mapped to this workspace's connection to the
 	// sample's database, and calls no model. connector_ids must name exactly

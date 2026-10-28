@@ -1,4 +1,4 @@
--- Kestrel, the sample company, as a local install's kestrel-db serves it.
+-- Acme Corp, the sample company, as a local install's acme-db serves it.
 -- Written by scripts/sample-company.mjs; edit that, not this.
 
 CREATE TABLE accounts (
@@ -14,46 +14,46 @@ CREATE TABLE accounts (
   PRIMARY KEY (account_id)
 );
 INSERT INTO accounts (account_id, name, industry, country, city, employees, segment, account_manager, customer_since) VALUES
-  ('ACC-1001', 'Greywater Environmental', 'Environmental services', 'United States', 'Columbus', 580, 'Mid-market', 'aisha.karimi@kestrel.example', '2022-03-01'),
-  ('ACC-1002', 'Yarrow Mobile Veterinary', 'Veterinary care', 'Australia', 'Brisbane', 145, 'SMB', 'jordan.reyes@kestrel.example', '2022-07-01'),
-  ('ACC-1003', 'Bramble Pool Care', 'Pool maintenance', 'United States', 'Sacramento', 1215, 'Enterprise', 'aisha.karimi@kestrel.example', '2022-08-01'),
-  ('ACC-1004', 'Ironwood Tree Surgeons', 'Arboriculture', 'United Kingdom', 'Glasgow', 70, 'SMB', 'sam.whitfield@kestrel.example', '2022-08-01'),
-  ('ACC-1005', 'Riverside Elevator Co.', 'Elevator maintenance', 'Australia', 'Brisbane', 305, 'Mid-market', 'aisha.karimi@kestrel.example', '2022-08-01'),
-  ('ACC-1006', 'Ashgrove Plumbing & Heating', 'Plumbing', 'United States', 'Sacramento', 470, 'Mid-market', 'leo.marchetti@kestrel.example', '2022-09-01'),
-  ('ACC-1007', 'Thornbury Locksmiths', 'Locksmiths', 'United Kingdom', 'Leeds', 985, 'Mid-market', 'jordan.reyes@kestrel.example', '2022-10-01'),
-  ('ACC-1008', 'Quarry Lane Electric', 'Electrical contracting', 'Canada', 'Halifax', 1215, 'Enterprise', 'sam.whitfield@kestrel.example', '2022-12-01'),
-  ('ACC-1009', 'Vantage Lift Trucks', 'Equipment rental', 'United States', 'Boise', 60, 'SMB', 'aisha.karimi@kestrel.example', '2023-02-01'),
-  ('ACC-1010', 'Northgate Pest Control', 'Pest control', 'United Kingdom', 'Norwich', 325, 'Mid-market', 'sam.whitfield@kestrel.example', '2023-04-01'),
-  ('ACC-1011', 'Upland Water Utilities', 'Water utilities', 'United States', 'Austin', 160, 'SMB', 'sam.whitfield@kestrel.example', '2023-05-01'),
-  ('ACC-1012', 'Merrow Security Systems', 'Security systems', 'Ireland', 'Dublin', 245, 'Mid-market', 'aisha.karimi@kestrel.example', '2023-07-01'),
-  ('ACC-1013', 'Foxglove Home Nursing', 'Home healthcare', 'Canada', 'Winnipeg', 2570, 'Enterprise', 'aisha.karimi@kestrel.example', '2023-11-01'),
-  ('ACC-1014', 'Alder Glass & Glazing', 'Glazing', 'United States', 'Minneapolis', 290, 'Mid-market', 'sam.whitfield@kestrel.example', '2023-12-01'),
-  ('ACC-1015', 'Pinecrest Home Health', 'Home healthcare', 'United States', 'Portland', 1800, 'Enterprise', 'jordan.reyes@kestrel.example', '2024-01-01'),
-  ('ACC-1016', 'Halvorsen Freight', 'Freight and logistics', 'Canada', 'Calgary', 2400, 'Enterprise', 'sam.whitfield@kestrel.example', '2024-02-01'),
-  ('ACC-1017', 'Redfern Waste Solutions', 'Waste management', 'United States', 'Tampa', 300, 'Mid-market', 'aisha.karimi@kestrel.example', '2024-03-01'),
-  ('ACC-1018', 'Kingfisher Irrigation', 'Irrigation', 'Canada', 'Halifax', 205, 'Mid-market', 'aisha.karimi@kestrel.example', '2024-06-01'),
-  ('ACC-1019', 'Nettlefield Septic', 'Septic services', 'United Kingdom', 'Glasgow', 150, 'SMB', 'sam.whitfield@kestrel.example', '2024-06-01'),
-  ('ACC-1020', 'Corbel HVAC Services', 'HVAC', 'United States', 'Minneapolis', 1200, 'Enterprise', 'jordan.reyes@kestrel.example', '2024-07-01'),
-  ('ACC-1021', 'Fenwick Fire Protection', 'Fire safety', 'Canada', 'Halifax', 1855, 'Enterprise', 'sam.whitfield@kestrel.example', '2024-09-01'),
-  ('ACC-1022', 'Juniper Home Care', 'Home healthcare', 'United States', 'Austin', 150, 'SMB', 'leo.marchetti@kestrel.example', '2024-10-01'),
-  ('ACC-1023', 'Brightmoor Facilities', 'Facilities management', 'United Kingdom', 'Manchester', 650, 'Mid-market', 'sam.whitfield@kestrel.example', '2024-12-01'),
-  ('ACC-1024', 'Calder Telecom Installations', 'Telecoms installation', 'United States', 'Columbus', 40, 'SMB', 'jordan.reyes@kestrel.example', '2024-12-01'),
-  ('ACC-1025', 'Millbank Signage', 'Signage installation', 'United States', 'Raleigh', 90, 'SMB', 'jordan.reyes@kestrel.example', '2024-12-01'),
-  ('ACC-1026', 'Driftwood Moving Co.', 'Moving and storage', 'Australia', 'Perth', 55, 'SMB', 'jordan.reyes@kestrel.example', '2025-01-01'),
-  ('ACC-1027', 'Pemberton Medical Equipment', 'Medical equipment servicing', 'United States', 'Sacramento', 410, 'Mid-market', 'jordan.reyes@kestrel.example', '2025-03-01'),
-  ('ACC-1028', 'Sable Solar', 'Solar installation', 'United States', 'Phoenix', 420, 'Mid-market', 'aisha.karimi@kestrel.example', '2025-03-01'),
-  ('ACC-1029', 'Hollis Garage Doors', 'Garage doors', 'United States', 'Tampa', 80, 'SMB', 'jordan.reyes@kestrel.example', '2025-04-01'),
-  ('ACC-1030', 'Tidewater Plumbing Co.', 'Plumbing', 'Australia', 'Perth', 335, 'Mid-market', 'leo.marchetti@kestrel.example', '2025-05-01'),
-  ('ACC-1031', 'Elmstead Solar', 'Solar installation', 'Australia', 'Perth', 525, 'Mid-market', 'sam.whitfield@kestrel.example', '2025-06-01'),
-  ('ACC-1032', 'Cobalt Fiber Networks', 'Telecoms installation', 'United States', 'Sacramento', 1465, 'Enterprise', 'leo.marchetti@kestrel.example', '2025-08-01'),
-  ('ACC-1033', 'Larkspur Landscaping', 'Landscaping', 'Canada', 'Toronto', 25, 'SMB', 'sam.whitfield@kestrel.example', '2025-10-01'),
-  ('ACC-1034', 'Granite Peak Generators', 'Power generation servicing', 'United States', 'Columbus', 460, 'Mid-market', 'leo.marchetti@kestrel.example', '2025-11-01'),
-  ('ACC-1035', 'Oakhurst Roofing', 'Roofing', 'United States', 'Raleigh', 25, 'SMB', 'leo.marchetti@kestrel.example', '2025-11-01'),
-  ('ACC-1036', 'Westbrook Cleaning Group', 'Commercial cleaning', 'United States', 'Tampa', 1125, 'Enterprise', 'leo.marchetti@kestrel.example', '2025-12-01'),
-  ('ACC-1037', 'Lowmoor Boiler Services', 'Heating', 'Canada', 'Halifax', 40, 'SMB', 'leo.marchetti@kestrel.example', '2026-03-01'),
-  ('ACC-1038', 'Saltmarsh Marine Services', 'Marine servicing', 'United Kingdom', 'Glasgow', 1715, 'Enterprise', 'leo.marchetti@kestrel.example', '2026-03-01'),
-  ('ACC-1039', 'Orchard Street Clinics', 'Community clinics', 'United Kingdom', 'Norwich', 235, 'Mid-market', 'aisha.karimi@kestrel.example', '2026-05-01'),
-  ('ACC-1040', 'Kettering Appliance Repair', 'Appliance repair', 'United Kingdom', 'Norwich', 2590, 'Enterprise', 'jordan.reyes@kestrel.example', '2026-06-01');
+  ('ACC-1001', 'Greywater Environmental', 'Environmental services', 'United States', 'Columbus', 580, 'Mid-market', 'aisha.karimi@acme.example', '2022-03-01'),
+  ('ACC-1002', 'Yarrow Mobile Veterinary', 'Veterinary care', 'Australia', 'Brisbane', 145, 'SMB', 'jordan.reyes@acme.example', '2022-07-01'),
+  ('ACC-1003', 'Bramble Pool Care', 'Pool maintenance', 'United States', 'Sacramento', 1215, 'Enterprise', 'aisha.karimi@acme.example', '2022-08-01'),
+  ('ACC-1004', 'Ironwood Tree Surgeons', 'Arboriculture', 'United Kingdom', 'Glasgow', 70, 'SMB', 'sam.whitfield@acme.example', '2022-08-01'),
+  ('ACC-1005', 'Riverside Elevator Co.', 'Elevator maintenance', 'Australia', 'Brisbane', 305, 'Mid-market', 'aisha.karimi@acme.example', '2022-08-01'),
+  ('ACC-1006', 'Ashgrove Plumbing & Heating', 'Plumbing', 'United States', 'Sacramento', 470, 'Mid-market', 'leo.marchetti@acme.example', '2022-09-01'),
+  ('ACC-1007', 'Thornbury Locksmiths', 'Locksmiths', 'United Kingdom', 'Leeds', 985, 'Mid-market', 'jordan.reyes@acme.example', '2022-10-01'),
+  ('ACC-1008', 'Quarry Lane Electric', 'Electrical contracting', 'Canada', 'Halifax', 1215, 'Enterprise', 'sam.whitfield@acme.example', '2022-12-01'),
+  ('ACC-1009', 'Vantage Lift Trucks', 'Equipment rental', 'United States', 'Boise', 60, 'SMB', 'aisha.karimi@acme.example', '2023-02-01'),
+  ('ACC-1010', 'Northgate Pest Control', 'Pest control', 'United Kingdom', 'Norwich', 325, 'Mid-market', 'sam.whitfield@acme.example', '2023-04-01'),
+  ('ACC-1011', 'Upland Water Utilities', 'Water utilities', 'United States', 'Austin', 160, 'SMB', 'sam.whitfield@acme.example', '2023-05-01'),
+  ('ACC-1012', 'Merrow Security Systems', 'Security systems', 'Ireland', 'Dublin', 245, 'Mid-market', 'aisha.karimi@acme.example', '2023-07-01'),
+  ('ACC-1013', 'Foxglove Home Nursing', 'Home healthcare', 'Canada', 'Winnipeg', 2570, 'Enterprise', 'aisha.karimi@acme.example', '2023-11-01'),
+  ('ACC-1014', 'Alder Glass & Glazing', 'Glazing', 'United States', 'Minneapolis', 290, 'Mid-market', 'sam.whitfield@acme.example', '2023-12-01'),
+  ('ACC-1015', 'Pinecrest Home Health', 'Home healthcare', 'United States', 'Portland', 1800, 'Enterprise', 'jordan.reyes@acme.example', '2024-01-01'),
+  ('ACC-1016', 'Halvorsen Freight', 'Freight and logistics', 'Canada', 'Calgary', 2400, 'Enterprise', 'sam.whitfield@acme.example', '2024-02-01'),
+  ('ACC-1017', 'Redfern Waste Solutions', 'Waste management', 'United States', 'Tampa', 300, 'Mid-market', 'aisha.karimi@acme.example', '2024-03-01'),
+  ('ACC-1018', 'Kingfisher Irrigation', 'Irrigation', 'Canada', 'Halifax', 205, 'Mid-market', 'aisha.karimi@acme.example', '2024-06-01'),
+  ('ACC-1019', 'Nettlefield Septic', 'Septic services', 'United Kingdom', 'Glasgow', 150, 'SMB', 'sam.whitfield@acme.example', '2024-06-01'),
+  ('ACC-1020', 'Corbel HVAC Services', 'HVAC', 'United States', 'Minneapolis', 1200, 'Enterprise', 'jordan.reyes@acme.example', '2024-07-01'),
+  ('ACC-1021', 'Fenwick Fire Protection', 'Fire safety', 'Canada', 'Halifax', 1855, 'Enterprise', 'sam.whitfield@acme.example', '2024-09-01'),
+  ('ACC-1022', 'Juniper Home Care', 'Home healthcare', 'United States', 'Austin', 150, 'SMB', 'leo.marchetti@acme.example', '2024-10-01'),
+  ('ACC-1023', 'Brightmoor Facilities', 'Facilities management', 'United Kingdom', 'Manchester', 650, 'Mid-market', 'sam.whitfield@acme.example', '2024-12-01'),
+  ('ACC-1024', 'Calder Telecom Installations', 'Telecoms installation', 'United States', 'Columbus', 40, 'SMB', 'jordan.reyes@acme.example', '2024-12-01'),
+  ('ACC-1025', 'Millbank Signage', 'Signage installation', 'United States', 'Raleigh', 90, 'SMB', 'jordan.reyes@acme.example', '2024-12-01'),
+  ('ACC-1026', 'Driftwood Moving Co.', 'Moving and storage', 'Australia', 'Perth', 55, 'SMB', 'jordan.reyes@acme.example', '2025-01-01'),
+  ('ACC-1027', 'Pemberton Medical Equipment', 'Medical equipment servicing', 'United States', 'Sacramento', 410, 'Mid-market', 'jordan.reyes@acme.example', '2025-03-01'),
+  ('ACC-1028', 'Sable Solar', 'Solar installation', 'United States', 'Phoenix', 420, 'Mid-market', 'aisha.karimi@acme.example', '2025-03-01'),
+  ('ACC-1029', 'Hollis Garage Doors', 'Garage doors', 'United States', 'Tampa', 80, 'SMB', 'jordan.reyes@acme.example', '2025-04-01'),
+  ('ACC-1030', 'Tidewater Plumbing Co.', 'Plumbing', 'Australia', 'Perth', 335, 'Mid-market', 'leo.marchetti@acme.example', '2025-05-01'),
+  ('ACC-1031', 'Elmstead Solar', 'Solar installation', 'Australia', 'Perth', 525, 'Mid-market', 'sam.whitfield@acme.example', '2025-06-01'),
+  ('ACC-1032', 'Cobalt Fiber Networks', 'Telecoms installation', 'United States', 'Sacramento', 1465, 'Enterprise', 'leo.marchetti@acme.example', '2025-08-01'),
+  ('ACC-1033', 'Larkspur Landscaping', 'Landscaping', 'Canada', 'Toronto', 25, 'SMB', 'sam.whitfield@acme.example', '2025-10-01'),
+  ('ACC-1034', 'Granite Peak Generators', 'Power generation servicing', 'United States', 'Columbus', 460, 'Mid-market', 'leo.marchetti@acme.example', '2025-11-01'),
+  ('ACC-1035', 'Oakhurst Roofing', 'Roofing', 'United States', 'Raleigh', 25, 'SMB', 'leo.marchetti@acme.example', '2025-11-01'),
+  ('ACC-1036', 'Westbrook Cleaning Group', 'Commercial cleaning', 'United States', 'Tampa', 1125, 'Enterprise', 'leo.marchetti@acme.example', '2025-12-01'),
+  ('ACC-1037', 'Lowmoor Boiler Services', 'Heating', 'Canada', 'Halifax', 40, 'SMB', 'leo.marchetti@acme.example', '2026-03-01'),
+  ('ACC-1038', 'Saltmarsh Marine Services', 'Marine servicing', 'United Kingdom', 'Glasgow', 1715, 'Enterprise', 'leo.marchetti@acme.example', '2026-03-01'),
+  ('ACC-1039', 'Orchard Street Clinics', 'Community clinics', 'United Kingdom', 'Norwich', 235, 'Mid-market', 'aisha.karimi@acme.example', '2026-05-01'),
+  ('ACC-1040', 'Kettering Appliance Repair', 'Appliance repair', 'United Kingdom', 'Norwich', 2590, 'Enterprise', 'jordan.reyes@acme.example', '2026-06-01');
 
 CREATE TABLE contacts (
   contact_id text NOT NULL,
@@ -1209,6 +1209,6 @@ INSERT INTO product_usage (account_id, month, active_users, jobs_scheduled) VALU
   ('ACC-1040', '2026-08', 737, 18661),
   ('ACC-1040', '2026-09', 732, 12228);
 
-CREATE ROLE kestrel_reader LOGIN PASSWORD 'kestrel';
-GRANT USAGE ON SCHEMA public TO kestrel_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO kestrel_reader;
+CREATE ROLE acme_reader LOGIN PASSWORD 'acme';
+GRANT USAGE ON SCHEMA public TO acme_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO acme_reader;

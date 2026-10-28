@@ -1,7 +1,7 @@
 // Builds the sample company the new-ontology wizard offers
-// (src/web/areas/ontology/sample.ts) into public/samples/kestrel, and its
-// tables as PostgreSQL into local/kestrel/kestrel.sql, which a local
-// install's kestrel-db serves (local/compose.yaml): Kestrel, a
+// (src/web/areas/ontology/sample.ts) into public/samples/acme, and its
+// tables as PostgreSQL into local/acme/acme.sql, which a local
+// install's acme-db serves (local/compose.yaml): Acme Corp, a
 // made-up field-service scheduling software company, as its own records
 // would hold it. Six tables (accounts, contacts, subscriptions, invoices,
 // support tickets, monthly usage) and nine documents (three contracts as
@@ -21,8 +21,8 @@ import { join } from "node:path";
 import process from "node:process";
 import { chromium } from "@playwright/test";
 
-const OUT = join(import.meta.dirname, "..", "public", "samples", "kestrel");
-const SQL = join(import.meta.dirname, "..", "local", "kestrel", "kestrel.sql");
+const OUT = join(import.meta.dirname, "..", "public", "samples", "acme");
+const SQL = join(import.meta.dirname, "..", "local", "acme", "acme.sql");
 const TODAY = "2026-10-27";
 
 // ---------------------------------------------------------------- Helpers
@@ -84,13 +84,13 @@ function csv(rows) {
   );
 }
 
-// ---------------------------------------------------------------- Kestrel
+// ---------------------------------------------------------------- Acme Corp
 
 const STAFF = {
-  jordan: { name: "Jordan Reyes", email: "jordan.reyes@kestrel.example" },
-  sam: { name: "Sam Whitfield", email: "sam.whitfield@kestrel.example" },
-  aisha: { name: "Aisha Karimi", email: "aisha.karimi@kestrel.example" },
-  leo: { name: "Leo Marchetti", email: "leo.marchetti@kestrel.example" },
+  jordan: { name: "Jordan Reyes", email: "jordan.reyes@acme.example" },
+  sam: { name: "Sam Whitfield", email: "sam.whitfield@acme.example" },
+  aisha: { name: "Aisha Karimi", email: "aisha.karimi@acme.example" },
+  leo: { name: "Leo Marchetti", email: "leo.marchetti@acme.example" },
 };
 const MANAGERS = Object.values(STAFF);
 const PRICE = { Starter: 29, Growth: 49 };
@@ -860,9 +860,9 @@ const usageOf = (a, month) =>
 const invoiceOf = (a, issued) =>
   invoices.find((v) => v.sub.account === a && v.issued_on === issued);
 
-const pricing = `# Kestrel plans and pricing, 2026
+const pricing = `# Acme Corp plans and pricing, 2026
 
-Kestrel is scheduling and dispatch software for field-service teams: the office plans jobs on the dispatch board, and technicians get them in the Kestrel mobile app. Prices are per technician seat per month, in US dollars.
+Acme Corp is scheduling and dispatch software for field-service teams: the office plans jobs on the dispatch board, and technicians get them in the Acme mobile app. Prices are per technician seat per month, in US dollars.
 
 | Plan | Price | Seats | Billing | Support | Uptime commitment |
 | --- | --- | --- | --- | --- | --- |
@@ -895,11 +895,11 @@ const pinecrestQbr = `# Pinecrest Home Health: quarterly business review
 
 **Date:** 15 September 2026, video call
 **Pinecrest:** Dana Okafor (VP Operations), Raj Patel (IT Manager), Miguel Serrano (CFO, last 20 minutes)
-**Kestrel:** ${STAFF.jordan.name} (account manager), Elena Vasquez (Chief Revenue Officer), Hana Lee (solutions engineer)
+**Acme Corp:** ${STAFF.jordan.name} (account manager), Elena Vasquez (Chief Revenue Officer), Hana Lee (solutions engineer)
 
 ## Summary
 
-A hard quarter. Usage fell after a run of SSO sign-in failures in August, and Pinecrest is looking at a competitor before their renewal on 31 December. Dana still backs Kestrel, but Miguel wants a price that reflects the problems.
+A hard quarter. Usage fell after a run of SSO sign-in failures in August, and Pinecrest is looking at a competitor before their renewal on 31 December. Dana still backs Acme Corp, but Miguel wants a price that reflects the problems.
 
 ## Usage
 
@@ -908,7 +908,7 @@ Active nurses and schedulers fell from ${usageOf(pinecrest, "2026-07")} in July 
 ## Issues raised
 
 - **SSO sign-in.** Nurses were locked out on three mornings in August: tickets ${T.sso1.id} (5 August), ${T.sso2.id} (11 August) and ${T.sso3.id} (19 August). Raj says nobody at Pinecrest was told about the SAML certificate rotation on 4 August, which caused the first two. Jordan apologised and committed to a written post-mortem.
-- **Audit logs.** Pinecrest's order form commits Kestrel to audit logs by 31 December 2026. Dana needs them for a state audit in January and asked for early access. Hana offered the beta.
+- **Audit logs.** Pinecrest's order form commits Acme Corp to audit logs by 31 December 2026. Dana needs them for a state audit in January and asked for early access. Hana offered the beta.
 - **Scheduling.** Leah Whitcombe's team wants recurring visits that skip public holidays. Logged as a feature request.
 
 ## Commercial
@@ -929,7 +929,7 @@ const halvorsenCall = `# Halvorsen Freight: expansion call
 
 **Date:** 6 October 2026
 **Halvorsen:** Ingrid Halvorsen (COO), Tom Becker (IT Director), Carla Mendes (Dispatch Manager)
-**Kestrel:** ${STAFF.sam.name} (account manager)
+**Acme Corp:** ${STAFF.sam.name} (account manager)
 
 ## Why they called
 
@@ -960,11 +960,11 @@ const brightmoorCall = `# Brightmoor Facilities: renewal call
 
 **Date:** 21 October 2026
 **Brightmoor:** Priya Natarajan (Head of Operations), Gareth Lloyd (Finance Director)
-**Kestrel:** ${STAFF.sam.name} (account manager)
+**Acme Corp:** ${STAFF.sam.name} (account manager)
 
 ## Summary
 
-Brightmoor's renewal is at risk. They lost their largest hospital facilities contract in August, and Gareth has to cut software spend by 30%. They want to stay on Kestrel, but smaller and at the same discount.
+Brightmoor's renewal is at risk. They lost their largest hospital facilities contract in August, and Gareth has to cut software spend by 30%. They want to stay on Acme Corp, but smaller and at the same discount.
 
 ## What they asked for
 
@@ -982,7 +982,7 @@ Brightmoor's renewal is at risk. They lost their largest hospital facilities con
 
 - ${STAFF.sam.name}: ask Elena Vasquez whether the 10% can carry into the renewal at 80 seats, and answer Gareth by 24 October.
 - Gareth Lloyd: pay the October invoice once the terms are agreed.
-- Priya Natarajan: name who owns Kestrel at Brightmoor after she leaves.
+- Priya Natarajan: name who owns Acme Corp at Brightmoor after she leaves.
 `;
 
 const sableThread = `# Sable Solar: escalation after the 7 October incident
@@ -990,7 +990,7 @@ const sableThread = `# Sable Solar: escalation after the 7 October incident
 ---
 
 **From:** Marcus Bell <${person(sable, "Marcus Bell").email}>
-**To:** Kestrel Support <support@kestrel.example>
+**To:** Acme Support <support@acme.example>
 **Cc:** ${STAFF.aisha.name} <${STAFF.aisha.email}>
 **Date:** 8 October 2026, 07:55 MST
 **Subject:** Yesterday's outage (${T.sable1.id}, ${T.sable2.id})
@@ -1006,7 +1006,7 @@ Operations Director, Sable Solar
 
 ---
 
-**From:** Nora Quinn <nora.quinn@kestrel.example>
+**From:** Nora Quinn <nora.quinn@acme.example>
 **To:** Marcus Bell
 **Cc:** ${STAFF.aisha.name}
 **Date:** 8 October 2026, 10:40 PDT
@@ -1018,7 +1018,7 @@ I'm sorry. Sable Solar was the account hit hardest by yesterday's incident: job 
 On credits: your Growth plan has no service credits, but I have asked our CRO, Elena Vasquez, to approve a goodwill credit of one month for 20 seats. I'll keep ${T.sable2.id} open until you have an answer.
 
 Nora Quinn
-Support Lead, Kestrel
+Support Lead, Acme Corp
 
 ---
 
@@ -1109,21 +1109,21 @@ const contract = ({
   signed,
 }) => `<!doctype html>
 <html><head><meta charset="utf-8"><title>${title}</title><style>${css}</style></head><body>
-<header><strong>KESTREL</strong><span>Kestrel Software, Inc. · 600 Alder Street, Suite 400, Seattle, WA 98104</span></header>
+<header><strong>ACME CORP</strong><span>Acme Corporation · 600 Alder Street, Suite 400, Seattle, WA 98104</span></header>
 <h1>${title}</h1>
-<p>${number} · between Kestrel Software, Inc. (“Kestrel”) and ${customer.legal} (“Customer”), ${customer.address}.</p>
+<p>${number} · between Acme Corporation (“Acme Corp”) and ${customer.legal} (“Customer”), ${customer.address}.</p>
 <h2>Parties and contacts</h2>
 ${rows(parties)}
 <h2>Subscription</h2>
 ${rows(terms)}
 <h2>Terms</h2>
 <ol>${clauses.map((c) => `<li>${c}</li>`).join("")}</ol>
-<p>This order form is governed by Kestrel's Master Subscription Agreement in force on the effective date. Where they differ, this order form governs.</p>
+<p>This order form is governed by Acme Corp's Master Subscription Agreement in force on the effective date. Where they differ, this order form governs.</p>
 <div class="sign">
-  <div><strong>For Kestrel Software, Inc.</strong><br>Elena Vasquez, Chief Revenue Officer<br>Signed ${signed.kestrel}</div>
+  <div><strong>For Acme Corporation</strong><br>Elena Vasquez, Chief Revenue Officer<br>Signed ${signed.acme}</div>
   <div><strong>For ${customer.legal}</strong><br>${signed.by}<br>Signed ${signed.customer}</div>
 </div>
-<footer>Confidential. Kestrel Software, Inc. ${number}.</footer>
+<footer>Confidential. Acme Corporation ${number}.</footer>
 </body></html>`;
 
 const contact = (a, name) => {
@@ -1136,7 +1136,7 @@ const pinecrestSub = subOf(pinecrest),
 
 const contracts = {
   "Pinecrest Home Health order form.pdf": contract({
-    title: "Order Form: Kestrel Enterprise renewal",
+    title: "Order Form: Acme Enterprise renewal",
     number: "Order form KF-2025-118",
     customer: pinecrest,
     parties: [
@@ -1144,12 +1144,12 @@ const contracts = {
       ["Technical contact", contact(pinecrest, "Raj Patel")],
       ["Billing contact", contact(pinecrest, "Miguel Serrano")],
       [
-        "Kestrel account manager",
+        "Acme Corp account manager",
         `${STAFF.jordan.name} (${STAFF.jordan.email})`,
       ],
     ],
     terms: [
-      ["Plan", "Kestrel Enterprise"],
+      ["Plan", "Acme Enterprise"],
       ["Seats", `${pinecrestSub.seats} named technician seats`],
       ["Price", `${usd(pinecrestSub.price)} per seat per month`],
       ["Term", "1 January 2026 to 31 December 2026 (12 months)"],
@@ -1161,15 +1161,15 @@ const contracts = {
     ],
     clauses: [
       "<strong>Renewal.</strong> This order form renews for a further 12 months unless either party gives written notice at least 60 days before the end of the term.",
-      "<strong>Renewal price.</strong> Kestrel may raise the per-seat price at renewal by no more than 7%.",
-      "<strong>Service levels.</strong> Kestrel commits to 99.95% monthly uptime for scheduling, the dispatch service and the mobile app. For each 0.1% (or part of it) by which a month falls short, Customer is credited 10% of that month's fees, up to 30%.",
+      "<strong>Renewal price.</strong> Acme Corp may raise the per-seat price at renewal by no more than 7%.",
+      "<strong>Service levels.</strong> Acme Corp commits to 99.95% monthly uptime for scheduling, the dispatch service and the mobile app. For each 0.1% (or part of it) by which a month falls short, Customer is credited 10% of that month's fees, up to 30%.",
       "<strong>Support.</strong> Premium support: a response within 1 hour to urgent tickets, at any hour.",
       "<strong>Health data.</strong> The parties' Business Associate Agreement of 12 December 2025 applies. Customer data is stored in the United States only.",
-      "<strong>Single sign-on.</strong> SAML single sign-on is included. Kestrel will give Customer at least 14 days' notice of any certificate rotation.",
-      "<strong>Audit logs.</strong> Kestrel will make audit logs of user sign-ins and schedule changes available to Customer by 31 December 2026. If it does not, Customer may end this order form on 30 days' notice with a refund of prepaid fees for the rest of the term.",
+      "<strong>Single sign-on.</strong> SAML single sign-on is included. Acme Corp will give Customer at least 14 days' notice of any certificate rotation.",
+      "<strong>Audit logs.</strong> Acme Corp will make audit logs of user sign-ins and schedule changes available to Customer by 31 December 2026. If it does not, Customer may end this order form on 30 days' notice with a refund of prepaid fees for the rest of the term.",
     ],
     signed: {
-      kestrel: "16 December 2025",
+      acme: "16 December 2025",
       by: "Miguel Serrano, CFO",
       customer: "18 December 2025",
     },
@@ -1182,10 +1182,10 @@ const contracts = {
       ["Executive sponsor", contact(halvorsen, "Ingrid Halvorsen")],
       ["Operations contact", contact(halvorsen, "Carla Mendes")],
       ["Technical contact", contact(halvorsen, "Tom Becker")],
-      ["Kestrel account manager", `${STAFF.sam.name} (${STAFF.sam.email})`],
+      ["Acme Corp account manager", `${STAFF.sam.name} (${STAFF.sam.email})`],
     ],
     terms: [
-      ["Plan", "Kestrel Enterprise"],
+      ["Plan", "Acme Enterprise"],
       [
         "Seats",
         `${halvorsenSub.seats} named seats for drivers and dispatchers`,
@@ -1203,30 +1203,30 @@ const contracts = {
     ],
     clauses: [
       "<strong>Additional seats.</strong> Customer may add seats at any time at the per-seat price above, prorated to the end of the current term.",
-      "<strong>Renewal.</strong> After the initial term this agreement renews for 12 months at a time unless either party gives 90 days' written notice. Kestrel may raise the per-seat price at each renewal by no more than 5%.",
+      "<strong>Renewal.</strong> After the initial term this agreement renews for 12 months at a time unless either party gives 90 days' written notice. Acme Corp may raise the per-seat price at each renewal by no more than 5%.",
       "<strong>Termination for convenience.</strong> After 31 January 2025, Customer may end this agreement on 90 days' written notice, paying fees to the end of the notice period.",
-      "<strong>Service levels.</strong> Kestrel commits to 99.9% monthly uptime for the dispatch service and the mobile app. For each 0.1% (or part of it) by which a month falls short, Customer is credited 5% of that month's fees, up to 20%.",
+      "<strong>Service levels.</strong> Acme Corp commits to 99.9% monthly uptime for the dispatch service and the mobile app. For each 0.1% (or part of it) by which a month falls short, Customer is credited 5% of that month's fees, up to 20%.",
       "<strong>Support.</strong> Premium support: a response within 1 hour to urgent tickets, at any hour.",
-      "<strong>Data.</strong> Customer data is stored in Canada. Kestrel may not use it to train models.",
+      "<strong>Data.</strong> Customer data is stored in Canada. Acme Corp may not use it to train models.",
     ],
     signed: {
-      kestrel: "22 January 2024",
+      acme: "22 January 2024",
       by: "Ingrid Halvorsen, COO",
       customer: "25 January 2024",
     },
   }),
   "Brightmoor Facilities order form.pdf": contract({
-    title: "Order Form: Kestrel Growth renewal",
+    title: "Order Form: Acme Corp Growth renewal",
     number: "Order form KF-2025-104",
     customer: brightmoor,
     parties: [
       ["Business contact", contact(brightmoor, "Priya Natarajan")],
       ["Billing contact", contact(brightmoor, "Gareth Lloyd")],
       ["Administrator", contact(brightmoor, "Owen Pryce")],
-      ["Kestrel account manager", `${STAFF.sam.name} (${STAFF.sam.email})`],
+      ["Acme Corp account manager", `${STAFF.sam.name} (${STAFF.sam.email})`],
     ],
     terms: [
-      ["Plan", "Kestrel Growth"],
+      ["Plan", "Acme Corp Growth"],
       ["Seats", `${brightmoorSub.seats} technician seats`],
       [
         "Price",
@@ -1239,11 +1239,11 @@ const contracts = {
       "<strong>Renewal.</strong> This order form renews for a further 12 months unless either party gives written notice at least 30 days before the end of the term.",
       "<strong>Seat changes.</strong> Customer may add seats at any time. Seats can be removed only at renewal, with the notice in clause 1.",
       `<strong>Discount.</strong> The ${brightmoorSub.discount}% discount applies to this term only. A renewal is at list price unless the parties agree otherwise in writing.`,
-      "<strong>Service levels.</strong> Kestrel targets 99.9% monthly uptime. The Growth plan carries no service credits.",
-      "<strong>Late payment.</strong> Kestrel may suspend access after written notice if an invoice is more than 30 days overdue.",
+      "<strong>Service levels.</strong> Acme Corp targets 99.9% monthly uptime. The Growth plan carries no service credits.",
+      "<strong>Late payment.</strong> Acme Corp may suspend access after written notice if an invoice is more than 30 days overdue.",
     ],
     signed: {
-      kestrel: "20 November 2025",
+      acme: "20 November 2025",
       by: "Gareth Lloyd, Finance Director",
       customer: "24 November 2025",
     },
@@ -1255,7 +1255,7 @@ const contracts = {
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const write = (name, body) => writeFileSync(join(OUT, name), body);
-// Each table's rows, as its CSV holds them, for kestrel.sql.
+// Each table's rows, as its CSV holds them, for acme.sql.
 const rowsOf = {};
 const table = (name, rows) => {
   rowsOf[name] = rows;
@@ -1324,7 +1324,7 @@ table(
   })),
 );
 table("product_usage", usage);
-write("Kestrel plans and pricing 2026.md", pricing);
+write("Acme Corp plans and pricing 2026.md", pricing);
 write("Pinecrest QBR 2026-09-15.md", pinecrestQbr);
 write("Halvorsen expansion call 2026-10-06.md", halvorsenCall);
 write("Brightmoor renewal call 2026-10-21.md", brightmoorCall);
@@ -1344,9 +1344,9 @@ try {
 
 // ---------------------------------------------------------------- SQL
 
-// The tables as kestrel-db serves them: typed, each keyed, and linked by
+// The tables as acme-db serves them: typed, each keyed, and linked by
 // foreign keys as the CSVs' ids link them. An empty cell is NULL. Foundry
-// reads them as kestrel_reader, which can only select.
+// reads them as acme_reader, which can only select.
 const SCHEMA = {
   accounts: {
     key: ["account_id"],
@@ -1395,7 +1395,7 @@ const literal = (v, type) =>
       ? String(v)
       : `'${String(v).replace(/'/g, "''")}'`;
 const sql = [
-  "-- Kestrel, the sample company, as a local install's kestrel-db serves it.",
+  "-- Acme Corp, the sample company, as a local install's acme-db serves it.",
   "-- Written by scripts/sample-company.mjs; edit that, not this.",
   "",
   ...Object.entries(SCHEMA).flatMap(([name, t]) => {
@@ -1423,9 +1423,9 @@ const sql = [
       "",
     ];
   }),
-  "CREATE ROLE kestrel_reader LOGIN PASSWORD 'kestrel';",
-  "GRANT USAGE ON SCHEMA public TO kestrel_reader;",
-  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO kestrel_reader;",
+  "CREATE ROLE acme_reader LOGIN PASSWORD 'acme';",
+  "GRANT USAGE ON SCHEMA public TO acme_reader;",
+  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO acme_reader;",
   "",
 ].join("\n");
 mkdirSync(join(SQL, ".."), { recursive: true });

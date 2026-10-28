@@ -3431,7 +3431,7 @@
         },
         "sample": {
           "type": "string",
-          "description": "Foundry's sample company to draft from in place of the AI: \"kestrel\" is\nthe only one (INVALID_ARGUMENT for another). The generation stores the\nsample's ready-made draft, mapped to this workspace's connection to the\nsample's database, and calls no model. connector_ids must name exactly\nthat connection and document_set_ids exactly the set of the sample's\ndocuments, with no event source (INVALID_ARGUMENT otherwise), and each\nof the sample's tables must be synced (FAILED_PRECONDITION until then)."
+          "description": "Foundry's sample company to draft from in place of the AI: \"acme\" is\nthe only one (INVALID_ARGUMENT for another). The generation stores the\nsample's ready-made draft, mapped to this workspace's connection to the\nsample's database, and calls no model. connector_ids must name exactly\nthat connection and document_set_ids exactly the set of the sample's\ndocuments, with no event source (INVALID_ARGUMENT otherwise), and each\nof the sample's tables must be synced (FAILED_PRECONDITION until then)."
         }
       }
     },

@@ -169,7 +169,7 @@ type noDatabases struct{ ports.Databases }
 // its documents' set.
 func sampleGeneration(tables ...string) *model.OntologyGeneration {
 	gen := &model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
-		Input: model.OntologyGenerationInput{Sample: sample.Kestrel, DocumentSetIDs: []string{"set-k"}}}
+		Input: model.OntologyGenerationInput{Sample: sample.Acme, DocumentSetIDs: []string{"set-k"}}}
 	for _, name := range tables {
 		gen.Input.Tables = append(gen.Input.Tables, model.OntologyGenerationTable{ConnectorID: "conn-k", Table: name, SyncID: "sync-1"})
 	}

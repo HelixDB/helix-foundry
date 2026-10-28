@@ -2,7 +2,7 @@
 
 **Date:** 6 October 2026
 **Halvorsen:** Ingrid Halvorsen (COO), Tom Becker (IT Director), Carla Mendes (Dispatch Manager)
-**Kestrel:** Sam Whitfield (account manager)
+**Acme Corp:** Sam Whitfield (account manager)
 
 ## Why they called
 

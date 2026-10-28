@@ -67,7 +67,7 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	}
 	switch name := req.GetSample(); {
 	case name == "":
-	case name != sample.Kestrel:
+	case name != sample.Acme:
 		return nil, status.Errorf(codes.InvalidArgument, "no sample is called %q", name)
 	case len(req.GetConnectorIds()) != 1 || len(req.GetDocumentSetIds()) != 1 || len(req.GetEventSources()) > 0:
 		return nil, status.Error(codes.InvalidArgument, "a sample is drafted from its database and its documents: name its one connector and its one document set, and no event source")

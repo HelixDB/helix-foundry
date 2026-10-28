@@ -37,16 +37,16 @@ import { SAMPLE, sampleDatabaseConfig } from "./sample";
 import { OntologySchema } from "./suggested-ontology";
 import { addSampleFiles } from "./try-sample";
 
-// /ontology/sample: the sample company, Kestrel, step by step, wherever its
+// /ontology/sample: the sample company, Acme Corp, step by step, wherever its
 // database runs (./sample.ts's SAMPLE_TOUR; ./try-sample.tsx opens it).
 // Opening it runs the whole setup with no AI draft to wait for:
-//  1. Kestrel's data: its PostgreSQL database (a local stack's kestrel-db,
+//  1. Acme Corp's data: its PostgreSQL database (a local stack's acme-db,
 //     or the stamp's) connected and synced, and its documents uploaded and
 //     read;
 //  2. the goal the ontology serves;
 //  3. the ontology: created on a new database, from the sample's ready-made
 //     draft (GenerateOntologyRequest's sample), made current, and drawn;
-//  4. its load: Kestrel's records and their links written into the
+//  4. its load: Acme Corp's records and their links written into the
 //     database, then its documents read with AI;
 //  5. Ask, with the draft's questions.
 // Each step finds what an earlier visit made (the connector, the documents,
@@ -89,7 +89,7 @@ export function SampleTour() {
   const run = async () => {
     setError("");
     try {
-      // 1. Kestrel's database, connected and synced.
+      // 1. Acme Corp's database, connected and synced.
       setStage("data");
       const named = (
         await qc.fetchQuery({ ...connectorsQuery(id), staleTime: 0 })
@@ -111,13 +111,15 @@ export function SampleTour() {
           await qc.fetchQuery({ ...connectorsQuery(id), staleTime: 0 })
         ).connectors?.find((x) => x.id === connector.id);
         if (c?.lastSync?.status === "CONNECTOR_SYNC_STATUS_FAILED")
-          throw new Error(c.lastSync.error || "Kestrel’s database didn’t sync");
+          throw new Error(
+            c.lastSync.error || "Acme Corp’s database didn’t sync",
+          );
         return SAMPLE.database.tables.every((t) =>
           c?.tables?.some((s) => s.name === t),
         )
           ? true
           : undefined;
-      }, "Syncing Kestrel’s database");
+      }, "Syncing Acme Corp’s database");
 
       // 1. Its documents, uploaded and read.
       setStage("documents");
@@ -129,7 +131,7 @@ export function SampleTour() {
       );
       if (setIds.length !== 1)
         throw new Error(
-          `Kestrel’s documents are in ${setIds.length} folders: move them back into ${SAMPLE.set.name}`,
+          `Acme Corp’s documents are in ${setIds.length} folders: move them back into ${SAMPLE.set.name}`,
         );
       await until(async () => {
         const docs = await qc.fetchQuery({
@@ -142,7 +144,7 @@ export function SampleTour() {
         })
           ? true
           : undefined;
-      }, "Reading Kestrel’s documents");
+      }, "Reading Acme Corp’s documents");
 
       // 3. The ontology, on a new database, its ready-made draft current.
       setStage("ontology");
@@ -212,9 +214,11 @@ export function SampleTour() {
             })
           ).generation;
           if (g && !isLive(g) && !g.resultVersionId)
-            throw new Error(g.error || "Kestrel’s ontology couldn’t be set up");
+            throw new Error(
+              g.error || "Acme Corp’s ontology couldn’t be set up",
+            );
           return g?.resultVersionId || undefined;
-        }, "Setting up Kestrel’s ontology");
+        }, "Setting up Acme Corp’s ontology");
         await setCurrentVersion(id, o, {
           versionId,
           expectedCurrentVersionId: "",
@@ -282,7 +286,7 @@ export function SampleTour() {
   if (!canManage(role))
     return (
       <Page width="narrow">
-        <PageHeader title="Kestrel, a sample company" />
+        <PageHeader title="Acme Corp, a sample company" />
         <EmptyState
           icon={TriangleAlert}
           title="Only owners and admins can add the sample"
@@ -297,7 +301,7 @@ export function SampleTour() {
   return (
     <Page width="wide">
       <PageHeader
-        title="Kestrel, a sample company"
+        title="Acme Corp, a sample company"
         subtitle="Watch Foundry turn a company’s database and documents into an ontology you can ask questions of."
       />
       {aiReady === false && <AiGate action="Adding the sample" />}
@@ -317,7 +321,7 @@ export function SampleTour() {
       <ol className="on-wizard" aria-label="Steps">
         <FlowStep
           number={1}
-          title="Kestrel’s data"
+          title="Acme Corp’s data"
           text="A made-up company that sells scheduling software to field-service businesses."
           state={dataDone ? "done" : "running"}
           summary="A made-up company that sells scheduling software to field-service businesses."
@@ -331,7 +335,7 @@ export function SampleTour() {
                 <small>
                   {connector?.tables?.length
                     ? `Customers, contacts, subscriptions, invoices, support tickets and usage: ${plural(connector.tables.length, "table")}, ${formatNumber(rows)} rows.`
-                    : "Connecting to Kestrel’s database and syncing its tables…"}
+                    : "Connecting to Acme Corp’s database and syncing its tables…"}
                 </small>
               </span>
             </li>
@@ -355,9 +359,9 @@ export function SampleTour() {
         <FlowStep
           number={2}
           title="The goal"
-          text="What the ontology is for, in Kestrel’s words."
+          text="What the ontology is for, in Acme Corp’s words."
           state={dataDone ? "done" : "upcoming"}
-          summary="What the ontology is for, in Kestrel’s words."
+          summary="What the ontology is for, in Acme Corp’s words."
           kept
         >
           <p className="on-goal-text">{SAMPLE.goal}</p>
@@ -365,15 +369,15 @@ export function SampleTour() {
         <FlowStep
           number={3}
           title="The ontology"
-          text="The kinds of things in Kestrel’s data, and how they link."
+          text="The kinds of things in Acme Corp’s data, and how they link."
           state={graph ? "done" : stage === "ontology" ? "running" : "upcoming"}
-          summary="The kinds of things in Kestrel’s data, and how they link."
+          summary="The kinds of things in Acme Corp’s data, and how they link."
           kept
         >
           {graph ? (
             <>
               <p className="on-muted">
-                To answer that goal, Foundry models Kestrel as{" "}
+                To answer that goal, Foundry models Acme Corp as{" "}
                 {plural(graph.nodes.length, "type")} and{" "}
                 {plural(graph.edges.length, "link")} between them. The
                 database’s rows become accounts, contacts, subscriptions,
@@ -406,16 +410,16 @@ export function SampleTour() {
             </>
           ) : (
             <p className="on-muted">
-              Creating the ontology from Kestrel’s ready-made draft…
+              Creating the ontology from Acme Corp’s ready-made draft…
             </p>
           )}
         </FlowStep>
         <FlowStep
           number={4}
           title="Loading"
-          text="Kestrel’s records and the links between them, written into a Helix database, then its documents read with AI."
+          text="Acme Corp’s records and the links between them, written into a Helix database, then its documents read with AI."
           state={loaded ? "done" : stage === "load" ? "running" : "upcoming"}
-          summary="Kestrel’s records and the links between them, written into a Helix database, then its documents read with AI."
+          summary="Acme Corp’s records and the links between them, written into a Helix database, then its documents read with AI."
           kept
         >
           <p className="on-muted">
@@ -434,7 +438,7 @@ export function SampleTour() {
         <FlowStep
           number={5}
           title="Ask"
-          text="Ask about Kestrel in your own words."
+          text="Ask about Acme Corp in your own words."
           state={loaded ? "current" : "upcoming"}
         >
           {suggestions.length > 0 && (

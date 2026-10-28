@@ -1,13 +1,13 @@
-// Package sample is Foundry's sample company, Kestrel: the draft a
+// Package sample is Foundry's sample company, Acme Corp: the draft a
 // generation stores in place of the AI's when it drafts from the sample
 // (GenerateOntology's sample), so a new workspace sees a ready ontology at
-// once. A local install serves Kestrel's tables from its kestrel-db
+// once. A local install serves Acme Corp's tables from its acme-db
 // (local/compose.yaml), which the site connects as a PostgreSQL connector,
 // and uploads its documents into a set. The draft names each table by its
-// source id, which differs with every connector, so kestrel.json holds
+// source id, which differs with every connector, so acme.json holds
 // {{table:<name>}} and {{set}} in their place.
 //
-// kestrel.json is an AI draft of those tables and documents, from the
+// acme.json is an AI draft of those tables and documents, from the
 // sample's goal, written once and kept: draft it again on a stack whose
 // engine serves the vendored contract, then put the placeholders back for
 // the ids.
@@ -21,11 +21,11 @@ import (
 	"strings"
 )
 
-// Kestrel is the one sample.
-const Kestrel = "kestrel"
+// Acme is the one sample.
+const Acme = "acme"
 
 // Title is the sample generation's title, as the AI titled its goal.
-const Title = "Kestrel customer accounts, contracts and renewal risk"
+const Title = "Acme Corp customer accounts, contracts and renewal risk"
 
 // Tables are the sample's tables, by name: a sample generation needs each
 // of them synced, from one connector.
@@ -33,8 +33,8 @@ var Tables = []string{
 	"accounts", "contacts", "subscriptions", "invoices", "support_tickets", "product_usage",
 }
 
-//go:embed kestrel.json
-var kestrel string
+//go:embed acme.json
+var acme string
 
 var placeholder = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 
@@ -43,9 +43,9 @@ var placeholder = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 // (ontologyagent.TableSourceID), set the id of the set that holds its
 // documents. It fails for another sample, or when a table is missing.
 //
-//	def, err := sample.Draft("kestrel", map[string]string{"accounts": "src_…", …}, "01J…")
+//	def, err := sample.Draft("acme", map[string]string{"accounts": "src_…", …}, "01J…")
 func Draft(name string, sources map[string]string, set string) (json.RawMessage, error) {
-	if name != Kestrel {
+	if name != Acme {
 		return nil, fmt.Errorf("no sample is called %q", name)
 	}
 	pairs := []string{"{{set}}", set}
@@ -55,7 +55,7 @@ func Draft(name string, sources map[string]string, set string) (json.RawMessage,
 		}
 		pairs = append(pairs, "{{table:"+t+"}}", sources[t])
 	}
-	def := strings.NewReplacer(pairs...).Replace(kestrel)
+	def := strings.NewReplacer(pairs...).Replace(acme)
 	if left := placeholder.FindString(def); left != "" {
 		return nil, fmt.Errorf("the sample's draft names %s, which nothing fills", left)
 	}

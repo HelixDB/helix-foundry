@@ -12,7 +12,7 @@ import { readTableFile, type Row } from "../../mock/table-files";
 // uploadable, and its tables and documents name each other's rows, so a
 // draft from them has links to find.
 
-const DIR = join(__dirname, "..", "..", "public", "samples", "kestrel");
+const DIR = join(__dirname, "..", "..", "public", "samples", "acme");
 const bytes = (name: string) => readFileSync(join(DIR, name));
 
 async function table(name: string): Promise<Row[]> {
@@ -24,28 +24,25 @@ async function table(name: string): Promise<Row[]> {
 describe("the sample company", () => {
   it("lists exactly the files served, each one the WFE takes", () => {
     expect(readdirSync(DIR).sort()).toEqual([...SAMPLE.files].sort());
-    expect(SAMPLE.base).toBe("/samples/kestrel/");
+    expect(SAMPLE.base).toBe("/samples/acme/");
     for (const name of SAMPLE.files)
       expect(fileProblem({ name, size: statSync(join(DIR, name)).size })).toBe(
         undefined,
       );
   });
 
-  it("is the tables kestrel-db serves and the backend's ready-made draft maps", async () => {
+  it("is the tables acme-db serves and the backend's ready-made draft maps", async () => {
     const root = join(__dirname, "..", "..");
     const draft = readFileSync(
-      join(root, "backend", "sample", "kestrel.json"),
+      join(root, "backend", "sample", "acme.json"),
       "utf8",
     );
     const named = new Set(
       [...draft.matchAll(/\{\{table:([^{}]+)\}\}/g)].map((m) => m[1]),
     );
     expect([...named].sort()).toEqual([...SAMPLE.database.tables].sort());
-    // kestrel.sql holds each CSV's rows, and no other table.
-    const sql = readFileSync(
-      join(root, "local", "kestrel", "kestrel.sql"),
-      "utf8",
-    );
+    // acme.sql holds each CSV's rows, and no other table.
+    const sql = readFileSync(join(root, "local", "acme", "acme.sql"), "utf8");
     const created = [...sql.matchAll(/CREATE TABLE (\w+) \(/g)].map(
       (m) => m[1],
     );
@@ -61,7 +58,7 @@ describe("the sample company", () => {
     expect(SAMPLE.files.filter((f) => !f.endsWith(".csv"))).toEqual([
       ...SAMPLE.documents,
     ]);
-    expect(SAMPLE.id).toBe("kestrel");
+    expect(SAMPLE.id).toBe("acme");
   });
 
   it("fits one generation, and its set and goal fit the WFE's limits", () => {
@@ -79,7 +76,7 @@ describe("the sample company", () => {
     for (const name of SAMPLE.files.filter((f) => f.endsWith(".pdf"))) {
       const read = await readPdfText(bytes(name));
       expect(read.ok, name).toBe(true);
-      expect(read.ok && read.text, name).toContain("Kestrel Software, Inc.");
+      expect(read.ok && read.text, name).toContain("Acme Corporation");
     }
   });
 
@@ -179,7 +176,7 @@ describe("the sample company", () => {
   });
 });
 
-// Where the sample's database runs: a local stack's kestrel-db with no TLS,
+// Where the sample's database runs: a local stack's acme-db with no TLS,
 // or a stamp's RDS, trusted through public/samples/rds-ca.pem.
 describe("the sample company's database", () => {
   afterEach(() => {
@@ -193,26 +190,26 @@ describe("the sample company's database", () => {
     return import("@/web/areas/ontology/sample");
   };
 
-  it("is the stack's kestrel-db in a local build, with no TLS", async () => {
+  it("is the stack's acme-db in a local build, with no TLS", async () => {
     const sample = await load({
       NEXT_PUBLIC_FOUNDRY_MODE: "local",
-      NEXT_PUBLIC_SAMPLE_DB_HOST: "kestrel-db",
+      NEXT_PUBLIC_SAMPLE_DB_HOST: "acme-db",
     });
     expect(sample.SAMPLE_TOUR).toBe(true);
     expect(await sample.sampleDatabaseConfig()).toEqual({
       postgres: {
-        host: "kestrel-db",
+        host: "acme-db",
         port: 5432,
-        database: "kestrel",
-        user: "kestrel_reader",
-        password: "kestrel",
+        database: "acme",
+        user: "acme_reader",
+        password: "acme",
         disableTls: true,
       },
     });
   });
 
   it("is the stamp's RDS when hosted, trusting Amazon's RDS roots", async () => {
-    const host = "helix-dev-kestrel.example.us-east-2.rds.amazonaws.com";
+    const host = "helix-dev-sample.example.us-east-2.rds.amazonaws.com";
     const sample = await load({ NEXT_PUBLIC_SAMPLE_DB_HOST: host });
     const pem = readFileSync(join(DIR, "..", "rds-ca.pem"), "utf8");
     const fetch = vi.fn(async (url: string) =>
@@ -250,12 +247,10 @@ describe("the sample company's database", () => {
       const config = (await import("../../next.config")).default;
       return config.env?.NEXT_PUBLIC_SAMPLE_DB_HOST;
     };
-    expect(await host({ NEXT_PUBLIC_FOUNDRY_MODE: "local" })).toBe(
-      "kestrel-db",
-    );
+    expect(await host({ NEXT_PUBLIC_FOUNDRY_MODE: "local" })).toBe("acme-db");
     expect(await host({ NEXT_PUBLIC_APP_ENV: "prod" })).toBe("");
     expect(await host({ NEXT_PUBLIC_APP_ENV: "dev" })).toMatch(
-      /^helix-dev-kestrel\.[a-z0-9]+\.us-east-2\.rds\.amazonaws\.com$/,
+      /^helix-dev-sample\.[a-z0-9]+\.us-east-2\.rds\.amazonaws\.com$/,
     );
   });
 });

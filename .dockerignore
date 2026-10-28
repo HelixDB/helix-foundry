@@ -12,4 +12,4 @@ public/pdfjs
 # The site image's context; the backend's image builds from backend/,
 # but for the sample's draft, which the mock reads.
 backend
-!backend/sample/kestrel.json
+!backend/sample/acme.json

@@ -1,10 +1,10 @@
 import { LOCAL } from "../../../shared/deployment";
 import type { ConnectorConfig } from "../../../shared/wfe";
 
-// Kestrel's documents: three contracts as PDFs, call notes, a support
+// Acme Corp's documents: three contracts as PDFs, call notes, a support
 // escalation, an incident report and the price list.
 const DOCUMENTS = [
-  "Kestrel plans and pricing 2026.md",
+  "Acme Corp plans and pricing 2026.md",
   "Pinecrest Home Health order form.pdf",
   "Halvorsen Freight master agreement.pdf",
   "Brightmoor Facilities order form.pdf",
@@ -17,41 +17,41 @@ const DOCUMENTS = [
 
 /**
  * The sample company the first ontology's wizard offers (./try-sample.tsx):
- * Kestrel, a made-up field-service software company, as its own records
+ * Acme Corp, a made-up field-service software company, as its own records
  * hold it. scripts/sample-company.mjs writes its files into public/, served
- * at `base`, and its tables into local/kestrel/kestrel.sql.
+ * at `base`, and its tables into local/acme/acme.sql.
  *
- * Where its database runs (`database.host`: a local install's kestrel-db,
+ * Where its database runs (`database.host`: a local install's acme-db,
  * local/compose.yaml, or the stamp's own), the sample's own page
  * (./sample-tour.tsx) connects it as a PostgreSQL database, uploads the
  * `documents` into a set named `set.name`, and creates `ontology` toward
  * `goal` on the sample's ready-made draft (GenerateOntologyRequest's
- * `sample`, `id`; backend/sample/kestrel.json). A stamp with no sample
+ * `sample`, `id`; backend/sample/acme.json). A stamp with no sample
  * database has the wizard upload every one of its `files`, the tables as
  * CSV, and draft from them.
  */
 export const SAMPLE = {
-  id: "kestrel",
-  base: "/samples/kestrel/",
-  ontology: "Kestrel customers",
+  id: "acme",
+  base: "/samples/acme/",
+  ontology: "Acme Corp customers",
   set: {
-    name: "Kestrel sample",
+    name: "Acme Corp sample",
     // The ontology agent reads it.
     description:
-      "Kestrel, a made-up field-service scheduling software company, as of 27 October 2026: its customer accounts, contacts, subscriptions, invoices, support tickets and monthly product usage as tables, with three customer contracts, call notes, a support escalation, an incident report and its price list.",
+      "Acme Corp, a made-up field-service scheduling software company, as of 27 October 2026: its customer accounts, contacts, subscriptions, invoices, support tickets and monthly product usage as tables, with three customer contracts, call notes, a support escalation, an incident report and its price list.",
   },
-  goal: "Understand Kestrel's customers: each account with its people, plan and subscription, contract terms, invoices, support tickets, usage and what was said on calls, so we can see which renewals are at risk, what we have promised, and what we owe.",
+  goal: "Understand Acme Corp's customers: each account with its people, plan and subscription, contract terms, invoices, support tickets, usage and what was said on calls, so we can see which renewals are at risk, what we have promised, and what we owe.",
   database: {
-    name: "Kestrel",
+    name: "Acme Corp",
     // next.config.ts; empty where the stamp has none.
     host: process.env.NEXT_PUBLIC_SAMPLE_DB_HOST ?? "",
     // Its read-only login, public: the data is made up, and a stamp's
     // database lets in only the stamp's own connectors.
     login: {
       port: 5432,
-      database: "kestrel",
-      user: "kestrel_reader",
-      password: "kestrel",
+      database: "acme",
+      user: "acme_reader",
+      password: "acme",
     },
     tables: [
       "accounts",
@@ -80,7 +80,7 @@ export const SAMPLE_TOUR = SAMPLE.database.host !== "";
 
 /**
  * The sample's database as a PostgreSQL connector's config. A local
- * kestrel-db has no TLS; a stamp's is an RDS whose certificate chains to
+ * acme-db has no TLS; a stamp's is an RDS whose certificate chains to
  * Amazon's RDS root for its region, which no system store holds, so the
  * connector trusts public/samples/rds-ca.pem (both stamps' regions) too.
  */
