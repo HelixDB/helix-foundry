@@ -18,17 +18,15 @@ const DOCUMENTS = [
 /**
  * The sample company the first ontology's wizard offers (./try-sample.tsx):
  * Acme Corp, a made-up field-service software company, as its own records
- * hold it. scripts/sample-company.mjs writes its files into public/, served
- * at `base`, and its tables into local/acme/acme.sql.
+ * hold it. scripts/sample-company.mjs writes its documents into public/,
+ * served at `base`, and its tables into local/acme/acme.sql.
  *
- * Where its database runs (`database.host`: a local install's acme-db,
- * local/compose.yaml, or the stamp's own), the sample's own page
- * (./sample-tour.tsx) connects it as a PostgreSQL database, uploads the
- * `documents` into a set named `set.name`, and creates `ontology` toward
- * `goal` on the sample's ready-made draft (GenerateOntologyRequest's
- * `sample`, `id`; backend/sample/acme.json). A stamp with no sample
- * database has the wizard upload every one of its `files`, the tables as
- * CSV, and draft from them.
+ * Its own page (./sample-tour.tsx) connects its database (`database.host`:
+ * a local install's acme-db, local/compose.yaml, or the stamp's own) as a
+ * PostgreSQL database, uploads the `documents` into a set named
+ * `set.name`, and creates `ontology` toward `goal` on the sample's
+ * ready-made draft (GenerateOntologyRequest's `sample`, `id`;
+ * backend/sample/acme.json).
  */
 export const SAMPLE = {
   id: "acme",
@@ -43,7 +41,7 @@ export const SAMPLE = {
   goal: "Understand Acme Corp's customers: each account with its people, plan and subscription, contract terms, invoices, support tickets, usage and what was said on calls, so we can see which renewals are at risk, what we have promised, and what we owe.",
   database: {
     name: "Acme Corp",
-    // next.config.ts; empty where the stamp has none.
+    // Per build: next.config.ts.
     host: process.env.NEXT_PUBLIC_SAMPLE_DB_HOST ?? "",
     // Its read-only login, public: the data is made up, and a stamp's
     // database lets in only the stamp's own connectors.
@@ -63,20 +61,7 @@ export const SAMPLE = {
     ],
   },
   documents: DOCUMENTS,
-  // Tables first, then documents, as the Data area lists them.
-  files: [
-    "accounts.csv",
-    "contacts.csv",
-    "subscriptions.csv",
-    "invoices.csv",
-    "support_tickets.csv",
-    "product_usage.csv",
-    ...DOCUMENTS,
-  ],
 } as const;
-
-/** Whether this build connects the sample's database, on its own page. */
-export const SAMPLE_TOUR = SAMPLE.database.host !== "";
 
 /**
  * The sample's database as a PostgreSQL connector's config. A local

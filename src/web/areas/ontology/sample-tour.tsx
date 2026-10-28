@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { Database, FileText, RotateCcw, TriangleAlert } from "lucide-react";
 import {
   Button,
@@ -18,7 +22,13 @@ import {
   createConnector,
   syncConnector,
 } from "../data/data-api";
-import { documentQueries } from "../documents/documents-api";
+import {
+  createDocumentSet,
+  documentQueries,
+  documentSetQueries,
+  documentsChanged,
+  uploadDocument,
+} from "../documents/documents-api";
 import { fileRead } from "../documents/model";
 import { AiGate, useAiConfigured } from "../workspace/ai-gate";
 import { askSuggestions } from "./ask-model";
@@ -35,10 +45,10 @@ import {
 } from "./queries";
 import { SAMPLE, sampleDatabaseConfig } from "./sample";
 import { OntologySchema } from "./suggested-ontology";
-import { addSampleFiles } from "./try-sample";
 
 // /ontology/sample: the sample company, Acme Corp, step by step, wherever its
-// database runs (./sample.ts's SAMPLE_TOUR; ./try-sample.tsx opens it).
+// database runs: a local install's acme-db, or the stamp's (./try-sample.tsx
+// opens it).
 // Opening it runs the whole setup with no AI draft to wait for:
 //  1. Acme Corp's data: its PostgreSQL database (a local stack's acme-db,
 //     or the stamp's) connected and synced, and its documents uploaded and
@@ -54,6 +64,53 @@ import { addSampleFiles } from "./try-sample";
 // was, and a failure says why with Try again. Each step opens as its work
 // finishes and stays open, so the page reads top to bottom as what
 // happened.
+
+/**
+ * Uploads the sample's files named `names` into its set, found by name or
+ * made, as any upload is, telling `onUploaded` how many are done. The
+ * workspace keeps one copy of any bytes, so adding them again finds the
+ * documents it has, wherever they were moved: the result is their ids and
+ * the sets they are in.
+ */
+export async function addSampleFiles(
+  qc: QueryClient,
+  ws: string,
+  names: readonly string[],
+  onUploaded: (done: number) => void,
+): Promise<{ ids: string[]; setIds: string[] }> {
+  const sets = await qc.fetchQuery({
+    ...documentSetQueries.list(ws),
+    staleTime: 0,
+  });
+  const set =
+    sets.find((s) => !s.connector && s.name === SAMPLE.set.name) ??
+    (await createDocumentSet(ws, SAMPLE.set)).set;
+  let done = 0;
+  const ends = await Promise.all(
+    names.map(async (name) => {
+      const res = await fetch(SAMPLE.base + encodeURIComponent(name));
+      if (!res.ok) throw new Error(`couldn’t fetch ${name}`);
+      const end = await uploadDocument(
+        ws,
+        new File([await res.blob()], name),
+        set.id,
+        crypto.randomUUID(),
+        () => {},
+      );
+      onUploaded(++done);
+      return end;
+    }),
+  );
+  await documentsChanged(qc, ws);
+  const docs = ends.map((e) => {
+    if (e.step !== "done") throw new Error(e.step === "failed" ? e.error : "");
+    return e.document;
+  });
+  return {
+    ids: docs.map((d) => d.id),
+    setIds: [...new Set(docs.map((d) => d.setId || set.id))],
+  };
+}
 
 // How long one step may wait on Foundry (a sync, the documents' reads, the
 // sample's draft) before it gives up.

@@ -50,7 +50,6 @@ import {
   type WizardStepId,
 } from "./model";
 import { Callout, FlowStep, canManage, type Arrival } from "./parts";
-import { SAMPLE } from "./sample";
 import { TrySample } from "./try-sample";
 import {
   createOntology,
@@ -172,7 +171,7 @@ export const forgetNewOntology = (ws: string) => {
 };
 
 export function NewOntologyPage() {
-  const { id, slug, role, onboarding, name: workspace } = useWorkspace(),
+  const { id, slug, role, onboarding } = useWorkspace(),
     navigate = useNavigate(),
     qc = useQueryClient(),
     [params, setParams] = useSearchParams();
@@ -492,32 +491,7 @@ export function NewOntologyPage() {
         title={title}
         subtitle="An ontology keeps its types, documents and data in one Helix database. Choose what it is drawn from, and Foundry’s agent drafts it."
       />
-      {onboarding && (
-        <TrySample
-          chosen={(sets.data || []).some(
-            (s) => s.name === SAMPLE.set.name && chosenSets?.has(s.id),
-          )}
-          onReady={(setIds) => {
-            // Only the sample: its own name, goal and a new database, unless
-            // already chosen.
-            const named = name.trim() || SAMPLE.ontology;
-            setName(named);
-            if (!database && databases.data)
-              setDatabase(
-                newDatabase(
-                  named,
-                  workspace,
-                  databases.data.map((p) => p.project),
-                ),
-              );
-            setChosen(new Set());
-            setChosenEvents(new Map());
-            setChosenSets(new Set(setIds));
-            if (!goal.trim()) setGoal(SAMPLE.goal);
-            go("review");
-          }}
-        />
-      )}
+      {onboarding && <TrySample />}
       {onboarding && <AgentSetup />}
       {adding !== null && (
         <ConnectData
