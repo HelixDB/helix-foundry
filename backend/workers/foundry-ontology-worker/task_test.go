@@ -12,6 +12,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -164,6 +165,78 @@ type noDatabases struct{ ports.Databases }
 
 // The worker drafts with the agent, on its settings, and resolves each
 // workspace's AI setting.
+// tableFiles is a workspace's uploaded table files, read, all in set-k.
+type tableFiles map[string]*model.FoundryDocument
+
+func (f tableFiles) ListFoundryDocumentsByID(_ context.Context, _ string, ids []string) (map[string]*model.FoundryDocument, error) {
+	out := map[string]*model.FoundryDocument{}
+	for _, id := range ids {
+		if d := f[id]; d != nil {
+			out[id] = d
+		}
+	}
+	return out, nil
+}
+
+func (tableFiles) ListFoundryDocumentSets(context.Context, string) ([]*model.FoundryDocumentSet, error) {
+	return []*model.FoundryDocumentSet{{ID: "set-k", Name: "Kestrel sample"}}, nil
+}
+
+// sampleGeneration asks for the sample, its table files uploaded as doc-<name>.
+func sampleGeneration() (*model.OntologyGeneration, tableFiles) {
+	key := "reads/key"
+	files := tableFiles{}
+	gen := &model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1,
+		Input: model.OntologyGenerationInput{Sample: sample.Kestrel, DocumentSetIDs: []string{"set-k"}}}
+	for _, name := range sample.Tables {
+		files["doc-"+name] = &model.FoundryDocument{ID: "doc-" + name, SetID: "set-k", Name: name, MediaType: model.FoundryMediaCSV,
+			Status: model.FoundryDocumentUploaded, Read: &model.FoundryFileRead{Status: model.FoundryFileReadSucceeded, ArtifactKey: &key}}
+		gen.Input.Documents = append(gen.Input.Documents, model.OntologyGenerationDocument{ID: "doc-" + name, SetID: "set-k"})
+	}
+	return gen, files
+}
+
+func TestFoundryOntologyWorkerSample(t *testing.T) {
+	never := func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+		t.Fatal("the sample called the agent")
+		return ontologygen.Result{}, nil
+	}
+	// The sample's draft is stored at once, naming the workspace's files.
+	t.Run("stores the sample's draft for its files, with no model", func(t *testing.T) {
+		gen, files := sampleGeneration()
+		q := newQueue(gen)
+		task := newTask(q, never)
+		task.tables = files
+		task.drain(context.Background())
+		got := q.outcomes["g1"]
+		v := got.Result
+		if got.Status != model.OntologyGenerationSucceeded || v == nil || v.Format != model.OntologyFormatAgentBundle ||
+			v.Source != model.OntologySourceGenerated || strings.Join(*v.DocumentSetIDs, ",") != "set-k" {
+			t.Fatalf("outcome = %+v, version = %+v", got, v)
+		}
+		if !strings.Contains(string(v.Definition), `source = \"doc-accounts.csv\"`) || strings.Contains(string(v.Definition), "{{") {
+			t.Fatalf("definition does not name the workspace's files")
+		}
+		if got.Model != "" || got.InputTokens != 0 || got.OutputTokens != 0 {
+			t.Fatalf("usage = %+v", got)
+		}
+	})
+	// A table file deleted before the worker claims it fails the sample for
+	// good: adding it again is the fix.
+	t.Run("fails a sample whose table file is gone, for good", func(t *testing.T) {
+		gen, files := sampleGeneration()
+		delete(files, "doc-invoices.csv")
+		q := newQueue(gen)
+		task := newTask(q, never)
+		task.tables = files
+		task.drain(context.Background())
+		got := q.outcomes["g1"]
+		if got.Status != model.OntologyGenerationFailed || got.RetryAt != nil || got.Error != "the sample's files were deleted or moved: add the sample again" {
+			t.Fatalf("outcome = %+v", got)
+		}
+	})
+}
+
 func TestFoundryOntologyWorkerGenerator(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Foundry.AI.Default = config.AIDefault{Provider: "anthropic", APIKey: "sk-test", Models: config.AIModels{

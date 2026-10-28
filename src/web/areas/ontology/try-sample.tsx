@@ -23,12 +23,14 @@ import { SAMPLE } from "./sample";
 // "Try it on a sample company", on the first ontology's wizard. One click
 // uploads the sample's files (./sample.ts) into its set, found by name or
 // made, as any upload is; waits until Foundry has read its tables and PDFs,
-// so a draft started next leaves none out; then hands the sets they are in
-// to the wizard (`onReady`), which fills in what is still empty and opens
-// its review. The workspace keeps one copy of any bytes, so adding the
-// sample again finds its documents, wherever they were moved. Once the
-// wizard drafts from the sample's set (`chosen`), the card says so. Locally,
-// uploads need an AI provider: until one is set up, it says that instead.
+// so none is left out; then hands the sets they are in to the wizard
+// (`onReady`), which fills in what is still empty and creates the ontology
+// on the sample's ready-made draft (`creating` while it does), current and
+// loading, with no wait for an AI draft. The workspace keeps one copy of
+// any bytes, so adding the sample again finds its documents, wherever they
+// were moved. Once the wizard drafts from the sample's set otherwise
+// (`chosen`), the card says so. Locally, uploads need an AI provider: until
+// one is set up, it says that instead.
 
 type Run =
   | { step: "idle" }
@@ -38,9 +40,11 @@ type Run =
 
 export function TrySample({
   chosen,
+  creating,
   onReady,
 }: {
   chosen: boolean;
+  creating: boolean;
   onReady: (setIds: string[]) => void;
 }) {
   const { id } = useWorkspace(),
@@ -125,6 +129,16 @@ export function TrySample({
         }
       />
     );
+  if (creating)
+    return (
+      <Callout
+        icon={LoaderCircle}
+        live
+        tone="muted"
+        title="Setting up Kestrel’s ontology"
+        text="Its ontology is ready-made, so there is no draft to wait for: Foundry makes it current and starts loading Kestrel’s data."
+      />
+    );
   if (run.step !== "idle")
     return (
       <Callout
@@ -153,7 +167,7 @@ export function TrySample({
       icon={FlaskConical}
       tone="muted"
       title="Try it on a sample company"
-      text="Kestrel is a made-up software company: its customers, subscriptions, invoices, support tickets and usage as tables, with contracts, call notes and an incident report as documents. Foundry’s agent drafts an ontology that links them."
+      text="Kestrel is a made-up software company: its customers, subscriptions, invoices, support tickets and usage as tables, with contracts, call notes and an incident report as documents. Its ontology is ready-made: it opens in seconds, loads them as linked records, and is ready for your questions."
       action={
         <Button size="sm" variant="primary" onClick={() => void add()}>
           Use the sample

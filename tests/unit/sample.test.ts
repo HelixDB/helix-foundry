@@ -31,6 +31,20 @@ describe("the sample company", () => {
       );
   });
 
+  it("is the files the backend's ready-made draft maps", () => {
+    const draft = readFileSync(
+      join(__dirname, "..", "..", "backend", "sample", "kestrel.json"),
+      "utf8",
+    );
+    const named = new Set(
+      [...draft.matchAll(/\{\{file:([^{}]+)\}\}/g)].map((m) => m[1]),
+    );
+    expect([...named].sort()).toEqual(
+      SAMPLE.files.filter((f) => formatOfName(f)?.kind === "table").sort(),
+    );
+    expect(SAMPLE.id).toBe("kestrel");
+  });
+
   it("fits one generation, and its set and goal fit the WFE's limits", () => {
     const tables = SAMPLE.files.filter(
       (f) => formatOfName(f)?.kind === "table",
