@@ -5,8 +5,8 @@ import { expect, mock, signIn, test } from "./support/mock";
 // palette, kept per browser, applied before first paint on every page (the
 // sign-in pages too), and followed by the explorer's canvas at once.
 
-const LIGHT_BG = "#f8f7f3",
-  DARK_BG = "#161713";
+const LIGHT_BG = "#fbfbfb",
+  DARK_BG = "#0e0e0e";
 
 const theme = (page: Page) =>
   page.evaluate(() => document.documentElement.dataset.theme ?? null);
@@ -49,7 +49,7 @@ test("switches between System, Light and Dark from the account menu", async ({
   expect(await backgroundToken(page)).toBe(DARK_BG);
   await expect(page.locator("body")).toHaveCSS(
     "background-color",
-    "rgb(22, 23, 19)",
+    "rgb(14, 14, 14)",
   );
   await expect(
     page.locator('meta[name="theme-color"]').first(),
@@ -114,7 +114,7 @@ test("applies the stored theme before first paint, on sign-in too", async ({
   expect(await theme(page)).toBe("dark");
   await expect(page.locator("body")).toHaveCSS(
     "background-color",
-    "rgb(22, 23, 19)",
+    "rgb(14, 14, 14)",
   );
   // An unknown stored value leaves it to the OS.
   await page.evaluate(() => localStorage.setItem("foundry.theme", "sepia"));
@@ -122,7 +122,7 @@ test("applies the stored theme before first paint, on sign-in too", async ({
   expect(await theme(page)).toBeNull();
   await expect(page.locator("body")).toHaveCSS(
     "background-color",
-    "rgb(248, 247, 243)",
+    "rgb(251, 251, 251)",
   );
 
   // With the app, sign-in shows in the stored theme.
@@ -134,7 +134,7 @@ test("applies the stored theme before first paint, on sign-in too", async ({
   ).toBeVisible();
   await expect(page.locator(".hf-app")).toHaveCSS(
     "background-color",
-    "rgb(22, 23, 19)",
+    "rgb(14, 14, 14)",
   );
   await expect(
     page.locator('meta[name="theme-color"]').first(),
@@ -199,7 +199,7 @@ test("redraws the explorer's canvas when the theme changes", async ({
       }
       return [...counts].sort((a, b) => b[1] - a[1])[0][0];
     });
-  await expect.poll(corner).toBe("rgb(248, 247, 243)");
+  await expect.poll(corner).toBe("rgb(251, 251, 251)");
   // Once the layout has settled the page asks for no more frames by itself:
   // a switch must ask for one.
   const idle = () =>
@@ -211,10 +211,10 @@ test("redraws the explorer's canvas when the theme changes", async ({
     });
   await expect.poll(idle, { timeout: 30_000 }).toBe(true);
   await chooseFromMenu(page, "Dark");
-  await expect.poll(corner).toBe("rgb(22, 23, 19)");
+  await expect.poll(corner).toBe("rgb(14, 14, 14)");
   // System follows the OS while the page is open.
   await chooseFromMenu(page, "System");
-  await expect.poll(corner).toBe("rgb(248, 247, 243)");
+  await expect.poll(corner).toBe("rgb(251, 251, 251)");
   await page.emulateMedia({ colorScheme: "dark" });
-  await expect.poll(corner).toBe("rgb(22, 23, 19)");
+  await expect.poll(corner).toBe("rgb(14, 14, 14)");
 });

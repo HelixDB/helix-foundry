@@ -8,9 +8,12 @@
    only these tokens, never a color of their own (tests/unit/theme-css.test.ts). */
 :root {
   --hf-font-sans:
-    Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --hf-font-display: Georgia, "Times New Roman", serif;
-  --hf-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, sans-serif;
+  --hf-font-display: var(--hf-font-sans);
+  --hf-font-mono:
+    var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas,
+    monospace;
 
   --hf-text-xs: 11px;
   --hf-text-sm: 12px;
@@ -31,50 +34,53 @@
   --hf-space-6: 48px;
   --hf-space-8: 64px;
 
-  --hf-radius-sm: 6px;
-  --hf-radius: 8px;
-  --hf-radius-lg: 12px;
-  --hf-radius-xl: 16px;
-  --hf-radius-pill: 999px;
+  /* Square corners everywhere, as on the landing page. Components still name
+     the radius they mean, so the system can soften in one place. */
+  --hf-radius-sm: 0;
+  --hf-radius: 0;
+  --hf-radius-lg: 0;
+  --hf-radius-xl: 0;
+  --hf-radius-pill: 0;
 
   --hf-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --hf-duration: 160ms;
   --hf-sidebar-width: 236px;
   --hf-sidebar-collapsed: 60px;
 
-  /* Warm paper surfaces, olive ink and the onboarding mint. */
-  --hf-bg: #f8f7f3;
-  --hf-surface: #f8f7f3;
-  --hf-raised: #fdfcf9;
-  --hf-sunken: #f0efe9;
-  --hf-sidebar: #f1f0ea;
-  --hf-hover: #eceae2;
-  --hf-selected: #e5e7da;
-  --hf-overlay: rgba(41, 42, 38, 0.28);
-  --hf-border: #e4e2da;
-  --hf-border-strong: #d4d2c7;
-  --hf-text: #292a26;
-  --hf-text-2: #4f534a;
+  /* Neutral surfaces, black ink and the landing page's mint (#85ed75 in
+     dark; a deeper green here, for contrast on white). */
+  --hf-bg: #fbfbfb;
+  --hf-surface: #fbfbfb;
+  --hf-raised: #ffffff;
+  --hf-sunken: #f3f3f3;
+  --hf-sidebar: #fbfbfb;
+  --hf-hover: #efefef;
+  --hf-selected: #e8e8e8;
+  --hf-overlay: rgba(14, 14, 14, 0.32);
+  --hf-border: #e4e4e4;
+  --hf-border-strong: #d2d2d2;
+  --hf-text: #111111;
+  --hf-text-2: #3d3d3d;
   /* Secondary text; 4.5:1 or better on every surface, hover and selected. */
-  --hf-muted: #65675e;
+  --hf-muted: #646464;
   /* Icons, borders and decoration only: too light for text. */
-  --hf-faint: #9b9d93;
-  --hf-ink: #343932;
-  --hf-ink-hover: #232721;
-  --hf-on-ink: #fbfaf6;
-  --hf-field: #fcfbf8;
+  --hf-faint: #9e9e9e;
+  --hf-ink: #0e0e0e;
+  --hf-ink-hover: #2b2b2b;
+  --hf-on-ink: #ffffff;
+  --hf-field: #ffffff;
   /* 3:1 or better against every surface. */
-  --hf-focus: #2a8f69;
+  --hf-focus: #2e8424;
 
-  --hf-accent: #36b98a;
-  --hf-accent-strong: #2a9b72;
-  --hf-accent-soft: #e5f4ea;
-  --hf-accent-border: #c3e2cf;
-  --hf-accent-text: #2d6a4b;
+  --hf-accent: #3a9c2e;
+  --hf-accent-strong: #2e8424;
+  --hf-accent-soft: #e9f7e5;
+  --hf-accent-border: #bfe5b6;
+  --hf-accent-text: #276b1e;
 
-  --hf-success: #36b98a;
-  --hf-success-soft: #e5f4ea;
-  --hf-success-text: #2d6a4b;
+  --hf-success: #3a9c2e;
+  --hf-success-soft: #e9f7e5;
+  --hf-success-text: #276b1e;
   --hf-warning: #c99a3e;
   --hf-warning-soft: #f6efdd;
   --hf-warning-text: #87662e;
@@ -88,7 +94,7 @@
   --hf-info-text: #36608a;
 
   /* Categorical chart palette, in order. */
-  --hf-chart-1: #36b98a;
+  --hf-chart-1: #3a9c2e;
   --hf-chart-2: #4f82b3;
   --hf-chart-3: #c99a3e;
   --hf-chart-4: #8a6fb0;
@@ -105,68 +111,66 @@
   --hf-type-7: #4a3aa7;
   --hf-type-8: #e34948;
 
-  --hf-shadow-1: 0 1px 2px rgba(34, 35, 24, 0.05);
-  --hf-shadow-2:
-    0 1px 2px rgba(34, 35, 24, 0.04), 0 8px 24px rgba(34, 35, 24, 0.07);
-  --hf-shadow-3:
-    0 2px 6px rgba(34, 35, 24, 0.06), 0 24px 64px rgba(34, 35, 24, 0.16);
+  --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --hf-shadow-3: 0 2px 6px rgba(0, 0, 0, 0.06), 0 24px 64px rgba(0, 0, 0, 0.14);
 
   /* Text and icons on a solid accent fill (buttons, done marks). */
-  --hf-on-accent: #0f2a1f;
+  --hf-on-accent: #08210a;
   /* The tile behind connector logos. */
   --hf-logo-bg: #ffffff;
   /* One-off shadows mix this with transparency. */
-  --hf-shadow-color: #222318;
+  --hf-shadow-color: #000000;
   /* Dark popovers (schema tips): their surface and text. */
-  --hf-tooltip: #2b2d28;
-  --hf-on-tooltip: #f4f3ee;
-  --hf-on-tooltip-2: #c9c7bd;
-  --hf-on-tooltip-muted: #a9a79d;
-  --hf-on-tooltip-accent: #bfe3cc;
-  --hf-on-tooltip-warning: #f0d9a8;
+  --hf-tooltip: #1a1a1a;
+  --hf-on-tooltip: #f2f2f2;
+  --hf-on-tooltip-2: #cfcfcf;
+  --hf-on-tooltip-muted: #ababab;
+  --hf-on-tooltip-accent: #a3f396;
+  --hf-on-tooltip-warning: #eccb88;
 
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --hf-bg: #161713;
-    --hf-surface: #161713;
-    --hf-raised: #1e1f1a;
-    --hf-sunken: #121310;
-    --hf-sidebar: #1a1b17;
-    --hf-hover: #26281f;
-    --hf-selected: #2c3026;
-    --hf-overlay: rgba(0, 0, 0, 0.5);
-    --hf-border: #2e3029;
-    --hf-border-strong: #3d4036;
-    --hf-text: #ecebe4;
-    --hf-text-2: #c9c8be;
-    --hf-muted: #9c9d92;
-    --hf-faint: #797b71;
-    --hf-ink: #e9e8df;
-    --hf-ink-hover: #ffffff;
-    --hf-on-ink: #1a1b16;
-    --hf-field: #1a1b17;
-    --hf-focus: #4fd0a0;
-    --hf-accent: #4fd0a0;
-    --hf-accent-strong: #6fdcb2;
-    --hf-accent-soft: #19362a;
-    --hf-accent-border: #28543f;
-    --hf-accent-text: #8fe3c4;
-    --hf-success: #4fd0a0;
-    --hf-success-soft: #19362a;
-    --hf-success-text: #8fe3c4;
+    --hf-bg: #0e0e0e;
+    --hf-surface: #0e0e0e;
+    --hf-raised: #151515;
+    --hf-sunken: #101010;
+    --hf-sidebar: #0e0e0e;
+    --hf-hover: #1c1c1c;
+    --hf-selected: #222222;
+    --hf-overlay: rgba(0, 0, 0, 0.6);
+    --hf-border: #2a2a2a;
+    --hf-border-strong: #3a3a3a;
+    --hf-text: #ededed;
+    --hf-text-2: #bbbbbb;
+    --hf-muted: #8f8f8f;
+    --hf-faint: #707070;
+    --hf-ink: #ffffff;
+    --hf-ink-hover: #d9d9d9;
+    --hf-on-ink: #0e0e0e;
+    --hf-field: #121212;
+    --hf-focus: #85ed75;
+    --hf-accent: #85ed75;
+    --hf-accent-strong: #a3f396;
+    --hf-accent-soft: #1b2a19;
+    --hf-accent-border: #2c4a27;
+    --hf-accent-text: #85ed75;
+    --hf-success: #85ed75;
+    --hf-success-soft: #1b2a19;
+    --hf-success-text: #85ed75;
     --hf-warning: #e0b35a;
-    --hf-warning-soft: #3a2f18;
+    --hf-warning-soft: #2e2614;
     --hf-warning-text: #eac77f;
     --hf-danger: #e47a62;
-    --hf-danger-soft: #3d201a;
+    --hf-danger-soft: #331b16;
     --hf-danger-text: #f0a08d;
     --hf-on-danger: #1a1b16;
     --hf-info: #74a6d8;
-    --hf-info-soft: #1b2a3a;
+    --hf-info-soft: #16212e;
     --hf-info-text: #a3c6ea;
-    --hf-chart-1: #4fd0a0;
+    --hf-chart-1: #85ed75;
     --hf-chart-2: #74a6d8;
     --hf-chart-3: #e0b35a;
     --hf-chart-4: #a98fd0;
@@ -180,62 +184,62 @@
     --hf-type-6: #008300;
     --hf-type-7: #9085e9;
     --hf-type-8: #e66767;
-    --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
     --hf-shadow-3:
-      0 2px 6px rgba(0, 0, 0, 0.35), 0 24px 64px rgba(0, 0, 0, 0.55);
+      0 2px 6px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.7);
 
-    --hf-logo-bg: #24261f;
+    --hf-logo-bg: #1a1a1a;
     --hf-shadow-color: #000000;
-    --hf-tooltip: #34362f;
-    --hf-on-tooltip: #f4f3ee;
-    --hf-on-tooltip-2: #d2d1c7;
-    --hf-on-tooltip-muted: #b4b3a9;
-    --hf-on-tooltip-accent: #a9e3c6;
+    --hf-tooltip: #1c1c1c;
+    --hf-on-tooltip: #f2f2f2;
+    --hf-on-tooltip-2: #cfcfcf;
+    --hf-on-tooltip-muted: #ababab;
+    --hf-on-tooltip-accent: #a3f396;
     --hf-on-tooltip-warning: #eccb88;
 
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --hf-bg: #161713;
-  --hf-surface: #161713;
-  --hf-raised: #1e1f1a;
-  --hf-sunken: #121310;
-  --hf-sidebar: #1a1b17;
-  --hf-hover: #26281f;
-  --hf-selected: #2c3026;
-  --hf-overlay: rgba(0, 0, 0, 0.5);
-  --hf-border: #2e3029;
-  --hf-border-strong: #3d4036;
-  --hf-text: #ecebe4;
-  --hf-text-2: #c9c8be;
-  --hf-muted: #9c9d92;
-  --hf-faint: #797b71;
-  --hf-ink: #e9e8df;
-  --hf-ink-hover: #ffffff;
-  --hf-on-ink: #1a1b16;
-  --hf-field: #1a1b17;
-  --hf-focus: #4fd0a0;
-  --hf-accent: #4fd0a0;
-  --hf-accent-strong: #6fdcb2;
-  --hf-accent-soft: #19362a;
-  --hf-accent-border: #28543f;
-  --hf-accent-text: #8fe3c4;
-  --hf-success: #4fd0a0;
-  --hf-success-soft: #19362a;
-  --hf-success-text: #8fe3c4;
+  --hf-bg: #0e0e0e;
+  --hf-surface: #0e0e0e;
+  --hf-raised: #151515;
+  --hf-sunken: #101010;
+  --hf-sidebar: #0e0e0e;
+  --hf-hover: #1c1c1c;
+  --hf-selected: #222222;
+  --hf-overlay: rgba(0, 0, 0, 0.6);
+  --hf-border: #2a2a2a;
+  --hf-border-strong: #3a3a3a;
+  --hf-text: #ededed;
+  --hf-text-2: #bbbbbb;
+  --hf-muted: #8f8f8f;
+  --hf-faint: #707070;
+  --hf-ink: #ffffff;
+  --hf-ink-hover: #d9d9d9;
+  --hf-on-ink: #0e0e0e;
+  --hf-field: #121212;
+  --hf-focus: #85ed75;
+  --hf-accent: #85ed75;
+  --hf-accent-strong: #a3f396;
+  --hf-accent-soft: #1b2a19;
+  --hf-accent-border: #2c4a27;
+  --hf-accent-text: #85ed75;
+  --hf-success: #85ed75;
+  --hf-success-soft: #1b2a19;
+  --hf-success-text: #85ed75;
   --hf-warning: #e0b35a;
-  --hf-warning-soft: #3a2f18;
+  --hf-warning-soft: #2e2614;
   --hf-warning-text: #eac77f;
   --hf-danger: #e47a62;
-  --hf-danger-soft: #3d201a;
+  --hf-danger-soft: #331b16;
   --hf-danger-text: #f0a08d;
   --hf-on-danger: #1a1b16;
   --hf-info: #74a6d8;
-  --hf-info-soft: #1b2a3a;
+  --hf-info-soft: #16212e;
   --hf-info-text: #a3c6ea;
-  --hf-chart-1: #4fd0a0;
+  --hf-chart-1: #85ed75;
   --hf-chart-2: #74a6d8;
   --hf-chart-3: #e0b35a;
   --hf-chart-4: #a98fd0;
@@ -249,17 +253,17 @@
   --hf-type-6: #008300;
   --hf-type-7: #9085e9;
   --hf-type-8: #e66767;
-  --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
-  --hf-shadow-3: 0 2px 6px rgba(0, 0, 0, 0.35), 0 24px 64px rgba(0, 0, 0, 0.55);
+  --hf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --hf-shadow-2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
+  --hf-shadow-3: 0 2px 6px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.7);
 
-  --hf-logo-bg: #24261f;
+  --hf-logo-bg: #1a1a1a;
   --hf-shadow-color: #000000;
-  --hf-tooltip: #34362f;
-  --hf-on-tooltip: #f4f3ee;
-  --hf-on-tooltip-2: #d2d1c7;
-  --hf-on-tooltip-muted: #b4b3a9;
-  --hf-on-tooltip-accent: #a9e3c6;
+  --hf-tooltip: #1c1c1c;
+  --hf-on-tooltip: #f2f2f2;
+  --hf-on-tooltip-2: #cfcfcf;
+  --hf-on-tooltip-muted: #ababab;
+  --hf-on-tooltip-accent: #a3f396;
   --hf-on-tooltip-warning: #eccb88;
 
   color-scheme: dark;

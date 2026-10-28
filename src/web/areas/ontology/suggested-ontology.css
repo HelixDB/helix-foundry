@@ -31,7 +31,7 @@
   margin: 0 0 14px;
   padding: 3px 10px 3px 8px;
   border: 1px solid var(--so-mint-border);
-  border-radius: 999px;
+  border-radius: var(--hf-radius-pill);
   background: var(--so-mint);
   color: var(--so-mint-ink);
   font-size: 12px;
@@ -39,7 +39,7 @@
   line-height: 18px;
 }
 .so-head h1 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--hf-font-display);
   font-size: 34px;
   font-weight: 400;
   letter-spacing: -0.7px;
@@ -80,7 +80,7 @@
 .so-stack .so-logo {
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--hf-radius);
   box-shadow: 0 0 0 2px var(--hf-bg);
 }
 .so-stack .so-logo + .so-logo {
@@ -118,7 +118,7 @@
   position: relative;
   box-sizing: content-box;
   border: 1px solid var(--hf-border);
-  border-radius: 16px;
+  border-radius: var(--hf-radius-xl);
   background:
     radial-gradient(circle, var(--hf-border) 1px, transparent 1.3px) 0 0 / 20px
       20px,
@@ -182,7 +182,7 @@
   flex-direction: column;
   padding: 14px 16px 13px;
   border: 1px solid var(--hf-border);
-  border-radius: 12px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-raised);
   box-shadow:
     0 1px 2px color-mix(in srgb, var(--hf-shadow-color) 4%, transparent),
@@ -264,7 +264,7 @@
   margin-left: -5px;
   padding: 0 5px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   background: none;
   color: inherit;
   font: inherit;
@@ -288,7 +288,7 @@
 .so-node-stack .so-logo {
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   box-shadow: 0 0 0 2px var(--hf-raised);
 }
 .so-node-stack .so-logo img {
@@ -331,7 +331,7 @@
   margin: 0 0 0 -5px;
   padding: 0 5px;
   border: 1px solid var(--hf-faint);
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   background: var(--hf-raised);
   color: var(--hf-text);
   font: inherit;
@@ -367,7 +367,7 @@
   position: relative;
   width: 30px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--hf-radius-pill);
   background: var(--hf-border-strong);
   transition: background-color 0.15s;
 }
@@ -378,7 +378,7 @@
   left: 2px;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-raised);
   box-shadow: 0 1px 2px
     color-mix(in srgb, var(--hf-shadow-color) 30%, transparent);
@@ -412,10 +412,10 @@
 }
 .so-meta code {
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-sunken);
   color: var(--hf-muted);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--hf-font-mono);
   font-size: 11px;
 }
 .so-desc {
@@ -431,14 +431,14 @@
 }
 .so-fields {
   color: var(--hf-muted);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--hf-font-mono);
   font-size: 11px;
 }
 .so-skeleton {
   display: block;
   height: 9px;
   margin: 4px 0 8px;
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   background: linear-gradient(
       90deg,
       var(--hf-sunken) 30%,
@@ -485,7 +485,7 @@
   height: 22px;
   padding: 0 9px 0 7px;
   border: 1px solid var(--so-mint-border);
-  border-radius: 999px;
+  border-radius: var(--hf-radius-pill);
   background: var(--so-mint);
   color: var(--so-mint-ink);
   font-size: 11.5px;
@@ -506,7 +506,7 @@
   height: 22px;
   padding: 0 9px;
   border: 1px dashed var(--hf-border-strong);
-  border-radius: 999px;
+  border-radius: var(--hf-radius-pill);
   background: var(--hf-bg);
   color: var(--hf-muted);
   font-size: 11.5px;
@@ -549,7 +549,7 @@
   height: 16px;
   overflow: hidden;
   border: 1px solid var(--hf-border);
-  border-radius: 5px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-raised);
   color: var(--hf-muted);
 }
@@ -577,7 +577,7 @@
   gap: 4px;
   width: max-content;
   padding: 11px 13px;
-  border-radius: 10px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-tooltip);
   color: var(--hf-on-tooltip);
   font-size: 12px;
@@ -622,7 +622,7 @@
 .so-pop-row small {
   display: block;
   color: var(--hf-on-tooltip-muted);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--hf-font-mono);
   font-size: 10.5px;
 }
 .so-pop-row b {
@@ -643,7 +643,7 @@
   height: 22px;
   padding: 0 9px;
   border: 1px solid var(--hf-border-strong);
-  border-radius: 999px;
+  border-radius: var(--hf-radius-pill);
   background: var(--hf-raised);
   color: var(--hf-muted);
   font-size: 11.5px;
@@ -696,7 +696,7 @@
 }
 .so-tip code {
   color: var(--hf-on-tooltip-2);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--hf-font-mono);
   font-size: 10.5px;
 }
 .so-tip small {
@@ -733,7 +733,7 @@
   width: 14px;
   height: 12px;
   border: 1px solid var(--so-mint-border);
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   background: linear-gradient(180deg, var(--hf-accent-soft), var(--hf-raised));
   box-shadow: 0 0 0 2px
     color-mix(in srgb, var(--hf-accent-border) 35%, transparent);
@@ -818,7 +818,7 @@
   margin: 36px calc((100% - var(--so-canvas)) / 2) 0;
   padding: 16px 18px 16px 24px;
   border: 1px solid var(--hf-border);
-  border-radius: 14px;
+  border-radius: var(--hf-radius-xl);
   background: color-mix(in srgb, var(--hf-field) 94%, transparent);
   box-shadow:
     0 2px 6px color-mix(in srgb, var(--hf-shadow-color) 5%, transparent),
@@ -828,7 +828,7 @@
 }
 .so-confirm h2 {
   margin: 0 0 2px;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--hf-font-display);
   font-size: 22px;
   font-weight: 400;
   letter-spacing: -0.4px;
@@ -961,7 +961,7 @@
   margin: 0 auto 18px;
   aspect-ratio: 340 / 220;
   border: 1px solid var(--hf-border);
-  border-radius: 14px;
+  border-radius: var(--hf-radius-xl);
   background:
     radial-gradient(circle, var(--hf-border) 1px, transparent 1.3px) 0 0 / 16px
       16px,
@@ -997,7 +997,7 @@
   overflow: hidden;
   padding: 3px 9px;
   border: 1px solid var(--hf-border-strong);
-  border-radius: 999px;
+  border-radius: var(--hf-radius-pill);
   background: var(--hf-raised);
   color: var(--hf-text);
   font: inherit;
@@ -1135,7 +1135,7 @@
   position: absolute;
   inset: 0;
   z-index: 1;
-  border-radius: 12px;
+  border-radius: var(--hf-radius-lg);
 }
 .so-view.is-readonly .so-node:hover a.so-name,
 .so-view.is-readonly a.so-name:focus-visible {

@@ -23,7 +23,7 @@
   gap: 10px;
   padding: 10px 14px;
   border: 1px solid var(--hf-border);
-  border-radius: 10px;
+  border-radius: var(--hf-radius-lg);
   background: var(--hf-raised);
 }
 .dc-upload.is-failed {
@@ -120,7 +120,7 @@
   border-top: 1px solid var(--hf-border);
 }
 .dc-mark {
-  border-radius: 2px;
+  border-radius: var(--hf-radius-sm);
   background: transparent;
   color: inherit;
   scroll-margin: 96px;
@@ -191,7 +191,7 @@
 }
 /* A fact or review a mark opened: flashed once. */
 .dc-doc-list > li.is-active {
-  border-radius: 6px;
+  border-radius: var(--hf-radius);
   animation: dc-flash 1.2s var(--hf-ease) 1;
 }
 .dc-doc-list {
@@ -271,7 +271,7 @@
   flex: none;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-faint);
 }
 @media (max-width: 1000px) {

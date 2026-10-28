@@ -37,7 +37,7 @@ export function degreeScale(degree: number): number {
 /** The largest {@link degreeScale}. */
 export const MAX_DEGREE_SCALE = 1.9;
 
-/** Below this radius nodes are drawn as squares: cheaper, and indistinguishable at that size. */
+/** Below this radius nodes are drawn without an outline: cheaper, and indistinguishable at that size. */
 export function fastNodeShapes(radiusPx: number): boolean {
   return radiusPx < 2.5;
 }

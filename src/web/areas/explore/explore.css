@@ -402,22 +402,25 @@
   display: grid;
   gap: 6px;
 }
-.ex-section-title {
+/* Past .ex h2's reset, which would take the mono lettering away. */
+.ex-section-title,
+.ex .ex-section-title {
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-family: var(--hf-font-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 .ex-swatch {
   flex: none;
   width: 9px;
   height: 9px;
-  border-radius: 2px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-faint);
 }
 .ex-swatch.is-round {
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
 }
 .ex-swatch.is-sm {
   width: 7px;
@@ -436,7 +439,7 @@
   height: 18px;
   padding: 0 5px;
   border: 1px solid var(--hf-border-strong);
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-surface);
   color: var(--hf-text-2);
   font-family: var(--hf-font-mono);
@@ -605,7 +608,7 @@
   width: 24px;
   height: 24px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   background: none;
   color: var(--hf-muted);
   transform: translateY(-50%);
@@ -846,7 +849,7 @@
   right: -5px;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-accent);
 }
 
@@ -1293,7 +1296,7 @@
   flex: 1;
   min-width: 0;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--hf-radius-sm);
 }
 .ex-bar-track.has-count {
   background: var(--hf-sunken);
@@ -1301,7 +1304,7 @@
 .ex-bar-fill {
   display: block;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--hf-radius-sm);
 }
 .ex-bar-count {
   flex: none;
@@ -1349,7 +1352,7 @@
   height: 22px;
   margin-left: auto;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   background: none;
   color: var(--hf-muted);
   opacity: 0;
@@ -1370,7 +1373,7 @@
   flex: none;
   padding: 0 5px;
   border: 1px solid var(--hf-border-strong);
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   color: var(--hf-text-2);
   font-size: 10.5px;
   line-height: 16px;
@@ -1406,7 +1409,7 @@
   display: inline-flex;
   padding: 1px 6px;
   border: 1px solid var(--hf-border-strong);
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   font-size: var(--hf-text-xs);
 }
 .ex-bool.is-true {
@@ -1797,7 +1800,7 @@
   height: 20px;
   margin-right: -4px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--hf-radius-sm);
   background: none;
   color: inherit;
   opacity: 0.7;
@@ -1865,7 +1868,7 @@
   width: 44px;
   height: 44px;
   margin: 0 auto 14px;
-  border-radius: 50%;
+  border-radius: var(--hf-radius-sm);
   background: var(--hf-sunken);
   color: var(--hf-text-2);
 }
