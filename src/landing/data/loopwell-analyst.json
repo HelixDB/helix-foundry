@@ -1,0 +1,636 @@
+[
+ {
+  "id": "e65c58bd-bf90-4bba-bb83-6d8c97032eb3",
+  "workspaceId": "e1e931c6-3d3d-4955-99e1-bc4ad8253a50",
+  "kind": "run",
+  "name": "How many support tickets came in each month?",
+  "description": "",
+  "revision": 17,
+  "createdAt": "2026-10-21T07:04:19.605Z",
+  "updatedAt": "2026-10-21T07:04:19.902Z",
+  "data": {
+   "goal": "How many support tickets came in each month?",
+   "threadId": "e65c58bd-bf90-4bba-bb83-6d8c97032eb3",
+   "intent": "auto",
+   "resolvedIntent": "answer",
+   "authority": {
+    "userId": "local-user",
+    "readOnly": false
+   },
+   "status": "succeeded",
+   "stage": "complete",
+   "events": [
+    {
+     "at": "2026-10-21T07:04:19.609Z",
+     "stage": "routing"
+    },
+    {
+     "at": "2026-10-21T07:04:19.609Z",
+     "stage": "routing",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:19.610Z",
+     "stage": "routing",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:19.610Z",
+     "stage": "routing",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:19.610Z",
+     "stage": "routing",
+     "message": "Looking into your question"
+    },
+    {
+     "at": "2026-10-21T07:04:19.611Z",
+     "stage": "analysis"
+    },
+    {
+     "at": "2026-10-21T07:04:19.611Z",
+     "stage": "analysis",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:19.612Z",
+     "stage": "analysis",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:19.613Z",
+     "stage": "analysis",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:19.616Z",
+     "stage": "query",
+     "message": "Executing query against declared dataset snapshots"
+    },
+    {
+     "at": "2026-10-21T07:04:19.899Z",
+     "stage": "check",
+     "message": "Checking the result"
+    },
+    {
+     "at": "2026-10-21T07:04:19.901Z",
+     "stage": "summary"
+    },
+    {
+     "at": "2026-10-21T07:04:19.901Z",
+     "stage": "summary",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:19.901Z",
+     "stage": "summary",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:19.902Z",
+     "stage": "summary",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:19.902Z",
+     "stage": "complete",
+     "message": "Answer computed from dataset snapshots"
+    }
+   ],
+   "outline": [
+    "understand",
+    "analyze",
+    "check",
+    "write"
+   ],
+   "estimate": null,
+   "checkpoints": {
+    "routing": {
+     "intent": "answer"
+    },
+    "analysis": {
+     "title": "Support tickets by month",
+     "sql": "SELECT date_trunc('month', t.created_at)::DATE AS month, count(*) AS tickets FROM \"Support_tickets_S3_\" t GROUP BY 1 ORDER BY 1",
+     "inputs": [
+      "pipeline_5d8f5baa60fc2822"
+     ],
+     "assumptions": []
+    },
+    "summary": {
+     "summary": "Tickets have grown since the spring, from 4 in February to 28 in August. June was the busiest month, with 33, and March the quietest, with 3.",
+     "highlights": [
+      "June peaked at 33 tickets",
+      "August had 28, up from 20"
+     ]
+    }
+   },
+   "partialStage": {
+    "stage": "summary",
+    "value": {
+     "summary": "Tickets have grown since the spring, from 4 in February to 28 in August. June was the busiest month, with 33, and March the quietest, with 3.",
+     "highlights": [
+      "June peaked at 33 tickets",
+      "August had 28, up from 20"
+     ]
+    }
+   },
+   "calls": 3,
+   "tokens": 3,
+   "timing": {
+    "key": "local:qwen3:4b:summary:3",
+    "took": 297
+   },
+   "answer": {
+    "title": "Support tickets by month",
+    "sql": "SELECT date_trunc('month', t.created_at)::DATE AS month, count(*) AS tickets FROM \"Support_tickets_S3_\" t GROUP BY 1 ORDER BY 1",
+    "inputs": [
+     "pipeline_5d8f5baa60fc2822"
+    ],
+    "assumptions": [],
+    "rows": [
+     {
+      "month": "2026-02-01",
+      "tickets": "4"
+     },
+     {
+      "month": "2026-03-01",
+      "tickets": "3"
+     },
+     {
+      "month": "2026-04-01",
+      "tickets": "11"
+     },
+     {
+      "month": "2026-05-01",
+      "tickets": "20"
+     },
+     {
+      "month": "2026-06-01",
+      "tickets": "33"
+     },
+     {
+      "month": "2026-07-01",
+      "tickets": "20"
+     },
+     {
+      "month": "2026-08-01",
+      "tickets": "28"
+     }
+    ],
+    "total": 7,
+    "citations": [
+     {
+      "datasetId": "pipeline_5d8f5baa60fc2822",
+      "name": "Support tickets (S3)",
+      "version": "566a7cf6-1a4d-4073-a0c6-4804553466dd"
+     }
+    ],
+    "check": {
+     "kind": "trend",
+     "label": "month",
+     "measure": "tickets",
+     "keys": [],
+     "duplicates": 0,
+     "missing": 0
+    },
+    "summary": "Tickets have grown since the spring, from 4 in February to 28 in August. June was the busiest month, with 33, and March the quietest, with 3.",
+    "highlights": [
+     "June peaked at 33 tickets",
+     "August had 28, up from 20"
+    ]
+   }
+  }
+ },
+ {
+  "id": "69ad6e65-64d4-4e3c-a27e-fb287812aa1e",
+  "workspaceId": "e1e931c6-3d3d-4955-99e1-bc4ad8253a50",
+  "kind": "run",
+  "name": "Which plan brings in the most monthly revenue?",
+  "description": "",
+  "revision": 17,
+  "createdAt": "2026-10-21T07:04:19.904Z",
+  "updatedAt": "2026-10-21T07:04:20.191Z",
+  "data": {
+   "goal": "Which plan brings in the most monthly revenue?",
+   "threadId": "69ad6e65-64d4-4e3c-a27e-fb287812aa1e",
+   "intent": "auto",
+   "resolvedIntent": "answer",
+   "authority": {
+    "userId": "local-user",
+    "readOnly": false
+   },
+   "status": "succeeded",
+   "stage": "complete",
+   "events": [
+    {
+     "at": "2026-10-21T07:04:19.906Z",
+     "stage": "routing"
+    },
+    {
+     "at": "2026-10-21T07:04:19.906Z",
+     "stage": "routing",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:19.906Z",
+     "stage": "routing",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:19.906Z",
+     "stage": "routing",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:19.906Z",
+     "stage": "routing",
+     "message": "Looking into your question"
+    },
+    {
+     "at": "2026-10-21T07:04:19.907Z",
+     "stage": "analysis"
+    },
+    {
+     "at": "2026-10-21T07:04:19.907Z",
+     "stage": "analysis",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:19.907Z",
+     "stage": "analysis",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:19.907Z",
+     "stage": "analysis",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:19.909Z",
+     "stage": "query",
+     "message": "Executing query against declared dataset snapshots"
+    },
+    {
+     "at": "2026-10-21T07:04:20.189Z",
+     "stage": "check",
+     "message": "Checking the result"
+    },
+    {
+     "at": "2026-10-21T07:04:20.191Z",
+     "stage": "summary"
+    },
+    {
+     "at": "2026-10-21T07:04:20.191Z",
+     "stage": "summary",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:20.191Z",
+     "stage": "summary",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:20.191Z",
+     "stage": "summary",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:20.191Z",
+     "stage": "complete",
+     "message": "Answer computed from dataset snapshots"
+    }
+   ],
+   "outline": [
+    "understand",
+    "analyze",
+    "check",
+    "write"
+   ],
+   "estimate": null,
+   "checkpoints": {
+    "routing": {
+     "intent": "answer"
+    },
+    "analysis": {
+     "title": "Monthly revenue by plan",
+     "sql": "SELECT s.plan.nickname AS plan, count(*) AS subscriptions, sum(s.quantity * s.plan.amount) / 100.0 AS monthly_revenue FROM \"Stripe_subscriptions\" s WHERE s.status IN ('active', 'past_due') GROUP BY 1 ORDER BY 3 DESC",
+     "inputs": [
+      "914ab1e9-2219-403a-9d89-be475862c7f2"
+     ],
+     "assumptions": [
+      "Counts active and past-due subscriptions"
+     ]
+    },
+    "summary": {
+     "summary": "Enterprise brings in the most, $6,305 a month from 5 subscriptions. Growth is close behind with $6,120 from 24, and Starter brings in $460 from 6.",
+     "highlights": [
+      "Enterprise leads from 5 subscriptions",
+      "Growth has the most subscriptions, 24"
+     ]
+    }
+   },
+   "partialStage": {
+    "stage": "summary",
+    "value": {
+     "summary": "Enterprise brings in the most, $6,305 a month from 5 subscriptions. Growth is close behind with $6,120 from 24, and Starter brings in $460 from 6.",
+     "highlights": [
+      "Enterprise leads from 5 subscriptions",
+      "Growth has the most subscriptions, 24"
+     ]
+    }
+   },
+   "calls": 3,
+   "tokens": 3,
+   "timing": {
+    "key": "local:qwen3:4b:summary:3",
+    "took": 287
+   },
+   "answer": {
+    "title": "Monthly revenue by plan",
+    "sql": "SELECT s.plan.nickname AS plan, count(*) AS subscriptions, sum(s.quantity * s.plan.amount) / 100.0 AS monthly_revenue FROM \"Stripe_subscriptions\" s WHERE s.status IN ('active', 'past_due') GROUP BY 1 ORDER BY 3 DESC",
+    "inputs": [
+     "914ab1e9-2219-403a-9d89-be475862c7f2"
+    ],
+    "assumptions": [
+     "Counts active and past-due subscriptions"
+    ],
+    "rows": [
+     {
+      "plan": "Enterprise (per seat)",
+      "subscriptions": "5",
+      "monthly_revenue": 6305
+     },
+     {
+      "plan": "Growth (per seat)",
+      "subscriptions": "24",
+      "monthly_revenue": 6120
+     },
+     {
+      "plan": "Starter (per seat)",
+      "subscriptions": "6",
+      "monthly_revenue": 460
+     }
+    ],
+    "total": 3,
+    "citations": [
+     {
+      "datasetId": "914ab1e9-2219-403a-9d89-be475862c7f2",
+      "name": "Stripe · subscriptions",
+      "version": "31e0c026-3cda-491a-a2a8-c270a3118e4f"
+     }
+    ],
+    "check": {
+     "kind": "ranking",
+     "label": "plan",
+     "measure": "monthly_revenue",
+     "order": "desc",
+     "leaders": 1,
+     "keys": [],
+     "duplicates": 0,
+     "missing": 0
+    },
+    "summary": "Enterprise brings in the most, $6,305 a month from 5 subscriptions. Growth is close behind with $6,120 from 24, and Starter brings in $460 from 6.",
+    "highlights": [
+     "Enterprise leads from 5 subscriptions",
+     "Growth has the most subscriptions, 24"
+    ]
+   }
+  }
+ },
+ {
+  "id": "469d12c1-9826-4e6d-ae7a-c6427bd139c7",
+  "workspaceId": "e1e931c6-3d3d-4955-99e1-bc4ad8253a50",
+  "kind": "run",
+  "name": "Which accounts raise the most support tickets?",
+  "description": "",
+  "revision": 17,
+  "createdAt": "2026-10-21T07:04:20.200Z",
+  "updatedAt": "2026-10-21T07:04:20.493Z",
+  "data": {
+   "goal": "Which accounts raise the most support tickets?",
+   "threadId": "469d12c1-9826-4e6d-ae7a-c6427bd139c7",
+   "intent": "auto",
+   "resolvedIntent": "answer",
+   "authority": {
+    "userId": "local-user",
+    "readOnly": false
+   },
+   "status": "succeeded",
+   "stage": "complete",
+   "events": [
+    {
+     "at": "2026-10-21T07:04:20.203Z",
+     "stage": "routing"
+    },
+    {
+     "at": "2026-10-21T07:04:20.203Z",
+     "stage": "routing",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:20.203Z",
+     "stage": "routing",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:20.203Z",
+     "stage": "routing",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:20.203Z",
+     "stage": "routing",
+     "message": "Looking into your question"
+    },
+    {
+     "at": "2026-10-21T07:04:20.204Z",
+     "stage": "analysis"
+    },
+    {
+     "at": "2026-10-21T07:04:20.204Z",
+     "stage": "analysis",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:20.204Z",
+     "stage": "analysis",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:20.204Z",
+     "stage": "analysis",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:20.205Z",
+     "stage": "query",
+     "message": "Executing query against declared dataset snapshots"
+    },
+    {
+     "at": "2026-10-21T07:04:20.491Z",
+     "stage": "check",
+     "message": "Checking the result"
+    },
+    {
+     "at": "2026-10-21T07:04:20.492Z",
+     "stage": "summary"
+    },
+    {
+     "at": "2026-10-21T07:04:20.492Z",
+     "stage": "summary",
+     "message": "Generating structured definitions"
+    },
+    {
+     "at": "2026-10-21T07:04:20.492Z",
+     "stage": "summary",
+     "message": "Structured result received"
+    },
+    {
+     "at": "2026-10-21T07:04:20.493Z",
+     "stage": "summary",
+     "message": "Stage saved"
+    },
+    {
+     "at": "2026-10-21T07:04:20.493Z",
+     "stage": "complete",
+     "message": "Answer computed from dataset snapshots"
+    }
+   ],
+   "outline": [
+    "understand",
+    "analyze",
+    "check",
+    "write"
+   ],
+   "estimate": null,
+   "checkpoints": {
+    "routing": {
+     "intent": "answer"
+    },
+    "analysis": {
+     "title": "Support tickets by account",
+     "sql": "SELECT a.name AS account, a.plan, count(*) AS tickets FROM \"Support_tickets_S3_\" t JOIN \"Users_PlanetScale_WorkOS_\" u ON u.email = t.requester_email JOIN \"Accounts_PlanetScale_WorkOS_Stripe_\" a ON a.account_id = u.account_id GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 8",
+     "inputs": [
+      "pipeline_b987c1a7c3448322",
+      "pipeline_3e30171e2717b14e",
+      "pipeline_5d8f5baa60fc2822"
+     ],
+     "assumptions": [
+      "Tickets are matched to accounts by the requester's email"
+     ]
+    },
+    "summary": {
+     "summary": "Riverstone Energy and Riverstone Foods raise the most, 6 tickets each, and both are on the free plan. Driftwood Analytics and Ironbark Labs follow with 5.",
+     "highlights": [
+      "Five of the top eight are on the free plan",
+      "Fernhill Learning and Ironbark Learning lead the enterprise accounts, with 4 each"
+     ]
+    }
+   },
+   "partialStage": {
+    "stage": "summary",
+    "value": {
+     "summary": "Riverstone Energy and Riverstone Foods raise the most, 6 tickets each, and both are on the free plan. Driftwood Analytics and Ironbark Labs follow with 5.",
+     "highlights": [
+      "Five of the top eight are on the free plan",
+      "Fernhill Learning and Ironbark Learning lead the enterprise accounts, with 4 each"
+     ]
+    }
+   },
+   "calls": 3,
+   "tokens": 3,
+   "timing": {
+    "key": "local:qwen3:4b:summary:3",
+    "took": 293
+   },
+   "answer": {
+    "title": "Support tickets by account",
+    "sql": "SELECT a.name AS account, a.plan, count(*) AS tickets FROM \"Support_tickets_S3_\" t JOIN \"Users_PlanetScale_WorkOS_\" u ON u.email = t.requester_email JOIN \"Accounts_PlanetScale_WorkOS_Stripe_\" a ON a.account_id = u.account_id GROUP BY 1, 2 ORDER BY 3 DESC, 1 LIMIT 8",
+    "inputs": [
+     "pipeline_b987c1a7c3448322",
+     "pipeline_3e30171e2717b14e",
+     "pipeline_5d8f5baa60fc2822"
+    ],
+    "assumptions": [
+     "Tickets are matched to accounts by the requester's email"
+    ],
+    "rows": [
+     {
+      "account": "Riverstone Energy",
+      "plan": "free",
+      "tickets": "6"
+     },
+     {
+      "account": "Riverstone Foods",
+      "plan": "free",
+      "tickets": "6"
+     },
+     {
+      "account": "Driftwood Analytics",
+      "plan": "free",
+      "tickets": "5"
+     },
+     {
+      "account": "Ironbark Labs",
+      "plan": "free",
+      "tickets": "5"
+     },
+     {
+      "account": "Ashgrove Foods",
+      "plan": "starter",
+      "tickets": "4"
+     },
+     {
+      "account": "Fernhill Learning",
+      "plan": "enterprise",
+      "tickets": "4"
+     },
+     {
+      "account": "Ironbark Learning",
+      "plan": "enterprise",
+      "tickets": "4"
+     },
+     {
+      "account": "Riverstone Freight",
+      "plan": "free",
+      "tickets": "4"
+     }
+    ],
+    "total": 8,
+    "citations": [
+     {
+      "datasetId": "pipeline_b987c1a7c3448322",
+      "name": "Accounts (PlanetScale + WorkOS + Stripe)",
+      "version": "d2604f43-4b62-4d91-9b57-aa7f995d020a"
+     },
+     {
+      "datasetId": "pipeline_3e30171e2717b14e",
+      "name": "Users (PlanetScale + WorkOS)",
+      "version": "ac94239e-c7d7-4eea-89f9-3d674c74a848"
+     },
+     {
+      "datasetId": "pipeline_5d8f5baa60fc2822",
+      "name": "Support tickets (S3)",
+      "version": "566a7cf6-1a4d-4073-a0c6-4804553466dd"
+     }
+    ],
+    "check": {
+     "kind": "ranking",
+     "label": "account",
+     "measure": "tickets",
+     "order": "desc",
+     "leaders": 2,
+     "keys": [],
+     "duplicates": 0,
+     "missing": 0
+    },
+    "summary": "Riverstone Energy and Riverstone Foods raise the most, 6 tickets each, and both are on the free plan. Driftwood Analytics and Ironbark Labs follow with 5.",
+    "highlights": [
+     "Five of the top eight are on the free plan",
+     "Fernhill Learning and Ironbark Learning lead the enterprise accounts, with 4 each"
+    ]
+   }
+  }
+ }
+]

@@ -1,0 +1,503 @@
+{
+ "ontology": {
+  "signature": "",
+  "hash": "",
+  "summary": "7 entities and 1 activity stream from 11 datasets across 5 sources. Accounts combine PlanetScale, WorkOS and Stripe; users combine PlanetScale and WorkOS.",
+  "described": false,
+  "entities": [
+   {
+    "id": "account",
+    "name": "Account",
+    "description": "60 accounts from PlanetScale, joined with WorkOS organizations and Stripe customers.",
+    "kind": "record",
+    "anchorDatasetId": "70a14227-0ecc-41d3-8273-d2aab41fb083",
+    "key": "account_id",
+    "rows": 60,
+    "members": [
+     {
+      "datasetId": "70a14227-0ecc-41d3-8273-d2aab41fb083",
+      "datasetName": "PlanetScale · accounts",
+      "source": "planetscale",
+      "key": "account_id",
+      "rows": 60,
+      "matched": 60,
+      "via": null
+     },
+     {
+      "datasetId": "319dfff2-8de4-4324-9e09-ddc96bf6d1d3",
+      "datasetName": "WorkOS · organizations",
+      "source": "workos",
+      "key": "organization_id",
+      "rows": 62,
+      "matched": 60,
+      "via": {
+       "column": "organization_id",
+       "targetDatasetId": "70a14227-0ecc-41d3-8273-d2aab41fb083",
+       "targetColumn": "workos_organization_id"
+      }
+     },
+     {
+      "datasetId": "893fc84c-8e0f-45ce-9a14-ac310bb8c9b1",
+      "datasetName": "Stripe · customers",
+      "source": "stripe",
+      "key": "customer_id",
+      "rows": 48,
+      "matched": 46,
+      "via": {
+       "column": "customer_id",
+       "targetDatasetId": "70a14227-0ecc-41d3-8273-d2aab41fb083",
+       "targetColumn": "stripe_customer_id"
+      }
+     }
+    ],
+    "properties": [
+     "account_id",
+     "name",
+     "domain",
+     "plan",
+     "signup_campaign_id",
+     "workos_organization_id",
+     "stripe_customer_id",
+     "created_at",
+     "workos_name",
+     "workos_external_id",
+     "workos_created_at",
+     "stripe_name",
+     "stripe_email",
+     "stripe_delinquent",
+     "stripe_created"
+    ]
+   },
+   {
+    "id": "user",
+    "name": "User",
+    "description": "337 users from PlanetScale, joined with WorkOS users.",
+    "kind": "record",
+    "anchorDatasetId": "fd0fa125-bf3a-466f-a1a8-faf0b8085c79",
+    "key": "user_id",
+    "rows": 337,
+    "members": [
+     {
+      "datasetId": "fd0fa125-bf3a-466f-a1a8-faf0b8085c79",
+      "datasetName": "PlanetScale · users",
+      "source": "planetscale",
+      "key": "user_id",
+      "rows": 337,
+      "matched": 337,
+      "via": null
+     },
+     {
+      "datasetId": "3543c5a3-136d-4f75-b212-c64d80e30302",
+      "datasetName": "WorkOS · users",
+      "source": "workos",
+      "key": "user_id",
+      "rows": 327,
+      "matched": 320,
+      "via": {
+       "column": "user_id",
+       "targetDatasetId": "fd0fa125-bf3a-466f-a1a8-faf0b8085c79",
+       "targetColumn": "workos_user_id"
+      }
+     }
+    ],
+    "properties": [
+     "user_id",
+     "account_id",
+     "workos_user_id",
+     "email",
+     "role",
+     "created_at",
+     "workos_email",
+     "workos_first_name",
+     "workos_last_name",
+     "workos_email_verified",
+     "workos_last_sign_in_at",
+     "workos_created_at"
+    ]
+   },
+   {
+    "id": "subscription",
+    "name": "Subscription",
+    "description": "47 subscriptions from Stripe.",
+    "kind": "record",
+    "anchorDatasetId": "914ab1e9-2219-403a-9d89-be475862c7f2",
+    "key": "subscription_id",
+    "rows": 47,
+    "members": [
+     {
+      "datasetId": "914ab1e9-2219-403a-9d89-be475862c7f2",
+      "datasetName": "Stripe · subscriptions",
+      "source": "stripe",
+      "key": "subscription_id",
+      "rows": 47,
+      "matched": 47,
+      "via": null
+     }
+    ],
+    "properties": [
+     "subscription_id",
+     "customer_id",
+     "status",
+     "quantity",
+     "trial_end",
+     "cancel_at_period_end",
+     "canceled_at",
+     "created"
+    ]
+   },
+   {
+    "id": "invoice",
+    "name": "Invoice",
+    "description": "215 invoices from Stripe.",
+    "kind": "record",
+    "anchorDatasetId": "b5d6de62-aee7-4743-9a20-5bf463673190",
+    "key": "invoice_id",
+    "rows": 215,
+    "members": [
+     {
+      "datasetId": "b5d6de62-aee7-4743-9a20-5bf463673190",
+      "datasetName": "Stripe · invoices",
+      "source": "stripe",
+      "key": "invoice_id",
+      "rows": 215,
+      "matched": 215,
+      "via": null
+     }
+    ],
+    "properties": [
+     "invoice_id",
+     "customer_id",
+     "subscription_id",
+     "status",
+     "billing_reason",
+     "amount_due",
+     "amount_paid",
+     "currency",
+     "created"
+    ]
+   },
+   {
+    "id": "support_ticket",
+    "name": "Support ticket",
+    "description": "119 support tickets from S3.",
+    "kind": "record",
+    "anchorDatasetId": "29ef0e83-d655-4fef-bc1a-6fe611493062",
+    "key": "ticket_id",
+    "rows": 119,
+    "members": [
+     {
+      "datasetId": "29ef0e83-d655-4fef-bc1a-6fe611493062",
+      "datasetName": "S3 · support_tickets.csv",
+      "source": "s3",
+      "key": "ticket_id",
+      "rows": 119,
+      "matched": 119,
+      "via": null
+     }
+    ],
+    "properties": [
+     "ticket_id",
+     "created_at",
+     "requester_email",
+     "account_id",
+     "channel",
+     "category",
+     "priority",
+     "status",
+     "satisfaction"
+    ]
+   },
+   {
+    "id": "campaign",
+    "name": "Campaign",
+    "description": "6 campaigns from S3.",
+    "kind": "record",
+    "anchorDatasetId": "5e71b418-6ecc-4182-844d-8af3840763e5",
+    "key": "campaign_id",
+    "rows": 6,
+    "members": [
+     {
+      "datasetId": "5e71b418-6ecc-4182-844d-8af3840763e5",
+      "datasetName": "S3 · marketing_campaigns.csv",
+      "source": "s3",
+      "key": "campaign_id",
+      "rows": 6,
+      "matched": 6,
+      "via": null
+     }
+    ],
+    "properties": [
+     "campaign_id",
+     "name",
+     "channel",
+     "start_date",
+     "end_date",
+     "spend_usd"
+    ]
+   },
+   {
+    "id": "sso_connection",
+    "name": "SSO connection",
+    "description": "6 SSO connections from WorkOS.",
+    "kind": "record",
+    "anchorDatasetId": "218a5227-aa0f-45ec-bad5-456b74a4b9b2",
+    "key": "connection_id",
+    "rows": 6,
+    "members": [
+     {
+      "datasetId": "218a5227-aa0f-45ec-bad5-456b74a4b9b2",
+      "datasetName": "WorkOS · sso_connections",
+      "source": "workos",
+      "key": "connection_id",
+      "rows": 6,
+      "matched": 6,
+      "via": null
+     }
+    ],
+    "properties": [
+     "connection_id",
+     "organization_id",
+     "connection_type",
+     "state",
+     "created_at"
+    ]
+   },
+   {
+    "id": "event",
+    "name": "Event",
+    "description": "3,873 events from PostHog, linked to users.",
+    "kind": "activity",
+    "anchorDatasetId": "d7395867-9908-4e0c-8b35-f9e0aa81f8f3",
+    "key": "event_id",
+    "rows": 3873,
+    "members": [
+     {
+      "datasetId": "d7395867-9908-4e0c-8b35-f9e0aa81f8f3",
+      "datasetName": "PostHog · events",
+      "source": "posthog",
+      "key": "event_id",
+      "rows": 3873,
+      "matched": 3873,
+      "via": null
+     }
+    ],
+    "properties": [
+     "event_id",
+     "event",
+     "timestamp",
+     "distinct_id",
+     "person_id",
+     "session_id",
+     "current_url"
+    ]
+   }
+  ],
+  "links": [
+   {
+    "id": "account-signup_campaign_id-campaign",
+    "name": "came from",
+    "from": "account",
+    "to": "campaign",
+    "fromDatasetId": "70a14227-0ecc-41d3-8273-d2aab41fb083",
+    "fromColumn": "signup_campaign_id",
+    "toDatasetId": "5e71b418-6ecc-4182-844d-8af3840763e5",
+    "toColumn": "campaign_id",
+    "totalRows": 47,
+    "matchedRows": 47,
+    "caseInsensitive": true,
+    "evidence": "name"
+   },
+   {
+    "id": "user-account_id-account",
+    "name": "belongs to",
+    "from": "user",
+    "to": "account",
+    "fromDatasetId": "fd0fa125-bf3a-466f-a1a8-faf0b8085c79",
+    "fromColumn": "account_id",
+    "toDatasetId": "70a14227-0ecc-41d3-8273-d2aab41fb083",
+    "toColumn": "account_id",
+    "totalRows": 337,
+    "matchedRows": 337,
+    "caseInsensitive": false,
+    "evidence": "name"
+   },
+   {
+    "id": "subscription-customer_id-account",
+    "name": "billed to",
+    "from": "subscription",
+    "to": "account",
+    "fromDatasetId": "914ab1e9-2219-403a-9d89-be475862c7f2",
+    "fromColumn": "customer_id",
+    "toDatasetId": "893fc84c-8e0f-45ce-9a14-ac310bb8c9b1",
+    "toColumn": "customer_id",
+    "totalRows": 47,
+    "matchedRows": 46,
+    "caseInsensitive": false,
+    "evidence": "name"
+   },
+   {
+    "id": "invoice-subscription_id-subscription",
+    "name": "for subscription",
+    "from": "invoice",
+    "to": "subscription",
+    "fromDatasetId": "b5d6de62-aee7-4743-9a20-5bf463673190",
+    "fromColumn": "subscription_id",
+    "toDatasetId": "914ab1e9-2219-403a-9d89-be475862c7f2",
+    "toColumn": "subscription_id",
+    "totalRows": 215,
+    "matchedRows": 215,
+    "caseInsensitive": false,
+    "evidence": "name"
+   },
+   {
+    "id": "support_ticket-requester_email-user",
+    "name": "requested by",
+    "from": "support_ticket",
+    "to": "user",
+    "fromDatasetId": "29ef0e83-d655-4fef-bc1a-6fe611493062",
+    "fromColumn": "requester_email",
+    "toDatasetId": "fd0fa125-bf3a-466f-a1a8-faf0b8085c79",
+    "toColumn": "email",
+    "totalRows": 119,
+    "matchedRows": 114,
+    "caseInsensitive": true,
+    "evidence": "name"
+   },
+   {
+    "id": "sso_connection-organization_id-account",
+    "name": "belongs to",
+    "from": "sso_connection",
+    "to": "account",
+    "fromDatasetId": "218a5227-aa0f-45ec-bad5-456b74a4b9b2",
+    "fromColumn": "organization_id",
+    "toDatasetId": "319dfff2-8de4-4324-9e09-ddc96bf6d1d3",
+    "toColumn": "organization_id",
+    "totalRows": 6,
+    "matchedRows": 6,
+    "caseInsensitive": false,
+    "evidence": "name"
+   },
+   {
+    "id": "event-distinct_id-user",
+    "name": "performed by",
+    "from": "event",
+    "to": "user",
+    "fromDatasetId": "d7395867-9908-4e0c-8b35-f9e0aa81f8f3",
+    "fromColumn": "distinct_id",
+    "toDatasetId": "fd0fa125-bf3a-466f-a1a8-faf0b8085c79",
+    "toColumn": "user_id",
+    "totalRows": 3873,
+    "matchedRows": 3767,
+    "caseInsensitive": false,
+    "evidence": "values"
+   }
+  ],
+  "notes": [
+   {
+    "kind": "merged",
+    "entities": [
+     "account"
+    ],
+    "text": "Account combines PlanetScale accounts with WorkOS organizations (60 of 62 match, confirmed by external_id) and Stripe customers (46 of 48 match, confirmed by metadata.account_id)."
+   },
+   {
+    "kind": "merged",
+    "entities": [
+     "user"
+    ],
+    "text": "User combines PlanetScale users with WorkOS users (320 of 327 match, confirmed by email)."
+   }
+  ],
+  "unplaced": []
+ },
+ "datasets": [
+  {
+   "id": "319dfff2-8de4-4324-9e09-ddc96bf6d1d3",
+   "kind": "dataset",
+   "name": "WorkOS · organizations",
+   "data": {
+    "sampleSource": "workos"
+   }
+  },
+  {
+   "id": "70a14227-0ecc-41d3-8273-d2aab41fb083",
+   "kind": "dataset",
+   "name": "PlanetScale · accounts",
+   "data": {
+    "sampleSource": "planetscale"
+   }
+  },
+  {
+   "id": "3543c5a3-136d-4f75-b212-c64d80e30302",
+   "kind": "dataset",
+   "name": "WorkOS · users",
+   "data": {
+    "sampleSource": "workos"
+   }
+  },
+  {
+   "id": "fd0fa125-bf3a-466f-a1a8-faf0b8085c79",
+   "kind": "dataset",
+   "name": "PlanetScale · users",
+   "data": {
+    "sampleSource": "planetscale"
+   }
+  },
+  {
+   "id": "218a5227-aa0f-45ec-bad5-456b74a4b9b2",
+   "kind": "dataset",
+   "name": "WorkOS · sso_connections",
+   "data": {
+    "sampleSource": "workos"
+   }
+  },
+  {
+   "id": "893fc84c-8e0f-45ce-9a14-ac310bb8c9b1",
+   "kind": "dataset",
+   "name": "Stripe · customers",
+   "data": {
+    "sampleSource": "stripe"
+   }
+  },
+  {
+   "id": "914ab1e9-2219-403a-9d89-be475862c7f2",
+   "kind": "dataset",
+   "name": "Stripe · subscriptions",
+   "data": {
+    "sampleSource": "stripe"
+   }
+  },
+  {
+   "id": "d7395867-9908-4e0c-8b35-f9e0aa81f8f3",
+   "kind": "dataset",
+   "name": "PostHog · events",
+   "data": {
+    "sampleSource": "posthog"
+   }
+  },
+  {
+   "id": "29ef0e83-d655-4fef-bc1a-6fe611493062",
+   "kind": "dataset",
+   "name": "S3 · support_tickets.csv",
+   "data": {
+    "sampleSource": "s3"
+   }
+  },
+  {
+   "id": "b5d6de62-aee7-4743-9a20-5bf463673190",
+   "kind": "dataset",
+   "name": "Stripe · invoices",
+   "data": {
+    "sampleSource": "stripe"
+   }
+  },
+  {
+   "id": "5e71b418-6ecc-4182-844d-8af3840763e5",
+   "kind": "dataset",
+   "name": "S3 · marketing_campaigns.csv",
+   "data": {
+    "sampleSource": "s3"
+   }
+  }
+ ]
+}

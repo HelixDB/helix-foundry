@@ -13,3 +13,5 @@ docs-media
 tests/unit/__fixtures__/event-render
 # The Go module: gofmt formats it, and its testdata is byte for byte
 backend
+# The landing page's figures' data, as exported
+src/landing/data
