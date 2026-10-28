@@ -18,8 +18,9 @@ import {
 // The prompt "Set up with your agent" copies for the user's own agent
 // (Claude Code, Codex) with the Helix MCP: what Foundry is, how to connect
 // the MCP, where the workspace's setup is, and the steps from there to a
-// loaded ontology, each through the MCP's tools. It names
-// the Helix MCP's Foundry tools, operations and payloads, so keep
+// loaded ontology, each through the MCP's tools. The landing page copies it
+// for no workspace: the agent finds the user's and reads where it stands.
+// It names the Helix MCP's Foundry tools, operations and payloads, so keep
 // it in step with them, and defers to the helix-foundry-onboarding skill
 // (HelixDB/skills) when the agent has it. The goal is worked out as the goal
 // prompt (./goal-prompt.ts) has it worked out, then shown to the user
@@ -41,16 +42,8 @@ export type PromptKind = {
   available: boolean;
 };
 
-export type OnboardingPromptInput = {
-  // Foundry's origin: "https://foundry.helix-db.com".
-  origin: string;
-  // The Helix MCP's URL, for the commands that add it.
-  mcpUrl: string;
-  // Where the stamp takes API sources' pieces over HTTP
-  // (NEXT_PUBLIC_HELIX_EVENTS_URL). With it, the step that makes an API
-  // source says its `send_url` takes them too; unset or "" (prod, local
-  // mode), the prompt says nothing of HTTP.
-  eventsUrl?: string;
+/** Where the workspace stands, from the app's reads. */
+export type OnboardingWorkspace = {
   workspace: { id: string; name: string };
   // Null while the workspace has none: the setup starts by creating one.
   ontology: OnboardingOntology | null;
@@ -61,6 +54,23 @@ export type OnboardingPromptInput = {
   sets: readonly Omit<PromptSet, "chosen">[];
   kinds: readonly PromptKind[];
 };
+
+export type OnboardingPromptInput = {
+  // Foundry's origin: "https://foundry.helix-db.com".
+  origin: string;
+  // The Helix MCP's URL, for the commands that add it.
+  mcpUrl: string;
+  // Where the stamp takes API sources' pieces over HTTP
+  // (NEXT_PUBLIC_HELIX_EVENTS_URL). With it, the step that makes an API
+  // source says its `send_url` takes them too; unset or "" (prod, local
+  // mode), the prompt says nothing of HTTP.
+  eventsUrl?: string;
+} & (
+  | OnboardingWorkspace
+  // Someone who hasn't signed in (the landing page): no workspace is known,
+  // so the agent finds it and reads the rest with the tools.
+  | { workspace: null }
+);
 
 /** The steps, in order; a setup under way starts at its own (`first`). */
 const STEPS = [
@@ -115,25 +125,29 @@ function standing(o: OnboardingOntology): string {
  * The prompt, in Markdown, in the user's voice: what Foundry is, how to
  * connect the Helix MCP, where things stand (the workspace, its ontology
  * and setup step, its data as the goal prompt describes it, and the kinds
- * not connected), the rules for acting through the MCP, and the steps left:
- * every step without an ontology, else from its setup's step on.
+ * not connected; without a workspace, which tools read them), the rules for
+ * acting through the MCP, and the steps left: every step without an
+ * ontology, else from its setup's step on.
  */
 export function onboardingPrompt(input: OnboardingPromptInput): string {
-  const ws = input.workspace.id,
-    o = input.ontology,
+  const known = input.workspace !== null ? input : null,
+    ws = known?.workspace.id ?? "<workspace id>",
+    o = known?.ontology ?? null,
     oid = o?.id || "<ontology id>",
     target = `\`ontology:${ws}/${oid}\``,
     ids = `"workspace_id": "${ws}", "ontology_id": "${oid}"`,
     link = (path: string) =>
-      `${input.origin}${path}?workspace=${encodeURIComponent(ws)}`,
+      known
+        ? `${input.origin}${path}?workspace=${encodeURIComponent(ws)}`
+        : `${input.origin}${path}`,
     billing = link(paths.settings("billing"));
+  const connectors = known?.connectors ?? [],
+    sources = known?.eventSources ?? [],
+    sets = known?.sets ?? [];
   const { tables, eventSources, documents, others } = inventory({
-    connectors: input.connectors.map((c) => ({ ...c, chosen: true })),
-    eventSources: (input.eventSources || []).map((e) => ({
-      ...e,
-      chosen: true,
-    })),
-    sets: input.sets.map((s) => ({ ...s, chosen: true })),
+    connectors: connectors.map((c) => ({ ...c, chosen: true })),
+    eventSources: sources.map((e) => ({ ...e, chosen: true })),
+    sets: sets.map((s) => ({ ...s, chosen: true })),
   });
   // A draft or a load under way, which its step waits for.
   const drafting =
@@ -143,9 +157,9 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
     loading = o?.setup.step === "load" && o.setup.state === "running",
     // What there is to draft from already.
     synced =
-      input.connectors.some((c) => c.tables.length > 0) ||
-      (input.eventSources || []).some((e) => e.pieces > 0),
-    uploaded = input.sets.some((s) => s.documents > 0 || s.files.length > 0);
+      connectors.some((c) => c.tables.length > 0) ||
+      sources.some((e) => e.pieces > 0),
+    uploaded = sets.some((s) => s.documents > 0 || s.files.length > 0);
   const sections: Record<StepId, { title: string; body: string[] }> = {
     ontology: {
       title: "Create the ontology",
@@ -187,11 +201,13 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
         `2. For each file, \`upload_document\`, target ${target}, payload \`{"set_id": "<set id>", "name": "<file name>", "size_bytes": <its size>, "sha256": "<its SHA-256, lowercase hex>"}\`. Send the file’s bytes as its result’s \`next\` says (without an \`upload\`, the workspace already holds them), then call \`helix_foundry_complete_document_upload\` with \`{${ids}, "document_id": "<its document’s id>"}\`.`,
         `3. A table file or a PDF counts once Helix has read it: follow each file’s \`read\` with \`helix_foundry_list_documents\` (\`{${ids}, "set_id": "<set id>"}\`) until its \`state\` isn’t \`reading\`. If it’s \`failed\`, tell me its \`error_message\`.`,
         "",
-        synced
-          ? "If what’s there already serves the questions, go on."
-          : uploaded
-            ? "Only documents are there so far, and they’re enough on their own: if they serve the questions, go on, and generate from documents alone."
-            : "Nothing is connected or uploaded yet, so add at least one.",
+        !known
+          ? "If what’s there already serves the questions, go on; if nothing is connected or uploaded yet, add at least one."
+          : synced
+            ? "If what’s there already serves the questions, go on."
+            : uploaded
+              ? "Only documents are there so far, and they’re enough on their own: if they serve the questions, go on, and generate from documents alone."
+              : "Nothing is connected or uploaded yet, so add at least one.",
       ],
     },
     goal: {
@@ -263,13 +279,17 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
   return [
     "# Set up Helix Foundry with me",
     "",
-    `I want to set up Helix Foundry in my workspace “${input.workspace.name}”, and I’d like you to do it with me through the Helix MCP’s tools. If you have the \`helix-foundry-onboarding\` skill (from HelixDB/skills), follow it, starting from where things stand below. If you don’t, everything you need is here.`,
+    known
+      ? `I want to set up Helix Foundry in my workspace “${known.workspace.name}”, and I’d like you to do it with me through the Helix MCP’s tools. If you have the \`helix-foundry-onboarding\` skill (from HelixDB/skills), follow it, starting from where things stand below. If you don’t, everything you need is here.`
+      : "I want to set up Helix Foundry, and I’d like you to do it with me through the Helix MCP’s tools. If you have the `helix-foundry-onboarding` skill (from HelixDB/skills), follow it. If you don’t, everything you need is here.",
     "",
     "## What Foundry is",
     "",
     "Helix Foundry turns a business’s data, the tables it syncs from apps and databases and the documents it’s given, into an ontology: the kinds of things in the business, how they link and the rules they follow. It loads the ontology into a Helix graph database, where people and AI agents explore it and ask it questions.",
     "",
-    `Foundry is at ${input.origin}. Every Foundry link takes \`?workspace=<workspace id>\`: this workspace opens at ${link(paths.home())}.`,
+    known
+      ? `Foundry is at ${input.origin}. Every Foundry link takes \`?workspace=<workspace id>\`: this workspace opens at ${link(paths.home())}.`
+      : `Foundry is at ${input.origin}. Every Foundry link takes \`?workspace=<workspace id>\`.`,
     "",
     "## Before you start",
     "",
@@ -278,38 +298,56 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
     `- Claude Code: \`claude mcp add --transport http helix ${input.mcpUrl}\`, then \`/mcp\` to sign in.`,
     `- Codex: \`codex mcp add helix --url ${input.mcpUrl} && codex mcp login helix\`.`,
     "",
-    `Then check that \`helix_list_workspaces\` lists “${input.workspace.name}” (\`${ws}\`). If it doesn’t, you’re signed in as someone else: stop and tell me.`,
-    "",
-    "## Where things stand",
-    "",
-    "When I copied this prompt from Foundry:",
-    "",
-    `- Workspace: “${input.workspace.name}” (\`${ws}\`).`,
-    o
-      ? `- Ontology: “${o.name || o.id}” (\`${o.id}\`), in ${o.tenantId ? `database \`tenant:${o.tenantId}\`${o.databaseName ? ` (${o.databaseName})` : ""}` : "a database I can’t see"}. Its page is ${link(paths.ontology(o.id))}. Its setup is at “${STEP_COPY[o.setup.step].title}”: ${standing(o)}`
-      : "- No ontology yet.",
-    "",
-    "Read the state again with the tools before you act on it: it may have moved on.",
-    "",
-    "### Tables",
-    "",
-    ...(tables.length ? tables : ["Nothing is synced yet.", ""]),
-    ...(eventSources.length ? ["### API sources", "", ...eventSources] : []),
-    "### Documents",
-    "",
-    ...(documents.length ? documents : ["None.", ""]),
-    ...(others.length ? ["### Also connected", "", ...others, ""] : []),
-    ...(input.kinds.length
+    ...(known
       ? [
-          "### Not connected yet",
+          `Then check that \`helix_list_workspaces\` lists “${known.workspace.name}” (\`${ws}\`). If it doesn’t, you’re signed in as someone else: stop and tell me.`,
           "",
-          ...input.kinds.map(
-            (k) =>
-              `- ${k.label}: \`${k.kind}\`${k.available ? "" : ", needs Foundry Pro"}`,
-          ),
+          "## Where things stand",
           "",
+          "When I copied this prompt from Foundry:",
+          "",
+          `- Workspace: “${known.workspace.name}” (\`${ws}\`).`,
+          o
+            ? `- Ontology: “${o.name || o.id}” (\`${o.id}\`), in ${o.tenantId ? `database \`tenant:${o.tenantId}\`${o.databaseName ? ` (${o.databaseName})` : ""}` : "a database I can’t see"}. Its page is ${link(paths.ontology(o.id))}. Its setup is at “${STEP_COPY[o.setup.step].title}”: ${standing(o)}`
+            : "- No ontology yet.",
+          "",
+          "Read the state again with the tools before you act on it: it may have moved on.",
+          "",
+          "### Tables",
+          "",
+          ...(tables.length ? tables : ["Nothing is synced yet.", ""]),
+          ...(eventSources.length
+            ? ["### API sources", "", ...eventSources]
+            : []),
+          "### Documents",
+          "",
+          ...(documents.length ? documents : ["None.", ""]),
+          ...(others.length ? ["### Also connected", "", ...others, ""] : []),
+          ...(known.kinds.length
+            ? [
+                "### Not connected yet",
+                "",
+                ...known.kinds.map(
+                  (k) =>
+                    `- ${k.label}: \`${k.kind}\`${k.available ? "" : ", needs Foundry Pro"}`,
+                ),
+                "",
+              ]
+            : []),
         ]
-      : []),
+      : [
+          `Then call \`helix_list_workspaces\` and use my workspace: the only one, or ask me which. If it lists none, I haven’t used Foundry yet: have me sign in at ${input.origin}/login and create one, then list them again. Its \`id\` is the \`<workspace id>\` below.`,
+          "",
+          "## Where things stand",
+          "",
+          "Read it with the tools before you act:",
+          "",
+          "- `helix_foundry_list_ontologies`: the workspace’s ontologies. If one is unfinished (no `current_version_id`, or no `current_load`), carry it on rather than create another, asking me which if there are several: read it with `helix_foundry_get_ontology` and start at its step below.",
+          "- `helix_foundry_list_connectors`: its connectors and API sources, with their synced tables.",
+          "- `helix_foundry_list_connector_kinds`: the kinds it can connect, and which need Foundry Pro.",
+          "- `helix_foundry_get_ontology`: an ontology’s document sets.",
+          "",
+        ]),
     "## Rules",
     "",
     "- Every change is an operation, in two calls: `helix_prepare_foundry_operation` with its `operation`, `target` and `payload`, then `helix_execute_foundry_operation` with the same three, unchanged, and the `confirmation_id` and `confirmation_token` the first returned, within 5 minutes.",

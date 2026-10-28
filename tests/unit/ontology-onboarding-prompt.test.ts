@@ -199,6 +199,71 @@ describe("onboardingPrompt without an ontology", () => {
   });
 });
 
+describe("onboardingPrompt without a workspace", () => {
+  // The landing page's: nobody has signed in, so nothing is known.
+  const text = onboardingPrompt({
+    origin: "https://foundry.example.com",
+    mcpUrl: "https://mcp.example.com/mcp",
+    workspace: null,
+  });
+
+  it("has the agent find the workspace, or have me make one", () => {
+    expect(text).toContain(
+      "I want to set up Helix Foundry, and I’d like you to do it with me through the Helix MCP’s tools. If you have the `helix-foundry-onboarding` skill (from HelixDB/skills), follow it. If you don’t",
+    );
+    expect(text).toContain(
+      "Foundry is at https://foundry.example.com. Every Foundry link takes `?workspace=<workspace id>`.\n",
+    );
+    expect(text).not.toContain("this workspace opens at");
+    expect(text).toContain(
+      "`claude mcp add --transport http helix https://mcp.example.com/mcp`",
+    );
+    expect(text).toContain(
+      "Then call `helix_list_workspaces` and use my workspace: the only one, or ask me which. If it lists none, I haven’t used Foundry yet: have me sign in at https://foundry.example.com/login and create one",
+    );
+  });
+
+  it("reads where things stand with the tools, carrying on an unfinished ontology", () => {
+    expect(text).toContain("## Where things stand\n\nRead it with the tools");
+    for (const tool of [
+      "`helix_foundry_list_ontologies`",
+      "`helix_foundry_list_connectors`",
+      "`helix_foundry_list_connector_kinds`",
+      "`helix_foundry_get_ontology`",
+    ])
+      expect(text).toContain(`- ${tool}`);
+    expect(text).toContain("carry it on rather than create another");
+    expect(text).not.toContain("When I copied this prompt");
+    expect(text).not.toContain("### Tables");
+    expect(text).not.toContain("### Not connected yet");
+    expect(text).toContain(
+      "If what’s there already serves the questions, go on; if nothing is connected or uploaded yet, add at least one.",
+    );
+  });
+
+  it("walks every step with the workspace's id to fill in, and links without one", () => {
+    expect(steps(text)).toEqual([
+      "Create the ontology",
+      "Connect your data or upload documents",
+      "Write the goal",
+      "Generate a draft",
+      "Review the draft",
+      "Make it current",
+      "Load it",
+      "Hand it back",
+    ]);
+    expect(text).toContain("target `workspace:<workspace id>`");
+    expect(text).toContain("target `ontology:<workspace id>/<ontology id>`");
+    expect(text).toContain(
+      '`{"workspace_id": "<workspace id>", "kind": "<kind>"}`',
+    );
+    expect(text).toContain(
+      "Give me https://foundry.example.com/settings/billing to upgrade",
+    );
+    expect(text).not.toContain("?workspace=%3C");
+  });
+});
+
 describe("onboardingPrompt with nothing synced", () => {
   it("says so, and leaves out the sections it has nothing for", () => {
     const text = onboardingPrompt(
