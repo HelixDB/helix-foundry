@@ -797,6 +797,9 @@ export type OntologyGeneration = {
   documents?: OntologyGenerationDocument[];
   // Set exactly for a revision of a version (ReviseOntologyVersion).
   revision?: OntologyRevision | null;
+  // The sample it drafts from in place of the AI ("kestrel"); "" for an AI
+  // draft.
+  sample?: string;
 };
 
 /**
@@ -872,6 +875,13 @@ export type GenerateOntologyRequest = {
   // needs a textField and a synced piece (FAILED_PRECONDITION without
   // either); documentSetIds never names that set (INVALID_ARGUMENT).
   eventSources?: FoundryEventSourcePick[];
+  // Foundry's sample company ("kestrel", the only one) to draft from in
+  // place of the AI: the generation stores its ready-made draft, mapped to
+  // this workspace's copies of its files, with no model call. It needs
+  // exactly one set in documentSetIds, noConnectors and no eventSources
+  // (INVALID_ARGUMENT otherwise), and each of the sample's table files in
+  // that set, read (FAILED_PRECONDITION until then).
+  sample?: string;
 };
 
 /**

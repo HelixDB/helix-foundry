@@ -175,16 +175,11 @@ test("drafts a new install's first ontology from the sample company", async ({
   await configure({ freshInstall: true });
   await page.goto("/");
   await page.getByRole("button", { name: "Use the sample" }).click();
-  await expect(page).toHaveURL(/\/ontology\/new\?step=review$/, {
-    timeout: 30_000,
-  });
-  const steps = page.getByRole("list", { name: "Steps" });
-  await expect(steps).toContainText(
-    "Kestrel sample: 6 table files and 9 documents",
-  );
-  await expect(steps).toContainText("A new database, Kestrel customers");
-  await page.getByRole("button", { name: "Create and generate" }).click();
-  await createdOntology(page);
+  await expect(page).toHaveURL(/\/ontology\/ont_\w+$/, { timeout: 30_000 });
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Kestrel customers" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Version 1" })).toBeVisible();
 });
 
 // With no provider, the sample asks for one; Settings has the way back to
@@ -223,9 +218,7 @@ test("asks for an AI provider before adding the sample company, then goes back t
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(first).toBeVisible();
   await sample.click();
-  await expect(page).toHaveURL(/\/ontology\/new\?step=review$/, {
-    timeout: 30_000,
-  });
+  await expect(page).toHaveURL(/\/ontology\/ont_\w+$/, { timeout: 30_000 });
 });
 
 test("keeps only settings and the theme in the account menu", async ({

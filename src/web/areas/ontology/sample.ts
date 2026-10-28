@@ -3,9 +3,12 @@
  * Kestrel, a made-up field-service software company, as its own records
  * hold it. scripts/sample-company.mjs writes its files into public/, served
  * at `base`; uploaded, they go into a set of the workspace's named
- * `set.name`, which the wizard drafts `ontology` from, toward `goal`.
+ * `set.name`, from which the wizard creates `ontology`, toward `goal`, on
+ * the sample's ready-made draft (GenerateOntologyRequest's `sample`, `id`;
+ * backend/sample/kestrel.json).
  */
 export const SAMPLE = {
+  id: "kestrel",
   base: "/samples/kestrel/",
   ontology: "Kestrel customers",
   set: {

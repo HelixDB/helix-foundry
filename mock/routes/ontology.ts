@@ -17,6 +17,7 @@ import type {
 // constraint given fixture evidence, as a finished draft has (the run
 // predates evaluation); and a Definition v1 version on the seeded Stripe
 // account.
+import kestrel from "../../backend/sample/kestrel.json";
 import agentBundle from "../fixtures/agent-bundle.json";
 // An agent draft for contracts with the Stripe customers, with a Contract
 // type that only documents fill: what the graph mock loads (./graph.ts).
@@ -455,6 +456,26 @@ export function generationsEnded(ontologyId: string) {
     }
 }
 
+// The sample company's ready-made draft (backend/sample/kestrel.json), which
+// a sample generation stores in place of the AI's: its table files, by the
+// names its placeholders give, and its title, as the WFE's.
+const KESTREL = JSON.stringify(kestrel),
+  KESTREL_TABLES = [
+    ...new Set(
+      [...KESTREL.matchAll(/\{\{file:([^{}]+)\}\}/g)].map((m) => m[1]!),
+    ),
+  ],
+  KESTREL_TITLE = "Kestrel customer accounts, contracts and renewal risk";
+/** The sample's draft for a workspace's copies of its table files in `set`. */
+function sampleDraft(
+  files: { id: string; name: string }[],
+  set: string,
+): Record<string, unknown> {
+  let text = KESTREL.replaceAll("{{set}}", set);
+  for (const f of files) text = text.replaceAll(`{{file:${f.name}}}`, f.id);
+  return JSON.parse(text);
+}
+
 // Moves a generation along its plan: queued, running, then done; a retry
 // runs a second time after waiting a step.
 function advance(g: StoredGeneration) {
@@ -577,6 +598,18 @@ function advance(g: StoredGeneration) {
   const texts = scope
     .filter((id) => textDocumentCount(g.workspaceId!, [id]) > 0)
     .map((id) => ({ id, name: setName(id) }));
+  // As the WFE's worker: a sample whose table file is gone fails for good.
+  if (
+    g.sample &&
+    KESTREL_TABLES.some((t) => !files.some((f) => f.name === t))
+  ) {
+    Object.assign(g, {
+      status: "ONTOLOGY_GENERATION_STATUS_FAILED",
+      error: "the sample's files were deleted or moved: add the sample again",
+      finishedAt,
+    });
+    return;
+  }
   // As the agent generator: nothing left to read fails for good.
   if (!picked.length && !texts.length) {
     Object.assign(g, {
@@ -601,13 +634,15 @@ function advance(g: StoredGeneration) {
       ) + 1,
     format: "ONTOLOGY_FORMAT_AGENT_BUNDLE",
     // With the operators' flag and the owner's consent, the agent sees
-    // People enrichment.
-    definition: draftFromTables(
-      picked,
-      g.goal || "",
-      texts,
-      enrichmentFlagOn() && enrichmentAllowed(g.workspaceId!),
-    ),
+    // People enrichment. A sample's draft is ready-made.
+    definition: g.sample
+      ? sampleDraft(files, scope[0] || "")
+      : draftFromTables(
+          picked,
+          g.goal || "",
+          texts,
+          enrichmentFlagOn() && enrichmentAllowed(g.workspaceId!),
+        ),
     source: "ONTOLOGY_SOURCE_GENERATED",
     generationId: g.id,
     createdByUserId: g.requestedByUserId,
@@ -619,7 +654,7 @@ function advance(g: StoredGeneration) {
     status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED",
     error: "",
     resultVersionId: version.id,
-    model: aiModel(g.workspaceId!, "draft") || MODEL,
+    model: g.sample ? "" : aiModel(g.workspaceId!, "draft") || MODEL,
     finishedAt,
   });
 }
@@ -683,6 +718,7 @@ const generationOut = (
   nextAttemptAt: g.nextAttemptAt || null,
   documentSetIds: [...(g.documentSetIds || [])],
   documents: (g.documents || []).map((d) => ({ ...d })),
+  sample: g.sample || "",
   revision: g.revision
     ? {
         parentVersionId: g.revision.parentVersionId || "",
@@ -897,6 +933,22 @@ export const ontologyRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           "connector_ids must be empty with no_connectors",
         );
+      const sample = body.sample || "";
+      if (sample && sample !== "kestrel")
+        return fail(
+          "INVALID_ARGUMENT",
+          `no sample is called ${JSON.stringify(sample)}`,
+        );
+      if (
+        sample &&
+        ((body.documentSetIds || []).length !== 1 ||
+          !none ||
+          (body.eventSources || []).length)
+      )
+        return fail(
+          "INVALID_ARGUMENT",
+          "a sample is drafted from its document set alone: name that one set, with no_connectors and no event source",
+        );
       // As the WFE checks: a live generation, the connectors and their
       // tables, then the sets.
       const mine = state.generations.filter((g) => g.ontologyId === o.id);
@@ -1008,6 +1060,19 @@ export const ontologyRoutes: MockRoute[] = [
       const documents = readTableFiles(m.workspaceId, documentSetIds).map(
         (f) => ({ id: f.id, setId: f.setId }),
       );
+      const missing =
+        sample &&
+        KESTREL_TABLES.find(
+          (t) =>
+            !readTableFiles(m.workspaceId, documentSetIds).some(
+              (f) => f.name === t,
+            ),
+        );
+      if (missing)
+        return fail(
+          "FAILED_PRECONDITION",
+          `the sample's ${missing} isn't in its set, read: wait for its files to be read, or add the sample again`,
+        );
       const count = tables.length + documents.length;
       if (!count && !textDocumentCount(m.workspaceId, documentSetIds))
         return fail(
@@ -1026,6 +1091,7 @@ export const ontologyRoutes: MockRoute[] = [
         ontologyId: o.id,
         status: "ONTOLOGY_GENERATION_STATUS_QUEUED",
         ...(goal ? { goal, title: draftTitle(goal) } : {}),
+        ...(sample ? { sample, title: KESTREL_TITLE } : {}),
         tables,
         documentSetIds,
         documents,

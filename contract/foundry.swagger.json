@@ -3428,6 +3428,10 @@
             "$ref": "#/definitions/v1FoundryEventSourcePick"
           },
           "description": "Event sources to draft from, each with how this ontology reads it.\nconnector_ids names no event source, and its empty default never\nincludes one. Extraction reads the source's own document set, which\ncounts as one of the 20 sets, and needs the source to have a\ntext_field and a synced piece (FAILED_PRECONDITION without either)."
+        },
+        "sample": {
+          "type": "string",
+          "description": "Foundry's sample company to draft from in place of the AI: \"kestrel\" is\nthe only one (INVALID_ARGUMENT for another). The generation stores the\nsample's ready-made draft, mapped to this workspace's copies of its\nfiles, and calls no model. document_set_ids must name exactly one set,\nwith no_connectors and no event source (INVALID_ARGUMENT otherwise), and\neach of the sample's table files must be in it, read\n(FAILED_PRECONDITION while one is missing or still being read)."
         }
       }
     },
@@ -5320,7 +5324,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "load, extract or delete."
+          "description": "load, extract, apply or delete."
         },
         "loadId": {
           "type": "string",
@@ -5406,6 +5410,19 @@
         "enrichment": {
           "$ref": "#/definitions/v1FoundryLoadEnrichment",
           "description": "Its People enrichment step; unset when its version enriches no one."
+        },
+        "appliedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a refresh last brought its tables up to date in place; unset until\none has."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryLoadSource"
+          },
+          "description": "The snapshot of each table it holds; empty for a load written before\nHelix recorded them, or still writing its tables."
         }
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
@@ -5507,6 +5524,26 @@
           "$ref": "#/definitions/v1FoundryLoad"
         }
       }
+    },
+    "v1FoundryLoadSource": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "syncId": {
+          "type": "string",
+          "description": "The sync that wrote the snapshot, and when it finished; both unset for a\nload written before Helix recorded them."
+        },
+        "syncedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryLoadSource is the snapshot of one synced table a load holds."
     },
     "v1FoundryOllamaModel": {
       "type": "object",
@@ -6481,6 +6518,10 @@
             "$ref": "#/definitions/v1OntologyGenerationDocument"
           },
           "description": "The table files of its document sets it drafts from beside the tables:\neach is a table of its own, which mappings name by its document id. A\nrevision's are its parent's."
+        },
+        "sample": {
+          "type": "string",
+          "description": "The sample it drafts from in place of the AI\n(GenerateOntologyRequest.sample); empty for an AI draft."
         }
       },
       "description": "OntologyGeneration is one request to draft a version of an ontology."
