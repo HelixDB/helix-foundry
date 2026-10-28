@@ -14,7 +14,7 @@ import {
 describe("the sections", () => {
   it("lists Ask first, then Ontologies, the Explorer and Connectors", () => {
     expect(primaryNav.map((n) => [n.label, n.to])).toEqual([
-      ["Ask", "/ask"],
+      ["Analyst", "/ask"],
       ["Ontologies", "/ontology"],
       ["Explorer", "/explore"],
       ["Connectors", "/data"],
@@ -43,7 +43,7 @@ describe("activeSection", () => {
 describe("what a section shows beside the page", () => {
   it("puts Ask's threads in the sidebar, under the sections", () => {
     expect(Object.keys(sectionSidebars)).toEqual(["ask"]);
-    expect(sectionSidebars.ask?.label).toBe("Ask threads");
+    expect(sectionSidebars.ask?.label).toBe("Analyst threads");
   });
 
   it("gives Connectors, Ontologies and the Explorer a panel beside the sidebar, and Ask none", () => {

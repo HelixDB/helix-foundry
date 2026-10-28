@@ -36,7 +36,7 @@ export const ontologyShell: AreaShell = {
       fallback: ExplorerContext,
     },
   },
-  sidebar: { ask: { label: "Ask threads", component: AskThreads } },
+  sidebar: { ask: { label: "Analyst threads", component: AskThreads } },
   palette: [
     {
       id: "ontologies",

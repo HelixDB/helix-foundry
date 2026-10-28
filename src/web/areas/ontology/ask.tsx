@@ -181,7 +181,7 @@ export function AskPage() {
     enabled: false,
   }).data?.version;
   const suggestions = useMemo(() => askSuggestions(version), [version]);
-  useTitle(view.kind === "thread" ? undefined : "Ask");
+  useTitle(view.kind === "thread" ? undefined : "Analyst");
   const setThread = (id: string) =>
     setParams(
       (p) => {
@@ -203,7 +203,7 @@ export function AskPage() {
   if (!ontology.tenantId)
     return (
       <div className="ak-chat">
-        <ChatBar title="Ask">{picker}</ChatBar>
+        <ChatBar title="Analyst">{picker}</ChatBar>
         <div className="ak-scroll ak-chat--empty">
           <EmptyState
             icon={Ban}
@@ -216,7 +216,7 @@ export function AskPage() {
   if (view.kind === "threads")
     return (
       <div className="ak-chat">
-        <ChatBar title="Ask">{picker}</ChatBar>
+        <ChatBar title="Analyst">{picker}</ChatBar>
         <div className="ak-scroll">
           <AskThreads />
         </div>
@@ -239,7 +239,7 @@ export function AskPage() {
     return (
       <div className="ak-chat">
         <ChatBar
-          title="Ask"
+          title="Analyst"
           onBack={threads.length > 0 ? () => setThread("") : undefined}
         >
           {picker}
@@ -1484,7 +1484,7 @@ export function AskDrawer({
                 load?.current ? null : loadId,
               )}
             >
-              Open in Ask
+              Open in Analyst
             </ButtonLink>
           </>
         ) : (

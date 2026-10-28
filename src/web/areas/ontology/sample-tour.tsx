@@ -494,7 +494,7 @@ export function SampleTour() {
         </FlowStep>
         <FlowStep
           number={5}
-          title="Ask"
+          title="Ask the Analyst"
           text="Ask about Acme Corp in your own words."
           state={loaded ? "current" : "upcoming"}
         >

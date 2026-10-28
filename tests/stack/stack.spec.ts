@@ -379,7 +379,7 @@ test.describe("with models", () => {
 
   test("answers a question about the load", async ({ page }) => {
     await page.goto(ontologyPath);
-    await page.getByRole("link", { name: "Ask", exact: true }).click();
+    await page.getByRole("link", { name: "Analyst", exact: true }).click();
     const form = page.getByRole("form", { name: "Ask a question" });
     const question = "Which customer has placed the most orders?";
     await form.getByRole("textbox", { name: /^Question/ }).fill(question);
@@ -441,7 +441,7 @@ test.describe("with models", () => {
     ).toBeChecked();
 
     await page.goto(ontologyPath);
-    await page.getByRole("link", { name: "Ask", exact: true }).click();
+    await page.getByRole("link", { name: "Analyst", exact: true }).click();
     const form = page.getByRole("form", { name: "Ask a question" });
     const question = "How many orders were cancelled?";
     await form.getByRole("textbox", { name: /^Question/ }).fill(question);
