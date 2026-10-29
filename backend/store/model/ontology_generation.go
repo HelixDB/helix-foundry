@@ -69,6 +69,10 @@ type OntologyGenerationInput struct {
 	// the generation stores in place of the AI's, mapped to Documents; empty
 	// for an AI draft.
 	Sample string `json:"sample,omitempty"`
+	// LoadWhenReady asks for an ontology's first draft to be made current
+	// and loaded once stored (OntologyGenerationOutcome.Load), and its
+	// requester emailed when that ends (FoundryNotifyOntologyReady).
+	LoadWhenReady bool `json:"load_when_ready,omitempty"`
 }
 
 type OntologyGenerationTable struct {

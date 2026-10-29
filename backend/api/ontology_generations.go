@@ -53,6 +53,15 @@ const maxOntologyGoalChars = 2000
 // document_set_ids never names such a set, so each is read once, and only
 // with a mode. The stored input is the same either way, so readers tell an
 // event source's table, or its set, by its connector's kind.
+//
+// load_when_ready is for an ontology's first draft: once the worker stores
+// it, it is made current and loaded (FinishOntologyGeneration), and the
+// foundry-notify-worker emails the requester when that load ends. Loading
+// writes the ontology's database, which CreateFoundryLoad's caller must be
+// able to; the front end authorizes generating on managing ontologies
+// alone, so the actor's query_write scope is checked here. The sample's
+// draft is not loaded this way, and an ontology with a current version has
+// had its first draft.
 func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateOntologyRequest) (*foundryv1.OntologyGenerationResponse, error) {
 	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
 	if err != nil {
@@ -71,6 +80,18 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 		return nil, status.Errorf(codes.InvalidArgument, "no sample is called %q", name)
 	case len(req.GetConnectorIds()) != 1 || len(req.GetDocumentSetIds()) != 1 || len(req.GetEventSources()) > 0:
 		return nil, status.Error(codes.InvalidArgument, "a sample is drafted from its database and its documents: name its one connector and its one document set, and no event source")
+	case req.GetLoadWhenReady():
+		return nil, status.Error(codes.InvalidArgument, "load_when_ready is for a first draft of your own data, not the sample: leave it unset")
+	}
+	if req.GetLoadWhenReady() {
+		if _, write := actor(ctx).Scope(ws); !write.Allows(o.ProjectID) {
+			return nil, status.Error(codes.PermissionDenied,
+				"loading the draft writes this ontology's database, which you can't write: generate without load_when_ready, or ask a workspace admin for access")
+		}
+		if o.CurrentVersionID != nil {
+			return nil, status.Error(codes.FailedPrecondition,
+				"this ontology already has a current version: load_when_ready is for its first draft only; generate without it, then load the draft you choose")
+		}
 	}
 	if err := s.requireAI(ctx, ws); err != nil {
 		return nil, err
@@ -223,6 +244,7 @@ func (s *Service) GenerateOntology(ctx context.Context, req *foundryv1.GenerateO
 	if o.CurrentVersionID != nil {
 		gen.Input.BaseVersionID = *o.CurrentVersionID
 	}
+	gen.Input.LoadWhenReady = req.GetLoadWhenReady()
 	if goal := req.GetGoal(); goal != "" {
 		gen.Goal = &goal
 	}
@@ -319,6 +341,7 @@ func ontologyGenerationToProto(gen *foundrymodel.OntologyGeneration, evidence bo
 		Attempts:      int32(gen.Attempts),
 		BaseVersionId: gen.Input.BaseVersionID,
 		Sample:        gen.Input.Sample,
+		LoadWhenReady: gen.Input.LoadWhenReady,
 		CreatedAt:     timestamppb.New(gen.CreatedAt), NextAttemptAt: timestamppb.New(gen.NextAttemptAt),
 	}
 	for _, t := range gen.Input.Tables {

@@ -576,6 +576,126 @@ func TestFoundryOntologyGenerationRPCs(t *testing.T) {
 	})
 }
 
+// load_when_ready asks for an ontology's first draft to be made current and
+// loaded once stored, which writes its database: only a caller who may write
+// it asks, only while the ontology has no current version, and never for the
+// sample.
+func TestGenerateOntologyLoadWhenReady(t *testing.T) {
+	ctx := context.Background()
+	// writer may write the databases of ws-1's project proj-1, ont-1's.
+	writer := ports.Actor{Source: ports.SourceUser, UserID: "user-1", WorkspaceID: "ws-1",
+		QueryRead: ports.AllProjects(), QueryWrite: ports.SelectedProjects([]string{"proj-1"})}
+	generate := func(s *Service, as ports.Actor, req *foundryv1.GenerateOntologyRequest) (*foundryv1.OntologyGeneration, error) {
+		resp, err := s.GenerateOntology(ports.WithActor(ctx, as), req)
+		return resp.GetGeneration(), err
+	}
+	first := func() *foundryv1.GenerateOntologyRequest {
+		return &foundryv1.GenerateOntologyRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Goal: "customer billing health", LoadWhenReady: true}
+	}
+
+	t.Run("records and echoes it for a first draft", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		gen, err := generate(s, writer, first())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !gen.GetLoadWhenReady() || !store.generations[0].Input.LoadWhenReady || gen.GetBaseVersionId() != "" {
+			t.Fatalf("generation = %+v, input = %+v", gen, store.generations[0].Input)
+		}
+		got, err := s.GetOntologyGeneration(ctx, &foundryv1.GetOntologyGenerationRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: gen.GetId()})
+		if err != nil || !got.GetGeneration().GetLoadWhenReady() {
+			t.Fatalf("GetOntologyGeneration = (%+v, %v)", got, err)
+		}
+		list, err := s.ListOntologyGenerations(ctx, &foundryv1.ListOntologyGenerationsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+		if err != nil || !list.GetGenerations()[0].GetLoadWhenReady() {
+			t.Fatalf("ListOntologyGenerations = (%+v, %v)", list, err)
+		}
+	})
+	// Unset, nothing changes, and it is stored as absent.
+	t.Run("leaves a draft without it for review", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		req := first()
+		req.LoadWhenReady = false
+		gen, err := generate(s, person, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(store.generations[0].Input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gen.GetLoadWhenReady() || strings.Contains(string(raw), "load_when_ready") {
+			t.Fatalf("generation = %+v, input = %s", gen, raw)
+		}
+	})
+	// The front end authorizes generating on managing ontologies alone, so
+	// the database's write is checked here: a caller with no write scope, one
+	// of another project, or one of another workspace's, is refused.
+	t.Run("needs a caller who may write the ontology's database", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		otherProject := writer
+		otherProject.QueryWrite = ports.SelectedProjects([]string{"proj-2"})
+		otherWorkspace := writer
+		otherWorkspace.WorkspaceID, otherWorkspace.QueryWrite = "ws-2", ports.AllProjects()
+		for name, as := range map[string]ports.Actor{"no scope": person, "another project": otherProject, "another workspace": otherWorkspace} {
+			_, err := generate(s, as, first())
+			if status.Code(err) != codes.PermissionDenied || !strings.Contains(status.Convert(err).Message(), "load_when_ready") {
+				t.Errorf("%s: GenerateOntology = %v, want PermissionDenied", name, err)
+			}
+		}
+		if len(store.generations) != 0 {
+			t.Fatalf("queued %d generations", len(store.generations))
+		}
+		every := writer
+		every.QueryWrite = ports.AllProjects()
+		if _, err := generate(s, every, first()); err != nil {
+			t.Fatalf("a caller who may write every project: %v", err)
+		}
+	})
+	// A current version means the first draft was had; the user loads later
+	// drafts themselves.
+	t.Run("refuses an ontology that has a current version", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		base, err := s.CreateOntologyVersion(ctx, &foundryv1.CreateOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Definition: definition(t, "customers")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.SetCurrentOntologyVersion(ctx, &foundryv1.SetCurrentOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", VersionId: base.GetVersion().GetId()}); err != nil {
+			t.Fatal(err)
+		}
+		_, err = generate(s, writer, first())
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(status.Convert(err).Message(), "current version") || len(store.generations) != 0 {
+			t.Fatalf("GenerateOntology = %v, %d queued", err, len(store.generations))
+		}
+		req := first()
+		req.LoadWhenReady = false
+		if _, err := generate(s, writer, req); err != nil {
+			t.Fatalf("without load_when_ready: %v", err)
+		}
+	})
+	// The sample's draft is the user's to load; asking for both is a
+	// mistake, refused before the caller's scope is looked at.
+	t.Run("refuses it with the sample", func(t *testing.T) {
+		s, store := generationService(t, 50)
+		store.sets = []*foundrymodel.FoundryDocumentSet{{ID: "set-k", WorkspaceID: "ws-1", Name: "Acme Corp sample"}}
+		store.rows["conn-k"] = &foundrymodel.Connector{ID: "conn-k", WorkspaceID: "ws-1", Kind: "postgres", Name: "Acme Corp", Config: []byte(`{}`)}
+		for _, name := range sample.Tables {
+			store.tables = append(store.tables, &foundrymodel.ConnectorTable{WorkspaceID: "ws-1", ConnectorID: "conn-k", TableName: name, SyncID: "sync-k"})
+		}
+		req := &foundryv1.GenerateOntologyRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", ConnectorIds: []string{"conn-k"},
+			DocumentSetIds: []string{"set-k"}, Sample: sample.Acme, LoadWhenReady: true}
+		for _, as := range []ports.Actor{writer, person} {
+			if _, err := generate(s, as, req); status.Code(err) != codes.InvalidArgument || len(store.generations) != 0 {
+				t.Fatalf("GenerateOntology = %v, %d queued", err, len(store.generations))
+			}
+		}
+		req.LoadWhenReady = false
+		if _, err := generate(s, person, req); err != nil {
+			t.Fatalf("the sample alone: %v", err)
+		}
+	})
+}
+
 // An event source is read only when a generation picks it, with how its
 // ontology reads it: structured, its events table among the tables, or
 // extraction, its own document set among the sets.
