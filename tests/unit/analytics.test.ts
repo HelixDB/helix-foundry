@@ -142,8 +142,8 @@ describe("jobs", () => {
       ["load_started", undefined],
       ["load_started", undefined],
       ["load_started", undefined],
-      ["load_ready", undefined],
-      ["load_ready", undefined],
+      ["load_ready", { status: "ready" }],
+      ["load_ready", { status: "partial" }],
     ]);
     a.jobSeen("load", [{ id: "load_3", status: "ready" }]);
     expect(sent()).toHaveLength(5);

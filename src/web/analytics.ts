@@ -35,6 +35,10 @@ export type AnalyticsEvents = {
   // A workspace with no ontology shows only the new-ontology wizard.
   onboarding_shown: undefined;
 
+  // The landing page's copy buttons: the agent's setup prompt, or a local
+  // install's (visitors who take them never open sign-in).
+  setup_prompt_copied: { setup: "agent" | "local" };
+
   // The sample company: Use the sample, then its tour reaching each step.
   sample_clicked: undefined;
   sample_data_ready: undefined;
@@ -52,7 +56,7 @@ export type AnalyticsEvents = {
   generation_succeeded: { source: GenerationSource };
   generation_failed: { source: GenerationSource };
   load_started: undefined;
-  load_ready: undefined;
+  load_ready: { status: "ready" | "partial" };
   question_asked: undefined;
   question_answered: undefined;
 
@@ -156,8 +160,8 @@ const ENDS: {
       trackEvent("generation_failed", { source: sourceOf(p) }),
   },
   load: {
-    ready: () => trackEvent("load_ready"),
-    partial: () => trackEvent("load_ready"),
+    ready: () => trackEvent("load_ready", { status: "ready" }),
+    partial: () => trackEvent("load_ready", { status: "partial" }),
     failed: null,
   },
   question: {
