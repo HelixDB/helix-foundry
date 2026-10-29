@@ -1,4 +1,9 @@
-import { isTrackerAvailable, track } from "@databuddy/sdk";
+import {
+  getAnonymousId,
+  getSessionId,
+  isTrackerAvailable,
+  track,
+} from "@databuddy/sdk";
 import type {
   ConnectorKindName,
   DocumentMediaType,
@@ -88,12 +93,19 @@ export function trackEvent<Name extends AnalyticsEventName>(
 
 // How long a page about to leave waits for the tracker to load.
 const LEAVE_WAIT_MS = 1000;
+// Databuddy's custom events API (www.databuddy.cc/docs/api/events).
+const TRACK_URL = "https://basket.databuddy.cc/track";
 
 /**
- * Sends an event just before the page leaves. The tracker sends what it
- * holds with a beacon as the page unloads, but a call made before it has
- * loaded waits in the SDK's own queue, which the navigation drops: this
- * waits for the tracker first, for at most a second.
+ * Sends an event before the page may leave (for WorkOS, Stripe, or the app
+ * from the landing page). The tracker holds custom events for up to 5 s and
+ * loses what it still holds when the page unloads (its build of Oct 2026),
+ * and a call made before it loads waits in the SDK's queue, which the
+ * navigation drops. So this waits for the tracker, at most a second, then
+ * sends the event at once with a beacon to the events API, under the
+ * tracker's visitor and session so it joins the same funnel. Without a
+ * beacon, or before the tracker has a visitor, it goes through the tracker.
+ * Only for pages whose path names nothing: it isn't masked.
  */
 export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
   name: Name,
@@ -106,7 +118,29 @@ export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
 
   )
     await new Promise((resolve) => setTimeout(resolve, 50));
-  trackEvent(name, ...properties);
+  const anonymousId = getAnonymousId(),
+    event = {
+      eventId: crypto.randomUUID(),
+      name,
+      properties: properties[0],
+      anonymousId,
+      sessionId: getSessionId(),
+      // As the tracker sends its own: the visitor id is hashed on arrival.
+      anonymizeVisitorIds: true,
+      path: location.origin + location.pathname,
+      source: "browser",
+      websiteId: DATABUDDY_CLIENT_ID,
+    };
+  const sent =
+    !!anonymousId &&
+    typeof navigator.sendBeacon === "function" &&
+    navigator.sendBeacon(
+      `${TRACK_URL}?website_id=${encodeURIComponent(DATABUDDY_CLIENT_ID)}`,
+      // text/plain, as the tracker's beacons: a beacon of JSON would need a
+      // preflight it can't make.
+      new Blob([JSON.stringify(event)], { type: "text/plain;charset=UTF-8" }),
+    );
+  if (!sent) trackEvent(name, ...properties);
 }
 
 // ---------------------------------------------------------------- sign-in

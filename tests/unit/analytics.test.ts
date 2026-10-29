@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const sdk = vi.hoisted(() => ({
   track: vi.fn(),
   isTrackerAvailable: vi.fn(() => true),
+  getAnonymousId: vi.fn((): string | null => "anon_1"),
+  getSessionId: vi.fn(() => "sess_1"),
   setGlobalProperties: vi.fn(),
 }));
 vi.mock("@databuddy/sdk", () => sdk);
@@ -36,6 +38,10 @@ const load = async (clientId = "client-test", blocked = false) => {
   session = fakeStorage(blocked);
   vi.stubGlobal("localStorage", local);
   vi.stubGlobal("sessionStorage", session);
+  vi.stubGlobal("location", {
+    origin: "https://foundry.helix-db.com",
+    pathname: "/login",
+  });
   vi.resetModules();
   return import("@/web/analytics");
 };
@@ -46,6 +52,7 @@ const PENDING = "foundry.analytics.pending.v1";
 beforeEach(() => {
   sdk.track.mockReset();
   sdk.isTrackerAvailable.mockReset().mockReturnValue(true);
+  sdk.getAnonymousId.mockReset().mockReturnValue("anon_1");
   sdk.setGlobalProperties.mockReset();
 });
 afterEach(() => {
@@ -109,6 +116,57 @@ describe("sign-in", () => {
 });
 
 describe("trackBeforeLeaving", () => {
+  /** navigator.sendBeacon, answering `queued`; what it was given. */
+  const beacon = (queued = true) => {
+    const beacons: { url: string; body: Blob }[] = [];
+    vi.stubGlobal("navigator", {
+      sendBeacon: (url: string, body: Blob) => (
+        beacons.push({ url, body }),
+        queued
+      ),
+    });
+    return beacons;
+  };
+
+  it("beacons the event to the events API, as the tracker's visitor", async () => {
+    const a = await load();
+    const beacons = beacon();
+    await a.signInStarted("github");
+    expect(sent()).toEqual([]);
+    expect(beacons).toHaveLength(1);
+    expect(beacons[0].url).toBe(
+      "https://basket.databuddy.cc/track?website_id=client-test",
+    );
+    expect(beacons[0].body.type).toBe("text/plain;charset=utf-8");
+    expect(JSON.parse(await beacons[0].body.text())).toEqual({
+      eventId: expect.any(String),
+      name: "sign_in_started",
+      properties: { method: "github" },
+      anonymousId: "anon_1",
+      sessionId: "sess_1",
+      anonymizeVisitorIds: true,
+      path: "https://foundry.helix-db.com/login",
+      source: "browser",
+      websiteId: "client-test",
+    });
+  });
+
+  it("goes through the tracker when the beacon is refused", async () => {
+    const a = await load();
+    beacon(false);
+    await a.trackBeforeLeaving("setup_prompt_copied", { setup: "local" });
+    expect(sent()).toEqual([["setup_prompt_copied", { setup: "local" }]]);
+  });
+
+  it("goes through the tracker before it has a visitor", async () => {
+    const a = await load();
+    const beacons = beacon();
+    sdk.getAnonymousId.mockReturnValue(null);
+    await a.trackBeforeLeaving("setup_prompt_copied", { setup: "agent" });
+    expect(beacons).toEqual([]);
+    expect(sent()).toEqual([["setup_prompt_copied", { setup: "agent" }]]);
+  });
+
   it("waits for the tracker to load before sending", async () => {
     vi.useFakeTimers();
     const a = await load();

@@ -1,4 +1,4 @@
-import { trackEvent } from "@/web/analytics";
+import { trackBeforeLeaving } from "@/web/analytics";
 
 // What each copy button's text sets up, for analytics: the agent's prompt
 // (Helix Cloud through the Helix MCP) or a local install.
@@ -64,7 +64,9 @@ export function page() {
       };
       const setup = SETUP[button.dataset.copy as keyof typeof SETUP];
       const click = () => {
-        if (setup) trackEvent("setup_prompt_copied", { setup });
+        // Copying is often the last thing done here, or just before Start
+        // on Helix Cloud.
+        if (setup) void trackBeforeLeaving("setup_prompt_copied", { setup });
         return copy(source.textContent!.trim()).then(
           () => say("Copied"),
           () => say("Select it and copy"),
