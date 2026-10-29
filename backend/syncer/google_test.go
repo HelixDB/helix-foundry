@@ -23,27 +23,49 @@ import (
 )
 
 // googleTestWorkspace is a Workspace a test edits between syncs: one user,
-// no shared drives, Drive's Docs by id, each with its modified time,
-// Markdown and owner, whether it is in the trash, and whether its owner
-// keeps the user from exporting it; and Ada's one calendar's events by id.
-// Drive's change feed and the calendar's sync tokens follow every edit
-// (edit, editEvent): a token is the count of edits it was taken after, and a
-// feed shows each file or event edited after it as it is now. A page token
-// below expired is refused, as is a sync token below gone. It counts the
-// requests a test asserts on by what they are (took).
+// the shared drives they are in, Drive's Docs by id, each with its drive
+// ("" My Drive), modified time, Markdown and owner, whether it is in the
+// trash, and whether its owner keeps the user from exporting it; and Ada's
+// one calendar's events by id. Drive's change feeds and the calendar's sync
+// tokens follow every edit (edit, editEvent, editDrive): a token is the
+// count of edits it was taken after. The user's feed holds My Drive, each
+// shared drive's feed its own files, and each shows every file an edit
+// after the token put in it or took out of it: as it is now while it is
+// there, else removed, with the file as it is now while the user can read it
+// when the read asks for it (includeCorpusRemovals). Both show a member
+// drive's own changes. A page token below expired is refused, as is a sync
+// token below gone. It counts the requests a test asserts on by what they
+// are (took).
 type googleTestWorkspace struct {
 	mu            sync.Mutex
 	docs          map[string]googleTestDoc
 	events        map[string]googleTestEvent
 	edits         int
-	edited        map[string]int // by "file:<id>" or "event:<id>", the edit that last changed it
+	edited        map[string]int // by "event:<id>", the edit that last changed it
 	expired, gone int
 	asked         map[string]int
+	// drives are the shared drives the user is in, as Drive lists them, of
+	// which Drive refuses the token, feed and files of those refused, and
+	// lets no one download the Docs of those restricted.
+	drives              []string
+	refused, restricted map[string]bool
+	// touched is, by file id, the edit that last put it in or took it out of
+	// each feed ("" the user's), and settings, by drive id, the edit that
+	// last changed the drive itself.
+	touched  map[string]map[string]int
+	settings map[string]int
+	// after runs once, holding mu, once a feed's ("" the user's) page is read.
+	after map[string]func()
+	// failing is a feed Drive answers with a 400 that is no page token's.
+	failing *string
+	// later are events the next sync token list shows again on a page of
+	// its own, as they are by then: a list paged while they change.
+	later map[string]googleTestEvent
 }
 
 type googleTestDoc struct {
-	modified, text, owner string
-	trashed, withheld     bool
+	drive, modified, text, owner string
+	trashed, withheld            bool
 }
 
 // googleTestEvent is an hour from start, inviting attendees, or cancelled.
@@ -55,20 +77,54 @@ type googleTestEvent struct {
 }
 
 func newGoogleTestWorkspace(docs map[string]googleTestDoc, events map[string]googleTestEvent) *googleTestWorkspace {
-	return &googleTestWorkspace{docs: docs, events: events, edited: map[string]int{}, asked: map[string]int{}}
+	return &googleTestWorkspace{docs: docs, events: events, edited: map[string]int{}, asked: map[string]int{}, refused: map[string]bool{},
+		restricted: map[string]bool{}, touched: map[string]map[string]int{}, settings: map[string]int{}, after: map[string]func(){}}
 }
 
-// edit sets a Doc, as Drive's feed then shows it; a zero doc deletes it.
+// edit sets a Doc, as Drive's feeds then show it; a zero doc deletes it.
 func (w *googleTestWorkspace) edit(id string, doc googleTestDoc) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.set(id, doc)
+}
+
+// set is edit, holding mu.
+func (w *googleTestWorkspace) set(id string, doc googleTestDoc) {
+	w.edits++
+	if w.touched[id] == nil {
+		w.touched[id] = map[string]int{}
+	}
+	if old, ok := w.docs[id]; ok {
+		w.touched[id][old.drive] = w.edits
+	}
 	if doc == (googleTestDoc{}) {
 		delete(w.docs, id)
-	} else {
-		w.docs[id] = doc
+		return
 	}
+	w.docs[id] = doc
+	w.touched[id][doc.drive] = w.edits
+}
+
+// move moves a Doc to drive, holding mu.
+func (w *googleTestWorkspace) move(id, drive string) {
+	doc := w.docs[id]
+	doc.drive = drive
+	w.set(id, doc)
+}
+
+// editDrive changes a shared drive's own settings: restricted lets no one
+// download its Docs. Drive shows the drive's change, and none of its files'.
+func (w *googleTestWorkspace) editDrive(drive string, restricted bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.restricted[drive] = restricted
 	w.edits++
-	w.edited["file:"+id] = w.edits
+	w.settings[drive] = w.edits
+}
+
+// readable is whether the user can read drive's files ("" My Drive).
+func (w *googleTestWorkspace) readable(drive string) bool {
+	return drive == "" || slices.Contains(w.drives, drive) && !w.refused[drive]
 }
 
 // editEvent sets an event, as the calendar's sync tokens then show it.
@@ -92,9 +148,16 @@ func (w *googleTestWorkspace) took() map[string]int {
 }
 
 func (w *googleTestWorkspace) file(id string, doc googleTestDoc) string {
+	extra := ""
+	if doc.drive != "" {
+		extra = fmt.Sprintf(`,"driveId":%q`, doc.drive)
+	}
+	if w.restricted[doc.drive] {
+		extra += `,"capabilities":{"canDownload":false}`
+	}
 	return fmt.Sprintf(`{"id":%q,"name":"Doc %s","mimeType":"application/vnd.google-apps.document","owners":[{"emailAddress":%q}],`+
-		`"modifiedTime":%q,"webViewLink":"https://docs.google.com/document/d/%s/edit","version":"1","trashed":%t}`,
-		id, id, doc.owner, doc.modified, id, doc.trashed)
+		`"modifiedTime":%q,"webViewLink":"https://docs.google.com/document/d/%s/edit","version":"1","trashed":%t%s}`,
+		id, id, doc.owner, doc.modified, id, doc.trashed, extra)
 }
 
 func (w *googleTestWorkspace) event(id string, e googleTestEvent) string {
@@ -109,7 +172,7 @@ func (w *googleTestWorkspace) event(id string, e googleTestEvent) string {
 		id, e.summary, e.start.UTC().Format(time.RFC3339), e.start.Add(time.Hour).UTC().Format(time.RFC3339), strings.Join(attendees, ","))
 }
 
-// changed are the ids of kind ("file" or "event") edited after token, in order.
+// changed are the ids of kind ("event") edited after token, in order.
 func (w *googleTestWorkspace) changed(kind string, token int) []string {
 	var ids []string
 	for key, at := range w.edited {
@@ -136,36 +199,80 @@ func (w *googleTestWorkspace) serve(t *testing.T) string {
 		case path == "/calendar/v3/users/me/calendarList":
 			write(`{"items":[{"id":"ada@acme.com","primary":true}]}`)
 		case path == "/drive/v3/drives":
-			write(`{"drives":[]}`)
+			var drives []string
+			for _, drive := range w.drives {
+				drives = append(drives, fmt.Sprintf(`{"id":%q}`, drive))
+			}
+			write(`{"drives":[%s]}`, strings.Join(drives, ","))
 		case path == "/drive/v3/changes/startPageToken":
 			w.asked["start"]++
+			if !w.readable(q.Get("driveId")) {
+				rw.WriteHeader(http.StatusNotFound)
+				write(`{"error":{"code":404,"message":"Shared drive not found","errors":[{"reason":"notFound"}]}}`)
+				return
+			}
 			write(`{"startPageToken":"%d"}`, w.edits)
 		case path == "/drive/v3/changes":
 			w.asked["changes"]++
-			if token, err := strconv.Atoi(q.Get("pageToken")); err != nil || token < w.expired {
+			drive := q.Get("driveId")
+			token, err := strconv.Atoi(q.Get("pageToken"))
+			switch {
+			case !w.readable(drive):
+				rw.WriteHeader(http.StatusNotFound)
+				write(`{"error":{"code":404,"message":"Shared drive not found","errors":[{"reason":"notFound"}]}}`)
+				return
+			case w.failing != nil && *w.failing == drive:
+				rw.WriteHeader(http.StatusBadRequest)
+				write(`{"error":{"code":400,"message":"Bad Request","errors":[{"reason":"badRequest"}]}}`)
+				return
+			case err != nil || token < w.expired:
 				rw.WriteHeader(http.StatusBadRequest)
 				write(`{"error":{"code":400,"message":"Invalid Value","errors":[{"reason":"invalid","location":"pageToken"}]}}`)
 				return
 			}
-			token, _ := strconv.Atoi(q.Get("pageToken"))
 			var changes []string
-			for _, id := range w.changed("file", token) {
-				if doc, ok := w.docs[id]; ok {
+			for _, d := range slices.Sorted(maps.Keys(w.settings)) {
+				if w.settings[d] > token && slices.Contains(w.drives, d) && (drive == "" || drive == d) {
+					changes = append(changes, fmt.Sprintf(`{"changeType":"drive","driveId":%q}`, d))
+				}
+			}
+			for _, id := range slices.Sorted(maps.Keys(w.touched)) {
+				if w.touched[id][drive] <= token {
+					continue
+				}
+				doc, ok := w.docs[id]
+				switch {
+				case ok && doc.drive == drive:
 					changes = append(changes, fmt.Sprintf(`{"changeType":"file","fileId":%q,"file":%s}`, id, w.file(id, doc)))
-				} else {
+				case ok && w.readable(doc.drive) && q.Get("includeCorpusRemovals") == "true":
+					changes = append(changes, fmt.Sprintf(`{"changeType":"file","fileId":%q,"removed":true,"file":%s}`, id, w.file(id, doc)))
+				default:
 					changes = append(changes, fmt.Sprintf(`{"changeType":"file","fileId":%q,"removed":true}`, id))
 				}
 			}
 			write(`{"changes":[%s],"newStartPageToken":"%d"}`, strings.Join(changes, ","), w.edits)
+			if after := w.after[drive]; after != nil {
+				delete(w.after, drive)
+				after()
+			}
 		case path == "/drive/v3/files":
 			// Discover's probe is no listing.
 			if q.Has("corpora") {
 				w.asked["files"]++
 			}
-			// A Sheet is a row and never a document.
-			files := []string{`{"id":"sheet1","name":"Budget","mimeType":"application/vnd.google-apps.spreadsheet","modifiedTime":"2026-10-01T09:00:00Z"}`}
+			drive := q.Get("driveId")
+			if !w.readable(drive) {
+				rw.WriteHeader(http.StatusNotFound)
+				write(`{"error":{"code":404,"message":"Shared drive not found","errors":[{"reason":"notFound"}]}}`)
+				return
+			}
+			// A Sheet in My Drive is a row and never a document.
+			var files []string
+			if drive == "" {
+				files = append(files, `{"id":"sheet1","name":"Budget","mimeType":"application/vnd.google-apps.spreadsheet","modifiedTime":"2026-10-01T09:00:00Z"}`)
+			}
 			for _, id := range slices.Sorted(maps.Keys(w.docs)) {
-				if doc := w.docs[id]; !doc.trashed || q.Get("q") != "trashed=false" {
+				if doc := w.docs[id]; doc.drive == drive && (!doc.trashed || q.Get("q") != "trashed=false") {
 					files = append(files, w.file(id, doc))
 				}
 			}
@@ -194,8 +301,21 @@ func (w *googleTestWorkspace) serve(t *testing.T) string {
 					write(`{"error":{"code":410,"message":"Sync token is no longer valid, a full sync is required.","errors":[{"reason":"fullSyncRequired"}]}}`)
 					return
 				}
+				if q.Get("pageToken") == "later" {
+					for _, id := range slices.Sorted(maps.Keys(w.later)) {
+						w.events[id] = w.later[id]
+						items = append(items, w.event(id, w.later[id]))
+					}
+					w.later = nil
+					write(`{"items":[%s],"nextSyncToken":"%d"}`, strings.Join(items, ","), w.edits)
+					return
+				}
 				for _, id := range w.changed("event", token) {
 					items = append(items, w.event(id, w.events[id]))
+				}
+				if len(w.later) > 0 {
+					write(`{"items":[%s],"nextPageToken":"later"}`, strings.Join(items, ","))
+					return
 				}
 			} else {
 				w.asked["window"]++
@@ -527,4 +647,252 @@ func TestGoogleSyncChanges(t *testing.T) {
 			t.Fatalf("events = %v", got)
 		}
 	})
+}
+
+// TestGoogleSyncSharedDrives follows Google Workspace's files across shared
+// drives on Pro, each drive's feed read after the user's in Drive's order. A
+// Doc moved between drives keeps its row and its document, whichever feed
+// shows the move first, though the other shows it only at the next sync. A
+// drive joined or left, a member drive's settings changed, and a drive whose
+// token Drive gives again read files in full, every feed from a new token,
+// so the next sync replays nothing; a drive whose token Drive refuses at
+// every sync reads nothing in full. A change read that fails part way
+// exports nothing, and its retry reads it all. A cursor taken under other
+// settings reads every table in full.
+func TestGoogleSyncSharedDrives(t *testing.T) {
+	google := newGoogleTestWorkspace(map[string]googleTestDoc{
+		"doc1": {modified: "2026-10-01T10:00:00Z", text: "One.", owner: "ada@acme.com"},
+		"docA": {drive: "drvA", modified: "2026-10-02T10:00:00Z", text: "A.", owner: "ada@acme.com"},
+		"docB": {drive: "drvB", modified: "2026-10-03T10:00:00Z", text: "B.", owner: "ada@acme.com"},
+	}, map[string]googleTestEvent{})
+	google.drives = []string{"drvA", "drvB"}
+	f := googleFixture(t, "pro", google)
+	// files are the files table's drive_id by file_id ("" My Drive).
+	files := func(t *testing.T) map[string]string {
+		t.Helper()
+		out := map[string]string{}
+		for _, line := range f.snapshotRows(t, "files") {
+			var row struct {
+				FileID  string `json:"file_id"`
+				DriveID string `json:"drive_id"`
+			}
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatal(err)
+			}
+			out[row.FileID] = row.DriveID
+		}
+		return out
+	}
+	// sync runs a sync of id, which must read mode, and returns what it asked Drive.
+	sync := func(t *testing.T, id string, mode model.ConnectorSyncMode) (Result, string) {
+		t.Helper()
+		res := f.run(t, id)
+		if res.Mode != mode {
+			t.Fatalf("%s: mode = %s", id, res.Mode)
+		}
+		asked := google.took()
+		delete(asked, "sync")
+		delete(asked, "window")
+		return res, fmt.Sprint(asked)
+	}
+
+	if _, asked := sync(t, "sync-1", model.ConnectorSyncFull); asked != "map[export doc1:1 export docA:1 export docB:1 files:3 start:3]" {
+		t.Fatalf("asked %v", asked)
+	}
+	docA, docB := f.liveID("docs", "docA"), f.liveID("docs", "docB")
+
+	// docA moves from drvA to drvB after drvA's feed is read: drvB's feed
+	// shows it now, and drvA's removal only at the next sync, carrying it.
+	google.after["drvA"] = func() { google.move("docA", "drvB") }
+	if res, asked := sync(t, "sync-2", model.ConnectorSyncChanges); !slices.Equal(res.Changed, []string{"files"}) || asked != "map[changes:3]" {
+		t.Fatalf("changed = %v, asked %v", res.Changed, asked)
+	}
+	if got := files(t); got["docA"] != "drvB" || f.liveID("docs", "docA") != docA {
+		t.Fatalf("files = %v, docA = %s, was %s", got, f.liveID("docs", "docA"), docA)
+	}
+	if res, asked := sync(t, "sync-3", model.ConnectorSyncChanges); len(res.Changed) != 0 || asked != "map[changes:3]" {
+		t.Fatalf("changed = %v, asked %v", res.Changed, asked)
+	}
+	if got := files(t); got["docA"] != "drvB" || f.liveID("docs", "docA") != docA {
+		t.Fatalf("files = %v, docA = %s, was %s", got, f.liveID("docs", "docA"), docA)
+	}
+	// docB moves from drvB to drvA, whose feed is read first: drvB's removal
+	// shows it now, carrying it, and drvA's feed at the next sync.
+	google.after["drvA"] = func() { google.move("docB", "drvA") }
+	if res, asked := sync(t, "sync-4", model.ConnectorSyncChanges); !slices.Equal(res.Changed, []string{"files"}) || asked != "map[changes:3]" {
+		t.Fatalf("changed = %v, asked %v", res.Changed, asked)
+	}
+	if got := files(t); got["docB"] != "drvA" || f.liveID("docs", "docB") != docB {
+		t.Fatalf("files = %v, docB = %s, was %s", got, f.liveID("docs", "docB"), docB)
+	}
+	if res, _ := sync(t, "sync-5", model.ConnectorSyncChanges); len(res.Changed) != 0 || f.liveID("docs", "docB") != docB {
+		t.Fatalf("changed = %v, docB = %s, was %s", res.Changed, f.liveID("docs", "docB"), docB)
+	}
+
+	// doc1 moves into drvC, which the user then joins, holding docC too:
+	// files is read in full, from a new token for every feed, so the user's
+	// feed doesn't show doc1's move again at the next sync.
+	google.mu.Lock()
+	google.move("doc1", "drvC")
+	google.drives = append(google.drives, "drvC")
+	google.set("docC", googleTestDoc{drive: "drvC", modified: "2026-10-04T10:00:00Z", text: "C.", owner: "ada@acme.com"})
+	google.mu.Unlock()
+	doc1 := f.liveID("docs", "doc1")
+	if _, asked := sync(t, "sync-6", model.ConnectorSyncChanges); asked != "map[export docC:1 files:4 start:4]" {
+		t.Fatalf("asked %v", asked)
+	}
+	if got := files(t); got["doc1"] != "drvC" || got["docC"] != "drvC" || f.liveID("docs", "doc1") != doc1 || f.liveID("docs", "docC") == "" {
+		t.Fatalf("files = %v, docs = %v", got, slices.Sorted(maps.Keys(f.held(t, "docs"))))
+	}
+	var stored struct {
+		Files struct {
+			User   string
+			Drives map[string]string
+		}
+	}
+	if err := json.Unmarshal(f.store.connectors["conn-1"].ChangeCursor, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if now := strconv.Itoa(google.edits); stored.Files.User != now || fmt.Sprint(stored.Files.Drives) != fmt.Sprintf("map[drvA:%s drvB:%s drvC:%s]", now, now, now) {
+		t.Fatalf("cursor = %s, want every feed's token %s", f.store.connectors["conn-1"].ChangeCursor, now)
+	}
+	if res, asked := sync(t, "sync-7", model.ConnectorSyncChanges); len(res.Changed) != 0 || asked != "map[changes:4]" {
+		t.Fatalf("changed = %v, asked %v", res.Changed, asked)
+	}
+
+	// The user joins drvD, whose token, feed and files Drive refuses: one
+	// full read, then only its token asked for at each sync, until Drive
+	// gives it, when files is read in full again.
+	google.mu.Lock()
+	google.drives, google.refused["drvD"] = append(google.drives, "drvD"), true
+	google.set("docD", googleTestDoc{drive: "drvD", modified: "2026-10-05T10:00:00Z", text: "D.", owner: "ada@acme.com"})
+	google.mu.Unlock()
+	if _, asked := sync(t, "sync-8", model.ConnectorSyncChanges); asked != "map[files:5 start:5]" {
+		t.Fatalf("asked %v", asked)
+	}
+	for _, id := range []string{"sync-9", "sync-10"} {
+		if _, asked := sync(t, id, model.ConnectorSyncChanges); asked != "map[changes:4 start:1]" {
+			t.Fatalf("%s: asked %v", id, asked)
+		}
+	}
+	if _, ok := files(t)["docD"]; ok {
+		t.Fatal("docD was read")
+	}
+	google.mu.Lock()
+	google.refused["drvD"] = false
+	google.mu.Unlock()
+	if _, asked := sync(t, "sync-11", model.ConnectorSyncChanges); asked != "map[changes:4 export docD:1 files:5 start:6]" {
+		t.Fatalf("asked %v", asked)
+	}
+	if files(t)["docD"] != "drvD" || f.liveID("docs", "docD") == "" {
+		t.Fatalf("files = %v", files(t))
+	}
+
+	// drvB, holding docA, stops letting anyone download its Docs: Drive
+	// shows the drive's change and none of its files', so files is read in
+	// full, and docA keeps its row and loses its document.
+	google.editDrive("drvB", true)
+	if _, asked := sync(t, "sync-12", model.ConnectorSyncChanges); asked != "map[changes:1 files:5 start:5]" {
+		t.Fatalf("asked %v", asked)
+	}
+	if got, held := files(t), f.held(t, "docs"); got["docA"] != "drvB" || held["docA"] != "" {
+		t.Fatalf("files = %v, docs = %v", got, slices.Sorted(maps.Keys(held)))
+	}
+
+	// The user leaves drvA, holding docB: its row and document go.
+	google.mu.Lock()
+	google.drives = slices.DeleteFunc(google.drives, func(d string) bool { return d == "drvA" })
+	google.mu.Unlock()
+	if _, asked := sync(t, "sync-13", model.ConnectorSyncChanges); asked != "map[files:4 start:4]" {
+		t.Fatalf("asked %v", asked)
+	}
+	if got, held := files(t), f.held(t, "docs"); fmt.Sprint(got) != "map[doc1:drvC docA:drvB docC:drvC docD:drvD sheet1:]" ||
+		fmt.Sprint(slices.Sorted(maps.Keys(held))) != "[doc1 docC docD]" {
+		t.Fatalf("files = %v, docs = %v", got, slices.Sorted(maps.Keys(held)))
+	}
+
+	// docC is edited, then drvD's feed, read after drvC's, fails: nothing is
+	// exported or stored, and the retry reads the edit from the same cursor.
+	google.edit("docC", googleTestDoc{drive: "drvC", modified: "2026-10-29T10:00:00Z", text: "C, edited.", owner: "ada@acme.com"})
+	failing := "drvD"
+	google.mu.Lock()
+	google.failing = &failing
+	google.mu.Unlock()
+	cursor := f.store.connectors["conn-1"].ChangeCursor
+	if _, err := f.syncer.Run(context.Background(), newSync("sync-14")); err == nil {
+		t.Fatal("a refused feed failed no sync")
+	}
+	if asked := google.took(); asked["export docC"] != 0 || asked["changes"] != 4 || string(f.store.connectors["conn-1"].ChangeCursor) != string(cursor) {
+		t.Fatalf("asked %v, cursor = %s", asked, f.store.connectors["conn-1"].ChangeCursor)
+	}
+	google.mu.Lock()
+	google.failing = nil
+	google.mu.Unlock()
+	retry := newSync("sync-14")
+	retry.Attempts = 2
+	if res, err := f.syncer.Run(context.Background(), retry); err != nil || res.Mode != model.ConnectorSyncChanges || !slices.Equal(res.Changed, []string{"files"}) {
+		t.Fatalf("Run = (%+v, %v)", res, err)
+	}
+	if asked := google.took(); asked["export docC"] != 1 || asked["files"] != 0 {
+		t.Fatalf("asked %v", asked)
+	}
+	if held := f.held(t, "docs"); !strings.HasSuffix(held["docC"], "\n\nC, edited.\n") {
+		t.Fatalf("docC = %q", held["docC"])
+	}
+
+	// A cursor taken for another window of events is not this sync's.
+	f.store.connectors["conn-1"].Config = json.RawMessage(`{"subject":"ada@acme.com","event_days":30}`)
+	if _, asked := sync(t, "sync-15", model.ConnectorSyncFull); asked != "map[files:4 start:4]" {
+		t.Fatalf("asked %v", asked)
+	}
+}
+
+// TestGoogleSyncEventCopies runs a change read whose sync token list shows
+// an event twice, as a list paged while the event changes does: the later
+// copy's rows stand alone, without the attendees the first copy wrote.
+func TestGoogleSyncEventCopies(t *testing.T) {
+	soon := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
+	google := newGoogleTestWorkspace(map[string]googleTestDoc{}, map[string]googleTestEvent{
+		"ev1": {start: soon, summary: "Roadmap", attendees: []string{"ada@acme.com", "grace@acme.com"}},
+		"ev2": {start: soon, summary: "Standup", attendees: []string{"ada@acme.com", "grace@acme.com"}},
+	})
+	f := googleFixture(t, "pro", google)
+	f.run(t, "sync-1")
+	// attendees are the event_attendees rows, as "<event> <email>".
+	attendees := func(t *testing.T) string {
+		t.Helper()
+		var out []string
+		for _, line := range f.snapshotRows(t, "event_attendees") {
+			var row struct {
+				EventID string `json:"event_id"`
+				Email   string
+			}
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, strings.TrimPrefix(row.EventID, "ada@acme.com:")+" "+row.Email)
+		}
+		slices.Sort(out)
+		return fmt.Sprint(out)
+	}
+	if got := attendees(t); got != "[ev1 ada@acme.com ev1 grace@acme.com ev2 ada@acme.com ev2 grace@acme.com]" {
+		t.Fatalf("attendees = %s", got)
+	}
+
+	// Both change, and show again: ev1 cancelled, ev2 with fewer attendees.
+	google.editEvent("ev1", googleTestEvent{start: soon, summary: "Roadmap", attendees: []string{"ada@acme.com", "alan@acme.com"}})
+	google.editEvent("ev2", googleTestEvent{start: soon, summary: "Standup", attendees: []string{"alan@acme.com", "grace@acme.com"}})
+	google.mu.Lock()
+	google.later = map[string]googleTestEvent{"ev1": {cancelled: true},
+		"ev2": {start: soon, summary: "Standup", attendees: []string{"grace@acme.com"}}}
+	google.mu.Unlock()
+	if res := f.run(t, "sync-2"); res.Mode != model.ConnectorSyncChanges {
+		t.Fatalf("mode = %s", res.Mode)
+	}
+	if got := attendees(t); got != "[ev2 grace@acme.com]" {
+		t.Fatalf("attendees = %s", got)
+	}
+	if rows := f.snapshotRows(t, "calendar_events"); len(rows) != 1 || !strings.Contains(rows[0], `"event_id":"ada@acme.com:ev2"`) {
+		t.Fatalf("events = %v", rows)
+	}
 }

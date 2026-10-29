@@ -39,6 +39,7 @@ const (
 	googleFutureDays = 30
 	maxGooglePages   = 10_000
 	googleDocType    = "application/vnd.google-apps.document"
+	googleFolderType = "application/vnd.google-apps.folder"
 	// googleFileFieldList are the fields of a file a Drive listing or
 	// change feed asks for: Drive returns only id, name and mimeType of each
 	// file unless asked.
