@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/helixdb/helix-foundry/backend/config"
 )
 
 var _ PassKind = (*slackKind)(nil)
@@ -58,6 +60,11 @@ var slackIntervals = map[string]time.Duration{
 // Past it, the oldest days' messages are dropped, and a day whose document
 // is then wanted is read again. Tests lower it.
 var slackTextBudget = 64 << 20
+
+// slackDayBytes bounds what one day keeps of its messages, and of its
+// document's text: the most foundry.documents.max_bytes may be, past which
+// the syncer cuts a document. Tests lower it.
+var slackDayBytes = config.MaxDocumentBytes
 
 // slackNow is the clock the history window is counted from. Tests set it.
 var slackNow = time.Now
@@ -539,10 +546,7 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	if d.dropped {
 		return nil
 	}
-	d.messages = append(d.messages, m)
-	d.bytes += len(m.Text) + slackMessageOverhead
-	p.kept += len(m.Text) + slackMessageOverhead
-	if p.kept <= slackTextBudget {
+	if p.kept += d.keep(m); p.kept <= slackTextBudget {
 		return nil
 	}
 	kept := slices.SortedFunc(maps.Values(p.days), func(a, b *slackDay) int { return b.active.Compare(a.active) })
@@ -550,7 +554,7 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	for ; p.kept > slackTextBudget*3/4; kept = kept[:len(kept)-1] {
 		oldest := kept[len(kept)-1]
 		p.kept -= oldest.bytes
-		oldest.messages, oldest.bytes, oldest.dropped = nil, 0, true
+		oldest.messages, oldest.bytes, oldest.cut, oldest.dropped = nil, 0, 0, true
 	}
 	return nil
 }
@@ -561,20 +565,25 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 // day holds the thread's parent, else on its own. A day whose messages
 // were dropped is read again; ok is false when none are left, or its
 // channel is gone since it was listed. A thread gone since has no replies.
+// Once the text is over slackDayBytes, no more is read or written, since
+// the syncer cuts it; a day that kept only its earliest messages and ends
+// below it says how many it left out.
 func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok bool, _ error) {
-	messages := d.messages
+	messages, cut := d.messages, d.cut
 	if d.dropped {
+		var again slackDay
 		start := d.first.Truncate(24 * time.Hour)
 		err := p.c.history(ctx, d.channel.ID, start, start.Add(24*time.Hour-time.Microsecond), func(m slackMessage) error {
-			messages = append(messages, m)
+			again.keep(m)
 			return nil
 		})
 		switch {
 		case errors.Is(err, errChannelGone):
 			return nil, false, nil
-		case err != nil || len(messages) == 0:
+		case err != nil || len(again.messages) == 0:
 			return nil, false, err
 		}
+		messages, cut = again.messages, again.cut
 	}
 	slices.SortFunc(messages, func(a, b slackMessage) int { return cmp.Or(a.at.Compare(b.at), strings.Compare(a.TS, b.TS)) })
 	parents := map[string]bool{}
@@ -584,6 +593,9 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 	var text strings.Builder
 	fmt.Fprintf(&text, "# #%s, %s\n\nChannel: #%s (%s)\n", d.channel.Name, d.day, d.channel.Name, d.channel.ID)
 	for _, m := range messages {
+		if text.Len() > slackDayBytes {
+			return []byte(text.String()), true, nil
+		}
 		if m.Subtype == "thread_broadcast" && m.ThreadTS != m.TS && parents[m.ThreadTS] {
 			continue
 		}
@@ -592,7 +604,7 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 		if m.ReplyCount == 0 {
 			continue
 		}
-		replies, err := p.c.replies(ctx, d.channel.ID, m.TS)
+		replies, err := p.c.replies(ctx, d.channel.ID, m.TS, slackDayBytes-text.Len())
 		switch {
 		case errors.Is(err, errChannelGone):
 			return nil, false, nil
@@ -604,6 +616,9 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 		for _, r := range replies {
 			p.line(&text, "  - ", "    ", r, d.day)
 		}
+	}
+	if cut > 0 && text.Len() <= slackDayBytes {
+		fmt.Fprintf(&text, "\n[Left out: %d later messages of this day]\n", cut)
 	}
 	return []byte(text.String()), true, nil
 }
@@ -680,9 +695,25 @@ type slackDay struct {
 	sum      [sha256.Size]byte
 	messages []slackMessage
 	bytes    int
+	// cut counts the latest messages left out of messages, past slackDayBytes.
+	cut int
 	// dropped is a day whose messages are not kept, to be read again if its
 	// document is wanted.
 	dropped bool
+}
+
+// keep adds m, listed after every message d keeps since history pages come
+// newest first, and leaves out the latest while the rest are over
+// slackDayBytes: a day keeps its earliest messages, a little more than one
+// document holds. It returns how many bytes d's messages grew by.
+func (d *slackDay) keep(m slackMessage) int {
+	before := d.bytes
+	d.messages = append(d.messages, m)
+	d.bytes += len(m.Text) + slackMessageOverhead
+	for latest := len(d.messages[0].Text) + slackMessageOverhead; d.bytes-latest > slackDayBytes; latest = len(d.messages[0].Text) + slackMessageOverhead {
+		d.messages, d.bytes, d.cut = d.messages[1:], d.bytes-latest, d.cut+1
+	}
+	return d.bytes - before
 }
 
 func (d *slackDay) id() string { return d.channel.ID + ":" + d.day }
@@ -872,9 +903,13 @@ func (c *slackClient) history(ctx context.Context, channel string, oldest, lates
 }
 
 // replies lists the replies of the thread parent starts, in time order,
-// but those slackSkipped names; conversations.replies lists the parent first.
-func (c *slackClient) replies(ctx context.Context, channel, parent string) ([]slackMessage, error) {
-	var replies []slackMessage
+// but those slackSkipped names; conversations.replies lists the parent
+// first, then the replies oldest first. It stops once they are over room bytes.
+func (c *slackClient) replies(ctx context.Context, channel, parent string, room int) ([]slackMessage, error) {
+	var (
+		replies []slackMessage
+		size    int
+	)
 	err := c.pages(ctx, "conversations.replies", "messages", url.Values{"channel": {channel}, "ts": {parent}, "limit": {slackHistoryPage}},
 		func(raw json.RawMessage) error {
 			var m slackMessage
@@ -887,6 +922,9 @@ func (c *slackClient) replies(ctx context.Context, channel, parent string) ([]sl
 				return fmt.Errorf("slack conversations.replies: thread %s in channel %s lists a reply without a valid ts", parent, channel)
 			case m.TS != parent && !slackSkipped[m.Subtype]:
 				replies = append(replies, m)
+				if size += len(m.Text) + slackMessageOverhead; size > room {
+					return errStopPaging
+				}
 			}
 			return nil
 		})

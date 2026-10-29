@@ -1448,6 +1448,89 @@ func TestSlackDocuments(t *testing.T) {
 			}
 		})
 	}
+	// One day of a busy channel may hold far more than a document does; it
+	// keeps its earliest messages, as the syncer's cut of a document would.
+	busy := func(t *testing.T, replies []string) *slackWorkspace {
+		t.Helper()
+		saved := slackDayBytes
+		slackDayBytes = 2000
+		t.Cleanup(func() { slackDayBytes = saved })
+		w := newSlackWorkspace()
+		w.joined, w.history["C1"] = w.joined[:1], nil
+		at := func(i int) string { return slackTS(fmt.Sprintf("2026-10-29T10:%02d:00Z", i)) }
+		for i := 9; i >= 0; i-- {
+			thread := ""
+			if i < 2 && len(replies) > 0 {
+				thread = fmt.Sprintf(`,"thread_ts":%q,"reply_count":%d,"latest_reply":%q`, at(i), len(replies), at(i))
+			}
+			w.history["C1"] = append(w.history["C1"], fmt.Sprintf(`{"user":"U1","text":"m%d","ts":%q%s}`, i, at(i), thread))
+		}
+		for i := range 2 {
+			w.replies["C1:"+at(i)] = []string{fmt.Sprintf(`{"user":"U1","text":"m%d","ts":%q,"thread_ts":%q}`, i, at(i), at(i))}
+			for j, text := range replies {
+				w.replies["C1:"+at(i)] = append(w.replies["C1:"+at(i)],
+					fmt.Sprintf(`{"user":"U2","text":%q,"ts":%q,"thread_ts":%q}`, text, slackTS(fmt.Sprintf("2026-10-29T11:%02d:00Z", j)), at(i)))
+			}
+		}
+		return w
+	}
+	t.Run("keeps a large day's earliest messages, saying how many it left out", func(t *testing.T) {
+		for _, budget := range []int{64 << 20, 0} {
+			saved := slackTextBudget
+			slackTextBudget = budget
+			kind, _ := slackAt(t, busy(t, nil).routes())
+			docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+			sinks, err := slackRead(t, kind, slackTables[3:], docs)
+			slackTextBudget = saved
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "# #general, 2026-10-29\n\n" + slackHeader
+			for i := range 8 {
+				want += fmt.Sprintf("\n**Ada Lovelace** 10:%02d: m%d\n", i, i)
+			}
+			want += "\n[Left out: 2 later messages of this day]\n"
+			if got := texts(docs)["C1:2026-10-29"]; got != want {
+				t.Fatalf("budget %d: C1:2026-10-29 =\n%s\nwant\n%s", budget, got, want)
+			}
+			// What Slack says of every message makes its row and version.
+			if len(sinks["messages"].rows) != 10 || fmt.Sprint(sinks["channel_days"].rows[0]["message_count"]) != "10" {
+				t.Fatalf("budget %d: rows = %v", budget, sinks["channel_days"].rows)
+			}
+		}
+	})
+	t.Run("stops reading a large day's threads once it holds more than a document", func(t *testing.T) {
+		long := strings.Repeat("a", 1000)
+		w := busy(t, []string{long + "1", long + "2", long + "3", long + "4"})
+		routes := w.routes()
+		replies := routes["conversations.replies"]
+		routes["conversations.replies"] = func(r *http.Request) (int, string) {
+			_, page := replies(r)
+			var listed struct{ Messages []json.RawMessage }
+			_ = json.Unmarshal([]byte(page), &listed)
+			items := make([]string, len(listed.Messages))
+			for i, m := range listed.Messages {
+				items[i] = string(m)
+			}
+			if r.URL.Query().Get("cursor") == "" {
+				return http.StatusOK, slackMore("messages", "r2", items[:3]...)
+			}
+			return http.StatusOK, slackPage("messages", items[3:]...)
+		}
+		kind, calls := slackAt(t, routes)
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		if _, err := slackRead(t, kind, slackTables[3:], docs); err != nil {
+			t.Fatal(err)
+		}
+		want := "# #general, 2026-10-29\n\n" + slackHeader + "\n**Ada Lovelace** 10:00: m0\n" +
+			"  - **Grace Hopper** 11:00: " + long + "1\n  - **Grace Hopper** 11:01: " + long + "2\n"
+		if got := texts(docs)["C1:2026-10-29"]; got != want {
+			t.Fatalf("C1:2026-10-29 =\n%s\nwant\n%s", got, want)
+		}
+		if got := calls.of("conversations.replies"); len(got) != 1 || !strings.Contains(got[0], "ts="+slackTS("2026-10-29T10:00:00Z")) {
+			t.Fatalf("replies calls = %q", got)
+		}
+	})
 	t.Run("stops at Put's error", func(t *testing.T) {
 		kind, _ := slackAt(t, newSlackWorkspace().routes())
 		failed := errors.New("store down")
