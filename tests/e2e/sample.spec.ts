@@ -54,20 +54,23 @@ test("walks a new workspace through the sample company, from its database to Ask
   });
   await page.reload();
   // Once loaded, the tour asks the draft's first question itself and shows
-  // its answer; the others are a click away, then the user's own data.
-  await expect(steps.getByRole("region", { name: "Answer" })).toBeVisible({
-    timeout: 60_000,
-  });
+  // how it ended, as Ask does (the mock can't answer this one); the others
+  // are a click away, then the user's own data.
+  const asked = steps.getByRole("article", { name: /^Question: / });
+  await expect(asked).toBeVisible({ timeout: 60_000 });
+  await expect(
+    steps.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByRole("link", { name: "Connect your own data" }),
   ).toHaveAttribute("href", "/ontology/new");
   const others = steps.getByRole("group", { name: "Suggested questions" });
   await expect(others.getByRole("button").first()).toBeEnabled();
-  // A reload shows the same answer: nothing is asked twice.
+  // A reload shows the same question: nothing is asked twice.
+  const first = (await asked.getAttribute("aria-label"))!;
   await page.reload();
-  await expect(steps.getByRole("region", { name: "Answer" })).toHaveCount(1, {
-    timeout: 30_000,
-  });
+  await expect(asked).toHaveCount(1, { timeout: 30_000 });
+  await expect(asked).toHaveAttribute("aria-label", first);
   const next = (await others.getByRole("button").first().textContent())!;
   await others.getByRole("button", { name: next }).click();
   await expect(page).toHaveURL(/\/ask\/[^?]+\?thread=q_/);

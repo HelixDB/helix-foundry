@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { choose, startOntology, uploadCard } from "../e2e/support/mock";
+import { choose, uploadCard } from "../e2e/support/mock";
 
 // The real local stack, from a fresh install with nothing set up: the
 // workspace it starts with, a PostgreSQL connection synced into the store
@@ -28,21 +28,14 @@ const dialog = (page: Page) => page.locator("dialog[open]");
 let ontologyPath = "",
   generationPath = "";
 
-// The first workspace opens on its onboarding, the first ontology's wizard,
-// which is all it offers until it has an ontology: its sources step connects
-// the database and uploads the document. Each test opens the wizard afresh,
-// on the new database, at that step.
+// The first workspace opens on its onboarding, Get started, which is all it
+// offers until it has an ontology. Use my own data opens the first
+// ontology's sources step, which connects the database and uploads the
+// document; the ontology is named from them and goes on a new database.
+// Each test opens it afresh.
 async function toSources(page: Page) {
-  await startOntology(page, "Shop");
-  await page.getByRole("radio", { name: "Create a new one" }).click();
-  await page.getByLabel("Project name").fill("Foundry");
-  await page.getByLabel("Database name").fill("Shop");
-  await expect(
-    page.getByText(
-      "It is kept in the Helix that runs with Foundry on this computer.",
-    ),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.goto("/ontology/new");
+  await page.getByRole("button", { name: "Use my own data" }).click();
 }
 
 // The install made the owner's first workspace as it first started, so the

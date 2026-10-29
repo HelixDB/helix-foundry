@@ -193,6 +193,16 @@ export async function startOntology(page: Page, name: string) {
 }
 
 /**
+ * Opens a new workspace's first ontology from its onboarding, with Use my own
+ * data: the sources step shows, the first of the only steps it asks (no name,
+ * no database).
+ */
+export async function startFirstOntology(page: Page) {
+  await page.goto("/ontology/new");
+  await page.getByRole("button", { name: "Use my own data" }).click();
+}
+
+/**
  * Walks the wizard on from the database step, once one is chosen: the
  * sources step as it stands (every synced connector unless changed, no
  * document sets) and no goal, then Create and generate.
@@ -221,8 +231,7 @@ export async function createdOntology(page: Page): Promise<string> {
  * The workspace then offers every page. The ontology's overview path.
  */
 export async function createFirstOntology(page: Page): Promise<string> {
-  await page.goto("/ontology/new");
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await startFirstOntology(page);
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Upload documents" }).click();
   await (await chooser).setFiles([file("notes.md", "# Notes\n")]);
