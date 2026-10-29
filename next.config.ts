@@ -18,11 +18,11 @@ if (mode && mode !== "local")
 const DATABUDDY = {
   dev: {
     origin: "https://dev.foundry.helix-db.com",
-    clientId: "DATABUDDY_DEV_CLIENT_ID",
+    clientId: "a4288db1-0535-4fdd-8cae-bc525f19a172",
   },
   prod: {
     origin: "https://foundry.helix-db.com",
-    clientId: "DATABUDDY_PROD_CLIENT_ID",
+    clientId: "81ea8e9c-0f0f-4696-885f-2fb34405e69b",
   },
 };
 const databuddy =

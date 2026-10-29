@@ -40,6 +40,9 @@ describe("next.config.ts", () => {
   );
 
   // Databuddy's client id: each stamp's, only in a build for its own origin.
+  // The "Foundry Dev" and "Foundry" sites in Databuddy.
+  const DEV_ID = "a4288db1-0535-4fdd-8cae-bc525f19a172",
+    PROD_ID = "81ea8e9c-0f0f-4696-885f-2fb34405e69b";
   const DEV_ORIGIN = "https://dev.foundry.helix-db.com",
     PROD_ORIGIN = "https://foundry.helix-db.com";
   it.each([
@@ -48,14 +51,14 @@ describe("next.config.ts", () => {
       appEnv: "dev",
       mode: undefined,
       origin: DEV_ORIGIN,
-      id: "dev",
+      id: DEV_ID,
     },
     {
       name: "prod",
       appEnv: " Prod ",
       mode: undefined,
       origin: PROD_ORIGIN,
-      id: "prod",
+      id: PROD_ID,
     },
     {
       name: "prod's values on dev's origin",
@@ -121,33 +124,9 @@ describe("next.config.ts", () => {
         NEXT_PUBLIC_FOUNDRY_MODE: mode,
         NEXT_PUBLIC_WORKOS_REDIRECT_URI: origin && `${origin}/login/callback`,
       });
-      const ids = await load({
-        NEXT_PUBLIC_APP_ENV: id || "dev",
-        NEXT_PUBLIC_FOUNDRY_MODE: undefined,
-        NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${id === "prod" ? PROD_ORIGIN : DEV_ORIGIN}/login/callback`,
-      });
-      expect(env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toBe(
-        id ? ids.NEXT_PUBLIC_DATABUDDY_CLIENT_ID : "",
-      );
-      if (id) expect(env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).not.toBe("");
+      expect(env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toBe(id);
     },
   );
-
-  it("gives each stamp a client id of its own", async () => {
-    const dev = await load({
-      NEXT_PUBLIC_APP_ENV: "dev",
-      NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${DEV_ORIGIN}/login/callback`,
-    });
-    const prod = await load({
-      NEXT_PUBLIC_APP_ENV: "prod",
-      NEXT_PUBLIC_WORKOS_REDIRECT_URI: `${PROD_ORIGIN}/login/callback`,
-    });
-    expect(dev.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toMatch(/^[0-9a-f-]{36}$/);
-    expect(prod.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toMatch(/^[0-9a-f-]{36}$/);
-    expect(dev.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).not.toBe(
-      prod.NEXT_PUBLIC_DATABUDDY_CLIENT_ID,
-    );
-  });
 
   it("names an origin the prompt can append a path to", async () => {
     const url = (await load({ NEXT_PUBLIC_APP_ENV: "dev" }))
