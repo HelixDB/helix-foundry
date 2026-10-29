@@ -585,7 +585,7 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 			fmt.Fprintf(&text, "Owner: %s\n", doc.owner)
 		}
 		fmt.Fprintf(&text, "Last modified: %s\nFile id: %s\n", doc.modified.UTC().Format("2006-01-02 15:04 UTC"), doc.id)
-		if export := strings.TrimSpace(strings.ToValidUTF8(string(body), "�")); export != "" {
+		if export := strings.TrimSpace(strings.ToValidUTF8(string(body), "\uFFFD")); export != "" {
 			text.WriteString("\n" + export + "\n")
 		}
 		if err := docs.Put(ctx, googleDocsStream.Name, Document{ExternalID: doc.id, Version: doc.version, At: doc.modified,

@@ -991,7 +991,7 @@ func TestGoogleDocuments(t *testing.T) {
 				URL: "https://docs.google.com/document/d/doc2/edit", Text: []byte("# Untitled document\n\nLast modified: 2026-10-25 08:00 UTC\nFile id: doc2\n")},
 			{ExternalID: "doc3", Version: "1|2026-10-22T09:00:00+01:00|", At: time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC), Title: "Notes",
 				URL:  "http://docs.google.com/document/d/doc3/edit",
-				Text: []byte("# Notes\n\nOwner: grace@acme.com\nLast modified: 2026-10-22 08:00 UTC\nFile id: doc3\n\ncaf�\n")},
+				Text: []byte("# Notes\n\nOwner: grace@acme.com\nLast modified: 2026-10-22 08:00 UTC\nFile id: doc3\n\ncaf\uFFFD\n")},
 			{ExternalID: "doc1", Version: "1|2026-10-20T15:30:00.250Z|42", At: time.Date(2026, 10, 20, 15, 30, 0, 25e7, time.UTC), Title: "Q3 plan",
 				URL:  "https://docs.google.com/document/d/doc1/edit",
 				Text: []byte("# Q3 plan\n\nOwner: ada@acme.com\nLast modified: 2026-10-20 15:30 UTC\nFile id: doc1\n\n## Goals\n\nShip it.\n")},
