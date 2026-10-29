@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -135,6 +136,9 @@ var notionPagesStream = Stream{Name: "pages", Table: "pages", Title: "Pages", Fo
 type notionKind struct {
 	base string
 	http *http.Client
+	// listings are by connector id (notionListing), under mu.
+	mu       sync.Mutex
+	listings map[string]notionListing
 }
 
 func (k *notionKind) Name() string        { return "notion" }
@@ -155,11 +159,13 @@ func (k *notionKind) Streams(Source) []Stream { return []Stream{notionPagesStrea
 
 func (k *notionKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }
 
-// Discover proves the secret on the integration's own user, then probes the
-// users list and a search each of pages and data sources, one result each.
-// A secret that may not read users makes the users table unavailable; one
-// shared with nothing is refused. Every shared data source is a table, its
-// columns from its schema; a test shows a few rows of each of the oldest 20.
+// Discover proves the secret on the integration's own user, lists the
+// shared data sources, then probes the users list and, when no data source
+// is shared, a search of pages, one result each. A secret that may not
+// read users makes the users table unavailable; one shared with nothing is
+// refused. Every shared data source is a table, its columns from its
+// schema; a test shows a few rows of each of the oldest 20. A sync's reads
+// use the data sources it listed (remember).
 func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	c := k.client(src.Secret)
 	status, _, err := c.do(ctx, "/v1/users/me", nil, nil)
@@ -169,8 +175,16 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 	if err := notionStatus(status, "/v1/users/me"); err != nil {
 		return Discovery{}, err
 	}
-	found, err := probeAll(ctx, []string{"users", "page", "data_source"}, func(ctx context.Context, probe string) (bool, error) {
-		if probe != "users" {
+	listed, err := c.listSources(ctx)
+	if err != nil {
+		return Discovery{}, err
+	}
+	probes := []string{"users"}
+	if len(listed) == 0 {
+		probes = append(probes, "page")
+	}
+	found, err := probeAll(ctx, probes, func(ctx context.Context, probe string) (bool, error) {
+		if probe == "page" {
 			l, err := c.page(ctx, "/v1/search", nil, map[string]any{"filter": map[string]any{"property": "object", "value": probe}, "page_size": 1})
 			return len(l.Results) > 0, err
 		}
@@ -186,7 +200,7 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 	if err != nil {
 		return Discovery{}, err
 	}
-	if !found["page"] && !found["data_source"] {
+	if len(listed) == 0 && !found["page"] {
 		return Discovery{}, refused(nil, "nothing is shared with this integration yet: in Notion, add it to a page or database "+
 			"from its ••• menu › Connections, then test again")
 	}
@@ -199,13 +213,6 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 		d.Unavailable = append(d.Unavailable, Unavailable{Name: "users", Reason: "turn on Read user information in the integration's capabilities"})
 	}
 	d.Tables = append(d.Tables, pages)
-	if !found["data_source"] {
-		return d, nil
-	}
-	listed, err := c.listSources(ctx)
-	if err != nil {
-		return Discovery{}, err
-	}
 	for i, s := range notionSources(listed) {
 		t := s.table
 		if !src.ForSync && i < notionPreviews {
@@ -224,6 +231,9 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 			}
 		}
 		d.Tables = append(d.Tables, t)
+	}
+	if src.ForSync && src.ConnectorID != "" {
+		k.remember(src.ConnectorID, c.secret, listed)
 	}
 	return d, nil
 }
@@ -245,10 +255,10 @@ func (k *notionKind) SyncDocuments(ctx context.Context, src Source, table Table,
 // read), and every other page from a search, which Notion doesn't promise
 // is complete; one Markdown read per page whose document is wanted. A table
 // names its data source only by the name Discover gave it, so the pass
-// searches the data sources again and names them the same way; a data
-// source renamed in Notion is a new table, and its old one goes. Each data
-// source's table is returned with the columns of the schema this search
-// read.
+// names the data sources its sync's Discover listed the same way, or, past
+// notionListingFresh, searches them again; a data source renamed in
+// Notion is a new table, and its old one goes. Each data source's table is
+// returned with the columns of the schema that listing read.
 func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
 	c := k.client(src.Secret)
 	written := slices.Clone(tables)
@@ -269,7 +279,7 @@ func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 	if pages == nil && len(read) == 0 {
 		return written, nil
 	}
-	listed, err := c.listSources(ctx)
+	listed, err := k.listed(ctx, c, src)
 	if err != nil {
 		return written, err
 	}
@@ -915,6 +925,48 @@ func (c *notionClient) dataSource(ctx context.Context, id string) (_ notionListe
 		return notionListed{}, false, nil
 	}
 	return notionListedOf(item), true, nil
+}
+
+// notionListing is the data sources a sync's Discover listed, which the
+// same sync's Start, Changes and SyncPass read rather than searching
+// again, for notionListingFresh: a sync searches its data sources once,
+// and names its tables as its discovery did.
+type notionListing struct {
+	secret string
+	at     time.Time
+	listed []notionListed
+}
+
+// notionListingFresh is how long a sync's discovered data sources serve
+// its reads: past it, as after a long change read, a read searches again,
+// so a data source unshared meanwhile isn't queried.
+const notionListingFresh = time.Minute
+
+// remember keeps what a sync's Discover listed for the connector, and
+// forgets the listings no read may use any longer.
+func (k *notionKind) remember(connectorID, secret string, listed []notionListed) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	now := time.Now()
+	maps.DeleteFunc(k.listings, func(_ string, l notionListing) bool { return now.Sub(l.at) >= notionListingFresh })
+	if k.listings == nil {
+		k.listings = map[string]notionListing{}
+	}
+	k.listings[connectorID] = notionListing{secret: secret, at: now, listed: listed}
+}
+
+// listed is the data sources a sync of src reads: those its Discover
+// listed (remember), while fresh and for the same secret, else a search.
+func (k *notionKind) listed(ctx context.Context, c *notionClient, src Source) ([]notionListed, error) {
+	if src.ForSync && src.ConnectorID != "" {
+		k.mu.Lock()
+		l, ok := k.listings[src.ConnectorID]
+		k.mu.Unlock()
+		if ok && l.secret == c.secret && time.Since(l.at) < notionListingFresh {
+			return slices.Clone(l.listed), nil
+		}
+	}
+	return c.listSources(ctx)
 }
 
 // notionSources names each listed data source's table from its title

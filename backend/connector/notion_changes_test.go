@@ -290,6 +290,59 @@ func TestNotionChanges(t *testing.T) {
 			t.Fatalf("requests = %q", asked)
 		}
 	})
+	// One sync's Discover, Start, Changes and full read search the data
+	// sources once, and name their tables alike.
+	t.Run("reads the data sources its sync discovered rather than searching again", func(t *testing.T) {
+		e := workspace(t, nil)
+		kind := e.kind(nil)
+		sync := Source{Secret: notionTestSecret, ForSync: true, ConnectorID: "conn-1"}
+		if _, err := kind.Discover(ctx, sync); err != nil {
+			t.Fatal(err)
+		}
+		start, err := kind.Start(ctx, sync, tables)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := kind.Changes(ctx, sync, tables, start.Cursor, newNotionChanges()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := kind.SyncPass(ctx, sync, []Table{{Name: "deals"}}, map[string]RowWriter{"deals": &rowSink{}}, noDocuments{}); err != nil {
+			t.Fatal(err)
+		}
+		searches := func() int {
+			return len(slices.DeleteFunc(e.took(), func(r string) bool { return r != "search data sources" }))
+		}
+		if n := searches(); n != 1 {
+			t.Fatalf("%d searches of data sources", n)
+		}
+		// Not for another connector, a test, another secret, or once stale.
+		for name, src := range map[string]Source{"another connector": {Secret: notionTestSecret, ForSync: true, ConnectorID: "conn-2"},
+			"a test": {Secret: notionTestSecret, ConnectorID: "conn-1"}} {
+			if _, err := kind.Start(ctx, src, tables); err != nil || searches() != 1 {
+				t.Fatalf("%s: Start = %v, searched again: %v", name, err, err == nil)
+			}
+		}
+		for name, edit := range map[string]func(*notionListing){
+			"another secret": func(l *notionListing) { l.secret = "ntn_other" },
+			"once stale":     func(l *notionListing) { l.at = l.at.Add(-notionListingFresh) },
+		} {
+			l := kind.listings["conn-1"]
+			edit(&l)
+			kind.listings["conn-1"] = l
+			if _, err := kind.Start(ctx, sync, tables); err != nil || searches() != 1 {
+				t.Fatalf("%s: Start = %v, searched again: %v", name, err, err == nil)
+			}
+			kind.remember("conn-1", notionTestSecret, nil)
+		}
+		// A listing no read may use is forgotten at the next one kept.
+		l := kind.listings["conn-1"]
+		l.at = l.at.Add(-notionListingFresh)
+		kind.listings["conn-1"] = l
+		kind.remember("conn-3", notionTestSecret, nil)
+		if _, kept := kind.listings["conn-1"]; kept || len(kind.listings) != 1 {
+			t.Fatalf("listings = %v", kind.listings)
+		}
+	})
 	t.Run("refuses a start Notion refuses", func(t *testing.T) {
 		e := workspace(t, nil)
 		_, err := e.kind(notionRoutes{"/v1/search": func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` }}).Start(ctx, src, tables)

@@ -315,7 +315,8 @@ func TestNotionConnector(t *testing.T) {
 			t.Fatalf("tables = %v, unavailable = %v", d.Tables, d.Unavailable)
 		}
 	})
-	// Only the probes search when no data source is shared.
+	// The data source search and a probe of pages search when no data
+	// source is shared; with one shared, the data sources alone.
 	t.Run("lists no data source when none is shared", func(t *testing.T) {
 		var mu sync.Mutex
 		searches := 0
@@ -327,6 +328,17 @@ func TestNotionConnector(t *testing.T) {
 			return search(r)
 		}})).Discover(ctx, Source{Secret: notionTestSecret})
 		if err != nil || !slices.Equal(tableNames(d), []string{"users", "pages"}) || searches != 2 {
+			t.Fatalf("Discover = (%v, %v) after %d searches", tableNames(d), err, searches)
+		}
+		searches = 0
+		search = notionSearchOf(t, pages, []string{accounts})
+		d, err = notionAt(t, notionShared(t, nil, nil, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			mu.Lock()
+			searches++
+			mu.Unlock()
+			return search(r)
+		}})).Discover(ctx, Source{Secret: notionTestSecret, ForSync: true})
+		if err != nil || !slices.Equal(tableNames(d), []string{"users", "pages", "customer_accounts"}) || searches != 1 {
 			t.Fatalf("Discover = (%v, %v) after %d searches", tableNames(d), err, searches)
 		}
 	})

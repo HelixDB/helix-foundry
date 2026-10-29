@@ -71,7 +71,7 @@ func (k *notionKind) Capture(_ Source, table string) Capture {
 
 func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Start, error) {
 	since := notionSince(time.Now())
-	listed, err := k.client(src.Secret).listSources(ctx)
+	listed, err := k.listed(ctx, k.client(src.Secret), src)
 	if err != nil {
 		return Start{}, err
 	}
@@ -115,7 +115,7 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 		return nil, fmt.Errorf("decode notion change cursor: %w", ErrCursorExpired)
 	}
 	c := k.client(src.Secret)
-	listed, err := c.listSources(ctx)
+	listed, err := k.listed(ctx, c, src)
 	if err != nil {
 		return nil, err
 	}
