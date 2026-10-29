@@ -33,6 +33,8 @@ type notionEdits struct {
 type notionEdit struct {
 	edited, source, properties string
 	trashed                    bool
+	// created is when the page was made; before every cursor when empty.
+	created string
 }
 
 func (e notionEdit) item(id string) string {
@@ -40,9 +42,10 @@ func (e notionEdit) item(id string) string {
 	if e.source != "" {
 		parent = notionUnder("data_source_id", e.source)
 	}
-	return fmt.Sprintf(`{"object":"page","id":%q,"created_time":"2026-01-05T09:00:00.000Z","last_edited_time":%q,
+	created := cmp.Or(e.created, "2026-01-05T09:00:00.000Z")
+	return fmt.Sprintf(`{"object":"page","id":%q,"created_time":%q,"last_edited_time":%q,
 		"created_by":{"object":"user","id":"usr_ada"},"last_edited_by":{"object":"user","id":"usr_ada"},"in_trash":%t,
-		"parent":%s,"url":"https://www.notion.so/%s","properties":%s}`, id, e.edited, e.trashed, parent, id, e.properties)
+		"parent":%s,"url":"https://www.notion.so/%s","properties":%s}`, id, created, e.edited, e.trashed, parent, id, e.properties)
 }
 
 // ask records a request.
@@ -147,8 +150,9 @@ func (e *notionEdits) kind(extra notionRoutes) *notionKind {
 }
 
 // notionChanges is a ChangeWriter that takes documents as granolaDocs does,
-// holds the documents of held, and logs every change in the order it was
-// written. A set fail refuses every change.
+// holds the documents of held (those a full read of the test workspace
+// wrote, row_1's and pg_1's, unless set), and logs every change in the
+// order it was written. A set fail refuses every change.
 type notionChanges struct {
 	*granolaDocs
 	cursorChanges
@@ -158,7 +162,7 @@ type notionChanges struct {
 }
 
 func newNotionChanges() *notionChanges {
-	return &notionChanges{granolaDocs: &granolaDocs{want: map[string]bool{"pages": true}}}
+	return &notionChanges{granolaDocs: &granolaDocs{want: map[string]bool{"pages": true}}, held: map[string]bool{"row_1": true, "pg_1": true}}
 }
 
 func (c *notionChanges) Held(_, id string) (string, bool) { return "2|held", c.held[id] }
@@ -344,13 +348,26 @@ func TestNotionChanges(t *testing.T) {
 		}
 	})
 	t.Run("adds a page edited since, with its document", func(t *testing.T) {
-		e := workspace(t, map[string]notionEdit{"pg_2": {edited: after, properties: title("Launch plan")}})
+		e := workspace(t, map[string]notionEdit{"pg_2": {edited: after, created: after, properties: title("Launch plan")}})
 		e.bodies["pg_2"] = "Launch in May."
 		w := newNotionChanges()
 		changes(t, e, cursorOf(t, e, nil), w)
 		if !slices.Equal(w.log, []string{"upsert pages pg_2"}) || !slices.Equal(w.putNames(), []string{"pages pg_2"}) ||
 			w.upserts["pages"][0]["title"] != "Launch plan" {
 			t.Fatalf("changes = %q, puts = %v", w.log, w.putNames())
+		}
+	})
+	// A page made before the cursor that the stream holds no document for
+	// may be one the full read left past the stream's cap: its document
+	// would go again at the reconcile, so only its row is written.
+	t.Run("offers no document for an older page the stream holds none for", func(t *testing.T) {
+		e := workspace(t, map[string]notionEdit{"row_2": {edited: after, source: "ds_2", properties: title("Bigger deal")}})
+		e.bodies["row_2"] = "Signed in June."
+		w := newNotionChanges()
+		changes(t, e, cursorOf(t, e, nil), w)
+		if asked := e.took(); !slices.Equal(w.log, []string{"upsert deals row_2", "upsert pages row_2"}) || len(w.offers) != 0 ||
+			slices.Contains(asked, "markdown row_2") {
+			t.Fatalf("changes = %q, offers = %q, asked = %q", w.log, w.offers, asked)
 		}
 	})
 	// The search lists rows too, newest first: it stops at the first older

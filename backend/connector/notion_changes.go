@@ -79,9 +79,9 @@ func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 //     where its table isn't followed).
 //  5. The other pages a search lists, newest edit first, back to the cursor.
 //
-// Each page the pages table upserts has its document offered as a full
-// read offers it (document); one Notion no longer finds loses its pages
-// row. What moves no page's last edit waits for the daily reconcile: a
+// Each page the pages table upserts whose document the stream holds, or
+// that was made since the cursor, has its document offered as a full read
+// offers it (document); one Notion no longer finds loses its pages row. What moves no page's last edit waits for the daily reconcile: a
 // page shared, unshared or trashed without one, a row moved out of its data
 // source (its old table keeps it), a formula or rollup whose inputs are on
 // other pages, and a select option renamed.
@@ -168,6 +168,15 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 		}
 	}
 	page := func(p notionPage) error {
+		// A change read has no cap. A page whose document the stream doesn't
+		// hold may be one the last full read left past it (a workspace of
+		// more pages than the stream keeps), and a document for it now would
+		// go at the next reconcile, extracted for nothing: so only a page
+		// made since the cursor is offered one. An older page that has just
+		// gained a body waits for the reconcile.
+		if _, held := w.Held(notionPagesStream.Name, p.id); !held && p.created.Before(prev.Since) {
+			return w.Upsert("pages", p.row())
+		}
 		gone, err := c.document(ctx, p, w)
 		switch {
 		case err != nil:

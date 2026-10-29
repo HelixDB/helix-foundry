@@ -43,6 +43,8 @@ var notionTestTasks = notionTestSource{title: "Tasks", properties: `"Done":{"id"
 type notionTestPage struct {
 	edited, title, body, source string
 	done, trashed, unsearched   bool
+	// created is when the page was made; 2026-10-01 when empty.
+	created string
 }
 
 func (w *notionWorkspace) serve(t *testing.T) string {
@@ -55,10 +57,10 @@ func (w *notionWorkspace) serve(t *testing.T) string {
 		if p.source != "" {
 			parent = fmt.Sprintf(`{"type":"data_source_id","data_source_id":%q,"database_id":"db_1"}`, p.source)
 		}
-		return fmt.Sprintf(`{"object":"page","id":%q,"created_time":"2026-10-01T09:00:00.000Z","last_edited_time":%q,
+		return fmt.Sprintf(`{"object":"page","id":%q,"created_time":%q,"last_edited_time":%q,
 			"created_by":{"object":"user","id":"usr_ada"},"last_edited_by":{"object":"user","id":"usr_ada"},"parent":%s,
 			"in_trash":%t,"url":"https://www.notion.so/%s","properties":{"Name":{"id":"title","type":"title","title":[{"plain_text":%q}]},
-			"Done":{"id":"dn","type":"checkbox","checkbox":%t}}}`, id, p.edited, parent, p.trashed, id, p.title, p.done)
+			"Done":{"id":"dn","type":"checkbox","checkbox":%t}}}`, id, cmp.Or(p.created, "2026-10-01T09:00:00.000Z"), p.edited, parent, p.trashed, id, p.title, p.done)
 	}
 	// listed are the pages keep takes, by last edit, the newest first when newest.
 	listed := func(keep func(notionTestPage) bool, newest bool) []string {
@@ -347,7 +349,8 @@ func TestNotionSyncChanges(t *testing.T) {
 	task := f.liveID("pages", "pg_2")
 	workspace.edit(func() {
 		workspace.pages["pg_2"] = notionTestPage{edited: edited(), title: "Write the docs", body: "Draft, then review.", source: "ds_tasks", done: true}
-		workspace.pages["pg_4"] = notionTestPage{edited: edited(), title: "Launch", body: "Launch in May."}
+		at := edited()
+		workspace.pages["pg_4"] = notionTestPage{edited: at, created: at, title: "Launch", body: "Launch in May."}
 		workspace.pages["pg_1"] = notionTestPage{edited: edited(), title: "Roadmap", body: " \n"}
 	})
 	if res := changes(t, "sync-3"); !slices.Equal(res.Changed, []string{"pages", "tasks"}) {
@@ -368,9 +371,9 @@ func TestNotionSyncChanges(t *testing.T) {
 
 	// A row's properties edited, its body and title not: the same bytes, so
 	// its document is updated in place, not replaced and extracted again. A
-	// page trashed since loses its row and its document. pg_1 has no
-	// document to hold its version, so it is read again while its edit is
-	// within the cursor's reach.
+	// page trashed since loses its row and its document. pg_1, emptied, has
+	// no document and was made before the cursor, so a change read doesn't
+	// read it again.
 	task = f.liveID("pages", "pg_2")
 	at := edited()
 	workspace.edit(func() {
@@ -382,7 +385,7 @@ func TestNotionSyncChanges(t *testing.T) {
 	if res := changes(t, "sync-4"); !slices.Equal(res.Changed, []string{"pages", "tasks"}) {
 		t.Fatalf("changed = %v", res.Changed)
 	}
-	if reads, queries := workspace.took(); fmt.Sprint(reads) != "map[pg_1:1 pg_2:1]" || fmt.Sprint(queries) != "map[ds_tasks since whole:1]" ||
+	if reads, queries := workspace.took(); fmt.Sprint(reads) != "map[pg_2:1]" || fmt.Sprint(queries) != "map[ds_tasks since whole:1]" ||
 		f.liveID("pages", "pg_2") != task || !strings.Contains(f.store.docs[task].Source.Version, at[:16]) ||
 		!strings.Contains(row(t, "tasks", "pg_2"), `"done":false`) {
 		t.Fatalf("Markdown reads = %v, queries = %v; pg_2's document %s, was %s, version %s", reads, queries,
