@@ -32,8 +32,11 @@ export type AnalyticsEvents = {
   sign_in_started: { method: "github" | "google" | "microsoft" };
   login_completed: { destination: "workspace" | "onboarding" };
   workspace_created: undefined;
-  // A workspace with no ontology shows only the new-ontology wizard.
+  // A workspace with no ontology shows only the new-ontology wizard, which
+  // first asks how to start: the sample (sample_clicked), the user's own
+  // data, or their agent (setup_prompt_copied).
   onboarding_shown: undefined;
+  onboarding_own_data_clicked: undefined;
 
   // The landing page's copy buttons: the agent's setup prompt, or a local
   // install's (visitors who take them never open sign-in).
@@ -45,6 +48,9 @@ export type AnalyticsEvents = {
   sample_ontology_ready: undefined;
   sample_loaded: undefined;
   sample_ask_opened: undefined;
+  // The tour's first question answered, then Connect your own data.
+  sample_answered: undefined;
+  sample_own_data_clicked: undefined;
 
   // The workspace's own data.
   connector_created: { kind: ConnectorKindName };

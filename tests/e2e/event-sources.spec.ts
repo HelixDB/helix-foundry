@@ -9,7 +9,7 @@ import {
   mock,
   signIn,
   signInToNewWorkspace,
-  startOntology,
+  startFirstOntology,
   test,
 } from "./support/mock";
 import {
@@ -211,8 +211,7 @@ test("makes an API source in the onboarding wizard and drafts from its pieces", 
   // Long enough to see its pieces received before they sync.
   await mock.configure({ eventSyncMs: 6000 });
   await signInToNewWorkspace(page);
-  await startOntology(page, "Orders");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await startFirstOntology(page);
   await expect(
     page.getByRole("heading", { name: "No API sources yet" }),
   ).toBeVisible();
@@ -337,8 +336,10 @@ test("opens the MCP's token link on the onboarding wizard's send panel", async (
   ).toHaveValue(/^hx_ev_/);
   await dialog.getByRole("button", { name: "Close" }).click();
   await expect(dialog).toHaveCount(0);
-  // Over the Name step, which it leaves as it was.
-  await expect(tab.getByLabel("Ontology name")).toBeVisible();
+  // Over the first ontology's sources step, past Get started.
+  await expect(
+    tab.getByRole("heading", { level: 1, name: "Your first ontology" }),
+  ).toBeVisible();
   await expect(tab).toHaveURL(/\/ontology\/new$/);
 
   // A link to a source that is gone says so.
@@ -665,8 +666,7 @@ test("chooses an API source's text field in the onboarding wizard, and drafts fr
   await signInToNewWorkspace(page);
   const ws = await workspaceId(page);
   const source = await apiSource(page, ws, "Replies", REPLIES);
-  await startOntology(page, "Support");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await startFirstOntology(page);
   const row = sourceRow(page, "Replies");
   await expect(row).toContainText(/3 pieces, synced/);
 

@@ -831,6 +831,9 @@ export type OntologyGeneration = {
   // The sample it drafts from in place of the AI ("acme"); "" for an AI
   // draft.
   sample?: string;
+  // Asked for with GenerateOntologyRequest's loadWhenReady: its draft is
+  // made current and loaded once stored, if no version is current by then.
+  loadWhenReady?: boolean;
 };
 
 /**
@@ -914,6 +917,11 @@ export type GenerateOntologyRequest = {
   // (INVALID_ARGUMENT otherwise), and each of the sample's tables synced
   // (FAILED_PRECONDITION until then).
   sample?: string;
+  // Once the draft is stored, while the ontology still has no current
+  // version, make it current and load it, as set-current then create-load
+  // would, and email the requester when that load ends. The new-ontology
+  // wizard's first ontology sets it. Not with `sample`.
+  loadWhenReady?: boolean;
 };
 
 /**

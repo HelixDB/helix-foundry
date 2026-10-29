@@ -49,7 +49,7 @@ import {
   sweepViolations,
 } from "../graph/rules";
 import { scopeFor } from "../graph/scope";
-import { fail, id, now, ok, type MockRoute } from "../http";
+import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
 import { aiModel } from "./ai";
 import { isFoundryPro } from "./billing";
@@ -79,7 +79,12 @@ import {
   type Person,
   type Result,
 } from "./enrichment";
-import { isScope, ontologyById, ontologyOf } from "./ontologies";
+import {
+  isScope,
+  ontologyById,
+  ontologyOf,
+  type StoredOntology,
+} from "./ontologies";
 import { generationsEnded, ontologyVersion, versionScope } from "./ontology";
 import { sourceId } from "./ontology-agent";
 
@@ -1504,6 +1509,75 @@ const toLoad = (l: StoredLoad): FoundryLoad => {
 const BASE =
   "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/loads" as const;
 
+/**
+ * Queues a load of `versionId` on `o` with `clientToken`, as the WFE's
+ * create-load does once the request is read: the same token returns its
+ * load; a version that is missing or can't be loaded, a live load or
+ * extract, or a spent month is refused. A person's work. The new ontology
+ * worker's first draft (loadWhenReady) queues its load this way too.
+ */
+export function queueLoad(
+  o: StoredOntology,
+  versionId: string,
+  clientToken: string,
+): StoredLoad | MockReply {
+  advanceLoads(o.id);
+  const again = state.loads.find(
+    (l) => l.ontologyId === o.id && l.clientToken === clientToken,
+  );
+  if (again) return again;
+  const v = ontologyVersion(o.id, versionId);
+  if (!v) return fail("NOT_FOUND", "ontology version not found");
+  const def = v.definition as { format?: string; status?: string };
+  if (def.format !== "agent_bundle")
+    return fail(
+      "FAILED_PRECONDITION",
+      "only an ontology agent draft can be loaded; generate one",
+    );
+  if (def.status !== "done")
+    return fail(
+      "FAILED_PRECONDITION",
+      `this draft ended as ${def.status}; only a finished draft can be loaded`,
+    );
+  const evaluation = ruleEvaluationRefusal(v.definition);
+  if (evaluation) return fail("FAILED_PRECONDITION", evaluation);
+  const running = jobsOf(o.id).find(live);
+  if (running && running.kind !== "delete")
+    return fail(
+      "FAILED_PRECONDITION",
+      "a load or extract of this ontology is already queued or running",
+    );
+  if (monthSpend(o.workspaceId) >= MONTH_CAP_MICROS)
+    return fail(
+      "FAILED_PRECONDITION",
+      `the workspace has spent this month's $${(MONTH_CAP_MICROS / 1e6).toFixed(2)} of loads`,
+    );
+  // A new load stops a delete; the load stays deleting and its delete
+  // runs again once the new load ends.
+  if (running)
+    Object.assign(running, {
+      status: "cancelled",
+      error: "stopped for a new load; it runs again after",
+      finishedAt: now(),
+    });
+  const l: StoredLoad = {
+    id: id("load"),
+    workspaceId: o.workspaceId,
+    ontologyId: o.id,
+    tenantId: o.tenantId,
+    versionId: v.id,
+    clientToken,
+    status: "writing",
+    createdAt: now(),
+    finishedAt: null,
+    decisions: decisionsFor(o.id),
+  };
+  state.loads.unshift(l);
+  joinScope(l);
+  create(o.id, l, "load", "person");
+  return l;
+}
+
 export const loadRoutes: MockRoute[] = [
   {
     method: "POST",
@@ -1518,61 +1592,10 @@ export const loadRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           "clientToken must be 1 to 128 characters",
         );
-      advanceLoads(s.o.id);
-      const again = state.loads.find(
-        (l) => l.ontologyId === s.o.id && l.clientToken === clientToken,
-      );
-      if (again) return ok({ load: toLoad(again) } satisfies LoadResponse);
-      const v = ontologyVersion(s.o.id, body.versionId || "");
-      if (!v) return fail("NOT_FOUND", "ontology version not found");
-      const def = v.definition as { format?: string; status?: string };
-      if (def.format !== "agent_bundle")
-        return fail(
-          "FAILED_PRECONDITION",
-          "only an ontology agent draft can be loaded; generate one",
-        );
-      if (def.status !== "done")
-        return fail(
-          "FAILED_PRECONDITION",
-          `this draft ended as ${def.status}; only a finished draft can be loaded`,
-        );
-      const evaluation = ruleEvaluationRefusal(v.definition);
-      if (evaluation) return fail("FAILED_PRECONDITION", evaluation);
-      const running = jobsOf(s.o.id).find(live);
-      if (running && running.kind !== "delete")
-        return fail(
-          "FAILED_PRECONDITION",
-          "a load or extract of this ontology is already queued or running",
-        );
-      if (monthSpend(s.o.workspaceId) >= MONTH_CAP_MICROS)
-        return fail(
-          "FAILED_PRECONDITION",
-          `the workspace has spent this month's $${(MONTH_CAP_MICROS / 1e6).toFixed(2)} of loads`,
-        );
-      // A new load stops a delete; the load stays deleting and its delete
-      // runs again once the new load ends.
-      if (running)
-        Object.assign(running, {
-          status: "cancelled",
-          error: "stopped for a new load; it runs again after",
-          finishedAt: now(),
-        });
-      const l: StoredLoad = {
-        id: id("load"),
-        workspaceId: s.o.workspaceId,
-        ontologyId: s.o.id,
-        tenantId: s.o.tenantId,
-        versionId: v.id,
-        clientToken,
-        status: "writing",
-        createdAt: now(),
-        finishedAt: null,
-        decisions: decisionsFor(s.o.id),
-      };
-      state.loads.unshift(l);
-      joinScope(l);
-      create(s.o.id, l, "load", "person");
-      return ok({ load: toLoad(l) } satisfies LoadResponse);
+      const l = queueLoad(s.o, body.versionId || "", clientToken);
+      return "clientToken" in l
+        ? ok({ load: toLoad(l) } satisfies LoadResponse)
+        : l;
     },
   },
   {

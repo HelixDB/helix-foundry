@@ -2281,6 +2281,12 @@ export const WIZARD_STEPS = [
   "review",
 ] as const;
 export type WizardStepId = (typeof WIZARD_STEPS)[number];
+/**
+ * The steps of a workspace's first ontology of its own (the sample's
+ * doesn't count): its name and its new database come from what it drafts
+ * from (firstOntologyWizard), so it asks only that and the goal.
+ */
+export const FIRST_WIZARD_STEPS = ["sources", "goal", "review"] as const;
 
 /**
  * The steps that draft an existing ontology's first version on its
@@ -3042,6 +3048,82 @@ export function newOntologyWizard(
             generate: choices.generate,
           }
         : null,
+  };
+}
+
+/**
+ * The name a first ontology gets, which its wizard doesn't ask for: what
+ * it drafts from, by name (its connectors, then its API sources, then its
+ * document sets), else the workspace's, cut to the 100 characters a name
+ * takes.
+ *
+ * @example
+ * const facts = {
+ *   connectors: [{ id: "c1", kind: "stripe", name: "Stripe" }, { id: "c2", kind: "postgres", name: "Shop" }],
+ *   sets: [{ id: "s1", name: "Contracts" }],
+ * };
+ * firstOntologyName({ connectorIds: ["c1", "c2"], documentSetIds: ["s1"] }, facts, "Acme"); // "Stripe, Shop, and Contracts"
+ * firstOntologyName({ noConnectors: true, documentSetIds: ["s1"] }, facts, "Acme"); // "Contracts"
+ * firstOntologyName({ noConnectors: true, documentSetIds: [] }, facts, "Acme"); // "Acme"
+ */
+export function firstOntologyName(
+  sources: GenerateSources,
+  facts: Pick<WizardFacts, "connectors" | "sets">,
+  workspace: string,
+): string {
+  const connector = (id: string) => {
+    const c = facts.connectors?.find((x) => x.id === id);
+    return c && (c.name || c.kind || c.id);
+  };
+  const names = [
+    ...(sources.connectorIds || []).map(connector),
+    ...(sources.eventSources || []).map((e) => connector(e.connectorId)),
+    ...sources.documentSetIds.map((id) => {
+      const set = facts.sets?.find((x) => x.id === id);
+      return set && setLabel(set);
+    }),
+  ]
+    .map((n) => n?.trim())
+    .filter((n): n is string => !!n);
+  const name = names.length
+    ? listText([...new Set(names)])
+    : workspace.trim() || "My ontology";
+  return [...name].slice(0, 100).join("").trim();
+}
+
+/**
+ * /ontology/new for a workspace's first ontology of its own: the sources
+ * and Goal steps, checked as newOntologyWizard checks them, then the
+ * review. It is named from what it drafts from (firstOntologyName) and
+ * goes on a new database named as it, in the workspace's first project,
+ * else a new one named as the workspace (newDatabase); its request waits
+ * for the projects to be read.
+ *
+ * @example
+ * const facts = { projects: [], connectors: [{ id: "c1", kind: "stripe", name: "Stripe", tables: [{ name: "charges" }] }], sets: [], documents: [] };
+ * const draft = { connectorIds: null, eventSources: new Map(), setIds: new Set<string>(), goal: "" };
+ * firstOntologyWizard(draft, facts, "Acme", null).current; // "sources"
+ * firstOntologyWizard(draft, facts, "Acme", "review").request?.name; // "Stripe"
+ * firstOntologyWizard(draft, facts, "Acme", "review").request?.database;
+ * // { kind: "new", project: { kind: "new", name: "Acme" }, name: "Stripe" }
+ */
+export function firstOntologyWizard(
+  draft: DraftChoices,
+  facts: WizardFacts,
+  workspace: string,
+  requested: string | null,
+): Wizard {
+  const choices = choiceSteps(draft, facts);
+  const { done, ...at } = walk(FIRST_WIZARD_STEPS, choices.steps, requested);
+  if (!done || !facts.projects) return { ...at, request: null };
+  const name = firstOntologyName(choices.generate, facts, workspace);
+  return {
+    ...at,
+    request: {
+      name,
+      database: newDatabase(name, workspace, facts.projects),
+      generate: choices.generate,
+    },
   };
 }
 

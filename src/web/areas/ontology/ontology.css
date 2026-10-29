@@ -1155,9 +1155,32 @@
 .on-tour-sources small {
   color: var(--hf-text-2);
 }
-.on-tour-questions {
-  margin: 4px 0 14px;
-  padding-left: 18px;
+/* Onboarding's start: the sample, then the user's own data or agent. */
+.on-start-or {
+  margin: 20px 0 8px;
   color: var(--hf-text-2);
-  line-height: 1.6;
+  font-size: var(--hf-text-sm);
+  font-weight: 500;
+}
+.on-start-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 12px;
+}
+.on-start-grid > .on-card {
+  flex-direction: column;
+}
+.on-start-grid > .on-card > .hf-btn,
+.on-start-grid .on-card-actions {
+  align-self: flex-start;
+}
+
+/* The tour's first answer, as Ask shows it, and the questions to ask next. */
+.on-tour-answer {
+  margin: 4px 0 14px;
+}
+/* Ask's suggestions, left-aligned in the tour: ask.css loads after this file. */
+.ak-suggestions.on-tour-asks {
+  justify-content: flex-start;
+  margin: 0 0 14px;
 }

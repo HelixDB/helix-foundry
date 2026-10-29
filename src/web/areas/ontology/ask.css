@@ -1040,10 +1040,14 @@
   text-align: left;
   cursor: pointer;
 }
-.ak-suggestion:hover {
+.ak-suggestion:hover:not(:disabled) {
   border-color: var(--hf-border-strong);
   background: var(--hf-hover);
   color: var(--hf-text);
+}
+.ak-suggestion:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 /* "Ask about this": the same turn and composer in a drawer. */
