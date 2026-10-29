@@ -831,6 +831,8 @@ const slackObjects = [
     [
       "message_id",
       "channel_id",
+      "day",
+      "channel_day_id",
       "ts",
       "thread_ts",
       "user_id",
@@ -862,7 +864,11 @@ const slackObjects = [
 const slackForeignKeys: Record<string, ConnectorForeignKey[]> = {
   channels: [fk("creator_id", "users", "user_id")],
   channel_members: [fk("channel_id", "channels"), fk("user_id", "users")],
-  messages: [fk("channel_id", "channels"), fk("user_id", "users")],
+  messages: [
+    fk("channel_id", "channels"),
+    fk("user_id", "users"),
+    fk("channel_day_id", "channel_days"),
+  ],
   channel_days: [fk("channel_id", "channels")],
 };
 // The scope each table needs of the mock's public channels; a token

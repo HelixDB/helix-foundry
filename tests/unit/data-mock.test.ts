@@ -609,6 +609,7 @@ describe("testing and creating", () => {
     expect(links(all, "messages")).toEqual([
       "channel_id>channels.channel_id",
       "user_id>users.user_id",
+      "channel_day_id>channel_days.channel_day_id",
     ]);
     expect(links(all, "channel_days")).toEqual([
       "channel_id>channels.channel_id",
