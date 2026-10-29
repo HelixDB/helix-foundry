@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +43,7 @@ const (
 	// could not build in time.
 	notionMinPageSize = 10
 	// maxNotionName is the longest name, in bytes, a table or column takes
-	// from a Notion title, before any _2 that makes it unique.
+	// from a Notion title, before any suffix that makes it unique.
 	maxNotionName = 63
 )
 
@@ -635,9 +637,11 @@ type notionColumn struct {
 func (s notionSource) path() string { return "/v1/data_sources/" + url.PathEscape(s.id) + "/query" }
 
 // sources lists every shared data source with its table, named from its
-// title (notionSlug): never users or pages, and unique, a later duplicate
-// by creation, then id, taking the first of name_2, name_3… free; one
-// whose title has no letter or digit Helix keeps is data_source.
+// title (notionSlug), or data_source for a title with no letter or digit
+// Helix keeps. A name is never users or pages, and is held by the oldest
+// data source by creation, then id; any other that would take it takes it
+// with its id's suffix (notionSuffixed) instead, so sharing a newer one
+// moves no table.
 func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 	type listed struct {
 		id, title  string
@@ -654,25 +658,50 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 		return nil, err
 	}
 	slices.SortFunc(all, func(a, b listed) int { return cmp.Or(a.created.Compare(b.created), strings.Compare(a.id, b.id)) })
-	taken := map[string]bool{"users": true, "pages": true}
+	tables := map[string]bool{"users": true, "pages": true}
 	sources := make([]notionSource, len(all))
 	for i, l := range all {
-		s := notionSource{id: l.id, table: Table{Name: notionUnique(taken, notionSlug(l.title), "data_source"),
-			Columns: slices.Clone(notionRowColumns), PrimaryKey: []string{"page_id"}, Dense: true}}
-		// Properties go in name order, so the same schema names its columns the same way.
-		columns := map[string]bool{"page_id": true, "url": true, "created_at": true, "last_edited_at": true}
+		name := cmp.Or(notionSlug(l.title), "data_source")
+		if tables[name] {
+			name = notionSuffixed(tables, name, l.id)
+		}
+		tables[name] = true
+		s := notionSource{id: l.id, table: Table{Name: name, Columns: slices.Clone(notionRowColumns), PrimaryKey: []string{"page_id"}, Dense: true}}
+		// A property's column is named from its name, and a date's end
+		// column from its name and _end. Properties have no creation time
+		// to settle a name two of them would take, so each of those takes it
+		// with its id's suffix, as a property would that takes a fixed
+		// column's name: no column ever takes another's name.
+		type property struct{ id, kind, name string }
+		var properties []property
+		claims := map[string]int{}
 		for _, name := range slices.Sorted(maps.Keys(l.properties)) {
-			property, _ := l.properties[name].(map[string]any)
-			kind, _ := property["type"].(string)
-			typ, ok := notionTypes[kind]
-			if !ok {
+			schema, _ := l.properties[name].(map[string]any)
+			p := property{name: cmp.Or(notionSlug(name), "property")}
+			p.kind, _ = schema["type"].(string)
+			p.id, _ = schema["id"].(string)
+			if _, ok := notionTypes[p.kind]; !ok {
 				continue
 			}
-			col := notionColumn{name: notionUnique(columns, notionSlug(name), "property")}
-			col.id, _ = property["id"].(string)
-			s.table.Columns = append(s.table.Columns, Column{Name: col.name, Type: typ, Nullable: true})
-			if kind == "date" {
-				col.end = notionUnique(columns, col.name+"_end", "")
+			properties = append(properties, p)
+			claims[p.name]++
+			if p.kind == "date" {
+				claims[p.name+"_end"]++
+			}
+		}
+		columns := map[string]bool{"page_id": true, "url": true, "created_at": true, "last_edited_at": true}
+		column := func(name, id string) string {
+			if claims[name] > 1 || columns[name] {
+				return notionSuffixed(columns, name, id)
+			}
+			columns[name] = true
+			return name
+		}
+		for _, p := range properties {
+			col := notionColumn{id: p.id, name: column(p.name, p.id)}
+			s.table.Columns = append(s.table.Columns, Column{Name: col.name, Type: notionTypes[p.kind], Nullable: true})
+			if p.kind == "date" {
+				col.end = column(p.name+"_end", p.id)
 				s.table.Columns = append(s.table.Columns, Column{Name: col.end, Type: "string", Nullable: true})
 			}
 			s.columns = append(s.columns, col)
@@ -878,14 +907,16 @@ func notionSlug(title string) string {
 	return strings.TrimRight(slug.String()[:min(slug.Len(), maxNotionName)], "_")
 }
 
-// notionUnique takes name, or fallback when name is empty, or the first of
-// its _2, _3… taken does not hold.
-func notionUnique(taken map[string]bool, name, fallback string) string {
-	name = cmp.Or(name, fallback)
-	got := name
-	for n := 2; taken[got]; n++ {
-		got = name + "_" + strconv.Itoa(n)
+// notionSuffixed is name with a suffix of id that no name in taken holds,
+// which it then holds: two underscores, which no slug has, and the first 4
+// bytes of id's SHA-256 in hex, or more should another id's take that. It
+// depends on id alone, so it never moves as other names come and go.
+func notionSuffixed(taken map[string]bool, name, id string) string {
+	sum := sha256.Sum256([]byte(id))
+	for n := 4; ; n++ {
+		if got := name + "__" + hex.EncodeToString(sum[:n]); !taken[got] {
+			taken[got] = true
+			return got
+		}
 	}
-	taken[got] = true
-	return got
 }

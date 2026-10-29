@@ -392,19 +392,27 @@ func TestNotionNaming(t *testing.T) {
 			t.Errorf("notionSlug(%q) = %q, want %q", title, got, want)
 		}
 	}
-	taken := map[string]bool{"users": true}
-	for _, tc := range []struct{ name, fallback, want string }{
-		{"users", "x", "users_2"}, {"users", "x", "users_3"}, {"tasks", "x", "tasks"}, {"", "data_source", "data_source"},
-		{"", "data_source", "data_source_2"}, {"data_source_2", "x", "data_source_2_2"},
-	} {
-		if got := notionUnique(taken, tc.name, tc.fallback); got != tc.want {
-			t.Errorf("notionUnique(%q) = %q, want %q", tc.name, got, tc.want)
-		}
+	// A suffix is of the id alone, longer only should another id's take it.
+	taken := map[string]bool{"tasks__5837f7a6": true}
+	if got := notionSuffixed(taken, "tasks", "ds_1"); got != "tasks__5837f7a66d" || !taken[got] {
+		t.Errorf("notionSuffixed = %q", got)
+	}
+	if got := notionSuffixed(taken, "tasks", "ds_b"); got != "tasks__f248edc1" {
+		t.Errorf("notionSuffixed = %q", got)
 	}
 
-	// Older data sources name first; ties go by id.
-	t.Run("names data sources uniquely in the order they were made", func(t *testing.T) {
-		sources := []string{
+	discover := func(t *testing.T, sources ...string) Discovery {
+		t.Helper()
+		d, err := notionAt(t, notionShared(t, nil, sources, nil)).Discover(context.Background(), Source{Secret: notionTestSecret, ForSync: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	// The oldest data source holds a name, ties by id; the others take it
+	// with their id's suffix, and none takes users or pages.
+	t.Run("names data sources uniquely, the oldest holding a name", func(t *testing.T) {
+		d := discover(t,
 			notionTestSource("ds_1", "Tasks", "2026-01-03T00:00:00.000Z", `{}`),
 			notionTestSource("ds_2", "Tasks", "2026-01-01T00:00:00.000Z", `{}`),
 			notionTestSource("ds_3", "tasks", "2026-01-03T00:00:00.000Z", `{}`),
@@ -414,33 +422,64 @@ func TestNotionNaming(t *testing.T) {
 			notionTestSource("ds_7", "🚀🚀", "2026-01-01T00:00:00.000Z", `{}`),
 			notionTestSource("ds_8", "Tasks 2", "2026-01-02T00:00:00.000Z", `{}`),
 			`{"object":"data_source","id":"ds_9","title":[{"plain_text":"Zeta"}],"properties":{}}`,
-		}
-		d, err := notionAt(t, notionShared(t, nil, sources, nil)).Discover(context.Background(), Source{Secret: notionTestSecret, ForSync: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := []string{"users", "pages", "zeta", "tasks", "users_2", "pages_2", "data_source", "data_source_2", "tasks_2", "tasks_3", "tasks_4"}
+		)
+		want := []string{"users", "pages", "zeta", "tasks", "users__e3972d4b", "pages__65bf4c9f", "data_source", "data_source__945a3f58",
+			"tasks_2", "tasks__5837f7a6", "tasks__c6fb397c"}
 		if got := tableNames(d); !slices.Equal(got, want) {
 			t.Fatalf("tables = %v, want %v", got, want)
 		}
 	})
-	// Columns go in property name order, never take a fixed column's name,
-	// and a date's end takes the next free name.
+	// A newer data source of the same title, shared later, moves no name;
+	// one unshared frees no name for another.
+	t.Run("keeps every table's name as newer data sources of its title come and go", func(t *testing.T) {
+		older := notionTestSource("ds_a", "Tasks", "2026-01-01T00:00:00.000Z", `{}`)
+		b := notionTestSource("ds_b", "Tasks", "2026-02-01T00:00:00.000Z", `{}`)
+		c := notionTestSource("ds_c", "Tasks", "2026-01-15T00:00:00.000Z", `{}`)
+		for _, tc := range []struct {
+			sources []string
+			want    string
+		}{
+			{[]string{older}, "[users pages tasks]"},
+			{[]string{older, b}, "[users pages tasks tasks__f248edc1]"},
+			{[]string{older, b, c}, "[users pages tasks tasks__ceef22ea tasks__f248edc1]"},
+			{[]string{b, c}, "[users pages tasks tasks__f248edc1]"},
+		} {
+			if got := fmt.Sprint(tableNames(discover(t, tc.sources...))); got != tc.want {
+				t.Errorf("tables = %s, want %s", got, tc.want)
+			}
+		}
+	})
+	// Columns go in property name order. A name two properties would take,
+	// or a fixed column's, each takes with its property id's suffix, and a
+	// date's end column is its name and _end.
 	t.Run("names a data source's columns uniquely by property", func(t *testing.T) {
 		schema := `{"Page ID":{"id":"a","type":"rich_text"},"URL":{"id":"b","type":"url"},"Due":{"id":"c","type":"date"},
 			"Due End":{"id":"d","type":"rich_text"},"Ünïcode Näme":{"id":"e","type":"people"},"🔥":{"id":"f","type":"checkbox"},
 			"✨":{"id":"g","type":"number"},"Button":{"id":"h","type":"button"},"Verify":{"id":"i","type":"verification"},
 			"Place":{"id":"j","type":"place"},"Weird":{"id":"k","type":"something_new"},"Odd":"not a property"}`
-		d, err := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Projects", "2026-01-01T00:00:00.000Z", schema)}, nil)).
-			Discover(context.Background(), Source{Secret: notionTestSecret, ForSync: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		d := discover(t, notionTestSource("ds_1", "Projects", "2026-01-01T00:00:00.000Z", schema))
 		want := "[{page_id string false} {url string true} {created_at string false} {last_edited_at string false} " +
-			"{due string true} {due_end string true} {due_end_2 string true} {page_id_2 string true} {url_2 string true} " +
-			"{unicode_name array true} {property number true} {property_2 boolean true}]"
+			"{due string true} {due_end__2e7d2c03 string true} {due_end__18ac3e73 string true} {page_id__ca978112 string true} " +
+			"{url__3e23e816 string true} {unicode_name array true} {property__cd0aa985 number true} {property__252f10c8 boolean true}]"
 		if got := fmt.Sprint(findTable(t, d, "projects").Columns); got != want {
 			t.Fatalf("columns = %s\nwant %s", got, want)
+		}
+	})
+	// Adding "Due Date" beside "Due date" leaves due_date to neither.
+	t.Run("gives a column no other property's name as properties come", func(t *testing.T) {
+		one := `{"Due date":{"id":"c","type":"date"}}`
+		two := `{"Due date":{"id":"c","type":"date"},"Due Date":{"id":"d","type":"rich_text"}}`
+		for schema, want := range map[string]string{
+			one: "[due_date due_date_end]",
+			two: "[due_date__18ac3e73 due_date__2e7d2c03 due_date_end]",
+		} {
+			var names []string
+			for _, c := range findTable(t, discover(t, notionTestSource("ds_1", "Projects", "2026-01-01T00:00:00.000Z", schema)), "projects").Columns[4:] {
+				names = append(names, c.Name)
+			}
+			if got := fmt.Sprint(names); got != want {
+				t.Errorf("columns = %s, want %s", got, want)
+			}
 		}
 	})
 }
