@@ -13,6 +13,13 @@ import (
 
 var _ ChangeReader = (*notionKind)(nil)
 
+// notionSearchLag is how far a change read's searches reach back before
+// its cursor, past the queries' overlap: Notion's search is eventually
+// consistent, its trash most of all, so an edit may join it, in its place
+// by last edit, well after it was made. A page listed again costs little:
+// its unchanged row merges to nothing, and a held version reads no Markdown.
+const notionSearchLag = 30 * time.Minute
+
 // notionCursor is where a change read begins: the rows of Tables last
 // edited from Since, and the data sources shared when it was taken, by id,
 // each with the table it was read into and its schema. Every read moves
@@ -69,20 +76,23 @@ func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 //     source's table that held another data source's rows (the name moves
 //     to another when its holder is unshared) or whose data source's schema
 //     changed: its stored rows aren't what a full read would write now.
-//  2. The trash, newest edit first, back to the cursor: a page trashed
-//     since loses its rows, and the syncer its document with them. It
-//     comes first, so a page restored since is upserted after.
+//  2. The trash, newest edit first, back to notionSearchLag before the
+//     cursor: a page trashed since loses its rows, and the syncer its
+//     document with them. It comes first, so a page restored since is
+//     upserted after.
 //  3. A data source the cursor has that Notion no longer shares loses its
 //     rows of the pages table, as a full read would leave them out.
 //  4. Each shared data source's rows edited since, from one query: its
 //     table's whole rows, and the pages table's (of their titles alone
 //     where its table isn't followed).
-//  5. The other pages a search lists, newest edit first, back to the cursor.
+//  5. The other pages a search lists, newest edit first, back to
+//     notionSearchLag before the cursor.
 //
 // Each page the pages table upserts whose document the stream holds, or
 // that was made since the cursor, has its document offered as a full read
-// offers it (document); one Notion no longer finds loses its pages row. What moves no page's last edit waits for the daily reconcile: a
-// page shared, unshared or trashed without one, a row moved out of its data
+// offers it (document); one Notion no longer finds loses its pages row.
+// What moves no page's last edit waits for the daily reconcile: a page
+// shared, unshared or trashed without one, a row moved out of its data
 // source (its old table keeps it), a formula or rollup whose inputs are on
 // other pages, and a select option renamed.
 func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cursor json.RawMessage, w ChangeWriter) (json.RawMessage, error) {
@@ -123,6 +133,7 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 		return notionCursorOf(next, tables, sources)
 	}
 	titles := url.Values{"filter_properties": {"title"}}
+	back := prev.Since.Add(-notionSearchLag)
 	newest := func(trash bool, each func(p notionPage) error) error {
 		filter := map[string]any{"property": "object", "value": "page"}
 		if trash {
@@ -133,7 +144,7 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 			switch {
 			case err != nil:
 				return err
-			case p.edited.Before(prev.Since):
+			case p.edited.Before(back):
 				return errNotionEnough
 			}
 			return each(p)

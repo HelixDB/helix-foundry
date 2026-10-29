@@ -505,10 +505,19 @@ func (c *notionClient) list(ctx context.Context, path string, query url.Values, 
 // object, its id alone, is read whole first, with query
 // (filter_properties), and left out if Notion refuses it
 // (notionOneRefused). Notion lists no trashed object unless the filter
-// asks for the trash (in_trash), and says when it cut a search at its
-// result limit, which fails the read: what it left out would go.
+// asks for the trash (in_trash), but its search is eventually consistent:
+// an object whose in_trash is not what the filter asked, just trashed or
+// restored, is left out. Notion says when it cut a search at its result
+// limit, which fails the read: what it left out would go.
 func (c *notionClient) search(ctx context.Context, filter map[string]any, direction string, query url.Values, each func(item map[string]any) error) error {
 	object, _ := filter["value"].(string)
+	trash := filter["in_trash"] == true
+	listed := func(item map[string]any) error {
+		if trashed, _ := item["in_trash"].(bool); trashed != trash {
+			return nil
+		}
+		return each(item)
+	}
 	cut, err := c.list(ctx, "/v1/search", query, map[string]any{
 		"filter": filter,
 		"sort":   map[string]any{"timestamp": "last_edited_time", "direction": direction},
@@ -518,7 +527,7 @@ func (c *notionClient) search(ctx context.Context, filter map[string]any, direct
 			return fmt.Errorf("notion /v1/search: a listed %s has no id", object)
 		}
 		if _, full := item["properties"]; full {
-			return each(item)
+			return listed(item)
 		}
 		path := "/v1/" + object + "s/" + url.PathEscape(id)
 		status, raw, err := c.do(ctx, path, query, nil)
@@ -535,7 +544,7 @@ func (c *notionClient) search(ctx context.Context, filter map[string]any, direct
 		if json.Unmarshal(raw, &whole) != nil || whole["id"] != id {
 			return fmt.Errorf("notion %s: the response is not the %s", path, strings.ReplaceAll(object, "_", " "))
 		}
-		return each(whole)
+		return listed(whole)
 	})
 	switch {
 	case err != nil:
@@ -562,12 +571,14 @@ func (c *notionClient) users(ctx context.Context, w RowWriter) error {
 	return err
 }
 
-// notionPage is a listed page: what its row and document need.
+// notionPage is a listed page: what its row and document need, and
+// whether it is in the trash.
 type notionPage struct {
 	id, title, url                     string
 	parentType, parentID, dataSourceID string
 	createdBy, editedBy                string
 	created, edited                    time.Time
+	trashed                            bool
 }
 
 // version is the version of the page's document read at now: a render
@@ -611,6 +622,7 @@ func notionPageOf(path string, item map[string]any) (notionPage, error) {
 		return p, fmt.Errorf("notion %s: page %s is listed without its created_time and last_edited_time", path, p.id)
 	}
 	p.url, _ = item["url"].(string)
+	p.trashed, _ = item["in_trash"].(bool)
 	parent, _ := item["parent"].(map[string]any)
 	kind, _ := parent["type"].(string)
 	// workspace, page_id, data_source_id or block_id; a workspace's value is true.
@@ -952,7 +964,9 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 // to the millisecond; a window of a second or less that one query can't
 // answer fails the read. query is the queries' own (filter_properties),
 // and a non-zero edited reads only the rows last edited at or after it. A
-// wiki's query also lists the data sources under it, which are not rows.
+// wiki's query also lists the data sources under it, which are not rows,
+// and a row in the trash, which Notion may list while it catches up, is
+// left out.
 func (c *notionClient) rows(ctx context.Context, s notionSource, query url.Values, edited time.Time,
 	each func(p notionPage, item map[string]any) error) error {
 	body := map[string]any{"result_type": "page", "sorts": []any{map[string]any{"timestamp": "created_time", "direction": "ascending"}}}
@@ -992,6 +1006,9 @@ func (c *notionClient) rows(ctx context.Context, s notionSource, query url.Value
 				since, at = p.created, map[string]bool{}
 			}
 			at[p.id] = true
+			if p.trashed {
+				return nil
+			}
 			return each(p, item)
 		})
 		switch {

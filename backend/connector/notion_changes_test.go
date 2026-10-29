@@ -189,8 +189,9 @@ func TestNotionChanges(t *testing.T) {
 	ctx := context.Background()
 	src := Source{Secret: notionTestSecret}
 	tables := []Table{{Name: "pages"}, {Name: "customer_accounts"}, {Name: "deals"}}
+	// before is an edit older than the searches reach back to (notionSearchLag).
 	since := time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC)
-	before, after := "2026-01-07T23:59:00.000Z", "2026-01-08T10:00:00.000Z"
+	before, after := "2026-01-07T23:00:00.000Z", "2026-01-08T10:00:00.000Z"
 	deals := `{"Name":{"id":"title","name":"Name","type":"title","title":{}},
 		"Projects":{"id":"pr","name":"Projects","type":"relation","relation":{}}}`
 	title := func(name string) string {
@@ -371,8 +372,8 @@ func TestNotionChanges(t *testing.T) {
 		}
 	})
 	// The search lists rows too, newest first: it stops at the first older
-	// than the cursor, and a row a query read is that query's.
-	t.Run("searches back to the cursor only, leaving out the rows the queries read", func(t *testing.T) {
+	// than notionSearchLag before the cursor, and a row a query read is that query's.
+	t.Run("searches back to its lag before the cursor only, leaving out the rows the queries read", func(t *testing.T) {
 		e := workspace(t, map[string]notionEdit{"row_1": {edited: after, source: "ds_1", properties: notionAccountValues}})
 		var cursors []string
 		kind := e.kind(notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
@@ -513,6 +514,65 @@ func TestNotionChanges(t *testing.T) {
 		changes(t, e, cursorOf(t, e, func(c *notionCursor) { c.Sources["ds_gone"] = notionSourceCursor{Table: "old"} }), w)
 		if !slices.Equal(w.log, []string{"cascade pages data_source_id=ds_gone"}) || len(w.resets) != 0 {
 			t.Fatalf("changes = %q, resets = %v", w.log, w.resets)
+		}
+	})
+	// A page joins the search late, out of its place by last edit: the
+	// searches reach back notionSearchLag before the cursor and stop only
+	// past it. A page listed again unchanged writes nothing new.
+	t.Run("reads an edit a lagging search lists late or out of order", func(t *testing.T) {
+		lagged := "2026-01-07T23:45:00.000Z"
+		e := workspace(t, map[string]notionEdit{
+			"pg_1":  {edited: lagged, properties: title("Roadmap")},
+			"row_1": {edited: lagged, source: "ds_1", properties: notionAccountValues},
+			"pg_9":  {edited: lagged, properties: title("Gone"), trashed: true},
+			"pg_10": {edited: after, created: after, properties: title("Late")},
+		})
+		e.bodies["pg_1"], e.bodies["pg_10"] = "## Q1\n\nShipped.", "Late."
+		order := []string{"pg_1", "pg_10"} // pg_10, newer, is listed after pg_1
+		kind := e.kind(notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			body := notionBody(t, r)
+			filter, _ := body["filter"].(map[string]any)
+			switch {
+			case filter["value"] == "data_source":
+				return http.StatusOK, notionResults(e.sources["ds_1"], e.sources["ds_2"])
+			case filter["in_trash"] == true:
+				return http.StatusOK, notionResults(e.pages["pg_9"].item("pg_9"), e.pages["row_1"].item("row_1"))
+			}
+			var items []string
+			for _, id := range append(order, "row_2") {
+				items = append(items, e.pages[id].item(id))
+			}
+			return http.StatusOK, notionResults(items...)
+		}})
+		w := newNotionChanges()
+		if _, err := kind.Changes(ctx, src, tables, cursorOf(t, e, nil), w); err != nil {
+			t.Fatal(err)
+		}
+		// row_1, listed by the trash but not in it, keeps its row.
+		want := []string{"delete pages pg_9", "upsert pages pg_1", "upsert pages pg_10"}
+		if !slices.Equal(w.log, want) || !slices.Equal(w.putNames(), []string{"pages pg_1", "pages pg_10"}) {
+			t.Fatalf("changes = %q, puts = %v\nwant %q", w.log, w.putNames(), want)
+		}
+	})
+	// A page just trashed may still be listed by the search, and one just
+	// restored by the trash's: each is left to the search it is in.
+	t.Run("leaves out a listed page whose trash isn't the search's", func(t *testing.T) {
+		e := workspace(t, map[string]notionEdit{"pg_2": {edited: after, created: after, properties: title("Trashed"), trashed: true},
+			"pg_3": {edited: after, properties: title("Restored")}})
+		kind := e.kind(notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			body := notionBody(t, r)
+			if filter, _ := body["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults(e.sources["ds_1"], e.sources["ds_2"])
+			}
+			// Both searches list both pages, as a lagging index does.
+			return http.StatusOK, notionResults(e.pages["pg_2"].item("pg_2"), e.pages["pg_3"].item("pg_3"))
+		}})
+		w := newNotionChanges()
+		if _, err := kind.Changes(ctx, src, tables, cursorOf(t, e, nil), w); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(w.log, []string{"delete pages pg_2", "upsert pages pg_3"}) {
+			t.Fatalf("changes = %q", w.log)
 		}
 	})
 	// A page shows 25 ids of a relation; the rest are read from the property.

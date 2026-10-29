@@ -1021,6 +1021,29 @@ func TestNotionSync(t *testing.T) {
 			t.Fatalf("SyncPass = %v, pages = %v, deals = %v, asked = %q", err, pages.rows, deals.rows, asked)
 		}
 	})
+	// Notion's lists are eventually consistent: one may show a page or row
+	// just trashed, which a full read leaves out.
+	t.Run("leaves out a page or row a list shows in the trash", func(t *testing.T) {
+		trashed := func(item string) string { return strings.Replace(item, `"parent"`, `"in_trash":true,"parent"`, 1) }
+		kind := notionAt(t, notionRoutes{
+			"/v1/search": notionSearchOf(t, []string{notionTestPage("pg_1", "Roadmap", "2026-01-06T10:00:00.000Z", notionWorkspace),
+				strings.Replace(notionTestPage("pg_2", "Gone", "2026-01-06T10:00:00.000Z", notionWorkspace), `"in_trash":false`, `"in_trash":true`, 1)},
+				[]string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z", notionAccountsSchema)}),
+			"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues),
+					trashed(notionTestRow("row_2", "2026-01-05T09:00:00.000Z", notionAccountValues)))
+			},
+		})
+		pages, deals := &rowSink{}, &rowSink{}
+		_, err := kind.SyncPass(ctx, src, []Table{{Name: "pages"}, {Name: "deals"}}, map[string]RowWriter{"pages": pages, "deals": deals}, noDocuments{})
+		var ids []any
+		for _, row := range pages.rows {
+			ids = append(ids, row["page_id"])
+		}
+		if err != nil || fmt.Sprint(ids) != "[pg_1 row_1]" || len(deals.rows) != 1 || deals.rows[0]["page_id"] != "row_1" {
+			t.Fatalf("SyncPass = %v, pages = %v, deals = %v", err, ids, deals.rows)
+		}
+	})
 	// The pass searches data sources again to find a table's.
 	t.Run("refuses a table whose data source is no longer shared", func(t *testing.T) {
 		_, err := read(t, notionAt(t, notionShared(t, nil, nil, nil)), "customer_accounts")
