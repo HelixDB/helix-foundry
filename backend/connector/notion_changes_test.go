@@ -3,6 +3,7 @@ package connector
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -323,7 +324,7 @@ func TestNotionChanges(t *testing.T) {
 			}
 		}
 		for name, edit := range map[string]func(*notionListing){
-			"another secret": func(l *notionListing) { l.secret = "ntn_other" },
+			"another secret": func(l *notionListing) { l.secret = sha256.Sum256([]byte("ntn_other")) },
 			"once stale":     func(l *notionListing) { l.at = l.at.Add(-notionListingFresh) },
 		} {
 			l := kind.listings["conn-1"]

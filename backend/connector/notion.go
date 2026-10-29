@@ -932,7 +932,9 @@ func (c *notionClient) dataSource(ctx context.Context, id string) (_ notionListe
 // again, for notionListingFresh: a sync searches its data sources once,
 // and names its tables as its discovery did.
 type notionListing struct {
-	secret string
+	// secret is the SHA-256 of the secret it was listed with: the kind
+	// serves every connector, so it keeps no secret past a read.
+	secret [sha256.Size]byte
 	at     time.Time
 	listed []notionListed
 }
@@ -952,7 +954,7 @@ func (k *notionKind) remember(connectorID, secret string, listed []notionListed)
 	if k.listings == nil {
 		k.listings = map[string]notionListing{}
 	}
-	k.listings[connectorID] = notionListing{secret: secret, at: now, listed: listed}
+	k.listings[connectorID] = notionListing{secret: sha256.Sum256([]byte(secret)), at: now, listed: listed}
 }
 
 // listed is the data sources a sync of src reads: those its Discover
@@ -962,7 +964,7 @@ func (k *notionKind) listed(ctx context.Context, c *notionClient, src Source) ([
 		k.mu.Lock()
 		l, ok := k.listings[src.ConnectorID]
 		k.mu.Unlock()
-		if ok && l.secret == c.secret && time.Since(l.at) < notionListingFresh {
+		if ok && l.secret == sha256.Sum256([]byte(c.secret)) && time.Since(l.at) < notionListingFresh {
 			return slices.Clone(l.listed), nil
 		}
 	}
