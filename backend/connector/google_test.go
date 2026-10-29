@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -564,21 +565,68 @@ var googleUsers = map[string]string{
 		"suspended":true,"archived":true,"creationTime":"2021-05-06T07:08:09+02:00","lastLoginTime":"1970-01-01T00:00:00.000Z"}]}`,
 }
 
-// googleFiles are a page of Drive's files: a Doc, a folder, a shared
-// drive's PDF and a Sheet.
-const googleFiles = `{"files":[
+// googleFiles are Drive's files by corpus: the user's, a Doc, a folder, a
+// shared drive's PDF shared with them and a Sheet; then each shared drive's,
+// drv1's that PDF again and a deck, and drv2, which they left since the
+// drives were listed.
+var googleFiles = map[string]func(*http.Request) (int, string){
+	"user": func(*http.Request) (int, string) {
+		return http.StatusOK, `{"files":[
 	{"id":"doc1","name":"Q3  plan","mimeType":"application/vnd.google-apps.document","parents":["fold1"],"owners":[{"emailAddress":"Ada@acme.com"}],
 		"lastModifyingUser":{"emailAddress":"grace@acme.com"},"createdTime":"2026-09-01T10:00:00.000Z","modifiedTime":"2026-10-20T15:30:00.250Z",
 		"webViewLink":"https://docs.google.com/document/d/doc1/edit","shared":true,"starred":false,"version":"42"},
 	{"id":"fold1","name":"Plans","mimeType":"application/vnd.google-apps.folder","owners":[{"emailAddress":"ada@acme.com"}],
 		"createdTime":"2026-09-01T09:00:00Z","modifiedTime":"2026-09-01T09:00:00Z","webViewLink":"https://drive.google.com/drive/folders/fold1",
 		"starred":true,"version":"1"},
-	{"id":"pdf1","name":"contract.pdf","mimeType":"application/pdf","driveId":"drv1","parents":["drv1"],
-		"lastModifyingUser":{"emailAddress":"alan@acme.com"},"createdTime":"2026-08-01T10:00:00+01:00","modifiedTime":"2026-08-02T10:00:00Z",
-		"size":"52341","webViewLink":"https://drive.google.com/file/d/pdf1/view","shared":false,"version":"3"},
+	` + googlePDF + `,
 	{"id":"sheet1","name":"Budget","mimeType":"application/vnd.google-apps.spreadsheet","owners":[{"emailAddress":"ada@acme.com"}],
 		"createdTime":"2026-09-02T10:00:00Z","modifiedTime":"2026-10-27T10:00:00Z","webViewLink":"https://docs.google.com/spreadsheets/d/sheet1/edit",
 		"version":"9"}],"incompleteSearch":false}`
+	},
+	"drv1": func(*http.Request) (int, string) {
+		return http.StatusOK, `{"files":[` + googlePDF + `,
+	{"id":"deck1","name":"Pitch","mimeType":"application/vnd.google-apps.presentation","driveId":"drv1","parents":["drv1"],
+		"createdTime":"2026-10-01T10:00:00Z","modifiedTime":"2026-10-02T10:00:00Z","webViewLink":"https://docs.google.com/presentation/d/deck1/edit",
+		"version":"5"}]}`
+	},
+	"drv2": googleFailure(http.StatusNotFound, "Shared drive not found: drv2", "notFound"),
+}
+
+const googlePDF = `{"id":"pdf1","name":"contract.pdf","mimeType":"application/pdf","driveId":"drv1","parents":["drv1"],
+		"lastModifyingUser":{"emailAddress":"alan@acme.com"},"createdTime":"2026-08-01T10:00:00+01:00","modifiedTime":"2026-08-02T10:00:00Z",
+		"size":"52341","webViewLink":"https://drive.google.com/file/d/pdf1/view","shared":false,"version":"3"}`
+
+// googleDrives lists the shared drives the user is in, in two pages.
+var googleDrives = map[string]string{"": `{"drives":[{"id":"drv1","name":"Legal"}],"nextPageToken":"d1"}`, "d1": `{"drives":[{"id":"drv2"}]}`}
+
+// googleFilesRoute serves files by corpus, checking each listing's query.
+func googleFilesRoute(t *testing.T, files map[string]func(*http.Request) (int, string)) func(*http.Request) (int, string) {
+	return func(r *http.Request) (int, string) {
+		q := r.URL.Query()
+		corpus := q.Get("corpora")
+		if corpus == "drive" {
+			corpus = q.Get("driveId")
+		} else if q.Has("driveId") {
+			t.Errorf("files query = %s", r.URL.RawQuery)
+		}
+		if q.Get("q") != "trashed=false" || q.Get("includeItemsFromAllDrives") != "true" || q.Get("supportsAllDrives") != "true" ||
+			q.Get("pageSize") != "1000" || q.Get("fields") != googleFileFields || files[corpus] == nil {
+			t.Errorf("files query = %s", r.URL.RawQuery)
+			return http.StatusBadRequest, `{}`
+		}
+		return files[corpus](r)
+	}
+}
+
+// googleDrivesRoute serves drives, a page of them by page token.
+func googleDrivesRoute(t *testing.T, drives map[string]string) func(*http.Request) (int, string) {
+	return func(r *http.Request) (int, string) {
+		if q := r.URL.Query(); q.Get("pageSize") != "100" || q.Get("fields") != "nextPageToken,drives(id)" {
+			t.Errorf("drives query = %s", r.URL.RawQuery)
+		}
+		return http.StatusOK, drives[r.URL.Query().Get("pageToken")]
+	}
+}
 
 // googleCalendars is the calendar list: Ada's own, a holiday calendar whose
 // id needs escaping, Grace's, of which she sees only the free/busy, and
@@ -612,8 +660,8 @@ var googleEvents = map[string]map[string]string{
 	},
 }
 
-// googleRoutes serves googleUsers, googleFiles, googleCalendars and
-// googleEvents, checking each list's query; events must ask for days of
+// googleRoutes serves googleUsers, googleFiles, googleDrives,
+// googleCalendars and googleEvents, checking each list's query; events must ask for days of
 // the past. A calendar id's # unescaped would cut its events' path short.
 func googleRoutes(t *testing.T, days int) map[string]func(*http.Request) (int, string) {
 	routes := map[string]func(*http.Request) (int, string){
@@ -623,13 +671,8 @@ func googleRoutes(t *testing.T, days int) map[string]func(*http.Request) (int, s
 			}
 			return http.StatusOK, googleUsers[r.URL.Query().Get("pageToken")]
 		},
-		"/drive/v3/files": func(r *http.Request) (int, string) {
-			if q := r.URL.Query(); q.Get("q") != "trashed=false" || q.Get("corpora") != "allDrives" || q.Get("includeItemsFromAllDrives") != "true" ||
-				q.Get("supportsAllDrives") != "true" || q.Get("pageSize") != "1000" || q.Get("fields") != googleFileFields {
-				t.Errorf("files query = %s", r.URL.RawQuery)
-			}
-			return http.StatusOK, googleFiles
-		},
+		"/drive/v3/files":  googleFilesRoute(t, googleFiles),
+		"/drive/v3/drives": googleDrivesRoute(t, googleDrives),
 		"/calendar/v3/users/me/calendarList": func(r *http.Request) (int, string) {
 			if r.URL.Query().Get("maxResults") != "250" {
 				t.Errorf("calendar list query = %s", r.URL.RawQuery)
@@ -688,7 +731,8 @@ func TestGoogleSync(t *testing.T) {
 			t.Fatalf("rows = %v", rows)
 		}
 	})
-	t.Run("lists every file, folders and shared drives' included", func(t *testing.T) {
+	// My Drive and what is shared with the user, then each shared drive.
+	t.Run("lists every file, folders and shared drives' included, each once", func(t *testing.T) {
 		want := []map[string]any{
 			{"file_id": "doc1", "name": "Q3  plan", "mime_type": "application/vnd.google-apps.document", "drive_id": nil, "parent_id": "fold1",
 				"owner_email": "ada@acme.com", "last_modifying_user_email": "grace@acme.com", "created_at": "2026-09-01T10:00:00Z",
@@ -703,9 +747,19 @@ func TestGoogleSync(t *testing.T) {
 			{"file_id": "sheet1", "name": "Budget", "mime_type": "application/vnd.google-apps.spreadsheet", "drive_id": nil, "parent_id": nil,
 				"owner_email": "ada@acme.com", "last_modifying_user_email": nil, "created_at": "2026-09-02T10:00:00Z", "modified_at": "2026-10-27T10:00:00Z",
 				"size": nil, "web_view_link": "https://docs.google.com/spreadsheets/d/sheet1/edit", "shared": false, "starred": false},
+			// drv1's PDF was listed with the user's files; its deck is drv1's alone.
+			{"file_id": "deck1", "name": "Pitch", "mime_type": "application/vnd.google-apps.presentation", "drive_id": "drv1", "parent_id": "drv1",
+				"owner_email": nil, "last_modifying_user_email": nil, "created_at": "2026-10-01T10:00:00Z", "modified_at": "2026-10-02T10:00:00Z",
+				"size": nil, "web_view_link": "https://docs.google.com/presentation/d/deck1/edit", "shared": false, "starred": false},
 		}
-		if rows := rowsOf(t, "files"); fmt.Sprint(rows) != fmt.Sprint(want) {
-			t.Fatalf("rows = %v", rows)
+		w := &googleWorkspace{routes: googleRoutes(t, 90)}
+		rows, err := read(t, googleAt(t, w), googleSource(), "files")
+		if err != nil || fmt.Sprint(rows) != fmt.Sprint(want) {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		// Never allDrives, which Drive may search only part of.
+		if lists := w.requested("/drive/v3/files?"); len(lists) != 3 || slices.ContainsFunc(lists, func(l string) bool { return strings.Contains(l, "allDrives") }) {
+			t.Fatalf("listed %v", lists)
 		}
 	})
 	t.Run("lists the user's calendars", func(t *testing.T) {
@@ -800,13 +854,41 @@ func TestGoogleSync(t *testing.T) {
 	// Drive may search only some of the shared drives a user is in.
 	t.Run("refuses a listing Drive says is incomplete", func(t *testing.T) {
 		kind := googleAt(t, &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
-			"/drive/v3/files": func(*http.Request) (int, string) { return http.StatusOK, `{"files":[],"incompleteSearch":true}` },
+			"/drive/v3/files":  func(*http.Request) (int, string) { return http.StatusOK, `{"files":[],"incompleteSearch":true}` },
+			"/drive/v3/drives": googleDrivesRoute(t, googleDrives),
 		}})
 		_, err := read(t, kind, googleSource(), "files")
 		if refusalOf(err) != "Drive searched only part of what ada@acme.com can read; try again later" {
 			t.Fatalf("Sync error = %v, want a refusal", err)
 		}
 	})
+	// Only a shared drive's own first page refused skips it.
+	for name, tc := range map[string]struct {
+		routes func(map[string]func(*http.Request) (int, string))
+		words  string
+	}{
+		"the drives refused": {func(routes map[string]func(*http.Request) (int, string)) {
+			routes["/drive/v3/drives"] = googleFailure(http.StatusForbidden, "Forbidden", "forbidden")
+		}, "this service account cannot read /drive/v3/drives as ada@acme.com; check its access and test again"},
+		"a drive refused after its first page": {func(routes map[string]func(*http.Request) (int, string)) {
+			files := maps.Clone(googleFiles)
+			files["drv2"] = func(r *http.Request) (int, string) {
+				if r.URL.Query().Get("pageToken") == "" {
+					return http.StatusOK, `{"files":[],"nextPageToken":"p1"}`
+				}
+				return googleFailure(http.StatusNotFound, "Shared drive not found: drv2", "notFound")(r)
+			}
+			routes["/drive/v3/files"] = googleFilesRoute(t, files)
+		}, "Google stopped listing /drive/v3/files as ada@acme.com part way through; try again"},
+	} {
+		t.Run("fails the files on "+name, func(t *testing.T) {
+			routes := googleRoutes(t, 90)
+			tc.routes(routes)
+			if _, err := read(t, googleAt(t, &googleWorkspace{routes: routes}), googleSource(), "files"); refusalOf(err) != tc.words {
+				t.Fatalf("Sync error = %v, want %q", err, tc.words)
+			}
+		})
+	}
 	t.Run("stops a list that never ends", func(t *testing.T) {
 		var mu sync.Mutex
 		pages := 0
@@ -1117,6 +1199,7 @@ func TestGoogleDocuments(t *testing.T) {
 			"/drive/v3/files": func(r *http.Request) (int, string) {
 				return http.StatusOK, googleDocFiles[r.URL.Query().Get("pageToken")]
 			},
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`}),
 		}
 		for id, text := range googleExports {
 			routes["/drive/v3/files/"+id+"/export"] = func(r *http.Request) (int, string) {
@@ -1223,6 +1306,7 @@ func TestGoogleDocuments(t *testing.T) {
 	}
 	t.Run("fails a Doc listed without its modified time", func(t *testing.T) {
 		kind := googleAt(t, &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{}`}),
 			"/drive/v3/files": func(*http.Request) (int, string) {
 				return http.StatusOK, `{"files":[{"id":"doc1","name":"Q3 plan","mimeType":"application/vnd.google-apps.document"}]}`
 			},

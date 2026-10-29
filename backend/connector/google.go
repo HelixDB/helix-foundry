@@ -597,51 +597,78 @@ type googleDoc struct {
 	modified                       time.Time
 }
 
-// files lists every file the user can read that isn't in the trash, in
-// My Drive and every shared drive, folders included. Once the listing is
-// whole, it offers each Doc's document, newest first, and exports the
-// Docs docs wants as Markdown: an unchanged Doc costs nothing. A Doc Drive
-// won't export gets no document: one over its 10 MB export limit
-// (exportSizeLimitExceeded), one whose owner keeps viewers from
-// downloading it, or one deleted since the listing.
+// files lists every file the user can read that isn't in the trash,
+// folders included: My Drive and what is shared with them (corpora=user),
+// then each shared drive they are a member of (corpora=drive), each file
+// once by its id. Drive may search only part of corpora=allDrives for a
+// user in many shared drives, on every attempt, so each is listed alone. A
+// shared drive whose first page is refused, one the user left since the
+// drives were listed, is skipped. Once the listing is whole, it offers each
+// Doc's document, newest first, and exports the Docs docs wants as
+// Markdown: an unchanged Doc costs nothing. A Doc Drive won't export gets
+// no document: one over its 10 MB export limit (exportSizeLimitExceeded),
+// one whose owner keeps viewers from downloading it, or one deleted since
+// the listing.
 func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWriter) error {
 	var listed []googleDoc
-	query := url.Values{"q": {"trashed=false"}, "corpora": {"allDrives"}, "includeItemsFromAllDrives": {"true"},
-		"supportsAllDrives": {"true"}, "pageSize": {"1000"}, "fields": {googleFileFields}}
-	err := c.pages(ctx, googleDrive, "/drive/v3/files", query, "files", func(id string, f map[string]any) error {
-		owner, _ := firstOf(f["owners"]).(map[string]any)
-		modifier, _ := f["lastModifyingUser"].(map[string]any)
-		var size any // an int64 as a string; Google's own files have none
-		if s, ok := f["size"].(string); ok {
-			size = s
-		}
-		row := map[string]any{
-			"file_id": id, "name": f["name"], "mime_type": f["mimeType"], "drive_id": f["driveId"], "parent_id": firstOf(f["parents"]),
-			"owner_email": googleEmail(owner["emailAddress"]), "last_modifying_user_email": googleEmail(modifier["emailAddress"]),
-			"created_at": googleTime(f["createdTime"]), "modified_at": googleTime(f["modifiedTime"]), "size": size,
-			"web_view_link": f["webViewLink"], "shared": f["shared"] == true, "starred": f["starred"] == true,
-		}
-		if err := w.Write(row); err != nil || f["mimeType"] != googleDocType {
-			return err
-		}
-		// The version is a render revision, then the Doc's modified time and
-		// Drive's version of it.
-		raw, _ := f["modifiedTime"].(string)
-		modified, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return fmt.Errorf("google /drive/v3/files: Doc %s is listed without its modifiedTime", id)
-		}
-		doc := googleDoc{id: id, modified: modified}
-		version, _ := f["version"].(string)
-		doc.version = "1|" + raw + "|" + version
-		doc.name, _ = f["name"].(string)
-		doc.owner, _ = row["owner_email"].(string)
-		doc.link, _ = f["webViewLink"].(string)
-		listed = append(listed, doc)
-		return nil
-	})
+	seen := map[string]bool{}
+	list := func(corpus url.Values) error {
+		query := url.Values{"q": {"trashed=false"}, "includeItemsFromAllDrives": {"true"}, "supportsAllDrives": {"true"},
+			"pageSize": {"1000"}, "fields": {googleFileFields}}
+		maps.Copy(query, corpus)
+		return c.pages(ctx, googleDrive, "/drive/v3/files", query, "files", func(id string, f map[string]any) error {
+			if seen[id] {
+				return nil
+			}
+			seen[id] = true
+			owner, _ := firstOf(f["owners"]).(map[string]any)
+			modifier, _ := f["lastModifyingUser"].(map[string]any)
+			var size any // an int64 as a string; Google's own files have none
+			if s, ok := f["size"].(string); ok {
+				size = s
+			}
+			row := map[string]any{
+				"file_id": id, "name": f["name"], "mime_type": f["mimeType"], "drive_id": f["driveId"], "parent_id": firstOf(f["parents"]),
+				"owner_email": googleEmail(owner["emailAddress"]), "last_modifying_user_email": googleEmail(modifier["emailAddress"]),
+				"created_at": googleTime(f["createdTime"]), "modified_at": googleTime(f["modifiedTime"]), "size": size,
+				"web_view_link": f["webViewLink"], "shared": f["shared"] == true, "starred": f["starred"] == true,
+			}
+			if err := w.Write(row); err != nil || f["mimeType"] != googleDocType {
+				return err
+			}
+			// The version is a render revision, then the Doc's modified time and
+			// Drive's version of it.
+			raw, _ := f["modifiedTime"].(string)
+			modified, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return fmt.Errorf("google /drive/v3/files: Doc %s is listed without its modifiedTime", id)
+			}
+			doc := googleDoc{id: id, modified: modified}
+			version, _ := f["version"].(string)
+			doc.version = "1|" + raw + "|" + version
+			doc.name, _ = f["name"].(string)
+			doc.owner, _ = row["owner_email"].(string)
+			doc.link, _ = f["webViewLink"].(string)
+			listed = append(listed, doc)
+			return nil
+		})
+	}
+	if err := list(url.Values{"corpora": {"user"}}); err != nil {
+		return err
+	}
+	var drives []string
+	err := c.pages(ctx, googleDrive, "/drive/v3/drives", url.Values{"pageSize": {"100"}, "fields": {"nextPageToken,drives(id)"}}, "drives",
+		func(id string, _ map[string]any) error {
+			drives = append(drives, id)
+			return nil
+		})
 	if err != nil {
 		return err
+	}
+	for _, drive := range drives {
+		if err := list(url.Values{"corpora": {"drive"}, "driveId": {drive}}); err != nil && !errors.Is(err, errNoAccess) {
+			return err
+		}
 	}
 	// The syncer keeps the first documents offered up to its cap.
 	slices.SortStableFunc(listed, func(a, b googleDoc) int { return b.modified.Compare(a.modified) })

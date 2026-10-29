@@ -46,6 +46,8 @@ func (d *googleDrive) serve(t *testing.T) string {
 			_, _ = w.Write([]byte(`{"users":[{"id":"1001","primaryEmail":"ada@acme.com","name":{"fullName":"Ada Lovelace"}}]}`))
 		case path == "/calendar/v3/users/me/calendarList":
 			_, _ = w.Write([]byte(`{"items":[]}`))
+		case path == "/drive/v3/drives":
+			_, _ = w.Write([]byte(`{"drives":[]}`))
 		case path == "/drive/v3/files":
 			// A Sheet is a row and never a document.
 			files := []string{`{"id":"sheet1","name":"Budget","mimeType":"application/vnd.google-apps.spreadsheet","modifiedTime":"2026-10-01T09:00:00Z"}`}
