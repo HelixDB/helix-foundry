@@ -326,6 +326,9 @@ export type ConnectorKindName =
   | "linear"
   | "calcom"
   | "granola"
+  | "slack"
+  | "notion"
+  | "google"
   | "postgres"
   | "mysql"
   | "s3"
@@ -384,6 +387,31 @@ export type GranolaConnectorConfig = {
   // Also keep each note's transcript as a document, in the connection's
   // Transcripts set beside its Notes. Off by default.
   transcripts?: boolean;
+};
+/** v1SlackConnectorConfig: the bot token (xoxb-…) of an app in a Slack workspace. */
+export type SlackConnectorConfig = {
+  // Write-only.
+  botToken?: string;
+  // Days of channel history to keep, 1 to 365; 0 means 90.
+  historyDays?: number;
+};
+/** v1NotionConnectorConfig: an internal integration's secret (ntn_… or secret_…). */
+export type NotionConnectorConfig = {
+  // Write-only.
+  token?: string;
+};
+/**
+ * v1GoogleWorkspaceConnectorConfig: Drive, Calendar and the Directory, read
+ * as one Workspace user through a service account with domain-wide
+ * delegation.
+ */
+export type GoogleWorkspaceConnectorConfig = {
+  // The service account's JSON key; write-only.
+  serviceAccountKey?: string;
+  // The Workspace user it acts as; an admin, to read the Directory's users.
+  subject?: string;
+  // Days of past calendar events to keep, 1 to 365; 0 means 90.
+  eventDays?: number;
 };
 /** v1DatabaseConnectorConfig: PostgreSQL and MySQL. */
 export type DatabaseConnectorConfig = {
@@ -476,6 +504,9 @@ export type ConnectorConfig =
   | { linear: LinearConnectorConfig }
   | { calcom: CalcomConnectorConfig }
   | { granola: GranolaConnectorConfig }
+  | { slack: SlackConnectorConfig }
+  | { notion: NotionConnectorConfig }
+  | { google: GoogleWorkspaceConnectorConfig }
   | { postgres: DatabaseConnectorConfig }
   | { mysql: DatabaseConnectorConfig }
   | { s3: S3ConnectorConfig }
