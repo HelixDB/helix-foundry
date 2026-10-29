@@ -197,6 +197,18 @@ func (offlineKind) Discover(context.Context, connector.Source) (connector.Discov
 	return connector.Discovery{Tables: []connector.Table{{Name: "orders", PrimaryKey: []string{"id"}}}}, nil
 }
 
+func (k offlineKind) Target(settings json.RawMessage) (string, error) {
+	return target(k.Kind, settings)
+}
+
+// target is the wrapped kind's Target, which embedding the Kind interface hides.
+func target(k connector.Kind, settings json.RawMessage) (string, error) {
+	if t, ok := k.(connector.Targeted); ok {
+		return t.Target(settings)
+	}
+	return "", nil
+}
+
 func stripeConfig(key string) *foundryv1.ConnectorConfig {
 	return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Stripe{Stripe: &foundryv1.StripeConnectorConfig{ApiKey: key}}}
 }
@@ -575,6 +587,10 @@ func (k *releasingKind) Release(_ context.Context, src connector.Source, cursor 
 	return nil
 }
 
+func (k *releasingKind) Target(settings json.RawMessage) (string, error) {
+	return target(k.Kind, settings)
+}
+
 func TestFoundryConnectorReleaseOnSettingsChange(t *testing.T) {
 	ctx := context.Background()
 	maxPlan := &stubFoundryPlans{status: held("max")}
@@ -626,6 +642,42 @@ func TestFoundryConnectorReleaseOnSettingsChange(t *testing.T) {
 		}
 		if got := database(store, id); got != "other" {
 			t.Fatalf("stored database = %q", got)
+		}
+	})
+	// A kept password goes only to the server it was entered for, so another
+	// workspace admin can't point the connector at a server of their own.
+	t.Run("refuses to send the stored password to another server", func(t *testing.T) {
+		for name, edit := range map[string]func(*foundryv1.DatabaseConnectorConfig){
+			"host": func(c *foundryv1.DatabaseConnectorConfig) { c.Host = "db.attacker.example" },
+			"port": func(c *foundryv1.DatabaseConnectorConfig) { c.Port = 3308 },
+			"tls":  func(c *foundryv1.DatabaseConnectorConfig) { c.DisableTls = false },
+		} {
+			t.Run(name, func(t *testing.T) {
+				s, store, rk, id := setup(t, nil)
+				cfg := mysqlConfig("")
+				edit(cfg.GetMysql())
+				err := update(s, id, cfg)
+				if status.Code(err) != codes.InvalidArgument || !strings.Contains(status.Convert(err).Message(), "enter the credential again") {
+					t.Fatalf("UpdateConnector = %v, want InvalidArgument", err)
+				}
+				if len(rk.released) != 0 {
+					t.Fatalf("released = %v", rk.released)
+				}
+				if got := database(store, id); got != "helix_provision_test" {
+					t.Fatalf("stored database = %q, want the old one", got)
+				}
+			})
+		}
+	})
+	t.Run("never sends a new server's password to the old one", func(t *testing.T) {
+		s, _, rk, id := setup(t, nil)
+		cfg := mysqlConfig("new-server-password")
+		cfg.GetMysql().Host = "db.elsewhere.example"
+		if err := update(s, id, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{`helix_provision_test|helix|{"slot":"helix_foundry_x"}`}; !slices.Equal(rk.released, want) {
+			t.Fatalf("released = %v, want %v", rk.released, want)
 		}
 	})
 	t.Run("releases nothing when the settings stay the same", func(t *testing.T) {
