@@ -223,7 +223,7 @@ func TestNotionChanges(t *testing.T) {
 		maps.Copy(e.pages, edits)
 		return e
 	}
-	// cursorOf is Start's cursor at since, edited by edit.
+	// cursorOf is Start's cursor at since, a full read's, edited by edit.
 	cursorOf := func(t *testing.T, e *notionEdits, edit func(*notionCursor)) json.RawMessage {
 		t.Helper()
 		start, err := e.kind(nil).Start(ctx, src, tables)
@@ -234,7 +234,7 @@ func TestNotionChanges(t *testing.T) {
 		if err := json.Unmarshal(start.Cursor, &c); err != nil {
 			t.Fatal(err)
 		}
-		c.Since = since
+		c.Since, c.Full = since, since
 		if edit != nil {
 			edit(&c)
 		}
@@ -279,8 +279,8 @@ func TestNotionChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 		low, high := before.Add(-ChangeOverlap).Truncate(time.Minute), after.Add(-ChangeOverlap)
-		if c.Since.Before(low) || c.Since.After(high) || !c.Since.Equal(c.Since.Truncate(time.Minute)) {
-			t.Fatalf("since = %s, want the read's start less %s to the minute", c.Since, ChangeOverlap)
+		if c.Since.Before(low) || c.Since.After(high) || !c.Since.Equal(c.Since.Truncate(time.Minute)) || !c.Full.Equal(c.Since) || c.Trashed != nil {
+			t.Fatalf("since = %s, full = %s, trashed = %q, want the read's start less %s to the minute", c.Since, c.Full, c.Trashed, ChangeOverlap)
 		}
 		if fmt.Sprint(c.Tables) != "[pages customer_accounts deals]" || len(c.Sources) != 2 || c.Sources["ds_1"].Table != "customer_accounts" ||
 			c.Sources["ds_2"].Table != "deals" || len(c.Sources["ds_1"].Schema) != 16 || c.Sources["ds_1"].Schema == c.Sources["ds_2"].Schema {
@@ -313,7 +313,7 @@ func TestNotionChanges(t *testing.T) {
 		if err := json.Unmarshal(next, &c); err != nil {
 			t.Fatal(err)
 		}
-		if c.Since.Before(before.Add(-ChangeOverlap).Truncate(time.Minute)) || c.Since.After(after.Add(-ChangeOverlap)) ||
+		if c.Since.Before(before.Add(-ChangeOverlap).Truncate(time.Minute)) || c.Since.After(after.Add(-ChangeOverlap)) || !c.Full.Equal(since) ||
 			fmt.Sprint(c.Tables) != "[pages customer_accounts deals]" || c.Sources["ds_1"].Table != "customer_accounts" {
 			t.Fatalf("next cursor = %s", next)
 		}
@@ -461,11 +461,18 @@ func TestNotionChanges(t *testing.T) {
 			"pg_9":  {edited: after, properties: title("Gone"), trashed: true},
 			"pg_2":  {edited: after, properties: title("New")}})
 		w := newNotionChanges()
-		changes(t, e, cursorOf(t, e, func(c *notionCursor) {
+		start := time.Now()
+		next := changes(t, e, cursorOf(t, e, func(c *notionCursor) {
 			c.Tables = []string{"customer_accounts", "deals"}
 			c.Sources["ds_2"] = notionSourceCursor{Table: "deals"}
+			c.Trashed = []string{"pg_1"}
 		}), w)
 		asked := e.took()
+		// The pages table's full read in this sync ranks its documents again.
+		var c notionCursor
+		if err := json.Unmarshal(next, &c); err != nil || c.Full.Before(start.Add(-ChangeOverlap).Truncate(time.Minute)) || c.Trashed != nil {
+			t.Fatalf("next cursor = %s", next)
+		}
 		if want := []string{"search data sources", "search trash descending", "query ds_1 since 2026-01-08T00:00:00Z whole"}; !slices.Equal(asked, want) {
 			t.Fatalf("requests = %q\nwant %q", asked, want)
 		}
@@ -477,7 +484,7 @@ func TestNotionChanges(t *testing.T) {
 	t.Run("reads nothing when every table is reset", func(t *testing.T) {
 		e := workspace(t, nil)
 		w := newNotionChanges()
-		next := changes(t, e, json.RawMessage(`{"since":"2026-01-08T00:00:00Z","tables":[],"sources":{}}`), w)
+		next := changes(t, e, json.RawMessage(`{"since":"2026-01-08T00:00:00Z","full":"2026-01-08T00:00:00Z","tables":[],"sources":{}}`), w)
 		if !slices.Equal(w.resets, []string{"pages", "customer_accounts", "deals"}) || !slices.Equal(e.took(), []string{"search data sources"}) ||
 			!strings.Contains(string(next), `"tables":["pages","customer_accounts","deals"]`) {
 			t.Fatalf("resets = %v, next = %s", w.resets, next)
@@ -514,10 +521,14 @@ func TestNotionChanges(t *testing.T) {
 		})
 		e.bodies["pg_2"] = "New."
 		w := newNotionChanges()
-		changes(t, e, cursorOf(t, e, nil), w)
+		next := changes(t, e, cursorOf(t, e, nil), w)
 		want := []string{"delete pages pg_1", "delete customer_accounts row_1", "delete pages row_1", "upsert pages pg_2"}
 		if !slices.Equal(w.log, want) {
 			t.Fatalf("changes = %q\nwant %q", w.log, want)
+		}
+		// Both held their documents, from the full read: restored, each has it back.
+		if !strings.Contains(string(next), `"trashed":["pg_1","row_1"]`) {
+			t.Fatalf("next cursor = %s", next)
 		}
 	})
 	t.Run("deletes the pages rows of a data source no longer shared", func(t *testing.T) {
@@ -635,6 +646,41 @@ func TestNotionChanges(t *testing.T) {
 			t.Fatalf("changes = %q", w.log)
 		}
 	})
+	// The full read that kept a trashed page's document would keep it again.
+	t.Run("gives a page restored from the trash its document back", func(t *testing.T) {
+		e := workspace(t, map[string]notionEdit{"pg_1": {edited: after, properties: title("Roadmap"), trashed: true}})
+		w := newNotionChanges()
+		next := changes(t, e, cursorOf(t, e, nil), w)
+		if !slices.Equal(w.log, []string{"delete pages pg_1"}) {
+			t.Fatalf("changes = %q", w.log)
+		}
+		var c notionCursor
+		if err := json.Unmarshal(next, &c); err != nil {
+			t.Fatal(err)
+		}
+		c.Since = since.Add(time.Hour)
+		cursor, _ := json.Marshal(c)
+		e.pages["pg_1"] = notionEdit{edited: "2026-01-08T11:00:00.000Z", properties: title("Roadmap")}
+		w = newNotionChanges()
+		w.held = map[string]bool{"row_1": true}
+		next = changes(t, e, cursor, w)
+		if !slices.Equal(w.log, []string{"upsert pages pg_1"}) || !slices.Equal(w.putNames(), []string{"pages pg_1"}) ||
+			!strings.Contains(string(next), `"trashed":["pg_1"]`) {
+			t.Fatalf("changes = %q, puts = %v, next = %s", w.log, w.putNames(), next)
+		}
+	})
+	// A page made since the full read, empty then, gets its document once it
+	// has a body, though cursors have moved past its making since.
+	t.Run("offers a document for a page made since the last full read, filled later", func(t *testing.T) {
+		made := "2026-01-07T23:30:00.000Z"
+		e := workspace(t, map[string]notionEdit{"pg_2": {edited: after, created: made, properties: title("Launch plan")}})
+		e.bodies["pg_2"] = "Launch in May."
+		w := newNotionChanges()
+		changes(t, e, cursorOf(t, e, func(c *notionCursor) { c.Full = since.Add(-time.Hour) }), w)
+		if !slices.Equal(w.log, []string{"upsert pages pg_2"}) || !slices.Equal(w.putNames(), []string{"pages pg_2"}) {
+			t.Fatalf("changes = %q, puts = %v", w.log, w.putNames())
+		}
+	})
 	// A page shows 25 ids of a relation; the rest are read from the property.
 	t.Run("reads a relation the row cut at 25 whole", func(t *testing.T) {
 		shown := make([]string, notionShownReferences)
@@ -661,7 +707,8 @@ func TestNotionChanges(t *testing.T) {
 		}
 	})
 	// A cursor the reader can't decode, or with no time, leaves no point to resume from.
-	for _, cursor := range []string{`"2026-01-08"`, `{}`, `{"since":"soon"}`, `{"tables":["pages"]}`, `[]`} {
+	for _, cursor := range []string{`"2026-01-08"`, `{}`, `{"since":"soon"}`, `{"tables":["pages"]}`, `[]`,
+		`{"since":"2026-01-08T00:00:00Z","tables":["pages"],"sources":{}}`} {
 		t.Run("asks for a full read when the cursor is "+cursor, func(t *testing.T) {
 			e := workspace(t, nil)
 			if _, err := e.kind(nil).Changes(ctx, src, tables, json.RawMessage(cursor), newNotionChanges()); !errors.Is(err, ErrCursorExpired) {
