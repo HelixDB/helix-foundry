@@ -79,8 +79,8 @@ var notionWait = func(attempt int, retryAfter string) time.Duration {
 }
 
 // notionReread is how often a page's document is read again though the
-// page shows no edit, and notionNow the clock of a read's versions, which
-// tests replace.
+// page shows no edit, and notionNow the clock a page's document is
+// versioned by when its Markdown is read, which tests replace.
 const notionReread = 7 * 24 * time.Hour
 
 var notionNow = time.Now
@@ -315,17 +315,15 @@ func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 	return written, c.pages(ctx, pages, queried, docs)
 }
 
-// notionClient is one read's requests, paced together under Notion's rate
-// limit, and the time its documents are versioned at.
+// notionClient is one read's requests, paced together under Notion's rate limit.
 type notionClient struct {
 	k      *notionKind
 	secret string
 	pace   *rate.Limiter
-	now    time.Time
 }
 
 func (k *notionKind) client(secret string) *notionClient {
-	return &notionClient{k: k, secret: strings.TrimSpace(secret), pace: rate.NewLimiter(rate.Every(notionInterval), 1), now: notionNow()}
+	return &notionClient{k: k, secret: strings.TrimSpace(secret), pace: rate.NewLimiter(rate.Every(notionInterval), 1)}
 }
 
 // do sends one Notion request, paced: a GET of path with query, or with
@@ -572,20 +570,30 @@ type notionPage struct {
 	created, edited                    time.Time
 }
 
-// version is the version of the page's document as of now: a render
+// version is the version of the page's document read at now: a render
 // revision, to bump whenever its text changes for the same page; the
-// page's last edit; and the week of its re-read. Notion keeps an edit to
-// the minute, so a second edit in the minute of a sync shows at the page's
-// next edit or re-read. A page shows content from elsewhere (a synced
+// page's last edit; the week of its re-read; and "|provisional" when its
+// text may not have settled. A page shows content from elsewhere (a synced
 // block, a child page's title, a mention) that changes no edit of its own,
 // so its version also moves once every notionReread, at an offset its id
 // sets so a workspace's pages are not all read again in one sync; read
 // again unchanged, its document is updated in place, not extracted again.
+//
+// Notion keeps an edit's time to the minute, so text edited later in the
+// minute of a read, or that Notion's export had not caught up with, keeps
+// the page's last edit: a read before a minute and ChangeOverlap have
+// passed since it is provisional. The next read lists the page again (its
+// cursor reaches back ChangeOverlap from this read's start, to the minute)
+// and, once settled, reads it once more; the same bytes update in place.
 func (p notionPage) version(now time.Time) string {
 	sum := sha256.Sum256([]byte(p.id))
 	period := int64(notionReread / time.Second)
 	offset := int64(binary.BigEndian.Uint64(sum[:8]) % uint64(period))
-	return fmt.Sprintf("2|%s|%d", p.edited.UTC().Format(time.RFC3339Nano), (now.Unix()+offset)/period)
+	version := fmt.Sprintf("2|%s|%d", p.edited.UTC().Format(time.RFC3339Nano), (now.Unix()+offset)/period)
+	if now.Before(p.edited.Add(time.Minute + ChangeOverlap)) {
+		version += "|provisional"
+	}
+	return version
 }
 
 // notionPageOf reads a listed page, or a data source's row. One without
@@ -743,7 +751,9 @@ func (c *notionClient) offer(ctx context.Context, ps *notionPages, docs Document
 // its document as held, and the read goes on. A body empty has no
 // document, and takes back the one held.
 func (c *notionClient) document(ctx context.Context, p notionPage, docs DocumentWriter) (gone bool, _ error) {
-	version := p.version(c.now)
+	// Taken before the read, so a read the clock puts at the edge of p's
+	// settling is provisional.
+	version := p.version(notionNow())
 	if !docs.Want(notionPagesStream.Name, p.id, version) {
 		return false, nil
 	}

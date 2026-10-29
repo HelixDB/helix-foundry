@@ -1413,6 +1413,35 @@ func TestNotionDocuments(t *testing.T) {
 			t.Fatalf("version after an edit = %q", v)
 		}
 	})
+	// Text read within a minute and the overlap of a page's last edit may
+	// still change under that edit's minute: its version is provisional, so
+	// the next read, which lists the page again, reads it once more.
+	t.Run("versions a document read before its last edit settles as provisional", func(t *testing.T) {
+		edited := time.Date(2026, 1, 6, 10, 45, 0, 0, time.UTC)
+		p := notionPage{id: "pg_1", edited: edited}
+		settled := edited.Add(time.Minute + ChangeOverlap)
+		for _, at := range []time.Time{edited.Add(-time.Minute), edited, edited.Add(25 * time.Second), settled.Add(-time.Millisecond)} {
+			if v := p.version(at); v != p.version(settled)+"|provisional" {
+				t.Errorf("version at %s = %q", at.Format(time.RFC3339Nano), v)
+			}
+		}
+		if v := p.version(settled); v != "2|2026-01-06T10:45:00Z|2922" {
+			t.Fatalf("settled version = %q", v)
+		}
+		// The clock is read as each page's Markdown is.
+		routes := searchOf(notionTestPage("pg_1", "Roadmap", "2026-01-06T10:45:00.000Z", notionWorkspace))
+		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", "Body", false)}, &sync.Map{}))
+		kind := notionAt(t, routes)
+		for at, want := range map[time.Time]string{edited.Add(20 * time.Second): "pages pg_1 2|2026-01-06T10:45:00Z|2922|provisional",
+			settled: "pages pg_1 2|2026-01-06T10:45:00Z|2922"} {
+			notionNow = func() time.Time { return at }
+			docs := &granolaDocs{want: map[string]bool{"pages": true}}
+			if _, err := pass(t, kind, docs); err != nil || !slices.Equal(docs.offers, []string{want}) || len(docs.puts) != 1 ||
+				docs.puts[0].doc.Version != strings.TrimPrefix(want, "pages pg_1 ") {
+				t.Fatalf("SyncPass at %s = %v, offers = %q", at, err, docs.offers)
+			}
+		}
+	})
 	t.Run("puts no document for a page with an empty body", func(t *testing.T) {
 		reads := &sync.Map{}
 		routes := searchOf(roadmap)
