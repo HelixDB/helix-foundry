@@ -2,6 +2,7 @@ import "./sign-in.css";
 import { useState, type ReactNode } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { signInStarted } from "./analytics";
 import { signOut } from "./api";
 import { Button, useTitle } from "./kit";
 import { whoamiQuery } from "./workspaces";
@@ -163,6 +164,7 @@ export function SignInPage() {
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
   const start = (id: Provider["id"]) => {
     setPending(id);
+    signInStarted(id);
     const q = new URLSearchParams({ provider: id });
     if (returnTo) q.set("return_to", returnTo);
     window.location.assign(`/auth/login?${q}`);

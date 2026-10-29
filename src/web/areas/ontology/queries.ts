@@ -21,6 +21,7 @@ import type {
   SetCurrentOntologyVersionRequest,
   StopLoadEnrichmentResponse,
 } from "../../../shared/wfe";
+import { jobSeen, jobStarted } from "../../analytics";
 import { api } from "../../api";
 
 // The Ontology area's WFE calls, as TanStack Query options keyed by
@@ -128,18 +129,26 @@ export const ontologyQueries = {
   }),
   generations: (ws: string, o: string) => ({
     queryKey: [ws, "ontology", o, "generations"],
-    queryFn: () =>
-      api<ListOntologyGenerationsResponse>(
+    queryFn: async () => {
+      const r = await api<ListOntologyGenerationsResponse>(
         `${at(ws, o)}/generations?limit=100`,
-      ),
+      );
+      jobSeen("generation", r.generations || []);
+      return r;
+    },
     refetchInterval: (q: {
       state: { data?: ListOntologyGenerationsResponse };
     }) => (q.state.data?.generations?.some(isLive) ? POLL_MS : false),
   }),
   generation: (ws: string, o: string, id: string) => ({
     queryKey: [ws, "ontology", o, "generation", id],
-    queryFn: () =>
-      api<OntologyGenerationResponse>(`${at(ws, o)}/generations/${enc(id)}`),
+    queryFn: async () => {
+      const r = await api<OntologyGenerationResponse>(
+        `${at(ws, o)}/generations/${enc(id)}`,
+      );
+      jobSeen("generation", [r.generation]);
+      return r;
+    },
     // Only while it is live: a refused read (gone, or no access) stops.
     refetchInterval: (q: { state: { data?: OntologyGenerationResponse } }) =>
       isLive(q.state.data?.generation) ? POLL_MS : false,
@@ -148,14 +157,22 @@ export const ontologyQueries = {
   // a handful, so there is one page. Polled while one is written or deleted.
   loads: (ws: string, o: string) => ({
     queryKey: [ws, "ontology", o, "loads"],
-    queryFn: () => api<ListLoadsResponse>(`${at(ws, o)}/loads`),
+    queryFn: async () => {
+      const r = await api<ListLoadsResponse>(`${at(ws, o)}/loads`);
+      jobSeen("load", r.loads || []);
+      return r;
+    },
     refetchInterval: (q: { state: { data?: ListLoadsResponse } }) =>
       q.state.data?.loads?.some(isBusyLoad) ? POLL_MS : false,
   }),
   // One load, polled while something happens to it. Gone once deleted.
   load: (ws: string, o: string, id: string) => ({
     queryKey: [ws, "ontology", o, "loads", id],
-    queryFn: () => api<LoadResponse>(`${at(ws, o)}/loads/${enc(id)}`),
+    queryFn: async () => {
+      const r = await api<LoadResponse>(`${at(ws, o)}/loads/${enc(id)}`);
+      jobSeen("load", [r.load]);
+      return r;
+    },
     refetchInterval: (q: { state: { data?: LoadResponse } }) =>
       isBusyLoad(q.state.data?.load) ? POLL_MS : false,
     retry: false,
@@ -173,11 +190,18 @@ export const createOntology = (ws: string, body: CreateOntologyRequest) =>
 export const deleteOntology = (ws: string, o: string) =>
   api<OntologyResponse>(at(ws, o), undefined, "DELETE");
 
-export const generateOntology = (
+export const generateOntology = async (
   ws: string,
   o: string,
   body: GenerateOntologyRequest,
-) => api<OntologyGenerationResponse>(`${at(ws, o)}:generate`, body);
+) => {
+  const r = await api<OntologyGenerationResponse>(
+    `${at(ws, o)}:generate`,
+    body,
+  );
+  jobStarted("generation", r.generation?.id, body.sample ? "sample" : "ai");
+  return r;
+};
 
 export const setCurrentVersion = (
   ws: string,
@@ -186,8 +210,15 @@ export const setCurrentVersion = (
 ) => api<OntologyVersionResponse>(`${at(ws, o)}:set-current`, body);
 
 /** Starts a load of `versionId`; the same client token is the same load. */
-export const createLoad = (ws: string, o: string, body: CreateLoadRequest) =>
-  api<LoadResponse>(`${at(ws, o)}/loads`, body);
+export const createLoad = async (
+  ws: string,
+  o: string,
+  body: CreateLoadRequest,
+) => {
+  const r = await api<LoadResponse>(`${at(ws, o)}/loads`, body);
+  jobStarted("load", r.load.id);
+  return r;
+};
 
 /**
  * Makes a ready or partial load the one reads go to; the documents it hasn't
@@ -237,17 +268,24 @@ export const questionQueries = {
   // questions budget. Polled while one is live.
   list: (ws: string, o: string, thread = "") => ({
     queryKey: [ws, "ontology", o, "questions", thread],
-    queryFn: () =>
-      api<ListQuestionsResponse>(
+    queryFn: async () => {
+      const r = await api<ListQuestionsResponse>(
         questions(ws, o) + (thread ? `?threadId=${enc(thread)}` : ""),
-      ),
+      );
+      jobSeen("question", r.questions || []);
+      return r;
+    },
     refetchInterval: (q: { state: { data?: ListQuestionsResponse } }) =>
       q.state.data?.questions?.some(isLiveQuestion) ? POLL_MS : false,
   }),
   // One question, polled while it is live.
   question: (ws: string, o: string, id: string) => ({
     queryKey: [ws, "ontology", o, "questions", "one", id],
-    queryFn: () => api<QuestionResponse>(`${questions(ws, o)}/${enc(id)}`),
+    queryFn: async () => {
+      const r = await api<QuestionResponse>(`${questions(ws, o)}/${enc(id)}`);
+      jobSeen("question", [r.question]);
+      return r;
+    },
     refetchInterval: (q: { state: { data?: QuestionResponse } }) =>
       isLiveQuestion(q.state.data?.question) ? POLL_MS : false,
   }),
@@ -277,8 +315,15 @@ export const questionEvents = (
   );
 
 /** Asks about a load; the same client token is the same question. */
-export const askQuestion = (ws: string, o: string, body: AskQuestionRequest) =>
-  api<QuestionResponse>(questions(ws, o), body);
+export const askQuestion = async (
+  ws: string,
+  o: string,
+  body: AskQuestionRequest,
+) => {
+  const r = await api<QuestionResponse>(questions(ws, o), body);
+  jobStarted("question", r.question.id);
+  return r;
+};
 
 /** Stops a queued or running question; a running one is charged what it reserved. */
 export const cancelQuestion = (ws: string, o: string, id: string) =>

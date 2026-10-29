@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FlaskConical } from "lucide-react";
+import { trackEvent } from "../../analytics";
 import { Button } from "../../kit";
 import { paths } from "../../paths";
 import { AiGate, useAiConfigured } from "../workspace/ai-gate";
@@ -26,9 +27,11 @@ export function TrySample() {
         <Button
           size="sm"
           variant="primary"
-          onClick={() =>
-            aiReady === false ? setGated(true) : navigate(paths.sampleTour())
-          }
+          onClick={() => {
+            trackEvent("sample_clicked");
+            if (aiReady === false) setGated(true);
+            else navigate(paths.sampleTour());
+          }}
         >
           Use the sample
         </Button>

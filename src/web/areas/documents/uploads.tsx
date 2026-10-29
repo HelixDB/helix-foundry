@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, X } from "lucide-react";
 import type { FoundryDocumentSet } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { Button, IconButton, SourceLogo, cx } from "../../kit";
@@ -10,6 +11,7 @@ import { AiGate, SettingsLinked, useAiConfigured } from "../workspace/ai-gate";
 import { documentsChanged, uploadDocument } from "./documents-api";
 import {
   formatBytes,
+  formatOf,
   kindText,
   readsText,
   uploadText,
@@ -45,8 +47,8 @@ export function useUploads() {
     setUploads((list) =>
       list.map((u) => (u.key === key ? { ...u, state } : u)),
     );
-  const run = (u: Upload, retry: boolean) =>
-    uploadDocument(
+  const run = async (u: Upload, retry: boolean) => {
+    const end = await uploadDocument(
       id,
       u.file,
       u.setId,
@@ -54,6 +56,14 @@ export function useUploads() {
       (s) => set(u.key, s),
       retry,
     );
+    // The same bytes already in the workspace are no new document.
+    const format =
+      end.step === "done" &&
+      end.result.kind !== "existing" &&
+      formatOf(end.document.mediaType)?.mediaType;
+    if (format) trackEvent("document_uploaded", { format });
+    return end;
+  };
   // Uploads may start reads in any ontology: once a batch settles, what
   // they changed is read again, once.
   const settle = async (ends: Promise<UploadStep>[]) => {

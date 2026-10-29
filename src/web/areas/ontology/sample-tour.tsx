@@ -15,6 +15,7 @@ import {
   formatNumber,
   plural,
 } from "../../kit";
+import { trackEvent } from "../../analytics";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import {
@@ -204,6 +205,7 @@ export function SampleTour() {
       }, "Reading Acme Corp’s documents");
 
       // 3. The ontology, on a new database, its ready-made draft current.
+      trackEvent("sample_data_ready");
       setStage("ontology");
       let ontology = (
         await qc.fetchQuery({ ...ontologyQueries.list(id), staleTime: 0 })
@@ -284,6 +286,7 @@ export function SampleTour() {
       setMade((m) => ({ ...m, versionId }));
 
       // 4. Its load: the records, their links, then the documents.
+      trackEvent("sample_ontology_ready");
       setStage("load");
       if (
         !(
@@ -331,6 +334,9 @@ export function SampleTour() {
   }).data?.loads?.[0];
   const job = load?.jobs?.[0];
   const loaded = load?.status === "ready" || load?.status === "partial";
+  useEffect(() => {
+    if (loaded) trackEvent("sample_loaded");
+  }, [loaded]);
   const suggestions = useMemo(() => askSuggestions(version), [version]);
   // What the load made of each document: read, or failed and why.
   const extractions = (
@@ -509,7 +515,11 @@ export function SampleTour() {
             </>
           )}
           <span className="on-card-actions">
-            <ButtonLink variant="primary" to={paths.ask(o)}>
+            <ButtonLink
+              variant="primary"
+              to={paths.ask(o)}
+              onClick={() => trackEvent("sample_ask_opened")}
+            >
               Ask a question
             </ButtonLink>
             <ButtonLink to={paths.explore(o)}>See the records</ButtonLink>

@@ -25,6 +25,7 @@ import { X } from "lucide-react";
 import { LOCAL } from "../shared/deployment";
 import type { WhoamiResponse } from "../shared/wfe";
 import { signInPath } from "../shared/return-path";
+import { signedIn, trackEvent } from "./analytics";
 import { ApiError } from "./api";
 import { Button, SkeletonText } from "./kit";
 import { paths } from "./paths";
@@ -175,13 +176,16 @@ function WorkspaceApp({
 }) {
   const location = useLocation();
   const list = useQuery(ontologyQueries.list(current.id));
+  const onboarding = !!list.data && !list.data.ontologies?.length;
+  useEffect(() => {
+    if (onboarding) trackEvent("onboarding_shown");
+  }, [onboarding, current.id]);
   if (list.isPending)
     return (
       <div className="hf-center">
         <Loading />
       </div>
     );
-  const onboarding = !!list.data && !list.data.ontologies?.length;
   return (
     <WorkspaceContext.Provider value={{ ...current, user, onboarding, notify }}>
       <Shell
@@ -221,6 +225,12 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
   // connector links do). One the user belongs to opens and is remembered;
   // the parameter then leaves the URL either way.
   const linked = new URLSearchParams(location.search).get("workspace");
+  // A sign-in this tab started ends here, once the workspaces are read.
+  const signedInTo =
+    list.data && (list.data.workspaces?.length ? "workspace" : "onboarding");
+  useEffect(() => {
+    if (signedInTo) signedIn(signedInTo);
+  }, [signedInTo]);
   useEffect(() => {
     if (!linked || !list.data) return;
     if (

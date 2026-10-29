@@ -26,6 +26,7 @@ import {
   SkeletonText,
   cx,
 } from "../../kit";
+import { trackEvent } from "../../analytics";
 import { sentence } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
@@ -527,6 +528,7 @@ function OwnerForm({
       );
       if (next.pending && apiKey.trim())
         onSaved({ id: next.pending.id, key: apiKey.trim() });
+      trackEvent("ai_provider_saved", { kind: choice?.kind ?? "default" });
       setConfirming(false);
       qc.setQueryData(AI.aiKey(id), next);
       if (!choice) {

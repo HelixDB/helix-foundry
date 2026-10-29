@@ -4,6 +4,7 @@ import type {
   ConnectorDiscovery,
   S3ConnectorSetup,
 } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { Select, Tag, connectorLabel } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { ProGate, isProRequired } from "../workspace/pro-gate";
@@ -216,6 +217,7 @@ export function ConnectionForm({
         name: name.trim() || suggestedName(form),
         config,
       });
+      trackEvent("connector_created", { kind: form.kind });
       // The first sync starts with the connection; a refusal is reported but
       // the connection is kept.
       await syncConnector(id, created.connector.id).catch((e) =>
