@@ -1,5 +1,13 @@
 import type { Page } from "@playwright/test";
-import { expect, file, signIn, test, uploadCard } from "./support/mock";
+import {
+  expect,
+  file,
+  signIn,
+  signInToNewWorkspace,
+  startFirstOntology,
+  test,
+  uploadCard,
+} from "./support/mock";
 
 // A connection's own documents across the site: its sets on its page (the
 // Transcripts setting turns one on and off), one of its documents' page,
@@ -246,18 +254,10 @@ test("picks a connection's sets in Generate, grouped under it", async ({
 test("uploads into a new General where a connection's sets are the only ones", async ({
   page,
 }) => {
-  // A new workspace is onboarding: the new-ontology wizard connects data
-  // and uploads documents in place.
-  await signIn(page, "grace@example.com");
-  await page.getByRole("button", { name: "Create workspace" }).click();
-  const create = page.getByRole("dialog", { name: "Create a workspace" });
-  await create.getByLabel("Workspace name").fill("Globex");
-  await create.getByRole("button", { name: "Create workspace" }).click();
-  await expect(page).toHaveURL(/\/ontology\/new$/);
-  await page.getByLabel("Ontology name").fill("Meetings");
-  await page.getByRole("button", { name: "Continue" }).click();
-  // With no database yet, a new one, named as the ontology.
-  await page.getByRole("button", { name: "Continue" }).click();
+  // A new workspace is onboarding: Use my own data opens the sources,
+  // which connect data and upload documents in place.
+  await signInToNewWorkspace(page);
+  await startFirstOntology(page);
 
   // Granola, connected from the sources step: its first sync writes its
   // Notes, which the picker lists under it.
