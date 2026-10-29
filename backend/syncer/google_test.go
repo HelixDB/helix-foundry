@@ -21,8 +21,10 @@ import (
 )
 
 // googleDrive is a Workspace a test edits between syncs: one user, no
-// calendars, and Drive's Docs by id, each with its modified time and
-// Markdown, and whether it is in the trash. It counts every export by id.
+// calendars, no shared drives, and Drive's Docs by id, each with its
+// modified time, Markdown and owner, whether it is in the trash, and
+// whether its owner keeps the user from exporting it. It counts every
+// export by id.
 type googleDrive struct {
 	mu      sync.Mutex
 	docs    map[string]googleTestDoc
@@ -30,8 +32,8 @@ type googleDrive struct {
 }
 
 type googleTestDoc struct {
-	modified, text string
-	trashed        bool
+	modified, text, owner string
+	trashed, withheld     bool
 }
 
 func (d *googleDrive) serve(t *testing.T) string {
@@ -54,8 +56,8 @@ func (d *googleDrive) serve(t *testing.T) string {
 			for _, id := range slices.Sorted(maps.Keys(d.docs)) {
 				if doc := d.docs[id]; !doc.trashed || r.URL.Query().Get("q") != "trashed=false" {
 					files = append(files, fmt.Sprintf(`{"id":%q,"name":"Doc %s","mimeType":"application/vnd.google-apps.document",`+
-						`"owners":[{"emailAddress":"ada@acme.com"}],"modifiedTime":%q,"webViewLink":"https://docs.google.com/document/d/%s/edit","version":"1"}`,
-						id, id, doc.modified, id))
+						`"owners":[{"emailAddress":%q}],"modifiedTime":%q,"webViewLink":"https://docs.google.com/document/d/%s/edit","version":"1"}`,
+						id, id, doc.owner, doc.modified, id))
 				}
 			}
 			_, _ = fmt.Fprintf(w, `{"files":[%s]}`, strings.Join(files, ","))
@@ -63,8 +65,13 @@ func (d *googleDrive) serve(t *testing.T) string {
 			id := strings.TrimSuffix(strings.TrimPrefix(path, "/drive/v3/files/"), "/export")
 			d.exports[id]++
 			doc, ok := d.docs[id]
-			if !ok {
+			switch {
+			case !ok:
 				w.WriteHeader(http.StatusNotFound)
+				return
+			case doc.withheld:
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":{"code":403,"message":"This file cannot be exported by the user.","errors":[{"reason":"cannotExportFile"}]}}`))
 				return
 			}
 			_, _ = w.Write([]byte(doc.text))
@@ -88,12 +95,14 @@ func (d *googleDrive) took() map[string]int {
 
 // TestGoogleSyncDocuments runs Google Workspace through the syncer: a
 // sync reads every table in one pass and fills the Docs set, an unchanged
-// Doc is not exported again, an edited one is, and a Doc moved to the
-// trash leaves the files table and its document goes with its row.
+// Doc is not exported again, an edited one is, and so is one whose owner's
+// email was renamed, a Doc moved to the trash leaves the files table and
+// its document goes with its row, and one its owner no longer lets the
+// user export keeps its row and loses its document.
 func TestGoogleSyncDocuments(t *testing.T) {
 	drive := &googleDrive{exports: map[string]int{}, docs: map[string]googleTestDoc{
-		"doc1": {modified: "2026-10-01T10:00:00Z", text: "## One\n\nFirst."},
-		"doc2": {modified: "2026-10-02T10:00:00.500Z", text: "## Two\n\nSecond."},
+		"doc1": {modified: "2026-10-01T10:00:00Z", text: "## One\n\nFirst.", owner: "ada@acme.com"},
+		"doc2": {modified: "2026-10-02T10:00:00.500Z", text: "## Two\n\nSecond.", owner: "ada@acme.com"},
 	}}
 	f := newFixture(t, "http://unused", "google", `{"subject":"ada@acme.com","event_days":90}`, plan{code: "pro"})
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -117,8 +126,8 @@ func TestGoogleSyncDocuments(t *testing.T) {
 	endpoints.GoogleToken = endpoints.Google + "/token"
 	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
 	f.syncer.Now = func() time.Time { return time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC) }
-	text := func(id, modified, body string) string {
-		return fmt.Sprintf("# Doc %s\n\nOwner: ada@acme.com\nLast modified: %s\nFile id: %s\n\n%s\n", id, modified, id, body)
+	text := func(id, owner, modified, body string) string {
+		return fmt.Sprintf("# Doc %s\n\nOwner: %s\nLast modified: %s\nFile id: %s\n\n%s\n", id, owner, modified, id, body)
 	}
 
 	res := f.run(t, "sync-1")
@@ -129,8 +138,8 @@ func TestGoogleSyncDocuments(t *testing.T) {
 		t.Fatalf("exports = %v; want each Doc once", exports)
 	}
 	docs := f.held(t, "docs")
-	if len(docs) != 2 || docs["doc1"] != text("doc1", "2026-10-01 10:00 UTC", "## One\n\nFirst.") ||
-		docs["doc2"] != text("doc2", "2026-10-02 10:00 UTC", "## Two\n\nSecond.") {
+	if len(docs) != 2 || docs["doc1"] != text("doc1", "ada@acme.com", "2026-10-01 10:00 UTC", "## One\n\nFirst.") ||
+		docs["doc2"] != text("doc2", "ada@acme.com", "2026-10-02 10:00 UTC", "## Two\n\nSecond.") {
 		t.Fatalf("docs = %q", docs)
 	}
 	if set := f.store.setOf("docs"); set.Name != "Docs" || set.Owner.ConnectorID != "conn-1" || !strings.Contains(set.Description, "Google Doc") {
@@ -147,17 +156,46 @@ func TestGoogleSyncDocuments(t *testing.T) {
 	// An edited Doc is exported again and replaces its document; one moved
 	// to the trash is no longer listed, so its row and document go.
 	drive.mu.Lock()
-	drive.docs["doc1"] = googleTestDoc{modified: "2026-10-01T10:00:00Z", text: "## One\n\nFirst.", trashed: true}
-	drive.docs["doc2"] = googleTestDoc{modified: "2026-10-28T08:00:00Z", text: "## Two\n\nSecond, edited."}
+	drive.docs["doc1"] = googleTestDoc{modified: "2026-10-01T10:00:00Z", text: "## One\n\nFirst.", owner: "ada@acme.com", trashed: true}
+	drive.docs["doc2"] = googleTestDoc{modified: "2026-10-28T08:00:00Z", text: "## Two\n\nSecond, edited.", owner: "ada@acme.com"}
 	drive.mu.Unlock()
 	f.run(t, "sync-3")
 	if exports := drive.took(); fmt.Sprint(exports) != "map[doc2:1]" {
 		t.Fatalf("exports = %v", exports)
 	}
-	if docs := f.held(t, "docs"); len(docs) != 1 || docs["doc2"] != text("doc2", "2026-10-28 08:00 UTC", "## Two\n\nSecond, edited.") {
+	if docs := f.held(t, "docs"); len(docs) != 1 || docs["doc2"] != text("doc2", "ada@acme.com", "2026-10-28 08:00 UTC", "## Two\n\nSecond, edited.") {
 		t.Fatalf("docs = %q", docs)
 	}
-	if f.store.docs[f.liveID("docs", "doc2")].Source.Version != "1|2026-10-28T08:00:00Z|1" {
+	if f.store.docs[f.liveID("docs", "doc2")].Source.Version != "1|2026-10-28T08:00:00Z|1|e8d1b1d0bebed26b" {
 		t.Fatalf("doc2 = %+v", f.store.docs[f.liveID("docs", "doc2")].Source)
+	}
+
+	// The owner's email renamed changes neither the Doc's time nor Drive's
+	// version, but its text, so it is exported again.
+	drive.mu.Lock()
+	drive.docs["doc2"] = googleTestDoc{modified: "2026-10-28T08:00:00Z", text: "## Two\n\nSecond, edited.", owner: "ada.lovelace@acme.com"}
+	drive.mu.Unlock()
+	f.run(t, "sync-4")
+	if exports := drive.took(); fmt.Sprint(exports) != "map[doc2:1]" {
+		t.Fatalf("exports = %v", exports)
+	}
+	if docs := f.held(t, "docs"); len(docs) != 1 || docs["doc2"] != text("doc2", "ada.lovelace@acme.com", "2026-10-28 08:00 UTC", "## Two\n\nSecond, edited.") {
+		t.Fatalf("docs = %q", docs)
+	}
+
+	// Its owner keeps the user from exporting it, edited since: its row stays
+	// and its document goes.
+	drive.mu.Lock()
+	drive.docs["doc2"] = googleTestDoc{modified: "2026-10-29T08:00:00Z", owner: "ada.lovelace@acme.com", withheld: true}
+	drive.mu.Unlock()
+	f.run(t, "sync-5")
+	if exports := drive.took(); fmt.Sprint(exports) != "map[doc2:1]" {
+		t.Fatalf("exports = %v", exports)
+	}
+	if docs := f.held(t, "docs"); len(docs) != 0 {
+		t.Fatalf("docs = %q", docs)
+	}
+	if rows := f.snapshotRows(t, "files"); len(rows) != 2 || !strings.Contains(rows[0], `"file_id":"doc2"`) {
+		t.Fatalf("files = %v", rows)
 	}
 }

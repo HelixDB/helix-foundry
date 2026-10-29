@@ -22,6 +22,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const googleSubject = "ada@acme.com"
@@ -1203,7 +1205,7 @@ func TestGoogleDocuments(t *testing.T) {
 		}
 		for id, text := range googleExports {
 			routes["/drive/v3/files/"+id+"/export"] = func(r *http.Request) (int, string) {
-				if r.URL.RawQuery != "mimeType=text%2Fmarkdown" {
+				if r.URL.RawQuery != "mimeType=text%2Fmarkdown" && r.URL.RawQuery != "mimeType=text%2Fplain" {
 					t.Errorf("export query = %s", r.URL.RawQuery)
 				}
 				if answer := exports[id]; answer != nil {
@@ -1228,7 +1230,10 @@ func TestGoogleDocuments(t *testing.T) {
 		}
 		return sinks, err
 	}
-	offers := []string{"docs doc2 1|2026-10-25T08:00:00Z|7", "docs doc3 1|2026-10-22T09:00:00+01:00|", "docs doc1 1|2026-10-20T15:30:00.250Z|42"}
+	// A version is a render revision, the modified time, Drive's version and
+	// a digest of the title, owner and link.
+	offers := []string{"docs doc2 1|2026-10-25T08:00:00Z|7|8430dcdfb5160d84", "docs doc3 1|2026-10-22T09:00:00+01:00||ccacfd0c71e8f746",
+		"docs doc1 1|2026-10-20T15:30:00.250Z|42|bbec1dadc8dd09af"}
 
 	// The syncer keeps the first documents offered up to its cap, so the newest come first.
 	t.Run("offers each Doc once the listing is whole, newest first, and writes what it wants", func(t *testing.T) {
@@ -1242,12 +1247,12 @@ func TestGoogleDocuments(t *testing.T) {
 			t.Fatalf("offers = %q, rows = %d", docs.offers, len(sinks["files"].rows))
 		}
 		want := []Document{
-			{ExternalID: "doc2", Version: "1|2026-10-25T08:00:00Z|7", At: time.Date(2026, 10, 25, 8, 0, 0, 0, time.UTC),
+			{ExternalID: "doc2", Version: "1|2026-10-25T08:00:00Z|7|8430dcdfb5160d84", At: time.Date(2026, 10, 25, 8, 0, 0, 0, time.UTC),
 				URL: "https://docs.google.com/document/d/doc2/edit", Text: []byte("# Untitled document\n\nLast modified: 2026-10-25 08:00 UTC\nFile id: doc2\n")},
-			{ExternalID: "doc3", Version: "1|2026-10-22T09:00:00+01:00|", At: time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC), Title: "Notes",
+			{ExternalID: "doc3", Version: "1|2026-10-22T09:00:00+01:00||ccacfd0c71e8f746", At: time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC), Title: "Notes",
 				URL:  "http://docs.google.com/document/d/doc3/edit",
 				Text: []byte("# Notes\n\nOwner: grace@acme.com\nLast modified: 2026-10-22 08:00 UTC\nFile id: doc3\n\ncaf\uFFFD\n")},
-			{ExternalID: "doc1", Version: "1|2026-10-20T15:30:00.250Z|42", At: time.Date(2026, 10, 20, 15, 30, 0, 25e7, time.UTC), Title: "Q3 plan",
+			{ExternalID: "doc1", Version: "1|2026-10-20T15:30:00.250Z|42|bbec1dadc8dd09af", At: time.Date(2026, 10, 20, 15, 30, 0, 25e7, time.UTC), Title: "Q3 plan",
 				URL:  "https://docs.google.com/document/d/doc1/edit",
 				Text: []byte("# Q3 plan\n\nOwner: ada@acme.com\nLast modified: 2026-10-20 15:30 UTC\nFile id: doc1\n\n## Goals\n\nShip it.\n")},
 		}
@@ -1272,8 +1277,73 @@ func TestGoogleDocuments(t *testing.T) {
 			t.Fatalf("offers = %q, puts = %v, exports = %v", docs.offers, docs.putNames(), exports)
 		}
 	})
-	// Drive exports at most 10 MB, and an owner may keep viewers from downloading.
-	t.Run("skips a Doc Drive won't export", func(t *testing.T) {
+	// What the text shows beside the export may change without the Doc: an owner's email renamed.
+	t.Run("versions a Doc by its title, owner and link too", func(t *testing.T) {
+		for _, edit := range []func(string) string{
+			func(page string) string { return strings.Replace(page, "Ada@acme.com", "ada.lovelace@acme.com", 1) },
+			func(page string) string { return strings.Replace(page, `"Q3  plan"`, `"Q3 plans"`, 1) },
+			func(page string) string {
+				return strings.Replace(page, "document/d/doc1/edit", "document/d/doc1/view", 1)
+			},
+		} {
+			routes := docRoutes(t, nil)
+			routes["/drive/v3/files"] = func(r *http.Request) (int, string) {
+				return http.StatusOK, edit(googleDocFiles[r.URL.Query().Get("pageToken")])
+			}
+			docs := &granolaDocs{}
+			if _, err := pass(t, googleAt(t, &googleWorkspace{routes: routes}), []Table{{Name: "files"}}, docs); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(docs.offers[:2], offers[:2]) || !strings.HasPrefix(docs.offers[2], "docs doc1 1|2026-10-20T15:30:00.250Z|42|") ||
+				docs.offers[2] == offers[2] {
+				t.Fatalf("offers = %q", docs.offers)
+			}
+		}
+	})
+	// Drive writes each image's bytes into the Markdown as a data URI.
+	t.Run("leaves images out of a Doc's text, keeping their alt text", func(t *testing.T) {
+		const markdown = "## Goals\n\n![][image1]\n\nShip it. ![Q3 chart][image2] See [the plan][plan] and ![a link][plan].\n\n" +
+			"[plan]: https://example.com/plan\n[image1]: <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==>\n\n" +
+			"[image2]: <data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==>"
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
+			"doc1": func(*http.Request) (int, string) { return http.StatusOK, markdown },
+		})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); err != nil || len(docs.puts) != 3 {
+			t.Fatalf("SyncPass = %v, puts = %v", err, docs.putNames())
+		}
+		want := "# Q3 plan\n\nOwner: ada@acme.com\nLast modified: 2026-10-20 15:30 UTC\nFile id: doc1\n\n" +
+			"## Goals\n\n\n\nShip it. Q3 chart See [the plan][plan] and ![a link][plan].\n\n[plan]: https://example.com/plan\n"
+		if text := string(docs.puts[2].doc.Text); text != want {
+			t.Fatalf("text = %q, want %q", text, want)
+		}
+	})
+	// Images count toward Drive's 10 MB export limit, and plain text has none.
+	t.Run("exports a Doc over the limit as plain text", func(t *testing.T) {
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
+			"doc1": func(r *http.Request) (int, string) {
+				if r.URL.Query().Get("mimeType") == "text/markdown" {
+					return googleFailure(http.StatusForbidden, "This file is too large to be exported.", "exportSizeLimitExceeded")(r)
+				}
+				return http.StatusOK, "\uFEFFGoals\r\n\r\nShip it.\r\n"
+			},
+		})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); err != nil || len(docs.puts) != 3 {
+			t.Fatalf("SyncPass = %v, puts = %v", err, docs.putNames())
+		}
+		want := "# Q3 plan\n\nOwner: ada@acme.com\nLast modified: 2026-10-20 15:30 UTC\nFile id: doc1\n\nGoals\n\nShip it.\n"
+		if text := string(docs.puts[2].doc.Text); text != want {
+			t.Fatalf("text = %q, want %q", text, want)
+		}
+		if exports := w.requested("/drive/v3/files/doc1/export"); fmt.Sprint(exports) !=
+			"[/drive/v3/files/doc1/export?mimeType=text%2Fmarkdown /drive/v3/files/doc1/export?mimeType=text%2Fplain]" {
+			t.Fatalf("exports = %v", exports)
+		}
+	})
+	// A Doc its owner keeps viewers from exporting, one over the limit even
+	// as plain text, and one gone since the listing can't be documents now.
+	t.Run("drops a Doc Drive won't export to the user", func(t *testing.T) {
 		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
 			"doc1": googleFailure(http.StatusForbidden, "This file is too large to be exported.", "exportSizeLimitExceeded"),
 			"doc2": googleFailure(http.StatusNotFound, "File not found: doc2.", "notFound"),
@@ -1281,19 +1351,73 @@ func TestGoogleDocuments(t *testing.T) {
 		})}
 		docs := &granolaDocs{want: map[string]bool{"docs": true}}
 		sinks, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs)
-		if err != nil || len(docs.offers) != 3 || len(docs.puts) != 0 || len(sinks["files"].rows) != 4 {
-			t.Fatalf("SyncPass = %v, offers = %q, puts = %v", err, docs.offers, docs.putNames())
+		if err != nil || len(docs.offers) != 3 || len(docs.puts) != 0 || len(sinks["files"].rows) != 4 ||
+			fmt.Sprint(docs.drops) != "[docs doc2 docs doc3 docs doc1]" {
+			t.Fatalf("SyncPass = %v, offers = %q, puts = %v, drops = %v", err, docs.offers, docs.putNames(), docs.drops)
+		}
+	})
+	// Drive lists whether the user may download a Doc, which exporting it is:
+	// one they may not is never offered, so a full read removes what the stream holds of it.
+	t.Run("offers no Doc the user may not download", func(t *testing.T) {
+		w := &googleWorkspace{routes: docRoutes(t, nil)}
+		w.routes["/drive/v3/files"] = func(r *http.Request) (int, string) {
+			page := googleDocFiles[r.URL.Query().Get("pageToken")]
+			return http.StatusOK, strings.Replace(page, `"version":"42"`, `"version":"42","capabilities":{"canDownload":false}`, 1)
+		}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		sinks, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs)
+		if err != nil || !slices.Equal(docs.offers, offers[:2]) || len(sinks["files"].rows) != 4 || len(w.requested("/drive/v3/files/doc1/")) != 0 {
+			t.Fatalf("SyncPass = %v, offers = %q, exports = %v", err, docs.offers, w.requested("/drive/v3/files/"))
+		}
+	})
+	// One Doc that won't export must not fail every sync at the same point.
+	t.Run("skips a Doc Drive fails to export, counting it", func(t *testing.T) {
+		noBackoff(t)
+		before := testutil.ToFloat64(googleDocsSkipped)
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
+			"doc2": func(*http.Request) (int, string) { return http.StatusBadGateway, `` },
+			"doc3": func(*http.Request) (int, string) { return 0, `` },
+		})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); err != nil || fmt.Sprint(docs.putNames()) != "[docs doc1]" || len(docs.drops) != 0 {
+			t.Fatalf("SyncPass = %v, puts = %v, drops = %v", err, docs.putNames(), docs.drops)
+		}
+		if skipped := testutil.ToFloat64(googleDocsSkipped) - before; skipped != 2 {
+			t.Fatalf("counted %v skipped", skipped)
+		}
+		if exports := len(w.requested("/drive/v3/files/doc2/export")); exports != 1+maxRetries {
+			t.Fatalf("exported doc2 %d times, want it retried", exports)
+		}
+	})
+	// That many in a row is Drive failing, not the Docs.
+	t.Run("fails when Drive fails to export three Docs in a row", func(t *testing.T) {
+		noBackoff(t)
+		outage := func(*http.Request) (int, string) { return http.StatusServiceUnavailable, `{}` }
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){"doc1": outage, "doc2": outage, "doc3": outage})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); refusalOf(err) != "could not reach Google; try again" || len(docs.puts) != 0 {
+			t.Fatalf("SyncPass error = %v after %v, want a refusal", err, docs.putNames())
+		}
+	})
+	t.Run("gives an export longer than a list's request", func(t *testing.T) {
+		kind := googleAt(t, &googleWorkspace{})
+		c, err := kind.client(googleSource())
+		if err != nil || c.exports.Timeout != 2*time.Minute || kind.http.Timeout != 30*time.Second || c.exports.Transport != kind.http.Transport {
+			t.Fatalf("client = %v, export timeout = %s, the kind's %s", err, c.exports.Timeout, kind.http.Timeout)
 		}
 	})
 	for name, tc := range map[string]struct {
 		answer func(*http.Request) (int, string)
 		words  string
 	}{
-		"an outage": {func(*http.Request) (int, string) { return http.StatusBadGateway, `` }, "could not reach Google; try again"},
 		"a refused token": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
 			"Google refused the Drive API's access token for ada@acme.com; try again"},
 		"a rate limit": {googleFailure(http.StatusForbidden, "Rate Limit Exceeded", "rateLimitExceeded"),
 			"this service account has used up its Google rate limit; try again in a few minutes"},
+		"a disabled API": {googleFailure(http.StatusForbidden, "Drive API is disabled", "accessNotConfigured"),
+			"enable the Drive API in the service account's Google Cloud project"},
+		"another error code": {googleFailure(http.StatusBadRequest, "Invalid Value", "invalid"),
+			"Google returned HTTP 400 for /drive/v3/files/doc2/export"},
 	} {
 		t.Run("fails an export answered with "+name, func(t *testing.T) {
 			noBackoff(t)

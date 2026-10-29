@@ -5,7 +5,9 @@ import (
 	"cmp"
 	"context"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -15,12 +17,15 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/jwt"
 	"golang.org/x/time/rate"
@@ -37,12 +42,32 @@ const (
 	// googleFileFields are the fields a Drive listing asks for: Drive
 	// returns only id, name and mimeType of each file unless asked.
 	googleFileFields = "nextPageToken,incompleteSearch,files(id,name,mimeType,driveId,parents,owners(emailAddress)," +
-		"lastModifyingUser(emailAddress),createdTime,modifiedTime,size,webViewLink,shared,starred,version)"
+		"lastModifyingUser(emailAddress),createdTime,modifiedTime,size,webViewLink,shared,starred,version,capabilities(canDownload))"
 	// googleTokenMargin is how much of a token's life must be left for a
 	// request to use it: Google's tokens live an hour, and a request with
 	// its retries takes well under this.
 	googleTokenMargin = 5 * time.Minute
+	// googleExportTimeout bounds one export, which Drive makes of up to
+	// 10 MB as it is asked, slower than a page of a list.
+	googleExportTimeout = 2 * time.Minute
+	// googleExportFailures is how many Docs in a row Drive may fail to
+	// export, each skipped, before the read fails: that many is Drive
+	// failing, not the Docs.
+	googleExportFailures = 3
 )
+
+var (
+	// googleImageData is a reference definition Drive's Markdown export
+	// writes for each image of a Doc, on a line of its own, with the image's
+	// bytes as a data URI; googleImageUse is a use of one, ![alt][label].
+	googleImageData = regexp.MustCompile(`(?m)^\[([^\]\n]+)\]:[ \t]*<?data:image/[^\n]*\n?`)
+	googleImageUse  = regexp.MustCompile(`!\[([^\]\n]*)\]\[([^\]\n]+)\]`)
+)
+
+var googleDocsSkipped = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "foundry_connector_google_docs_skipped_total",
+	Help: "Google Docs a sync left as their set holds them because Drive failed to export them; the next sync exports them again.",
+})
 
 // googleLimits are the reasons Google gives a 403 or 429 for a rate limit or
 // a quota: the request is retried with backoff, then refused with when to try
@@ -96,8 +121,9 @@ var googleForeignKeys = map[string][]ForeignKey{
 
 // googleDocsStream is every Google Doc in the files table.
 var googleDocsStream = Stream{Name: "docs", Table: "files", Title: "Docs", Format: Markdown,
-	Description: "Each Google Doc the connection's user can open in Drive, as Markdown: its title, owner, last modified time " +
-		"and file id, then the Doc's text as Drive exports it, with its headings, lists, tables and links."}
+	Description: "Each Google Doc the connection's user can open and download in Drive, as Markdown: its title, owner, last " +
+		"modified time and file id, then the Doc's text as Drive exports it, with its headings, lists, tables and links; its " +
+		"images are left out, keeping their alt text, and a Doc whose export is over Drive's 10 MB limit is its plain text."}
 
 var (
 	// errUnreadable is an API the connection can't read; its refusal's
@@ -295,6 +321,8 @@ type googleClient struct {
 	settings GoogleSettings
 	tokens   map[string]*googleToken // by scope
 	pace     *rate.Limiter
+	// exports is the kind's HTTP client with googleExportTimeout.
+	exports *http.Client
 }
 
 // googleToken is one scope's access token: exchanged when first used, again
@@ -320,7 +348,9 @@ func (k *googleKind) client(src Source) (*googleClient, error) {
 	if s.Subject == "" {
 		return nil, invalid("enter the email of the Workspace user Foundry acts as")
 	}
-	c := &googleClient{k: k, settings: s, tokens: map[string]*googleToken{}, pace: rate.NewLimiter(rate.Every(googleInterval), 1)}
+	exports := *k.http
+	exports.Timeout = googleExportTimeout
+	c := &googleClient{k: k, settings: s, tokens: map[string]*googleToken{}, pace: rate.NewLimiter(rate.Every(googleInterval), 1), exports: &exports}
 	for _, api := range googleAPIOf {
 		c.tokens[api.scope] = &googleToken{config: &jwt.Config{Email: key.ClientEmail, PrivateKey: []byte(key.PrivateKey),
 			PrivateKeyID: key.PrivateKeyID, Scopes: []string{api.scope}, TokenURL: k.tokenURL, Subject: s.Subject}}
@@ -591,7 +621,7 @@ func (c *googleClient) users(ctx context.Context, w RowWriter) error {
 }
 
 // googleDoc is a listed Google Doc: what its document is made of besides
-// its export, and the time that orders and versions it.
+// its export, the time that orders it, and its version.
 type googleDoc struct {
 	id, name, owner, link, version string
 	modified                       time.Time
@@ -604,11 +634,12 @@ type googleDoc struct {
 // user in many shared drives, on every attempt, so each is listed alone. A
 // shared drive whose first page is refused, one the user left since the
 // drives were listed, is skipped. Once the listing is whole, it offers each
-// Doc's document, newest first, and exports the Docs docs wants as
-// Markdown: an unchanged Doc costs nothing. A Doc Drive won't export gets
-// no document: one over its 10 MB export limit (exportSizeLimitExceeded),
-// one whose owner keeps viewers from downloading it, or one deleted since
-// the listing.
+// Doc's document, newest first, and exports the Docs docs wants (export):
+// an unchanged Doc costs nothing. A Doc the user may not download is not
+// offered, so the read, always in full, removes what the stream holds of
+// it; one Drive refuses to export now is dropped. One Drive fails to
+// export is skipped and counted, keeping what the stream holds of it until
+// a later sync exports it, unless googleExportFailures fail in a row.
 func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWriter) error {
 	var listed []googleDoc
 	seen := map[string]bool{}
@@ -636,19 +667,26 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 			if err := w.Write(row); err != nil || f["mimeType"] != googleDocType {
 				return err
 			}
-			// The version is a render revision, then the Doc's modified time and
-			// Drive's version of it.
+			// Its owner may keep viewers from downloading, and so exporting, it.
+			if capabilities, _ := f["capabilities"].(map[string]any); capabilities["canDownload"] == false {
+				return nil
+			}
 			raw, _ := f["modifiedTime"].(string)
 			modified, err := time.Parse(time.RFC3339, raw)
 			if err != nil {
 				return fmt.Errorf("google /drive/v3/files: Doc %s is listed without its modifiedTime", id)
 			}
 			doc := googleDoc{id: id, modified: modified}
-			version, _ := f["version"].(string)
-			doc.version = "1|" + raw + "|" + version
 			doc.name, _ = f["name"].(string)
 			doc.owner, _ = row["owner_email"].(string)
 			doc.link, _ = f["webViewLink"].(string)
+			// The version is a render revision, the Doc's modified time and
+			// Drive's version of it, then a digest of what the document shows
+			// beside the export, which may change without either: an owner's
+			// email renamed.
+			version, _ := f["version"].(string)
+			shown := sha256.Sum256([]byte(doc.name + "\x00" + doc.owner + "\x00" + doc.link))
+			doc.version = "1|" + raw + "|" + version + "|" + hex.EncodeToString(shown[:8])
 			listed = append(listed, doc)
 			return nil
 		})
@@ -672,17 +710,25 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 	}
 	// The syncer keeps the first documents offered up to its cap.
 	slices.SortStableFunc(listed, func(a, b googleDoc) int { return b.modified.Compare(a.modified) })
+	failed := 0
 	for _, doc := range listed {
 		if !docs.Want(googleDocsStream.Name, doc.id, doc.version) {
 			continue
 		}
-		target := "/drive/v3/files/" + url.PathEscape(doc.id) + "/export?" + url.Values{"mimeType": {"text/markdown"}}.Encode()
-		status, body, err := c.get(ctx, c.k.http, googleDrive, target)
-		if err != nil {
-			return err
+		export, err := c.export(ctx, doc.id, "text/markdown")
+		if errors.Is(err, errUnreachable) {
+			if failed++; failed == googleExportFailures {
+				return err
+			}
+			googleDocsSkipped.Inc()
+			continue
 		}
-		switch err := c.status(status, body, googleDrive, target); {
+		failed = 0
+		switch {
 		case errors.Is(err, errNoAccess):
+			if err := docs.Drop(googleDocsStream.Name, doc.id); err != nil {
+				return err
+			}
 			continue
 		case err != nil:
 			return err
@@ -694,7 +740,7 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 			fmt.Fprintf(&text, "Owner: %s\n", doc.owner)
 		}
 		fmt.Fprintf(&text, "Last modified: %s\nFile id: %s\n", doc.modified.UTC().Format("2006-01-02 15:04 UTC"), doc.id)
-		if export := strings.TrimSpace(strings.ToValidUTF8(string(body), "\uFFFD")); export != "" {
+		if export = strings.TrimSpace(export); export != "" {
 			text.WriteString("\n" + export + "\n")
 		}
 		if err := docs.Put(ctx, googleDocsStream.Name, Document{ExternalID: doc.id, Version: doc.version, At: doc.modified,
@@ -703,6 +749,46 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 		}
 	}
 	return nil
+}
+
+// export is Doc id's text as Drive exports it as mediaType, under
+// googleExportTimeout: Markdown without its images, whose bytes Drive
+// writes into it as data URIs, keeping their alt text; or plain text, which
+// has none, when the Markdown with its images is over Drive's 10 MB limit.
+// err wraps errNoAccess when Drive won't export the Doc to the user (its
+// owner keeps viewers from downloading it, it is over the limit as plain
+// text too, or it is gone or unshared since the listing), and
+// errUnreachable when Drive gave no answer, or a server error after the
+// retries; any other fails the read: a refused token, a disabled API, a
+// rate limit that outlasted the retries.
+func (c *googleClient) export(ctx context.Context, id, mediaType string) (string, error) {
+	target := "/drive/v3/files/" + url.PathEscape(id) + "/export?" + url.Values{"mimeType": {mediaType}}.Encode()
+	status, body, err := c.get(ctx, c.exports, googleDrive, target)
+	if err != nil {
+		return "", err
+	}
+	if reasons, _ := googleError(body); status == http.StatusForbidden && mediaType == "text/markdown" &&
+		slices.Contains(reasons, "exportSizeLimitExceeded") {
+		return c.export(ctx, id, "text/plain")
+	}
+	if err := c.status(status, body, googleDrive, target); err != nil {
+		return "", err
+	}
+	// A plain text export starts with a byte order mark, and ends its lines with CRLF.
+	text := strings.ReplaceAll(strings.TrimPrefix(strings.ToValidUTF8(string(body), "\uFFFD"), "\uFEFF"), "\r\n", "\n")
+	if mediaType != "text/markdown" {
+		return text, nil
+	}
+	images := map[string]bool{}
+	for _, m := range googleImageData.FindAllStringSubmatch(text, -1) {
+		images[m[1]] = true
+	}
+	return googleImageUse.ReplaceAllStringFunc(googleImageData.ReplaceAllString(text, ""), func(use string) string {
+		if m := googleImageUse.FindStringSubmatch(use); images[m[2]] {
+			return m[1]
+		}
+		return use
+	}), nil
 }
 
 // calendars lists the user's calendar list into the calendars table and,
