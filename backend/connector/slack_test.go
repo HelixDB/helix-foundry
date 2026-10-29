@@ -73,10 +73,20 @@ func (c *slackCalls) of(method string) []string {
 	return queries
 }
 
-// slackAt serves routes by Web API method, checking each call is a GET
-// with the token, and returns the slack kind calling them, unpaced and
-// with the clock at slackTestNow, and its calls.
+// slackAllScopes are the scopes the setup guide asks for.
+const slackAllScopes = "channels:read,channels:history,groups:read,groups:history,users:read,users:read.email"
+
+// slackAt is slackScoped with every scope the guide asks for.
 func slackAt(t *testing.T, routes map[string]func(*http.Request) (int, string)) (*slackKind, *slackCalls) {
+	t.Helper()
+	return slackScoped(t, slackAllScopes, routes)
+}
+
+// slackScoped serves routes by Web API method, each answer saying the token
+// has scopes, as Slack's X-OAuth-Scopes header does (none for ""), and checking each call
+// is a GET with the token. It returns the slack kind calling them, unpaced
+// and with the clock at slackTestNow, and its calls.
+func slackScoped(t *testing.T, scopes string, routes map[string]func(*http.Request) (int, string)) (*slackKind, *slackCalls) {
 	t.Helper()
 	savedIntervals, savedNow := slackIntervals, slackNow
 	slackIntervals = map[string]time.Duration{}
@@ -86,18 +96,27 @@ func slackAt(t *testing.T, routes map[string]func(*http.Request) (int, string)) 
 	slackNow = func() time.Time { return slackTestNow }
 	t.Cleanup(func() { slackIntervals, slackNow = savedIntervals, savedNow })
 	calls := &slackCalls{}
-	checked := map[string]func(*http.Request) (int, string){}
-	for method, handler := range routes {
-		checked["/api/"+method] = func(r *http.Request) (int, string) {
-			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+slackTestToken {
-				t.Errorf("%s %s with Authorization %q", r.Method, method, r.Header.Get("Authorization"))
-			}
-			calls.add(method + "?" + r.URL.RawQuery)
-			return handler(r)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := strings.TrimPrefix(r.URL.Path, "/api/")
+		handler, ok := routes[method]
+		if !ok {
+			t.Errorf("unexpected request %s", r.URL)
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
-	}
-	base := routeServer(t, checked) + "/api"
-	return kindOf(t, NewCatalog(Endpoints{Slack: base}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{}), "slack").(*slackKind), calls
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+slackTestToken {
+			t.Errorf("%s %s with Authorization %q", r.Method, method, r.Header.Get("Authorization"))
+		}
+		calls.add(method + "?" + r.URL.RawQuery)
+		status, body := handler(r)
+		if scopes != "" {
+			w.Header().Set("X-OAuth-Scopes", scopes)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return kindOf(t, NewCatalog(Endpoints{Slack: server.URL + "/api"}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{}), "slack").(*slackKind), calls
 }
 
 // slackWorkspace is the workspace a test serves: its users and channels,
@@ -173,14 +192,28 @@ func newSlackWorkspace() *slackWorkspace {
 	}
 }
 
+// ofTypes are the channels of the types r asks for, as Slack lists them.
+func ofTypes(r *http.Request, channels []string) []string {
+	types := strings.Split(r.URL.Query().Get("types"), ",")
+	return slices.DeleteFunc(slices.Clone(channels), func(raw string) bool {
+		var ch slackChannel
+		_ = json.Unmarshal([]byte(raw), &ch)
+		return !slices.Contains(types, map[bool]string{false: "public_channel", true: "private_channel"}[ch.IsPrivate])
+	})
+}
+
 func (w *slackWorkspace) routes() map[string]func(*http.Request) (int, string) {
 	return map[string]func(*http.Request) (int, string){
 		"auth.test": func(*http.Request) (int, string) {
 			return http.StatusOK, `{"ok":true,"url":"https://acme.slack.com/","team":"Acme","user":"foundry","team_id":"T1","user_id":"UF","bot_id":"BF"}`
 		},
-		"users.list":          func(*http.Request) (int, string) { return http.StatusOK, slackPage("members", w.users...) },
-		"conversations.list":  func(*http.Request) (int, string) { return http.StatusOK, slackPage("channels", w.channels...) },
-		"users.conversations": func(*http.Request) (int, string) { return http.StatusOK, slackPage("channels", w.joined...) },
+		"users.list": func(*http.Request) (int, string) { return http.StatusOK, slackPage("members", w.users...) },
+		"conversations.list": func(r *http.Request) (int, string) {
+			return http.StatusOK, slackPage("channels", ofTypes(r, w.channels)...)
+		},
+		"users.conversations": func(r *http.Request) (int, string) {
+			return http.StatusOK, slackPage("channels", ofTypes(r, w.joined)...)
+		},
 		"conversations.members": func(r *http.Request) (int, string) {
 			return http.StatusOK, slackPage("members", w.members[r.URL.Query().Get("channel")]...)
 		},
@@ -300,7 +333,7 @@ func TestSlackConnector(t *testing.T) {
 		types := "types=public_channel%2Cprivate_channel"
 		for method, want := range map[string][]string{
 			"auth.test": {""}, "users.list": {"limit=1"}, "conversations.list": {"limit=1&" + types},
-			"users.conversations": {"limit=200&" + types}, "conversations.history": {"channel=C1&limit=1"},
+			"users.conversations": {"limit=200&" + types}, "conversations.history": {"channel=C1&limit=1", "channel=C2&limit=1"},
 		} {
 			if got := calls.of(method); !slices.Equal(got, want) {
 				t.Errorf("%s calls = %q, want %q", method, got, want)
@@ -338,9 +371,9 @@ func TestSlackConnector(t *testing.T) {
 				{"messages", "add the groups:read scope to the app and reinstall it"},
 				{"channel_days", "add the groups:read scope to the app and reinstall it"},
 			}},
+		// conversations.members needs only the scopes that list channels.
 		"history": {map[string]string{"conversations.history": slackScope("channels:history")},
-			[]string{"users", "channels"}, []Unavailable{
-				{"channel_members", "add the channels:history scope to the app and reinstall it"},
+			[]string{"users", "channels", "channel_members"}, []Unavailable{
 				{"messages", "add the channels:history scope to the app and reinstall it"},
 				{"channel_days", "add the channels:history scope to the app and reinstall it"},
 			}},
@@ -368,21 +401,98 @@ func TestSlackConnector(t *testing.T) {
 			}
 		})
 	}
+	// Private channels need the groups: scopes, which the guide asks for only
+	// for them, and each kind of channel's history its own scope: what the
+	// token's scopes leave out is never asked for.
+	without := func(scopes ...string) string {
+		return strings.Join(slices.DeleteFunc(strings.Split(slackAllScopes, ","), func(s string) bool { return slices.Contains(scopes, s) }), ",")
+	}
+	for name, tc := range map[string]struct {
+		scopes            string
+		joined            []string // the channels the app is in, of newSlackWorkspace's; nil for all
+		types             string
+		history, warnings []string
+		unavailable       []Unavailable
+	}{
+		"no private channel without groups:read": {scopes: without("groups:read", "groups:history"), types: "public_channel",
+			history: []string{"channel=C1&limit=1"}},
+		"private channels without groups:history": {scopes: without("groups:history"), types: "public_channel,private_channel",
+			history: []string{"channel=C1&limit=1"}, warnings: []string{
+				"The app cannot read the messages of the private channels it is in: add the groups:history scope to the app and reinstall it, then test again"}},
+		"public channels without channels:history": {scopes: without("channels:history"), types: "public_channel,private_channel",
+			history: []string{"channel=C2&limit=1"}, warnings: []string{
+				"The app cannot read the messages of the public channels it is in: add the channels:history scope to the app and reinstall it, then test again"}},
+		"only private channels, without groups:history": {scopes: without("groups:history"), joined: []string{"C2"}, types: "public_channel,private_channel",
+			unavailable: []Unavailable{
+				{"messages", "add the groups:history scope to the app and reinstall it"},
+				{"channel_days", "add the groups:history scope to the app and reinstall it"},
+			}},
+		// Slack not listing the scopes leaves the calls to find out.
+		"every channel when Slack does not list the scopes": {types: "public_channel,private_channel",
+			history: []string{"channel=C1&limit=1", "channel=C2&limit=1"}},
+	} {
+		t.Run("reads the channels its scopes allow: "+name, func(t *testing.T) {
+			w := newSlackWorkspace()
+			if tc.joined != nil {
+				w.joined = slices.DeleteFunc(w.joined, func(raw string) bool {
+					return !slices.ContainsFunc(tc.joined, func(id string) bool { return strings.Contains(raw, `"id":"`+id+`"`) })
+				})
+			}
+			kind, calls := slackScoped(t, tc.scopes, w.routes())
+			d, err := kind.Discover(ctx, Source{Secret: slackTestToken})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTables := []string{"users", "channels", "channel_members", "messages", "channel_days"}
+			if len(tc.unavailable) > 0 {
+				wantTables = wantTables[:3]
+			}
+			if !slices.Equal(tableNames(d), wantTables) || !slices.Equal(d.Unavailable, tc.unavailable) || !slices.Equal(d.Warnings, tc.warnings) {
+				t.Fatalf("tables = %v, unavailable = %q, warnings = %q", tableNames(d), d.Unavailable, d.Warnings)
+			}
+			types := "types=" + url.QueryEscape(tc.types)
+			if got := calls.of("conversations.list"); !slices.Equal(got, []string{"limit=1&" + types}) {
+				t.Errorf("conversations.list calls = %q", got)
+			}
+			if got := calls.of("users.conversations"); !slices.Equal(got, []string{"limit=200&" + types}) {
+				t.Errorf("users.conversations calls = %q", got)
+			}
+			if got := calls.of("conversations.history"); !slices.Equal(got, tc.history) {
+				t.Errorf("history calls = %q, want %q", got, tc.history)
+			}
+		})
+	}
+	t.Run("warns of a kind of channel whose history Slack refuses", func(t *testing.T) {
+		routes := newSlackWorkspace().routes()
+		routes["conversations.history"] = func(r *http.Request) (int, string) {
+			if r.URL.Query().Get("channel") == "C2" {
+				return http.StatusOK, slackScope("groups:history")
+			}
+			return http.StatusOK, slackPage("messages")
+		}
+		kind, _ := slackAt(t, routes)
+		d, err := kind.Discover(ctx, Source{Secret: slackTestToken})
+		want := []string{"The app cannot read the messages of the private channels it is in: add the groups:history scope to the app and reinstall it, then test again"}
+		if err != nil || len(d.Tables) != 5 || !slices.Equal(d.Warnings, want) {
+			t.Fatalf("Discover = (%+v, %v)", d, err)
+		}
+	})
 	// Slack may answer a filtered page with nothing and a cursor though more follow.
-	t.Run("pages the channels it is in for one to read", func(t *testing.T) {
+	t.Run("pages the channels it is in for one of each kind to read", func(t *testing.T) {
 		routes := newSlackWorkspace().routes()
 		routes["users.conversations"] = func(r *http.Request) (int, string) {
 			if r.URL.Query().Get("cursor") == "" {
 				return http.StatusOK, slackMore("channels", "j2")
 			}
-			return http.StatusOK, slackMore("channels", "j3", `{"id":"C2","name":"design"}`, `{"id":"C1","name":"general"}`)
+			return http.StatusOK, slackMore("channels", "j3", `{"id":"C2","name":"design","is_private":true}`, `{"id":"C1","name":"general"}`)
 		}
 		kind, calls := slackAt(t, routes)
 		d, err := kind.Discover(ctx, Source{Secret: slackTestToken})
 		if err != nil || len(d.Tables) != 5 || len(d.Warnings) != 0 {
 			t.Fatalf("Discover = (%+v, %v)", d, err)
 		}
-		if got := calls.of("conversations.history"); !slices.Equal(got, []string{"channel=C2&limit=1"}) || len(calls.of("users.conversations")) != 2 {
+		if got := calls.of("conversations.history"); !slices.Equal(got, []string{"channel=C1&limit=1", "channel=C2&limit=1"}) ||
+			len(calls.of("users.conversations")) != 2 {
 			t.Fatalf("history calls = %q, users.conversations calls = %q", got, calls.of("users.conversations"))
 		}
 	})
@@ -493,7 +603,7 @@ func TestSlackSync(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := calls.of("conversations.list"); !slices.Equal(got, []string{"limit=200&types=public_channel%2Cprivate_channel"}) || len(calls.log) != 1 {
+		if got := calls.of("conversations.list"); !slices.Equal(got, []string{"limit=200&types=public_channel%2Cprivate_channel"}) || len(calls.log) != 2 {
 			t.Fatalf("calls = %q", calls.log)
 		}
 		want := []map[string]any{
@@ -529,7 +639,7 @@ func TestSlackSync(t *testing.T) {
 			t.Fatalf("rows = %v", rows)
 		}
 		if got := calls.of("conversations.members"); !slices.Equal(got, []string{"channel=C1&limit=200", "channel=C1&cursor=m2&limit=200", "channel=C2&limit=200"}) ||
-			len(calls.of("users.conversations")) != 1 || len(calls.log) != 4 {
+			len(calls.of("users.conversations")) != 1 || len(calls.log) != 5 {
 			t.Fatalf("calls = %q", calls.log)
 		}
 	})
@@ -671,6 +781,59 @@ func TestSlackSync(t *testing.T) {
 			}
 		})
 	}
+	t.Run("reads no private channel without groups:read", func(t *testing.T) {
+		kind, calls := slackScoped(t, "channels:read,channels:history,users:read", newSlackWorkspace().routes())
+		sinks, err := slackRead(t, kind, slackTables, noDocuments{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var channels []any
+		for _, row := range sinks["channels"].rows {
+			channels = append(channels, row["channel_id"])
+		}
+		if !slices.Equal(channels, []any{"C1", "C3"}) || len(sinks["channel_members"].rows) != 3 || len(sinks["messages"].rows) != 5 {
+			t.Fatalf("channels = %v, members = %v, messages = %d", channels, sinks["channel_members"].rows, len(sinks["messages"].rows))
+		}
+		for _, method := range []string{"conversations.list", "users.conversations"} {
+			if got := calls.of(method); len(got) != 1 || !strings.Contains(got[0], "types=public_channel") || strings.Contains(got[0], "private") {
+				t.Errorf("%s calls = %q", method, got)
+			}
+		}
+	})
+	// Discover warned of it; its members are still read.
+	t.Run("reads no private channel's history without groups:history", func(t *testing.T) {
+		kind, calls := slackScoped(t, "channels:read,channels:history,groups:read,users:read", newSlackWorkspace().routes())
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		sinks, err := slackRead(t, kind, slackTables, docs)
+		if err != nil || len(sinks["channel_members"].rows) != 5 || len(sinks["messages"].rows) != 5 ||
+			!slices.Equal(docs.putNames(), []string{"conversations C1:2026-10-28", "conversations C1:2026-10-27"}) {
+			t.Fatalf("SyncPass = %v, rows = %v, puts = %v", err, sinks, docs.putNames())
+		}
+		if got := calls.of("conversations.history"); len(got) != 1 || !strings.HasPrefix(got[0], "channel=C1&") {
+			t.Fatalf("history calls = %q", got)
+		}
+	})
+	t.Run("reads a public channel's history only with channels:history", func(t *testing.T) {
+		kind, calls := slackScoped(t, "channels:read,groups:read,groups:history,users:read", newSlackWorkspace().routes())
+		sinks, err := slackRead(t, kind, slackTables[3:], noDocuments{})
+		if err != nil || len(sinks["messages"].rows) != 4 || len(sinks["channel_days"].rows) != 1 {
+			t.Fatalf("SyncPass = %v, rows = %v", err, sinks)
+		}
+		if got := calls.of("conversations.history"); len(got) != 1 || !strings.HasPrefix(got[0], "channel=C2&") {
+			t.Fatalf("history calls = %q", got)
+		}
+	})
+	t.Run("refuses messages and days once it may read no history", func(t *testing.T) {
+		for _, table := range slackTables[3:] {
+			kind, calls := slackScoped(t, "channels:read,groups:read,users:read", newSlackWorkspace().routes())
+			_, err := slackRead(t, kind, []Table{table}, noDocuments{})
+			var refusedErr *RefusedError
+			if !errors.As(err, &refusedErr) || refusedErr.Message != "add the channels:history scope to the app and reinstall it" ||
+				!errors.Is(err, errMissingScope) || len(calls.log) != 1 {
+				t.Fatalf("%s: SyncPass error = %v after %q, want a refusal", table.Name, err, calls.log)
+			}
+		}
+	})
 	// Discover finds what the app may read; a scope gone since is refused with its fix.
 	t.Run("refuses a table whose scope the app lost", func(t *testing.T) {
 		kind, _ := slackAt(t, with(newSlackWorkspace().routes(), map[string]string{"users.list": slackScope("users:read")}))
@@ -1175,7 +1338,7 @@ func TestSlackDocuments(t *testing.T) {
 		kind, calls := slackAt(t, newSlackWorkspace().routes())
 		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
 		sinks, err := slackRead(t, kind, slackTables[:4], docs)
-		if err != nil || len(sinks["messages"].rows) != 9 || len(docs.offers) != 0 || len(calls.of("auth.test")) != 0 {
+		if err != nil || len(sinks["messages"].rows) != 9 || len(docs.offers) != 0 || len(calls.of("conversations.replies")) != 0 {
 			t.Fatalf("SyncPass = %v, offers = %q, calls = %q", err, docs.offers, calls.log)
 		}
 	})

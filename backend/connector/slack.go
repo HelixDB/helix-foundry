@@ -36,8 +36,6 @@ const (
 	slackListPage    = "200"
 	slackHistoryPage = "999"
 	maxSlackPages    = 20_000
-	// slackChannelTypes are the conversations read: channels, never direct messages.
-	slackChannelTypes = "public_channel,private_channel"
 	// slackMessageOverhead is what a kept message costs beyond its text.
 	slackMessageOverhead = 256
 )
@@ -96,6 +94,37 @@ var slackRejected = map[string]bool{
 // wrapping it says which scope to add.
 var errMissingScope = errors.New("slack: missing_scope")
 
+// slackScopes are the scopes a token has, as the X-OAuth-Scopes header of
+// auth.test's answer lists them. Slack sends it with every answer; nil, for
+// an answer without it, has every scope, so the calls find out.
+type slackScopes map[string]bool
+
+func (s slackScopes) has(scope string) bool { return s == nil || s[scope] }
+
+// types are the conversation types the token may list: public channels,
+// and private ones with groups:read. Direct messages never.
+func (s slackScopes) types() string {
+	if s.has("groups:read") {
+		return "public_channel,private_channel"
+	}
+	return "public_channel"
+}
+
+// slackHistoryScope is the scope the history of a public or a private channel needs.
+func slackHistoryScope(private bool) string {
+	if private {
+		return "groups:history"
+	}
+	return "channels:history"
+}
+
+// slackAuth is auth.test's answer: the workspace, the bot user's handle
+// and the token's scopes.
+type slackAuth struct {
+	team, bot string
+	scopes    slackScopes
+}
+
 // slackConversations is the channel_days table's stream: each channel day's messages.
 var slackConversations = Stream{Name: "conversations", Table: "channel_days", Title: "Conversations", Format: Markdown,
 	Description: "Each day of one Slack channel the app is in, as Markdown: a heading with the channel and the UTC day, " +
@@ -139,51 +168,51 @@ func (k *slackKind) Prepare(src Source) (json.RawMessage, error) {
 // Streams are the conversations, always.
 func (k *slackKind) Streams(Source) []Stream { return []Stream{slackConversations} }
 
-// Discover proves the token with auth.test, then probes each object with a
-// one-item read: users.list for users, conversations.list for channels,
-// and conversations.history of a channel the app is in for its members,
-// messages and days, which also need channels. A method the app has no
-// scope for makes its objects unavailable, saying which scope to add. An
-// app in no channel yet lists them with a warning, since only an invite
-// shows what it may read.
+// Discover proves the token with auth.test, which also lists its scopes,
+// then probes each object with a one-item read: users.list for users,
+// conversations.list for channels, and users.conversations for the
+// channels the app is in, which channel_members needs. Messages and days
+// also need conversations.history of a channel the app is in: of a public
+// and of a private one, those there are, as each needs its own scope. A
+// method the app has no scope for makes its objects unavailable, saying
+// which scope to add; one kind of channel whose history it may not read,
+// while it may the other's, is a warning that says so. An app in no
+// channel yet lists them with a warning, since only an invite shows what
+// it may read.
 func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	c := k.client(src.Secret)
-	auth, err := c.call(ctx, "auth.test", nil)
+	auth, err := c.auth(ctx)
 	if err != nil {
 		return Discovery{}, err
 	}
-	var bot string
-	_ = json.Unmarshal(auth["user"], &bot) // the bot user's handle, for the warning
 	var (
 		mu      sync.Mutex
 		reasons = map[string]string{}
-		alone   bool
+		joined  = map[bool]slackChannel{} // by is_private: the first channel of each kind the app is in
 	)
-	readable, err := probeAll(ctx, []string{"users", "channels", "messages"}, func(ctx context.Context, probe string) (bool, error) {
+	readable, err := probeAll(ctx, []string{"users", "channels", "joined"}, func(ctx context.Context, probe string) (bool, error) {
 		var err error
 		switch probe {
 		case "users":
-			_, err = c.call(ctx, "users.list", url.Values{"limit": {"1"}})
+			_, _, err = c.call(ctx, "users.list", url.Values{"limit": {"1"}})
 		case "channels":
-			_, err = c.call(ctx, "conversations.list", url.Values{"limit": {"1"}, "types": {slackChannelTypes}})
+			_, _, err = c.call(ctx, "conversations.list", url.Values{"limit": {"1"}, "types": {auth.scopes.types()}})
 		default:
-			// A filtered page may be empty though more follow, so one is paged for.
-			var channel string
-			err = c.pages(ctx, "users.conversations", "channels", url.Values{"limit": {slackListPage}, "types": {slackChannelTypes}},
+			// A filtered page may be empty though more follow, so they are paged for.
+			err = c.pages(ctx, "users.conversations", "channels", url.Values{"limit": {slackListPage}, "types": {auth.scopes.types()}},
 				func(raw json.RawMessage) error {
 					var ch slackChannel
 					if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
 						return errors.New("slack users.conversations: a listed channel has no id")
 					}
-					channel = ch.ID
-					return errStopPaging
+					if _, ok := joined[ch.IsPrivate]; !ok {
+						joined[ch.IsPrivate] = ch
+					}
+					if len(joined) == 2 {
+						return errStopPaging
+					}
+					return nil
 				})
-			if err == nil && channel != "" {
-				_, err = c.call(ctx, "conversations.history", url.Values{"channel": {channel}, "limit": {"1"}})
-			}
-			mu.Lock()
-			alone = err == nil && channel == ""
-			mu.Unlock()
 		}
 		var refusedErr *RefusedError
 		if errors.Is(err, errMissingScope) && errors.As(err, &refusedErr) {
@@ -197,19 +226,48 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 	if err != nil {
 		return Discovery{}, err
 	}
-	d := saasDiscovery(slackObjects, func(name string) bool {
-		if name == "users" || name == "channels" {
-			return readable[name]
+	history := map[bool]string{} // by is_private: why the app may not read that kind's history
+	readsHistory := false
+	for _, private := range []bool{false, true} {
+		ch, ok := joined[private]
+		if !ok {
+			continue
 		}
-		return readable["channels"] && readable["messages"]
+		if scope := slackHistoryScope(private); !auth.scopes.has(scope) {
+			history[private] = "add the " + scope + " scope to the app and reinstall it"
+			continue
+		}
+		_, _, err := c.call(ctx, "conversations.history", url.Values{"channel": {ch.ID}, "limit": {"1"}})
+		var refusedErr *RefusedError
+		switch {
+		case errors.Is(err, errMissingScope) && errors.As(err, &refusedErr):
+			history[private] = refusedErr.Message
+		case err != nil:
+			return Discovery{}, err
+		default:
+			readsHistory = true
+		}
+	}
+	d := saasDiscovery(slackObjects, func(name string) bool {
+		switch name {
+		case "users", "channels":
+			return readable[name]
+		case "channel_members":
+			return readable["channels"] && readable["joined"]
+		}
+		return readable["channels"] && readable["joined"] && (readsHistory || len(history) == 0)
 	}, slackForeignKeys)
 	if len(d.Tables) == 0 {
 		return Discovery{}, refused(nil, "this token cannot read Slack users or channels; add the app's scopes and test again")
 	}
 	for i, u := range d.Unavailable {
-		d.Unavailable[i].Reason = reasons[u.Name]
-		if u.Name != "users" && u.Name != "channels" {
-			d.Unavailable[i].Reason = cmp.Or(reasons["messages"], reasons["channels"])
+		switch u.Name {
+		case "users", "channels":
+			d.Unavailable[i].Reason = reasons[u.Name]
+		case "channel_members":
+			d.Unavailable[i].Reason = cmp.Or(reasons["joined"], reasons["channels"])
+		default:
+			d.Unavailable[i].Reason = cmp.Or(reasons["joined"], history[false], history[true], reasons["channels"])
 		}
 	}
 	for i, t := range d.Tables {
@@ -218,8 +276,17 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 		}
 		d.Tables[i].Windowed = WindowedTable("slack", t.Name)
 	}
-	if alone && readable["channels"] {
-		d.Warnings = append(d.Warnings, "The app is in no channels yet: invite it to each channel to sync with /invite @"+bot+", then test again")
+	if !readable["channels"] || !readable["joined"] {
+		return d, nil
+	}
+	if len(joined) == 0 {
+		d.Warnings = append(d.Warnings, "The app is in no channels yet: invite it to each channel to sync with /invite @"+auth.bot+", then test again")
+	}
+	for _, private := range []bool{false, true} {
+		if readsHistory && history[private] != "" {
+			kind := map[bool]string{false: "public", true: "private"}[private]
+			d.Warnings = append(d.Warnings, "The app cannot read the messages of the "+kind+" channels it is in: "+history[private]+", then test again")
+		}
 	}
 	return d, nil
 }
@@ -276,6 +343,7 @@ type slackPass struct {
 	// is read and their stream is not paused.
 	keep     bool
 	team     string
+	scopes   slackScopes
 	people   map[string]string // user id: real name, else handle
 	channels map[string]string // channel id: name
 	days     map[string]*slackDay
@@ -284,12 +352,18 @@ type slackPass struct {
 
 func (p *slackPass) run(ctx context.Context, historyDays int) error {
 	c := p.c
-	if p.read["channel_days"] {
-		auth, err := c.call(ctx, "auth.test", nil)
+	history := p.read["messages"] || p.read["channel_days"]
+	if p.read["channels"] || p.read["channel_members"] || history {
+		auth, err := c.auth(ctx)
 		if err != nil {
 			return err
 		}
-		_ = json.Unmarshal(auth["team_id"], &p.team) // for the documents' links
+		p.team, p.scopes = auth.team, auth.scopes
+	}
+	// Discover makes a table unavailable that no history can be read for;
+	// a token that lost both scopes since is refused with the fix.
+	if history && !p.scopes.has("channels:history") && !p.scopes.has("groups:history") {
+		return refused(errMissingScope, "add the channels:history scope to the app and reinstall it")
 	}
 	if p.read["users"] || p.keep {
 		err := c.pages(ctx, "users.list", "members", url.Values{"limit": {slackListPage}}, func(raw json.RawMessage) error {
@@ -309,7 +383,7 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		}
 	}
 	if p.read["channels"] {
-		err := c.pages(ctx, "conversations.list", "channels", url.Values{"limit": {slackListPage}, "types": {slackChannelTypes}},
+		err := c.pages(ctx, "conversations.list", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
 			func(raw json.RawMessage) error {
 				var ch slackChannel
 				if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
@@ -322,11 +396,11 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 			return err
 		}
 	}
-	if !p.read["channel_members"] && !p.read["messages"] && !p.read["channel_days"] {
+	if !p.read["channel_members"] && !history {
 		return nil
 	}
 	var member []slackChannel
-	err := c.pages(ctx, "users.conversations", "channels", url.Values{"limit": {slackListPage}, "types": {slackChannelTypes}},
+	err := c.pages(ctx, "users.conversations", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
 		func(raw json.RawMessage) error {
 			var ch slackChannel
 			if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
@@ -354,7 +428,9 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 				return err
 			}
 		}
-		if p.read["messages"] || p.read["channel_days"] {
+		// A kind of channel whose history the app may not read is left out;
+		// Discover warned of it.
+		if history && p.scopes.has(slackHistoryScope(ch.IsPrivate)) {
 			if err := c.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) }); err != nil {
 				return err
 			}
@@ -778,7 +854,7 @@ func (c *slackClient) pages(ctx context.Context, method, field string, query url
 		if page == maxSlackPages {
 			return fmt.Errorf("slack %s: more than %d pages", method, maxSlackPages)
 		}
-		fields, err := c.call(ctx, method, q)
+		fields, _, err := c.call(ctx, method, q)
 		if err != nil {
 			return err
 		}
@@ -817,7 +893,7 @@ func (c *slackClient) pages(ctx context.Context, method, field string, query url
 // retries rather than failing for good; so is the ratelimited error Slack
 // may answer with instead. A method the app has no scope for is refused
 // with the scope to add, wrapping errMissingScope.
-func (c *slackClient) call(ctx context.Context, method string, query url.Values) (map[string]json.RawMessage, error) {
+func (c *slackClient) call(ctx context.Context, method string, query url.Values) (map[string]json.RawMessage, http.Header, error) {
 	target := c.k.base + "/" + method
 	if len(query) > 0 {
 		target += "?" + query.Encode()
@@ -833,7 +909,7 @@ func (c *slackClient) call(ctx context.Context, method string, query url.Values)
 		return req, err
 	})
 	if err != nil {
-		return nil, refused(err, "could not reach Slack; try again")
+		return nil, nil, refused(err, "could not reach Slack; try again")
 	}
 	var (
 		fields map[string]json.RawMessage
@@ -851,17 +927,37 @@ func (c *slackClient) call(ctx context.Context, method string, query url.Values)
 		if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
 			when = "after " + time.Now().Add(time.Duration(seconds)*time.Second).UTC().Format("15:04 UTC")
 		}
-		return nil, refused(nil, "this token has used up its Slack rate limit; try again %s", when)
+		return nil, nil, refused(nil, "this token has used up its Slack rate limit; try again %s", when)
 	case status != http.StatusOK:
-		return nil, refused(nil, "Slack returned HTTP %d for %s", status, method)
+		return nil, nil, refused(nil, "Slack returned HTTP %d for %s", status, method)
 	case decodeErr != nil:
-		return nil, fmt.Errorf("decode slack %s: %w", method, decodeErr)
+		return nil, nil, fmt.Errorf("decode slack %s: %w", method, decodeErr)
 	case answer.OK:
-		return fields, nil
+		return fields, header, nil
 	case slackRejected[answer.Error]:
-		return nil, refused(nil, "Slack rejected this token; check it and enter it again")
+		return nil, nil, refused(nil, "Slack rejected this token; check it and enter it again")
 	case answer.Error == "missing_scope":
-		return nil, refused(errMissingScope, "add the %s scope to the app and reinstall it", cmp.Or(answer.Needed, "missing"))
+		return nil, nil, refused(errMissingScope, "add the %s scope to the app and reinstall it", cmp.Or(answer.Needed, "missing"))
 	}
-	return nil, refused(nil, "Slack returned %s for %s", cmp.Or(answer.Error, "an error"), method)
+	return nil, nil, refused(nil, "Slack returned %s for %s", cmp.Or(answer.Error, "an error"), method)
+}
+
+// auth proves the token with auth.test.
+func (c *slackClient) auth(ctx context.Context) (slackAuth, error) {
+	fields, header, err := c.call(ctx, "auth.test", nil)
+	if err != nil {
+		return slackAuth{}, err
+	}
+	var a slackAuth
+	_ = json.Unmarshal(fields["team_id"], &a.team) // for the documents' links
+	_ = json.Unmarshal(fields["user"], &a.bot)     // for the invite warning
+	if listed, ok := header[http.CanonicalHeaderKey("X-OAuth-Scopes")]; ok {
+		a.scopes = slackScopes{}
+		for scope := range strings.SplitSeq(strings.Join(listed, ","), ",") {
+			if scope = strings.TrimSpace(scope); scope != "" {
+				a.scopes[scope] = true
+			}
+		}
+	}
+	return a, nil
 }
