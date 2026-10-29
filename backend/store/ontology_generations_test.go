@@ -334,3 +334,181 @@ func TestOntologyGenerationQueue(t *testing.T) {
 		assert.Empty(t, other, "generations are scoped to their ontology")
 	})
 }
+
+// A first draft's success (outcome.Load) makes the draft current and queues
+// its load in the transaction that stores it, as set-current then
+// create-load would. Whatever stops either, the generation still succeeds.
+func TestFirstDraftLoad(t *testing.T) {
+	user := id26("FDL-USER")
+	// started queues and claims a first draft's generation of f's ontology.
+	started := func(t *testing.T, f foundryFixture, tag string) *model.OntologyGeneration {
+		t.Helper()
+		ctx := context.Background()
+		gen := &model.OntologyGeneration{ID: id26("FDL-GEN-" + tag), WorkspaceID: f.ontology.WorkspaceID, OntologyID: f.ontology.ID,
+			RequestedByUserID: &user, Input: model.OntologyGenerationInput{LoadWhenReady: true}}
+		require.NoError(t, f.db.EnqueueOntologyGeneration(ctx, gen, 10))
+		claimed, err := f.db.ClaimOntologyGeneration(ctx, "worker-1", time.Minute)
+		require.NoError(t, err)
+		require.Equal(t, gen.ID, claimed.ID)
+		return claimed
+	}
+	// drafted is the outcome the worker hands a first draft that loads.
+	drafted := func(f foundryFixture, gen *model.OntologyGeneration, tag string) model.OntologyGenerationOutcome {
+		v := &model.OntologyVersion{
+			ID: id26("FDL-V-" + tag), WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, Source: model.OntologySourceGenerated,
+			Format: model.OntologyFormatAgentBundle, GenerationID: &gen.ID, Definition: json.RawMessage(`{"format":"agent_bundle"}`),
+			DocumentSetIDs: &[]string{generalSetID(f.ontology.ID)}, CreatedByUserID: gen.RequestedByUserID,
+		}
+		token := model.FirstDraftLoadTokenPrefix + gen.ID
+		return model.OntologyGenerationOutcome{Status: model.OntologyGenerationSucceeded, Result: v, Load: &model.FoundryGraphJob{
+			ID: id26("FDL-L-" + tag), LoadID: id26("FDL-L-" + tag), WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, VersionID: v.ID,
+			Kind: model.FoundryGraphJobLoad, Phase: model.FoundryGraphJobProvisioning, ClientToken: &token, RequestedByUserID: gen.RequestedByUserID,
+		}}
+	}
+	// succeeded checks the generation succeeded with its draft stored.
+	succeeded := func(t *testing.T, f foundryFixture, gen *model.OntologyGeneration, versionID string) {
+		t.Helper()
+		ctx := context.Background()
+		got, err := f.db.GetOntologyGeneration(ctx, f.ontology.ID, gen.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.OntologyGenerationSucceeded, got.Status)
+		require.NotNil(t, got.ResultVersionID)
+		assert.Equal(t, versionID, *got.ResultVersionID)
+		_, err = f.db.GetOntologyVersion(ctx, f.ontology.ID, versionID)
+		require.NoError(t, err, "the draft is stored")
+	}
+
+	t.Run("makes the draft current and queues its load", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "FDL1")
+		gen := started(t, f, "1")
+		outcome := drafted(f, gen, "1")
+		require.NoError(t, f.db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome))
+		succeeded(t, f, gen, outcome.Result.ID)
+		o := f.ontologyNow(t)
+		require.NotNil(t, o.CurrentVersionID)
+		assert.Equal(t, outcome.Result.ID, *o.CurrentVersionID)
+		job := f.liveJob(t)
+		require.NotNil(t, job)
+		assert.Equal(t, outcome.Load.ID, job.ID)
+		assert.Equal(t, job.ID, job.LoadID)
+		assert.Equal(t, model.FoundryGraphJobLoad, job.Kind)
+		assert.Equal(t, model.FoundryGraphJobQueued, job.Status)
+		assert.Equal(t, model.FoundryGraphJobProvisioning, job.Phase)
+		assert.Equal(t, outcome.Result.ID, job.VersionID)
+		require.NotNil(t, job.RequestedByUserID)
+		assert.Equal(t, user, *job.RequestedByUserID)
+		byToken, err := f.db.GetFoundryGraphJobByClientToken(ctx, f.ontology.ID, "first-draft:"+gen.ID)
+		require.NoError(t, err)
+		assert.Equal(t, job.ID, byToken.ID, "the load is found by its generation's token")
+		assert.Equal(t, model.FoundryLoadWriting, f.loadStatus(t, job.LoadID))
+
+		f.loaded(t, "w1")
+		assert.Equal(t, model.FoundryLoadReady, f.loadStatus(t, job.LoadID))
+		require.NotNil(t, f.ontologyNow(t).CurrentLoadID)
+		assert.Equal(t, job.LoadID, *f.ontologyNow(t).CurrentLoadID, "the first load serves reads once it ends")
+	})
+
+	// A version made current since the request is the user's choice: the
+	// draft is stored for review, and nothing is loaded.
+	t.Run("leaves a version made current meanwhile", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "FDL2")
+		gen := started(t, f, "2")
+		chosen := f.version(t, "CHOSEN")
+		require.NoError(t, f.db.SetCurrentOntologyVersion(ctx, f.ontology.ID, chosen, nil))
+		outcome := drafted(f, gen, "2")
+		require.NoError(t, f.db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome))
+		succeeded(t, f, gen, outcome.Result.ID)
+		assert.Equal(t, chosen, *f.ontologyNow(t).CurrentVersionID)
+		assert.Nil(t, f.liveJob(t), "no load is queued")
+		_, err := f.db.GetFoundryLoad(ctx, f.ontology.ID, outcome.Load.ID)
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+
+	// One writer per database: the live job keeps it, and the draft is left
+	// current for the user to load once it ends.
+	t.Run("leaves the draft current, unloaded, while a load is live", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "FDL3")
+		live := f.load(t, "LIVE")
+		gen := started(t, f, "3")
+		outcome := drafted(f, gen, "3")
+		require.NoError(t, f.db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome))
+		succeeded(t, f, gen, outcome.Result.ID)
+		assert.Equal(t, outcome.Result.ID, *f.ontologyNow(t).CurrentVersionID)
+		job := f.liveJob(t)
+		require.NotNil(t, job)
+		assert.Equal(t, live, job.ID, "the live load keeps the database")
+		_, err := f.db.GetFoundryLoad(ctx, f.ontology.ID, outcome.Load.ID)
+		assert.ErrorIs(t, err, store.ErrNotFound, "no load of the draft is written")
+		_, err = f.db.GetFoundryGraphJobByClientToken(ctx, f.ontology.ID, "first-draft:"+gen.ID)
+		assert.ErrorIs(t, err, store.ErrNotFound)
+	})
+
+	// A token is the user's to send, so a load already holding the draft's
+	// is left alone, and no half-written load of the draft is kept.
+	t.Run("leaves a load that took the draft's token", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "FDL4")
+		gen := started(t, f, "4")
+		f.version(t, "TOKEN")
+		taken := loadJob(f.ontology, "TOKEN")
+		token := "first-draft:" + gen.ID
+		taken.ClientToken = &token
+		require.NoError(t, f.db.CreateFoundryLoad(ctx, taken))
+		f.finish(t, "w1", "token", model.FoundryGraphJobFailed)
+		outcome := drafted(f, gen, "4")
+		require.NoError(t, f.db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome))
+		succeeded(t, f, gen, outcome.Result.ID)
+		assert.Equal(t, outcome.Result.ID, *f.ontologyNow(t).CurrentVersionID)
+		assert.Nil(t, f.liveJob(t))
+		_, err := f.db.GetFoundryLoad(ctx, f.ontology.ID, outcome.Load.ID)
+		assert.ErrorIs(t, err, store.ErrNotFound, "no load of the draft is written")
+		var loads int
+		require.NoError(t, testDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_loads WHERE ontology_id=?`, f.ontology.ID).Scan(&loads))
+		assert.Equal(t, 1, loads, "only the user's load")
+	})
+
+	// A draft the worker didn't load waits for review, as before.
+	t.Run("stores a draft without a load as before", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "FDL5")
+		gen := started(t, f, "5")
+		outcome := drafted(f, gen, "5")
+		outcome.Load = nil
+		require.NoError(t, f.db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome))
+		succeeded(t, f, gen, outcome.Result.ID)
+		assert.Nil(t, f.ontologyNow(t).CurrentVersionID)
+		assert.Nil(t, f.liveJob(t))
+	})
+
+	// A load that isn't the draft's, or one beside no draft, is the worker's
+	// mistake: nothing is stored, and the attempt keeps its lease.
+	t.Run("refuses a load that is not the draft's", func(t *testing.T) {
+		ctx := context.Background()
+		f := newFoundryFixture(t, "FDL6")
+		gen := started(t, f, "6")
+		for name, change := range map[string]func(*model.OntologyGenerationOutcome){
+			"another version":      func(o *model.OntologyGenerationOutcome) { o.Load.VersionID = id26("FDL-OTHER") },
+			"another ontology":     func(o *model.OntologyGenerationOutcome) { o.Load.OntologyID = id26("FDL-OTHER") },
+			"an extract":           func(o *model.OntologyGenerationOutcome) { o.Load.Kind = model.FoundryGraphJobExtract },
+			"a load of another id": func(o *model.OntologyGenerationOutcome) { o.Load.LoadID = id26("FDL-OTHER") },
+			"no token":             func(o *model.OntologyGenerationOutcome) { o.Load.ClientToken = nil },
+			"a failure":            func(o *model.OntologyGenerationOutcome) { o.Status, o.Result = model.OntologyGenerationFailed, nil },
+			"a retry": func(o *model.OntologyGenerationOutcome) {
+				at := time.Now()
+				o.RetryAt = &at
+			},
+		} {
+			outcome := drafted(f, gen, "6")
+			change(&outcome)
+			assert.Error(t, f.db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome), name)
+		}
+		got, err := f.db.GetOntologyGeneration(ctx, f.ontology.ID, gen.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.OntologyGenerationRunning, got.Status)
+		assert.Nil(t, f.ontologyNow(t).CurrentVersionID)
+		assert.Nil(t, f.liveJob(t))
+	})
+}

@@ -54,6 +54,9 @@ type generationQueue interface {
 	ClaimOntologyGeneration(ctx context.Context, workerID string, lease time.Duration) (*model.OntologyGeneration, error)
 	RenewOntologyGenerationLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	FinishOntologyGeneration(ctx context.Context, id, workerID string, outcome model.OntologyGenerationOutcome) error
+	// SumFoundryGraphJobSpend is what a first draft's load checks the
+	// month's budget with, as CreateFoundryLoad does.
+	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 }
 
 type generator interface {
@@ -63,8 +66,11 @@ type generator interface {
 // Task drafts queued ontologies one at a time with the ontology agent, and
 // runs revisions of drafts.
 type Task struct {
-	deps      Deps
-	cfg       config.OntologyConfig
+	deps Deps
+	cfg  config.OntologyConfig
+	// graph is foundry.graph, whose month's budget a first draft's load
+	// must have room in (MonthBudget).
+	graph     config.GraphConfig
 	queue     generationQueue
 	generator generator
 	reviser   *reviser
@@ -85,7 +91,7 @@ func New(d Deps) (*Task, error) {
 	cfg := d.Cfg.Foundry.Ontology
 	client := s3.NewFromConfig(d.AWS)
 	snapshots := snapshot.NewS3(client, d.Cfg.Foundry.Sync.DataBucket)
-	t := &Task{deps: d, cfg: cfg, queue: d.DB, workerID: id.NewWorkerID(), now: time.Now}
+	t := &Task{deps: d, cfg: cfg, graph: d.Cfg.Foundry.Graph, queue: d.DB, workerID: id.NewWorkerID(), now: time.Now}
 	resolver, err := ai.NewResolver(d.Cfg, d.DB, d.Plans)
 	if err != nil {
 		return nil, fmt.Errorf("foundry-ontology-worker: %w", err)
@@ -251,7 +257,8 @@ func sampleDraft(gen *model.OntologyGeneration) (ontologygen.Result, error) {
 // after a backoff that doubles from a minute, or a failure for good. The
 // version's scope is the sets the generation read: for a revision, its
 // parent version's scope and the sets its revised routes name (storing the
-// version keeps the live ones of the workspace).
+// version keeps the live ones of the workspace). A first draft
+// (LoadWhenReady) comes with its load (firstDraftLoad).
 func (t *Task) outcome(ctx context.Context, gen *model.OntologyGeneration, result ontologygen.Result, err error) model.OntologyGenerationOutcome {
 	usage := model.OntologyGenerationOutcome{
 		Model: result.Model, ModelProvider: result.ModelProvider, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
@@ -280,6 +287,9 @@ func (t *Task) outcome(ctx context.Context, gen *model.OntologyGeneration, resul
 			ID: id.New(), WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, Format: result.Format, Definition: result.Definition,
 			Source: source, GenerationID: &gen.ID, DocumentSetIDs: &scope, CreatedByUserID: gen.RequestedByUserID,
 		}
+		if gen.Input.LoadWhenReady && gen.Input.Revise == nil {
+			usage.Load = t.firstDraftLoad(ctx, gen, usage.Result)
+		}
 		return usage
 	}
 	var failure *ontologygen.Failure
@@ -298,4 +308,40 @@ func (t *Task) outcome(ctx context.Context, gen *model.OntologyGeneration, resul
 		usage.Error = fmt.Sprintf("%s (gave up after %d attempts)", failure.Message, gen.Attempts)
 	}
 	return usage
+}
+
+// firstDraftLoad is the load of v, a first draft, that storing it queues
+// once it has made v current, as CreateFoundryLoad would: credited to the
+// generation's requester, under the token FirstDraftLoadTokenPrefix and the
+// generation's id. It is nil, and v waits for review as a draft without
+// LoadWhenReady does, when a load would refuse v (ontologyagent.LoadRefusal)
+// or the workspace has spent this month's budget of loads; the requester's
+// email then says the draft is ready to review.
+func (t *Task) firstDraftLoad(ctx context.Context, gen *model.OntologyGeneration, v *model.OntologyVersion) *model.FoundryGraphJob {
+	refusal, err := ontologyagent.LoadRefusal(v)
+	switch {
+	case err != nil:
+		log.From(ctx).Warn("read a first draft failed; it waits for review", "generation", gen.ID, "err", err)
+		return nil
+	case refusal != "":
+		log.From(ctx).Info("a load would refuse the first draft; it waits for review", "generation", gen.ID, "why", refusal)
+		return nil
+	}
+	budget := t.graph.MonthBudget(t.now())
+	spent, err := t.queue.SumFoundryGraphJobSpend(ctx, gen.WorkspaceID, budget.Since)
+	switch {
+	case err != nil:
+		log.From(ctx).Warn("sum the month's load spend failed; the first draft waits for review", "generation", gen.ID, "err", err)
+		return nil
+	case spent >= budget.CapMicros:
+		log.From(ctx).Info("the workspace has spent this month's loads; the first draft waits for review", "generation", gen.ID,
+			"workspace", gen.WorkspaceID, "spent_micros", spent)
+		return nil
+	}
+	token := model.FirstDraftLoadTokenPrefix + gen.ID
+	loadID := id.New()
+	return &model.FoundryGraphJob{
+		ID: loadID, WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, VersionID: v.ID, LoadID: loadID, Kind: model.FoundryGraphJobLoad,
+		Phase: model.FoundryGraphJobProvisioning, ClientToken: &token, RequestedByUserID: gen.RequestedByUserID,
+	}
 }

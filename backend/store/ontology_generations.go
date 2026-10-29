@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 	"time"
@@ -170,7 +171,24 @@ WHERE id=? AND status='running' AND lease_owner=?`, time.Now().UTC().Add(lease),
 // and cards, and those of refused edits, are kept in ReviseResult.
 // ErrNotFound means the lease was lost and nothing was stored, as when the
 // ontology was deleted meanwhile (DeleteFoundryOntology ends its generation).
+//
+// A first draft's success (Load) also makes the draft current and queues
+// its load in that transaction, as SetCurrentOntologyVersion then
+// CreateFoundryLoad would (loadFirstDraft). The generation succeeds all the
+// same when neither can be done: the ontology got a current version
+// meanwhile (the user's choice stands), or a load or extract is live, which
+// leaves the draft current for the user to load.
 func (s *mysqlDB) FinishOntologyGeneration(ctx context.Context, id, workerID string, outcome model.OntologyGenerationOutcome) (err error) {
+	if load := outcome.Load; load != nil {
+		v := outcome.Result
+		switch {
+		case outcome.RetryAt != nil || outcome.Status != model.OntologyGenerationSucceeded || v == nil:
+			return fmt.Errorf("a first draft's load comes only with the draft a success stores")
+		case load.Kind != model.FoundryGraphJobLoad || load.Phase != model.FoundryGraphJobProvisioning || load.LoadID != load.ID ||
+			load.ClientToken == nil || load.VersionID != v.ID || load.OntologyID != v.OntologyID || load.WorkspaceID != v.WorkspaceID:
+			return fmt.Errorf("a first draft's load is a load job of the draft at provisioning that creates its load with its own id and a token")
+		}
+	}
 	const owned = ` WHERE id=? AND status='running' AND lease_owner=?`
 	usage := `model=COALESCE(NULLIF(?, ''), model), model_provider=COALESCE(NULLIF(?, ''), model_provider),
     input_tokens=COALESCE(input_tokens, 0)+?, output_tokens=COALESCE(output_tokens, 0)+?`
@@ -231,8 +249,47 @@ SET status='succeeded', error=NULL, result_version_id=?, revise_result=CAST(? AS
 	if err = insertOntologyVersion(ctx, tx, outcome.Result); err != nil {
 		return err
 	}
+	if outcome.Load != nil {
+		txDB := &mysqlDB{db: tx, workspaces: s.workspaces}
+		if err = txDB.loadFirstDraft(ctx, outcome.Result, outcome.Load); err != nil {
+			return err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit ontology generation result: %w", err)
+	}
+	return nil
+}
+
+// loadFirstDraft makes v, a first draft just stored, its ontology's current
+// version, dropping the review decisions it doesn't take
+// (pruneFoundryReviewDecisions), and queues load, its load
+// (createFoundryLoad), in the caller's transaction, which holds the
+// ontology's lock. It does neither while a version is current: one made
+// current since the generation was requested is the user's choice. A live
+// load or extract leaves v current with no load queued, for the user to
+// load. createFoundryLoad refuses those before it writes anything; the one
+// refusal it would make after writing the load, a token the ontology has
+// used, is looked for first, since a user may send any token.
+func (s *mysqlDB) loadFirstDraft(ctx context.Context, v *model.OntologyVersion, load *model.FoundryGraphJob) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE foundry_ontologies SET current_version_id=?
+WHERE id=? AND deleted_at IS NULL AND current_version_id IS NULL`, v.ID, v.OntologyID)
+	if err != nil {
+		return fmt.Errorf("make the first draft current: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	if err := s.pruneFoundryReviewDecisions(ctx, v.OntologyID, v.ID); err != nil {
+		return fmt.Errorf("prune review decisions: %w", err)
+	}
+	var taken bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_load_jobs WHERE ontology_id=? AND client_token=?)`,
+		load.OntologyID, *load.ClientToken).Scan(&taken); err != nil || taken {
+		return err
+	}
+	if err := s.createFoundryLoad(ctx, load); err != nil && !errors.Is(err, ErrConflict) {
+		return fmt.Errorf("queue the first draft's load: %w", err)
 	}
 	return nil
 }
