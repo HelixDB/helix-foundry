@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sdk = vi.hoisted(() => ({
   track: vi.fn(),
+  flush: vi.fn(),
   setGlobalProperties: vi.fn(),
 }));
 vi.mock("@databuddy/sdk", () => sdk);
@@ -44,6 +45,7 @@ const PENDING = "foundry.analytics.pending.v1";
 
 beforeEach(() => {
   sdk.track.mockReset();
+  sdk.flush.mockReset();
   sdk.setGlobalProperties.mockReset();
 });
 afterEach(() => {
@@ -69,7 +71,9 @@ describe("trackEvent", () => {
     a.trackEvent("sample_clicked");
     a.signInStarted("github");
     a.jobStarted("load", "load_1");
+    a.flushEvents();
     expect(sent()).toEqual([]);
+    expect(sdk.flush).not.toHaveBeenCalled();
     expect(local.values.size).toBe(0);
   });
 });
@@ -84,6 +88,8 @@ describe("sign-in", () => {
       ["sign_in_started", { method: "google" }],
       ["login_completed", { destination: "onboarding" }],
     ]);
+    // Sent before the page leaves for WorkOS.
+    expect(sdk.flush).toHaveBeenCalledTimes(1);
     expect(session.values.size).toBe(0);
   });
 
@@ -210,6 +216,16 @@ describe("jobs", () => {
     a.jobSeen("load", [{ id: "load_1", status: "ready" }]);
     local.values.set(PENDING, "null");
     a.jobStarted("load", "load_1");
+    // Entries that aren't jobs are dropped, never read.
+    local.values.set(
+      PENDING,
+      JSON.stringify({ a: null, b: 5, c: { job: "load" }, d: [] }),
+    );
+    a.jobSeen("load", [{ id: "a", status: "ready" }]);
+    a.jobStarted("load", "load_2");
+    expect(Object.keys(JSON.parse(local.values.get(PENDING)!))).toEqual([
+      "load_2",
+    ]);
     // A source that isn't one of its words reads as the agent's.
     local.values.set(
       PENDING,
@@ -221,6 +237,7 @@ describe("jobs", () => {
       { id: "gen_1", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
     ]);
     expect(sent()).toEqual([
+      ["load_started", undefined],
       ["load_started", undefined],
       ["generation_succeeded", { source: "ai" }],
     ]);

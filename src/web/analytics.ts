@@ -1,4 +1,4 @@
-import { track } from "@databuddy/sdk";
+import { flush, track } from "@databuddy/sdk";
 import type {
   ConnectorKindName,
   DocumentMediaType,
@@ -82,16 +82,29 @@ export function trackEvent<Name extends AnalyticsEventName>(
   track(name, properties);
 }
 
+/**
+ * Sends what is queued now, for an event just before the page leaves (for
+ * WorkOS, or Stripe): the tracker's own flush as the page unloads misses
+ * calls it hasn't loaded yet.
+ */
+export function flushEvents(): void {
+  if (DATABUDDY_CLIENT_ID) flush();
+}
+
 // ---------------------------------------------------------------- sign-in
 
 // sessionStorage outlives the sign-in's trip through WorkOS in the same tab.
 const SIGNING_IN = "foundry.analytics.signing-in";
 
-/** The sign-in page's provider button: remembered until the user is signed in. */
+/**
+ * The sign-in page's provider button, just before the page leaves for
+ * WorkOS: remembered until the user is signed in.
+ */
 export function signInStarted(
   method: AnalyticsEvents["sign_in_started"]["method"],
 ) {
   trackEvent("sign_in_started", { method });
+  flushEvents();
   try {
     sessionStorage.setItem(SIGNING_IN, "1");
   } catch {
@@ -175,7 +188,9 @@ function readPending(): Record<string, Pending> {
 function writePending(pending: Record<string, Pending>) {
   const now = Date.now();
   const kept = Object.fromEntries(
-    Object.entries(pending).filter(([, p]) => now - p.at < KEEP_MS),
+    Object.entries(pending).filter(
+      ([, p]) => typeof p?.at === "number" && now - p.at < KEEP_MS,
+    ),
   );
   try {
     if (Object.keys(kept).length)
