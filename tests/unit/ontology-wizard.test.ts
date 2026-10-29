@@ -9,9 +9,12 @@ import {
   MAX_GENERATION_SETS,
   MAX_GOAL,
   MAX_TABLES,
+  firstOntologyName,
+  firstOntologyWizard,
   newDatabase,
   newOntologyWizard,
   setSourcesText,
+  type DraftChoices,
   type WizardDraft,
   type WizardFacts,
 } from "@/web/areas/ontology/model";
@@ -746,5 +749,121 @@ describe("newDatabase", () => {
       kind: "ready",
       summary: "A new database, Orders, in a new project, Acme",
     });
+  });
+});
+
+describe("firstOntologyWizard", () => {
+  const choices: DraftChoices = {
+    connectorIds: null,
+    eventSources: new Map(),
+    setIds: new Set<string>(),
+    goal: "",
+  };
+  const first = (
+    d: Partial<DraftChoices> = {},
+    f: Partial<WizardFacts> = {},
+    id: string | null = "review",
+  ) =>
+    firstOntologyWizard({ ...choices, ...d }, { ...facts, ...f }, "Acme", id);
+
+  it("asks only for the sources and the goal, then the review", () => {
+    const w = first({}, {}, null);
+    expect(w.steps.map((s) => s.id)).toEqual(["sources", "goal", "review"]);
+    expect(w.current).toBe("sources");
+    expect(w.back).toBeNull();
+    expect(w.next).toBe("goal");
+    expect(first({}, {}, "name").current).toBe("sources");
+  });
+
+  it("names it from its sources and puts it on a new database", () => {
+    expect(first().request).toEqual({
+      name: "Stripe",
+      database: {
+        kind: "new",
+        project: { kind: "existing", id: "p1" },
+        name: "Stripe",
+      },
+      generate: { connectorIds: ["c1"], documentSetIds: [] },
+    });
+    // A workspace without a project gets one named as the workspace.
+    expect(first({}, { projects: [] }).request?.database).toEqual({
+      kind: "new",
+      project: { kind: "new", name: "Acme" },
+      name: "Stripe",
+    });
+  });
+
+  it("holds the request while the projects or sources are read, or a step is blocked", () => {
+    expect(first({}, { projects: undefined }).request).toBeNull();
+    expect(first({}, { connectors: undefined }).request).toBeNull();
+    expect(first({ connectorIds: new Set() }).request).toBeNull();
+    expect(first({ connectorIds: new Set() }).current).toBe("sources");
+    expect(first({ goal: "x".repeat(MAX_GOAL + 1) }).current).toBe("goal");
+  });
+
+  it("sends the goal", () => {
+    expect(first({ goal: " Track renewals " }).request?.generate).toEqual({
+      goal: "Track renewals",
+      connectorIds: ["c1"],
+      documentSetIds: [],
+    });
+  });
+});
+
+describe("firstOntologyName", () => {
+  const f = {
+    connectors: [
+      synced("c1", "Stripe"),
+      synced("c2", " Shop "),
+      { id: "c3", kind: "postgres" },
+      { id: "e1", kind: "events", name: "Agent notes" },
+    ],
+    sets: [set("s1", "Contracts"), set("s2", "Stripe")],
+  };
+
+  it("lists what it drafts from: connectors, API sources, then sets", () => {
+    expect(
+      firstOntologyName(
+        {
+          connectorIds: ["c1", "c2"],
+          eventSources: [
+            {
+              connectorId: "e1",
+              mode: "FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED",
+            },
+          ],
+          documentSetIds: ["s1"],
+        },
+        f,
+        "Acme",
+      ),
+    ).toBe("Stripe, Shop, Agent notes, and 1 more");
+  });
+
+  it("names a connector without a name by its kind, and each name once", () => {
+    expect(
+      firstOntologyName(
+        { connectorIds: ["c3", "c1"], documentSetIds: ["s2"] },
+        f,
+        "Acme",
+      ),
+    ).toBe("postgres and Stripe");
+  });
+
+  it("falls back to the workspace's name, then a fixed one", () => {
+    const none = { noConnectors: true as const, documentSetIds: ["gone"] };
+    expect(firstOntologyName(none, f, " Acme ")).toBe("Acme");
+    expect(firstOntologyName(none, f, " ")).toBe("My ontology");
+  });
+
+  it("cuts a long name to 100 characters", () => {
+    const long = "x".repeat(150);
+    expect(
+      firstOntologyName(
+        { connectorIds: ["c1"], documentSetIds: [] },
+        { connectors: [synced("c1", long)], sets: [] },
+        "Acme",
+      ),
+    ).toBe("x".repeat(100));
   });
 });

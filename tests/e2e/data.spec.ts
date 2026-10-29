@@ -7,7 +7,7 @@ import {
   mock,
   signIn,
   signInToNewWorkspace,
-  startOntology,
+  startFirstOntology,
   test,
 } from "./support/mock";
 
@@ -47,8 +47,8 @@ async function openPicker(page: Page) {
 
 /**
  * A new workspace's picker. With no ontology it has no Data pages: it
- * connects from its onboarding wizard's sources step, which `?step=sources`
- * opens once the ontology is named (startOntology) and its database chosen.
+ * connects from its first ontology's sources step, which `?step=sources`
+ * opens past Get started.
  */
 async function openOnboardingPicker(page: Page) {
   await page.goto("/ontology/new?step=sources");
@@ -455,10 +455,8 @@ test("offers databases once the workspace upgrades to Foundry Pro", async ({
   page,
 }) => {
   await signInToNewWorkspace(page);
-  // The new database the wizard starts with is chosen: on to the sources,
-  // where nothing is connected yet.
-  await startOntology(page, "Orders");
-  await page.getByRole("button", { name: "Continue" }).click();
+  // Use my own data opens the sources, where nothing is connected yet.
+  await startFirstOntology(page);
   await expect(
     page.getByRole("heading", { name: "No connectors yet" }),
   ).toBeVisible();
@@ -553,8 +551,7 @@ test("offers databases on Foundry Max, as on Pro", async ({ page }) => {
     page.getByRole("heading", { name: /Foundry Max/ }),
   ).toContainText("Active", { timeout: 15_000 });
 
-  await startOntology(page, "Orders");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await startFirstOntology(page);
   await openOnboardingPicker(page);
   for (const name of ["PostgreSQL", "MySQL", "Amazon S3"])
     await expect(
@@ -1461,12 +1458,15 @@ test("opens a connector's form from a link to its workspace", async ({
   const create = page.getByRole("dialog", { name: "Create a workspace" });
   await create.getByLabel("Workspace name").fill("Initech");
   await create.getByRole("button", { name: "Create workspace" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Get started" }),
+  ).toBeVisible();
+  // The link starts the user's own data: the wizard, past Get started.
   const wizard = page.getByRole("heading", {
     level: 1,
-    name: "Create your first ontology",
+    name: "Your first ontology",
   });
-  await expect(page).toHaveURL(/\/ontology\/new$/);
-  await expect(wizard).toBeVisible();
   await page.goto("/data?add=stripe");
   await expect(dialog(page)).toHaveAttribute("aria-label", "Stripe");
   await expect(page).toHaveURL(/\/ontology\/new$/);

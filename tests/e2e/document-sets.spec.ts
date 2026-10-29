@@ -9,7 +9,7 @@ import {
   mock,
   signIn,
   signInToNewWorkspace,
-  startOntology,
+  startFirstOntology,
   test,
   uploadCard,
   uploadInData,
@@ -305,8 +305,7 @@ test("makes General for a workspace's first upload from its onboarding wizard", 
   // A new workspace has no Data pages yet: it uploads from its onboarding
   // wizard's sources step.
   await signInToNewWorkspace(page);
-  await startOntology(page, "Orders");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await startFirstOntology(page);
   await expect(
     page.getByRole("heading", { name: "No documents yet" }),
   ).toBeVisible();
@@ -342,8 +341,7 @@ test("makes General for a workspace's first upload in the Data tree, after an on
   // The first ontology reads Stripe alone, connected from the wizard: the
   // workspace then has Data pages and no documents.
   await signInToNewWorkspace(page);
-  await startOntology(page, "Billing");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await startFirstOntology(page);
   await page.getByRole("button", { name: "Add data" }).first().click();
   const connect = page.locator("dialog[open]");
   await connect.getByRole("button", { name: "Stripe", exact: true }).click();

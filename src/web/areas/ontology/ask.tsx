@@ -131,7 +131,8 @@ import { useSources } from "./sources";
 // light the step whose result they cite. The conversation follows the newest answer unless scrolled
 // up, and the follow-up composer stays pinned under it. A new thread asks
 // what the user wants to know, its composer centred, with the draft's
-// competency questions as suggestions when its version is already read.
+// competency questions as suggestions, which a click asks, when nothing
+// has been asked yet or its version is already read.
 // An answer's visuals (contract 3.11.0) follow the blocks the model put
 // them after: query results drawn from the output the engine recorded
 // (ask-visual.tsx), and each query step has its Result the same way (the
@@ -174,11 +175,12 @@ export function AskPage() {
     useMedia("(max-width: 800px)"),
     list.data ? threads.length : undefined,
   );
-  // The version the load holds names its suggestions, read only if a page
-  // already read it: a version can be large.
+  // The version the load holds names its suggestions. A version can be
+  // large: it is read for them only while nobody has asked anything yet,
+  // else only if a page already read it.
   const version = useQuery({
     ...ontologyQueries.version(ws, o, load?.versionId || ""),
-    enabled: false,
+    enabled: !!load?.versionId && list.data !== undefined && !threads.length,
   }).data?.version;
   const suggestions = useMemo(() => askSuggestions(version), [version]);
   useTitle(view.kind === "thread" ? undefined : "Analyst");
@@ -1265,7 +1267,7 @@ function Composer({
   focus?: EntityRef;
   busy?: boolean;
   docked?: boolean;
-  // Questions a click puts in the box, under it.
+  // Questions under the box that a click asks at once.
   suggestions?: string[];
   onAsked?: (q: FoundryQuestion) => void;
 }) {
@@ -1285,14 +1287,14 @@ function Composer({
   const ready = !!load && askable(load.status);
   const length = [...text.trim()].length,
     tooLong = length > MAX_QUESTION;
-  const submit = async () => {
+  const submit = async (question = text.trim()) => {
     if (!load) return;
     setPending(true);
     setError(null);
     try {
       const r = await askQuestion(ws, o, {
         loadId: load.id,
-        question: text.trim(),
+        question,
         ...(thread ? { threadId: thread } : {}),
         ...(about ? { focusJson: JSON.stringify(about) } : {}),
         clientToken: token,
@@ -1423,13 +1425,8 @@ function Composer({
               key={q}
               type="button"
               className="ak-suggestion"
-              onClick={() => {
-                setText(q);
-                requestAnimationFrame(() => {
-                  input.current?.focus();
-                  input.current?.setSelectionRange(q.length, q.length);
-                });
-              }}
+              disabled={pending || !ready || busy || aiReady === false}
+              onClick={() => void submit(q)}
             >
               {q}
             </button>

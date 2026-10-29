@@ -45,6 +45,7 @@ import {
 } from "./enrichment";
 import {
   isScope,
+  ontologyById,
   ontologyOf,
   RENEWALS,
   SALES_ONTOLOGY,
@@ -92,7 +93,7 @@ import {
 // is refused for its budget (./ontology-revise.ts).
 
 import { aiModel, aiRefusal, draftFailure } from "./ai";
-import { currentLoadVersionId } from "./loads";
+import { currentLoadVersionId, liveJob, queueLoad } from "./loads";
 import { comparableSchema, reviseDefinition } from "./ontology-revise";
 
 type Outcome = "succeed" | "fail" | "retry" | "auth";
@@ -659,6 +660,16 @@ function advance(g: StoredGeneration) {
     model: g.sample ? "" : aiModel(g.workspaceId!, "draft") || MODEL,
     finishedAt,
   });
+  // As the WFE's worker: a first draft asked to load (loadWhenReady) is made
+  // current and loaded as it is stored, while no version is current. A draft
+  // the load refuses (or a spent month) waits for the user, not current; a
+  // live load or extract leaves it current with no load.
+  const o = ontologyById(g.ontologyId);
+  if (!g.loadWhenReady || !o || state.current.get(o.id)) return;
+  state.current.set(o.id, version.id);
+  pruneDecisions(o.id, version);
+  const load = queueLoad(o, version.id, "first-draft:" + g.id);
+  if (!("clientToken" in load) && !liveJob(o.id)) state.current.delete(o.id);
 }
 
 // Lists leave the definition out, as the WFE does.
@@ -721,6 +732,7 @@ const generationOut = (
   documentSetIds: [...(g.documentSetIds || [])],
   documents: (g.documents || []).map((d) => ({ ...d })),
   sample: g.sample || "",
+  loadWhenReady: !!g.loadWhenReady,
   revision: g.revision
     ? {
         parentVersionId: g.revision.parentVersionId || "",
@@ -936,6 +948,16 @@ export const ontologyRoutes: MockRoute[] = [
           "connector_ids must be empty with no_connectors",
         );
       const sample = body.sample || "";
+      if (body.loadWhenReady && sample)
+        return fail(
+          "INVALID_ARGUMENT",
+          "a sample's draft is loaded by its tour: leave load_when_ready unset",
+        );
+      if (body.loadWhenReady && state.current.get(o.id))
+        return fail(
+          "FAILED_PRECONDITION",
+          "load_when_ready drafts an ontology's first version: this one has a current version",
+        );
       if (sample && sample !== "acme")
         return fail(
           "INVALID_ARGUMENT",
@@ -1088,6 +1110,7 @@ export const ontologyRoutes: MockRoute[] = [
         status: "ONTOLOGY_GENERATION_STATUS_QUEUED",
         ...(goal ? { goal, title: draftTitle(goal) } : {}),
         ...(sample ? { sample, title: ACME_TITLE } : {}),
+        ...(body.loadWhenReady ? { loadWhenReady: true } : {}),
         tables,
         documentSetIds,
         documents,

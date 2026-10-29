@@ -607,14 +607,12 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
     "Which customers are under contract, and which contracts are they signed with?",
     "What is each customer under contract billed?",
   ]);
+  // A click asks it at once.
   await suggestions
     .getByRole("button", {
       name: "What is each customer under contract billed?",
     })
     .click();
-  await expect(box).toHaveValue("What is each customer under contract billed?");
-  await expect(box).toBeFocused();
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(page).toHaveURL(/\?thread=q_/);
   // The bar holds the thread's title; the panel lists it today.
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
@@ -682,8 +680,8 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
   ).toBeVisible();
   expect((await json.boundingBox())!.y).toBeCloseTo(at, 0);
 
-  // A version no page has read isn't read for suggestions: a new tab's
-  // new thread has none.
+  // Once something was asked, a version no page has read isn't read for
+  // suggestions: a new tab's new thread has none.
   await page.goto("/ask/ont_acme_contracts?new=1");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "What do you want to know about Customer contracts?",
