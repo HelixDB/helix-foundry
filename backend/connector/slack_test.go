@@ -899,15 +899,18 @@ func TestSlackSync(t *testing.T) {
 				kind, calls := slackAt(t, routes)
 				docs := &granolaDocs{want: map[string]bool{"conversations": true}}
 				sinks, err := slackRead(t, kind, slackTables, docs)
-				if err != nil || !slices.Equal(docs.putNames(), []string{"conversations C2:2026-10-29"}) || len(sinks["channel_days"].rows) != 1 ||
-					len(sinks["messages"].rows) != 4 || len(calls.of("conversations.replies")) != 0 {
-					t.Fatalf("SyncPass = %v, puts = %v, rows = %v", err, docs.putNames(), sinks)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if members := len(sinks["channel_members"].rows); method == "conversations.members" && members != 2 || method == "conversations.history" && members != 5 {
-					t.Fatalf("members = %v", sinks["channel_members"].rows)
+				// Each read skips it alone: its members, read beside its history, don't hold the history back.
+				if method == "conversations.history" && (!slices.Equal(docs.putNames(), []string{"conversations C2:2026-10-29"}) ||
+					len(sinks["channel_days"].rows) != 1 || len(sinks["messages"].rows) != 4 || len(calls.of("conversations.replies")) != 0 ||
+					len(sinks["channel_members"].rows) != 5) {
+					t.Fatalf("puts = %v, rows = %v", docs.putNames(), sinks)
 				}
-				if got := calls.of("conversations.history"); method == "conversations.members" && len(got) != 1 {
-					t.Fatalf("history calls = %q", got)
+				if method == "conversations.members" && (len(docs.puts) != 3 || len(sinks["channel_days"].rows) != 3 || len(sinks["messages"].rows) != 9 ||
+					len(sinks["channel_members"].rows) != 2) {
+					t.Fatalf("puts = %v, rows = %v", docs.putNames(), sinks)
 				}
 			})
 		}

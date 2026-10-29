@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -345,9 +346,9 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 }
 
 // SyncPass reads users and channels from their lists, then each channel
-// the app is in: its members, and its messages of the window, the
-// history_days UTC days before today and today (today's day gets its row,
-// and its document once it is over), with one
+// the app is in: its members, and beside them (readChannels) its messages
+// of the window, the history_days UTC days before today and today (today's
+// day gets its row, and its document once it is over), with one
 // conversations.history page per 999 messages, of each kind of channel
 // whose history the token's scopes allow. The messages make the
 // channel_days rows and, when that table is read, its documents, offered
@@ -378,7 +379,8 @@ func (k *slackKind) pass(ctx context.Context, src Source, tables []Table, rows m
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
 	now := slackNow().UTC().Add(-ChangeOverlap)
 	p := &slackPass{c: k.client(src.Secret), read: map[string]bool{}, rows: rows, docs: docs, channels: map[string]string{},
-		days: map[string]*slackDay{}, historyDays: cmp.Or(s.HistoryDays, defaultSlackHistoryDays), today: now.Format(time.DateOnly)}
+		days: map[string]*slackDay{}, historyDays: cmp.Or(s.HistoryDays, defaultSlackHistoryDays), today: now.Format(time.DateOnly),
+		late: map[string]string{}}
 	p.window = now.Truncate(24*time.Hour).AddDate(0, 0, -p.historyDays)
 	for _, table := range tables {
 		if !slices.ContainsFunc(slackObjects, func(o saasTable) bool { return o.name == table.Name }) {
@@ -430,9 +432,10 @@ type slackPass struct {
 	// its document, and have it extracted again, at every sync.
 	today string
 	// stop is when the pass stops fetching documents; zero for never. late
-	// is the earliest day whose document it then wanted but did not fetch.
+	// is, by channel, the earliest day whose document it then wanted but
+	// did not fetch.
 	stop time.Time
-	late string
+	late map[string]string
 }
 
 func (p *slackPass) run(ctx context.Context) error {
@@ -455,40 +458,91 @@ func (p *slackPass) run(ctx context.Context) error {
 	if !p.read["channel_members"] && !history {
 		return nil
 	}
-	member, err := p.joined(ctx)
+	joined, err := p.joined(ctx)
 	if err != nil {
 		return err
 	}
-	// A channel the app was removed from, or that was deleted, since it was
-	// listed is skipped: the rows of it already written stay, and its days
-	// are left out.
-	for _, ch := range member {
-		if p.read["channel_members"] {
-			err := p.c.pages(ctx, "conversations.members", "members", url.Values{"channel": {ch.ID}, "limit": {slackListPage}},
-				func(raw json.RawMessage) error {
-					var user string
-					if json.Unmarshal(raw, &user) != nil || user == "" {
-						return fmt.Errorf("slack conversations.members: channel %s lists a member without an id", ch.ID)
-					}
-					return p.rows["channel_members"].Write(map[string]any{"channel_id": ch.ID, "user_id": user})
-				})
-			if errors.Is(err, errChannelGone) {
-				continue
-			}
-			if err != nil {
+	_, err = p.readChannels(ctx, joined, func(slackChannel) time.Time { return p.window }, func(ch slackChannel, members []string) error {
+		for _, user := range members {
+			if err := p.rows["channel_members"].Write(map[string]any{"channel_id": ch.ID, "user_id": user}); err != nil {
 				return err
 			}
 		}
-		// A kind of channel whose history the app may not read is left out;
-		// Discover warned of it.
-		if !history || !p.scopes.has(slackHistoryScope(ch.IsPrivate)) {
-			continue
-		}
-		if err := p.history(ctx, ch, p.window); err != nil && !errors.Is(err, errChannelGone) {
-			return err
-		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	return p.channelDays(ctx)
+}
+
+// readChannels reads each channel's members, when channel_members is read,
+// beside its messages from since(ch) on, when messages or channel_days are,
+// on two goroutines: Slack limits conversations.members and
+// conversations.history apart, so neither waits for the other, and a read
+// takes about as long as its histories alone. members takes each channel's
+// member ids, in Slack's order, on the goroutine that reads them; the pass's
+// days and rows are written on the other. A kind of channel whose history
+// the token's scopes don't allow is left out of the history read; Discover
+// warned of it. A channel the app was removed from, or that was deleted,
+// since it was listed is skipped by the read that finds it so, and returned
+// in gone: the members read writes none of its members, and the history
+// read drops the days it read of it (history), though rows of it already
+// written stay.
+func (p *slackPass) readChannels(ctx context.Context, channels []slackChannel, since func(slackChannel) time.Time,
+	members func(slackChannel, []string) error) (gone map[string]bool, err error) {
+	g, gctx := errgroup.WithContext(ctx)
+	var membersGone, historyGone []string
+	if p.read["channel_members"] {
+		g.Go(func() error {
+			for _, ch := range channels {
+				var ids []string
+				err := p.c.pages(gctx, "conversations.members", "members", url.Values{"channel": {ch.ID}, "limit": {slackListPage}},
+					func(raw json.RawMessage) error {
+						var user string
+						if json.Unmarshal(raw, &user) != nil || user == "" {
+							return fmt.Errorf("slack conversations.members: channel %s lists a member without an id", ch.ID)
+						}
+						ids = append(ids, user)
+						return nil
+					})
+				switch {
+				case errors.Is(err, errChannelGone):
+					membersGone = append(membersGone, ch.ID)
+				case err != nil:
+					return err
+				default:
+					if err := members(ch, ids); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		})
+	}
+	if p.read["messages"] || p.read["channel_days"] {
+		g.Go(func() error {
+			for _, ch := range channels {
+				if !p.scopes.has(slackHistoryScope(ch.IsPrivate)) {
+					continue
+				}
+				err := p.history(gctx, ch, since(ch))
+				switch {
+				case errors.Is(err, errChannelGone):
+					historyGone = append(historyGone, ch.ID)
+				case err != nil:
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	err = g.Wait()
+	gone = map[string]bool{}
+	for _, id := range slices.Concat(membersGone, historyGone) {
+		gone[id] = true
+	}
+	return gone, err
 }
 
 // auth reads the workspace and the token's scopes with auth.test; without
@@ -547,18 +601,23 @@ func (p *slackPass) joined(ctx context.Context) ([]slackChannel, error) {
 
 // history reads ch's messages from since on (message). A channel the app
 // was removed from, or that was deleted, since it was listed loses the days
-// it read, and the error wraps errChannelGone.
+// it read (forget), and the error wraps errChannelGone.
 func (p *slackPass) history(ctx context.Context, ch slackChannel, since time.Time) error {
 	err := p.c.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) })
 	if errors.Is(err, errChannelGone) {
-		for id, d := range p.days {
-			if d.channel.ID == ch.ID {
-				p.kept -= d.bytes
-				delete(p.days, id)
-			}
-		}
+		p.forget(ch.ID)
 	}
 	return err
+}
+
+// forget drops the days read of a channel, and the messages they keep.
+func (p *slackPass) forget(channel string) {
+	for id, d := range p.days {
+		if d.channel.ID == channel {
+			p.kept -= d.bytes
+			delete(p.days, id)
+		}
+	}
 }
 
 // channelDays writes the row of each day the pass read, when channel_days
@@ -605,8 +664,8 @@ func (p *slackPass) channelDays(ctx context.Context) error {
 			continue
 		}
 		if !p.stop.IsZero() && !time.Now().Before(p.stop) {
-			if p.late == "" || d.day < p.late {
-				p.late = d.day
+			if late, ok := p.late[d.channel.ID]; !ok || d.day < late {
+				p.late[d.channel.ID] = d.day
 			}
 			continue
 		}
@@ -655,18 +714,16 @@ func (p *slackPass) users(ctx context.Context) error {
 }
 
 // message writes a listed message's row and counts it into its channel
-// day, keeping it for the day's document while the pass keeps messages
-// and the day's are not dropped. When the kept messages pass
-// slackTextBudget, the least recently active days' are dropped down to
-// three quarters of it, so the drop's sort is rare.
+// day, whose digest a change read compares, keeping it for the day's
+// document while the pass keeps messages and the day's are not dropped.
+// When the kept messages pass slackTextBudget, the least recently active
+// days' are dropped down to three quarters of it, so the drop's sort is
+// rare.
 func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	if p.read["messages"] {
 		if err := p.rows["messages"].Write(m.row(ch.ID)); err != nil {
 			return err
 		}
-	}
-	if !p.read["channel_days"] {
-		return nil
 	}
 	day := m.at.Format(time.DateOnly)
 	d := p.days[ch.ID+":"+day]
@@ -690,8 +747,9 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	if active.After(d.active) {
 		d.active = active
 	}
-	digest := sha256.Sum256([]byte(strings.Join([]string{m.TS, m.Edited.TS, m.Text, strconv.Itoa(m.ReplyCount), m.LatestReply,
-		m.ThreadTS, m.Subtype, m.User, m.BotID, m.Username, m.BotProfile.Name}, "\x00")))
+	// Every column of its row is in it, so a day whose digest is the same has the same rows.
+	digest := sha256.Sum256([]byte(strings.Join([]string{m.TS, m.Edited.TS, m.Text, strconv.Itoa(m.ReplyCount), strconv.Itoa(m.ReplyUsersCount),
+		m.LatestReply, m.ThreadTS, m.Subtype, m.User, m.BotID, m.Username, m.BotProfile.Name}, "\x00")))
 	for i := range d.sum {
 		d.sum[i] ^= digest[i]
 	}
@@ -846,7 +904,8 @@ func (p *slackPass) mrkdwn(text string) string {
 
 // slackDay is one channel's messages on one UTC day of the window, as
 // conversations.history lists them: their count, first and last times, the
-// XOR of each one's digest, and the messages themselves unless dropped.
+// XOR of each one's digest of every column its row carries, and the
+// messages themselves unless dropped.
 type slackDay struct {
 	channel     slackChannel
 	day         string // YYYY-MM-DD
@@ -893,10 +952,10 @@ func (d *slackDay) id() string { return d.channel.ID + ":" + d.day }
 // revision, to bump whenever its text changes for the same messages and
 // names; 40 hex digits of a SHA-256 of the channel's name, what
 // conversations.history says of each message (its ts, edit, text, thread,
-// reply count, latest reply, subtype and author) and the names of the
-// channels they mention without a label; then "ids" when people are named
-// by id, else 16 hex digits of a SHA-256 of the name of each user they
-// name. It changes when a message is posted, edited, deleted or replied
+// reply count, reply users count, latest reply, subtype and author) and
+// the names of the channels they mention without a label; then "ids" when
+// people are named by id, else 16 hex digits of a SHA-256 of the name of
+// each user they name. It changes when a message is posted, edited, deleted or replied
 // to, or a name its messages render changes. The messages' digests
 // combine by XOR, so the order Slack lists them in doesn't count. A
 // reply's edit, or the name of who wrote it, changes none of it. named is
