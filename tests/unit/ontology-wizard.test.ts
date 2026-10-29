@@ -14,6 +14,7 @@ import {
   newDatabase,
   newOntologyWizard,
   setSourcesText,
+  type DraftChoices,
   type WizardDraft,
   type WizardFacts,
 } from "@/web/areas/ontology/model";
@@ -752,14 +753,14 @@ describe("newDatabase", () => {
 });
 
 describe("firstOntologyWizard", () => {
-  const choices = {
+  const choices: DraftChoices = {
     connectorIds: null,
     eventSources: new Map(),
     setIds: new Set<string>(),
     goal: "",
   };
   const first = (
-    d: Partial<typeof choices> = {},
+    d: Partial<DraftChoices> = {},
     f: Partial<WizardFacts> = {},
     id: string | null = "review",
   ) =>
