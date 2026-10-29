@@ -19,9 +19,10 @@ import (
 
 const slackTestToken = "xoxb-1234-5678-abcdefABCD"
 
-// slackTestNow is the clock of every test read: with history_days 2, the
-// window starts at 2026-10-27 00:00 UTC.
-var slackTestNow = time.Date(2026, 10, 29, 15, 0, 0, 0, time.UTC)
+// slackTestNow is the clock of every test read: with history_days 3, the
+// window starts at 2026-10-27 00:00 UTC, and the fixtures' days, to
+// 2026-10-29, are over.
+var slackTestNow = time.Date(2026, 10, 30, 15, 0, 0, 0, time.UTC)
 
 // slackTS is Slack's ts for an RFC 3339 time.
 func slackTS(at string) string {
@@ -235,7 +236,7 @@ func with(routes map[string]func(*http.Request) (int, string), answers map[strin
 }
 
 // slackSource is a prepared source whose window is two days and today.
-var slackSource = Source{Secret: slackTestToken, Settings: json.RawMessage(`{"history_days":2}`)}
+var slackSource = Source{Secret: slackTestToken, Settings: json.RawMessage(`{"history_days":3}`)}
 
 var slackTables = []Table{{Name: "users"}, {Name: "channels"}, {Name: "channel_members"}, {Name: "messages"}, {Name: "channel_days"}}
 
@@ -1162,6 +1163,25 @@ func TestSlackDocuments(t *testing.T) {
 		return ids
 	}
 	// The syncer keeps the first documents offered up to its cap.
+	t.Run("writes today's day as a row and no document, without keeping its messages", func(t *testing.T) {
+		saved := slackTestNow
+		slackTestNow = time.Date(2026, 10, 29, 15, 0, 0, 0, time.UTC)
+		t.Cleanup(func() { slackTestNow = saved })
+		kind, _ := slackAt(t, newSlackWorkspace().routes())
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		sinks, err := slackRead(t, kind, slackTables, docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(docs.putNames(), []string{"conversations C1:2026-10-28", "conversations C1:2026-10-27", "conversations C1:2026-10-26"}) || slices.ContainsFunc(docs.offers, func(o string) bool {
+			return strings.Contains(o, "2026-10-29")
+		}) {
+			t.Fatalf("puts = %v, offers = %q", docs.putNames(), docs.offers)
+		}
+		if !slices.ContainsFunc(sinks["channel_days"].rows, func(r map[string]any) bool { return r["channel_day_id"] == "C2:2026-10-29" }) {
+			t.Fatalf("channel_days = %v", sinks["channel_days"].rows)
+		}
+	})
 	t.Run("offers the most recently active days first, the lower id first at the same time", func(t *testing.T) {
 		w := newSlackWorkspace()
 		w.history["C2"] = []string{fmt.Sprintf(`{"user":"U1","text":"Same time","ts":%q}`, slackTS("2026-10-29T08:00:00Z"))}

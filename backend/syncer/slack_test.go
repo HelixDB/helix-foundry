@@ -177,7 +177,7 @@ func TestSlackSyncDocuments(t *testing.T) {
 // TestSlackSyncNearDeadline runs a Slack sync that reaches its documents
 // too near its attempt's deadline: it fetches none, and the conversations
 // set keeps what it holds, though their days changed, until the next sync
-// writes them.
+// writes them, all but today's.
 func TestSlackSyncNearDeadline(t *testing.T) {
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
@@ -218,8 +218,14 @@ func TestSlackSyncNearDeadline(t *testing.T) {
 		t.Fatalf("channel_days = %q", rows)
 	}
 
+	// The next sync writes the standup's new reply; today's day, still
+	// going, has its row and no document until it is over.
 	f.run(t, "sync-3")
-	if after := f.held(t, "conversations"); len(after) != 3 || after["C1:"+standup.Format(time.DateOnly)] == before["C1:"+standup.Format(time.DateOnly)] {
+	if after := f.held(t, "conversations"); len(after) != 2 || after["C1:"+standup.Format(time.DateOnly)] == before["C1:"+standup.Format(time.DateOnly)] ||
+		after["C1:"+today.Format(time.DateOnly)] != "" {
 		t.Fatalf("conversations = %q", after)
+	}
+	if rows := f.snapshotRows(t, "channel_days"); len(rows) != 3 {
+		t.Fatalf("channel_days = %q", rows)
 	}
 }

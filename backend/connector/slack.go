@@ -152,7 +152,7 @@ type slackAuth struct {
 
 // slackConversations is the channel_days table's stream: each channel day's messages.
 var slackConversations = Stream{Name: "conversations", Table: "channel_days", Title: "Conversations", Format: Markdown,
-	Description: "Each day of one Slack channel the app is in, as Markdown: a heading with the channel and the UTC day, " +
+	Description: "Each finished UTC day of one Slack channel the app is in, as Markdown: a heading with the channel and the UTC day, " +
 		"the channel's name and id, then each message posted that day in time order as \"**Name** HH:MM: text\", in UTC, " +
 		"with the replies of a thread it started listed beneath it, dated when sent on a later day. Replies show only here, " +
 		"so replies to a thread started before the kept days are left out, and a reply edited later reads as first written " +
@@ -340,7 +340,8 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 
 // SyncPass reads users and channels from their lists, then each channel
 // the app is in: its members, and its messages of the window, the
-// history_days UTC days before today and today, with one
+// history_days UTC days before today and today (today's day gets its row,
+// and its document once it is over), with one
 // conversations.history page per 999 messages, of each kind of channel
 // whose history the token's scopes allow. The messages make the
 // channel_days rows and, when that table is read, its documents, offered
@@ -354,7 +355,7 @@ func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, ro
 	var s SlackSettings
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
 	p := &slackPass{c: k.client(src.Secret), read: map[string]bool{}, rows: rows, docs: docs,
-		channels: map[string]string{}, days: map[string]*slackDay{}}
+		channels: map[string]string{}, days: map[string]*slackDay{}, today: slackNow().UTC().Format(time.DateOnly)}
 	for _, table := range tables {
 		if !slices.ContainsFunc(slackObjects, func(o saasTable) bool { return o.name == table.Name }) {
 			return tables, invalid("Slack has no object %q", table.Name)
@@ -388,6 +389,11 @@ type slackPass struct {
 	channels map[string]string // channel id: name
 	days     map[string]*slackDay
 	kept     int // the bytes of messages days keep
+	// today is the UTC day the pass runs on, YYYY-MM-DD. Its days get rows
+	// but no document until it is over: a channel still talking would
+	// otherwise replace its document, and have it extracted again, at
+	// every sync.
+	today string
 	// stop is when the pass stops fetching documents; zero for never.
 	stop time.Time
 }
@@ -496,6 +502,9 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		if err := p.rows["channel_days"].Write(d.row()); err != nil {
 			return err
 		}
+		if d.day == p.today {
+			continue
+		}
 		version, named := p.version(d)
 		if !named {
 			// Until a document needs users.list, a day the stream holds with
@@ -573,7 +582,7 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	d := p.days[ch.ID+":"+day]
 	if d == nil {
 		d = &slackDay{channel: ch, day: day, first: m.at, last: m.at, active: m.at, users: map[string]bool{}, mentioned: map[string]bool{},
-			dropped: !p.keep}
+			dropped: !p.keep || day == p.today}
 		p.days[d.id()] = d
 	}
 	d.count++
