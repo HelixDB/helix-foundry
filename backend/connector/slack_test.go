@@ -462,6 +462,13 @@ func TestSlackConnector(t *testing.T) {
 			}
 		})
 	}
+	t.Run("says nothing of a channel gone since it was listed", func(t *testing.T) {
+		kind, _ := slackAt(t, with(newSlackWorkspace().routes(), map[string]string{"conversations.history": slackError("channel_not_found")}))
+		d, err := kind.Discover(ctx, Source{Secret: slackTestToken})
+		if err != nil || len(d.Tables) != 5 || len(d.Unavailable) != 0 || len(d.Warnings) != 0 {
+			t.Fatalf("Discover = (%+v, %v)", d, err)
+		}
+	})
 	t.Run("warns of a kind of channel whose history Slack refuses", func(t *testing.T) {
 		routes := newSlackWorkspace().routes()
 		routes["conversations.history"] = func(r *http.Request) (int, string) {
@@ -845,8 +852,8 @@ func TestSlackSync(t *testing.T) {
 	})
 	for method, answer := range map[string]string{
 		"auth.test": slackError("invalid_auth"), "users.list": slackError("fatal_error"), "conversations.list": slackError("fatal_error"),
-		"users.conversations": slackError("fatal_error"), "conversations.members": slackError("channel_not_found"),
-		"conversations.history": slackError("not_in_channel"), "conversations.replies": slackError("thread_not_found"),
+		"users.conversations": slackError("fatal_error"), "conversations.members": slackError("fatal_error"),
+		"conversations.history": slackError("fatal_error"), "conversations.replies": slackError("fatal_error"),
 	} {
 		t.Run("refuses a read "+method+" fails", func(t *testing.T) {
 			kind, _ := slackAt(t, with(newSlackWorkspace().routes(), map[string]string{method: answer}))
@@ -857,6 +864,57 @@ func TestSlackSync(t *testing.T) {
 			}
 		})
 	}
+	// The app removed from a channel, or the channel deleted, between
+	// users.conversations and a read of it skips the channel, not the pass.
+	for _, code := range []string{"not_in_channel", "channel_not_found"} {
+		for _, method := range []string{"conversations.members", "conversations.history"} {
+			t.Run("skips a channel gone since it was listed: "+method+" "+code, func(t *testing.T) {
+				w := newSlackWorkspace()
+				routes := w.routes()
+				served := routes[method]
+				routes[method] = func(r *http.Request) (int, string) {
+					if r.URL.Query().Get("channel") == "C1" {
+						return http.StatusOK, slackError(code)
+					}
+					return served(r)
+				}
+				kind, calls := slackAt(t, routes)
+				docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+				sinks, err := slackRead(t, kind, slackTables, docs)
+				if err != nil || !slices.Equal(docs.putNames(), []string{"conversations C2:2026-10-29"}) || len(sinks["channel_days"].rows) != 1 ||
+					len(sinks["messages"].rows) != 4 || len(calls.of("conversations.replies")) != 0 {
+					t.Fatalf("SyncPass = %v, puts = %v, rows = %v", err, docs.putNames(), sinks)
+				}
+				if members := len(sinks["channel_members"].rows); method == "conversations.members" && members != 2 || method == "conversations.history" && members != 5 {
+					t.Fatalf("members = %v", sinks["channel_members"].rows)
+				}
+				if got := calls.of("conversations.history"); method == "conversations.members" && len(got) != 1 {
+					t.Fatalf("history calls = %q", got)
+				}
+			})
+		}
+	}
+	// What it listed of the channel's messages before stays; its days, which would be partial, go.
+	t.Run("leaves out the days of a channel gone while its history is read", func(t *testing.T) {
+		w := newSlackWorkspace()
+		routes := w.routes()
+		routes["conversations.history"] = func(r *http.Request) (int, string) {
+			switch q := r.URL.Query(); {
+			case q.Get("channel") == "C2":
+				return http.StatusOK, slackPage("messages", w.history["C2"]...)
+			case q.Get("cursor") == "":
+				return http.StatusOK, slackMore("messages", "h2", w.history["C1"][:3]...)
+			}
+			return http.StatusOK, slackError("channel_not_found")
+		}
+		kind, _ := slackAt(t, routes)
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		sinks, err := slackRead(t, kind, slackTables, docs)
+		if err != nil || !slices.Equal(docs.putNames(), []string{"conversations C2:2026-10-29"}) || len(sinks["channel_days"].rows) != 1 ||
+			len(sinks["messages"].rows) != 6 {
+			t.Fatalf("SyncPass = %v, puts = %v, days = %v, messages = %v", err, docs.putNames(), sinks["channel_days"].rows, sinks["messages"].rows)
+		}
+	})
 	// Documents name people by id without a scope for users, but an outage is no missing scope.
 	t.Run("refuses users Slack fails to list for documents", func(t *testing.T) {
 		kind, _ := slackAt(t, with(newSlackWorkspace().routes(), map[string]string{"users.list": slackError("fatal_error")}))
@@ -1322,6 +1380,45 @@ func TestSlackDocuments(t *testing.T) {
 			docs := &granolaDocs{want: map[string]bool{"conversations": true}}
 			if _, err := slackRead(t, kind, slackTables, docs); err == nil || !strings.Contains(err.Error(), "lists a reply without a valid ts") {
 				t.Fatalf("SyncPass error = %v", err)
+			}
+		})
+	}
+	t.Run("writes a thread gone since its parent was listed without replies", func(t *testing.T) {
+		kind, _ := slackAt(t, with(newSlackWorkspace().routes(), map[string]string{"conversations.replies": slackError("thread_not_found")}))
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		if _, err := slackRead(t, kind, slackTables, docs); err != nil || len(docs.puts) != 3 {
+			t.Fatalf("SyncPass = %v, puts = %v", err, docs.putNames())
+		}
+		want := "# #general, 2026-10-28\n\n" + slackHeader + "\n" +
+			"**Ada Lovelace** 09:15: Morning @Grace Hopper, see #design and [the doc](https://example.com/a?b=1&c=2) or https://example.com\n<3 & more\n" +
+			"\n**alan** 16:00: Lunch? @here\n"
+		if got := texts(docs)["C1:2026-10-28"]; got != want {
+			t.Fatalf("C1:2026-10-28 =\n%s\nwant\n%s", got, want)
+		}
+	})
+	// The held document stays until a sync finds the day gone with its channel.
+	for name, budget := range map[string]int{"while its threads are read": 64 << 20, "while its day is read again": 0} {
+		t.Run("puts no document of a channel gone "+name, func(t *testing.T) {
+			saved := slackTextBudget
+			slackTextBudget = budget
+			t.Cleanup(func() { slackTextBudget = saved })
+			w := newSlackWorkspace()
+			routes := w.routes()
+			routes["conversations.replies"] = func(*http.Request) (int, string) { return http.StatusOK, slackError("channel_not_found") }
+			routes["conversations.history"] = func(r *http.Request) (int, string) {
+				if q := r.URL.Query(); q.Get("latest") == "" || q.Get("channel") == "C2" {
+					return http.StatusOK, slackPage("messages", w.history[q.Get("channel")]...)
+				}
+				return http.StatusOK, slackError("not_in_channel")
+			}
+			kind, _ := slackAt(t, routes)
+			docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+			want := []string{"conversations C2:2026-10-29", "conversations C1:2026-10-27"}
+			if budget == 0 {
+				want = want[:1]
+			}
+			if _, err := slackRead(t, kind, slackTables, docs); err != nil || len(docs.offers) != 3 || !slices.Equal(docs.putNames(), want) {
+				t.Fatalf("SyncPass = %v, offers = %q, puts = %v", err, docs.offers, docs.putNames())
 			}
 		})
 	}

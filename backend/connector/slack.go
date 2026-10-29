@@ -90,9 +90,19 @@ var slackRejected = map[string]bool{
 	"invalid_auth": true, "not_authed": true, "account_inactive": true, "token_revoked": true, "token_expired": true,
 }
 
-// errMissingScope is a method the app has no scope for; the RefusedError
-// wrapping it says which scope to add.
-var errMissingScope = errors.New("slack: missing_scope")
+var (
+	// errMissingScope is a method the app has no scope for; the RefusedError
+	// wrapping it says which scope to add.
+	errMissingScope = errors.New("slack: missing_scope")
+	// errChannelGone is a channel the app was removed from, or that was
+	// deleted, since it was listed: a read skips it.
+	errChannelGone = errors.New("slack: the channel is gone")
+	// errThreadGone is a thread deleted since its parent was listed: it has no replies.
+	errThreadGone = errors.New("slack: the thread is gone")
+)
+
+// slackGone are the errors of what changed since a read listed it.
+var slackGone = map[string]error{"not_in_channel": errChannelGone, "channel_not_found": errChannelGone, "thread_not_found": errThreadGone}
 
 // slackScopes are the scopes a token has, as the X-OAuth-Scopes header of
 // auth.test's answer lists them. Slack sends it with every answer; nil, for
@@ -242,6 +252,8 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 		switch {
 		case errors.Is(err, errMissingScope) && errors.As(err, &refusedErr):
 			history[private] = refusedErr.Message
+		case errors.Is(err, errChannelGone):
+			// Gone since it was listed, which says nothing of the scopes.
 		case err != nil:
 			return Discovery{}, err
 		default:
@@ -414,6 +426,9 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		return err
 	}
 	since := slackNow().UTC().Truncate(24*time.Hour).AddDate(0, 0, -historyDays)
+	// A channel the app was removed from, or that was deleted, since it was
+	// listed is skipped: the rows of it already written stay, and its days
+	// are left out.
 	for _, ch := range member {
 		if p.read["channel_members"] {
 			err := c.pages(ctx, "conversations.members", "members", url.Values{"channel": {ch.ID}, "limit": {slackListPage}},
@@ -424,16 +439,30 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 					}
 					return p.rows["channel_members"].Write(map[string]any{"channel_id": ch.ID, "user_id": user})
 				})
+			if errors.Is(err, errChannelGone) {
+				continue
+			}
 			if err != nil {
 				return err
 			}
 		}
 		// A kind of channel whose history the app may not read is left out;
 		// Discover warned of it.
-		if history && p.scopes.has(slackHistoryScope(ch.IsPrivate)) {
-			if err := c.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) }); err != nil {
-				return err
+		if !history || !p.scopes.has(slackHistoryScope(ch.IsPrivate)) {
+			continue
+		}
+		err := c.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) })
+		if errors.Is(err, errChannelGone) {
+			for id, d := range p.days {
+				if d.channel.ID == ch.ID {
+					p.kept -= d.bytes
+					delete(p.days, id)
+				}
 			}
+			continue
+		}
+		if err != nil {
+			return err
 		}
 	}
 	if !p.read["channel_days"] {
@@ -521,7 +550,8 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 // each message in time order with the replies of the thread it started,
 // read now, beneath it. A thread broadcast shows in its thread when the
 // day holds the thread's parent, else on its own. A day whose messages
-// were dropped is read again; ok is false when none are left.
+// were dropped is read again; ok is false when none are left, or its
+// channel is gone since it was listed. A thread gone since has no replies.
 func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok bool, _ error) {
 	messages := d.messages
 	if d.dropped {
@@ -530,7 +560,10 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 			messages = append(messages, m)
 			return nil
 		})
-		if err != nil || len(messages) == 0 {
+		switch {
+		case errors.Is(err, errChannelGone):
+			return nil, false, nil
+		case err != nil || len(messages) == 0:
 			return nil, false, err
 		}
 	}
@@ -551,7 +584,12 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 			continue
 		}
 		replies, err := p.c.replies(ctx, d.channel.ID, m.TS)
-		if err != nil {
+		switch {
+		case errors.Is(err, errChannelGone):
+			return nil, false, nil
+		case errors.Is(err, errThreadGone):
+			replies = nil
+		case err != nil:
 			return nil, false, err
 		}
 		for _, r := range replies {
@@ -892,7 +930,8 @@ func (c *slackClient) pages(ctx context.Context, method, field string, query url
 // outlasts the retries is refused with when to try again, so the sync
 // retries rather than failing for good; so is the ratelimited error Slack
 // may answer with instead. A method the app has no scope for is refused
-// with the scope to add, wrapping errMissingScope.
+// with the scope to add, wrapping errMissingScope, and a channel or thread
+// gone since it was listed wraps errChannelGone or errThreadGone.
 func (c *slackClient) call(ctx context.Context, method string, query url.Values) (map[string]json.RawMessage, http.Header, error) {
 	target := c.k.base + "/" + method
 	if len(query) > 0 {
@@ -938,6 +977,8 @@ func (c *slackClient) call(ctx context.Context, method string, query url.Values)
 		return nil, nil, refused(nil, "Slack rejected this token; check it and enter it again")
 	case answer.Error == "missing_scope":
 		return nil, nil, refused(errMissingScope, "add the %s scope to the app and reinstall it", cmp.Or(answer.Needed, "missing"))
+	case slackGone[answer.Error] != nil:
+		return nil, nil, refused(slackGone[answer.Error], "Slack returned %s for %s", answer.Error, method)
 	}
 	return nil, nil, refused(nil, "Slack returned %s for %s", cmp.Or(answer.Error, "an error"), method)
 }
