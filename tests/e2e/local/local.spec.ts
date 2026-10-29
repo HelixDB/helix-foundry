@@ -179,12 +179,17 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
 test("walks a new install through the sample company, from its database to Ask", async ({
   page,
 }) => {
-  // A local build loads no analytics tracker and sends nothing
-  // (src/web/telemetry.tsx).
+  // A local build loads no analytics tracker, nor the SDK's loader, and
+  // sends nothing (src/web/telemetry.tsx).
   const tracked: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).hostname.endsWith("databuddy.cc"))
       tracked.push(request.url());
+  });
+  page.on("response", async (response) => {
+    if (response.request().resourceType() !== "script") return;
+    const text = await response.text().catch(() => "");
+    if (text.includes("cdn.databuddy.cc")) tracked.push(response.url());
   });
   await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
