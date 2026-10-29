@@ -68,7 +68,8 @@ type googleWorkspace struct {
 	asked     []string // the API requests, as path?query
 }
 
-// googleAt serves w and returns the google kind reading from it, unpaced.
+// googleAt serves w and returns the google kind reading from it, unpaced. A
+// status of 0 is no answer: the connection closes.
 func googleAt(t *testing.T, w *googleWorkspace) *googleKind {
 	t.Helper()
 	saved := googleInterval
@@ -76,6 +77,15 @@ func googleAt(t *testing.T, w *googleWorkspace) *googleKind {
 	t.Cleanup(func() { googleInterval = saved })
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		status, body := w.serve(t, r)
+		if status == 0 {
+			conn, _, err := rw.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
 		rw.WriteHeader(status)
 		_, _ = rw.Write([]byte(body))
 	}))
@@ -147,6 +157,13 @@ func (w *googleWorkspace) exchange(t *testing.T, r *http.Request, tokenURL strin
 		return answer()
 	}
 	return http.StatusOK, fmt.Sprintf(`{"access_token":%q,"token_type":"Bearer","expires_in":3599}`, "token for "+claims.Scope)
+}
+
+// exchanges counts the token requests of scope.
+func (w *googleWorkspace) exchanges(scope string) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(slices.DeleteFunc(slices.Clone(w.exchanged), func(s string) bool { return s != scope }))
 }
 
 // requested are the API requests whose path?query starts with prefix.
@@ -417,6 +434,7 @@ func TestGoogleConnector(t *testing.T) {
 		status        int
 		answer, words string
 	}{
+		// A 429 or a 5xx is retried, then refused.
 		"an unknown user": {http.StatusBadRequest, `{"error":"invalid_grant","error_description":"Invalid email or User ID"}`,
 			"Google has no user ada@acme.com, or the service account may not act as them; check the email"},
 		"a user the grant names": {http.StatusBadRequest, `{"error":"invalid_grant","error_description":"Not a valid user: Ada@Acme.com"}`,
@@ -433,6 +451,7 @@ func TestGoogleConnector(t *testing.T) {
 		"a rate limit": {http.StatusTooManyRequests, `{"error":"rate_limit_exceeded"}`, "could not reach Google; try again"},
 	} {
 		t.Run("refuses "+name+" at the token endpoint", func(t *testing.T) {
+			noBackoff(t)
 			answer := func() (int, string) { return tc.status, tc.answer }
 			w := &googleWorkspace{routes: googleProbed(t), tokens: map[string]func() (int, string){
 				googleDirectory.scope: answer, googleDrive.scope: answer, googleCalendar.scope: answer,
@@ -440,9 +459,17 @@ func TestGoogleConnector(t *testing.T) {
 			if _, err := googleAt(t, w).Discover(ctx, googleSource()); refusalOf(err) != tc.words {
 				t.Fatalf("Discover error = %v, want %q", err, tc.words)
 			}
+			exchanges := 1
+			if tc.status == http.StatusTooManyRequests || tc.status >= 500 {
+				exchanges = 1 + maxRetries
+			}
+			if got := w.exchanges(googleDrive.scope); got != exchanges {
+				t.Fatalf("exchanged %d times, want %d", got, exchanges)
+			}
 		})
 	}
 	t.Run("refuses when Google's token endpoint can't be reached", func(t *testing.T) {
+		noBackoff(t)
 		closed := httptest.NewServer(http.NotFoundHandler())
 		closed.Close()
 		kind := googleAt(t, &googleWorkspace{routes: googleProbed(t)})
@@ -457,11 +484,16 @@ func TestGoogleConnector(t *testing.T) {
 		answer func(*http.Request) (int, string)
 		words  string
 	}{
-		"a rejected key": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
-			"Google rejected this service account key; check it and paste it again"},
+		// The token endpoint took the key, so a 401 is the token's.
+		"a refused token": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
+			"Google refused the Drive API's access token for ada@acme.com; try again"},
 		"429 after retries": {func(*http.Request) (int, string) { return http.StatusTooManyRequests, `{}` },
 			"this service account has used up its Google rate limit; try again in a few minutes"},
 		"a rate limit Drive answers 403": {googleFailure(http.StatusForbidden, "User Rate Limit Exceeded", "userRateLimitExceeded"),
+			"this service account has used up its Google rate limit; try again in a few minutes"},
+		"a quota Calendar answers 403": {googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+			"this service account has used up its Google rate limit; try again in a few minutes"},
+		"a daily limit": {googleFailure(http.StatusForbidden, "Daily Limit Exceeded", "dailyLimitExceeded"),
 			"this service account has used up its Google rate limit; try again in a few minutes"},
 		"502 after retries":  {func(*http.Request) (int, string) { return http.StatusBadGateway, `` }, "could not reach Google; try again"},
 		"another error code": {googleFailure(http.StatusBadRequest, "Invalid Value", "invalid"), "Google returned HTTP 400 for /drive/v3/files"},
@@ -470,11 +502,42 @@ func TestGoogleConnector(t *testing.T) {
 			noBackoff(t)
 			routes := googleProbed(t)
 			routes["/drive/v3/files"] = tc.answer
-			if _, err := googleAt(t, &googleWorkspace{routes: routes}).Discover(ctx, googleSource()); refusalOf(err) != tc.words {
+			w := &googleWorkspace{routes: routes}
+			if _, err := googleAt(t, w).Discover(ctx, googleSource()); refusalOf(err) != tc.words {
 				t.Fatalf("Discover error = %v, want %q", err, tc.words)
+			}
+			// A rate limit or an outage is retried; a 401 once, under a new token.
+			probes, exchanges := 1+maxRetries, 1
+			switch name {
+			case "a refused token":
+				probes, exchanges = 2, 2
+			case "another error code":
+				probes = 1
+			}
+			if got := len(w.requested("/drive/v3/files")); got != probes {
+				t.Fatalf("probed %d times, want %d", got, probes)
+			}
+			if got := w.exchanges(googleDrive.scope); got != exchanges {
+				t.Fatalf("exchanged %d tokens, want %d", got, exchanges)
 			}
 		})
 	}
+	// Without a user the assertion names none, and the service account would read as itself.
+	t.Run("refuses a stored setting without a user", func(t *testing.T) {
+		w := &googleWorkspace{routes: googleProbed(t)}
+		kind := googleAt(t, w)
+		src := Source{Secret: key, Settings: json.RawMessage(`{"subject":"","event_days":90}`)}
+		var invalidErr *InvalidError
+		if _, err := kind.Discover(ctx, src); !errors.As(err, &invalidErr) || invalidErr.Message != "enter the email of the Workspace user Foundry acts as" {
+			t.Fatalf("Discover error = %v, want InvalidError", err)
+		}
+		if _, err := kind.Sync(ctx, src, Table{Name: "users"}, &rowSink{}); !errors.As(err, &invalidErr) {
+			t.Fatalf("Sync error = %v, want InvalidError", err)
+		}
+		if len(w.exchanged) != 0 || len(w.requested("/")) != 0 {
+			t.Fatalf("exchanged %v, asked %v", w.exchanged, w.requested("/"))
+		}
+	})
 	t.Run("refuses settings and keys Prepare never stores", func(t *testing.T) {
 		kind := googleAt(t, &googleWorkspace{})
 		var invalidErr *InvalidError
@@ -780,8 +843,8 @@ func TestGoogleSync(t *testing.T) {
 			words: "could not reach Google; try again"},
 		"events of a disabled API": {events: googleFailure(http.StatusForbidden, "Calendar API is disabled", "accessNotConfigured"),
 			words: "enable the Google Calendar API in the service account's Google Cloud project"},
-		"events refused the key": {events: func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
-			words: "Google rejected this service account key; check it and paste it again"},
+		"events refused the token": {events: func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
+			words: "Google refused the Google Calendar API's access token for ada@acme.com; try again"},
 	} {
 		t.Run("fails the event tables on "+name, func(t *testing.T) {
 			noBackoff(t)
@@ -819,6 +882,96 @@ func TestGoogleSync(t *testing.T) {
 		}})
 		if rows, err := read(t, kind, googleSource(), "calendars"); err != nil || len(rows) != 1 || calls != 2 {
 			t.Fatalf("Sync = (%v, %v) after %d calls", rows, err, calls)
+		}
+	})
+	// Google sends a 403 rate limit or quota without Retry-After.
+	for reason, answer := range map[string]func(*http.Request) (int, string){
+		"userRateLimitExceeded": googleFailure(http.StatusForbidden, "User Rate Limit Exceeded", "userRateLimitExceeded"),
+		"rateLimitExceeded":     googleFailure(http.StatusForbidden, "Rate Limit Exceeded", "rateLimitExceeded"),
+		"quotaExceeded":         googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+		"dailyLimitExceeded":    googleFailure(http.StatusForbidden, "Daily Limit Exceeded", "dailyLimitExceeded"),
+		"usageLimits":           googleFailure(http.StatusForbidden, "Usage limits exceeded", "usageLimits"),
+		"RATE_LIMIT_EXCEEDED": func(*http.Request) (int, string) {
+			return http.StatusForbidden, `{"error":{"code":403,"message":"Quota exceeded","status":"PERMISSION_DENIED",
+				"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]}}`
+		},
+	} {
+		t.Run("retries a 403 that is a rate limit or quota: "+reason, func(t *testing.T) {
+			noBackoff(t)
+			var mu sync.Mutex
+			calls := 0
+			kind := googleAt(t, &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+				"/calendar/v3/users/me/calendarList": func(r *http.Request) (int, string) {
+					mu.Lock()
+					defer mu.Unlock()
+					if calls++; calls < 3 {
+						return answer(r)
+					}
+					return http.StatusOK, `{"items":[{"id":"ada@acme.com"}]}`
+				},
+			}})
+			if rows, err := read(t, kind, googleSource(), "calendars"); err != nil || len(rows) != 1 || calls != 3 {
+				t.Fatalf("Sync = (%v, %v) after %d calls", rows, err, calls)
+			}
+		})
+	}
+	// A request and its retries may outlast a token near its end.
+	t.Run("gets a token for each attempt, and a new one with under five minutes left", func(t *testing.T) {
+		noBackoff(t)
+		calls := 0
+		w := &googleWorkspace{
+			tokens: map[string]func() (int, string){googleDirectory.scope: func() (int, string) {
+				return http.StatusOK, `{"access_token":"token for ` + googleDirectory.scope + `","token_type":"Bearer","expires_in":299}`
+			}},
+			routes: map[string]func(*http.Request) (int, string){
+				"/admin/directory/v1/users": func(r *http.Request) (int, string) {
+					if calls++; calls == 1 {
+						return http.StatusServiceUnavailable, `{}`
+					}
+					return http.StatusOK, googleUsers[r.URL.Query().Get("pageToken")]
+				},
+			},
+		}
+		if rows, err := read(t, googleAt(t, w), googleSource(), "users"); err != nil || len(rows) != 2 {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		if exchanges := w.exchanges(googleDirectory.scope); calls != 3 || exchanges != 3 {
+			t.Fatalf("%d requests under %d tokens, want a token each", calls, exchanges)
+		}
+	})
+	t.Run("retries the token exchange on no answer, a 429 or a 5xx", func(t *testing.T) {
+		noBackoff(t)
+		answers := []int{http.StatusServiceUnavailable, 0, http.StatusTooManyRequests}
+		w := &googleWorkspace{routes: googleRoutes(t, 90), tokens: map[string]func() (int, string){googleCalendar.scope: func() (int, string) {
+			if len(answers) == 0 {
+				return http.StatusOK, `{"access_token":"token for ` + googleCalendar.scope + `","token_type":"Bearer","expires_in":3599}`
+			}
+			status := answers[0]
+			answers = answers[1:]
+			return status, `{"error":"internal_failure"}`
+		}}}
+		if rows, err := read(t, googleAt(t, w), googleSource(), "calendars"); err != nil || len(rows) != 4 {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		if exchanges := w.exchanges(googleCalendar.scope); exchanges != 4 {
+			t.Fatalf("exchanged %d times, want 4", exchanges)
+		}
+	})
+	t.Run("retries a 401 once under a new token", func(t *testing.T) {
+		calls := 0
+		w := &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+			"/calendar/v3/users/me/calendarList": func(*http.Request) (int, string) {
+				if calls++; calls == 1 {
+					return http.StatusUnauthorized, `{"error":{"code":401,"message":"Invalid Credentials","errors":[{"reason":"authError"}]}}`
+				}
+				return http.StatusOK, `{"items":[{"id":"ada@acme.com"}]}`
+			},
+		}}
+		if rows, err := read(t, googleAt(t, w), googleSource(), "calendars"); err != nil || len(rows) != 1 {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		if exchanges := w.exchanges(googleCalendar.scope); calls != 2 || exchanges != 2 {
+			t.Fatalf("%d requests under %d tokens", calls, exchanges)
 		}
 	})
 	// A limit that outlasts the retries fails the attempt with a message the syncer retries on.
@@ -1023,8 +1176,9 @@ func TestGoogleDocuments(t *testing.T) {
 		answer func(*http.Request) (int, string)
 		words  string
 	}{
-		"an outage":      {func(*http.Request) (int, string) { return http.StatusBadGateway, `` }, "could not reach Google; try again"},
-		"a rejected key": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` }, "Google rejected this service account key; check it and paste it again"},
+		"an outage": {func(*http.Request) (int, string) { return http.StatusBadGateway, `` }, "could not reach Google; try again"},
+		"a refused token": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
+			"Google refused the Drive API's access token for ada@acme.com; try again"},
 		"a rate limit": {googleFailure(http.StatusForbidden, "Rate Limit Exceeded", "rateLimitExceeded"),
 			"this service account has used up its Google rate limit; try again in a few minutes"},
 	} {

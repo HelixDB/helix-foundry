@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/mail"
@@ -37,7 +38,17 @@ const (
 	// returns only id, name and mimeType of each file unless asked.
 	googleFileFields = "nextPageToken,incompleteSearch,files(id,name,mimeType,driveId,parents,owners(emailAddress)," +
 		"lastModifyingUser(emailAddress),createdTime,modifiedTime,size,webViewLink,shared,starred,version)"
+	// googleTokenMargin is how much of a token's life must be left for a
+	// request to use it: Google's tokens live an hour, and a request with
+	// its retries takes well under this.
+	googleTokenMargin = 5 * time.Minute
 )
+
+// googleLimits are the reasons Google gives a 403 or 429 for a rate limit or
+// a quota: the request is retried with backoff, then refused with when to try
+// again.
+var googleLimits = []string{"rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED",
+	"quotaExceeded", "dailyLimitExceeded", "usageLimits"}
 
 // googleInterval spaces one read's requests, to all three APIs together:
 // 10 a second stays well under each API's per-user quota and leaves room
@@ -95,6 +106,9 @@ var (
 	// errNoAccess is a 403 or 404 for one object the user can't read, such
 	// as a calendar they see only the free/busy of.
 	errNoAccess = errors.New("google: no access")
+	// errUnreachable is a request Google gave no answer to, or a server
+	// error after the retries.
+	errUnreachable = errors.New("google: no answer")
 )
 
 type googleKind struct {
@@ -173,7 +187,7 @@ func (k *googleKind) Streams(Source) []Stream { return []Stream{googleDocsStream
 // not read makes only that API's tables unavailable, saying how to fix it.
 // The six requests are cheap enough for every sync to make them too.
 func (k *googleKind) Discover(ctx context.Context, src Source) (Discovery, error) {
-	c, err := k.client(ctx, src)
+	c, err := k.client(src)
 	if err != nil {
 		return Discovery{}, err
 	}
@@ -185,7 +199,7 @@ func (k *googleKind) Discover(ctx context.Context, src Source) (Discovery, error
 	reasons := map[string]string{}
 	readable, err := probeAll(ctx, slices.Collect(maps.Keys(apis)), func(ctx context.Context, name string) (bool, error) {
 		api := apis[name]
-		status, body, err := c.get(ctx, api, api.probe)
+		status, body, err := c.get(ctx, c.k.http, api, api.probe)
 		if err == nil {
 			err = c.status(status, body, api, api.probe)
 		}
@@ -252,7 +266,7 @@ func (k *googleKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 			return tables, invalid("Google Workspace has no object %q", table.Name)
 		}
 	}
-	c, err := k.client(ctx, src)
+	c, err := k.client(src)
 	if err != nil {
 		return tables, err
 	}
@@ -279,14 +293,22 @@ func (k *googleKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 type googleClient struct {
 	k        *googleKind
 	settings GoogleSettings
-	tokens   map[string]oauth2.TokenSource // by scope
+	tokens   map[string]*googleToken // by scope
 	pace     *rate.Limiter
 }
 
-// client reads the prepared settings and the key. Each scope's token is
-// exchanged when first used and again once it expires, through the kind's
-// own HTTP client.
-func (k *googleKind) client(ctx context.Context, src Source) (*googleClient, error) {
+// googleToken is one scope's access token: exchanged when first used, again
+// once it has under googleTokenMargin left, and again when an API refuses it.
+type googleToken struct {
+	config *jwt.Config
+	mu     sync.Mutex
+	token  *oauth2.Token
+}
+
+// client reads the prepared settings and the key. A subject is required:
+// without one the assertion names no user, and the service account would
+// read as itself.
+func (k *googleKind) client(src Source) (*googleClient, error) {
 	key, ok := parseGoogleKey(src.Secret)
 	if !ok {
 		return nil, invalid("paste the service account's JSON key")
@@ -295,27 +317,59 @@ func (k *googleKind) client(ctx context.Context, src Source) (*googleClient, err
 	if err := json.Unmarshal(src.Settings, &s); err != nil {
 		return nil, invalid("Google Workspace settings are malformed")
 	}
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, k.http)
-	c := &googleClient{k: k, settings: s, tokens: map[string]oauth2.TokenSource{}, pace: rate.NewLimiter(rate.Every(googleInterval), 1)}
+	if s.Subject == "" {
+		return nil, invalid("enter the email of the Workspace user Foundry acts as")
+	}
+	c := &googleClient{k: k, settings: s, tokens: map[string]*googleToken{}, pace: rate.NewLimiter(rate.Every(googleInterval), 1)}
 	for _, api := range googleAPIOf {
-		config := &jwt.Config{Email: key.ClientEmail, PrivateKey: []byte(key.PrivateKey), PrivateKeyID: key.PrivateKeyID,
-			Scopes: []string{api.scope}, TokenURL: k.tokenURL, Subject: s.Subject}
-		c.tokens[api.scope] = config.TokenSource(ctx)
+		c.tokens[api.scope] = &googleToken{config: &jwt.Config{Email: key.ClientEmail, PrivateKey: []byte(key.PrivateKey),
+			PrivateKeyID: key.PrivateKeyID, Scopes: []string{api.scope}, TokenURL: k.tokenURL, Subject: s.Subject}}
 	}
 	return c, nil
 }
 
-// token is api's access token. A scope the admin didn't delegate is
-// unreadable; a user Google doesn't know, or a key it doesn't, is refused.
-func (c *googleClient) token(api googleAPI) (string, error) {
-	token, err := c.tokens[api.scope].Token()
-	if err == nil {
-		return token.AccessToken, nil
+// token is api's access token, a new one in place of rejected, the token an
+// API refused, if that is the one held. The exchange, through the kind's own
+// HTTP client, is retried on no answer, a 429 or a 5xx, as fetchWithHeader
+// retries. A scope the admin didn't delegate is unreadable; a user Google
+// doesn't know, or a key it doesn't, is refused.
+func (c *googleClient) token(ctx context.Context, api googleAPI, rejected string) (string, error) {
+	t := c.tokens[api.scope]
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.token != nil && t.token.AccessToken != rejected && (t.token.Expiry.IsZero() || time.Until(t.token.Expiry) > googleTokenMargin) {
+		return t.token.AccessToken, nil
 	}
-	var answer *oauth2.RetrieveError
-	if !errors.As(err, &answer) {
-		return "", refused(err, "could not reach Google; try again")
+	exchange := context.WithValue(ctx, oauth2.HTTPClient, c.k.http)
+	for attempt := 0; ; attempt++ {
+		// A new token source holds no token, so it exchanges one.
+		token, err := t.config.TokenSource(exchange).Token()
+		if err == nil {
+			t.token = token
+			return token.AccessToken, nil
+		}
+		var answer *oauth2.RetrieveError
+		answered := errors.As(err, &answer)
+		if answered && answer.Response.StatusCode != http.StatusTooManyRequests && answer.Response.StatusCode < 500 {
+			return "", c.tokenRefusal(api, answer)
+		}
+		if attempt == maxRetries {
+			return "", refused(err, "could not reach Google; try again")
+		}
+		retryAfter := ""
+		if answered {
+			retryAfter = answer.Response.Header.Get("Retry-After")
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(retryBackoff(attempt, retryAfter)):
+		}
 	}
+}
+
+// tokenRefusal says why the token endpoint refused api's token.
+func (c *googleClient) tokenRefusal(api googleAPI, answer *oauth2.RetrieveError) error {
 	var reply struct {
 		Error       string `json:"error"`
 		Description string `json:"error_description"`
@@ -324,56 +378,78 @@ func (c *googleClient) token(api googleAPI) (string, error) {
 	subject := c.settings.Subject
 	switch {
 	case reply.Error == "unauthorized_client":
-		return "", refused(errUnreadable, "allow the scope %s for the service account's client ID in the Admin console's domain-wide delegation", api.scope)
+		return refused(errUnreadable, "allow the scope %s for the service account's client ID in the Admin console's domain-wide delegation", api.scope)
 	case reply.Error == "invalid_grant" && (strings.Contains(reply.Description, "Invalid email or User ID") ||
 		strings.Contains(strings.ToLower(reply.Description), subject)):
-		return "", refused(nil, "Google has no user %s, or the service account may not act as them; check the email", subject)
+		return refused(nil, "Google has no user %s, or the service account may not act as them; check the email", subject)
 	case reply.Error == "invalid_grant" || reply.Error == "invalid_client":
-		return "", refused(nil, "Google rejected this service account key; check it and paste it again")
-	case answer.Response.StatusCode == http.StatusTooManyRequests || answer.Response.StatusCode >= 500:
-		return "", refused(err, "could not reach Google; try again")
+		return refused(nil, "Google rejected this service account key; check it and paste it again")
 	}
-	return "", refused(err, "Google refused the service account a token (%s); check its key and domain-wide delegation",
+	return refused(answer, "Google refused the service account a token (%s); check its key and domain-wide delegation",
 		cmp.Or(reply.Error, answer.Response.Status))
 }
 
-// get sends one GET of target, a path and query, under api's token, paced
-// and retried by fetchWithHeader. A rate limit that outlasts the retries,
-// or that Google answers with a 403, is refused with when to try again, so
-// the sync retries rather than failing for good.
-func (c *googleClient) get(ctx context.Context, api googleAPI, target string) (int, []byte, error) {
-	token, err := c.token(api)
-	if err != nil {
-		return 0, nil, err
-	}
-	status, header, body, err := fetchWithHeader(ctx, c.k.http, func() (*http.Request, error) {
+// get sends one GET of target, a path and query, under api's token through
+// hc, paced, with the token each attempt holds. It retries what
+// fetchWithHeader retries, a 429 or a 5xx, and a 403 for a rate limit or a
+// quota (googleLimits), which Google sends without Retry-After; a 401 is
+// retried once, at once, under a new token. A rate limit that outlasts the
+// retries is refused with when to try again, so the sync retries rather than
+// failing for good; a request Google gave no answer to is refused as
+// errUnreachable.
+func (c *googleClient) get(ctx context.Context, hc *http.Client, api googleAPI, target string) (int, []byte, error) {
+	rejected := ""
+	for attempt := 0; ; attempt++ {
 		if err := c.pace.Wait(ctx); err != nil {
-			return nil, err
+			return 0, nil, err
 		}
-		req, err := http.NewRequest(http.MethodGet, c.k.base+target, nil)
-		if err == nil {
-			req.Header = http.Header{"Authorization": {"Bearer " + token}}
+		token, err := c.token(ctx, api, rejected)
+		if err != nil {
+			return 0, nil, err
 		}
-		return req, err
-	})
-	if err != nil {
-		return 0, nil, refused(err, "could not reach Google; try again")
-	}
-	limited := status == http.StatusTooManyRequests
-	if status == http.StatusForbidden {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.k.base+target, nil)
+		if err != nil {
+			return 0, nil, err
+		}
+		req.Header = http.Header{"Authorization": {"Bearer " + token}}
+		status, header, body, err := func() (int, http.Header, []byte, error) {
+			res, err := hc.Do(req)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			defer res.Body.Close()
+			body, err := io.ReadAll(io.LimitReader(res.Body, maxPageBytes))
+			return res.StatusCode, res.Header, body, err
+		}()
+		switch {
+		case ctx.Err() != nil:
+			return 0, nil, ctx.Err()
+		case err != nil:
+			return 0, nil, refused(fmt.Errorf("%w: %w", errUnreachable, err), "could not reach Google; try again")
+		}
 		reasons, _ := googleError(body)
-		limited = slices.ContainsFunc(reasons, func(r string) bool {
-			return r == "rateLimitExceeded" || r == "userRateLimitExceeded" || r == "RATE_LIMIT_EXCEEDED"
-		})
-	}
-	if limited {
-		when := "in a few minutes"
-		if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
-			when = "after " + time.Now().Add(time.Duration(seconds)*time.Second).UTC().Format("15:04 UTC")
+		limited := status == http.StatusTooManyRequests ||
+			status == http.StatusForbidden && slices.ContainsFunc(reasons, func(r string) bool { return slices.Contains(googleLimits, r) })
+		switch {
+		case status == http.StatusUnauthorized && rejected == "" && attempt < maxRetries:
+			rejected = token
+			continue
+		case (limited || status >= 500) && attempt < maxRetries:
+			select {
+			case <-ctx.Done():
+				return 0, nil, ctx.Err()
+			case <-time.After(retryBackoff(attempt, header.Get("Retry-After"))):
+			}
+			continue
+		case limited:
+			when := "in a few minutes"
+			if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
+				when = "after " + time.Now().Add(time.Duration(seconds)*time.Second).UTC().Format("15:04 UTC")
+			}
+			return 0, nil, refused(nil, "this service account has used up its Google rate limit; try again %s", when)
 		}
-		return 0, nil, refused(nil, "this service account has used up its Google rate limit; try again %s", when)
+		return status, body, nil
 	}
-	return status, body, nil
 }
 
 // status says what an answer other than a success means for api's target:
@@ -386,8 +462,10 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 	path, _, _ := strings.Cut(target, "?")
 	reasons, message := googleError(body)
 	switch {
+	// The token endpoint took the key, and get tried a new token, so the
+	// key is not the fault.
 	case status == http.StatusUnauthorized:
-		return refused(nil, "Google rejected this service account key; check it and paste it again")
+		return refused(nil, "Google refused the %s API's access token for %s; try again", api.name, c.settings.Subject)
 	case status == http.StatusForbidden && (slices.Contains(reasons, "accessNotConfigured") || slices.Contains(reasons, "SERVICE_DISABLED")):
 		return refused(errUnreadable, "enable the %s API in the service account's Google Cloud project", api.name)
 	case status == http.StatusForbidden && api == googleDirectory && strings.Contains(message, "Not Authorized to access this resource/api"):
@@ -395,7 +473,7 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 	case status == http.StatusForbidden || status == http.StatusNotFound:
 		return refused(errNoAccess, "this service account cannot read %s as %s; check its access and test again", path, c.settings.Subject)
 	case status >= 500:
-		return refused(nil, "could not reach Google; try again")
+		return refused(errUnreachable, "could not reach Google; try again")
 	}
 	return refused(nil, "Google returned HTTP %d for %s", status, path)
 }
@@ -433,7 +511,7 @@ func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, qu
 			return fmt.Errorf("google %s: more than %d pages", path, maxGooglePages)
 		}
 		target := path + "?" + query.Encode()
-		status, body, err := c.get(ctx, api, target)
+		status, body, err := c.get(ctx, c.k.http, api, target)
 		if err != nil {
 			return err
 		}
@@ -568,7 +646,7 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 			continue
 		}
 		target := "/drive/v3/files/" + url.PathEscape(doc.id) + "/export?" + url.Values{"mimeType": {"text/markdown"}}.Encode()
-		status, body, err := c.get(ctx, googleDrive, target)
+		status, body, err := c.get(ctx, c.k.http, googleDrive, target)
 		if err != nil {
 			return err
 		}
