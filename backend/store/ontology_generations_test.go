@@ -335,36 +335,52 @@ func TestOntologyGenerationQueue(t *testing.T) {
 	})
 }
 
+// firstDraftUser asks for the tests' first drafts.
+var firstDraftUser = id26("FDL-USER")
+
+// firstDraft is a first draft's generation of f's ontology, FDL-GEN-<tag>,
+// asked for by firstDraftUser.
+func firstDraft(f foundryFixture, tag string) *model.OntologyGeneration {
+	return &model.OntologyGeneration{ID: id26("FDL-GEN-" + tag), WorkspaceID: f.ontology.WorkspaceID, OntologyID: f.ontology.ID,
+		RequestedByUserID: &firstDraftUser, Input: model.OntologyGenerationInput{LoadWhenReady: true}}
+}
+
+// startedGeneration queues gen and claims it as worker-1.
+func startedGeneration(t *testing.T, db store.Store, gen *model.OntologyGeneration) *model.OntologyGeneration {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, db.EnqueueOntologyGeneration(ctx, gen, 10))
+	claimed, err := db.ClaimOntologyGeneration(ctx, "worker-1", time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, gen.ID, claimed.ID)
+	return claimed
+}
+
+// firstDraftOutcome is what the worker hands gen, a first draft of f's
+// ontology that loads: its draft FDL-V-<tag> and its load FDL-L-<tag>.
+func firstDraftOutcome(f foundryFixture, gen *model.OntologyGeneration, tag string) model.OntologyGenerationOutcome {
+	v := &model.OntologyVersion{
+		ID: id26("FDL-V-" + tag), WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, Source: model.OntologySourceGenerated,
+		Format: model.OntologyFormatAgentBundle, GenerationID: &gen.ID, Definition: json.RawMessage(`{"format":"agent_bundle"}`),
+		DocumentSetIDs: &[]string{generalSetID(f.ontology.ID)}, CreatedByUserID: gen.RequestedByUserID,
+	}
+	token := model.FirstDraftLoadTokenPrefix + gen.ID
+	return model.OntologyGenerationOutcome{Status: model.OntologyGenerationSucceeded, Result: v, Load: &model.FoundryGraphJob{
+		ID: id26("FDL-L-" + tag), LoadID: id26("FDL-L-" + tag), WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, VersionID: v.ID,
+		Kind: model.FoundryGraphJobLoad, Phase: model.FoundryGraphJobProvisioning, ClientToken: &token, RequestedByUserID: gen.RequestedByUserID,
+	}}
+}
+
 // A first draft's success (outcome.Load) makes the draft current and queues
 // its load in the transaction that stores it, as set-current then
 // create-load would. Whatever stops either, the generation still succeeds.
 func TestFirstDraftLoad(t *testing.T) {
-	user := id26("FDL-USER")
-	// started queues and claims a first draft's generation of f's ontology.
+	user := firstDraftUser
 	started := func(t *testing.T, f foundryFixture, tag string) *model.OntologyGeneration {
 		t.Helper()
-		ctx := context.Background()
-		gen := &model.OntologyGeneration{ID: id26("FDL-GEN-" + tag), WorkspaceID: f.ontology.WorkspaceID, OntologyID: f.ontology.ID,
-			RequestedByUserID: &user, Input: model.OntologyGenerationInput{LoadWhenReady: true}}
-		require.NoError(t, f.db.EnqueueOntologyGeneration(ctx, gen, 10))
-		claimed, err := f.db.ClaimOntologyGeneration(ctx, "worker-1", time.Minute)
-		require.NoError(t, err)
-		require.Equal(t, gen.ID, claimed.ID)
-		return claimed
+		return startedGeneration(t, f.db, firstDraft(f, tag))
 	}
-	// drafted is the outcome the worker hands a first draft that loads.
-	drafted := func(f foundryFixture, gen *model.OntologyGeneration, tag string) model.OntologyGenerationOutcome {
-		v := &model.OntologyVersion{
-			ID: id26("FDL-V-" + tag), WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, Source: model.OntologySourceGenerated,
-			Format: model.OntologyFormatAgentBundle, GenerationID: &gen.ID, Definition: json.RawMessage(`{"format":"agent_bundle"}`),
-			DocumentSetIDs: &[]string{generalSetID(f.ontology.ID)}, CreatedByUserID: gen.RequestedByUserID,
-		}
-		token := model.FirstDraftLoadTokenPrefix + gen.ID
-		return model.OntologyGenerationOutcome{Status: model.OntologyGenerationSucceeded, Result: v, Load: &model.FoundryGraphJob{
-			ID: id26("FDL-L-" + tag), LoadID: id26("FDL-L-" + tag), WorkspaceID: gen.WorkspaceID, OntologyID: gen.OntologyID, VersionID: v.ID,
-			Kind: model.FoundryGraphJobLoad, Phase: model.FoundryGraphJobProvisioning, ClientToken: &token, RequestedByUserID: gen.RequestedByUserID,
-		}}
-	}
+	drafted := firstDraftOutcome
 	// succeeded checks the generation succeeded with its draft stored.
 	succeeded := func(t *testing.T, f foundryFixture, gen *model.OntologyGeneration, versionID string) {
 		t.Helper()

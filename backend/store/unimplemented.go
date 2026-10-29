@@ -784,3 +784,19 @@ func (u Unimplemented) ActivateFoundryAIDefault(context.Context, string, string)
 	u.unimplemented("ActivateFoundryAIDefault")
 	return nil
 }
+func (u Unimplemented) DiscoverFoundryOntologyReady(context.Context, time.Time, int, func() string) (int, error) {
+	u.unimplemented("DiscoverFoundryOntologyReady")
+	return 0, nil
+}
+func (u Unimplemented) DiscoverFoundrySampleFollowUps(context.Context, time.Time, time.Time, int, func() string) (int, error) {
+	u.unimplemented("DiscoverFoundrySampleFollowUps")
+	return 0, nil
+}
+func (u Unimplemented) ClaimFoundryNotification(context.Context, string, time.Duration) (*model.FoundryNotification, error) {
+	u.unimplemented("ClaimFoundryNotification")
+	return nil, nil
+}
+func (u Unimplemented) FinishFoundryNotification(context.Context, string, string, model.FoundryNotificationOutcome) error {
+	u.unimplemented("FinishFoundryNotification")
+	return nil
+}
