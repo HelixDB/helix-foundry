@@ -116,7 +116,7 @@ async function createGlobex(page: Page) {
     page.getByRole("button", { name: "Workspace: Globex" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
 }
 
@@ -149,7 +149,7 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await page.goto("/");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Workspace: My workspace" }),
@@ -193,7 +193,9 @@ test("walks a new install through the sample company, from its database to Ask",
   });
   await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Use the sample" }).click();
+  await page
+    .getByRole("button", { name: "See it on a sample company (1 min)" })
+    .click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
     page.getByRole("heading", {
@@ -245,13 +247,15 @@ test("asks for an AI provider before adding the sample company, then goes back t
     loadStepMs: 200,
   });
   await page.goto("/");
-  const sample = page.getByRole("button", { name: "Use the sample" }),
+  const sample = page.getByRole("button", {
+      name: "See it on a sample company (1 min)",
+    }),
     gate = page.getByRole("note").filter({
       hasText: "Adding the sample needs an AI provider",
     }),
     first = page.getByRole("heading", {
       level: 1,
-      name: "Create your first ontology",
+      name: "Get started",
     });
   await sample.click();
   await expect(gate).toBeVisible();

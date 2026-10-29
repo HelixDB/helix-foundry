@@ -162,8 +162,9 @@ export async function signIn(
 /**
  * Signs in as `email`, a user with no workspace yet, and creates `name` from
  * the picker: a new workspace, so on Foundry Free, with no data and no
- * ontology. It opens on its onboarding, the new-ontology wizard, which is all
- * it offers besides Settings until it has an ontology (createFirstOntology).
+ * ontology. It opens on its onboarding, Get started (the sample, the user's
+ * own data or their agent), which is all it offers besides Settings until it
+ * has an ontology (createFirstOntology).
  */
 export async function signInToNewWorkspace(
   page: Page,
@@ -180,7 +181,7 @@ export async function signInToNewWorkspace(
     page.getByRole("button", { name: `Workspace: ${name}` }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
 }
 
@@ -213,18 +214,15 @@ export async function createdOntology(page: Page): Promise<string> {
 }
 
 /**
- * Creates a new workspace's first ontology from its onboarding wizard: on
- * the new database the wizard starts with (which brings the workspace its
- * free Helix plan), drafted from one uploaded document (into General), with
- * nothing connected. The workspace then offers every page. The ontology's
- * overview path.
+ * Creates a new workspace's first ontology from its onboarding, with Use my
+ * own data: drafted from one uploaded document (into General), with nothing
+ * connected, so named General, on a new database (which brings the
+ * workspace its free Helix plan), and made current and loaded once drafted.
+ * The workspace then offers every page. The ontology's overview path.
  */
-export async function createFirstOntology(
-  page: Page,
-  name = "Orders",
-): Promise<string> {
-  await startOntology(page, name);
-  await page.getByRole("button", { name: "Continue" }).click();
+export async function createFirstOntology(page: Page): Promise<string> {
+  await page.goto("/ontology/new");
+  await page.getByRole("button", { name: "Use my own data" }).click();
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Upload documents" }).click();
   await (await chooser).setFiles([file("notes.md", "# Notes\n")]);

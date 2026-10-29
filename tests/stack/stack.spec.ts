@@ -51,7 +51,7 @@ test("opens in the workspace the install starts with", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Workspace: My workspace" }),

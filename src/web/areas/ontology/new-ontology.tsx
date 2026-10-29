@@ -25,6 +25,7 @@ import {
   formatRelative,
 } from "../../kit";
 import { paths } from "../../paths";
+import { trackEvent } from "../../analytics";
 import { useWorkspace } from "../../ui";
 import { ConnectData } from "../data/connect-data";
 import { connectorsQuery } from "../data/data-api";
@@ -41,6 +42,7 @@ import { GoalPanel, SourcesPicker, type EventChoices } from "./generate-parts";
 import {
   STEP_COPY,
   databaseChoices,
+  firstOntologyWizard,
   isNoSubscription,
   newDatabase,
   newOntologyWizard,
@@ -50,6 +52,7 @@ import {
   type WizardStepId,
 } from "./model";
 import { Callout, FlowStep, canManage, type Arrival } from "./parts";
+import { SAMPLE } from "./sample";
 import { TrySample } from "./try-sample";
 import {
   createOntology,
@@ -80,10 +83,14 @@ import {
 // name the ontology (./setup.tsx).
 //
 // While the workspace has no ontology, this page is its onboarding, all the
-// shell offers (main.tsx): it has no way back to Ontologies, and offers the
-// sample company (./try-sample.tsx: a local install's opens its own page;
-// hosted, it fills in what is still empty and opens the review) and Set up
-// with your agent. A connector link sent here (?add=<kind>) opens its
+// shell offers (main.tsx): it has no way back to Ontologies, and first asks
+// how to start: the sample company (./try-sample.tsx, its own page), the
+// user's own data (the wizard), or Set up with your agent.
+// A workspace's first ontology of its own (the sample's doesn't count) asks
+// only what to draft from and the goal (firstOntologyWizard): it is named
+// from its sources, goes on a new database, and its first draft is made
+// current and loaded as soon as it is stored, with an email to say so
+// (GenerateOntologyRequest's loadWhenReady). A connector link sent here (?add=<kind>) opens its
 // form over the wizard once, and the new connection stays here. An API
 // source's token link (?event_source=<id>&token=new, forwarded from its
 // Data page by main.tsx) opens its send panel over the wizard once, at
@@ -171,11 +178,16 @@ export const forgetNewOntology = (ws: string) => {
 };
 
 export function NewOntologyPage() {
-  const { id, slug, role, onboarding } = useWorkspace(),
+  const { id, slug, role, onboarding, name: workspace } = useWorkspace(),
     navigate = useNavigate(),
     qc = useQueryClient(),
     [params, setParams] = useSearchParams();
-  const [adding, setAdding] = useState(() => params.get("add")),
+  // Onboarding asks how to start until the user picks their own data, or a
+  // link (a step, a connector's form, an API source's token) says so.
+  const [own, setOwn] = useState(() =>
+      ["step", "add", "event_source"].some((k) => params.has(k)),
+    ),
+    [adding, setAdding] = useState(() => params.get("add")),
     // The API source a token link opens the send panel of.
     [sending, setSending] = useState(() =>
       params.get("token") === "new" ? params.get("event_source") : null,
@@ -254,30 +266,42 @@ export function NewOntologyPage() {
     if (!created.current) keep(id, entry);
   }, [id, name, database, chosen, chosenEvents, chosenSets, goal, made]);
 
-  const wizard = newOntologyWizard(
-    {
-      name,
-      database,
+  // The workspace's first ontology of its own: none but the sample's.
+  const first =
+    onboarding ||
+    (!!ontologies.data &&
+      !ontologies.data.ontologies?.some((o) => o.name !== SAMPLE.ontology));
+  const draft = {
       connectorIds: chosen,
       eventSources: chosenEvents || new Map(),
-      setIds: chosenSets || new Set(),
+      setIds: chosenSets || new Set<string>(),
       goal,
     },
-    {
+    facts = {
       databases: choices,
       projects: databases.data?.map((p) => p.project),
       connectors: connectors.data?.connectors,
       sets: sets.data,
       documents: documents.data,
-    },
-    params.get("step"),
-  );
+    };
+  const wizard = first
+    ? firstOntologyWizard(draft, facts, workspace, params.get("step"))
+    : newOntologyWizard(
+        { ...draft, name, database },
+        facts,
+        params.get("step"),
+      );
   const at = wizard.steps.findIndex((s) => s.id === wizard.current),
     step = wizard.steps[at]!;
+  const choosing = onboarding && !own;
   const crumbs = onboarding
       ? undefined
       : [{ label: "Ontologies", to: paths.ontologies() }],
-    title = onboarding ? "Create your first ontology" : "New ontology";
+    title = choosing
+      ? "Get started"
+      : onboarding
+        ? "Your first ontology"
+        : "New ontology";
 
   if (!canManage(role))
     return (
@@ -307,7 +331,7 @@ export function NewOntologyPage() {
   // Each step is a history entry; the first has no ?step=.
   const go = (to: WizardStepId) => {
     setError(null);
-    setParams(to === "name" ? {} : { step: to });
+    setParams(to === wizard.steps[0]!.id ? {} : { step: to });
     window.scrollTo(0, 0);
   };
   const cancel = () => {
@@ -368,7 +392,10 @@ export function NewOntologyPage() {
         arrival: Arrival = { newDatabase: pick.kind === "new" };
       // Until its generation starts, the choices are the ontology's.
       keep(id, { ...entry, ontologyId: o });
-      const [to, state] = await generateOntology(id, o, request.generate).then(
+      const [to, state] = await generateOntology(id, o, {
+        ...request.generate,
+        ...(first ? { loadWhenReady: true } : {}),
+      }).then(
         (res): [string, Arrival] => [
           paths.generation(o, res.generation!.id),
           arrival,
@@ -472,7 +499,14 @@ export function NewOntologyPage() {
           />
         );
       case "review":
-        return (
+        return first ? (
+          <p className="on-muted">
+            Foundry creates {wizard.request?.name || "the ontology"} on a new
+            Helix database, then its agent drafts it from what you chose. Once
+            the draft is ready, Foundry makes it current and loads it, and
+            emails you when you can ask it questions.
+          </p>
+        ) : (
           <p className="on-muted">
             Foundry creates {name.trim()}
             {database?.kind === "new" ? " and its new database" : ""}, then its
@@ -484,15 +518,56 @@ export function NewOntologyPage() {
   };
 
   const message = error instanceof Error ? error.message : "";
+  if (choosing)
+    return (
+      <Page width="narrow">
+        <PageHeader
+          title={title}
+          subtitle="Foundry turns your databases, apps and documents into an ontology: one connected graph of your business that you and your agents can ask questions of."
+        />
+        <TrySample />
+        <h2 className="on-start-or">Or start with your own</h2>
+        <div className="on-start-grid">
+          <Callout
+            icon={Database}
+            tone="muted"
+            title="Use my own data"
+            text="Connect a database or app, or upload documents, and say what the ontology should serve. Foundry drafts it, loads it and emails you when it’s ready, in a few minutes."
+            action={
+              <Button
+                size="sm"
+                onClick={() => {
+                  trackEvent("onboarding_own_data_clicked");
+                  setOwn(true);
+                  go(wizard.steps[0]!.id);
+                }}
+              >
+                Use my own data
+              </Button>
+            }
+          />
+          <AgentSetup />
+        </div>
+        {adding !== null && (
+          <ConnectData
+            initialKind={adding}
+            onConnected={() => {}}
+            onClose={() => setAdding(null)}
+          />
+        )}
+      </Page>
+    );
   return (
     <Page width="narrow">
       <PageHeader
         breadcrumbs={crumbs}
         title={title}
-        subtitle="An ontology keeps its types, documents and data in one Helix database. Choose what it is drawn from, and Foundry’s agent drafts it."
+        subtitle={
+          first
+            ? "Choose what it’s drawn from and what it should serve. Foundry’s agent drafts it, loads it into a new Helix database and emails you when it’s ready to ask."
+            : "An ontology keeps its types, documents and data in one Helix database. Choose what it is drawn from, and Foundry’s agent drafts it."
+        }
       />
-      {onboarding && <TrySample />}
-      {onboarding && <AgentSetup />}
       {adding !== null && (
         <ConnectData
           initialKind={adding}
@@ -553,7 +628,7 @@ export function NewOntologyPage() {
                           >
                             Open Helix billing
                           </a>
-                          {choices?.some((c) => !c.usedBy) && (
+                          {!first && choices?.some((c) => !c.usedBy) && (
                             <Button
                               size="sm"
                               onClick={() => {
@@ -579,8 +654,17 @@ export function NewOntologyPage() {
                 <div className="hf-form-actions">
                   {wizard.back ? (
                     <Button onClick={() => go(wizard.back!)}>Back</Button>
+                  ) : onboarding ? (
+                    <Button
+                      onClick={() => {
+                        setOwn(false);
+                        setParams({});
+                      }}
+                    >
+                      Back
+                    </Button>
                   ) : (
-                    !onboarding && <Button onClick={cancel}>Cancel</Button>
+                    <Button onClick={cancel}>Cancel</Button>
                   )}
                   {wizard.next ? (
                     <Button

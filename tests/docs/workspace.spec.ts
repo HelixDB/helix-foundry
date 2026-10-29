@@ -174,11 +174,11 @@ test("workspace: video", async ({ browser }) => {
       .getByRole("button", { name: "Create workspace" }),
   );
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
   await caption(
     page,
-    "A new workspace opens on its first ontology's steps",
+    "A new workspace opens on Get started: a sample, your own data or your agent",
     2500,
   );
   await caption(page, "Invite the people you work with from Settings");

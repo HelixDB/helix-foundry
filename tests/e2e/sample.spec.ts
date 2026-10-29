@@ -35,7 +35,9 @@ test("walks a new workspace through the sample company, from its database to Ask
     page.getByRole("heading", { name: /Foundry Pro/ }),
   ).toContainText("Active", { timeout: 15_000 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Use the sample" }).click();
+  await page
+    .getByRole("button", { name: "See it on a sample company (1 min)" })
+    .click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
     page.getByRole("heading", {

@@ -1461,12 +1461,15 @@ test("opens a connector's form from a link to its workspace", async ({
   const create = page.getByRole("dialog", { name: "Create a workspace" });
   await create.getByLabel("Workspace name").fill("Initech");
   await create.getByRole("button", { name: "Create workspace" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Get started" }),
+  ).toBeVisible();
+  // The link starts the user's own data: the wizard, past Get started.
   const wizard = page.getByRole("heading", {
     level: 1,
-    name: "Create your first ontology",
+    name: "Your first ontology",
   });
-  await expect(page).toHaveURL(/\/ontology\/new$/);
-  await expect(wizard).toBeVisible();
   await page.goto("/data?add=stripe");
   await expect(dialog(page)).toHaveAttribute("aria-label", "Stripe");
   await expect(page).toHaveURL(/\/ontology\/new$/);
