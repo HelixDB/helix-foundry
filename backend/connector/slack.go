@@ -694,7 +694,7 @@ func slackStamp(ts string) any {
 	return t.Format(time.RFC3339)
 }
 
-// orNull is s, or null when Slack gave it empty or left it out.
+// orNull is s, or null when the source gave it empty or left it out.
 func orNull(s string) any {
 	if s == "" {
 		return nil

@@ -802,13 +802,6 @@ func notionTime(v any) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
 }
 
-func orNull(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 // notionSlug names a table or column from a Notion title in snake case:
 // ASCII letters and digits in lower case, accents dropped (é is e), every
 // other run of characters one underscore, at most maxNotionName bytes;
