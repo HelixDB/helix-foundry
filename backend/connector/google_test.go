@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -21,6 +22,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const googleSubject = "ada@acme.com"
@@ -68,7 +71,8 @@ type googleWorkspace struct {
 	asked     []string // the API requests, as path?query
 }
 
-// googleAt serves w and returns the google kind reading from it, unpaced.
+// googleAt serves w and returns the google kind reading from it, unpaced. A
+// status of 0 is no answer: the connection closes.
 func googleAt(t *testing.T, w *googleWorkspace) *googleKind {
 	t.Helper()
 	saved := googleInterval
@@ -76,6 +80,15 @@ func googleAt(t *testing.T, w *googleWorkspace) *googleKind {
 	t.Cleanup(func() { googleInterval = saved })
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		status, body := w.serve(t, r)
+		if status == 0 {
+			conn, _, err := rw.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
 		rw.WriteHeader(status)
 		_, _ = rw.Write([]byte(body))
 	}))
@@ -147,6 +160,13 @@ func (w *googleWorkspace) exchange(t *testing.T, r *http.Request, tokenURL strin
 		return answer()
 	}
 	return http.StatusOK, fmt.Sprintf(`{"access_token":%q,"token_type":"Bearer","expires_in":3599}`, "token for "+claims.Scope)
+}
+
+// exchanges counts the token requests of scope.
+func (w *googleWorkspace) exchanges(scope string) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(slices.DeleteFunc(slices.Clone(w.exchanged), func(s string) bool { return s != scope }))
 }
 
 // requested are the API requests whose path?query starts with prefix.
@@ -417,6 +437,7 @@ func TestGoogleConnector(t *testing.T) {
 		status        int
 		answer, words string
 	}{
+		// A 429 or a 5xx is retried, then refused.
 		"an unknown user": {http.StatusBadRequest, `{"error":"invalid_grant","error_description":"Invalid email or User ID"}`,
 			"Google has no user ada@acme.com, or the service account may not act as them; check the email"},
 		"a user the grant names": {http.StatusBadRequest, `{"error":"invalid_grant","error_description":"Not a valid user: Ada@Acme.com"}`,
@@ -433,6 +454,7 @@ func TestGoogleConnector(t *testing.T) {
 		"a rate limit": {http.StatusTooManyRequests, `{"error":"rate_limit_exceeded"}`, "could not reach Google; try again"},
 	} {
 		t.Run("refuses "+name+" at the token endpoint", func(t *testing.T) {
+			noBackoff(t)
 			answer := func() (int, string) { return tc.status, tc.answer }
 			w := &googleWorkspace{routes: googleProbed(t), tokens: map[string]func() (int, string){
 				googleDirectory.scope: answer, googleDrive.scope: answer, googleCalendar.scope: answer,
@@ -440,9 +462,17 @@ func TestGoogleConnector(t *testing.T) {
 			if _, err := googleAt(t, w).Discover(ctx, googleSource()); refusalOf(err) != tc.words {
 				t.Fatalf("Discover error = %v, want %q", err, tc.words)
 			}
+			exchanges := 1
+			if tc.status == http.StatusTooManyRequests || tc.status >= 500 {
+				exchanges = 1 + maxRetries
+			}
+			if got := w.exchanges(googleDrive.scope); got != exchanges {
+				t.Fatalf("exchanged %d times, want %d", got, exchanges)
+			}
 		})
 	}
 	t.Run("refuses when Google's token endpoint can't be reached", func(t *testing.T) {
+		noBackoff(t)
 		closed := httptest.NewServer(http.NotFoundHandler())
 		closed.Close()
 		kind := googleAt(t, &googleWorkspace{routes: googleProbed(t)})
@@ -457,11 +487,16 @@ func TestGoogleConnector(t *testing.T) {
 		answer func(*http.Request) (int, string)
 		words  string
 	}{
-		"a rejected key": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
-			"Google rejected this service account key; check it and paste it again"},
+		// The token endpoint took the key, so a 401 is the token's.
+		"a refused token": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
+			"Google refused the Drive API's access token for ada@acme.com; try again"},
 		"429 after retries": {func(*http.Request) (int, string) { return http.StatusTooManyRequests, `{}` },
 			"this service account has used up its Google rate limit; try again in a few minutes"},
 		"a rate limit Drive answers 403": {googleFailure(http.StatusForbidden, "User Rate Limit Exceeded", "userRateLimitExceeded"),
+			"this service account has used up its Google rate limit; try again in a few minutes"},
+		"a quota Calendar answers 403": {googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+			"this service account has used up its Google rate limit; try again in a few minutes"},
+		"a daily limit": {googleFailure(http.StatusForbidden, "Daily Limit Exceeded", "dailyLimitExceeded"),
 			"this service account has used up its Google rate limit; try again in a few minutes"},
 		"502 after retries":  {func(*http.Request) (int, string) { return http.StatusBadGateway, `` }, "could not reach Google; try again"},
 		"another error code": {googleFailure(http.StatusBadRequest, "Invalid Value", "invalid"), "Google returned HTTP 400 for /drive/v3/files"},
@@ -470,11 +505,42 @@ func TestGoogleConnector(t *testing.T) {
 			noBackoff(t)
 			routes := googleProbed(t)
 			routes["/drive/v3/files"] = tc.answer
-			if _, err := googleAt(t, &googleWorkspace{routes: routes}).Discover(ctx, googleSource()); refusalOf(err) != tc.words {
+			w := &googleWorkspace{routes: routes}
+			if _, err := googleAt(t, w).Discover(ctx, googleSource()); refusalOf(err) != tc.words {
 				t.Fatalf("Discover error = %v, want %q", err, tc.words)
+			}
+			// A rate limit or an outage is retried; a 401 once, under a new token.
+			probes, exchanges := 1+maxRetries, 1
+			switch name {
+			case "a refused token":
+				probes, exchanges = 2, 2
+			case "another error code":
+				probes = 1
+			}
+			if got := len(w.requested("/drive/v3/files")); got != probes {
+				t.Fatalf("probed %d times, want %d", got, probes)
+			}
+			if got := w.exchanges(googleDrive.scope); got != exchanges {
+				t.Fatalf("exchanged %d tokens, want %d", got, exchanges)
 			}
 		})
 	}
+	// Without a user the assertion names none, and the service account would read as itself.
+	t.Run("refuses a stored setting without a user", func(t *testing.T) {
+		w := &googleWorkspace{routes: googleProbed(t)}
+		kind := googleAt(t, w)
+		src := Source{Secret: key, Settings: json.RawMessage(`{"subject":"","event_days":90}`)}
+		var invalidErr *InvalidError
+		if _, err := kind.Discover(ctx, src); !errors.As(err, &invalidErr) || invalidErr.Message != "enter the email of the Workspace user Foundry acts as" {
+			t.Fatalf("Discover error = %v, want InvalidError", err)
+		}
+		if _, err := kind.Sync(ctx, src, Table{Name: "users"}, &rowSink{}); !errors.As(err, &invalidErr) {
+			t.Fatalf("Sync error = %v, want InvalidError", err)
+		}
+		if len(w.exchanged) != 0 || len(w.requested("/")) != 0 {
+			t.Fatalf("exchanged %v, asked %v", w.exchanged, w.requested("/"))
+		}
+	})
 	t.Run("refuses settings and keys Prepare never stores", func(t *testing.T) {
 		kind := googleAt(t, &googleWorkspace{})
 		var invalidErr *InvalidError
@@ -501,21 +567,68 @@ var googleUsers = map[string]string{
 		"suspended":true,"archived":true,"creationTime":"2021-05-06T07:08:09+02:00","lastLoginTime":"1970-01-01T00:00:00.000Z"}]}`,
 }
 
-// googleFiles are a page of Drive's files: a Doc, a folder, a shared
-// drive's PDF and a Sheet.
-const googleFiles = `{"files":[
+// googleFiles are Drive's files by corpus: the user's, a Doc, a folder, a
+// shared drive's PDF shared with them and a Sheet; then each shared drive's,
+// drv1's that PDF again and a deck, and drv2, which they left since the
+// drives were listed.
+var googleFiles = map[string]func(*http.Request) (int, string){
+	"user": func(*http.Request) (int, string) {
+		return http.StatusOK, `{"files":[
 	{"id":"doc1","name":"Q3  plan","mimeType":"application/vnd.google-apps.document","parents":["fold1"],"owners":[{"emailAddress":"Ada@acme.com"}],
 		"lastModifyingUser":{"emailAddress":"grace@acme.com"},"createdTime":"2026-09-01T10:00:00.000Z","modifiedTime":"2026-10-20T15:30:00.250Z",
 		"webViewLink":"https://docs.google.com/document/d/doc1/edit","shared":true,"starred":false,"version":"42"},
 	{"id":"fold1","name":"Plans","mimeType":"application/vnd.google-apps.folder","owners":[{"emailAddress":"ada@acme.com"}],
 		"createdTime":"2026-09-01T09:00:00Z","modifiedTime":"2026-09-01T09:00:00Z","webViewLink":"https://drive.google.com/drive/folders/fold1",
 		"starred":true,"version":"1"},
-	{"id":"pdf1","name":"contract.pdf","mimeType":"application/pdf","driveId":"drv1","parents":["drv1"],
-		"lastModifyingUser":{"emailAddress":"alan@acme.com"},"createdTime":"2026-08-01T10:00:00+01:00","modifiedTime":"2026-08-02T10:00:00Z",
-		"size":"52341","webViewLink":"https://drive.google.com/file/d/pdf1/view","shared":false,"version":"3"},
+	` + googlePDF + `,
 	{"id":"sheet1","name":"Budget","mimeType":"application/vnd.google-apps.spreadsheet","owners":[{"emailAddress":"ada@acme.com"}],
 		"createdTime":"2026-09-02T10:00:00Z","modifiedTime":"2026-10-27T10:00:00Z","webViewLink":"https://docs.google.com/spreadsheets/d/sheet1/edit",
 		"version":"9"}],"incompleteSearch":false}`
+	},
+	"drv1": func(*http.Request) (int, string) {
+		return http.StatusOK, `{"files":[` + googlePDF + `,
+	{"id":"deck1","name":"Pitch","mimeType":"application/vnd.google-apps.presentation","driveId":"drv1","parents":["drv1"],
+		"createdTime":"2026-10-01T10:00:00Z","modifiedTime":"2026-10-02T10:00:00Z","webViewLink":"https://docs.google.com/presentation/d/deck1/edit",
+		"version":"5"}]}`
+	},
+	"drv2": googleFailure(http.StatusNotFound, "Shared drive not found: drv2", "notFound"),
+}
+
+const googlePDF = `{"id":"pdf1","name":"contract.pdf","mimeType":"application/pdf","driveId":"drv1","parents":["drv1"],
+		"lastModifyingUser":{"emailAddress":"alan@acme.com"},"createdTime":"2026-08-01T10:00:00+01:00","modifiedTime":"2026-08-02T10:00:00Z",
+		"size":"52341","webViewLink":"https://drive.google.com/file/d/pdf1/view","shared":false,"version":"3"}`
+
+// googleDrives lists the shared drives the user is in, in two pages.
+var googleDrives = map[string]string{"": `{"drives":[{"id":"drv1","name":"Legal"}],"nextPageToken":"d1"}`, "d1": `{"drives":[{"id":"drv2"}]}`}
+
+// googleFilesRoute serves files by corpus, checking each listing's query.
+func googleFilesRoute(t *testing.T, files map[string]func(*http.Request) (int, string)) func(*http.Request) (int, string) {
+	return func(r *http.Request) (int, string) {
+		q := r.URL.Query()
+		corpus := q.Get("corpora")
+		if corpus == "drive" {
+			corpus = q.Get("driveId")
+		} else if q.Has("driveId") {
+			t.Errorf("files query = %s", r.URL.RawQuery)
+		}
+		if q.Get("q") != "trashed=false" || q.Get("includeItemsFromAllDrives") != "true" || q.Get("supportsAllDrives") != "true" ||
+			q.Get("pageSize") != "1000" || q.Get("fields") != googleFileFields || files[corpus] == nil {
+			t.Errorf("files query = %s", r.URL.RawQuery)
+			return http.StatusBadRequest, `{}`
+		}
+		return files[corpus](r)
+	}
+}
+
+// googleDrivesRoute serves drives, a page of them by page token.
+func googleDrivesRoute(t *testing.T, drives map[string]string) func(*http.Request) (int, string) {
+	return func(r *http.Request) (int, string) {
+		if q := r.URL.Query(); q.Get("pageSize") != "100" || q.Get("fields") != "nextPageToken,drives(id)" {
+			t.Errorf("drives query = %s", r.URL.RawQuery)
+		}
+		return http.StatusOK, drives[r.URL.Query().Get("pageToken")]
+	}
+}
 
 // googleCalendars is the calendar list: Ada's own, a holiday calendar whose
 // id needs escaping, Grace's, of which she sees only the free/busy, and
@@ -527,7 +640,8 @@ const googleCalendars = `{"kind":"calendar#calendarList","items":[
 	{"id":"grace@acme.com","summary":"Grace Hopper","accessRole":"freeBusyReader"},
 	{"id":"gone@acme.com","summary":"Gone","accessRole":"reader"}]}`
 
-// googleEvents are each calendar's events by page token: Ada's in two pages.
+// googleEvents are each calendar's events by page token: Ada's in two pages,
+// the second with an event whose attendees Google left out.
 var googleEvents = map[string]map[string]string{
 	"ada@acme.com": {
 		"": `{"items":[{"id":"ev1","status":"confirmed","htmlLink":"https://www.google.com/calendar/event?eid=ev1","created":"2026-10-01T09:00:00.000Z",
@@ -539,7 +653,7 @@ var googleEvents = map[string]map[string]string{
 				{"email":"room-1@resource.calendar.google.com","displayName":"Room 1","resource":true,"responseStatus":"accepted"},
 				{"email":"ADA@acme.com","responseStatus":"declined"},{"displayName":"No email"}]}],"nextPageToken":"e1"}`,
 		"e1": `{"items":[{"id":"ev2","status":"cancelled"},{"id":"ev3_20261101T090000Z","status":"tentative","recurringEventId":"ev3",
-			"iCalUID":"ev3@google.com","organizer":{"email":"grace@acme.com"},"start":{"dateTime":"2026-11-01T09:00:00Z"},
+			"iCalUID":"ev3@google.com","organizer":{"email":"grace@acme.com"},"attendeesOmitted":true,"start":{"dateTime":"2026-11-01T09:00:00Z"},
 			"end":{"dateTime":"2026-11-01T09:30:00Z"}}]}`,
 	},
 	"en.uk#holiday@group.v.calendar.google.com": {
@@ -548,8 +662,8 @@ var googleEvents = map[string]map[string]string{
 	},
 }
 
-// googleRoutes serves googleUsers, googleFiles, googleCalendars and
-// googleEvents, checking each list's query; events must ask for days of
+// googleRoutes serves googleUsers, googleFiles, googleDrives,
+// googleCalendars and googleEvents, checking each list's query; events must ask for days of
 // the past. A calendar id's # unescaped would cut its events' path short.
 func googleRoutes(t *testing.T, days int) map[string]func(*http.Request) (int, string) {
 	routes := map[string]func(*http.Request) (int, string){
@@ -559,13 +673,8 @@ func googleRoutes(t *testing.T, days int) map[string]func(*http.Request) (int, s
 			}
 			return http.StatusOK, googleUsers[r.URL.Query().Get("pageToken")]
 		},
-		"/drive/v3/files": func(r *http.Request) (int, string) {
-			if q := r.URL.Query(); q.Get("q") != "trashed=false" || q.Get("corpora") != "allDrives" || q.Get("includeItemsFromAllDrives") != "true" ||
-				q.Get("supportsAllDrives") != "true" || q.Get("pageSize") != "1000" || q.Get("fields") != googleFileFields {
-				t.Errorf("files query = %s", r.URL.RawQuery)
-			}
-			return http.StatusOK, googleFiles
-		},
+		"/drive/v3/files":  googleFilesRoute(t, googleFiles),
+		"/drive/v3/drives": googleDrivesRoute(t, googleDrives),
 		"/calendar/v3/users/me/calendarList": func(r *http.Request) (int, string) {
 			if r.URL.Query().Get("maxResults") != "250" {
 				t.Errorf("calendar list query = %s", r.URL.RawQuery)
@@ -624,7 +733,8 @@ func TestGoogleSync(t *testing.T) {
 			t.Fatalf("rows = %v", rows)
 		}
 	})
-	t.Run("lists every file, folders and shared drives' included", func(t *testing.T) {
+	// My Drive and what is shared with the user, then each shared drive.
+	t.Run("lists every file, folders and shared drives' included, each once", func(t *testing.T) {
 		want := []map[string]any{
 			{"file_id": "doc1", "name": "Q3  plan", "mime_type": "application/vnd.google-apps.document", "drive_id": nil, "parent_id": "fold1",
 				"owner_email": "ada@acme.com", "last_modifying_user_email": "grace@acme.com", "created_at": "2026-09-01T10:00:00Z",
@@ -639,9 +749,19 @@ func TestGoogleSync(t *testing.T) {
 			{"file_id": "sheet1", "name": "Budget", "mime_type": "application/vnd.google-apps.spreadsheet", "drive_id": nil, "parent_id": nil,
 				"owner_email": "ada@acme.com", "last_modifying_user_email": nil, "created_at": "2026-09-02T10:00:00Z", "modified_at": "2026-10-27T10:00:00Z",
 				"size": nil, "web_view_link": "https://docs.google.com/spreadsheets/d/sheet1/edit", "shared": false, "starred": false},
+			// drv1's PDF was listed with the user's files; its deck is drv1's alone.
+			{"file_id": "deck1", "name": "Pitch", "mime_type": "application/vnd.google-apps.presentation", "drive_id": "drv1", "parent_id": "drv1",
+				"owner_email": nil, "last_modifying_user_email": nil, "created_at": "2026-10-01T10:00:00Z", "modified_at": "2026-10-02T10:00:00Z",
+				"size": nil, "web_view_link": "https://docs.google.com/presentation/d/deck1/edit", "shared": false, "starred": false},
 		}
-		if rows := rowsOf(t, "files"); fmt.Sprint(rows) != fmt.Sprint(want) {
-			t.Fatalf("rows = %v", rows)
+		w := &googleWorkspace{routes: googleRoutes(t, 90)}
+		rows, err := read(t, googleAt(t, w), googleSource(), "files")
+		if err != nil || fmt.Sprint(rows) != fmt.Sprint(want) {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		// Never allDrives, which Drive may search only part of.
+		if lists := w.requested("/drive/v3/files?"); len(lists) != 3 || slices.ContainsFunc(lists, func(l string) bool { return strings.Contains(l, "allDrives") }) {
+			t.Fatalf("listed %v", lists)
 		}
 	})
 	t.Run("lists the user's calendars", func(t *testing.T) {
@@ -661,23 +781,23 @@ func TestGoogleSync(t *testing.T) {
 			t.Fatalf("listed events %v for the calendars table", events)
 		}
 	})
-	// Cancelled events are left out; a calendar that won't list its events is skipped.
+	// Cancelled events are left out; a calendar whose first page is refused is skipped.
 	t.Run("lists each calendar's events in the window", func(t *testing.T) {
 		want := []map[string]any{
 			{"event_id": "ada@acme.com:ev1", "calendar_id": "ada@acme.com", "ical_uid": "ev1@google.com", "summary": "Roadmap",
 				"description": "Q4 plans", "location": "Room 1", "status": "confirmed", "start_at": "2026-10-30T09:00:00Z", "end_at": "2026-10-30T10:00:00Z",
 				"all_day": false, "organizer_email": "ada@acme.com", "creator_email": "ada@acme.com", "recurring_event_id": nil,
 				"html_link": "https://www.google.com/calendar/event?eid=ev1", "created_at": "2026-10-01T09:00:00Z", "updated_at": "2026-10-02T09:00:00Z",
-				"attendee_count": 2},
+				"attendee_count": 2, "attendees_omitted": false},
 			{"event_id": "ada@acme.com:ev3_20261101T090000Z", "calendar_id": "ada@acme.com", "ical_uid": "ev3@google.com", "summary": nil,
 				"description": nil, "location": nil, "status": "tentative", "start_at": "2026-11-01T09:00:00Z", "end_at": "2026-11-01T09:30:00Z",
 				"all_day": false, "organizer_email": "grace@acme.com", "creator_email": nil, "recurring_event_id": "ev3",
-				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0},
+				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0, "attendees_omitted": true},
 			// An all-day event keeps its dates.
 			{"event_id": "en.uk#holiday@group.v.calendar.google.com:hol1", "calendar_id": "en.uk#holiday@group.v.calendar.google.com", "ical_uid": nil,
 				"summary": "Christmas Day", "description": nil, "location": nil, "status": "confirmed", "start_at": "2026-12-25", "end_at": "2026-12-26",
 				"all_day": true, "organizer_email": "en.uk#holiday@group.v.calendar.google.com", "creator_email": nil, "recurring_event_id": nil,
-				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0},
+				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0, "attendees_omitted": false},
 		}
 		w := &googleWorkspace{routes: googleRoutes(t, 90)}
 		rows, err := read(t, googleAt(t, w), googleSource(), "calendar_events")
@@ -736,13 +856,41 @@ func TestGoogleSync(t *testing.T) {
 	// Drive may search only some of the shared drives a user is in.
 	t.Run("refuses a listing Drive says is incomplete", func(t *testing.T) {
 		kind := googleAt(t, &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
-			"/drive/v3/files": func(*http.Request) (int, string) { return http.StatusOK, `{"files":[],"incompleteSearch":true}` },
+			"/drive/v3/files":  func(*http.Request) (int, string) { return http.StatusOK, `{"files":[],"incompleteSearch":true}` },
+			"/drive/v3/drives": googleDrivesRoute(t, googleDrives),
 		}})
 		_, err := read(t, kind, googleSource(), "files")
 		if refusalOf(err) != "Drive searched only part of what ada@acme.com can read; try again later" {
 			t.Fatalf("Sync error = %v, want a refusal", err)
 		}
 	})
+	// Only a shared drive's own first page refused skips it.
+	for name, tc := range map[string]struct {
+		routes func(map[string]func(*http.Request) (int, string))
+		words  string
+	}{
+		"the drives refused": {func(routes map[string]func(*http.Request) (int, string)) {
+			routes["/drive/v3/drives"] = googleFailure(http.StatusForbidden, "Forbidden", "forbidden")
+		}, "this service account cannot read /drive/v3/drives as ada@acme.com; check its access and test again"},
+		"a drive refused after its first page": {func(routes map[string]func(*http.Request) (int, string)) {
+			files := maps.Clone(googleFiles)
+			files["drv2"] = func(r *http.Request) (int, string) {
+				if r.URL.Query().Get("pageToken") == "" {
+					return http.StatusOK, `{"files":[],"nextPageToken":"p1"}`
+				}
+				return googleFailure(http.StatusNotFound, "Shared drive not found: drv2", "notFound")(r)
+			}
+			routes["/drive/v3/files"] = googleFilesRoute(t, files)
+		}, "Google stopped listing /drive/v3/files as ada@acme.com part way through; try again"},
+	} {
+		t.Run("fails the files on "+name, func(t *testing.T) {
+			routes := googleRoutes(t, 90)
+			tc.routes(routes)
+			if _, err := read(t, googleAt(t, &googleWorkspace{routes: routes}), googleSource(), "files"); refusalOf(err) != tc.words {
+				t.Fatalf("Sync error = %v, want %q", err, tc.words)
+			}
+		})
+	}
 	t.Run("stops a list that never ends", func(t *testing.T) {
 		var mu sync.Mutex
 		pages := 0
@@ -780,8 +928,10 @@ func TestGoogleSync(t *testing.T) {
 			words: "could not reach Google; try again"},
 		"events of a disabled API": {events: googleFailure(http.StatusForbidden, "Calendar API is disabled", "accessNotConfigured"),
 			words: "enable the Google Calendar API in the service account's Google Cloud project"},
-		"events refused the key": {events: func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
-			words: "Google rejected this service account key; check it and paste it again"},
+		"events over a quota": {events: googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+			words: "this service account has used up its Google rate limit; try again in a few minutes"},
+		"events refused the token": {events: func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
+			words: "Google refused the Google Calendar API's access token for ada@acme.com; try again"},
 	} {
 		t.Run("fails the event tables on "+name, func(t *testing.T) {
 			noBackoff(t)
@@ -798,6 +948,33 @@ func TestGoogleSync(t *testing.T) {
 				}
 				if _, err := read(t, googleAt(t, &googleWorkspace{routes: routes}), googleSource(), table); refusalOf(err) != tc.words {
 					t.Fatalf("%s: Sync error = %v, want %q", table, err, tc.words)
+				}
+			}
+		})
+	}
+	// A calendar listed in part would publish as whole: only its first page refused skips it.
+	for name, answer := range map[string]func(*http.Request) (int, string){
+		"404":   googleFailure(http.StatusNotFound, "Not Found", "notFound"),
+		"403":   googleFailure(http.StatusForbidden, "Forbidden", "forbidden"),
+		"quota": googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+	} {
+		t.Run("fails a calendar whose later page is refused: "+name, func(t *testing.T) {
+			noBackoff(t)
+			routes := googleRoutes(t, 90)
+			first := routes["/calendar/v3/calendars/ada@acme.com/events"]
+			routes["/calendar/v3/calendars/ada@acme.com/events"] = func(r *http.Request) (int, string) {
+				if r.URL.Query().Get("pageToken") == "" {
+					return first(r)
+				}
+				return answer(r)
+			}
+			words := "Google stopped listing /calendar/v3/calendars/ada@acme.com/events as ada@acme.com part way through; try again"
+			if name == "quota" {
+				words = "this service account has used up its Google rate limit; try again in a few minutes"
+			}
+			for _, table := range []string{"calendar_events", "event_attendees"} {
+				if _, err := read(t, googleAt(t, &googleWorkspace{routes: routes}), googleSource(), table); refusalOf(err) != words {
+					t.Fatalf("%s: Sync error = %v, want %q", table, err, words)
 				}
 			}
 		})
@@ -819,6 +996,96 @@ func TestGoogleSync(t *testing.T) {
 		}})
 		if rows, err := read(t, kind, googleSource(), "calendars"); err != nil || len(rows) != 1 || calls != 2 {
 			t.Fatalf("Sync = (%v, %v) after %d calls", rows, err, calls)
+		}
+	})
+	// Google sends a 403 rate limit or quota without Retry-After.
+	for reason, answer := range map[string]func(*http.Request) (int, string){
+		"userRateLimitExceeded": googleFailure(http.StatusForbidden, "User Rate Limit Exceeded", "userRateLimitExceeded"),
+		"rateLimitExceeded":     googleFailure(http.StatusForbidden, "Rate Limit Exceeded", "rateLimitExceeded"),
+		"quotaExceeded":         googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+		"dailyLimitExceeded":    googleFailure(http.StatusForbidden, "Daily Limit Exceeded", "dailyLimitExceeded"),
+		"usageLimits":           googleFailure(http.StatusForbidden, "Usage limits exceeded", "usageLimits"),
+		"RATE_LIMIT_EXCEEDED": func(*http.Request) (int, string) {
+			return http.StatusForbidden, `{"error":{"code":403,"message":"Quota exceeded","status":"PERMISSION_DENIED",
+				"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]}}`
+		},
+	} {
+		t.Run("retries a 403 that is a rate limit or quota: "+reason, func(t *testing.T) {
+			noBackoff(t)
+			var mu sync.Mutex
+			calls := 0
+			kind := googleAt(t, &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+				"/calendar/v3/users/me/calendarList": func(r *http.Request) (int, string) {
+					mu.Lock()
+					defer mu.Unlock()
+					if calls++; calls < 3 {
+						return answer(r)
+					}
+					return http.StatusOK, `{"items":[{"id":"ada@acme.com"}]}`
+				},
+			}})
+			if rows, err := read(t, kind, googleSource(), "calendars"); err != nil || len(rows) != 1 || calls != 3 {
+				t.Fatalf("Sync = (%v, %v) after %d calls", rows, err, calls)
+			}
+		})
+	}
+	// A request and its retries may outlast a token near its end.
+	t.Run("gets a token for each attempt, and a new one with under five minutes left", func(t *testing.T) {
+		noBackoff(t)
+		calls := 0
+		w := &googleWorkspace{
+			tokens: map[string]func() (int, string){googleDirectory.scope: func() (int, string) {
+				return http.StatusOK, `{"access_token":"token for ` + googleDirectory.scope + `","token_type":"Bearer","expires_in":299}`
+			}},
+			routes: map[string]func(*http.Request) (int, string){
+				"/admin/directory/v1/users": func(r *http.Request) (int, string) {
+					if calls++; calls == 1 {
+						return http.StatusServiceUnavailable, `{}`
+					}
+					return http.StatusOK, googleUsers[r.URL.Query().Get("pageToken")]
+				},
+			},
+		}
+		if rows, err := read(t, googleAt(t, w), googleSource(), "users"); err != nil || len(rows) != 2 {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		if exchanges := w.exchanges(googleDirectory.scope); calls != 3 || exchanges != 3 {
+			t.Fatalf("%d requests under %d tokens, want a token each", calls, exchanges)
+		}
+	})
+	t.Run("retries the token exchange on no answer, a 429 or a 5xx", func(t *testing.T) {
+		noBackoff(t)
+		answers := []int{http.StatusServiceUnavailable, 0, http.StatusTooManyRequests}
+		w := &googleWorkspace{routes: googleRoutes(t, 90), tokens: map[string]func() (int, string){googleCalendar.scope: func() (int, string) {
+			if len(answers) == 0 {
+				return http.StatusOK, `{"access_token":"token for ` + googleCalendar.scope + `","token_type":"Bearer","expires_in":3599}`
+			}
+			status := answers[0]
+			answers = answers[1:]
+			return status, `{"error":"internal_failure"}`
+		}}}
+		if rows, err := read(t, googleAt(t, w), googleSource(), "calendars"); err != nil || len(rows) != 4 {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		if exchanges := w.exchanges(googleCalendar.scope); exchanges != 4 {
+			t.Fatalf("exchanged %d times, want 4", exchanges)
+		}
+	})
+	t.Run("retries a 401 once under a new token", func(t *testing.T) {
+		calls := 0
+		w := &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+			"/calendar/v3/users/me/calendarList": func(*http.Request) (int, string) {
+				if calls++; calls == 1 {
+					return http.StatusUnauthorized, `{"error":{"code":401,"message":"Invalid Credentials","errors":[{"reason":"authError"}]}}`
+				}
+				return http.StatusOK, `{"items":[{"id":"ada@acme.com"}]}`
+			},
+		}}
+		if rows, err := read(t, googleAt(t, w), googleSource(), "calendars"); err != nil || len(rows) != 1 {
+			t.Fatalf("Sync = (%v, %v)", rows, err)
+		}
+		if exchanges := w.exchanges(googleCalendar.scope); calls != 2 || exchanges != 2 {
+			t.Fatalf("%d requests under %d tokens", calls, exchanges)
 		}
 	})
 	// A limit that outlasts the retries fails the attempt with a message the syncer retries on.
@@ -934,10 +1201,11 @@ func TestGoogleDocuments(t *testing.T) {
 			"/drive/v3/files": func(r *http.Request) (int, string) {
 				return http.StatusOK, googleDocFiles[r.URL.Query().Get("pageToken")]
 			},
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`}),
 		}
 		for id, text := range googleExports {
 			routes["/drive/v3/files/"+id+"/export"] = func(r *http.Request) (int, string) {
-				if r.URL.RawQuery != "mimeType=text%2Fmarkdown" {
+				if r.URL.RawQuery != "mimeType=text%2Fmarkdown" && r.URL.RawQuery != "mimeType=text%2Fplain" {
 					t.Errorf("export query = %s", r.URL.RawQuery)
 				}
 				if answer := exports[id]; answer != nil {
@@ -962,7 +1230,10 @@ func TestGoogleDocuments(t *testing.T) {
 		}
 		return sinks, err
 	}
-	offers := []string{"docs doc2 1|2026-10-25T08:00:00Z|7", "docs doc3 1|2026-10-22T09:00:00+01:00|", "docs doc1 1|2026-10-20T15:30:00.250Z|42"}
+	// A version is a render revision, the modified time, Drive's version and
+	// a digest of the title, owner and link.
+	offers := []string{"docs doc2 1|2026-10-25T08:00:00Z|7|8430dcdfb5160d84", "docs doc3 1|2026-10-22T09:00:00+01:00||ccacfd0c71e8f746",
+		"docs doc1 1|2026-10-20T15:30:00.250Z|42|bbec1dadc8dd09af"}
 
 	// The syncer keeps the first documents offered up to its cap, so the newest come first.
 	t.Run("offers each Doc once the listing is whole, newest first, and writes what it wants", func(t *testing.T) {
@@ -976,12 +1247,12 @@ func TestGoogleDocuments(t *testing.T) {
 			t.Fatalf("offers = %q, rows = %d", docs.offers, len(sinks["files"].rows))
 		}
 		want := []Document{
-			{ExternalID: "doc2", Version: "1|2026-10-25T08:00:00Z|7", At: time.Date(2026, 10, 25, 8, 0, 0, 0, time.UTC),
+			{ExternalID: "doc2", Version: "1|2026-10-25T08:00:00Z|7|8430dcdfb5160d84", At: time.Date(2026, 10, 25, 8, 0, 0, 0, time.UTC),
 				URL: "https://docs.google.com/document/d/doc2/edit", Text: []byte("# Untitled document\n\nLast modified: 2026-10-25 08:00 UTC\nFile id: doc2\n")},
-			{ExternalID: "doc3", Version: "1|2026-10-22T09:00:00+01:00|", At: time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC), Title: "Notes",
+			{ExternalID: "doc3", Version: "1|2026-10-22T09:00:00+01:00||ccacfd0c71e8f746", At: time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC), Title: "Notes",
 				URL:  "http://docs.google.com/document/d/doc3/edit",
 				Text: []byte("# Notes\n\nOwner: grace@acme.com\nLast modified: 2026-10-22 08:00 UTC\nFile id: doc3\n\ncaf\uFFFD\n")},
-			{ExternalID: "doc1", Version: "1|2026-10-20T15:30:00.250Z|42", At: time.Date(2026, 10, 20, 15, 30, 0, 25e7, time.UTC), Title: "Q3 plan",
+			{ExternalID: "doc1", Version: "1|2026-10-20T15:30:00.250Z|42|bbec1dadc8dd09af", At: time.Date(2026, 10, 20, 15, 30, 0, 25e7, time.UTC), Title: "Q3 plan",
 				URL:  "https://docs.google.com/document/d/doc1/edit",
 				Text: []byte("# Q3 plan\n\nOwner: ada@acme.com\nLast modified: 2026-10-20 15:30 UTC\nFile id: doc1\n\n## Goals\n\nShip it.\n")},
 		}
@@ -1006,8 +1277,73 @@ func TestGoogleDocuments(t *testing.T) {
 			t.Fatalf("offers = %q, puts = %v, exports = %v", docs.offers, docs.putNames(), exports)
 		}
 	})
-	// Drive exports at most 10 MB, and an owner may keep viewers from downloading.
-	t.Run("skips a Doc Drive won't export", func(t *testing.T) {
+	// What the text shows beside the export may change without the Doc: an owner's email renamed.
+	t.Run("versions a Doc by its title, owner and link too", func(t *testing.T) {
+		for _, edit := range []func(string) string{
+			func(page string) string { return strings.Replace(page, "Ada@acme.com", "ada.lovelace@acme.com", 1) },
+			func(page string) string { return strings.Replace(page, `"Q3  plan"`, `"Q3 plans"`, 1) },
+			func(page string) string {
+				return strings.Replace(page, "document/d/doc1/edit", "document/d/doc1/view", 1)
+			},
+		} {
+			routes := docRoutes(t, nil)
+			routes["/drive/v3/files"] = func(r *http.Request) (int, string) {
+				return http.StatusOK, edit(googleDocFiles[r.URL.Query().Get("pageToken")])
+			}
+			docs := &granolaDocs{}
+			if _, err := pass(t, googleAt(t, &googleWorkspace{routes: routes}), []Table{{Name: "files"}}, docs); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(docs.offers[:2], offers[:2]) || !strings.HasPrefix(docs.offers[2], "docs doc1 1|2026-10-20T15:30:00.250Z|42|") ||
+				docs.offers[2] == offers[2] {
+				t.Fatalf("offers = %q", docs.offers)
+			}
+		}
+	})
+	// Drive writes each image's bytes into the Markdown as a data URI.
+	t.Run("leaves images out of a Doc's text, keeping their alt text", func(t *testing.T) {
+		const markdown = "## Goals\n\n![][image1]\n\nShip it. ![Q3 chart][image2] See [the plan][plan] and ![a link][plan].\n\n" +
+			"[plan]: https://example.com/plan\n[image1]: <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==>\n\n" +
+			"[image2]: <data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==>"
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
+			"doc1": func(*http.Request) (int, string) { return http.StatusOK, markdown },
+		})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); err != nil || len(docs.puts) != 3 {
+			t.Fatalf("SyncPass = %v, puts = %v", err, docs.putNames())
+		}
+		want := "# Q3 plan\n\nOwner: ada@acme.com\nLast modified: 2026-10-20 15:30 UTC\nFile id: doc1\n\n" +
+			"## Goals\n\n\n\nShip it. Q3 chart See [the plan][plan] and ![a link][plan].\n\n[plan]: https://example.com/plan\n"
+		if text := string(docs.puts[2].doc.Text); text != want {
+			t.Fatalf("text = %q, want %q", text, want)
+		}
+	})
+	// Images count toward Drive's 10 MB export limit, and plain text has none.
+	t.Run("exports a Doc over the limit as plain text", func(t *testing.T) {
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
+			"doc1": func(r *http.Request) (int, string) {
+				if r.URL.Query().Get("mimeType") == "text/markdown" {
+					return googleFailure(http.StatusForbidden, "This file is too large to be exported.", "exportSizeLimitExceeded")(r)
+				}
+				return http.StatusOK, "\uFEFFGoals\r\n\r\nShip it.\r\n"
+			},
+		})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); err != nil || len(docs.puts) != 3 {
+			t.Fatalf("SyncPass = %v, puts = %v", err, docs.putNames())
+		}
+		want := "# Q3 plan\n\nOwner: ada@acme.com\nLast modified: 2026-10-20 15:30 UTC\nFile id: doc1\n\nGoals\n\nShip it.\n"
+		if text := string(docs.puts[2].doc.Text); text != want {
+			t.Fatalf("text = %q, want %q", text, want)
+		}
+		if exports := w.requested("/drive/v3/files/doc1/export"); fmt.Sprint(exports) !=
+			"[/drive/v3/files/doc1/export?mimeType=text%2Fmarkdown /drive/v3/files/doc1/export?mimeType=text%2Fplain]" {
+			t.Fatalf("exports = %v", exports)
+		}
+	})
+	// A Doc its owner keeps viewers from exporting, one over the limit even
+	// as plain text, and one gone since the listing can't be documents now.
+	t.Run("drops a Doc Drive won't export to the user", func(t *testing.T) {
 		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
 			"doc1": googleFailure(http.StatusForbidden, "This file is too large to be exported.", "exportSizeLimitExceeded"),
 			"doc2": googleFailure(http.StatusNotFound, "File not found: doc2.", "notFound"),
@@ -1015,18 +1351,73 @@ func TestGoogleDocuments(t *testing.T) {
 		})}
 		docs := &granolaDocs{want: map[string]bool{"docs": true}}
 		sinks, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs)
-		if err != nil || len(docs.offers) != 3 || len(docs.puts) != 0 || len(sinks["files"].rows) != 4 {
-			t.Fatalf("SyncPass = %v, offers = %q, puts = %v", err, docs.offers, docs.putNames())
+		if err != nil || len(docs.offers) != 3 || len(docs.puts) != 0 || len(sinks["files"].rows) != 4 ||
+			fmt.Sprint(docs.drops) != "[docs doc2 docs doc3 docs doc1]" {
+			t.Fatalf("SyncPass = %v, offers = %q, puts = %v, drops = %v", err, docs.offers, docs.putNames(), docs.drops)
+		}
+	})
+	// Drive lists whether the user may download a Doc, which exporting it is:
+	// one they may not is never offered, so a full read removes what the stream holds of it.
+	t.Run("offers no Doc the user may not download", func(t *testing.T) {
+		w := &googleWorkspace{routes: docRoutes(t, nil)}
+		w.routes["/drive/v3/files"] = func(r *http.Request) (int, string) {
+			page := googleDocFiles[r.URL.Query().Get("pageToken")]
+			return http.StatusOK, strings.Replace(page, `"version":"42"`, `"version":"42","capabilities":{"canDownload":false}`, 1)
+		}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		sinks, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs)
+		if err != nil || !slices.Equal(docs.offers, offers[:2]) || len(sinks["files"].rows) != 4 || len(w.requested("/drive/v3/files/doc1/")) != 0 {
+			t.Fatalf("SyncPass = %v, offers = %q, exports = %v", err, docs.offers, w.requested("/drive/v3/files/"))
+		}
+	})
+	// One Doc that won't export must not fail every sync at the same point.
+	t.Run("skips a Doc Drive fails to export, counting it", func(t *testing.T) {
+		noBackoff(t)
+		before := testutil.ToFloat64(googleDocsSkipped)
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){
+			"doc2": func(*http.Request) (int, string) { return http.StatusBadGateway, `` },
+			"doc3": func(*http.Request) (int, string) { return 0, `` },
+		})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); err != nil || fmt.Sprint(docs.putNames()) != "[docs doc1]" || len(docs.drops) != 0 {
+			t.Fatalf("SyncPass = %v, puts = %v, drops = %v", err, docs.putNames(), docs.drops)
+		}
+		if skipped := testutil.ToFloat64(googleDocsSkipped) - before; skipped != 2 {
+			t.Fatalf("counted %v skipped", skipped)
+		}
+		if exports := len(w.requested("/drive/v3/files/doc2/export")); exports != 1+maxRetries {
+			t.Fatalf("exported doc2 %d times, want it retried", exports)
+		}
+	})
+	// That many in a row is Drive failing, not the Docs.
+	t.Run("fails when Drive fails to export three Docs in a row", func(t *testing.T) {
+		noBackoff(t)
+		outage := func(*http.Request) (int, string) { return http.StatusServiceUnavailable, `{}` }
+		w := &googleWorkspace{routes: docRoutes(t, map[string]func(*http.Request) (int, string){"doc1": outage, "doc2": outage, "doc3": outage})}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		if _, err := pass(t, googleAt(t, w), []Table{{Name: "files"}}, docs); refusalOf(err) != "could not reach Google; try again" || len(docs.puts) != 0 {
+			t.Fatalf("SyncPass error = %v after %v, want a refusal", err, docs.putNames())
+		}
+	})
+	t.Run("gives an export longer than a list's request", func(t *testing.T) {
+		kind := googleAt(t, &googleWorkspace{})
+		c, err := kind.client(googleSource())
+		if err != nil || c.exports.Timeout != 2*time.Minute || kind.http.Timeout != 30*time.Second || c.exports.Transport != kind.http.Transport {
+			t.Fatalf("client = %v, export timeout = %s, the kind's %s", err, c.exports.Timeout, kind.http.Timeout)
 		}
 	})
 	for name, tc := range map[string]struct {
 		answer func(*http.Request) (int, string)
 		words  string
 	}{
-		"an outage":      {func(*http.Request) (int, string) { return http.StatusBadGateway, `` }, "could not reach Google; try again"},
-		"a rejected key": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` }, "Google rejected this service account key; check it and paste it again"},
+		"a refused token": {func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
+			"Google refused the Drive API's access token for ada@acme.com; try again"},
 		"a rate limit": {googleFailure(http.StatusForbidden, "Rate Limit Exceeded", "rateLimitExceeded"),
 			"this service account has used up its Google rate limit; try again in a few minutes"},
+		"a disabled API": {googleFailure(http.StatusForbidden, "Drive API is disabled", "accessNotConfigured"),
+			"enable the Drive API in the service account's Google Cloud project"},
+		"another error code": {googleFailure(http.StatusBadRequest, "Invalid Value", "invalid"),
+			"Google returned HTTP 400 for /drive/v3/files/doc2/export"},
 	} {
 		t.Run("fails an export answered with "+name, func(t *testing.T) {
 			noBackoff(t)
@@ -1039,6 +1430,7 @@ func TestGoogleDocuments(t *testing.T) {
 	}
 	t.Run("fails a Doc listed without its modified time", func(t *testing.T) {
 		kind := googleAt(t, &googleWorkspace{routes: map[string]func(*http.Request) (int, string){
+			"/drive/v3/drives": googleDrivesRoute(t, map[string]string{"": `{}`}),
 			"/drive/v3/files": func(*http.Request) (int, string) {
 				return http.StatusOK, `{"files":[{"id":"doc1","name":"Q3 plan","mimeType":"application/vnd.google-apps.document"}]}`
 			},
