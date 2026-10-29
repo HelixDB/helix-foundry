@@ -2,11 +2,13 @@ package syncer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,13 +21,15 @@ import (
 // slackAccount is a Slack workspace a test edits between syncs: Ada, and
 // #general, the one channel the app is in, with its messages and each
 // thread's replies by their ts. Its token has every scope the guide asks
-// for. It counts conversations.replies calls, and waits wait before
-// answering a read of the window's history, when set.
+// for. It counts conversations.replies calls, keeps the UTC day each read
+// of history from a day on starts from, and waits wait before answering
+// one, when set.
 type slackAccount struct {
 	mu       sync.Mutex
 	messages map[string]string   // ts: text
 	replies  map[string][]string // a thread parent's ts: its replies' ts, each said "Re: <parent's text>"
 	threads  int
+	since    []string
 	wait     func()
 }
 
@@ -63,6 +67,11 @@ func (a *slackAccount) serve(t *testing.T) string {
 		case "conversations.members":
 			body = page("members", []string{`"U1"`})
 		case "conversations.history":
+			if q := r.URL.Query(); q.Has("oldest") && !q.Has("latest") {
+				seconds, _, _ := strings.Cut(q.Get("oldest"), ".")
+				unix, _ := strconv.ParseInt(seconds, 10, 64)
+				a.since = append(a.since, time.Unix(unix, 0).UTC().Format(time.DateOnly))
+			}
 			var listed []string
 			for _, ts := range slices.Backward(slices.Sorted(maps.Keys(a.messages))) {
 				listed = append(listed, message(ts, a.messages[ts], a.replies[ts]))
@@ -95,11 +104,20 @@ func (a *slackAccount) took() int {
 	return threads
 }
 
-// TestSlackSyncDocuments runs Slack through the syncer: the first sync
-// fills the conversations set with a document per channel day, an
-// unchanged sync reads no thread and writes nothing, a reply replaces only
-// its day's document, and a day whose messages are gone loses its document
-// with its row.
+// read are the days history was read from since the last call.
+func (a *slackAccount) read() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	since := a.since
+	a.since = nil
+	return since
+}
+
+// TestSlackSyncDocuments runs Slack through the syncer on Free, which reads
+// in full on every sync: the first sync fills the conversations set with a
+// document per channel day, an unchanged sync reads no thread and writes
+// nothing, a reply replaces only its day's document, and a day whose
+// messages are gone loses its document with its row.
 func TestSlackSyncDocuments(t *testing.T) {
 	// The connector counts its window from the wall clock.
 	today := time.Now().UTC().Truncate(24 * time.Hour)
@@ -110,7 +128,7 @@ func TestSlackSyncDocuments(t *testing.T) {
 		messages: map[string]string{ts(kickoff): "Kickoff", ts(standup): "Standup"},
 		replies:  map[string][]string{ts(kickoff): {ts(kickoff.Add(30 * time.Minute))}},
 	}
-	f := newFixture(t, "http://unused", "slack", `{"history_days":7}`, plan{code: "pro"})
+	f := newFixture(t, "http://unused", "slack", `{"history_days":7}`, plan{code: "free"})
 	endpoints := connector.DefaultEndpoints()
 	endpoints.Slack = account.serve(t)
 	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
@@ -140,7 +158,9 @@ func TestSlackSyncDocuments(t *testing.T) {
 
 	// Nothing changed: every day is held at its version, so no thread is read and nothing is written.
 	publishes := len(f.store.publishes)
-	f.run(t, "sync-2")
+	if res := f.run(t, "sync-2"); res.Mode != model.ConnectorSyncFull {
+		t.Fatalf("mode = %s", res.Mode)
+	}
 	if threads := account.took(); threads != 0 || len(f.store.publishes) != publishes {
 		t.Fatalf("threads read = %d, publishes = %d", threads, len(f.store.publishes)-publishes)
 	}
@@ -150,7 +170,9 @@ func TestSlackSyncDocuments(t *testing.T) {
 	account.mu.Lock()
 	account.replies[ts(standup)] = []string{ts(standup.Add(time.Hour))}
 	account.mu.Unlock()
-	f.run(t, "sync-3")
+	if res := f.run(t, "sync-3"); res.Mode != model.ConnectorSyncFull {
+		t.Fatalf("mode = %s", res.Mode)
+	}
 	if threads := account.took(); threads != 1 {
 		t.Fatalf("threads read = %d; want the standup's", threads)
 	}
@@ -174,17 +196,17 @@ func TestSlackSyncDocuments(t *testing.T) {
 	}
 }
 
-// TestSlackSyncNearDeadline runs a Slack sync that reaches its documents
-// too near its attempt's deadline: it fetches none, and the conversations
-// set keeps what it holds, though their days changed, until the next sync
-// writes them, all but today's.
+// TestSlackSyncNearDeadline runs a full read of Slack that reaches its
+// documents too near its attempt's deadline: it fetches none, and the
+// conversations set keeps what it holds, though their days changed, until
+// the next full read writes them, all but today's.
 func TestSlackSyncNearDeadline(t *testing.T) {
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
 	ts := func(t time.Time) string { return fmt.Sprintf("%d.000000", t.Unix()) }
 	kickoff, standup := at(2, 9*time.Hour), at(1, 9*time.Hour)
 	account := &slackAccount{messages: map[string]string{ts(kickoff): "Kickoff", ts(standup): "Standup"}, replies: map[string][]string{}}
-	f := newFixture(t, "http://unused", "slack", `{"history_days":7}`, plan{code: "pro"})
+	f := newFixture(t, "http://unused", "slack", `{"history_days":7}`, plan{code: "free"})
 	endpoints := connector.DefaultEndpoints()
 	endpoints.Slack = account.serve(t)
 	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
@@ -227,5 +249,112 @@ func TestSlackSyncNearDeadline(t *testing.T) {
 	}
 	if rows := f.snapshotRows(t, "channel_days"); len(rows) != 3 {
 		t.Fatalf("channel_days = %q", rows)
+	}
+}
+
+// TestSlackSyncChanges runs Slack on Pro, whose syncs after the first
+// follow messages and channel days by reading history again from the
+// cursor's day: an unchanged sync reads today alone and changes nothing, a
+// message today changes its rows and writes no document, an edit on an
+// older day waits for the reconcile, a cursor a sync before midnight left
+// reads yesterday again, where a day emptied loses its row and its
+// document, and the reconcile 24 hours after the full read reads in full.
+func TestSlackSyncChanges(t *testing.T) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
+	ts := func(t time.Time) string { return fmt.Sprintf("%d.000000", t.Unix()) }
+	day := func(t time.Time) string { return t.Format(time.DateOnly) }
+	kickoff, standup, midnight := at(2, 9*time.Hour), at(1, 9*time.Hour), at(0, 0)
+	account := &slackAccount{messages: map[string]string{ts(kickoff): "Kickoff", ts(standup): "Standup"}, replies: map[string][]string{}}
+	f := newFixture(t, "http://unused", "slack", `{"history_days":7}`, plan{code: "pro"})
+	endpoints := connector.DefaultEndpoints()
+	endpoints.Slack = account.serve(t)
+	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
+	edit := func(change func()) {
+		account.mu.Lock()
+		defer account.mu.Unlock()
+		change()
+	}
+	days := func(t *testing.T) []string {
+		t.Helper()
+		var ids []string
+		for _, row := range f.snapshotRows(t, "channel_days") {
+			var d struct {
+				ID string `json:"channel_day_id"`
+			}
+			if err := json.Unmarshal([]byte(row), &d); err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, d.ID)
+		}
+		return ids
+	}
+
+	if res, read := f.run(t, "sync-1"), account.read(); res.Mode != model.ConnectorSyncFull || !slices.Equal(read, []string{day(at(7, 0))}) {
+		t.Fatalf("mode = %s, history read from %q", res.Mode, read)
+	}
+	first := f.held(t, "conversations")
+	if len(first) != 2 {
+		t.Fatalf("conversations = %q", first)
+	}
+
+	// Unchanged: today's history alone is read, and nothing changes.
+	publishes := len(f.store.publishes)
+	if res := f.run(t, "sync-2"); res.Mode != model.ConnectorSyncChanges || len(res.Changed) != 0 || len(f.store.publishes) != publishes {
+		t.Fatalf("mode = %s, changed = %v", res.Mode, res.Changed)
+	}
+	if read := account.read(); !slices.Equal(read, []string{day(today)}) {
+		t.Fatalf("history read from %q", read)
+	}
+
+	// A message today: its rows change, and the day gets no document while it lasts.
+	edit(func() { account.messages[ts(midnight)] = "Midnight" })
+	res := f.run(t, "sync-3")
+	if slices.Sort(res.Changed); res.Mode != model.ConnectorSyncChanges || !slices.Equal(res.Changed, []string{"channel_days", "messages"}) {
+		t.Fatalf("mode = %s, changed = %v", res.Mode, res.Changed)
+	}
+	if got := days(t); !slices.Equal(got, []string{"C1:" + day(kickoff), "C1:" + day(standup), "C1:" + day(today)}) {
+		t.Fatalf("channel_days = %q", got)
+	}
+	if got := f.held(t, "conversations"); fmt.Sprint(got) != fmt.Sprint(first) {
+		t.Fatalf("conversations = %q", got)
+	}
+
+	// An edit two days ago is a day no change read reads again.
+	edit(func() { account.messages[ts(kickoff)] = "Kickoff, edited" })
+	if res := f.run(t, "sync-4"); res.Mode != model.ConnectorSyncChanges || len(res.Changed) != 0 || fmt.Sprint(f.held(t, "conversations")) != fmt.Sprint(first) {
+		t.Fatalf("mode = %s, changed = %v", res.Mode, res.Changed)
+	}
+	account.read()
+
+	// The cursor a sync before midnight left reads yesterday again: the
+	// standup deleted, its day loses its row and its document.
+	var cursor map[string]any
+	if err := json.Unmarshal(f.store.connectors["conn-1"].ChangeCursor, &cursor); err != nil || cursor["day"] != day(today) {
+		t.Fatalf("cursor = %s", f.store.connectors["conn-1"].ChangeCursor)
+	}
+	cursor["day"] = day(standup)
+	f.store.connectors["conn-1"].ChangeCursor, _ = json.Marshal(cursor)
+	edit(func() { delete(account.messages, ts(standup)) })
+	if res, read := f.run(t, "sync-5"), account.read(); res.Mode != model.ConnectorSyncChanges || !slices.Equal(read, []string{day(standup)}) {
+		t.Fatalf("mode = %s, history read from %q", res.Mode, read)
+	}
+	if got := days(t); !slices.Equal(got, []string{"C1:" + day(kickoff), "C1:" + day(today)}) {
+		t.Fatalf("channel_days = %q", got)
+	}
+	if got := f.held(t, "conversations"); len(got) != 1 || got["C1:"+day(kickoff)] != first["C1:"+day(kickoff)] {
+		t.Fatalf("conversations = %q", got)
+	}
+	if rows := f.snapshotRows(t, "messages"); len(rows) != 2 {
+		t.Fatalf("messages = %q", rows)
+	}
+
+	// A day after the full read, the reconcile reads in full and finds the edit.
+	f.syncer.Now = func() time.Time { return time.Now().Add(25 * time.Hour) }
+	if res, read := f.run(t, "sync-6"), account.read(); res.Mode != model.ConnectorSyncFull || !slices.Equal(read, []string{day(at(7, 0))}) {
+		t.Fatalf("mode = %s, history read from %q", res.Mode, read)
+	}
+	if got := f.held(t, "conversations")["C1:"+day(kickoff)]; !strings.Contains(got, "Kickoff, edited") {
+		t.Fatalf("kickoff = %q", got)
 	}
 }
