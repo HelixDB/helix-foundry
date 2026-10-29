@@ -82,8 +82,9 @@ func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 // Each page the pages table upserts has its document offered as a full
 // read offers it (document); one Notion no longer finds loses its pages
 // row. What moves no page's last edit waits for the daily reconcile: a
-// page shared, unshared or trashed without one, a formula or rollup whose
-// inputs are on other pages, and a select option renamed.
+// page shared, unshared or trashed without one, a row moved out of its data
+// source (its old table keeps it), a formula or rollup whose inputs are on
+// other pages, and a select option renamed.
 func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cursor json.RawMessage, w ChangeWriter) (json.RawMessage, error) {
 	next := notionSince(time.Now())
 	var prev notionCursor
