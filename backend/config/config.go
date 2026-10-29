@@ -3,7 +3,7 @@
 // (koanf tags, with HELIX_ environment overrides), so the same settings mean
 // the same thing in every deployment:
 //
-//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events
+//	foundry.*                Foundry           connectors, sync, ontologies, AI, documents, graph, read, ask, enrichment, events, notify
 //	billing.autumn.foundry.* Billing           the plan catalog and the checkout return page
 //	backend.foundry_read.*   Read              where the API reaches foundry-read
 //
@@ -87,7 +87,7 @@ func (l *LiveAIDefault) Store(d DetectedAIDefault) { l.v.Store(&d) }
 
 // Foundry is the foundry block: connectors and their credentials, syncs,
 // ontologies and their models, documents, graph loads, reads, questions,
-// People enrichment and event sources.
+// People enrichment, event sources and the emails Foundry sends.
 type Foundry struct {
 	Connectors ConnectorsConfig `koanf:"connectors"`
 	Sync       SyncConfig       `koanf:"sync"`
@@ -99,6 +99,50 @@ type Foundry struct {
 	Ask        AskConfig        `koanf:"ask"`
 	Enrichment EnrichmentConfig `koanf:"enrichment"`
 	Events     EventsConfig     `koanf:"events"`
+	Notify     NotifyConfig     `koanf:"notify"`
+}
+
+// NotifyConfig drives the foundry-notify-worker, which emails people
+// through the host's mail (ports.Mail): when an ontology's first draft
+// they asked to load when ready has ended, loaded or not, and once, a day
+// after they watched the sample draft one, to try Foundry on their own
+// data. Its settings are checked where it runs (Validate).
+type NotifyConfig struct {
+	// SiteURL is the Foundry site's origin, such as
+	// https://foundry.helix-db.com, which the emails link into.
+	SiteURL string `koanf:"site_url"`
+	// PollInterval is how often the worker looks for emails to send, then
+	// sends those due.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	// FollowUpAfter is how long after the sample's run its follow-up goes.
+	// FollowUpWindow is how long after it the follow-up still may: a run
+	// that ended longer ago gets none, so a first deploy emails no one about
+	// old runs. It bounds, as well, how long a first draft's email waits for
+	// its load to end.
+	FollowUpAfter  time.Duration `koanf:"follow_up_after"`
+	FollowUpWindow time.Duration `koanf:"follow_up_window"`
+	// MaxAttempts is how many times an email is tried before it fails.
+	MaxAttempts int `koanf:"max_attempts"`
+}
+
+// Validate checks the worker's settings where it runs; the
+// foundry-notify-worker checks them as it starts, too.
+func (n NotifyConfig) Validate() error {
+	switch {
+	case n.PollInterval <= 0 || n.MaxAttempts < 1:
+		return fmt.Errorf("foundry.notify poll_interval and max_attempts must be positive")
+	case n.FollowUpAfter <= 0 || n.FollowUpWindow <= n.FollowUpAfter:
+		return fmt.Errorf("foundry.notify.follow_up_after must be positive, and follow_up_window longer than it")
+	case n.SiteURL == "":
+		return fmt.Errorf("foundry.notify.site_url must be set when 'foundry-notify-worker' is in tasks: the Foundry site's origin, such as https://foundry.helix-db.com")
+	}
+	switch origin, err := validatedApplicationOrigin(n.SiteURL); {
+	case err != nil:
+		return fmt.Errorf("foundry.notify.site_url: %w", err)
+	case origin != n.SiteURL:
+		return fmt.Errorf("foundry.notify.site_url %q must be an origin, such as https://foundry.helix-db.com, with no path", n.SiteURL)
+	}
+	return nil
 }
 
 // EnrichmentProvider is who the foundry-enrichment-worker looks people
@@ -1163,8 +1207,9 @@ type Roles struct {
 	Read, Events bool
 	// The workers, by their tasks: foundry-sync-worker,
 	// foundry-document-worker, foundry-ontology-worker, foundry-graph-worker,
-	// foundry-ask-worker and foundry-enrichment-worker.
-	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker bool
+	// foundry-ask-worker, foundry-enrichment-worker and
+	// foundry-notify-worker.
+	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
@@ -1255,6 +1300,11 @@ func (c *Config) validateRoles(roles Roles) error {
 	}
 	if roles.Events {
 		if err := f.Events.Endpoint.Validate(f.Events.MaxSendBytes); err != nil {
+			return err
+		}
+	}
+	if roles.NotifyWorker {
+		if err := f.Notify.Validate(); err != nil {
 			return err
 		}
 	}
@@ -1547,6 +1597,11 @@ func Defaults() Config {
 		PollInterval:         5 * time.Second,
 		Lease:                2 * time.Minute,
 		MaxPeople:            2_000_000,
+	}, Notify: NotifyConfig{
+		PollInterval:   30 * time.Second,
+		FollowUpAfter:  24 * time.Hour,
+		FollowUpWindow: 72 * time.Hour,
+		MaxAttempts:    5,
 	}},
 		Billing: Billing{Plans: DefaultPlans()},
 	}

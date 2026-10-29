@@ -1,6 +1,6 @@
 # Helix Foundry backend
 
-The Go module `github.com/helixdb/helix-foundry/backend`: Foundry's API and the workers behind it. They connect and sync data sources, have the ontology agent draft and revise ontologies, load versions into HelixDB, read documents and answer questions over a load. State is in MySQL (`store`, with its migrations embedded from `store/migrations`); synced tables and documents are in S3-compatible storage.
+The Go module `github.com/helixdb/helix-foundry/backend`: Foundry's API and the workers behind it. They connect and sync data sources, have the ontology agent draft and revise ontologies, load versions into HelixDB, read documents, answer questions over a load and email people when their work is done. State is in MySQL (`store`, with its migrations embedded from `store/migrations`); synced tables and documents are in S3-compatible storage.
 
 ## Build and test
 
@@ -29,3 +29,5 @@ buf generate && buf generate --template buf.internal.gen.yaml
 ## Hosted Helix
 
 Hosted Helix (foundry.helix-db.com) runs this same code as a library inside its own server. It runs the module's migrations in one sequence with its own, and supplies what differs when hosted, such as sign-in and roles, workspaces, Helix databases and plans, through the module's interfaces. So REST paths and JSON shapes, tables and migrations, config keys, environment variable names and metric names are shared with the hosted deployment: change them on purpose, never as a side effect.
+
+Foundry's emails go out through the host's mail (`ports.Mail`) from the `foundry-notify-worker` (package `workers/foundry-notify-worker`), which hosted runs as a task beside the sync worker, with `foundry.notify.site_url` set to the site's origin. It tells the person who asked for an ontology's first draft to be loaded when ready how that ended, and follows up once, a day later, with someone who watched the sample and brought no data of their own. A standalone install sends no email and doesn't run it.
