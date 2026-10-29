@@ -247,7 +247,8 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 			token = prev.Drives[drive]
 		}
 		if token == "" {
-			token, err = c.startPageToken(ctx, drive)
+			// A token now means the full read can list the drive: it takes every feed's new token.
+			_, err = c.startPageToken(ctx, drive)
 			switch {
 			case errors.Is(err, errNoAccess):
 				next.Drives[drive] = ""
@@ -512,7 +513,7 @@ func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string,
 }
 
 // googleEventGone removes a cancelled event's rows from the followed
-// tables, the attendees wrote holds of it included.
+// tables, the attendees of it this read wrote (wrote) included.
 func googleEventGone(w ChangeWriter, follow map[string]bool, eventID string, wrote map[string][]map[string]any) error {
 	if follow["calendar_events"] {
 		if err := w.Delete("calendar_events", map[string]any{"event_id": eventID}); err != nil {
@@ -535,8 +536,8 @@ func googleEventGone(w ChangeWriter, follow map[string]bool, eventID string, wro
 }
 
 // googleEventChanged writes a changed event's rows to the followed tables,
-// its attendees' in place of the ones it had and of those wrote holds of it,
-// and records them in wrote.
+// its attendees' in place of the ones the table held and the ones this read
+// wrote of it (wrote), and records them in wrote.
 func googleEventChanged(w ChangeWriter, follow map[string]bool, row map[string]any, people []map[string]any,
 	wrote map[string][]map[string]any) error {
 	if follow["calendar_events"] {
