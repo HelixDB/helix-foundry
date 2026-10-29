@@ -19,6 +19,9 @@ var documentKinds = map[string]struct {
 		"note_folders": {"note_id", "folder_id"}, "folders": {"folder_id"}, "spaces": {"space_id"}}},
 	"events": {settings: json.RawMessage(`{"description":"Replies to customers","text_field":"reply"}`), keys: map[string][]string{
 		"events": {"id"}}},
+	"slack": {settings: json.RawMessage(`{"history_days":90}`), keys: map[string][]string{
+		"users": {"user_id"}, "channels": {"channel_id"}, "channel_members": {"channel_id", "user_id"},
+		"messages": {"message_id"}, "channel_days": {"channel_day_id"}}},
 }
 
 // streamProblems lists what keeps streams from being synced: a stream the
