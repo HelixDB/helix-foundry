@@ -516,6 +516,21 @@ func TestSlackConnector(t *testing.T) {
 			t.Fatalf("warnings = %q", d.Warnings)
 		}
 	})
+	t.Run("lists no history for an app in no channel without a history scope", func(t *testing.T) {
+		kind, _ := slackScoped(t, "channels:read,groups:read,users:read", with(newSlackWorkspace().routes(), map[string]string{"users.conversations": slackPage("channels")}))
+		d, err := kind.Discover(ctx, Source{Secret: slackTestToken})
+		if err != nil || !slices.Equal(tableNames(d), []string{"users", "channels", "channel_members"}) {
+			t.Fatalf("Discover = (%+v, %v)", d, err)
+		}
+		for _, u := range d.Unavailable {
+			if u.Reason != "add the channels:history scope to the app and reinstall it" {
+				t.Errorf("%s unavailable: %q", u.Name, u.Reason)
+			}
+		}
+		if len(d.Unavailable) != 2 || len(d.Warnings) != 1 {
+			t.Fatalf("unavailable = %+v, warnings = %q", d.Unavailable, d.Warnings)
+		}
+	})
 	t.Run("says nothing of invites when it cannot read channels", func(t *testing.T) {
 		kind, _ := slackAt(t, with(newSlackWorkspace().routes(), map[string]string{
 			"users.conversations": slackPage("channels"), "conversations.list": slackScope("channels:read"),

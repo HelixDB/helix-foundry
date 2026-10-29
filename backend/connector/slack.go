@@ -277,6 +277,10 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 			readsHistory = true
 		}
 	}
+	// In no channel yet, the scopes alone say whether it may read history.
+	if len(joined) == 0 && !auth.scopes.has(slackHistoryScope(false)) && !auth.scopes.has(slackHistoryScope(true)) {
+		history[false] = "add the " + slackHistoryScope(false) + " scope to the app and reinstall it"
+	}
 	d := saasDiscovery(slackObjects, func(name string) bool {
 		switch name {
 		case "users", "channels":
