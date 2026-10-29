@@ -250,14 +250,16 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
     <ol>
       <li>
         Open{" "}
-        <External href="https://api.slack.com/apps">your apps in Slack</External>
+        <External href="https://api.slack.com/apps">
+          your apps in Slack
+        </External>
         , click <strong>Create New App</strong> and choose{" "}
         <strong>From scratch</strong>. Name it “Helix Foundry” and pick your
         workspace.
       </li>
       <li>
-        Under <strong>OAuth &amp; Permissions</strong>, add the Bot Token
-        Scopes <code>channels:read</code>, <code>channels:history</code>,{" "}
+        Under <strong>OAuth &amp; Permissions</strong>, add the Bot Token Scopes{" "}
+        <code>channels:read</code>, <code>channels:history</code>,{" "}
         <code>groups:read</code>, <code>groups:history</code>,{" "}
         <code>users:read</code> and <code>users:read.email</code>.
       </li>
@@ -326,9 +328,9 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
         </pre>
       </li>
       <li>
-        Paste the JSON key below, and an admin’s email as Acts as. Foundry
-        reads Drive and Calendar as that user, and each Google Doc they can
-        open becomes a document.
+        Paste the JSON key below, and an admin’s email as Acts as. Foundry reads
+        Drive and Calendar as that user, and each Google Doc they can open
+        becomes a document.
       </li>
     </ol>
   ),

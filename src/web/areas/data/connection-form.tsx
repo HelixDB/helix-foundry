@@ -381,10 +381,6 @@ export function ConnectionForm({
                 value={form.subject}
                 onChange={(e) => update("subject", e.target.value)}
               />
-              <small className="muted">
-                The email of a Workspace user. An admin, to read the
-                Directory’s users.
-              </small>
             </label>
             <label>
               Days of past events
