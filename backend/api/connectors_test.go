@@ -3,7 +3,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -786,6 +790,55 @@ func TestGranolaConnectorConfig(t *testing.T) {
 		})
 	}
 	if _, err := configToProto("granola", json.RawMessage(`{"transcripts":"yes"}`)); err == nil {
+		t.Fatal("configToProto read settings Prepare never stores")
+	}
+}
+
+// Google's settings store the user in lower case and its days of past
+// events, 90 unless chosen; the config rebuilt from them carries no key.
+func TestGoogleConnectorConfig(t *testing.T) {
+	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{}, connector.S3Options{}, connector.EventsOptions{})
+	private, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := json.Marshal(map[string]string{
+		"type": "service_account", "client_email": "foundry@acme.iam.gserviceaccount.com", "private_key_id": "5c1e0d9f1a2b",
+		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
+	})
+	config := func(key, subject string, days int32) *foundryv1.ConnectorConfig {
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{
+			ServiceAccountKey: key, Subject: subject, EventDays: days,
+		}}}
+	}
+	for _, tc := range []struct {
+		subject    string
+		days, kept int32
+		stored     string
+	}{
+		{" Ada@Acme.com ", 0, 90, `{"subject":"ada@acme.com","event_days":90}`},
+		{"ada@acme.com", 30, 30, `{"subject":"ada@acme.com","event_days":30}`},
+	} {
+		t.Run(tc.stored, func(t *testing.T) {
+			kind, src, secretless, err := sourceFromProto(catalog, config("  "+string(key)+"\n", tc.subject, tc.days))
+			if err != nil || kind.Name() != "google" || secretless || src.Secret != string(key) {
+				t.Fatalf("source = (%v, %s, %v, %v)", kind, src.Settings, secretless, err)
+			}
+			settings, err := kind.Prepare(src)
+			if err != nil || string(settings) != tc.stored || kind.Hint(src.Secret) != "foundry@acme.iam.gserviceaccount.com…1a2b" {
+				t.Fatalf("prepare = (%s, %v), hint = %q", settings, err, kind.Hint(src.Secret))
+			}
+			got, err := configToProto("google", settings)
+			if err != nil || !proto.Equal(got, config("", "ada@acme.com", tc.kept)) {
+				t.Fatalf("config = (%v, %v)", got, err)
+			}
+		})
+	}
+	if _, err := configToProto("google", json.RawMessage(`{"subject":1}`)); err == nil {
 		t.Fatal("configToProto read settings Prepare never stores")
 	}
 }
