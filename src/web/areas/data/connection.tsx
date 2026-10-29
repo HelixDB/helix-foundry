@@ -110,6 +110,19 @@ function details(c: Connector): KeyValueItem[] {
       label: "Documents",
       value: config.granola.transcripts ? "Notes and transcripts" : "Notes",
     });
+  if (config && "slack" in config)
+    items.push({
+      label: "Message history",
+      value: plural(config.slack.historyDays || 90, "day"),
+    });
+  if (config && "google" in config)
+    items.push(
+      { label: "Acts as", value: config.google.subject, mono: true },
+      {
+        label: "Event history",
+        value: plural(config.google.eventDays || 90, "day"),
+      },
+    );
   if (config && "github" in config) {
     const g = config.github;
     items.push(

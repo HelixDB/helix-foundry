@@ -2,7 +2,7 @@
 
 Connect your company's data, let an agent draft an ontology over it, and load it into [HelixDB](https://docs.helix-db.com) as one connected graph you can explore and ask questions of.
 
-- Connect PostgreSQL, MySQL, Amazon S3, Stripe, PostHog, WorkOS, GitHub, Linear, Granola and Cal.com, and upload documents (Markdown, text, PDF) and table files (CSV, TSV, JSON, JSON Lines, Parquet).
+- Connect PostgreSQL, MySQL, Amazon S3, Stripe, PostHog, WorkOS, GitHub, Linear, Granola, Cal.com, Slack, Notion and Google Workspace, and upload documents (Markdown, text, PDF) and table files (CSV, TSV, JSON, JSON Lines, Parquet).
 - An agent drafts the ontology: types, links, the tables and documents each comes from, and rules. You review it, edit it and make a version current.
 - A load writes the version into HelixDB. Explore it as a graph or as records, follow every value back to its row or its quote, and ask questions with cited answers.
 

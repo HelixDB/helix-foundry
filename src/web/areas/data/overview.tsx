@@ -161,7 +161,7 @@ export function DataOverview() {
           ) : empty ? (
             <EmptyState
               title="No data connected"
-              text="Connect an app such as Stripe, GitHub, Linear, Cal.com or Granola, a PostgreSQL or MySQL database, or files in Amazon S3."
+              text="Connect an app such as Stripe, GitHub, Slack, Notion or Google Workspace, a PostgreSQL or MySQL database, or files in Amazon S3."
               action={addData}
             />
           ) : (

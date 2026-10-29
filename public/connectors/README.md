@@ -54,4 +54,18 @@ Brand guidelines: https://cal.com/brand
 Granola spiral mark from svgl (MIT), its light-background logo in Granola's #1E1E1E, the same spiral as Granola's favicon (https://www.granola.ai/favicon/favicon.svg). The clip path around the full canvas was removed.
 Source: https://svgl.app/library/granola-light.svg (https://github.com/pheralb/svgl)
 
-Dark variants (`<name>-dark.svg`, shown in the dark theme by `logoUrl` in `src/web/kit/SourceLogo.tsx`): the same artwork with its near-black or dark-blue parts made white, as the brands show on dark backgrounds. `planetscale-dark.svg` fills the mark with white, `mysql-wordmark-dark.svg` makes the blue wordmark white and keeps the orange dolphin, `posthog-dark.svg` makes the black hedgehog white, and `github-dark.svg`, `calcom-dark.svg` and `granola-dark.svg` make the mark white.
+Slack mark from Simple Icons 15.22.0 (CC0), using Slack's aubergine #4A154B. Simple Icons dropped it in 16.0.0 at Salesforce's request; 15.22.0 is its last release with it.
+Brand guidelines: https://slack.com/brand-guidelines
+Source: https://github.com/simple-icons/simple-icons/blob/15.22.0/icons/slack.svg
+License: https://creativecommons.org/publicdomain/zero/1.0/
+
+Notion mark from Simple Icons v16.35.0 (CC0), using Notion's #000000, as Simple Icons takes it from https://www.notion.so.
+Source: https://github.com/simple-icons/simple-icons
+License: https://creativecommons.org/publicdomain/zero/1.0/
+
+Google "G" from Simple Icons v16.35.0 (CC0), using Google's blue #4285F4.
+Brand guidelines: https://about.google/brand-resource-center/brand-elements/
+Source: https://github.com/simple-icons/simple-icons
+License: https://creativecommons.org/publicdomain/zero/1.0/
+
+Dark variants (`<name>-dark.svg`, shown in the dark theme by `logoUrl` in `src/web/kit/SourceLogo.tsx`): the same artwork with its near-black or dark-blue parts made white, as the brands show on dark backgrounds. `planetscale-dark.svg` fills the mark with white, `mysql-wordmark-dark.svg` makes the blue wordmark white and keeps the orange dolphin, `posthog-dark.svg` makes the black hedgehog white, and `github-dark.svg`, `calcom-dark.svg`, `granola-dark.svg`, `slack-dark.svg` (its aubergine) and `notion-dark.svg` make the mark white.
