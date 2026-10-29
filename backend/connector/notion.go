@@ -5,7 +5,9 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -35,6 +37,9 @@ const (
 	// notionPreviewRows the rows a test shows of each data source.
 	notionPageSize    = 100
 	notionPreviewRows = 5
+	// notionMinPageSize is the fewest results list asks for of a page Notion
+	// could not build in time.
+	notionMinPageSize = 10
 	// maxNotionName is the longest name, in bytes, a table or column takes
 	// from a Notion title, before any _2 that makes it unique.
 	maxNotionName = 63
@@ -47,6 +52,21 @@ var notionInterval = time.Second / 3
 
 // maxNotionPages bounds one list, at 100 results a page. Tests lower it.
 var maxNotionPages = 20_000
+
+// notionWait is how long do waits before a retry: the Retry-After Notion
+// asks for, up to a minute, as Notion's own SDK waits (an integration's
+// limit asks for at most a minute; a workspace's may ask for more, which
+// the retries wait out a minute at a time), else retryBackoff's doubling.
+// Tests replace it.
+var notionWait = func(attempt int, retryAfter string) time.Duration {
+	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+		return min(time.Duration(seconds)*time.Second, time.Minute)
+	}
+	return retryBackoff(attempt, "")
+}
+
+// errNotionSlow is a page of results Notion could not build in time.
+var errNotionSlow = errors.New("notion could not answer in time")
 
 // The fixed tables' columns, and those every data source's table starts
 // with. Columns are typed by the JSON they hold, as an API source's are;
@@ -241,47 +261,70 @@ func (k *notionKind) client(secret string) *notionClient {
 	return &notionClient{k: k, secret: strings.TrimSpace(secret), pace: rate.NewLimiter(rate.Every(notionInterval), 1)}
 }
 
-// do sends one Notion request, paced and retried by fetch: a GET of path
-// with query, or with body a POST of it as JSON. A rate limit that
-// outlasts the retries is refused with when to try again, so the sync
-// retries rather than failing for good; Notion's Retry-After is in seconds.
-// An answer Notion could not give (5xx) is an outage, like no answer.
+// do sends one Notion request, paced: a GET of path with query, or with
+// body a POST of it as JSON. It retries a rate limit and an outage up to
+// maxRetries times, waiting notionWait. A request for more than
+// notionMinPageSize results that Notion could not answer in time (503,
+// 504) is not retried here: Notion's remedy is a smaller page_size, which
+// list asks for (errNotionSlow). A rate limit that outlasts the retries is
+// refused with when to try again, so the sync retries rather than failing
+// for good; Notion's Retry-After is in seconds. An answer Notion could not
+// give (5xx) is an outage, like no answer.
 func (c *notionClient) do(ctx context.Context, path string, query url.Values, body map[string]any) (int, []byte, error) {
 	target := c.k.base + path
 	if len(query) > 0 {
 		target += "?" + query.Encode()
 	}
 	method, payload := http.MethodGet, []byte(nil)
+	size, _ := strconv.Atoi(query.Get("page_size"))
 	if body != nil {
 		method = http.MethodPost
 		payload, _ = json.Marshal(body) // strings, numbers and maps of them always encode
+		size, _ = body["page_size"].(int)
 	}
-	status, header, raw, err := fetchWithHeader(ctx, c.k.http, func() (*http.Request, error) {
+	for attempt := 0; ; attempt++ {
 		if err := c.pace.Wait(ctx); err != nil {
-			return nil, err
+			return 0, nil, refused(err, "could not reach Notion; try again")
 		}
-		req, err := http.NewRequest(method, target, bytes.NewReader(payload))
-		if err == nil {
-			req.Header = http.Header{"Authorization": {"Bearer " + c.secret}, "Notion-Version": {notionVersion}}
-			if body != nil {
-				req.Header.Set("Content-Type", "application/json")
+		req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(payload))
+		if err != nil {
+			return 0, nil, err
+		}
+		req.Header = http.Header{"Authorization": {"Bearer " + c.secret}, "Notion-Version": {notionVersion}}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		res, err := c.k.http.Do(req)
+		if err != nil {
+			return 0, nil, refused(err, "could not reach Notion; try again")
+		}
+		raw, err := io.ReadAll(io.LimitReader(res.Body, maxPageBytes))
+		res.Body.Close()
+		if err != nil {
+			return 0, nil, refused(err, "could not reach Notion; try again")
+		}
+		status, retryAfter := res.StatusCode, res.Header.Get("Retry-After")
+		switch {
+		case (status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) && size > notionMinPageSize:
+			return 0, nil, refused(fmt.Errorf("HTTP %d for %s: %w", status, path, errNotionSlow), "could not reach Notion; try again")
+		case (status == http.StatusTooManyRequests || status >= 500) && attempt < maxRetries:
+			select {
+			case <-ctx.Done():
+				return 0, nil, refused(ctx.Err(), "could not reach Notion; try again")
+			case <-time.After(notionWait(attempt, retryAfter)):
 			}
+			continue
+		case status == http.StatusTooManyRequests:
+			when := "in a few minutes"
+			if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+				when = "after " + time.Now().Add(time.Duration(seconds)*time.Second).UTC().Format("15:04 UTC")
+			}
+			return 0, nil, refused(nil, "this integration has used up its Notion rate limit; try again %s", when)
+		case status >= 500:
+			return 0, nil, refused(fmt.Errorf("HTTP %d for %s", status, path), "could not reach Notion; try again")
 		}
-		return req, err
-	})
-	switch {
-	case err != nil:
-		return 0, nil, refused(err, "could not reach Notion; try again")
-	case status == http.StatusTooManyRequests:
-		when := "in a few minutes"
-		if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
-			when = "after " + time.Now().Add(time.Duration(seconds)*time.Second).UTC().Format("15:04 UTC")
-		}
-		return 0, nil, refused(nil, "this integration has used up its Notion rate limit; try again %s", when)
-	case status >= 500:
-		return 0, nil, refused(fmt.Errorf("HTTP %d for %s", status, path), "could not reach Notion; try again")
+		return status, raw, nil
 	}
-	return status, raw, nil
 }
 
 func notionStatus(status int, path string) error {
@@ -323,23 +366,37 @@ func (c *notionClient) page(ctx context.Context, path string, query url.Values, 
 	return l, nil
 }
 
-// list pages through a Notion list, a GET with its cursor in the query
-// without body, else a POST with it in body, and passes each result to
-// each. It says whether Notion cut the list at its result limit. An
-// incomplete page fails the attempt: ending early would publish a partial table.
-func (c *notionClient) list(ctx context.Context, path string, body map[string]any, each func(map[string]any) error) (cut bool, err error) {
-	query := url.Values{"page_size": {strconv.Itoa(notionPageSize)}}
-	body = maps.Clone(body)
-	if body != nil {
-		query = nil
-		body["page_size"] = notionPageSize
+// list pages through a Notion list, a GET with its cursor in query without
+// body, else a POST with it in body, and passes each result to each. It
+// says whether Notion cut the list at its result limit. An incomplete page
+// fails the attempt: ending early would publish a partial table. A page
+// Notion could not build in time is asked for again with half the results,
+// down to notionMinPageSize, for the rest of the list.
+func (c *notionClient) list(ctx context.Context, path string, query url.Values, body map[string]any, each func(map[string]any) error) (cut bool, err error) {
+	query, body = maps.Clone(query), maps.Clone(body)
+	if query == nil {
+		query = url.Values{}
 	}
-	cursor := ""
+	set := func(key string, value any) {
+		if body == nil {
+			query.Set(key, fmt.Sprint(value))
+		} else {
+			body[key] = value
+		}
+	}
+	size, cursor := notionPageSize, ""
+	set("page_size", size)
 	for page := 0; ; page++ {
 		if page == maxNotionPages {
 			return false, fmt.Errorf("notion %s: more than %d pages", path, maxNotionPages)
 		}
 		l, err := c.page(ctx, path, query, body)
+		if errors.Is(err, errNotionSlow) {
+			size = max(size/2, notionMinPageSize)
+			set("page_size", size)
+			page--
+			continue
+		}
 		if err != nil {
 			return false, err
 		}
@@ -359,11 +416,7 @@ func (c *notionClient) list(ctx context.Context, path string, body map[string]an
 			return l.RequestStatus.Type == "incomplete", nil
 		}
 		cursor = next
-		if body == nil {
-			query.Set("start_cursor", cursor)
-		} else {
-			body["start_cursor"] = cursor
-		}
+		set("start_cursor", cursor)
 	}
 }
 
@@ -375,7 +428,7 @@ func (c *notionClient) list(ctx context.Context, path string, body map[string]an
 func notionSearch[T any](ctx context.Context, c *notionClient, object string, parse func(id string, item map[string]any) (T, error)) ([]T, error) {
 	at := map[string]int{}
 	var all []T
-	cut, err := c.list(ctx, "/v1/search", map[string]any{
+	cut, err := c.list(ctx, "/v1/search", nil, map[string]any{
 		"filter": map[string]any{"property": "object", "value": object},
 		"sort":   map[string]any{"timestamp": "last_edited_time", "direction": "ascending"},
 	}, func(item map[string]any) error {
@@ -409,7 +462,7 @@ func notionSearch[T any](ctx context.Context, c *notionClient, object string, pa
 // bots, not its guests, and a person's email only when the integration may
 // read emails.
 func (c *notionClient) users(ctx context.Context, w RowWriter) error {
-	_, err := c.list(ctx, "/v1/users", nil, func(u map[string]any) error { // the users list has no result limit
+	_, err := c.list(ctx, "/v1/users", nil, nil, func(u map[string]any) error { // the users list has no result limit
 		id, _ := u["id"].(string)
 		if id == "" {
 			return fmt.Errorf("notion /v1/users: a listed user has no id")
@@ -641,7 +694,7 @@ func (c *notionClient) rows(ctx context.Context, s notionSource, w RowWriter) er
 	at := map[string]bool{} // the rows created at since
 	for {
 		added := 0
-		cut, err := c.list(ctx, s.path(), body, func(item map[string]any) error {
+		cut, err := c.list(ctx, s.path(), nil, body, func(item map[string]any) error {
 			p, err := notionPageOf(s.path(), item)
 			switch {
 			case err != nil:

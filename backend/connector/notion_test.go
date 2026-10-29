@@ -588,6 +588,23 @@ func TestNotionValues(t *testing.T) {
 	}
 }
 
+// notionWaits makes do's retries wait no time, and records the Retry-After
+// each was asked to wait.
+func notionWaits(t *testing.T) *[]string {
+	t.Helper()
+	saved := notionWait
+	var mu sync.Mutex
+	var asked []string
+	notionWait = func(_ int, retryAfter string) time.Duration {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, retryAfter)
+		return 0
+	}
+	t.Cleanup(func() { notionWait = saved })
+	return &asked
+}
+
 // notionUsers serves the users list in two pages.
 func notionUsers(t *testing.T) func(*http.Request) (int, string) {
 	return func(r *http.Request) (int, string) {
@@ -835,7 +852,7 @@ func TestNotionSync(t *testing.T) {
 	})
 	// A limit that outlasts the retries fails the attempt with a message the syncer retries on.
 	t.Run("refuses a rate limit that outlasts the retries, saying when to try again", func(t *testing.T) {
-		noBackoff(t)
+		waits := notionWaits(t)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Retry-After", "120")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -854,6 +871,52 @@ func TestNotionSync(t *testing.T) {
 		at := strings.TrimPrefix(refusedErr.Message, prefix)
 		if early, late := before.Add(2*time.Minute).UTC().Format("15:04 UTC"), after.Add(2*time.Minute).UTC().Format("15:04 UTC"); at != early && at != late {
 			t.Fatalf("retry at %q, want %s", at, early)
+		}
+		if fmt.Sprint(*waits) != "[120 120 120 120 120 120]" {
+			t.Fatalf("waits = %v, want each of the 6 retries to wait the Retry-After", *waits)
+		}
+	})
+	// Notion's own SDK waits as long as Retry-After asks, up to a minute.
+	t.Run("waits the Retry-After Notion asks for, up to a minute", func(t *testing.T) {
+		noBackoff(t)
+		for retryAfter, want := range map[string]time.Duration{"45": 45 * time.Second, "60": time.Minute, "120": time.Minute, "": 0, "soon": 0, "-5": 0} {
+			if got := notionWait(2, retryAfter); got != want {
+				t.Errorf("notionWait(%q) = %s, want %s", retryAfter, got, want)
+			}
+		}
+	})
+	// Notion's remedy for a query it can't answer in time is a smaller page_size.
+	t.Run("asks for half the results of a page Notion could not build in time, for the rest of the list", func(t *testing.T) {
+		var asked []string
+		kind := notionAt(t, notionRoutes{"/v1/users": func(r *http.Request) (int, string) {
+			q := r.URL.Query()
+			asked = append(asked, q.Get("page_size")+" "+q.Get("start_cursor"))
+			switch len(asked) {
+			case 1:
+				return http.StatusServiceUnavailable, `{"code":"service_unavailable"}`
+			case 2:
+				return http.StatusGatewayTimeout, `{"code":"gateway_timeout"}`
+			case 3:
+				return http.StatusOK, notionMore("u1", notionAdaJSON)
+			}
+			return http.StatusOK, notionResults(notionGraceJSON)
+		}})
+		rows, err := read(t, kind, "users")
+		if err != nil || len(rows) != 2 || fmt.Sprint(asked) != "[100  50  25  25 u1]" {
+			t.Fatalf("Sync = (%v, %v), asked = %q", rows, err, asked)
+		}
+	})
+	t.Run("retries a page that times out at the fewest results, then refuses", func(t *testing.T) {
+		noBackoff(t)
+		var asked []string
+		kind := notionAt(t, notionRoutes{"/v1/users": func(r *http.Request) (int, string) {
+			asked = append(asked, r.URL.Query().Get("page_size"))
+			return http.StatusGatewayTimeout, `{"code":"gateway_timeout"}`
+		}})
+		_, err := read(t, kind, "users")
+		notionRefusal(t, err, "could not reach Notion; try again")
+		if want := "[100 50 25 12 10 10 10 10 10 10 10]"; fmt.Sprint(asked) != want || !strings.Contains(err.Error(), "HTTP 504 for /v1/users") {
+			t.Fatalf("asked = %v, want %s; error = %v", asked, want, err)
 		}
 	})
 	t.Run("refuses an outage that outlasts the retries", func(t *testing.T) {
