@@ -333,14 +333,14 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 // history_days UTC days before today and today, with one
 // conversations.history page per 999 messages. The messages make the
 // channel_days rows and, when that table is read, its documents, offered
-// newest first once every channel is read; a day's thread replies are read
-// only when its document is wanted. Users are read whenever documents are,
-// to name people.
+// most recently active first once every channel is read; a day's thread
+// replies are read only when its document is wanted, and users.list, to
+// name people, once a document is (or the users table is read).
 func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
 	var s SlackSettings
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
 	p := &slackPass{c: k.client(src.Secret), read: map[string]bool{}, rows: rows, docs: docs,
-		people: map[string]string{}, channels: map[string]string{}, days: map[string]*slackDay{}}
+		channels: map[string]string{}, days: map[string]*slackDay{}}
 	for _, table := range tables {
 		if !slices.ContainsFunc(slackObjects, func(o saasTable) bool { return o.name == table.Name }) {
 			return tables, invalid("Slack has no object %q", table.Name)
@@ -360,10 +360,14 @@ type slackPass struct {
 	docs DocumentWriter
 	// keep is set when the pass keeps messages for documents: their table
 	// is read and their stream is not paused.
-	keep     bool
-	team     string
-	scopes   slackScopes
-	people   map[string]string // user id: real name, else handle
+	keep   bool
+	team   string
+	scopes slackScopes
+	// people names user ids by real name, else handle, once users.list is
+	// read, and is nil before; byID is set when the app may not read users,
+	// so documents name people by id.
+	people   map[string]string
+	byID     bool
 	channels map[string]string // channel id: name
 	days     map[string]*slackDay
 	kept     int // the bytes of messages days keep
@@ -384,23 +388,12 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 	if history && !p.scopes.has("channels:history") && !p.scopes.has("groups:history") {
 		return refused(errMissingScope, "add the channels:history scope to the app and reinstall it")
 	}
-	if p.read["users"] || p.keep {
-		err := c.pages(ctx, "users.list", "members", url.Values{"limit": {slackListPage}}, func(raw json.RawMessage) error {
-			var u slackUser
-			if json.Unmarshal(raw, &u) != nil || u.ID == "" {
-				return errors.New("slack users.list: a listed user has no id")
-			}
-			p.people[u.ID] = cmp.Or(u.RealName, u.Profile.RealName, u.Name, u.ID)
-			if !p.read["users"] {
-				return nil
-			}
-			return p.rows["users"].Write(u.row())
-		})
-		// Documents name people by id when the app may not read users.
-		if err != nil && (p.read["users"] || !errors.Is(err, errMissingScope)) {
+	if p.read["users"] {
+		if err := p.users(ctx); err != nil {
 			return err
 		}
 	}
+	p.byID = p.people == nil && !p.scopes.has("users:read")
 	if p.read["channels"] {
 		err := c.pages(ctx, "conversations.list", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
 			func(raw json.RawMessage) error {
@@ -484,9 +477,31 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		if err := p.rows["channel_days"].Write(d.row()); err != nil {
 			return err
 		}
-		version := d.version()
+		version, named := p.version(d)
+		if !named {
+			// Until a document needs users.list, a day the stream holds with
+			// these messages keeps the names it was written with, unless
+			// they were ids. Another is offered at its version without
+			// names, which no document has: Want answers the same for any
+			// version but the one held, and its Put carries the whole one.
+			unnamed := strings.TrimSuffix(version, "?")
+			if held, ok := p.docs.Held(slackConversations.Name, d.id()); ok && strings.HasPrefix(held, unnamed) && held != unnamed+"ids" {
+				version = held
+			}
+		}
 		if !p.docs.Want(slackConversations.Name, d.id(), version) {
 			continue
+		}
+		if !named {
+			// Documents name people by id when the app may not read users.
+			err := p.users(ctx)
+			switch {
+			case errors.Is(err, errMissingScope):
+				p.people, p.byID = nil, true
+			case err != nil:
+				return err
+			}
+			version, _ = p.version(d)
 		}
 		text, ok, err := p.document(ctx, d)
 		if err != nil {
@@ -502,6 +517,23 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		}
 	}
 	return nil
+}
+
+// users reads users.list for the names documents give people, writing the
+// users table's rows when it is read.
+func (p *slackPass) users(ctx context.Context) error {
+	p.people = map[string]string{}
+	return p.c.pages(ctx, "users.list", "members", url.Values{"limit": {slackListPage}}, func(raw json.RawMessage) error {
+		var u slackUser
+		if json.Unmarshal(raw, &u) != nil || u.ID == "" {
+			return errors.New("slack users.list: a listed user has no id")
+		}
+		p.people[u.ID] = cmp.Or(u.RealName, u.Profile.RealName, u.Name, u.ID)
+		if !p.read["users"] {
+			return nil
+		}
+		return p.rows["users"].Write(u.row())
+	})
 }
 
 // message writes a listed message's row and counts it into its channel
@@ -521,7 +553,8 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	day := m.at.Format(time.DateOnly)
 	d := p.days[ch.ID+":"+day]
 	if d == nil {
-		d = &slackDay{channel: ch, day: day, first: m.at, last: m.at, active: m.at, dropped: !p.keep}
+		d = &slackDay{channel: ch, day: day, first: m.at, last: m.at, active: m.at, users: map[string]bool{}, mentioned: map[string]bool{},
+			dropped: !p.keep}
 		p.days[d.id()] = d
 	}
 	d.count++
@@ -539,9 +572,22 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	if active.After(d.active) {
 		d.active = active
 	}
-	digest := sha256.Sum256([]byte(strings.Join([]string{m.TS, m.Edited.TS, m.Text, strconv.Itoa(m.ReplyCount), m.LatestReply}, "\x00")))
+	digest := sha256.Sum256([]byte(strings.Join([]string{m.TS, m.Edited.TS, m.Text, strconv.Itoa(m.ReplyCount), m.LatestReply,
+		m.ThreadTS, m.Subtype, m.User, m.BotID, m.Username, m.BotProfile.Name}, "\x00")))
 	for i := range d.sum {
 		d.sum[i] ^= digest[i]
+	}
+	// The names its line takes from users.list and the channel lists.
+	if m.User != "" {
+		d.users[m.User] = true
+	}
+	for _, span := range slackTokenSpan.FindAllStringSubmatch(m.Text, -1) {
+		switch target := slackUnescape.Replace(span[1]); {
+		case strings.HasPrefix(target, "@"):
+			d.users[target[1:]] = true
+		case strings.HasPrefix(target, "#") && span[2] == "":
+			d.mentioned[target[1:]] = true
+		}
 	}
 	if d.dropped {
 		return nil
@@ -691,10 +737,13 @@ type slackDay struct {
 	// active is the day's latest activity: its last message, or the latest
 	// reply to a thread one of them started, when later. It is its
 	// document's time and orders the stream.
-	active   time.Time
-	sum      [sha256.Size]byte
-	messages []slackMessage
-	bytes    int
+	active time.Time
+	sum    [sha256.Size]byte
+	// users are the users its messages name, as authors and @mentions, and
+	// mentioned the channels they mention without a label.
+	users, mentioned map[string]bool
+	messages         []slackMessage
+	bytes            int
 	// cut counts the latest messages left out of messages, past slackDayBytes.
 	cut int
 	// dropped is a day whose messages are not kept, to be read again if its
@@ -718,16 +767,37 @@ func (d *slackDay) keep(m slackMessage) int {
 
 func (d *slackDay) id() string { return d.channel.ID + ":" + d.day }
 
-// version is the day's document's version: a render revision, to bump
-// whenever its text changes for the same messages, then 40 hex digits of a
-// SHA-256 of the channel's name and what conversations.history says of each
-// message (its ts, edit, text, reply count and latest reply), which
-// changes when one is posted, edited, deleted or replied to. The messages'
-// digests combine by XOR, so the order Slack lists them in doesn't count.
-// An edited reply changes none of it.
-func (d *slackDay) version() string {
-	sum := sha256.Sum256(append([]byte(d.channel.Name+"\x00"), d.sum[:]...))
-	return "1|" + hex.EncodeToString(sum[:20])
+// version is d's document's version, "2|<content>|<people>": a render
+// revision, to bump whenever its text changes for the same messages and
+// names; 40 hex digits of a SHA-256 of the channel's name, what
+// conversations.history says of each message (its ts, edit, text, thread,
+// reply count, latest reply, subtype and author) and the names of the
+// channels they mention without a label; then "ids" when people are named
+// by id, else 16 hex digits of a SHA-256 of the name of each user they
+// name. It changes when a message is posted, edited, deleted or replied
+// to, or a name its messages render changes. The messages' digests
+// combine by XOR, so the order Slack lists them in doesn't count. A
+// reply's edit, or the name of who wrote it, changes none of it. named is
+// false while users.list is unread and d names users: people is then "?".
+func (p *slackPass) version(d *slackDay) (_ string, named bool) {
+	content := sha256.New()
+	content.Write([]byte(d.channel.Name + "\x00"))
+	content.Write(d.sum[:])
+	for _, id := range slices.Sorted(maps.Keys(d.mentioned)) {
+		content.Write([]byte(id + "\x00" + p.channels[id] + "\x00"))
+	}
+	version := "2|" + hex.EncodeToString(content.Sum(nil)[:20]) + "|"
+	switch {
+	case p.byID:
+		return version + "ids", true
+	case p.people == nil && len(d.users) > 0:
+		return version + "?", false
+	}
+	people := sha256.New()
+	for _, id := range slices.Sorted(maps.Keys(d.users)) {
+		people.Write([]byte(id + "\x00" + p.people[id] + "\x00"))
+	}
+	return version + hex.EncodeToString(people.Sum(nil)[:8]), true
 }
 
 func (d *slackDay) row() map[string]any {

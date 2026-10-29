@@ -1132,7 +1132,7 @@ func TestSlackDocuments(t *testing.T) {
 				t.Errorf("%s =\n%s\nwant\n%s", id, text, want[id])
 			}
 		}
-		version := regexp.MustCompile(`^1\|[0-9a-f]{40}$`)
+		version := regexp.MustCompile(`^2\|[0-9a-f]{40}\|[0-9a-f]{16}$`)
 		// #general's 28th is as recent as its thread's latest reply.
 		at := []time.Time{time.Date(2026, 10, 29, 14, 0, 0, 0, time.UTC), time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC),
 			time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
@@ -1207,12 +1207,12 @@ func TestSlackDocuments(t *testing.T) {
 			t.Fatalf("offers = %q, puts = %v, calls = %q", docs.offers, docs.putNames(), calls.log)
 		}
 	})
-	t.Run("versions a day by what Slack says of its messages", func(t *testing.T) {
+	t.Run("versions a day by what Slack says of its messages and the names they render", func(t *testing.T) {
 		offered := func(t *testing.T, w *slackWorkspace) map[string]string {
 			t.Helper()
 			kind, _ := slackAt(t, w.routes())
 			docs := &granolaDocs{}
-			if _, err := slackRead(t, kind, slackTables[3:], docs); err != nil {
+			if _, err := slackRead(t, kind, []Table{{Name: "users"}, {Name: "messages"}, {Name: "channel_days"}}, docs); err != nil {
 				t.Fatal(err)
 			}
 			return versions(docs)
@@ -1249,9 +1249,26 @@ func TestSlackDocuments(t *testing.T) {
 				w.history["C1"] = append([]string{fmt.Sprintf(`{"user":"U1","text":"Late","ts":%q}`, slackTS("2026-10-28T23:00:00Z"))}, w.history["C1"]...)
 			}, []string{"C1:2026-10-28"}},
 			"a message is deleted": {func(w *slackWorkspace) { w.history["C1"] = slices.Delete(w.history["C1"], 4, 5) }, []string{"C1:2026-10-27"}},
+			// #design mentions #general without a label, so by its name.
 			"the channel is renamed": {func(w *slackWorkspace) {
 				w.joined[0] = `{"id":"C1","name":"announcements","is_member":true}`
-			}, []string{"C1:2026-10-27", "C1:2026-10-28"}},
+			}, []string{"C1:2026-10-27", "C1:2026-10-28", "C2:2026-10-29"}},
+			// #general's 28th mentions #design by its label.
+			"a channel mentioned by its label is renamed": {func(w *slackWorkspace) {
+				w.joined[1] = `{"id":"C2","name":"ux","is_private":true,"is_member":true}`
+			}, []string{"C2:2026-10-29"}},
+			"a person a message mentions is renamed": {func(w *slackWorkspace) {
+				w.users[1] = strings.Replace(w.users[1], "Grace Hopper", "Grace Brewster Hopper", 1)
+			}, []string{"C1:2026-10-28"}},
+			"a person who wrote and is mentioned is renamed": {func(w *slackWorkspace) {
+				w.users[0] = strings.ReplaceAll(w.users[0], "Ada Lovelace", "Ada King")
+			}, []string{"C1:2026-10-27", "C1:2026-10-28", "C2:2026-10-29"}},
+			"a person no message names is renamed": {func(w *slackWorkspace) {
+				w.users[3] = strings.ReplaceAll(w.users[3], "Deploy Bot", "Deployer")
+			}, nil},
+			"a bot's name is changed": {func(w *slackWorkspace) {
+				w.history["C1"][4] = strings.Replace(w.history["C1"][4], `"Deploy Bot"`, `"Deployer"`, 1)
+			}, []string{"C1:2026-10-27"}},
 		} {
 			w := newSlackWorkspace()
 			tc.change(w)
@@ -1348,6 +1365,68 @@ func TestSlackDocuments(t *testing.T) {
 		}
 		if got := texts(docs)["C1:2026-10-27"]; got != strings.Replace(general27, "**Ada Lovelace**", "**U1**", 1) {
 			t.Fatalf("C1:2026-10-27 = %q", got)
+		}
+		for _, p := range docs.puts {
+			if !strings.HasSuffix(p.doc.Version, "|ids") {
+				t.Fatalf("%s version %s", p.doc.ExternalID, p.doc.Version)
+			}
+		}
+	})
+	// Most syncs of a quiet workspace change no day, so need no names.
+	t.Run("reads no users while no document is wanted", func(t *testing.T) {
+		kind, calls := slackAt(t, newSlackWorkspace().routes())
+		docs := &granolaDocs{}
+		if _, err := slackRead(t, kind, slackTables[3:], docs); err != nil || len(docs.offers) != 3 || len(calls.of("users.list")) != 0 {
+			t.Fatalf("SyncPass = %v, offers = %q, calls = %q", err, docs.offers, calls.log)
+		}
+	})
+	// A day the stream holds is offered at the version it holds until
+	// users.list is read, so an unchanged sync reads neither it nor a
+	// thread; once a document needs it, every later day is versioned by its
+	// names too.
+	t.Run("versions held days by their names once a document needs them", func(t *testing.T) {
+		w := newSlackWorkspace()
+		held := map[string]string{}
+		sync := func(t *testing.T, scopes string) (*slackHeld, *slackCalls) {
+			t.Helper()
+			kind, calls := slackScoped(t, scopes, w.routes())
+			docs := &slackHeld{granolaDocs: &granolaDocs{want: map[string]bool{"conversations": true}}, held: maps.Clone(held)}
+			if _, err := slackRead(t, kind, slackTables[3:], docs); err != nil || len(docs.offers) != 3 {
+				t.Fatalf("SyncPass = %v, offers = %q", err, docs.offers)
+			}
+			for _, p := range docs.puts {
+				held[p.doc.ExternalID] = p.doc.Version
+			}
+			return docs, calls
+		}
+		// Without users:read, people are named by id, and users.list is never asked.
+		docs, calls := sync(t, strings.ReplaceAll(slackAllScopes, ",users:read,", ","))
+		if len(docs.puts) != 3 || len(calls.of("users.list")) != 0 || texts(docs.granolaDocs)["C1:2026-10-27"] != strings.Replace(general27, "**Ada Lovelace**", "**U1**", 1) {
+			t.Fatalf("puts = %v, calls = %q", docs.putNames(), calls.log)
+		}
+		// With it, the days named by id are written again with names.
+		docs, calls = sync(t, slackAllScopes)
+		if got := texts(docs.granolaDocs); len(calls.of("users.list")) != 1 ||
+			fmt.Sprint(got) != fmt.Sprint(map[string]string{"C1:2026-10-28": general28, "C1:2026-10-27": general27, "C2:2026-10-29": design29}) {
+			t.Fatalf("documents = %q, calls = %q", got, calls.log)
+		}
+		// Unchanged, nothing is read for documents, and nothing is written.
+		docs, calls = sync(t, slackAllScopes)
+		if len(docs.puts) != 0 || len(calls.of("users.list"))+len(calls.of("conversations.replies")) != 0 {
+			t.Fatalf("puts = %v, calls = %q", docs.putNames(), calls.log)
+		}
+		// A new name alone waits for a day that needs users.list.
+		w.users[1] = strings.Replace(w.users[1], "Grace Hopper", "Grace Brewster Hopper", 1)
+		if docs, calls = sync(t, slackAllScopes); len(docs.puts) != 0 || len(calls.of("users.list")) != 0 {
+			t.Fatalf("puts = %v, calls = %q", docs.putNames(), calls.log)
+		}
+		// A message posted to the newest day reads it, and the new name
+		// changes the day that renders it; the day that doesn't stays.
+		w.history["C2"] = append([]string{fmt.Sprintf(`{"user":"U1","text":"Later","ts":%q}`, slackTS("2026-10-29T14:30:00Z"))}, w.history["C2"]...)
+		docs, calls = sync(t, slackAllScopes)
+		if !slices.Equal(docs.putNames(), []string{"conversations C2:2026-10-29", "conversations C1:2026-10-28"}) || len(calls.of("users.list")) != 1 ||
+			!strings.Contains(texts(docs.granolaDocs)["C1:2026-10-28"], "@Grace Brewster Hopper") {
+			t.Fatalf("puts = %v, calls = %q", docs.putNames(), calls.log)
 		}
 	})
 	t.Run("reads users for documents though their table is not read", func(t *testing.T) {
@@ -1561,6 +1640,22 @@ func TestSlackDocuments(t *testing.T) {
 			t.Fatalf("SyncDocuments = %v, puts = %v", err, docs.putNames())
 		}
 	})
+}
+
+// slackHeld is a granolaDocs whose stream holds documents at the versions
+// held names by id, as the syncer's does: Want says no to a version held.
+type slackHeld struct {
+	*granolaDocs
+	held map[string]string
+}
+
+func (d *slackHeld) Want(stream, id, version string) bool {
+	return d.granolaDocs.Want(stream, id, version) && d.held[id] != version
+}
+
+func (d *slackHeld) Held(_, id string) (string, bool) {
+	version, ok := d.held[id]
+	return version, ok
 }
 
 // pausedDocs is a granolaDocs whose streams are paused.
