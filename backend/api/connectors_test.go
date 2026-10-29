@@ -711,6 +711,12 @@ func TestKeyOnlyConnectorConfigs(t *testing.T) {
 		{"granola", "grn_0123456789abcdef4f2a", "grn…4f2a", func(key string) *foundryv1.ConnectorConfig {
 			return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Granola{Granola: &foundryv1.GranolaConnectorConfig{ApiKey: key}}}
 		}},
+		{"notion", "ntn_0123456789abcdef4f2a", "ntn…4f2a", func(key string) *foundryv1.ConnectorConfig {
+			return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Notion{Notion: &foundryv1.NotionConnectorConfig{Token: key}}}
+		}},
+		{"notion", "secret_0123456789abcdef4f2a", "secret…4f2a", func(key string) *foundryv1.ConnectorConfig {
+			return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Notion{Notion: &foundryv1.NotionConnectorConfig{Token: key}}}
+		}},
 	} {
 		t.Run(tc.hint, func(t *testing.T) {
 			kind, src, secretless, err := sourceFromProto(catalog, tc.config("  "+tc.key+"\n"))
