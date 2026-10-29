@@ -39,10 +39,13 @@ const (
 	googleFutureDays = 30
 	maxGooglePages   = 10_000
 	googleDocType    = "application/vnd.google-apps.document"
-	// googleFileFields are the fields a Drive listing asks for: Drive
-	// returns only id, name and mimeType of each file unless asked.
-	googleFileFields = "nextPageToken,incompleteSearch,files(id,name,mimeType,driveId,parents,owners(emailAddress)," +
-		"lastModifyingUser(emailAddress),createdTime,modifiedTime,size,webViewLink,shared,starred,version,capabilities(canDownload))"
+	// googleFileFieldList are the fields of a file a Drive listing or
+	// change feed asks for: Drive returns only id, name and mimeType of each
+	// file unless asked.
+	googleFileFieldList = "id,name,mimeType,driveId,parents,owners(emailAddress),lastModifyingUser(emailAddress),createdTime," +
+		"modifiedTime,size,webViewLink,shared,starred,version,capabilities(canDownload)"
+	// googleFileFields are the fields a Drive listing asks for.
+	googleFileFields = "nextPageToken,incompleteSearch,files(" + googleFileFieldList + ")"
 	// googleTokenMargin is how much of a token's life must be left for a
 	// request to use it: Google's tokens live an hour, and a request with
 	// its retries takes well under this.
@@ -135,6 +138,10 @@ var (
 	// errUnreachable is a request Google gave no answer to, or a server
 	// error after the retries.
 	errUnreachable = errors.New("google: no answer")
+	// errTokenGone is a change feed's token Google no longer takes: Drive's
+	// page token or Calendar's sync token. A change read reads the feed's
+	// tables in full instead.
+	errTokenGone = errors.New("google: the change token is no longer valid")
 )
 
 type googleKind struct {
@@ -502,6 +509,9 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 		return refused(errUnreadable, "%s is not an admin, so the Directory's users can't be read", c.settings.Subject)
 	case status == http.StatusForbidden || status == http.StatusNotFound:
 		return refused(errNoAccess, "this service account cannot read %s as %s; check its access and test again", path, c.settings.Subject)
+	// Calendar's answer to a sync token it no longer takes.
+	case status == http.StatusGone:
+		return refused(errTokenGone, "Google no longer holds the changes of %s; try again", path)
 	case status >= 500:
 		return refused(errUnreachable, "could not reach Google; try again")
 	}
@@ -528,65 +538,66 @@ func googleError(body []byte) (reasons []string, message string) {
 // pages lists a Google collection a page at a time, following
 // nextPageToken, and passes each item of field to each, once by its id: a
 // list that changes while it is paged may show an item twice. Google
-// leaves an empty list out. Only the first page refused (errNoAccess) says
+// leaves an empty list out. It returns the last page's nextSyncToken,
+// which Calendar gives a list of events, and "" for a list without one. Only the first page refused (errNoAccess) says
 // the user can't read the list. A later page refused, a page that isn't an
 // object, whose list isn't one of objects, that lists an item without an
 // id, that gives back the token it was asked with, or that Drive says
 // searched only part of what the user can read fails the read: ending
 // early would publish a partial table.
 func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, query url.Values, field string,
-	each func(id string, item map[string]any) error) error {
+	each func(id string, item map[string]any) error) (string, error) {
 	seen := map[string]bool{}
 	for page := 0; ; page++ {
 		if page == maxGooglePages {
-			return fmt.Errorf("google %s: more than %d pages", path, maxGooglePages)
+			return "", fmt.Errorf("google %s: more than %d pages", path, maxGooglePages)
 		}
 		target := path + "?" + query.Encode()
 		status, body, err := c.get(ctx, c.k.http, api, target)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if err := c.status(status, body, api, target); err != nil {
 			if page > 0 && errors.Is(err, errNoAccess) {
-				return refused(nil, "Google stopped listing %s as %s part way through; try again", path, c.settings.Subject)
+				return "", refused(nil, "Google stopped listing %s as %s part way through; try again", path, c.settings.Subject)
 			}
-			return err
+			return "", err
 		}
 		var (
-			fields     map[string]json.RawMessage
-			items      []map[string]any
-			next       string
-			incomplete bool
+			fields          map[string]json.RawMessage
+			items           []map[string]any
+			next, syncToken string
+			incomplete      bool
 		)
 		err = json.Unmarshal(body, &fields)
-		for name, into := range map[string]any{field: &items, "nextPageToken": &next, "incompleteSearch": &incomplete} {
+		for name, into := range map[string]any{field: &items, "nextPageToken": &next, "nextSyncToken": &syncToken, "incompleteSearch": &incomplete} {
 			if raw, ok := fields[name]; ok && err == nil {
 				err = json.Unmarshal(raw, into)
 			}
 		}
 		switch {
 		case err != nil || fields == nil:
-			return fmt.Errorf("google %s: the answer is not a complete page of %s", path, field)
+			return "", fmt.Errorf("google %s: the answer is not a complete page of %s", path, field)
 		case incomplete:
-			return refused(nil, "Drive searched only part of what %s can read; try again later", c.settings.Subject)
+			return "", refused(nil, "Drive searched only part of what %s can read; try again later", c.settings.Subject)
 		case next != "" && next == query.Get("pageToken"):
-			return fmt.Errorf("google %s: a page gives back the token it was asked with", path)
+			return "", fmt.Errorf("google %s: a page gives back the token it was asked with", path)
 		}
 		for _, item := range items {
 			id, _ := item["id"].(string)
 			switch {
 			case id == "":
-				return fmt.Errorf("google %s: a listed item has no id", path)
+				return "", fmt.Errorf("google %s: a listed item has no id", path)
 			case seen[id]:
 				continue
 			}
 			seen[id] = true
 			if err := each(id, item); err != nil {
-				return err
+				return "", err
 			}
 		}
 		if next == "" {
-			return nil
+			return syncToken, nil
 		}
 		query.Set("pageToken", next)
 	}
@@ -595,7 +606,7 @@ func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, qu
 // users lists the Directory's users of the user's own customer.
 func (c *googleClient) users(ctx context.Context, w RowWriter) error {
 	query := url.Values{"customer": {"my_customer"}, "maxResults": {"500"}}
-	return c.pages(ctx, googleDirectory, "/admin/directory/v1/users", query, "users", func(id string, u map[string]any) error {
+	_, err := c.pages(ctx, googleDirectory, "/admin/directory/v1/users", query, "users", func(id string, u map[string]any) error {
 		name, _ := u["name"].(map[string]any)
 		org, _ := firstOf(u["organizations"]).(map[string]any)
 		var manager any
@@ -618,13 +629,59 @@ func (c *googleClient) users(ctx context.Context, w RowWriter) error {
 			"created_at": googleTime(u["creationTime"]), "last_login_at": lastLogin,
 		})
 	})
+	return err
 }
 
 // googleDoc is a listed Google Doc: what its document is made of besides
-// its export, the time that orders it, and its version.
+// its export, the time that orders it, and its version. A withheld Doc is
+// one its owner keeps viewers from downloading, and so exporting: it can't
+// be a document, and has no time.
 type googleDoc struct {
 	id, name, owner, link, version string
 	modified                       time.Time
+	withheld                       bool
+}
+
+// googleFile is a listed file's row and, for a Doc, its document's parts;
+// nil for any other file. A Doc the user may download must be listed with
+// its modifiedTime, which orders its document.
+func googleFile(id string, f map[string]any) (map[string]any, *googleDoc, error) {
+	owner, _ := firstOf(f["owners"]).(map[string]any)
+	modifier, _ := f["lastModifyingUser"].(map[string]any)
+	var size any // an int64 as a string; Google's own files have none
+	if s, ok := f["size"].(string); ok {
+		size = s
+	}
+	row := map[string]any{
+		"file_id": id, "name": f["name"], "mime_type": f["mimeType"], "drive_id": f["driveId"], "parent_id": firstOf(f["parents"]),
+		"owner_email": googleEmail(owner["emailAddress"]), "last_modifying_user_email": googleEmail(modifier["emailAddress"]),
+		"created_at": googleTime(f["createdTime"]), "modified_at": googleTime(f["modifiedTime"]), "size": size,
+		"web_view_link": f["webViewLink"], "shared": f["shared"] == true, "starred": f["starred"] == true,
+	}
+	if f["mimeType"] != googleDocType {
+		return row, nil, nil
+	}
+	raw, _ := f["modifiedTime"].(string)
+	doc := &googleDoc{id: id}
+	doc.name, _ = f["name"].(string)
+	doc.owner, _ = row["owner_email"].(string)
+	doc.link, _ = f["webViewLink"].(string)
+	// The version is a render revision, the Doc's modified time and Drive's
+	// version of it, then a digest of what the document shows beside the
+	// export, which may change without either: an owner's email renamed.
+	version, _ := f["version"].(string)
+	shown := sha256.Sum256([]byte(doc.name + "\x00" + doc.owner + "\x00" + doc.link))
+	doc.version = "1|" + raw + "|" + version + "|" + hex.EncodeToString(shown[:8])
+	if capabilities, _ := f["capabilities"].(map[string]any); capabilities["canDownload"] == false {
+		doc.withheld = true
+		return row, doc, nil
+	}
+	modified, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return row, nil, fmt.Errorf("google /drive/v3/files: Doc %s is listed without its modifiedTime", id)
+	}
+	doc.modified = modified
+	return row, doc, nil
 }
 
 // files lists every file the user can read that isn't in the trash,
@@ -634,12 +691,8 @@ type googleDoc struct {
 // user in many shared drives, on every attempt, so each is listed alone. A
 // shared drive whose first page is refused, one the user left since the
 // drives were listed, is skipped. Once the listing is whole, it offers each
-// Doc's document, newest first, and exports the Docs docs wants (export):
-// an unchanged Doc costs nothing. A Doc the user may not download is not
-// offered, so the read, always in full, removes what the stream holds of
-// it; one Drive refuses to export now is dropped. One Drive fails to
-// export is skipped and counted, keeping what the stream holds of it until
-// a later sync exports it, unless googleExportFailures fail in a row.
+// Doc's document, newest first (googleExporter). A withheld Doc is not
+// offered, so the read, always in full, removes what the stream holds of it.
 func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWriter) error {
 	var listed []googleDoc
 	seen := map[string]bool{}
@@ -647,59 +700,26 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 		query := url.Values{"q": {"trashed=false"}, "includeItemsFromAllDrives": {"true"}, "supportsAllDrives": {"true"},
 			"pageSize": {"1000"}, "fields": {googleFileFields}}
 		maps.Copy(query, corpus)
-		return c.pages(ctx, googleDrive, "/drive/v3/files", query, "files", func(id string, f map[string]any) error {
+		_, err := c.pages(ctx, googleDrive, "/drive/v3/files", query, "files", func(id string, f map[string]any) error {
 			if seen[id] {
 				return nil
 			}
 			seen[id] = true
-			owner, _ := firstOf(f["owners"]).(map[string]any)
-			modifier, _ := f["lastModifyingUser"].(map[string]any)
-			var size any // an int64 as a string; Google's own files have none
-			if s, ok := f["size"].(string); ok {
-				size = s
-			}
-			row := map[string]any{
-				"file_id": id, "name": f["name"], "mime_type": f["mimeType"], "drive_id": f["driveId"], "parent_id": firstOf(f["parents"]),
-				"owner_email": googleEmail(owner["emailAddress"]), "last_modifying_user_email": googleEmail(modifier["emailAddress"]),
-				"created_at": googleTime(f["createdTime"]), "modified_at": googleTime(f["modifiedTime"]), "size": size,
-				"web_view_link": f["webViewLink"], "shared": f["shared"] == true, "starred": f["starred"] == true,
-			}
-			if err := w.Write(row); err != nil || f["mimeType"] != googleDocType {
+			row, doc, err := googleFile(id, f)
+			if err := w.Write(row); err != nil {
 				return err
 			}
-			// Its owner may keep viewers from downloading, and so exporting, it.
-			if capabilities, _ := f["capabilities"].(map[string]any); capabilities["canDownload"] == false {
-				return nil
+			if err == nil && doc != nil && !doc.withheld {
+				listed = append(listed, *doc)
 			}
-			raw, _ := f["modifiedTime"].(string)
-			modified, err := time.Parse(time.RFC3339, raw)
-			if err != nil {
-				return fmt.Errorf("google /drive/v3/files: Doc %s is listed without its modifiedTime", id)
-			}
-			doc := googleDoc{id: id, modified: modified}
-			doc.name, _ = f["name"].(string)
-			doc.owner, _ = row["owner_email"].(string)
-			doc.link, _ = f["webViewLink"].(string)
-			// The version is a render revision, the Doc's modified time and
-			// Drive's version of it, then a digest of what the document shows
-			// beside the export, which may change without either: an owner's
-			// email renamed.
-			version, _ := f["version"].(string)
-			shown := sha256.Sum256([]byte(doc.name + "\x00" + doc.owner + "\x00" + doc.link))
-			doc.version = "1|" + raw + "|" + version + "|" + hex.EncodeToString(shown[:8])
-			listed = append(listed, doc)
-			return nil
+			return err
 		})
+		return err
 	}
 	if err := list(url.Values{"corpora": {"user"}}); err != nil {
 		return err
 	}
-	var drives []string
-	err := c.pages(ctx, googleDrive, "/drive/v3/drives", url.Values{"pageSize": {"100"}, "fields": {"nextPageToken,drives(id)"}}, "drives",
-		func(id string, _ map[string]any) error {
-			drives = append(drives, id)
-			return nil
-		})
+	drives, err := c.drives(ctx)
 	if err != nil {
 		return err
 	}
@@ -710,45 +730,69 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 	}
 	// The syncer keeps the first documents offered up to its cap.
 	slices.SortStableFunc(listed, func(a, b googleDoc) int { return b.modified.Compare(a.modified) })
-	failed := 0
+	exporter := googleExporter{c: c, docs: docs}
 	for _, doc := range listed {
-		if !docs.Want(googleDocsStream.Name, doc.id, doc.version) {
-			continue
-		}
-		export, err := c.export(ctx, doc.id, "text/markdown")
-		if errors.Is(err, errUnreachable) {
-			if failed++; failed == googleExportFailures {
-				return err
-			}
-			googleDocsSkipped.Inc()
-			continue
-		}
-		failed = 0
-		switch {
-		case errors.Is(err, errNoAccess):
-			if err := docs.Drop(googleDocsStream.Name, doc.id); err != nil {
-				return err
-			}
-			continue
-		case err != nil:
-			return err
-		}
-		name := strings.Join(strings.Fields(doc.name), " ")
-		var text strings.Builder
-		fmt.Fprintf(&text, "# %s\n\n", cmp.Or(name, "Untitled document"))
-		if doc.owner != "" {
-			fmt.Fprintf(&text, "Owner: %s\n", doc.owner)
-		}
-		fmt.Fprintf(&text, "Last modified: %s\nFile id: %s\n", doc.modified.UTC().Format("2006-01-02 15:04 UTC"), doc.id)
-		if export = strings.TrimSpace(export); export != "" {
-			text.WriteString("\n" + export + "\n")
-		}
-		if err := docs.Put(ctx, googleDocsStream.Name, Document{ExternalID: doc.id, Version: doc.version, At: doc.modified,
-			Title: name, URL: doc.link, Text: []byte(text.String())}); err != nil {
+		if err := exporter.offer(ctx, doc); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// drives are the ids of the shared drives the user is a member of.
+func (c *googleClient) drives(ctx context.Context) ([]string, error) {
+	var drives []string
+	_, err := c.pages(ctx, googleDrive, "/drive/v3/drives", url.Values{"pageSize": {"100"}, "fields": {"nextPageToken,drives(id)"}}, "drives",
+		func(id string, _ map[string]any) error {
+			drives = append(drives, id)
+			return nil
+		})
+	return drives, err
+}
+
+// googleExporter offers a read's Docs to its documents and exports the ones
+// they want (export): an unchanged Doc costs nothing. One Drive refuses to
+// export now is dropped. One Drive fails to export is skipped and counted,
+// keeping what the stream holds of it until a later sync exports it, unless
+// googleExportFailures fail in a row.
+type googleExporter struct {
+	c      *googleClient
+	docs   DocumentWriter
+	failed int // in a row
+}
+
+// offer offers doc, which is not withheld.
+func (e *googleExporter) offer(ctx context.Context, doc googleDoc) error {
+	if !e.docs.Want(googleDocsStream.Name, doc.id, doc.version) {
+		return nil
+	}
+	export, err := e.c.export(ctx, doc.id, "text/markdown")
+	if errors.Is(err, errUnreachable) {
+		if e.failed++; e.failed == googleExportFailures {
+			return err
+		}
+		googleDocsSkipped.Inc()
+		return nil
+	}
+	e.failed = 0
+	switch {
+	case errors.Is(err, errNoAccess):
+		return e.docs.Drop(googleDocsStream.Name, doc.id)
+	case err != nil:
+		return err
+	}
+	name := strings.Join(strings.Fields(doc.name), " ")
+	var text strings.Builder
+	fmt.Fprintf(&text, "# %s\n\n", cmp.Or(name, "Untitled document"))
+	if doc.owner != "" {
+		fmt.Fprintf(&text, "Owner: %s\n", doc.owner)
+	}
+	fmt.Fprintf(&text, "Last modified: %s\nFile id: %s\n", doc.modified.UTC().Format("2006-01-02 15:04 UTC"), doc.id)
+	if export = strings.TrimSpace(export); export != "" {
+		text.WriteString("\n" + export + "\n")
+	}
+	return e.docs.Put(ctx, googleDocsStream.Name, Document{ExternalID: doc.id, Version: doc.version, At: doc.modified,
+		Title: name, URL: doc.link, Text: []byte(text.String())})
 }
 
 // export is Doc id's text as Drive exports it as mediaType, under
@@ -792,79 +836,37 @@ func (c *googleClient) export(ctx context.Context, id, mediaType string) (string
 }
 
 // calendars lists the user's calendar list into the calendars table and,
-// when an event table is read, each calendar's events in the window, from
-// event_days ago to googleFutureDays ahead, a recurring event as its
-// instances and a cancelled one left out. A calendar whose first page of
-// events is refused (errNoAccess), as one the user sees only the free/busy
-// of or one deleted since the list, is skipped. An event whose attendees
-// Google left out says so (attendees_omitted).
+// when an event table is read, each calendar's events in the window
+// (googleWindow), a recurring event as its instances and a cancelled one
+// left out. A calendar whose first page of events is refused (errNoAccess),
+// as one the user sees only the free/busy of or one deleted since the list,
+// is skipped.
 func (c *googleClient) calendars(ctx context.Context, rows map[string]RowWriter) error {
-	var calendars []string
-	err := c.pages(ctx, googleCalendar, "/calendar/v3/users/me/calendarList", url.Values{"maxResults": {"250"}}, "items",
-		func(id string, cal map[string]any) error {
-			calendars = append(calendars, id)
-			w := rows["calendars"]
-			if w == nil {
-				return nil
-			}
-			return w.Write(map[string]any{
-				"calendar_id": id, "summary": cal["summary"], "description": cal["description"], "time_zone": cal["timeZone"],
-				"access_role": cal["accessRole"], "primary": cal["primary"] == true,
-			})
+	calendars, err := c.calendarList(ctx, func(id string, cal map[string]any) error {
+		w := rows["calendars"]
+		if w == nil {
+			return nil
+		}
+		return w.Write(map[string]any{
+			"calendar_id": id, "summary": cal["summary"], "description": cal["description"], "time_zone": cal["timeZone"],
+			"access_role": cal["accessRole"], "primary": cal["primary"] == true,
 		})
+	})
 	events, attendees := rows["calendar_events"], rows["event_attendees"]
 	if err != nil || events == nil && attendees == nil {
 		return err
 	}
-	now := time.Now().UTC()
+	from, to := googleWindow(time.Now(), c.settings.EventDays)
 	window := url.Values{"singleEvents": {"true"}, "showDeleted": {"false"}, "maxResults": {"2500"},
-		"timeMin": {now.AddDate(0, 0, -c.settings.EventDays).Format(time.RFC3339)},
-		"timeMax": {now.AddDate(0, 0, googleFutureDays).Format(time.RFC3339)}}
+		"timeMin": {from.Format(time.RFC3339)}, "timeMax": {to.Format(time.RFC3339)}}
 	for _, calendar := range calendars {
-		path := "/calendar/v3/calendars/" + url.PathEscape(calendar) + "/events"
-		err := c.pages(ctx, googleCalendar, path, maps.Clone(window), "items", func(id string, e map[string]any) error {
+		_, err := c.pages(ctx, googleCalendar, googleEventsPath(calendar), maps.Clone(window), "items", func(id string, e map[string]any) error {
 			if e["status"] == "cancelled" {
 				return nil
 			}
-			eventID := calendar + ":" + id
-			// A room or other resource is not a person; each person is one row by email.
-			var people []map[string]any
-			seen := map[string]bool{}
-			list, _ := e["attendees"].([]any)
-			for _, a := range list {
-				person, _ := a.(map[string]any)
-				email, _ := googleEmail(person["email"]).(string)
-				if email == "" || person["resource"] == true || seen[email] {
-					continue
-				}
-				seen[email] = true
-				people = append(people, map[string]any{
-					"event_id": eventID, "email": email, "display_name": person["displayName"], "response_status": person["responseStatus"],
-					"optional": person["optional"] == true, "organizer": person["organizer"] == true, "is_self": person["self"] == true,
-				})
-			}
+			row, people := googleEvent(calendar, id, e)
 			if events != nil {
-				start, _ := e["start"].(map[string]any)
-				end, _ := e["end"].(map[string]any)
-				// An all-day event has dates, kept as they are; any other has times.
-				at := func(when map[string]any) any {
-					if date, ok := when["date"].(string); ok {
-						return date
-					}
-					return googleTime(when["dateTime"])
-				}
-				_, allDay := start["date"].(string)
-				organizer, _ := e["organizer"].(map[string]any)
-				creator, _ := e["creator"].(map[string]any)
-				if err := events.Write(map[string]any{
-					"event_id": eventID, "calendar_id": calendar, "ical_uid": e["iCalUID"], "summary": e["summary"],
-					"description": e["description"], "location": e["location"], "status": e["status"],
-					"start_at": at(start), "end_at": at(end), "all_day": allDay,
-					"organizer_email": googleEmail(organizer["email"]), "creator_email": googleEmail(creator["email"]),
-					"recurring_event_id": e["recurringEventId"], "html_link": e["htmlLink"],
-					"created_at": googleTime(e["created"]), "updated_at": googleTime(e["updated"]), "attendee_count": len(people),
-					"attendees_omitted": e["attendeesOmitted"] == true,
-				}); err != nil {
+				if err := events.Write(row); err != nil {
 					return err
 				}
 			}
@@ -883,6 +885,74 @@ func (c *googleClient) calendars(ctx context.Context, rows map[string]RowWriter)
 		}
 	}
 	return nil
+}
+
+// calendarList lists the user's calendar list, passing each calendar to
+// each, and returns their ids.
+func (c *googleClient) calendarList(ctx context.Context, each func(id string, cal map[string]any) error) ([]string, error) {
+	var calendars []string
+	_, err := c.pages(ctx, googleCalendar, "/calendar/v3/users/me/calendarList", url.Values{"maxResults": {"250"}}, "items",
+		func(id string, cal map[string]any) error {
+			calendars = append(calendars, id)
+			return each(id, cal)
+		})
+	return calendars, err
+}
+
+// googleWindow is the window of events a read keeps, as of now: from days
+// ago to googleFutureDays ahead.
+func googleWindow(now time.Time, days int) (from, to time.Time) {
+	now = now.UTC().Truncate(time.Second)
+	return now.AddDate(0, 0, -days), now.AddDate(0, 0, googleFutureDays)
+}
+
+// googleEventsPath is the path of a calendar's events.
+func googleEventsPath(calendar string) string {
+	return "/calendar/v3/calendars/" + url.PathEscape(calendar) + "/events"
+}
+
+// googleEvent is a listed event's calendar_events row and its
+// event_attendees rows: each person it invites once by email, a room or
+// other resource being no person. An event whose attendees Google left out
+// says so (attendees_omitted).
+func googleEvent(calendar, id string, e map[string]any) (map[string]any, []map[string]any) {
+	eventID := calendar + ":" + id
+	var people []map[string]any
+	seen := map[string]bool{}
+	list, _ := e["attendees"].([]any)
+	for _, a := range list {
+		person, _ := a.(map[string]any)
+		email, _ := googleEmail(person["email"]).(string)
+		if email == "" || person["resource"] == true || seen[email] {
+			continue
+		}
+		seen[email] = true
+		people = append(people, map[string]any{
+			"event_id": eventID, "email": email, "display_name": person["displayName"], "response_status": person["responseStatus"],
+			"optional": person["optional"] == true, "organizer": person["organizer"] == true, "is_self": person["self"] == true,
+		})
+	}
+	start, _ := e["start"].(map[string]any)
+	end, _ := e["end"].(map[string]any)
+	// An all-day event has dates, kept as they are; any other has times.
+	at := func(when map[string]any) any {
+		if date, ok := when["date"].(string); ok {
+			return date
+		}
+		return googleTime(when["dateTime"])
+	}
+	_, allDay := start["date"].(string)
+	organizer, _ := e["organizer"].(map[string]any)
+	creator, _ := e["creator"].(map[string]any)
+	return map[string]any{
+		"event_id": eventID, "calendar_id": calendar, "ical_uid": e["iCalUID"], "summary": e["summary"],
+		"description": e["description"], "location": e["location"], "status": e["status"],
+		"start_at": at(start), "end_at": at(end), "all_day": allDay,
+		"organizer_email": googleEmail(organizer["email"]), "creator_email": googleEmail(creator["email"]),
+		"recurring_event_id": e["recurringEventId"], "html_link": e["htmlLink"],
+		"created_at": googleTime(e["created"]), "updated_at": googleTime(e["updated"]), "attendee_count": len(people),
+		"attendees_omitted": e["attendeesOmitted"] == true,
+	}, people
 }
 
 // firstOf is the first item of a JSON list; nil for none.
