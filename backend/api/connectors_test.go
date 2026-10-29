@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -786,6 +787,52 @@ func TestGranolaConnectorConfig(t *testing.T) {
 		})
 	}
 	if _, err := configToProto("granola", json.RawMessage(`{"transcripts":"yes"}`)); err == nil {
+		t.Fatal("configToProto read settings Prepare never stores")
+	}
+}
+
+// Slack's one setting, history_days, is stored with its default applied,
+// so a connector made without one reads back as keeping 90 days.
+func TestSlackConnectorConfig(t *testing.T) {
+	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{}, connector.S3Options{}, connector.EventsOptions{})
+	config := func(token string, days int32) *foundryv1.ConnectorConfig {
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{
+			BotToken: token, HistoryDays: days,
+		}}}
+	}
+	for _, tc := range []struct {
+		days, stored int32
+	}{{0, 90}, {1, 1}, {30, 30}, {365, 365}} {
+		t.Run(fmt.Sprint(tc.days), func(t *testing.T) {
+			kind, src, secretless, err := sourceFromProto(catalog, config(" xoxb-1234-5678-abcdef4f2a\n", tc.days))
+			if err != nil || kind.Name() != "slack" || secretless || src.Secret != "xoxb-1234-5678-abcdef4f2a" ||
+				string(src.Settings) != fmt.Sprintf(`{"history_days":%d}`, tc.days) {
+				t.Fatalf("source = (%v, %+v, %v, %v)", kind, src, secretless, err)
+			}
+			settings, err := kind.Prepare(src)
+			if err != nil || string(settings) != fmt.Sprintf(`{"history_days":%d}`, tc.stored) || kind.Hint(src.Secret) != "xoxb…4f2a" {
+				t.Fatalf("prepare = (%s, %v), hint = %q", settings, err, kind.Hint(src.Secret))
+			}
+			got, err := configToProto("slack", settings)
+			if err != nil || !proto.Equal(got, config("", tc.stored)) {
+				t.Fatalf("config = (%v, %v)", got, err)
+			}
+		})
+	}
+	for token, message := range map[string]string{
+		"xoxb-1234-5678-abcdef4f2a": "keep 1 to 365 days of history",
+		"xoxp-1234-5678-abcdef4f2a": "enter a Slack bot token (xoxb-…)",
+	} {
+		kind, src, _, err := sourceFromProto(catalog, config(token, 366))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var invalidErr *connector.InvalidError
+		if _, err := kind.Prepare(src); !errors.As(err, &invalidErr) || invalidErr.Message != message {
+			t.Errorf("Prepare(%s, 366 days) error = %v, want %q", token[:4], err, message)
+		}
+	}
+	if _, err := configToProto("slack", json.RawMessage(`{"history_days":"90"}`)); err == nil {
 		t.Fatal("configToProto read settings Prepare never stores")
 	}
 }
