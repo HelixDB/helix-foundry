@@ -1,6 +1,7 @@
 package syncer
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net/http"
@@ -17,12 +18,15 @@ import (
 
 // slackAccount is a Slack workspace a test edits between syncs: Ada, and
 // #general, the one channel the app is in, with its messages and each
-// thread's replies by their ts. It counts conversations.replies calls.
+// thread's replies by their ts. Its token has every scope the guide asks
+// for. It counts conversations.replies calls, and waits wait before
+// answering a read of the window's history, when set.
 type slackAccount struct {
 	mu       sync.Mutex
 	messages map[string]string   // ts: text
 	replies  map[string][]string // a thread parent's ts: its replies' ts, each said "Re: <parent's text>"
 	threads  int
+	wait     func()
 }
 
 func (a *slackAccount) serve(t *testing.T) string {
@@ -40,7 +44,14 @@ func (a *slackAccount) serve(t *testing.T) string {
 	general := `{"id":"C1","name":"general","is_member":true}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
+		wait := a.wait
+		a.mu.Unlock()
+		if q := r.URL.Query(); q.Has("oldest") && !q.Has("latest") && wait != nil {
+			wait()
+		}
+		a.mu.Lock()
 		defer a.mu.Unlock()
+		w.Header().Set("X-OAuth-Scopes", "channels:read,channels:history,groups:read,groups:history,users:read,users:read.email")
 		var body string
 		switch strings.TrimPrefix(r.URL.Path, "/api/") {
 		case "auth.test":
@@ -160,5 +171,55 @@ func TestSlackSyncDocuments(t *testing.T) {
 	}
 	if threads := account.took(); threads != 0 {
 		t.Fatalf("threads read = %d", threads)
+	}
+}
+
+// TestSlackSyncNearDeadline runs a Slack sync that reaches its documents
+// too near its attempt's deadline: it fetches none, and the conversations
+// set keeps what it holds, though their days changed, until the next sync
+// writes them.
+func TestSlackSyncNearDeadline(t *testing.T) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
+	ts := func(t time.Time) string { return fmt.Sprintf("%d.000000", t.Unix()) }
+	kickoff, standup := at(2, 9*time.Hour), at(1, 9*time.Hour)
+	account := &slackAccount{messages: map[string]string{ts(kickoff): "Kickoff", ts(standup): "Standup"}, replies: map[string][]string{}}
+	f := newFixture(t, "http://unused", "slack", `{"history_days":7}`, plan{code: "pro"})
+	endpoints := connector.DefaultEndpoints()
+	endpoints.Slack = account.serve(t)
+	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
+	f.run(t, "sync-1")
+	before := f.held(t, "conversations")
+	if len(before) != 2 {
+		t.Fatalf("conversations = %q", before)
+	}
+
+	// A reply to the standup, and a message on a new day; the window's
+	// history answers 400ms before the deadline, past when documents stop
+	// being fetched (a quarter of the time left, 500ms).
+	account.mu.Lock()
+	account.replies[ts(standup)] = []string{ts(standup.Add(time.Hour))}
+	account.messages[ts(at(0, 0))] = "Midnight"
+	deadline := time.Now().Add(2 * time.Second)
+	account.wait = func() { time.Sleep(time.Until(deadline.Add(-400 * time.Millisecond))) }
+	account.mu.Unlock()
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	if _, err := f.syncer.Run(ctx, newSync("sync-2")); err != nil {
+		t.Fatalf("sync-2: %v", err)
+	}
+	account.mu.Lock()
+	account.wait = nil
+	account.mu.Unlock()
+	if after := f.held(t, "conversations"); fmt.Sprint(after) != fmt.Sprint(before) || account.took() != 0 {
+		t.Fatalf("conversations = %q, want them as held", after)
+	}
+	if rows := f.snapshotRows(t, "channel_days"); len(rows) != 3 {
+		t.Fatalf("channel_days = %q", rows)
+	}
+
+	f.run(t, "sync-3")
+	if after := f.held(t, "conversations"); len(after) != 3 || after["C1:"+standup.Format(time.DateOnly)] == before["C1:"+standup.Format(time.DateOnly)] {
+		t.Fatalf("conversations = %q", after)
 	}
 }
