@@ -536,9 +536,11 @@ func googleError(body []byte) (reasons []string, message string) {
 }
 
 // pages lists a Google collection a page at a time, following
-// nextPageToken, and passes each item of field to each, once by its id: a
-// list that changes while it is paged may show an item twice. Google
-// leaves an empty list out. It returns the last page's nextSyncToken, which
+// nextPageToken, and passes each item of field to each, in the order
+// listed: a list that changes while it is paged may show an item twice, the
+// later copy as it is later. A full read takes the first (googleOnce); a
+// change read every copy, the last winning. Google leaves an empty list
+// out. It returns the last page's nextSyncToken, which
 // Calendar gives a list of events, and "" for a list without one. Only the
 // first page refused (errNoAccess) says the user can't read the list. A
 // later page refused, a page that isn't an object, whose list isn't one of
@@ -547,7 +549,6 @@ func googleError(body []byte) (reasons []string, message string) {
 // can read fails the read: ending early would publish a partial table.
 func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, query url.Values, field string,
 	each func(id string, item map[string]any) error) (string, error) {
-	seen := map[string]bool{}
 	for page := 0; ; page++ {
 		if page == maxGooglePages {
 			return "", fmt.Errorf("google %s: more than %d pages", path, maxGooglePages)
@@ -585,13 +586,9 @@ func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, qu
 		}
 		for _, item := range items {
 			id, _ := item["id"].(string)
-			switch {
-			case id == "":
+			if id == "" {
 				return "", fmt.Errorf("google %s: a listed item has no id", path)
-			case seen[id]:
-				continue
 			}
-			seen[id] = true
 			if err := each(id, item); err != nil {
 				return "", err
 			}
@@ -603,10 +600,23 @@ func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, qu
 	}
 }
 
+// googleOnce passes each id's first item to each, as a full read writes
+// each row once.
+func googleOnce(each func(id string, item map[string]any) error) func(id string, item map[string]any) error {
+	seen := map[string]bool{}
+	return func(id string, item map[string]any) error {
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		return each(id, item)
+	}
+}
+
 // users lists the Directory's users of the user's own customer.
 func (c *googleClient) users(ctx context.Context, w RowWriter) error {
 	query := url.Values{"customer": {"my_customer"}, "maxResults": {"500"}}
-	_, err := c.pages(ctx, googleDirectory, "/admin/directory/v1/users", query, "users", func(id string, u map[string]any) error {
+	_, err := c.pages(ctx, googleDirectory, "/admin/directory/v1/users", query, "users", googleOnce(func(id string, u map[string]any) error {
 		name, _ := u["name"].(map[string]any)
 		org, _ := firstOf(u["organizations"]).(map[string]any)
 		var manager any
@@ -628,7 +638,7 @@ func (c *googleClient) users(ctx context.Context, w RowWriter) error {
 			"org_unit_path": u["orgUnitPath"], "title": org["title"], "department": org["department"], "manager_email": manager,
 			"created_at": googleTime(u["creationTime"]), "last_login_at": lastLogin,
 		})
-	})
+	}))
 	return err
 }
 
@@ -743,10 +753,10 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 func (c *googleClient) drives(ctx context.Context) ([]string, error) {
 	var drives []string
 	_, err := c.pages(ctx, googleDrive, "/drive/v3/drives", url.Values{"pageSize": {"100"}, "fields": {"nextPageToken,drives(id)"}}, "drives",
-		func(id string, _ map[string]any) error {
+		googleOnce(func(id string, _ map[string]any) error {
 			drives = append(drives, id)
 			return nil
-		})
+		}))
 	return drives, err
 }
 
@@ -860,7 +870,7 @@ func (c *googleClient) calendars(ctx context.Context, rows map[string]RowWriter)
 	window := url.Values{"singleEvents": {"true"}, "showDeleted": {"false"}, "maxResults": {"2500"},
 		"timeMin": {from.Format(time.RFC3339)}, "timeMax": {to.Format(time.RFC3339)}}
 	for _, calendar := range calendars {
-		_, err := c.pages(ctx, googleCalendar, googleEventsPath(calendar), maps.Clone(window), "items", func(id string, e map[string]any) error {
+		_, err := c.pages(ctx, googleCalendar, googleEventsPath(calendar), maps.Clone(window), "items", googleOnce(func(id string, e map[string]any) error {
 			if e["status"] == "cancelled" {
 				return nil
 			}
@@ -879,7 +889,7 @@ func (c *googleClient) calendars(ctx context.Context, rows map[string]RowWriter)
 				}
 			}
 			return nil
-		})
+		}))
 		if err != nil && !errors.Is(err, errNoAccess) {
 			return err
 		}
@@ -892,10 +902,10 @@ func (c *googleClient) calendars(ctx context.Context, rows map[string]RowWriter)
 func (c *googleClient) calendarList(ctx context.Context, each func(id string, cal map[string]any) error) ([]string, error) {
 	var calendars []string
 	_, err := c.pages(ctx, googleCalendar, "/calendar/v3/users/me/calendarList", url.Values{"maxResults": {"250"}}, "items",
-		func(id string, cal map[string]any) error {
+		googleOnce(func(id string, cal map[string]any) error {
 			calendars = append(calendars, id)
 			return each(id, cal)
-		})
+		}))
 	return calendars, err
 }
 

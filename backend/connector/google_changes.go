@@ -24,9 +24,9 @@ const googleChangeFields = "nextPageToken,newStartPageToken,changes(changeType,r
 type googleCursor struct {
 	Files *googleFilesCursor `json:"files"`
 	// Events is each calendar's sync token, by calendar id: Calendar's
-	// nextSyncToken of its events, listed as a full read lists them. A
-	// calendar the user can't read the events of has none, as has one whose
-	// list Calendar gave none: a change read lists its window instead.
+	// nextSyncToken of its events, listed as a full read lists them; "" when
+	// Calendar gave the list none, and a change read lists its window
+	// instead. A calendar the user can't read the events of is not in it.
 	Events map[string]string `json:"events"`
 }
 
@@ -87,9 +87,8 @@ func (k *googleKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 				continue
 			case err != nil:
 				return Start{}, err
-			case token != "":
-				cursor.Events[calendar] = token
 			}
+			cursor.Events[calendar] = token
 		}
 	}
 	b, err := json.Marshal(cursor)
@@ -155,10 +154,11 @@ func (c *googleClient) filesStart(ctx context.Context, drives []string) (*google
 // fileChanges reads the user's feed and each shared drive's from the
 // cursor, one page each when nothing changed. A file a feed shows as it is
 // now gets its row, as a full read writes it, and a Doc is offered again
-// (googleExporter): a changed one is exported again. A file every feed that
-// shows it shows gone (removed: deleted, or no longer the user's to read; or
-// in the trash) loses its row, and the syncer its document; a file one feed
-// shows gone and another as it is, moved between drives, keeps it. A Doc its
+// (googleExporter): a changed one is exported again. Within a feed a file's
+// last change wins. A file every feed that shows it last shows gone
+// (removed: deleted, or no longer the user's to read; or in the trash)
+// loses its row, and the syncer its document; a file one feed shows gone
+// and another as it is, moved between drives, keeps it. A Doc its
 // owner no longer lets the user download loses the document the stream
 // holds, if Drive's version of it changed; a full read leaves it out.
 //
@@ -187,14 +187,14 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 			reset = "the user left shared drive " + drive
 		}
 	}
-	present, gone := map[string]bool{}, map[string]bool{}
+	// shown is, by file id, whether some feed's last change shows the file,
+	// and last the feed being read's.
+	shown, last := map[string]bool{}, map[string]bool{}
 	exporter := googleExporter{c: c, docs: w}
 	each := func(id string, f map[string]any) error {
-		if f == nil {
-			gone[id] = true
+		if last[id] = f != nil; f == nil {
 			return nil
 		}
-		present[id] = true
 		row, doc, err := googleFile(id, f)
 		if err != nil {
 			return err
@@ -217,7 +217,11 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 			token = prev.Drives[drive]
 		}
 		if token != "" && reset == "" {
+			clear(last)
 			token, err = c.driveFeed(ctx, drive, token, each)
+			for id, ok := range last {
+				shown[id] = shown[id] || ok
+			}
 			switch {
 			case drive != "" && errors.Is(err, errNoAccess):
 				reset = "the user left shared drive " + drive
@@ -249,7 +253,7 @@ func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor,
 		w.Reset("files", reset)
 		return next, nil
 	}
-	for _, id := range slices.DeleteFunc(slices.Sorted(maps.Keys(gone)), func(id string) bool { return present[id] }) {
+	for _, id := range slices.DeleteFunc(slices.Sorted(maps.Keys(shown)), func(id string) bool { return shown[id] }) {
 		if err := w.Delete("files", map[string]any{"file_id": id}); err != nil {
 			return nil, err
 		}
@@ -383,19 +387,21 @@ func (c *googleClient) eventToken(ctx context.Context, calendar string, from, to
 }
 
 // eventChanges reads each listed calendar's events changed after its sync
-// token, one page each when nothing changed. A cancelled event loses its
-// rows; a changed one in the window gets its row and its attendees' rows in
-// place of the ones it had, as a full read writes them. A changed event
-// outside the window is left as it is, as a full read leaves it: the tables
-// are windowed, so its row, if any, leaves when the next full read drops it,
-// and is no delete. A calendar without a token, newly listed or refused
-// before, or one Calendar gave no token, is listed in the window, as a full
-// read lists it, cancelled events included; one whose events are refused is
-// skipped.
+// token, one page each when nothing changed; an event's last change wins. A
+// cancelled event loses its rows; a changed one in the window gets its row
+// and its attendees' rows in place of the ones it had, as a full read writes
+// them. A changed event outside the window is left as it is, as a full read
+// leaves it: the tables are windowed, so its row, if any, leaves when the
+// next full read drops it, and is no delete. An event that enters the window
+// unchanged, as each instance of a series does googleFutureDays before it,
+// is no change: the next full read, the daily reconcile, adds it. A calendar
+// the cursor doesn't hold, newly listed or refused before, or one it holds
+// without a token, is listed in the window, as a full read lists it,
+// cancelled events included; one whose events are refused is skipped.
 //
 // The event tables are reset, and read in full, when there is no cursor,
-// when a calendar with a token left the list or its events are refused (a
-// full read leaves out its events, and their attendees have no calendar
+// when a calendar the cursor holds left the list or its events are refused
+// (a full read leaves out its events, and their attendees have no calendar
 // column to remove them by), and when Calendar no longer takes a token
 // (410 Gone), whose calendar then takes a new one from its window.
 func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string, follow map[string]bool, w ChangeWriter) (map[string]string, error) {
@@ -425,15 +431,14 @@ func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string,
 			row, people := googleEvent(calendar, id, e)
 			return googleEventChanged(w, follow, row, people)
 		}
-		if token, ok := prev[calendar]; ok {
+		token, held := prev[calendar]
+		if token != "" {
 			query := googleEventQuery()
 			query.Set("syncToken", token)
 			token, err := c.pages(ctx, googleCalendar, googleEventsPath(calendar), query, "items", each)
 			switch {
-			case err == nil && token != "":
-				next[calendar] = token
-				continue
 			case err == nil:
+				next[calendar] = token
 				continue
 			case errors.Is(err, errNoAccess):
 				reset = "the user can no longer read the events of calendar " + calendar
@@ -445,13 +450,15 @@ func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string,
 		}
 		token, err := c.eventToken(ctx, calendar, from, to, each)
 		switch {
+		case errors.Is(err, errNoAccess) && held:
+			reset = "the user can no longer read the events of calendar " + calendar
+			continue
 		case errors.Is(err, errNoAccess):
 			continue
 		case err != nil:
 			return nil, err
-		case token != "":
-			next[calendar] = token
 		}
+		next[calendar] = token
 	}
 	if reset != "" {
 		for _, table := range []string{"calendar_events", "event_attendees"} {

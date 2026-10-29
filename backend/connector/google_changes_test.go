@@ -336,19 +336,20 @@ func TestGoogleChanges(t *testing.T) {
 		routes["/calendar/v3/calendars/en.uk#holiday@group.v.calendar.google.com/events"] = googleEventFeed(t, 90, map[string]string{
 			"window": `{"nextSyncToken":"hw"}`, "hw": `{"nextSyncToken":"h3"}`, "h1": `{"nextSyncToken":"h2"}`})
 		start, err := googleAt(t, &googleWorkspace{routes: routes}).Start(ctx, src, allFollowed[1:])
-		if err != nil || string(start.Cursor) != `{"files":null,"events":{"en.uk#holiday@group.v.calendar.google.com":"hw"}}` {
+		if err != nil || string(start.Cursor) != `{"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"hw"}}` {
 			t.Fatalf("Start = (%s, %v)", start.Cursor, err)
 		}
 		got, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], start.Cursor, nil)
 		want := []string{"upsert calendar_events ada@acme.com:ev1", "cascade event_attendees event_id=ada@acme.com:ev1",
 			"delete calendar_events ada@acme.com:ev2", "cascade event_attendees event_id=ada@acme.com:ev2"}
-		if !slices.Equal(got.log, want) || len(got.resets) != 0 || next != `{"files":null,"events":{"en.uk#holiday@group.v.calendar.google.com":"h3"}}` {
+		if !slices.Equal(got.log, want) || len(got.resets) != 0 ||
+			next != `{"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"h3"}}` {
 			t.Fatalf("log = %v, resets = %v, next = %s", got.log, got.resets, next)
 		}
 		// A sync token's list without a new one leaves the calendar to its window next time.
 		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, map[string]string{"s1": `{"items":[]}`})
 		if _, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], cursor, nil); next !=
-			`{"files":null,"events":{"en.uk#holiday@group.v.calendar.google.com":"h2"}}` {
+			`{"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"h2"}}` {
 			t.Fatalf("next = %s", next)
 		}
 	})
@@ -407,6 +408,21 @@ func TestGoogleChanges(t *testing.T) {
 			string(got.puts[0].Text) != "# File doc1\n\nOwner: ada@acme.com\nLast modified: 2026-10-29 08:00 UTC\nFile id: doc1\n\n## doc1\n\nEdited.\n" ||
 			got.puts[1].ExternalID != "doc4" {
 			t.Fatalf("puts = %+v", got.puts)
+		}
+	})
+	// A list that changes while it is paged shows a file again, as it is later.
+	t.Run("takes a file's last change in a feed", func(t *testing.T) {
+		routes := unchanged()
+		sheet := func(id string) string {
+			return `{"fileId":"` + id + `","file":` + googleChangeFile(id, "application/vnd.google-apps.spreadsheet", "2026-10-29T08:00:00Z", "10", "") + `}`
+		}
+		routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{
+			"": {"100": `{"changes":[` + sheet("sheet1") + `,{"fileId":"sheet2","removed":true}],"nextPageToken":"100b"}`,
+				"100b": `{"changes":[{"fileId":"sheet1","removed":true},` + sheet("sheet2") + `],"newStartPageToken":"101"}`},
+			"drv1": {"200": `{"newStartPageToken":"201"}`}})
+		got, _ := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, cursor, nil)
+		if fmt.Sprint(got.log) != "[upsert files sheet1 upsert files sheet2 delete files sheet1]" {
+			t.Fatalf("log = %v", got.log)
 		}
 	})
 	// A Doc offered by two feeds, as one in a shared drive shared with the user, is exported once.
@@ -589,6 +605,16 @@ func TestGoogleChanges(t *testing.T) {
 			t.Fatalf("asked Drive %v", w.requested("/drive/"))
 		}
 	})
+	t.Run("takes an event's last change in a list", func(t *testing.T) {
+		routes := unchanged()
+		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, map[string]string{
+			"s1":    `{"items":[` + googleTestEvent("ev1", soon, "") + `],"nextPageToken":"p2"}`,
+			"s1/p2": `{"items":[{"id":"ev1","status":"cancelled"}],"nextSyncToken":"s2"}`})
+		got, _ := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "calendar_events"}}, cursor, nil)
+		if fmt.Sprint(got.log) != "[upsert calendar_events ada@acme.com:ev1 delete calendar_events ada@acme.com:ev1]" {
+			t.Fatalf("log = %v", got.log)
+		}
+	})
 	t.Run("writes only the event table followed", func(t *testing.T) {
 		routes := unchanged()
 		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, adaChanges)
@@ -640,6 +666,12 @@ func TestGoogleChanges(t *testing.T) {
 				`{"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
 			"refused": {`{"files":null,"events":{"grace@acme.com":"r1"}}`, "the user can no longer read the events of calendar grace@acme.com",
 				`{"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
+			"left, listed by its window": {`{"files":null,"events":{"ada@acme.com":"s1","gone@acme.com":""}}`,
+				"calendar gone@acme.com left the user's calendar list",
+				`{"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
+			"refused, listed by its window": {`{"files":null,"events":{"ada@acme.com":"s1","grace@acme.com":""}}`,
+				"the user can no longer read the events of calendar grace@acme.com",
+				`{"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
 			"none": {`{"files":null,"events":null}`, "the table has no change cursor yet",
 				`{"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
 		} {
