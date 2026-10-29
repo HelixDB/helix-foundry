@@ -1610,6 +1610,21 @@ func TestSlackDocuments(t *testing.T) {
 			t.Fatalf("replies calls = %q", got)
 		}
 	})
+	t.Run("reads no thread whose first message is past what a document holds", func(t *testing.T) {
+		saved := slackDayBytes
+		slackDayBytes = 100
+		t.Cleanup(func() { slackDayBytes = saved })
+		kind, calls := slackAt(t, newSlackWorkspace().routes())
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		if _, err := slackRead(t, kind, slackTables, docs); err != nil {
+			t.Fatal(err)
+		}
+		want := "# #general, 2026-10-28\n\n" + slackHeader + "\n" +
+			"**Ada Lovelace** 09:15: Morning @Grace Hopper, see #design and [the doc](https://example.com/a?b=1&c=2) or https://example.com\n<3 & more\n"
+		if got := texts(docs)["C1:2026-10-28"]; got != want || len(calls.of("conversations.replies")) != 0 {
+			t.Fatalf("C1:2026-10-28 =\n%s\nwant\n%s\ncalls = %q", got, want, calls.log)
+		}
+	})
 	// The days left are offered, so the stream keeps what it holds of them,
 	// but wait for the next sync, which the attempt's time is left for.
 	t.Run("stops fetching documents near the read's deadline", func(t *testing.T) {

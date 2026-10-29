@@ -666,7 +666,7 @@ func (p *slackPass) document(ctx context.Context, d *slackDay) (_ []byte, ok boo
 		}
 		text.WriteString("\n")
 		p.line(&text, "", "", m, d.day)
-		if m.ReplyCount == 0 {
+		if m.ReplyCount == 0 || text.Len() > slackDayBytes {
 			continue
 		}
 		replies, err := p.c.replies(ctx, d.channel.ID, m.TS, slackDayBytes-text.Len())
@@ -778,7 +778,11 @@ func (d *slackDay) keep(m slackMessage) int {
 	before := d.bytes
 	d.messages = append(d.messages, m)
 	d.bytes += len(m.Text) + slackMessageOverhead
-	for latest := len(d.messages[0].Text) + slackMessageOverhead; d.bytes-latest > slackDayBytes; latest = len(d.messages[0].Text) + slackMessageOverhead {
+	for len(d.messages) > 1 {
+		latest := len(d.messages[0].Text) + slackMessageOverhead
+		if d.bytes-latest <= slackDayBytes {
+			break
+		}
 		d.messages, d.bytes, d.cut = d.messages[1:], d.bytes-latest, d.cut+1
 	}
 	return d.bytes - before
