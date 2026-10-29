@@ -552,7 +552,7 @@ func TestSlackSync(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		since := "inclusive=true&limit=1000&oldest=" + slackTS("2026-10-27T00:00:00Z")
+		since := "inclusive=true&limit=999&oldest=" + slackTS("2026-10-27T00:00:00Z")
 		if got := calls.of("conversations.history"); !slices.Equal(got, []string{"channel=C1&" + since, "channel=C1&cursor=h2&" + since, "channel=C2&" + since}) {
 			t.Fatalf("history calls = %q", got)
 		}
@@ -923,7 +923,7 @@ func TestSlackDocuments(t *testing.T) {
 			}
 		}
 		// Only the thread a wanted day holds is read, once.
-		if got := calls.of("conversations.replies"); !slices.Equal(got, []string{"channel=C1&limit=1000&ts=" + slackParent}) ||
+		if got := calls.of("conversations.replies"); !slices.Equal(got, []string{"channel=C1&limit=999&ts=" + slackParent}) ||
 			len(calls.of("auth.test")) != 1 || len(calls.of("users.list")) != 1 || len(calls.of("conversations.history")) != 2 {
 			t.Fatalf("calls = %q", calls.log)
 		}
@@ -1044,7 +1044,7 @@ func TestSlackDocuments(t *testing.T) {
 				}
 				day, _ := slackTime(q.Get("oldest"))
 				if q.Get("oldest") != slackTS(day.Format(time.RFC3339)) || q.Get("latest") != slackTS(day.Add(24*time.Hour-time.Microsecond).Format(time.RFC3339Nano)) ||
-					q.Get("inclusive") != "true" || q.Get("limit") != "1000" {
+					q.Get("inclusive") != "true" || q.Get("limit") != "999" {
 					t.Errorf("budget %d: day read %s", budget, query)
 				}
 				days = append(days, q.Get("channel")+":"+day.Format(time.DateOnly))

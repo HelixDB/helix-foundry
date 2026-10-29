@@ -31,9 +31,10 @@ var slackTokenRE = regexp.MustCompile(`^xoxb-[A-Za-z0-9-]+$`)
 const (
 	defaultSlackHistoryDays = 90
 	// An internal app keeps Slack's full page sizes: 200 is what Slack
-	// suggests for its lists, and history returns up to 1,000 messages.
+	// suggests for its lists, and history and replies return up to 999
+	// messages a page (replies pages only under 1,000).
 	slackListPage    = "200"
-	slackHistoryPage = "1000"
+	slackHistoryPage = "999"
 	maxSlackPages    = 20_000
 	// slackChannelTypes are the conversations read: channels, never direct messages.
 	slackChannelTypes = "public_channel,private_channel"
@@ -244,7 +245,7 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 // SyncPass reads users and channels from their lists, then each channel
 // the app is in: its members, and its messages of the window, the
 // history_days UTC days before today and today, with one
-// conversations.history page per 1,000 messages. The messages make the
+// conversations.history page per 999 messages. The messages make the
 // channel_days rows and, when that table is read, its documents, offered
 // newest first once every channel is read; a day's thread replies are read
 // only when its document is wanted. Users are read whenever documents are,
