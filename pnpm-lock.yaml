@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@databuddy/sdk':
+        specifier: 3.3.0
+        version: 3.3.0(react@19.3.0)
       '@dnd-kit/core':
         specifier: 6.3.1
         version: 6.3.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -174,6 +177,17 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@databuddy/sdk@3.3.0':
+    resolution: {integrity: sha512-nsKdw2jEUUkjWjUBFW/obg3tUJkJP3OagqYFwWxrMwCuEnsRtLHdhXGxb7TQiMwxVQSC2RgILooXaGUAXarMLw==}
+    peerDependencies:
+      react: '>=18'
+      vue: '>=3'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      vue:
+        optional: true
 
   '@dnd-kit/accessibility@3.1.1':
     resolution: {integrity: sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==}
@@ -2600,6 +2614,10 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@databuddy/sdk@3.3.0(react@19.3.0)':
+    optionalDependencies:
+      react: 19.3.0
 
   '@dnd-kit/accessibility@3.1.1(react@19.3.0)':
     dependencies:

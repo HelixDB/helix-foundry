@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Telemetry } from "@/web/telemetry";
 // The landing page's own stylesheets, before the figures' (src/landing). A
 // root layout of its own, so none of the app's global styles reach it, and
 // going between the two is a full page load.
@@ -45,7 +46,10 @@ export default function LandingLayout({ children }: { children: ReactNode }) {
           href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Telemetry />
+      </body>
     </html>
   );
 }
