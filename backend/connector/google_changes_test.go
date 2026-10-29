@@ -228,6 +228,9 @@ func googleChangeFile(id, mimeType, modified, version, extra string) string {
 		`"webViewLink":"https://docs.google.com/document/d/%s/edit","version":%q%s}`, id, id, mimeType, modified, id, version, extra)
 }
 
+// googleCursorHead opens a cursor taken under googleSource's settings.
+const googleCursorHead = `{"subject":"ada@acme.com","event_days":90,`
+
 func TestGoogleChanges(t *testing.T) {
 	ctx := context.Background()
 	src := googleSource()
@@ -251,7 +254,7 @@ func TestGoogleChanges(t *testing.T) {
 			"/calendar/v3/calendars/grace@acme.com/events": googleFailure(http.StatusForbidden, "Forbidden", "forbidden"),
 		}
 	}
-	cursor := json.RawMessage(`{"files":{"user":"100","drives":{"drv1":"200"}},` +
+	cursor := json.RawMessage(googleCursorHead + `"files":{"user":"100","drives":{"drv1":"200"}},` +
 		`"events":{"ada@acme.com":"s1","en.uk#holiday@group.v.calendar.google.com":"h1"}}`)
 	// changes reads Changes of tables from cursor under routes, failing the test on an error.
 	changes := func(t *testing.T, w *googleWorkspace, tables []Table, cursor json.RawMessage, held map[string]string) (*googleChanges, string) {
@@ -286,7 +289,7 @@ func TestGoogleChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 		// drv2, left since the drives were listed, has no token; Grace's calendar, refused, none.
-		if want := `{"files":{"user":"500","drives":{"drv1":"600"}},"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`; string(start.Cursor) != want {
+		if want := googleCursorHead + `"files":{"user":"500","drives":{"drv1":"600"}},"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`; string(start.Cursor) != want {
 			t.Fatalf("cursor = %s, want %s", start.Cursor, want)
 		}
 		if start.Source != nil || start.Close != nil {
@@ -302,12 +305,12 @@ func TestGoogleChanges(t *testing.T) {
 	t.Run("starts only the feeds of the tables followed", func(t *testing.T) {
 		w := &googleWorkspace{routes: unchanged()}
 		start, err := googleAt(t, w).Start(ctx, src, []Table{{Name: "files"}})
-		if err != nil || string(start.Cursor) != `{"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` || len(w.requested("/calendar/")) != 0 {
+		if err != nil || string(start.Cursor) != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` || len(w.requested("/calendar/")) != 0 {
 			t.Fatalf("Start = (%s, %v) after %v", start.Cursor, err, w.requested("/"))
 		}
 		w = &googleWorkspace{routes: unchanged()}
 		start, err = googleAt(t, w).Start(ctx, src, []Table{{Name: "event_attendees"}})
-		if err != nil || !strings.HasPrefix(string(start.Cursor), `{"files":null,"events":{"ada@acme.com":"w1",`) || len(w.requested("/drive/")) != 0 {
+		if err != nil || !strings.HasPrefix(string(start.Cursor), googleCursorHead+`"files":null,"events":{"ada@acme.com":"w1",`) || len(w.requested("/drive/")) != 0 {
 			t.Fatalf("Start = (%s, %v) after %v", start.Cursor, err, w.requested("/"))
 		}
 	})
@@ -336,20 +339,20 @@ func TestGoogleChanges(t *testing.T) {
 		routes["/calendar/v3/calendars/en.uk#holiday@group.v.calendar.google.com/events"] = googleEventFeed(t, 90, map[string]string{
 			"window": `{"nextSyncToken":"hw"}`, "hw": `{"nextSyncToken":"h3"}`, "h1": `{"nextSyncToken":"h2"}`})
 		start, err := googleAt(t, &googleWorkspace{routes: routes}).Start(ctx, src, allFollowed[1:])
-		if err != nil || string(start.Cursor) != `{"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"hw"}}` {
+		if err != nil || string(start.Cursor) != googleCursorHead+`"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"hw"}}` {
 			t.Fatalf("Start = (%s, %v)", start.Cursor, err)
 		}
 		got, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], start.Cursor, nil)
 		want := []string{"upsert calendar_events ada@acme.com:ev1", "cascade event_attendees event_id=ada@acme.com:ev1",
 			"delete calendar_events ada@acme.com:ev2", "cascade event_attendees event_id=ada@acme.com:ev2"}
 		if !slices.Equal(got.log, want) || len(got.resets) != 0 ||
-			next != `{"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"h3"}}` {
+			next != googleCursorHead+`"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"h3"}}` {
 			t.Fatalf("log = %v, resets = %v, next = %s", got.log, got.resets, next)
 		}
 		// A sync token's list without a new one leaves the calendar to its window next time.
 		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, map[string]string{"s1": `{"items":[]}`})
 		if _, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], cursor, nil); next !=
-			`{"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"h2"}}` {
+			googleCursorHead+`"files":null,"events":{"ada@acme.com":"","en.uk#holiday@group.v.calendar.google.com":"h2"}}` {
 			t.Fatalf("next = %s", next)
 		}
 	})
@@ -360,7 +363,7 @@ func TestGoogleChanges(t *testing.T) {
 		if len(got.log) != 0 || len(got.resets) != 0 || len(got.offers) != 0 {
 			t.Fatalf("log = %v, resets = %v, offers = %v", got.log, got.resets, got.offers)
 		}
-		if want := `{"files":{"user":"101","drives":{"drv1":"201"}},"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"h2"}}`; next != want {
+		if want := googleCursorHead + `"files":{"user":"101","drives":{"drv1":"201"}},"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"h2"}}`; next != want {
 			t.Fatalf("next = %s, want %s", next, want)
 		}
 		// Grace's calendar has no token, so it is tried from its window.
@@ -394,7 +397,7 @@ func TestGoogleChanges(t *testing.T) {
 		if !slices.Equal(got.log, want) || len(got.resets) != 0 {
 			t.Fatalf("log = %v, resets = %v", got.log, got.resets)
 		}
-		if next != `{"files":{"user":"102","drives":{"drv1":"202"}},"events":null}` || len(w.requested("/calendar/")) != 0 {
+		if next != googleCursorHead+`"files":{"user":"102","drives":{"drv1":"202"}},"events":null}` || len(w.requested("/calendar/")) != 0 {
 			t.Fatalf("next = %s", next)
 		}
 		// Its row is the full read's.
@@ -488,7 +491,7 @@ func TestGoogleChanges(t *testing.T) {
 		got, next := changes(t, w, []Table{{Name: "files"}}, cursor, nil)
 		// The user's feed takes a new token before the full read; drv1's keeps its own, unread.
 		if len(got.log) != 0 || got.resets["files"] != "Drive no longer holds the changes after the cursor" ||
-			next != `{"files":{"user":"500","drives":{"drv1":"200"}},"events":null}` || len(w.requested("/drive/v3/changes?")) != 1 {
+			next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"200"}},"events":null}` || len(w.requested("/drive/v3/changes?")) != 1 {
 			t.Fatalf("log = %v, resets = %v, next = %s, feeds = %v", got.log, got.resets, next, w.requested("/drive/v3/changes?"))
 		}
 		// Another 400 is no expired token.
@@ -501,8 +504,8 @@ func TestGoogleChanges(t *testing.T) {
 	t.Run("reads files in full when the user joins or leaves a shared drive", func(t *testing.T) {
 		for name, tc := range map[string]struct{ drives, reason, next string }{
 			"joins": {`{"drives":[{"id":"drv1"},{"id":"drv3"}]}`, "the user joined shared drive drv3",
-				`{"files":{"user":"100","drives":{"drv1":"200","drv3":"700"}},"events":null}`},
-			"leaves": {`{"drives":[]}`, "the user left shared drive drv1", `{"files":{"user":"100","drives":{}},"events":null}`},
+				googleCursorHead + `"files":{"user":"100","drives":{"drv1":"200","drv3":"700"}},"events":null}`},
+			"leaves": {`{"drives":[]}`, "the user left shared drive drv1", googleCursorHead + `"files":{"user":"100","drives":{}},"events":null}`},
 		} {
 			routes := unchanged()
 			routes["/drive/v3/drives"] = googleDrivesRoute(t, map[string]string{"": tc.drives})
@@ -524,14 +527,14 @@ func TestGoogleChanges(t *testing.T) {
 			return feeds(r)
 		}
 		got, next := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, cursor, nil)
-		if got.resets["files"] != "the user left shared drive drv1" || next != `{"files":{"user":"101","drives":{}},"events":null}` {
+		if got.resets["files"] != "the user left shared drive drv1" || next != googleCursorHead+`"files":{"user":"101","drives":{}},"events":null}` {
 			t.Fatalf("resets = %v, next = %s", got.resets, next)
 		}
 	})
 	t.Run("reads files in full, from new tokens, without a cursor for them", func(t *testing.T) {
 		w := &googleWorkspace{routes: unchanged()}
-		got, next := changes(t, w, []Table{{Name: "files"}}, json.RawMessage(`{"files":null,"events":null}`), nil)
-		if got.resets["files"] != "the table has no change cursor yet" || next != `{"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` {
+		got, next := changes(t, w, []Table{{Name: "files"}}, json.RawMessage(googleCursorHead+`"files":null,"events":null}`), nil)
+		if got.resets["files"] != "the table has no change cursor yet" || next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` {
 			t.Fatalf("resets = %v, next = %s", got.resets, next)
 		}
 	})
@@ -598,7 +601,7 @@ func TestGoogleChanges(t *testing.T) {
 		if row := got.rows["calendar_events"][0]; row["start_at"] != soon.Format(time.RFC3339) || row["attendee_count"] != float64(2) || row["summary"] != "Event ev1" {
 			t.Fatalf("row = %v", row)
 		}
-		if want := `{"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"h2"}}`; next != want {
+		if want := googleCursorHead + `"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"h2"}}`; next != want {
 			t.Fatalf("next = %s", next)
 		}
 		if len(w.requested("/drive/")) != 0 {
@@ -656,7 +659,7 @@ func TestGoogleChanges(t *testing.T) {
 		routes["/calendar/v3/calendars/en.uk#holiday@group.v.calendar.google.com/events"] = googleEventFeed(t, 90, map[string]string{
 			"window": `{"items":[{"id":"hol1","status":"confirmed","start":{"date":"` + soon.Format(time.DateOnly) + `"},"end":{"date":"` +
 				soon.AddDate(0, 0, 1).Format(time.DateOnly) + `"}},{"id":"hol0","status":"cancelled"}],"nextSyncToken":"hw"}`})
-		got, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], json.RawMessage(`{"files":null,"events":{"ada@acme.com":"s1"}}`), nil)
+		got, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], json.RawMessage(googleCursorHead+`"files":null,"events":{"ada@acme.com":"s1"}}`), nil)
 		want := []string{"upsert calendar_events en.uk#holiday@group.v.calendar.google.com:hol1",
 			"cascade event_attendees event_id=en.uk#holiday@group.v.calendar.google.com:hol1",
 			"delete calendar_events en.uk#holiday@group.v.calendar.google.com:hol0",
@@ -678,24 +681,24 @@ func TestGoogleChanges(t *testing.T) {
 		got, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], cursor, nil)
 		reason := "Google no longer holds the changes of calendar ada@acme.com"
 		if fmt.Sprint(got.resets) != fmt.Sprint(map[string]string{"calendar_events": reason, "event_attendees": reason}) ||
-			next != `{"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"h2"}}` {
+			next != googleCursorHead+`"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"h2"}}` {
 			t.Fatalf("resets = %v, next = %s", got.resets, next)
 		}
 	})
 	t.Run("reads the event tables in full when a calendar leaves the list or its events are refused", func(t *testing.T) {
 		for name, tc := range map[string]struct{ cursor, reason, next string }{
-			"left": {`{"files":null,"events":{"ada@acme.com":"s1","gone@acme.com":"g1"}}`, "calendar gone@acme.com left the user's calendar list",
-				`{"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
-			"refused": {`{"files":null,"events":{"grace@acme.com":"r1"}}`, "the user can no longer read the events of calendar grace@acme.com",
-				`{"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
-			"left, listed by its window": {`{"files":null,"events":{"ada@acme.com":"s1","gone@acme.com":""}}`,
+			"left": {googleCursorHead + `"files":null,"events":{"ada@acme.com":"s1","gone@acme.com":"g1"}}`, "calendar gone@acme.com left the user's calendar list",
+				googleCursorHead + `"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
+			"refused": {googleCursorHead + `"files":null,"events":{"grace@acme.com":"r1"}}`, "the user can no longer read the events of calendar grace@acme.com",
+				googleCursorHead + `"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
+			"left, listed by its window": {googleCursorHead + `"files":null,"events":{"ada@acme.com":"s1","gone@acme.com":""}}`,
 				"calendar gone@acme.com left the user's calendar list",
-				`{"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
-			"refused, listed by its window": {`{"files":null,"events":{"ada@acme.com":"s1","grace@acme.com":""}}`,
+				googleCursorHead + `"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
+			"refused, listed by its window": {googleCursorHead + `"files":null,"events":{"ada@acme.com":"s1","grace@acme.com":""}}`,
 				"the user can no longer read the events of calendar grace@acme.com",
-				`{"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
-			"none": {`{"files":null,"events":null}`, "the table has no change cursor yet",
-				`{"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
+				googleCursorHead + `"files":null,"events":{"ada@acme.com":"s2","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
+			"none": {googleCursorHead + `"files":null,"events":null}`, "the table has no change cursor yet",
+				googleCursorHead + `"files":null,"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`},
 		} {
 			got, next := changes(t, &googleWorkspace{routes: unchanged()}, allFollowed[1:], json.RawMessage(tc.cursor), nil)
 			if got.resets["calendar_events"] != tc.reason || got.resets["event_attendees"] != tc.reason || next != tc.next {
@@ -738,6 +741,17 @@ func TestGoogleChanges(t *testing.T) {
 		_, err := googleAt(t, &googleWorkspace{}).Changes(ctx, src, allFollowed, json.RawMessage(`[]`), &googleChanges{})
 		if !errors.Is(err, ErrCursorExpired) {
 			t.Fatalf("Changes error = %v, want ErrCursorExpired", err)
+		}
+	})
+	// A settings change can race a sync queued before it.
+	t.Run("starts over on a cursor taken as another user or for another window", func(t *testing.T) {
+		for _, settings := range []string{`{"subject":"grace@acme.com","event_days":90}`, `{"subject":"ada@acme.com","event_days":30}`} {
+			other := src
+			other.Settings = json.RawMessage(settings)
+			w := &googleWorkspace{routes: unchanged()}
+			if _, err := googleAt(t, w).Changes(ctx, other, allFollowed, cursor, &googleChanges{}); !errors.Is(err, ErrCursorExpired) || len(w.requested("/")) != 0 {
+				t.Errorf("%s: Changes error = %v after %v", settings, err, w.requested("/"))
+			}
 		}
 	})
 	t.Run("refuses a table it doesn't follow and settings Prepare never stores", func(t *testing.T) {

@@ -19,10 +19,14 @@ var _ ChangeReader = (*googleKind)(nil)
 // trash, which a listing leaves out by its query.
 const googleChangeFields = "nextPageToken,newStartPageToken,changes(changeType,removed,fileId,file(" + googleFileFieldList + ",trashed))"
 
-// googleCursor is where each followed API's next change read begins. Files
-// is null, and Events null, when the cursor follows none of their tables.
+// googleCursor is where each followed API's next change read begins, and
+// the settings it was taken under: another user's feeds, or another window
+// of events, are not this read's. Files is null, and Events null, when the
+// cursor follows none of their tables.
 type googleCursor struct {
-	Files *googleFilesCursor `json:"files"`
+	Subject   string             `json:"subject"`
+	EventDays int                `json:"event_days"`
+	Files     *googleFilesCursor `json:"files"`
 	// Events is each calendar's sync token, by calendar id: Calendar's
 	// nextSyncToken of its events, listed as a full read lists them; "" when
 	// Calendar gave the list none, and a change read lists its window
@@ -63,7 +67,7 @@ func (k *googleKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 	for _, t := range tables {
 		follow[t.Name] = true
 	}
-	var cursor googleCursor
+	cursor := googleCursor{Subject: c.settings.Subject, EventDays: c.settings.EventDays}
 	if follow["files"] {
 		drives, err := c.drives(ctx)
 		if err != nil {
@@ -98,7 +102,8 @@ func (k *googleKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 // Changes reads what each followed API's feeds hold after the cursor; a
 // table whose feeds can't be followed this time is reset, and the syncer
 // reads it in full in the same sync, from the tokens Changes returns, which
-// it takes before that read.
+// it takes before that read. A cursor taken as another user, or for another
+// window of events, is expired: a settings change can race a queued sync.
 func (k *googleKind) Changes(ctx context.Context, src Source, tables []Table, cursor json.RawMessage, w ChangeWriter) (json.RawMessage, error) {
 	var prev googleCursor
 	if err := json.Unmarshal(cursor, &prev); err != nil {
@@ -108,6 +113,9 @@ func (k *googleKind) Changes(ctx context.Context, src Source, tables []Table, cu
 	if err != nil {
 		return nil, err
 	}
+	if prev.Subject != c.settings.Subject || prev.EventDays != c.settings.EventDays {
+		return nil, fmt.Errorf("the google change cursor was taken as %q with %d days of events: %w", prev.Subject, prev.EventDays, ErrCursorExpired)
+	}
 	follow := map[string]bool{}
 	for _, t := range tables {
 		if k.Capture(src, t.Name) != CaptureCursor {
@@ -115,7 +123,7 @@ func (k *googleKind) Changes(ctx context.Context, src Source, tables []Table, cu
 		}
 		follow[t.Name] = true
 	}
-	var next googleCursor
+	next := googleCursor{Subject: c.settings.Subject, EventDays: c.settings.EventDays}
 	if follow["files"] {
 		if next.Files, err = c.fileChanges(ctx, prev.Files, w); err != nil {
 			return nil, err
