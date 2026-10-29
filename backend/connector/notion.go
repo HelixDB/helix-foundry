@@ -202,11 +202,11 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 	if !found["data_source"] {
 		return d, nil
 	}
-	sources, err := c.sources(ctx)
+	listed, err := c.listSources(ctx)
 	if err != nil {
 		return Discovery{}, err
 	}
-	for i, s := range sources {
+	for i, s := range notionSources(listed) {
 		t := s.table
 		if !src.ForSync && i < notionPreviews {
 			l, err := c.page(ctx, s.path(), nil, map[string]any{"page_size": notionPreviewRows, "result_type": "page"})
@@ -269,10 +269,11 @@ func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 	if pages == nil && len(read) == 0 {
 		return written, nil
 	}
-	sources, err := c.sources(ctx)
+	listed, err := c.listSources(ctx)
 	if err != nil {
 		return written, err
 	}
+	sources := notionSources(listed)
 	for _, table := range tables {
 		if _, ok := read[table.Name]; ok && !slices.ContainsFunc(sources, func(s notionSource) bool { return s.table.Name == table.Name }) {
 			return written, refused(nil, "Notion no longer shares the database of table %s with this integration; try again", table.Name)
@@ -859,26 +860,28 @@ type notionColumn struct {
 
 func (s notionSource) path() string { return "/v1/data_sources/" + url.PathEscape(s.id) + "/query" }
 
-// sources lists every shared data source with its table, named from its
-// title (notionSlug), or data_source for a title with no letter or digit
-// Helix keeps. A name is never users or pages, and is held by the oldest
-// data source by creation, then id; any other that would take it takes it
-// with its id's suffix (notionSuffixed) instead, so sharing a newer one
-// moves no table.
-func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
-	type listed struct {
-		id, title  string
-		created    time.Time
-		properties map[string]any
-	}
-	// A data source listed twice keeps its last listing.
-	var all []listed
+// notionListed is a shared data source as Notion lists it, before it is named.
+type notionListed struct {
+	id, title  string
+	created    time.Time
+	properties map[string]any
+}
+
+func notionListedOf(item map[string]any) notionListed {
+	l := notionListed{title: notionText(item["title"])}
+	l.id, _ = item["id"].(string)
+	l.created, _ = notionTime(item["created_time"]) // none sorts first
+	l.properties, _ = item["properties"].(map[string]any)
+	return l
+}
+
+// listSources lists every shared data source; one listed twice keeps its
+// last listing.
+func (c *notionClient) listSources(ctx context.Context) ([]notionListed, error) {
+	var all []notionListed
 	at := map[string]int{}
 	err := c.search(ctx, map[string]any{"property": "object", "value": "data_source"}, "ascending", nil, func(item map[string]any) error {
-		l := listed{title: notionText(item["title"])}
-		l.id, _ = item["id"].(string)
-		l.created, _ = notionTime(item["created_time"]) // none sorts first
-		l.properties, _ = item["properties"].(map[string]any)
+		l := notionListedOf(item)
 		if i, ok := at[l.id]; ok {
 			all[i] = l
 			return nil
@@ -887,10 +890,43 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 		all = append(all, l)
 		return nil
 	})
-	if err != nil {
-		return nil, err
+	return all, err
+}
+
+// dataSource reads one data source by id, as a search lists it: ok is
+// false when Notion no longer shares it (404 or 403) or it is in the trash.
+func (c *notionClient) dataSource(ctx context.Context, id string) (_ notionListed, ok bool, _ error) {
+	path := "/v1/data_sources/" + url.PathEscape(id)
+	status, raw, err := c.do(ctx, path, nil, nil)
+	switch {
+	case err != nil:
+		return notionListed{}, false, err
+	case status == http.StatusNotFound || status == http.StatusForbidden:
+		return notionListed{}, false, nil
 	}
-	slices.SortFunc(all, func(a, b listed) int { return cmp.Or(a.created.Compare(b.created), strings.Compare(a.id, b.id)) })
+	if err := notionStatus(status, path); err != nil {
+		return notionListed{}, false, err
+	}
+	var item map[string]any
+	if json.Unmarshal(raw, &item) != nil || item["id"] != id {
+		return notionListed{}, false, fmt.Errorf("notion %s: the response is not the data source", path)
+	}
+	if item["in_trash"] == true {
+		return notionListed{}, false, nil
+	}
+	return notionListedOf(item), true, nil
+}
+
+// notionSources names each listed data source's table from its title
+// (notionSlug), or data_source for a title with no letter or digit Helix
+// keeps. A name is never users or pages, and is held by the oldest data
+// source by creation, then id; any other that would take it takes it with
+// its id's suffix (notionSuffixed) instead, so sharing a newer one moves
+// no table.
+func notionSources(listed []notionListed) []notionSource {
+	all := slices.SortedFunc(slices.Values(listed), func(a, b notionListed) int {
+		return cmp.Or(a.created.Compare(b.created), strings.Compare(a.id, b.id))
+	})
 	tables := map[string]bool{"users": true, "pages": true}
 	sources := make([]notionSource, len(all))
 	for i, l := range all {
@@ -951,7 +987,7 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 		s.schema = hex.EncodeToString(schema.Sum(nil)[:8])
 		sources[i] = s
 	}
-	return sources, nil
+	return sources
 }
 
 // rows reads every row of a data source, oldest first by creation, and

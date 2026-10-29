@@ -16,16 +16,18 @@ import (
 )
 
 // notionEdits is a workspace a change read reads: its data sources by id,
-// its pages by id, each page's Markdown, and the requests it answered. It
-// filters a query by last edit and a search by the trash, and sorts a
-// search by last edit, as Notion does.
+// those its search leaves out (unsearched), its pages by id, each page's
+// Markdown, and the requests it answered. It filters a query by last edit
+// and a search by the trash, and sorts a search by last edit, as Notion
+// does; a data source read by id is one it has, else 404.
 type notionEdits struct {
-	t       *testing.T
-	sources map[string]string
-	pages   map[string]notionEdit
-	bodies  map[string]string
-	mu      sync.Mutex
-	asked   []string
+	t          *testing.T
+	sources    map[string]string
+	unsearched map[string]bool
+	pages      map[string]notionEdit
+	bodies     map[string]string
+	mu         sync.Mutex
+	asked      []string
 }
 
 // notionEdit is a page: its last edit, the data source it is a row of ("" for
@@ -100,7 +102,7 @@ func (e *notionEdits) kind(extra notionRoutes) *notionKind {
 				e.ask("search data sources")
 				return http.StatusOK, notionResults(slices.Collect(func(yield func(string) bool) {
 					for _, id := range slices.Sorted(maps.Keys(e.sources)) {
-						if !yield(e.sources[id]) {
+						if !e.unsearched[id] && !yield(e.sources[id]) {
 							return
 						}
 					}
@@ -113,6 +115,16 @@ func (e *notionEdits) kind(extra notionRoutes) *notionKind {
 			e.ask(fmt.Sprintf("search %s %v", map[bool]string{false: "pages", true: "trash"}[trash], order["direction"]))
 			return http.StatusOK, notionResults(e.listed(func(p notionEdit) bool { return p.trashed == trash }, order["direction"] == "descending")...)
 		},
+	}
+	// The data sources the tests' cursors name, shared or not.
+	for _, id := range []string{"ds_1", "ds_2", "ds_gone"} {
+		routes["/v1/data_sources/"+id] = func(*http.Request) (int, string) {
+			e.ask("data source " + id)
+			if source, ok := e.sources[id]; ok {
+				return http.StatusOK, source
+			}
+			return http.StatusNotFound, `{"object":"error","status":404,"code":"object_not_found"}`
+		}
 	}
 	for id := range e.sources {
 		routes["/v1/data_sources/"+id+"/query"] = func(r *http.Request) (int, string) {
@@ -516,6 +528,54 @@ func TestNotionChanges(t *testing.T) {
 			t.Fatalf("changes = %q, resets = %v", w.log, w.resets)
 		}
 	})
+	// Notion's search is eventually consistent: one that leaves out a data
+	// source the cursor has must not cost its rows and their documents.
+	t.Run("reads a data source the search leaves out by id, and follows it as listed", func(t *testing.T) {
+		e := workspace(t, map[string]notionEdit{"row_2": {edited: after, source: "ds_2", properties: title("Bigger deal")}})
+		cursor := cursorOf(t, e, nil)
+		e.unsearched = map[string]bool{"ds_2": true}
+		w := newNotionChanges()
+		next := changes(t, e, cursor, w)
+		asked := e.took()
+		if !slices.Contains(asked, "data source ds_2") || !slices.Contains(asked, "query ds_2 since 2026-01-08T00:00:00Z whole") ||
+			len(w.resets) != 0 || !slices.Equal(w.log, []string{"upsert deals row_2", "upsert pages row_2"}) ||
+			!strings.Contains(string(next), `"ds_2":{"table":"deals"`) {
+			t.Fatalf("requests = %q, resets = %v, changes = %q, next = %s", asked, w.resets, w.log, next)
+		}
+	})
+	for name, answer := range map[string]func(*http.Request) (int, string){
+		"answers 403 for": func(*http.Request) (int, string) {
+			return http.StatusForbidden, `{"object":"error","status":403,"code":"restricted_resource"}`
+		},
+		"has in the trash": func(*http.Request) (int, string) {
+			return http.StatusOK, strings.Replace(notionTestSource("ds_2", "Deals", "2026-01-02T00:00:00.000Z", deals), `"in_trash":false`, `"in_trash":true`, 1)
+		},
+	} {
+		t.Run("deletes the pages rows of a data source Notion "+name, func(t *testing.T) {
+			e := workspace(t, nil)
+			cursor := cursorOf(t, e, nil)
+			e.unsearched = map[string]bool{"ds_2": true}
+			w := newNotionChanges()
+			next, err := e.kind(notionRoutes{"/v1/data_sources/ds_2": answer}).Changes(ctx, src, tables, cursor, w)
+			if err != nil || !slices.Equal(w.log, []string{"cascade pages data_source_id=ds_2"}) || !slices.Equal(w.resets, []string{"deals"}) ||
+				strings.Contains(string(next), `"ds_2"`) {
+				t.Fatalf("Changes = %v, changes = %q, resets = %v, next = %s", err, w.log, w.resets, next)
+			}
+		})
+	}
+	t.Run("fails the read when Notion won't say whether it still shares a data source", func(t *testing.T) {
+		e := workspace(t, nil)
+		cursor := cursorOf(t, e, nil)
+		e.unsearched = map[string]bool{"ds_2": true}
+		w := newNotionChanges()
+		_, err := e.kind(notionRoutes{"/v1/data_sources/ds_2": func(*http.Request) (int, string) {
+			return http.StatusBadRequest, `{"object":"error","status":400,"code":"validation_error"}`
+		}}).Changes(ctx, src, tables, cursor, w)
+		notionRefusal(t, err, "Notion returned HTTP 400 for /v1/data_sources/ds_2")
+		if len(w.log) != 0 {
+			t.Fatalf("changes = %q", w.log)
+		}
+	})
 	// A page joins the search late, out of its place by last edit: the
 	// searches reach back notionSearchLag before the cursor and stop only
 	// past it. A page listed again unchanged writes nothing new.
@@ -677,11 +737,11 @@ func TestNotionSchema(t *testing.T) {
 	schemaOf := func(t *testing.T, properties string) string {
 		t.Helper()
 		kind := notionAt(t, notionRoutes{"/v1/search": notionSearchOf(t, nil, []string{notionTestSource("ds_1", "Accounts", "2026-01-01T00:00:00.000Z", properties)})})
-		sources, err := kind.client(notionTestSecret).sources(context.Background())
-		if err != nil || len(sources) != 1 {
-			t.Fatalf("sources = %v, %v", sources, err)
+		listed, err := kind.client(notionTestSecret).listSources(context.Background())
+		if err != nil || len(listed) != 1 {
+			t.Fatalf("sources = %v, %v", listed, err)
 		}
-		return sources[0].schema
+		return notionSources(listed)[0].schema
 	}
 	base := `{"Name":{"id":"title","type":"title","title":{}},"Plan":{"id":"pl","type":"select","select":{"options":[{"name":"Gold"}]}},
 		"Score":{"id":"sc","type":"formula","formula":{"expression":"1"}},"Ticket":{"id":"tk","type":"unique_id","unique_id":{"prefix":"T"}}}`

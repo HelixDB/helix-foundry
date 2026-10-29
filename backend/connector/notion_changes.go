@@ -63,11 +63,11 @@ func (k *notionKind) Capture(_ Source, table string) Capture {
 
 func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Start, error) {
 	since := notionSince(time.Now())
-	sources, err := k.client(src.Secret).sources(ctx)
+	listed, err := k.client(src.Secret).listSources(ctx)
 	if err != nil {
 		return Start{}, err
 	}
-	cursor, err := notionCursorOf(since, tables, sources)
+	cursor, err := notionCursorOf(since, tables, notionSources(listed))
 	return Start{Cursor: cursor}, err
 }
 
@@ -75,12 +75,16 @@ func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 //  1. A table the cursor doesn't follow is reset, and so is a data
 //     source's table that held another data source's rows (the name moves
 //     to another when its holder is unshared) or whose data source's schema
-//     changed: its stored rows aren't what a full read would write now.
+//     changed: its stored rows aren't what a full read would write now. A
+//     data source the cursor has that the search of them leaves out is read
+//     by id, since the search is eventually consistent: one Notion still
+//     shares is read as if listed.
 //  2. The trash, newest edit first, back to notionSearchLag before the
 //     cursor: a page trashed since loses its rows, and the syncer its
 //     document with them. It comes first, so a page restored since is
 //     upserted after.
-//  3. A data source the cursor has that Notion no longer shares loses its
+//  3. A data source the cursor has that Notion no longer shares (it
+//     answers 404 or 403, or the data source is in the trash) loses its
 //     rows of the pages table, as a full read would leave them out.
 //  4. Each shared data source's rows edited since, from one query: its
 //     table's whole rows, and the pages table's (of their titles alone
@@ -102,10 +106,25 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 		return nil, fmt.Errorf("decode notion change cursor: %w", ErrCursorExpired)
 	}
 	c := k.client(src.Secret)
-	sources, err := c.sources(ctx)
+	listed, err := c.listSources(ctx)
 	if err != nil {
 		return nil, err
 	}
+	var unshared []string // the cursor's data sources Notion no longer shares
+	for _, id := range slices.Sorted(maps.Keys(prev.Sources)) {
+		if slices.ContainsFunc(listed, func(l notionListed) bool { return l.id == id }) {
+			continue
+		}
+		switch l, shared, err := c.dataSource(ctx, id); {
+		case err != nil:
+			return nil, err
+		case shared:
+			listed = append(listed, l)
+		default:
+			unshared = append(unshared, id)
+		}
+	}
+	sources := notionSources(listed)
 	pages := false
 	followed := map[string]string{} // the data sources' tables this read follows, by data source id
 	for _, t := range tables {
@@ -170,11 +189,9 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 		return nil, err
 	}
 	if pages {
-		for _, id := range slices.Sorted(maps.Keys(prev.Sources)) {
-			if !slices.ContainsFunc(sources, func(s notionSource) bool { return s.id == id }) {
-				if err := w.DeleteWhere("pages", "data_source_id", id); err != nil {
-					return nil, err
-				}
+		for _, id := range unshared {
+			if err := w.DeleteWhere("pages", "data_source_id", id); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -230,12 +247,12 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 	if !pages {
 		return notionCursorOf(next, tables, sources)
 	}
-	listed := map[string]bool{}
+	listedPages := map[string]bool{}
 	err = newest(false, func(p notionPage) error {
-		if queried[p.dataSourceID] || listed[p.id] {
+		if queried[p.dataSourceID] || listedPages[p.id] {
 			return nil
 		}
-		listed[p.id] = true
+		listedPages[p.id] = true
 		return page(p)
 	})
 	if err != nil {
