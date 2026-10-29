@@ -390,7 +390,7 @@ func (c *googleClient) eventToken(ctx context.Context, calendar string, from, to
 // token, one page each when nothing changed; an event's last change wins. A
 // cancelled event loses its rows; a changed one in the window gets its row
 // and its attendees' rows in place of the ones it had, as a full read writes
-// them. A changed event outside the window is left as it is, as a full read
+// them, and in place of those an earlier copy of it in the read wrote. A changed event outside the window is left as it is, as a full read
 // leaves it: the tables are windowed, so its row, if any, leaves when the
 // next full read drops it, and is no delete. An event that enters the window
 // unchanged, as each instance of a series does googleFutureDays before it,
@@ -419,17 +419,22 @@ func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string,
 		}
 	}
 	from, to := googleWindow(time.Now(), c.settings.EventDays)
+	// wrote are the attendee keys this read wrote of each event, by event
+	// id: a later copy of the event, as a list paged while it changes shows,
+	// takes them back, since DeleteWhere removes only the rows the table held
+	// before the read.
+	wrote := map[string][]map[string]any{}
 	next := map[string]string{}
 	for _, calendar := range calendars {
 		each := func(id string, e map[string]any) error {
 			if e["status"] == "cancelled" {
-				return googleEventGone(w, follow, calendar+":"+id)
+				return googleEventGone(w, follow, calendar+":"+id, wrote)
 			}
 			if !googleInWindow(e, from, to) {
 				return nil
 			}
 			row, people := googleEvent(calendar, id, e)
-			return googleEventChanged(w, follow, row, people)
+			return googleEventChanged(w, follow, row, people, wrote)
 		}
 		token, held := prev[calendar]
 		if token != "" {
@@ -470,22 +475,34 @@ func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string,
 	return next, nil
 }
 
-// googleEventGone removes a cancelled event's rows from the followed tables.
-func googleEventGone(w ChangeWriter, follow map[string]bool, eventID string) error {
+// googleEventGone removes a cancelled event's rows from the followed
+// tables, the attendees wrote holds of it included.
+func googleEventGone(w ChangeWriter, follow map[string]bool, eventID string, wrote map[string][]map[string]any) error {
 	if follow["calendar_events"] {
 		if err := w.Delete("calendar_events", map[string]any{"event_id": eventID}); err != nil {
 			return err
 		}
 	}
-	if follow["event_attendees"] {
-		return w.DeleteWhere("event_attendees", "event_id", eventID)
+	if !follow["event_attendees"] {
+		return nil
 	}
+	if err := w.DeleteWhere("event_attendees", "event_id", eventID); err != nil {
+		return err
+	}
+	for _, key := range wrote[eventID] {
+		if err := w.Delete("event_attendees", key); err != nil {
+			return err
+		}
+	}
+	delete(wrote, eventID)
 	return nil
 }
 
 // googleEventChanged writes a changed event's rows to the followed tables,
-// its attendees' in place of the ones it had.
-func googleEventChanged(w ChangeWriter, follow map[string]bool, row map[string]any, people []map[string]any) error {
+// its attendees' in place of the ones it had and of those wrote holds of it,
+// and records them in wrote.
+func googleEventChanged(w ChangeWriter, follow map[string]bool, row map[string]any, people []map[string]any,
+	wrote map[string][]map[string]any) error {
 	if follow["calendar_events"] {
 		if err := w.Upsert("calendar_events", row); err != nil {
 			return err
@@ -494,13 +511,21 @@ func googleEventChanged(w ChangeWriter, follow map[string]bool, row map[string]a
 	if !follow["event_attendees"] {
 		return nil
 	}
-	if err := w.DeleteWhere("event_attendees", "event_id", row["event_id"]); err != nil {
+	eventID, _ := row["event_id"].(string)
+	if err := w.DeleteWhere("event_attendees", "event_id", eventID); err != nil {
 		return err
 	}
+	for _, key := range wrote[eventID] {
+		if err := w.Delete("event_attendees", key); err != nil {
+			return err
+		}
+	}
+	wrote[eventID] = nil
 	for _, person := range people {
 		if err := w.Upsert("event_attendees", person); err != nil {
 			return err
 		}
+		wrote[eventID] = append(wrote[eventID], map[string]any{"event_id": eventID, "email": person["email"]})
 	}
 	return nil
 }

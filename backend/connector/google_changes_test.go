@@ -615,6 +615,28 @@ func TestGoogleChanges(t *testing.T) {
 			t.Fatalf("log = %v", got.log)
 		}
 	})
+	// The table's earlier rows go by DeleteWhere, but not the ones an earlier
+	// copy wrote in the same read: they go by key.
+	t.Run("takes back the attendees an earlier copy of an event wrote", func(t *testing.T) {
+		ev1 := googleTestEvent("ev1", soon, `"attendees":[{"email":"ada@acme.com"},{"email":"grace@acme.com"}]`)
+		for name, tc := range map[string]struct{ later, log string }{
+			"cancelled": {`{"id":"ev1","status":"cancelled"}`, "[delete calendar_events ada@acme.com:ev1 cascade event_attendees event_id=ada@acme.com:ev1 " +
+				"delete event_attendees ada@acme.com:ev1 ada@acme.com delete event_attendees ada@acme.com:ev1 grace@acme.com]"},
+			"changed": {googleTestEvent("ev1", soon, `"attendees":[{"email":"ada@acme.com"}]`), "[upsert calendar_events ada@acme.com:ev1 " +
+				"cascade event_attendees event_id=ada@acme.com:ev1 delete event_attendees ada@acme.com:ev1 ada@acme.com " +
+				"delete event_attendees ada@acme.com:ev1 grace@acme.com upsert event_attendees ada@acme.com:ev1 ada@acme.com]"},
+		} {
+			routes := unchanged()
+			routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, map[string]string{
+				"s1": `{"items":[` + ev1 + `],"nextPageToken":"p2"}`, "s1/p2": `{"items":[` + tc.later + `],"nextSyncToken":"s2"}`})
+			got, _ := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], cursor, nil)
+			first := "[upsert calendar_events ada@acme.com:ev1 cascade event_attendees event_id=ada@acme.com:ev1 " +
+				"upsert event_attendees ada@acme.com:ev1 ada@acme.com upsert event_attendees ada@acme.com:ev1 grace@acme.com "
+			if fmt.Sprint(got.log) != first+strings.TrimPrefix(tc.log, "[") {
+				t.Errorf("%s: log = %v", name, got.log)
+			}
+		}
+	})
 	t.Run("writes only the event table followed", func(t *testing.T) {
 		routes := unchanged()
 		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, adaChanges)
