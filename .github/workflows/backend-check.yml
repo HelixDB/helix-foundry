@@ -11,9 +11,15 @@ defaults:
   run:
     working-directory: backend
 jobs:
-  # A branch protection check: named apart from the site CI's `check`.
+  # A branch protection check: named apart from the site CI's `check`. Also on
+  # a Crucible runner while it is tried, as `backend-check (crucible)`.
   backend-check:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.runner == 'crucible-2vcpu-arm' && 'backend-check (crucible)' || 'backend-check' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, crucible-2vcpu-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

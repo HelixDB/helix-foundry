@@ -1,8 +1,15 @@
 name: CI
 on: [push, pull_request]
 jobs:
+  # Also on a Crucible runner while it is tried: `check (crucible)` beside the
+  # required `check`, which a Crucible failure never cancels.
   check:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.runner == 'crucible-2vcpu-arm' && 'check (crucible)' || 'check' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, crucible-2vcpu-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
