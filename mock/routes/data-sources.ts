@@ -1494,8 +1494,8 @@ export function documentStreams(
                   // slack.go's "2|<content>|<people>": 40 hex digits of a hash
                   // of the channel's name and what history says of each
                   // message (its time, text, author, reply count and latest
-                  // reply), then 16 of the names of who wrote them. A reply's
-                  // text or author changes neither.
+                  // reply), then 16 of the names they show. A reply's edit,
+                  // or the name of who wrote it, changes neither.
                   version: `2|${sha(
                     [
                       channel.name,
