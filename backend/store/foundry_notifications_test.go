@@ -12,9 +12,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/helixdb/helix-foundry/backend/config"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	foundrynotifyworker "github.com/helixdb/helix-foundry/backend/workers/foundry-notify-worker"
 )
 
 // notificationID hands out FN-1, FN-2, …, across the tests, as id.New
@@ -536,4 +539,111 @@ VALUES (?, 'sample_follow_up', ?, ?, ?, NOW(6) + INTERVAL 1 HOUR)`, id26("FNC-LA
 			assert.Equal(t, 1, n, id)
 		}
 	})
+}
+
+// replicaMail is the host's mail for TestFoundryNotifyWorkerReplicas: every
+// person has an address, and it counts each email sent.
+type replicaMail struct {
+	mu   sync.Mutex
+	sent map[string]int
+}
+
+func (m *replicaMail) Recipient(_ context.Context, userID string) (ports.Recipient, error) {
+	return ports.Recipient{Email: userID + "@example.com", FirstName: "Ada"}, nil
+}
+
+func (m *replicaMail) Send(_ context.Context, to ports.Recipient, e ports.Email) error {
+	time.Sleep(20 * time.Millisecond) // long enough for the other replica to claim meanwhile
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent[to.Email+" "+e.Subject]++
+	return nil
+}
+
+// The worker runs in a role with replicas: two of them finding and sending
+// the same emails at once queue each email once and send it once.
+func TestFoundryNotifyWorkerReplicas(t *testing.T) {
+	ctx := context.Background()
+	db := newTestStore(t)
+	for _, tag := range []string{"NRA", "NRB", "NRC", "NRD"} {
+		f := foundryFixture{db: db, ontology: sampleOntology(t, db, id26("FWS-NREP"), tag)}
+		gen := startedGeneration(t, db, firstDraft(f, tag))
+		outcome := firstDraftOutcome(f, gen, tag)
+		outcome.Load = nil
+		require.NoError(t, db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome))
+	}
+	newSampleRun(t, db, "REP", id26("FNS-ADA"), 30*time.Hour)
+
+	cfg := config.Defaults()
+	cfg.Foundry.Notify.SiteURL, cfg.Foundry.Notify.PollInterval = "https://foundry.example.com", 50*time.Millisecond
+	mail := &replicaMail{sent: map[string]int{}}
+	var replicas []*foundrynotifyworker.Task
+	for range 2 {
+		task, err := foundrynotifyworker.New(foundrynotifyworker.Deps{Cfg: &cfg, DB: db, Mail: mail})
+		require.NoError(t, err)
+		replicas = append(replicas, task)
+	}
+	var wg sync.WaitGroup
+	for _, task := range replicas {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assert.NoError(t, task.Start(ctx))
+		}()
+	}
+	sent := func() int {
+		var n int
+		require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_notifications WHERE status='sent'`).Scan(&n))
+		return n
+	}
+	require.Eventually(t, func() bool { return sent() == 5 }, 20*time.Second, 50*time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // a few more ticks of each replica
+	for _, task := range replicas {
+		require.NoError(t, task.Stop(ctx))
+	}
+	wg.Wait()
+
+	assert.Len(t, notifications(t), 5, "one email per subject")
+	mail.mu.Lock()
+	defer mail.mu.Unlock()
+	assert.Len(t, mail.sent, 5)
+	for email, n := range mail.sent {
+		assert.Equal(t, 1, n, "%s sent %d times", email, n)
+	}
+}
+
+// Replicas find the same emails at once: each is queued once, by one of
+// them, and neither fails.
+func TestDiscoverFoundryNotificationsConcurrently(t *testing.T) {
+	ctx := context.Background()
+	db := newTestStore(t)
+	for _, tag := range []string{"NCA", "NCB", "NCC"} {
+		f := foundryFixture{db: db, ontology: sampleOntology(t, db, id26("FWS-NCON"), tag)}
+		gen := startedGeneration(t, db, firstDraft(f, tag))
+		outcome := firstDraftOutcome(f, gen, tag)
+		outcome.Load = nil
+		require.NoError(t, db.FinishOntologyGeneration(ctx, gen.ID, "worker-1", outcome))
+	}
+	newSampleRun(t, db, "CON1", id26("FNS-ADA"), 30*time.Hour)
+	newSampleRun(t, db, "CON2", id26("FNS-ALAN"), 30*time.Hour)
+	now := time.Now()
+	var mu sync.Mutex
+	queued := 0
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ready, err := db.DiscoverFoundryOntologyReady(ctx, now.Add(-time.Hour), 100, notificationID)
+			assert.NoError(t, err)
+			followUps, err := db.DiscoverFoundrySampleFollowUps(ctx, now.Add(-72*time.Hour), now.Add(-24*time.Hour), 100, notificationID)
+			assert.NoError(t, err)
+			mu.Lock()
+			queued += ready + followUps
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, 5, queued, "each email is counted by the one that queued it")
+	assert.Len(t, notifications(t), 5)
 }

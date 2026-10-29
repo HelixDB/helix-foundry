@@ -432,16 +432,18 @@ func TestFoundryNotifyWorkerSkips(t *testing.T) {
 		change func(*outboxStore, *model.FoundryNotification)
 		why    string
 	}{
-		"a person with no address": {func(_ *outboxStore, n *model.FoundryNotification) { n.UserID = "user-gone" }, "the person is gone"},
+		"a person with no address":  {func(_ *outboxStore, n *model.FoundryNotification) { n.UserID = "user-gone" }, "the person is gone"},
 		"a workspace being deleted": {func(b *outboxStore, _ *model.FoundryNotification) { b.deleting["ws-1"] = true }, "the workspace is gone"},
 		"a workspace gone":          {func(b *outboxStore, _ *model.FoundryNotification) { b.gone["ws-1"] = true }, "the workspace is gone"},
 		"a deleted ontology": {func(b *outboxStore, _ *model.FoundryNotification) {
 			b.ontologies["ont-1"].DeletedAt = &now
 		}, "the ontology is gone"},
-		"an ontology gone":   {func(b *outboxStore, _ *model.FoundryNotification) { delete(b.ontologies, "ont-1") }, "the ontology is gone"},
-		"a generation gone":  {func(b *outboxStore, _ *model.FoundryNotification) { delete(b.generations, "gen-1") }, "the generation is gone"},
-		"a load deleted":     {func(b *outboxStore, _ *model.FoundryNotification) { b.loads["load-1"].Status = model.FoundryLoadDeleted }, "load is deleted"},
-		"a load gone":        {func(b *outboxStore, _ *model.FoundryNotification) { delete(b.loads, "load-1") }, "load is gone"},
+		"an ontology gone":  {func(b *outboxStore, _ *model.FoundryNotification) { delete(b.ontologies, "ont-1") }, "the ontology is gone"},
+		"a generation gone": {func(b *outboxStore, _ *model.FoundryNotification) { delete(b.generations, "gen-1") }, "the generation is gone"},
+		"a load deleted": {func(b *outboxStore, _ *model.FoundryNotification) {
+			b.loads["load-1"].Status = model.FoundryLoadDeleted
+		}, "load is deleted"},
+		"a load gone":             {func(b *outboxStore, _ *model.FoundryNotification) { delete(b.loads, "load-1") }, "load is gone"},
 		"an email of no ontology": {func(_ *outboxStore, n *model.FoundryNotification) { n.OntologyID = nil }, "names no ontology"},
 		"a generation still running": {func(b *outboxStore, _ *model.FoundryNotification) {
 			b.generations["gen-1"].Status = model.OntologyGenerationRunning
@@ -485,7 +487,7 @@ func TestFoundryNotifyWorkerRetries(t *testing.T) {
 		t.Fatalf("the last attempt ended %#v", box.ended["n-1"])
 	}
 	for name, change := range map[string]func(*outboxStore, *mailbox){
-		"the store":           func(b *outboxStore, _ *mailbox) { b.readErr = errors.New("connection reset") },
+		"the store":            func(b *outboxStore, _ *mailbox) { b.readErr = errors.New("connection reset") },
 		"the person's address": func(_ *outboxStore, m *mailbox) { m.recipErr = errors.New("directory down") },
 	} {
 		box, _ := firstDraft("Billing", model.OntologyGenerationSucceeded)
