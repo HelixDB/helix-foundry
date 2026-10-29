@@ -16,15 +16,25 @@ var ErrPrivateAddress = errors.New("connector: host resolves to a non-public add
 
 // blockedPrefixes are public-looking ranges that still reach infrastructure:
 // carrier-grade NAT (which also holds Alibaba's metadata endpoint), benchmarking,
-// IETF protocol assignments, and the IPv6 discard and documentation ranges.
+// IETF protocol assignments, the IPv6 discard and documentation ranges, and
+// Teredo and local-use NAT64, which tunnel to IPv4 addresses not checked here.
 var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"),
 	netip.MustParsePrefix("198.18.0.0/15"),
 	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001::/32"),
 	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
 }
+
+// nat64 and sixToFour are IPv6 ranges whose addresses reach the IPv4 address
+// inside them, which is the one judged.
+var (
+	nat64     = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour = netip.MustParsePrefix("2002::/16")
+)
 
 // Guard decides which addresses connectors may reach. Customer hosts are dialed
 // from inside our VPC, so loopback, private, link-local (cloud metadata) and
@@ -40,6 +50,11 @@ func (g Guard) permits(addr netip.Addr) bool {
 	addr = addr.Unmap()
 	if g.AllowPrivate {
 		return addr.IsValid()
+	}
+	if b := addr.As16(); nat64.Contains(addr) {
+		return g.permits(netip.AddrFrom4([4]byte(b[12:16])))
+	} else if sixToFour.Contains(addr) {
+		return g.permits(netip.AddrFrom4([4]byte(b[2:6])))
 	}
 	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() {
 		return false
