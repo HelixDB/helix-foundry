@@ -468,9 +468,10 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 	if !p.read["channel_days"] {
 		return nil
 	}
-	// The syncer keeps the first documents offered up to its cap, so the newest come first.
+	// The syncer keeps the first documents offered up to its cap, so the
+	// most recently active come first.
 	days := slices.SortedFunc(maps.Values(p.days), func(a, b *slackDay) int {
-		return cmp.Or(b.last.Compare(a.last), strings.Compare(a.id(), b.id()))
+		return cmp.Or(b.active.Compare(a.active), strings.Compare(a.id(), b.id()))
 	})
 	for _, d := range days {
 		if err := p.rows["channel_days"].Write(d.row()); err != nil {
@@ -487,7 +488,7 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		if !ok {
 			continue
 		}
-		doc := Document{ExternalID: d.id(), Version: version, At: d.last, Title: "#" + d.channel.Name + ", " + d.day,
+		doc := Document{ExternalID: d.id(), Version: version, At: d.active, Title: "#" + d.channel.Name + ", " + d.day,
 			URL: "https://app.slack.com/client/" + p.team + "/" + d.channel.ID, Text: text}
 		if err := p.docs.Put(ctx, slackConversations.Name, doc); err != nil {
 			return err
@@ -499,8 +500,8 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 // message writes a listed message's row and counts it into its channel
 // day, keeping it for the day's document while the pass keeps messages
 // and the day's are not dropped. When the kept messages pass
-// slackTextBudget, the oldest days' are dropped down to three quarters of
-// it, so the drop's sort is rare.
+// slackTextBudget, the least recently active days' are dropped down to
+// three quarters of it, so the drop's sort is rare.
 func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	if p.read["messages"] {
 		if err := p.rows["messages"].Write(m.row(ch.ID)); err != nil {
@@ -513,7 +514,7 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	day := m.at.Format(time.DateOnly)
 	d := p.days[ch.ID+":"+day]
 	if d == nil {
-		d = &slackDay{channel: ch, day: day, first: m.at, last: m.at, dropped: !p.keep}
+		d = &slackDay{channel: ch, day: day, first: m.at, last: m.at, active: m.at, dropped: !p.keep}
 		p.days[d.id()] = d
 	}
 	d.count++
@@ -522,6 +523,14 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	}
 	if m.at.After(d.last) {
 		d.last = m.at
+	}
+	// A thread's replies make its parent's day as recent as the latest of them.
+	active := m.at
+	if latest, ok := slackTime(m.LatestReply); ok && latest.After(active) {
+		active = latest
+	}
+	if active.After(d.active) {
+		d.active = active
 	}
 	digest := sha256.Sum256([]byte(strings.Join([]string{m.TS, m.Edited.TS, m.Text, strconv.Itoa(m.ReplyCount), m.LatestReply}, "\x00")))
 	for i := range d.sum {
@@ -536,7 +545,7 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	if p.kept <= slackTextBudget {
 		return nil
 	}
-	kept := slices.SortedFunc(maps.Values(p.days), func(a, b *slackDay) int { return b.last.Compare(a.last) })
+	kept := slices.SortedFunc(maps.Values(p.days), func(a, b *slackDay) int { return b.active.Compare(a.active) })
 	kept = slices.DeleteFunc(kept, func(d *slackDay) bool { return d.dropped })
 	for ; p.kept > slackTextBudget*3/4; kept = kept[:len(kept)-1] {
 		oldest := kept[len(kept)-1]
@@ -664,9 +673,13 @@ type slackDay struct {
 	day         string // YYYY-MM-DD
 	count       int
 	first, last time.Time
-	sum         [sha256.Size]byte
-	messages    []slackMessage
-	bytes       int
+	// active is the day's latest activity: its last message, or the latest
+	// reply to a thread one of them started, when later. It is its
+	// document's time and orders the stream.
+	active   time.Time
+	sum      [sha256.Size]byte
+	messages []slackMessage
+	bytes    int
 	// dropped is a day whose messages are not kept, to be read again if its
 	// document is wanted.
 	dropped bool

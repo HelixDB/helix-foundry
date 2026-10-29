@@ -1133,7 +1133,8 @@ func TestSlackDocuments(t *testing.T) {
 			}
 		}
 		version := regexp.MustCompile(`^1\|[0-9a-f]{40}$`)
-		at := []time.Time{time.Date(2026, 10, 29, 14, 0, 0, 0, time.UTC), time.Date(2026, 10, 28, 16, 0, 0, 300_000, time.UTC),
+		// #general's 28th is as recent as its thread's latest reply.
+		at := []time.Time{time.Date(2026, 10, 29, 14, 0, 0, 0, time.UTC), time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC),
 			time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
 		for i, p := range docs.puts {
 			channel, day, _ := strings.Cut(p.doc.ExternalID, ":")
@@ -1153,21 +1154,46 @@ func TestSlackDocuments(t *testing.T) {
 			t.Fatalf("rows = %v", sinks)
 		}
 	})
+	offered := func(docs *granolaDocs) []string {
+		var ids []string
+		for _, offer := range docs.offers {
+			ids = append(ids, strings.Fields(offer)[1])
+		}
+		return ids
+	}
 	// The syncer keeps the first documents offered up to its cap.
-	t.Run("offers the newest days first, the lower id first at the same time", func(t *testing.T) {
+	t.Run("offers the most recently active days first, the lower id first at the same time", func(t *testing.T) {
 		w := newSlackWorkspace()
-		w.history["C2"] = []string{fmt.Sprintf(`{"user":"U1","text":"Same time","ts":%q}`, slackLunch)}
+		w.history["C2"] = []string{fmt.Sprintf(`{"user":"U1","text":"Same time","ts":%q}`, slackTS("2026-10-29T08:00:00Z"))}
 		kind, _ := slackAt(t, w.routes())
 		docs := &granolaDocs{}
 		if _, err := slackRead(t, kind, slackTables, docs); err != nil {
 			t.Fatal(err)
 		}
-		var ids []string
-		for _, offer := range docs.offers {
-			ids = append(ids, strings.Fields(offer)[1])
-		}
-		if !slices.Equal(ids, []string{"C1:2026-10-28", "C2:2026-10-28", "C1:2026-10-27"}) {
+		if ids := offered(docs); !slices.Equal(ids, []string{"C1:2026-10-28", "C2:2026-10-29", "C1:2026-10-27"}) {
 			t.Fatalf("offers = %q", ids)
+		}
+	})
+	// An old thread answered today must not fall past the cap with its day.
+	t.Run("dates a day by its threads' latest replies", func(t *testing.T) {
+		w := newSlackWorkspace()
+		w.history["C1"][4] = strings.Replace(w.history["C1"][4], `"text":"Deployed v2"`,
+			fmt.Sprintf(`"text":"Deployed v2","thread_ts":%q,"reply_count":1,"latest_reply":%q`, slackTS("2026-10-27T12:00:00Z"), slackTS("2026-10-29T14:30:00Z")), 1)
+		kind, _ := slackAt(t, w.routes())
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		sinks, err := slackRead(t, kind, slackTables, docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ids := offered(docs); !slices.Equal(ids, []string{"C1:2026-10-27", "C2:2026-10-29", "C1:2026-10-28"}) {
+			t.Fatalf("offers = %q", ids)
+		}
+		if at := docs.puts[0].doc.At; !at.Equal(time.Date(2026, 10, 29, 14, 30, 0, 0, time.UTC)) {
+			t.Fatalf("C1:2026-10-27 at %s", at)
+		}
+		// Its row says when its messages were posted.
+		if row := sinks["channel_days"].rows[0]; row["channel_day_id"] != "C1:2026-10-27" || row["last_message_at"] != "2026-10-27T12:00:00Z" {
+			t.Fatalf("row = %v", row)
 		}
 	})
 	// A day the stream holds at its version costs no conversations.replies call.
