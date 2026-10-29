@@ -40,6 +40,10 @@ const (
 	maxSlackPages    = 20_000
 	// slackMessageOverhead is what a kept message costs beyond its text.
 	slackMessageOverhead = 256
+	// slackDocumentMargin is the most a pass leaves of its time once it
+	// stops fetching documents, for the syncer to write what it read: a
+	// quarter of the time it had, at most this.
+	slackDocumentMargin = 15 * time.Minute
 )
 
 // slackIntervals space one read's calls of each Web API method under
@@ -335,7 +339,10 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 // channel_days rows and, when that table is read, its documents, offered
 // most recently active first once every channel is read; a day's thread
 // replies are read only when its document is wanted, and users.list, to
-// name people, once a document is (or the users table is read).
+// name people, once a document is (or the users table is read). Past
+// slackDocumentMargin before ctx's deadline, the days are still offered, so
+// the ones the stream holds stay, but none is fetched: they wait for the
+// next sync.
 func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
 	var s SlackSettings
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
@@ -348,6 +355,9 @@ func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, ro
 		p.read[table.Name] = true
 	}
 	p.keep = p.read["channel_days"] && !docs.Paused(slackConversations.Name)
+	if deadline, ok := ctx.Deadline(); ok {
+		p.stop = deadline.Add(-min(time.Until(deadline)/4, slackDocumentMargin))
+	}
 	return tables, p.run(ctx, cmp.Or(s.HistoryDays, defaultSlackHistoryDays))
 }
 
@@ -371,6 +381,8 @@ type slackPass struct {
 	channels map[string]string // channel id: name
 	days     map[string]*slackDay
 	kept     int // the bytes of messages days keep
+	// stop is when the pass stops fetching documents; zero for never.
+	stop time.Time
 }
 
 func (p *slackPass) run(ctx context.Context, historyDays int) error {
@@ -489,7 +501,7 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 				version = held
 			}
 		}
-		if !p.docs.Want(slackConversations.Name, d.id(), version) {
+		if !p.docs.Want(slackConversations.Name, d.id(), version) || !p.stop.IsZero() && !time.Now().Before(p.stop) {
 			continue
 		}
 		if !named {

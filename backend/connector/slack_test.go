@@ -1610,6 +1610,35 @@ func TestSlackDocuments(t *testing.T) {
 			t.Fatalf("replies calls = %q", got)
 		}
 	})
+	// The days left are offered, so the stream keeps what it holds of them,
+	// but wait for the next sync, which the attempt's time is left for.
+	t.Run("stops fetching documents near the read's deadline", func(t *testing.T) {
+		saved := slackTextBudget
+		slackTextBudget = 0 // so each day is read again when fetched
+		t.Cleanup(func() { slackTextBudget = saved })
+		deadline := time.Now().Add(1200 * time.Millisecond) // documents stop 300ms before it
+		ctx, cancel := context.WithDeadline(ctx, deadline)
+		defer cancel()
+		routes := newSlackWorkspace().routes()
+		replies := routes["conversations.replies"]
+		routes["conversations.replies"] = func(r *http.Request) (int, string) {
+			time.Sleep(time.Until(deadline.Add(-150 * time.Millisecond)))
+			return replies(r)
+		}
+		kind, calls := slackAt(t, routes)
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		sinks := map[string]*rowSink{"messages": {}, "channel_days": {}}
+		if _, err := kind.SyncPass(ctx, slackSource, slackTables[3:], map[string]RowWriter{"messages": sinks["messages"], "channel_days": sinks["channel_days"]}, docs); err != nil {
+			t.Fatal(err)
+		}
+		if len(docs.offers) != 3 || !slices.Equal(docs.putNames(), []string{"conversations C2:2026-10-29", "conversations C1:2026-10-28"}) ||
+			len(sinks["channel_days"].rows) != 3 {
+			t.Fatalf("offers = %q, puts = %v", docs.offers, docs.putNames())
+		}
+		if got := calls.of("conversations.history"); len(got) != 4 {
+			t.Fatalf("history calls = %q; want the C1:2026-10-27 day not read again", got)
+		}
+	})
 	t.Run("stops at Put's error", func(t *testing.T) {
 		kind, _ := slackAt(t, newSlackWorkspace().routes())
 		failed := errors.New("store down")
