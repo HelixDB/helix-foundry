@@ -830,9 +830,10 @@ describe("testing and creating", () => {
       messages: 0,
       users: 18,
     });
+    // Pages holds every page, the databases' rows among them.
     expect(rows(notion.id)).toEqual({
       customer_accounts: 38,
-      pages: 74,
+      pages: 74 + 38 + 21,
       projects: 21,
       users: 12,
     });

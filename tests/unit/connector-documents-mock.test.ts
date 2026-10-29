@@ -396,6 +396,10 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       documents: 60,
       connector: { connectorId, stream: "pages" },
     });
+    expect(pages!.description).toBe(
+      "Each Notion page shared with the integration, database rows included, as Markdown: its title and " +
+        "page id, then the page's content as Notion exports it.",
+    );
     const [newest] = (await page(`setId=${pages!.id}`)).documents;
     const id = "2a1f0001-6c3b-4d2e-9f1a-7b8c9d0e1f2a";
     expect(newest).toMatchObject({
@@ -403,18 +407,38 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       mediaType: "text/markdown",
       source: {
         externalId: id,
-        version: "1|2026-10-27T14:05:00Z",
         url: `https://www.notion.so/Onboarding-playbook-${id.replaceAll("-", "")}`,
         at: "2026-10-27T14:05:00.000Z",
       },
     });
+    // "2|", its last edit and the week of its re-read, offset by its id.
+    const week = 7 * 24 * 3600,
+      offset = Number(
+        createHash("sha256").update(id).digest().readBigUInt64BE() %
+          BigInt(week),
+      ),
+      reread = (at: number) =>
+        Math.floor((Math.floor(at / 1000) + offset) / week);
+    expect(newest!.source!.version).toBe(
+      `2|2026-10-27T14:05:00Z|${reread(Date.now())}`,
+    );
+    // Its title and id, then its body: its last edit is no line of it.
     expect(
       (await call("GET", `${DOCS}/${newest!.id}:content`)).body.text,
     ).toMatch(
       new RegExp(
-        `^# Onboarding playbook\\n\\nLast edited: 2026-10-27 14:05 UTC\\nPage id: ${id}\\n\\n## Overview\\n`,
+        `^# Onboarding playbook\\n\\nPage id: ${id}\\n\\n## Overview\\n`,
       ),
     );
+    // A week on, each page is read again; unchanged, it keeps its document.
+    vi.setSystemTime(Date.now() + week * 1000);
+    await sync(connectorId);
+    const [again] = (await page(`setId=${pages!.id}`)).documents;
+    expect(again).toMatchObject({
+      id: newest!.id,
+      source: { version: `2|2026-10-27T14:05:00Z|${reread(Date.now())}` },
+    });
+    expect(again!.source!.version).not.toBe(newest!.source!.version);
   });
 
   it("fills Google Workspace's Docs with each Google Doc the user can open", async () => {

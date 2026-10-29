@@ -943,12 +943,16 @@ const SLACK_REPLIES = [
 ];
 
 // Notion's API (api.notion.com), as notion.go reads it with an internal
-// integration's secret: the workspace's people, the pages shared with it,
-// and each shared database (data source) as a table of its own, named by
-// its title in snake_case and keyed by its pages' ids, with page_id, url,
-// created_at, last_edited_at and a column per property in name order (a
-// date's end too), typed by the JSON it holds. A test shows each
-// database's first rows. Each shared page with a body is a document.
+// integration's secret: the workspace's people, the pages shared with it
+// (every shared database's rows among them), and each shared database
+// (data source) as a table of its own, named by its title in snake_case
+// and keyed by its pages' ids, with page_id, url, created_at,
+// last_edited_at and a column per property in name order (a date's end
+// too), typed by the JSON it holds. The kind gives a name two would take
+// to the oldest, and the others, or a title that is users or pages, take
+// it with "__" and their id's suffix; the mock's titles and properties
+// take none. A test shows the first rows of each of the oldest 20
+// databases. Each shared page with a body is a document.
 type NotionTable = {
   name: string;
   columns: [name: string, type: string, nullable?: true][];
@@ -990,6 +994,8 @@ const notionTables: NotionTable[] = [
     rows: 12,
   },
   {
+    // 74 pages outside a database, 60 of them with a body, and the 59 rows
+    // of the two databases below.
     name: "pages",
     columns: [
       ["page_id", "string"],
@@ -1004,7 +1010,7 @@ const notionTables: NotionTable[] = [
       ["last_edited_by_id", "string", true],
     ],
     preview: [],
-    rows: 74,
+    rows: 74 + 38 + 21,
   },
   {
     // "Customer Accounts": ARR, Active, Name, Owner, Renewal date, Stage.
@@ -1091,6 +1097,9 @@ const NOTION_PAGE_TITLES = [
   "Support escalation guide",
   "Engineering principles",
 ];
+// How often notion.go reads a page's document again though it shows no
+// edit, in seconds.
+const NOTION_REREAD = 7 * 24 * 3600;
 // The pages with a body, newest edit first: each a document.
 const notionPages = Array.from({ length: 60 }, (_, i) => {
   const title = NOTION_PAGE_TITLES[i % NOTION_PAGE_TITLES.length]!,
@@ -1349,8 +1358,8 @@ const notionStream: MockStream = {
   table: "pages",
   title: "Pages",
   description:
-    "Each Notion page shared with the integration, database rows included, as Markdown: its title, " +
-    "when it was last edited and its page id, then the page's content as Notion exports it.",
+    "Each Notion page shared with the integration, database rows included, as Markdown: its title and " +
+    "page id, then the page's content as Notion exports it.",
   mediaType: "text/markdown",
 };
 const googleStream: MockStream = {
@@ -1506,14 +1515,25 @@ export function documentStreams(
         stream: notionStream,
         documents: notionPages.map((p) => ({
           externalId: p.id,
-          version: `1|${p.editedAt.replace(/\.?0+Z$/, "Z")}`,
+          // notion.go's version: "2|", the page's last edit in RFC 3339
+          // (Go's, no trailing zeros) and the week of its weekly re-read,
+          // offset by its id so pages aren't all read again in one sync. A
+          // page read again unchanged is updated in place.
+          version: `2|${p.editedAt.replace(/\.?0+Z$/, "Z")}|${Math.floor(
+            (Math.floor(Date.parse(syncedAt) / 1000) +
+              Number(
+                createHash("sha256").update(p.id).digest().readBigUInt64BE() %
+                  BigInt(NOTION_REREAD),
+              )) /
+              NOTION_REREAD,
+          )}`,
           at: p.editedAt,
           title: p.title,
           url: p.url,
+          // Its title and id, then its body; its last edit is its time.
           text: [
             `# ${p.title}`,
             "",
-            `Last edited: ${p.editedAt.slice(0, 16).replace("T", " ")} UTC`,
             `Page id: ${p.id}`,
             "",
             "## Overview",
