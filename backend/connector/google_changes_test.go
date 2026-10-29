@@ -158,13 +158,15 @@ func googleStartRoute(t *testing.T, starts map[string]string) func(*http.Request
 
 // googleFeedRoute serves Drive's change feeds: pages[drive][pageToken] is
 // the page of drive's feed ("" the user's) from that token. It checks each
-// request asks for every drive's items, removed ones and a listing's fields.
+// request asks for every drive's items, removed ones with the file while
+// the user can read it, and a listing's fields.
 func googleFeedRoute(t *testing.T, pages map[string]map[string]string) func(*http.Request) (int, string) {
 	return func(r *http.Request) (int, string) {
 		q := r.URL.Query()
-		fields := "nextPageToken,newStartPageToken,changes(changeType,removed,fileId,file(" + googleFileFieldList + ",trashed))"
+		fields := "nextPageToken,newStartPageToken,changes(changeType,removed,fileId,driveId,file(" + googleFileFieldList + ",trashed))"
 		if q.Get("pageSize") != "1000" || q.Get("includeItemsFromAllDrives") != "true" || q.Get("supportsAllDrives") != "true" ||
-			q.Get("includeRemoved") != "true" || q.Get("fields") != fields || !strings.Contains(googleFileFields, googleFileFieldList) {
+			q.Get("includeRemoved") != "true" || q.Get("includeCorpusRemovals") != "true" || q.Get("fields") != fields ||
+			!strings.Contains(googleFileFields, googleFileFieldList) {
 			t.Errorf("changes query = %s", r.URL.RawQuery)
 		}
 		page, ok := pages[q.Get("driveId")][q.Get("pageToken")]
@@ -288,8 +290,8 @@ func TestGoogleChanges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// drv2, left since the drives were listed, has no token; Grace's calendar, refused, none.
-		if want := googleCursorHead + `"files":{"user":"500","drives":{"drv1":"600"}},"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`; string(start.Cursor) != want {
+		// drv2, whose token is refused, is kept with none; Grace's calendar, refused, is left out.
+		if want := googleCursorHead + `"files":{"user":"500","drives":{"drv1":"600","drv2":""}},"events":{"ada@acme.com":"w1","en.uk#holiday@group.v.calendar.google.com":"hw"}}`; string(start.Cursor) != want {
 			t.Fatalf("cursor = %s, want %s", start.Cursor, want)
 		}
 		if start.Source != nil || start.Close != nil {
@@ -374,31 +376,48 @@ func TestGoogleChanges(t *testing.T) {
 	t.Run("writes a changed file's row, exports a changed Doc and deletes a gone file", func(t *testing.T) {
 		routes := unchanged()
 		edited := googleChangeFile("doc1", googleDocType, "2026-10-29T08:00:00Z", "43", "")
+		pdf := googleChangeFile("pdf1", "application/pdf", "2026-10-29T09:00:00Z", "4", `,"driveId":"drv2"`)
+		doc5 := func(extra string) string {
+			return googleChangeFile("doc5", googleDocType, "2026-10-29T10:00:00Z", "2", extra)
+		}
 		routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{
+			// drv9, which the user is not in, changed: no file of it is read.
 			"": {
 				"100": `{"changes":[{"changeType":"file","fileId":"doc1","file":` + edited + `},
 					{"changeType":"file","fileId":"sheet1","file":` + googleChangeFile("sheet1", "application/vnd.google-apps.spreadsheet",
 					"2026-10-29T08:00:00Z", "10", `,"trashed":true`) + `},
-					{"changeType":"drive","driveId":"drv1","drive":{"id":"drv1","name":"Legal"}}],"nextPageToken":"100b"}`,
+					{"changeType":"drive","driveId":"drv9","drive":{"id":"drv9","name":"Legal"}}],"nextPageToken":"100b"}`,
 				"100b": `{"changes":[{"changeType":"file","fileId":"fold1","removed":true},
 					{"changeType":"file","fileId":"doc4","file":` + googleChangeFile("doc4", googleDocType, "2026-10-29T09:00:00Z", "1", "") + `},
-					{"changeType":"file","fileId":"pdf1","file":` + googleChangeFile("pdf1", "application/pdf", "2026-10-29T09:00:00Z", "4", `,"driveId":"drv2"`) + `}],
+					{"changeType":"file","fileId":"pdf1","file":` + pdf + `},{"changeType":"file","fileId":"doc5","file":` + doc5("") + `}],
 					"newStartPageToken":"102"}`,
 			},
-			// pdf1 moved from drv1 to another drive the user can read; deck1 was deleted.
-			"drv1": {"200": `{"changes":[{"fileId":"pdf1","removed":true},{"fileId":"deck1","removed":true}],"newStartPageToken":"202"}`},
+			// pdf1 moved from drv1 to drv2, which the user can read, so drv1's
+			// removal carries it; deck1 was deleted, and doc5 moved to the trash.
+			"drv1": {"200": `{"changes":[{"fileId":"pdf1","removed":true,"file":` + pdf + `},{"fileId":"deck1","removed":true},
+				{"fileId":"doc5","file":` + doc5(`,"trashed":true`) + `}],"newStartPageToken":"202"}`},
 		})
 		for _, id := range []string{"doc1", "doc4"} {
 			routes["/drive/v3/files/"+id+"/export"] = func(*http.Request) (int, string) { return http.StatusOK, "## " + id + "\n\nEdited." }
 		}
 		w := &googleWorkspace{routes: routes}
 		got, next := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"doc1": "1|2026-10-20T15:30:00.250Z|42|old"})
-		want := []string{"upsert files doc1", "upsert files doc4", "upsert files pdf1", "delete files deck1", "delete files fold1", "delete files sheet1"}
+		want := []string{"upsert files doc1", "delete files sheet1", "delete files fold1", "upsert files doc4", "upsert files pdf1",
+			"upsert files doc5", "upsert files pdf1", "delete files deck1", "delete files doc5"}
 		if !slices.Equal(got.log, want) || len(got.resets) != 0 {
 			t.Fatalf("log = %v, resets = %v", got.log, got.resets)
 		}
 		if next != googleCursorHead+`"files":{"user":"102","drives":{"drv1":"202"}},"events":null}` || len(w.requested("/calendar/")) != 0 {
 			t.Fatalf("next = %s", next)
+		}
+		if moved := got.rows["files"][len(got.rows["files"])-1]; moved["file_id"] != "pdf1" || moved["drive_id"] != "drv2" {
+			t.Fatalf("pdf1 = %v", moved)
+		}
+		// The Docs are exported once every feed is read, newest first; doc5, in the trash since, is not.
+		asked := w.requested("/drive/")
+		if i := slices.IndexFunc(asked, func(a string) bool { return strings.Contains(a, "driveId=drv1") }); i < 0 ||
+			fmt.Sprint(asked[i+1:]) != "[/drive/v3/files/doc4/export?mimeType=text%2Fmarkdown /drive/v3/files/doc1/export?mimeType=text%2Fmarkdown]" {
+			t.Fatalf("asked %v", asked)
 		}
 		// Its row is the full read's.
 		row := got.rows["files"][0]
@@ -407,10 +426,34 @@ func TestGoogleChanges(t *testing.T) {
 			"size": nil, "web_view_link": "https://docs.google.com/document/d/doc1/edit", "shared": false, "starred": false}) {
 			t.Fatalf("row = %v", row)
 		}
-		if len(got.puts) != 2 || got.puts[0].ExternalID != "doc1" || !strings.HasPrefix(got.puts[0].Version, "1|2026-10-29T08:00:00Z|43|") ||
-			string(got.puts[0].Text) != "# File doc1\n\nOwner: ada@acme.com\nLast modified: 2026-10-29 08:00 UTC\nFile id: doc1\n\n## doc1\n\nEdited.\n" ||
-			got.puts[1].ExternalID != "doc4" {
+		if len(got.puts) != 2 || got.puts[1].ExternalID != "doc1" || !strings.HasPrefix(got.puts[1].Version, "1|2026-10-29T08:00:00Z|43|") ||
+			string(got.puts[1].Text) != "# File doc1\n\nOwner: ada@acme.com\nLast modified: 2026-10-29 08:00 UTC\nFile id: doc1\n\n## doc1\n\nEdited.\n" ||
+			got.puts[0].ExternalID != "doc4" {
 			t.Fatalf("puts = %+v", got.puts)
+		}
+	})
+	// Drive gives a removed file as it is now while the user can read it
+	// (includeCorpusRemovals): a move's removal from one drive's feed may
+	// come a read before or after the other drive's feed shows it.
+	t.Run("keeps a file a feed removed while the user can read it", func(t *testing.T) {
+		pdf := func(extra string) string {
+			return googleChangeFile("pdf1", "application/pdf", "2026-10-29T09:00:00Z", "4", `,"driveId":"drv2"`+extra)
+		}
+		for name, tc := range map[string]struct{ change, log string }{
+			"moved to a drive it can read": {`{"fileId":"pdf1","removed":true,"file":` + pdf("") + `}`, "[upsert files pdf1]"},
+			"in the trash":                 {`{"fileId":"pdf1","removed":true,"file":` + pdf(`,"trashed":true`) + `}`, "[delete files pdf1]"},
+			"no longer the user's to read": {`{"fileId":"pdf1","removed":true}`, "[delete files pdf1]"},
+		} {
+			routes := unchanged()
+			routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{"": {"100": `{"newStartPageToken":"101"}`},
+				"drv1": {"200": `{"changes":[` + tc.change + `],"newStartPageToken":"201"}`}})
+			got, _ := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, cursor, nil)
+			if fmt.Sprint(got.log) != tc.log || len(got.resets) != 0 {
+				t.Errorf("%s: log = %v, resets = %v", name, got.log, got.resets)
+			}
+			if tc.log == "[upsert files pdf1]" && got.rows["files"][0]["drive_id"] != "drv2" {
+				t.Errorf("%s: row = %v", name, got.rows["files"][0])
+			}
 		}
 	})
 	// A list that changes while it is paged shows a file again, as it is later.
@@ -424,7 +467,7 @@ func TestGoogleChanges(t *testing.T) {
 				"100b": `{"changes":[{"fileId":"sheet1","removed":true},` + sheet("sheet2") + `],"newStartPageToken":"101"}`},
 			"drv1": {"200": `{"newStartPageToken":"201"}`}})
 		got, _ := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, cursor, nil)
-		if fmt.Sprint(got.log) != "[upsert files sheet1 upsert files sheet2 delete files sheet1]" {
+		if fmt.Sprint(got.log) != "[upsert files sheet1 delete files sheet2 delete files sheet1 upsert files sheet2]" {
 			t.Fatalf("log = %v", got.log)
 		}
 	})
@@ -481,18 +524,24 @@ func TestGoogleChanges(t *testing.T) {
 		}
 	})
 	// Drive refuses a token it no longer takes with a 400 naming the parameter.
-	t.Run("reads files in full when Drive no longer takes a page token", func(t *testing.T) {
+	t.Run("reads files in full, from new tokens for every feed, when Drive no longer takes a page token", func(t *testing.T) {
 		routes := unchanged()
-		routes["/drive/v3/changes"] = func(*http.Request) (int, string) {
-			return http.StatusBadRequest, `{"error":{"code":400,"message":"Invalid Value","errors":[{"domain":"global","reason":"invalid",
-				"message":"Invalid Value","locationType":"parameter","location":"pageToken"}]}}`
+		feeds := googleFeedRoute(t, map[string]map[string]string{"": {"100": `{"changes":[{"fileId":"doc1","file":` +
+			googleChangeFile("doc1", googleDocType, "2026-10-29T08:00:00Z", "43", "") + `}],"newStartPageToken":"101"}`}})
+		routes["/drive/v3/changes"] = func(r *http.Request) (int, string) {
+			if r.URL.Query().Get("driveId") == "drv1" {
+				return http.StatusBadRequest, `{"error":{"code":400,"message":"Invalid Value","errors":[{"domain":"global","reason":"invalid",
+					"message":"Invalid Value","locationType":"parameter","location":"pageToken"}]}}`
+			}
+			return feeds(r)
 		}
 		w := &googleWorkspace{routes: routes}
 		got, next := changes(t, w, []Table{{Name: "files"}}, cursor, nil)
-		// The user's feed takes a new token before the full read; drv1's keeps its own, unread.
-		if len(got.log) != 0 || got.resets["files"] != "Drive no longer holds the changes after the cursor" ||
-			next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"200"}},"events":null}` || len(w.requested("/drive/v3/changes?")) != 1 {
-			t.Fatalf("log = %v, resets = %v, next = %s, feeds = %v", got.log, got.resets, next, w.requested("/drive/v3/changes?"))
+		// The user's feed, read first, takes a new token too, and its Doc is left to the full read.
+		if got.resets["files"] != "Drive no longer holds the changes after the cursor" || len(got.offers) != 0 ||
+			next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` || len(w.requested("/drive/v3/changes?")) != 2 ||
+			len(w.requested("/drive/v3/files/")) != 0 {
+			t.Fatalf("resets = %v, offers = %v, next = %s, asked %v", got.resets, got.offers, next, w.requested("/drive/"))
 		}
 		// Another 400 is no expired token.
 		routes["/drive/v3/changes"] = googleFailure(http.StatusBadRequest, "Invalid Value", "invalid")
@@ -501,15 +550,17 @@ func TestGoogleChanges(t *testing.T) {
 			t.Fatalf("Changes error = %v", err)
 		}
 	})
-	t.Run("reads files in full when the user joins or leaves a shared drive", func(t *testing.T) {
+	// A feed left at its old token would replay what the full read holds,
+	// such as files moved into the drive joined, with no feed to cancel it.
+	t.Run("reads files in full, from new tokens for every feed, when the user joins or leaves a shared drive", func(t *testing.T) {
 		for name, tc := range map[string]struct{ drives, reason, next string }{
 			"joins": {`{"drives":[{"id":"drv1"},{"id":"drv3"}]}`, "the user joined shared drive drv3",
-				googleCursorHead + `"files":{"user":"100","drives":{"drv1":"200","drv3":"700"}},"events":null}`},
-			"leaves": {`{"drives":[]}`, "the user left shared drive drv1", googleCursorHead + `"files":{"user":"100","drives":{}},"events":null}`},
+				googleCursorHead + `"files":{"user":"500","drives":{"drv1":"600","drv3":"700"}},"events":null}`},
+			"leaves": {`{"drives":[]}`, "the user left shared drive drv1", googleCursorHead + `"files":{"user":"500","drives":{}},"events":null}`},
 		} {
 			routes := unchanged()
 			routes["/drive/v3/drives"] = googleDrivesRoute(t, map[string]string{"": tc.drives})
-			routes["/drive/v3/changes/startPageToken"] = googleStartRoute(t, map[string]string{"drv3": "700"})
+			routes["/drive/v3/changes/startPageToken"] = googleStartRoute(t, map[string]string{"": "500", "drv1": "600", "drv3": "700"})
 			w := &googleWorkspace{routes: routes}
 			got, next := changes(t, w, []Table{{Name: "files"}}, cursor, nil)
 			if got.resets["files"] != tc.reason || next != tc.next || len(w.requested("/drive/v3/changes?")) != 0 {
@@ -526,9 +577,67 @@ func TestGoogleChanges(t *testing.T) {
 			}
 			return feeds(r)
 		}
+		routes["/drive/v3/changes/startPageToken"] = googleStartRoute(t, map[string]string{"": "500"})
 		got, next := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, cursor, nil)
-		if got.resets["files"] != "the user left shared drive drv1" || next != googleCursorHead+`"files":{"user":"101","drives":{}},"events":null}` {
+		if got.resets["files"] != "the user can no longer read shared drive drv1" ||
+			next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":""}},"events":null}` {
 			t.Fatalf("resets = %v, next = %s", got.resets, next)
+		}
+	})
+	// Left out of the cursor, it would be joined at every read.
+	t.Run("keeps a shared drive whose token is refused, and reads files in full once Drive gives it one", func(t *testing.T) {
+		refused := json.RawMessage(googleCursorHead + `"files":{"user":"100","drives":{"drv1":""}},"events":null}`)
+		routes := unchanged()
+		routes["/drive/v3/changes/startPageToken"] = googleStartRoute(t, map[string]string{"": "500"})
+		w := &googleWorkspace{routes: routes}
+		got, next := changes(t, w, []Table{{Name: "files"}}, refused, nil)
+		if len(got.resets) != 0 || next != googleCursorHead+`"files":{"user":"101","drives":{"drv1":""}},"events":null}` ||
+			len(w.requested("/drive/v3/changes?driveId")) != 0 || len(w.requested("/drive/v3/changes/startPageToken?driveId=drv1")) != 1 {
+			t.Fatalf("resets = %v, next = %s, asked %v", got.resets, next, w.requested("/drive/"))
+		}
+		// Leaving it changes no listing.
+		routes["/drive/v3/drives"] = googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`})
+		if got, next := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, refused, nil); len(got.resets) != 0 ||
+			next != googleCursorHead+`"files":{"user":"101","drives":{}},"events":null}` {
+			t.Fatalf("resets = %v, next = %s", got.resets, next)
+		}
+		routes = unchanged()
+		got, next = changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, refused, nil)
+		if got.resets["files"] != "the user can read shared drive drv1 again" ||
+			next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` {
+			t.Fatalf("resets = %v, next = %s", got.resets, next)
+		}
+	})
+	// Its restrictions decide which Docs may be downloaded; Drive's feed
+	// doesn't say it shows each of its files again.
+	t.Run("reads files in full when a member drive's settings change", func(t *testing.T) {
+		for feed, token := range map[string]string{"": "100", "drv1": "200"} {
+			pages := map[string]map[string]string{"": {"100": `{"newStartPageToken":"101"}`}, "drv1": {"200": `{"newStartPageToken":"201"}`}}
+			pages[feed][token] = `{"changes":[{"changeType":"drive","driveId":"drv1",` +
+				`"drive":{"id":"drv1","restrictions":{"downloadRestriction":{"restrictedForReaders":true}}}},{"fileId":"doc1","file":` +
+				googleChangeFile("doc1", googleDocType, "2026-10-29T08:00:00Z", "43", "") + `}],"newStartPageToken":"102"}`
+			routes := unchanged()
+			routes["/drive/v3/changes"] = googleFeedRoute(t, pages)
+			w := &googleWorkspace{routes: routes}
+			got, next := changes(t, w, []Table{{Name: "files"}}, cursor, nil)
+			if got.resets["files"] != "the settings of shared drive drv1 changed" || len(got.log) != 0 || len(got.offers) != 0 ||
+				next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` {
+				t.Errorf("%q's feed: log = %v, resets = %v, next = %s", feed, got.log, got.resets, next)
+			}
+		}
+	})
+	// Drive doesn't say it reports the files in a folder moved to the trash.
+	t.Run("reads files in full when a folder moves to the trash", func(t *testing.T) {
+		folder := func(id, extra string) string {
+			return `{"fileId":"` + id + `","file":` + googleChangeFile(id, googleFolderType, "2026-10-29T08:00:00Z", "3", extra) + `}`
+		}
+		routes := unchanged()
+		routes["/drive/v3/changes"] = googleFeedRoute(t, map[string]map[string]string{
+			"": {"100": `{"changes":[` + folder("fold2", "") + `,` + folder("fold1", `,"trashed":true`) + `],"newStartPageToken":"101"}`}})
+		got, next := changes(t, &googleWorkspace{routes: routes}, []Table{{Name: "files"}}, cursor, nil)
+		if got.resets["files"] != "folder fold1 moved to the trash" || fmt.Sprint(got.log) != "[upsert files fold2]" ||
+			next != googleCursorHead+`"files":{"user":"500","drives":{"drv1":"600"}},"events":null}` {
+			t.Fatalf("log = %v, resets = %v, next = %s", got.log, got.resets, next)
 		}
 	})
 	t.Run("reads files in full, from new tokens, without a cursor for them", func(t *testing.T) {
@@ -543,6 +652,7 @@ func TestGoogleChanges(t *testing.T) {
 		"is not JSON":                         `<html>Bad gateway</html>`,
 		"is null":                             `null`,
 		"names no file":                       `{"changes":[{"changeType":"file","removed":true}],"newStartPageToken":"101"}`,
+		"names no drive of a drive's change":  `{"changes":[{"changeType":"drive","removed":true}],"newStartPageToken":"101"}`,
 		"lists null":                          `{"changes":[null],"newStartPageToken":"101"}`,
 		"shows a file without it":             `{"changes":[{"fileId":"doc1"}],"newStartPageToken":"101"}`,
 		"ends without a start token":          `{"changes":[]}`,

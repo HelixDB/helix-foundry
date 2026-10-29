@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -16,8 +18,9 @@ var _ ChangeReader = (*googleKind)(nil)
 
 // googleChangeFields are what a page of a Drive change feed asks for: each
 // change's file with the fields a listing asks for, and whether it is in the
-// trash, which a listing leaves out by its query.
-const googleChangeFields = "nextPageToken,newStartPageToken,changes(changeType,removed,fileId,file(" + googleFileFieldList + ",trashed))"
+// trash, which a listing leaves out by its query; and the shared drive a
+// drive's own change is of.
+const googleChangeFields = "nextPageToken,newStartPageToken,changes(changeType,removed,fileId,driveId,file(" + googleFileFieldList + ",trashed))"
 
 // googleCursor is where each followed API's next change read begins, and
 // the settings it was taken under: another user's feeds, or another window
@@ -36,7 +39,8 @@ type googleCursor struct {
 
 // googleFilesCursor is the page token of each Drive change feed a full
 // read's listings match: the user's (My Drive and what is shared with them,
-// corpora=user) and each shared drive's (corpora=drive), by drive id.
+// corpora=user) and each shared drive's (corpora=drive), by drive id; ""
+// for a shared drive whose token Drive refused, one the user can't read.
 type googleFilesCursor struct {
 	User   string            `json:"user"`
 	Drives map[string]string `json:"drives"`
@@ -138,8 +142,8 @@ func (k *googleKind) Changes(ctx context.Context, src Source, tables []Table, cu
 }
 
 // filesStart is the start page token of the user's feed and of each of
-// drives' feeds. A drive whose token is refused, one the user left since the
-// drives were listed, has none; the next change read finds it gone.
+// drives' feeds; "" for a drive whose token is refused, as one the user left
+// since the drives were listed, or can't read.
 func (c *googleClient) filesStart(ctx context.Context, drives []string) (*googleFilesCursor, error) {
 	user, err := c.startPageToken(ctx, "")
 	if err != nil {
@@ -148,10 +152,7 @@ func (c *googleClient) filesStart(ctx context.Context, drives []string) (*google
 	cursor := &googleFilesCursor{User: user, Drives: map[string]string{}}
 	for _, drive := range drives {
 		token, err := c.startPageToken(ctx, drive)
-		switch {
-		case errors.Is(err, errNoAccess):
-			continue
-		case err != nil:
+		if err != nil && !errors.Is(err, errNoAccess) {
 			return nil, err
 		}
 		cursor.Drives[drive] = token
@@ -159,110 +160,134 @@ func (c *googleClient) filesStart(ctx context.Context, drives []string) (*google
 	return cursor, nil
 }
 
+// errFilesReset stops a Drive feed at a change that resets the files table.
+var errFilesReset = errors.New("google: the files table is read in full")
+
 // fileChanges reads the user's feed and each shared drive's from the
-// cursor, one page each when nothing changed. A file a feed shows as it is
-// now gets its row, as a full read writes it, and a Doc is offered again
-// (googleExporter): a changed one is exported again. Within a feed a file's
-// last change wins. A file every feed that shows it last shows gone
-// (removed: deleted, or no longer the user's to read; or in the trash)
-// loses its row, and the syncer its document; a file one feed shows gone
-// and another as it is, moved between drives, keeps it. A Doc its
-// owner no longer lets the user download loses the document the stream
-// holds, if Drive's version of it changed; a full read leaves it out.
+// cursor, one page each when nothing changed. Drive gives each change the
+// file as it is now while the user can still read it, even one a feed
+// removed (includeCorpusRemovals), so each change says where the file is
+// now, and the last change to a file, in the order read, wins: a file shown
+// and not in the trash gets its row, as a full read writes it; one in the
+// trash, or not shown (deleted, or no longer the user's to read), loses its
+// row, and the syncer its document. A file moved between shared drives
+// keeps its row and document, with its new drive, whichever feed shows the
+// move first, and when the other shows it only at the next read. Once every
+// feed is read, as a full read lists before it exports, the Docs shown are
+// offered, newest first (googleExporter): a changed one is exported again.
+// A Doc its owner no longer lets the user download loses the document the
+// stream holds, if Drive's version of it changed; a full read leaves it out.
 //
-// The files table is reset, and read in full, when the shared drives the
-// user is in changed (a drive joined has no token; one left takes its files
-// out of the full read's listings), when Drive no longer takes a feed's page
-// token, and when there is no cursor. Each feed then keeps the token it had,
-// or takes a new one, before that full read.
+// The files table is reset, and read in full, when there is no cursor; when
+// the shared drives the user can read changed (one joined has no token; one
+// left, or whose feed is refused now, takes its files out of the full read's
+// listings; one whose token Drive gives again puts them back); when a member
+// drive's own settings changed (its restrictions decide which Docs may be
+// downloaded); when a folder moves to the trash (Drive doesn't say it
+// reports the files in it); and when Drive no longer takes a feed's page
+// token. Every feed then takes a new token before that full read, so the
+// next change read replays nothing it already holds. A drive whose token is
+// refused, one the user can't read, keeps none and asks again at each read:
+// still refused, it changes nothing.
 func (c *googleClient) fileChanges(ctx context.Context, prev *googleFilesCursor, w ChangeWriter) (*googleFilesCursor, error) {
 	drives, err := c.drives(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if prev == nil {
-		w.Reset("files", "the table has no change cursor yet")
-		return c.filesStart(ctx, drives)
-	}
 	reset := ""
-	for _, drive := range drives {
-		if _, ok := prev.Drives[drive]; !ok {
-			reset = "the user joined shared drive " + drive
+	if prev == nil || prev.User == "" {
+		reset = "the table has no change cursor yet"
+	} else {
+		for _, drive := range drives {
+			if _, ok := prev.Drives[drive]; !ok {
+				reset = "the user joined shared drive " + drive
+			}
+		}
+		for drive, token := range prev.Drives {
+			if token != "" && !slices.Contains(drives, drive) {
+				reset = "the user left shared drive " + drive
+			}
 		}
 	}
-	for drive := range prev.Drives {
-		if !slices.Contains(drives, drive) {
-			reset = "the user left shared drive " + drive
+	// pending are the Docs to offer, by id, as last shown.
+	pending := map[string]googleDoc{}
+	each := func(change googleFeedChange) error {
+		if change.ChangeType == "drive" {
+			if !slices.Contains(drives, change.DriveID) {
+				return nil
+			}
+			reset = "the settings of shared drive " + change.DriveID + " changed"
+			return errFilesReset
 		}
-	}
-	// shown is, by file id, whether some feed's last change shows the file,
-	// and last the feed being read's.
-	shown, last := map[string]bool{}, map[string]bool{}
-	exporter := googleExporter{c: c, docs: w}
-	each := func(id string, f map[string]any) error {
-		if last[id] = f != nil; f == nil {
-			return nil
+		f, id := change.File, change.FileID
+		if f["mimeType"] == googleFolderType && f["trashed"] == true {
+			reset = "folder " + id + " moved to the trash"
+			return errFilesReset
+		}
+		delete(pending, id)
+		if f == nil || f["trashed"] == true {
+			return w.Delete("files", map[string]any{"file_id": id})
 		}
 		row, doc, err := googleFile(id, f)
 		if err != nil {
 			return err
 		}
-		if err := w.Upsert("files", row); err != nil || doc == nil {
-			return err
+		if doc != nil {
+			pending[id] = *doc
 		}
-		if !doc.withheld {
-			return exporter.offer(ctx, *doc)
-		}
-		if _, held := w.Held(googleDocsStream.Name, id); held && w.Want(googleDocsStream.Name, id, doc.version) {
-			return w.Drop(googleDocsStream.Name, id)
-		}
-		return nil
+		return w.Upsert("files", row)
 	}
 	next := &googleFilesCursor{Drives: map[string]string{}}
 	for _, drive := range slices.Concat([]string{""}, drives) {
+		if reset != "" {
+			break
+		}
 		token := prev.User
 		if drive != "" {
 			token = prev.Drives[drive]
 		}
-		if token != "" && reset == "" {
-			clear(last)
-			token, err = c.driveFeed(ctx, drive, token, each)
-			for id, ok := range last {
-				shown[id] = shown[id] || ok
-			}
-			switch {
-			case drive != "" && errors.Is(err, errNoAccess):
-				reset = "the user left shared drive " + drive
-				continue
-			case errors.Is(err, errTokenGone):
-				reset = "Drive no longer holds the changes after the cursor"
-				token = ""
-			case err != nil:
-				return nil, err
-			}
-		}
 		if token == "" {
 			token, err = c.startPageToken(ctx, drive)
 			switch {
-			case drive != "" && errors.Is(err, errNoAccess):
-				reset = "the user left shared drive " + drive
-				continue
+			case errors.Is(err, errNoAccess):
+				next.Drives[drive] = ""
 			case err != nil:
 				return nil, err
+			default:
+				reset = "the user can read shared drive " + drive + " again"
 			}
+			continue
 		}
-		if drive == "" {
+		token, err = c.driveFeed(ctx, drive, token, each)
+		switch {
+		case errors.Is(err, errFilesReset):
+		case drive != "" && errors.Is(err, errNoAccess):
+			reset = "the user can no longer read shared drive " + drive
+		case errors.Is(err, errTokenGone):
+			reset = "Drive no longer holds the changes after the cursor"
+		case err != nil:
+			return nil, err
+		case drive == "":
 			next.User = token
-		} else {
+		default:
 			next.Drives[drive] = token
 		}
 	}
 	if reset != "" {
 		w.Reset("files", reset)
-		return next, nil
+		return c.filesStart(ctx, drives)
 	}
-	for _, id := range slices.DeleteFunc(slices.Sorted(maps.Keys(shown)), func(id string) bool { return shown[id] }) {
-		if err := w.Delete("files", map[string]any{"file_id": id}); err != nil {
+	docs := slices.SortedFunc(maps.Values(pending), func(a, b googleDoc) int {
+		return cmp.Or(b.modified.Compare(a.modified), strings.Compare(a.id, b.id))
+	})
+	exporter := googleExporter{c: c, docs: w}
+	for _, doc := range docs {
+		if !doc.withheld {
+			err = exporter.offer(ctx, doc)
+		} else if _, held := w.Held(googleDocsStream.Name, doc.id); held && w.Want(googleDocsStream.Name, doc.id, doc.version) {
+			err = w.Drop(googleDocsStream.Name, doc.id)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -292,16 +317,27 @@ func (c *googleClient) startPageToken(ctx context.Context, drive string) (string
 	return answer.StartPageToken, nil
 }
 
+// googleFeedChange is one change of a Drive feed: a shared drive's own
+// (ChangeType "drive", of DriveID), or else a file's, FileID's. File is the
+// file as it is now, in the trash or not, while the user can read it, even
+// when the feed removed it (moved to another drive); nil once they can't.
+type googleFeedChange struct {
+	ChangeType string
+	Removed    bool
+	FileID     string `json:"fileId"`
+	DriveID    string `json:"driveId"`
+	File       map[string]any
+}
+
 // driveFeed reads one of Drive's change feeds from token to its end: the
-// user's, or shared drive's when drive is set. It passes each file a change
-// names to each, as the file is now; nil when it is gone from the feed or in
-// the trash. A shared drive's own changes are not files'. It returns the
-// feed's next page token. A token Drive no longer takes is errTokenGone; a
-// shared drive the user is no longer in is errNoAccess. As pages does, a
-// later page refused or a page that is not a complete one fails the read.
-func (c *googleClient) driveFeed(ctx context.Context, drive, token string, each func(id string, file map[string]any) error) (string, error) {
+// user's, or shared drive's when drive is set, passing each change to each.
+// It returns the feed's next page token. A token Drive no longer takes is
+// errTokenGone; a shared drive the user is no longer in is errNoAccess. As
+// pages does, a later page refused or a page that is not a complete one
+// fails the read.
+func (c *googleClient) driveFeed(ctx context.Context, drive, token string, each func(change googleFeedChange) error) (string, error) {
 	query := url.Values{"pageToken": {token}, "pageSize": {"1000"}, "includeItemsFromAllDrives": {"true"}, "supportsAllDrives": {"true"},
-		"includeRemoved": {"true"}, "fields": {googleChangeFields}}
+		"includeRemoved": {"true"}, "includeCorpusRemovals": {"true"}, "fields": {googleChangeFields}}
 	if drive != "" {
 		query.Set("driveId", drive)
 	}
@@ -325,12 +361,7 @@ func (c *googleClient) driveFeed(ctx context.Context, drive, token string, each 
 			return "", err
 		}
 		var p struct {
-			Changes []*struct {
-				ChangeType string
-				Removed    bool
-				FileID     string `json:"fileId"`
-				File       map[string]any
-			}
+			Changes                          []*googleFeedChange
 			NextPageToken, NewStartPageToken string
 		}
 		if err := json.Unmarshal(body, &p); err != nil {
@@ -338,16 +369,13 @@ func (c *googleClient) driveFeed(ctx context.Context, drive, token string, each 
 		}
 		for _, change := range p.Changes {
 			switch {
+			case change != nil && change.ChangeType == "drive" && change.DriveID == "":
+				return "", fmt.Errorf("google %s: a drive's change names no drive", path)
 			case change != nil && change.ChangeType == "drive":
-				continue
 			case change == nil || change.FileID == "" || !change.Removed && change.File == nil:
 				return "", fmt.Errorf("google %s: a change names no file", path)
 			}
-			file := change.File
-			if change.Removed || file["trashed"] == true {
-				file = nil
-			}
-			if err := each(change.FileID, file); err != nil {
+			if err := each(*change); err != nil {
 				return "", err
 			}
 		}
