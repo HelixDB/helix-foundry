@@ -356,7 +356,8 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 // name people, once a document is (or the users table is read). Near
 // ctx's deadline (slackDocumentMargin), the days are still offered, so the
 // ones the stream holds stay, but none is fetched: they wait for the next
-// sync.
+// sync that reads their day, the next full read on a plan that follows
+// changes (Changes reads only its cursor's days).
 func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
 	p, err := k.pass(ctx, src, tables, rows, docs)
 	if err != nil {
