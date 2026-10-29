@@ -368,12 +368,15 @@ func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, ro
 	return tables, p.run(ctx)
 }
 
-// pass starts a read of tables, full or of changes, on the UTC day it is
-// now: its window is the history_days days before that day, and that day.
+// pass starts a read of tables, full or of changes, on the UTC day it was
+// ChangeOverlap ago: its window is the history_days days before that day,
+// and that day. A worker's clock a little ahead of Slack's so never ends a
+// day, or moves a change cursor past it, while a message may still be
+// posted to it.
 func (k *slackKind) pass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) (*slackPass, error) {
 	var s SlackSettings
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
-	now := slackNow().UTC()
+	now := slackNow().UTC().Add(-ChangeOverlap)
 	p := &slackPass{c: k.client(src.Secret), read: map[string]bool{}, rows: rows, docs: docs, channels: map[string]string{},
 		days: map[string]*slackDay{}, historyDays: cmp.Or(s.HistoryDays, defaultSlackHistoryDays), today: now.Format(time.DateOnly)}
 	p.window = now.Truncate(24*time.Hour).AddDate(0, 0, -p.historyDays)
@@ -421,8 +424,8 @@ type slackPass struct {
 	// window is the first instant the pass reads history from: midnight
 	// UTC, historyDays before today.
 	window time.Time
-	// today is the UTC day the pass runs on, YYYY-MM-DD. Its days, and any
-	// later one a clock ahead of the pass's lists, get rows but no document
+	// today is the UTC day the pass runs on, ChangeOverlap ago, YYYY-MM-DD.
+	// Its days, and any later one Slack lists, get rows but no document
 	// until they are over: a channel still talking would otherwise replace
 	// its document, and have it extracted again, at every sync.
 	today string

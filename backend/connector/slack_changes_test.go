@@ -295,6 +295,32 @@ func TestSlackChanges(t *testing.T) {
 			}
 		}
 	})
+	// A worker's clock a little ahead of Slack's: at 00:01 the 29th may still
+	// get a message, so it isn't over, and the cursor stays on it.
+	t.Run("takes its day from ChangeOverlap ago, so a message just before midnight is read", func(t *testing.T) {
+		saved := slackTestNow
+		t.Cleanup(func() { slackTestNow = saved })
+		slackTestNow = time.Date(2026, 10, 30, 0, 1, 0, 0, time.UTC)
+		w := newSlackWorkspace()
+		kind, _ := slackAt(t, w.routes())
+		if start, err := kind.Start(ctx, slackSource, slackFollowedTables); err != nil || string(start.Cursor) != string(slackCursorAt("2026-10-29", "C1", "C2")) {
+			t.Fatalf("Start = %s, %v", start.Cursor, err)
+		}
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		_, next, _ := changes(t, w, slackAllScopes, slackCursorAt("2026-10-29", "C1", "C2"), docs)
+		if len(docs.offers) != 0 || next.Day != "2026-10-29" {
+			t.Fatalf("offers = %q, next cursor = %+v", docs.offers, next)
+		}
+		// Posted at 23:59:30 by Slack's clock, after that read's history.
+		w.history["C1"] = append([]string{fmt.Sprintf(`{"user":"U1","text":"Night","ts":%q}`, slackTS("2026-10-29T23:59:30Z"))}, w.history["C1"]...)
+		slackTestNow = time.Date(2026, 10, 30, 1, 0, 0, 0, time.UTC)
+		docs = &granolaDocs{want: map[string]bool{"conversations": true}}
+		_, next, _ = changes(t, w, slackAllScopes, slackCursorAt(next.Day, next.Channels...), docs)
+		if !slices.Equal(docs.putNames(), []string{"conversations C1:2026-10-29", "conversations C2:2026-10-29"}) ||
+			!strings.HasSuffix(string(docs.puts[0].doc.Text), "**Ada Lovelace** 23:59: Night\n") || next.Day != today {
+			t.Fatalf("puts = %v, next cursor = %+v", docs.putNames(), next)
+		}
+	})
 	t.Run("names people by id without users:read, as a full read does, without asking users.list", func(t *testing.T) {
 		scopes := strings.ReplaceAll(slackAllScopes, ",users:read,", ",")
 		w := newSlackWorkspace()

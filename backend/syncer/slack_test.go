@@ -119,8 +119,8 @@ func (a *slackAccount) read() []string {
 // nothing, a reply replaces only its day's document, and a day whose
 // messages are gone loses its document with its row.
 func TestSlackSyncDocuments(t *testing.T) {
-	// The connector counts its window from the wall clock.
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	// The connector counts its window from the wall clock, ChangeOverlap ago.
+	today := time.Now().UTC().Add(-connector.ChangeOverlap).Truncate(24 * time.Hour)
 	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
 	ts := func(t time.Time) string { return fmt.Sprintf("%d.000000", t.Unix()) }
 	kickoff, standup := at(2, 9*time.Hour), at(1, 9*time.Hour)
@@ -201,7 +201,7 @@ func TestSlackSyncDocuments(t *testing.T) {
 // conversations set keeps what it holds, though their days changed, until
 // the next full read writes them, all but today's.
 func TestSlackSyncNearDeadline(t *testing.T) {
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	today := time.Now().UTC().Add(-connector.ChangeOverlap).Truncate(24 * time.Hour)
 	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
 	ts := func(t time.Time) string { return fmt.Sprintf("%d.000000", t.Unix()) }
 	kickoff, standup := at(2, 9*time.Hour), at(1, 9*time.Hour)
@@ -260,7 +260,7 @@ func TestSlackSyncNearDeadline(t *testing.T) {
 // reads yesterday again, where a day emptied loses its row and its
 // document, and the reconcile 24 hours after the full read reads in full.
 func TestSlackSyncChanges(t *testing.T) {
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	today := time.Now().UTC().Add(-connector.ChangeOverlap).Truncate(24 * time.Hour)
 	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
 	ts := func(t time.Time) string { return fmt.Sprintf("%d.000000", t.Unix()) }
 	day := func(t time.Time) string { return t.Format(time.DateOnly) }
