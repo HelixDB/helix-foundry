@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -67,6 +68,13 @@ var notionWait = func(attempt int, retryAfter string) time.Duration {
 	return retryBackoff(attempt, "")
 }
 
+// notionReread is how often a page's document is read again though the
+// page shows no edit, and notionNow the clock of a read's versions, which
+// tests replace.
+const notionReread = 7 * 24 * time.Hour
+
+var notionNow = time.Now
+
 // errNotionSlow is a page of results Notion could not build in time.
 var errNotionSlow = errors.New("notion could not answer in time")
 
@@ -100,8 +108,8 @@ var notionTypes = map[string]string{
 
 // notionPagesStream is every shared page's Markdown, kept on the pages table.
 var notionPagesStream = Stream{Name: "pages", Table: "pages", Title: "Pages", Format: Markdown,
-	Description: "Each Notion page shared with the integration, database rows included, as Markdown: its title, " +
-		"when it was last edited and its page id, then the page's content as Notion exports it."}
+	Description: "Each Notion page shared with the integration, database rows included, as Markdown: its title and " +
+		"page id, then the page's content as Notion exports it."}
 
 type notionKind struct {
 	base string
@@ -252,15 +260,17 @@ func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 	return written, nil
 }
 
-// notionClient is one read's requests, paced together under Notion's rate limit.
+// notionClient is one read's requests, paced together under Notion's rate
+// limit, and the time its documents are versioned at.
 type notionClient struct {
 	k      *notionKind
 	secret string
 	pace   *rate.Limiter
+	now    time.Time
 }
 
 func (k *notionKind) client(secret string) *notionClient {
-	return &notionClient{k: k, secret: strings.TrimSpace(secret), pace: rate.NewLimiter(rate.Every(notionInterval), 1)}
+	return &notionClient{k: k, secret: strings.TrimSpace(secret), pace: rate.NewLimiter(rate.Every(notionInterval), 1), now: notionNow()}
 }
 
 // do sends one Notion request, paced: a GET of path with query, or with
@@ -483,11 +493,21 @@ type notionPage struct {
 	created, edited                    time.Time
 }
 
-// version is the version of the page's document: a render revision, to
-// bump whenever its text changes for the same page, then the page's last
-// edit. Notion keeps that time to the minute, so a second edit in the minute
-// of a sync shows at the page's next edit.
-func (p notionPage) version() string { return "1|" + p.edited.UTC().Format(time.RFC3339Nano) }
+// version is the version of the page's document as of now: a render
+// revision, to bump whenever its text changes for the same page; the
+// page's last edit; and the week of its re-read. Notion keeps an edit to
+// the minute, so a second edit in the minute of a sync shows at the page's
+// next edit or re-read. A page shows content from elsewhere (a synced
+// block, a child page's title, a mention) that changes no edit of its own,
+// so its version also moves once every notionReread, at an offset its id
+// sets so a workspace's pages are not all read again in one sync; read
+// again unchanged, its document is updated in place, not extracted again.
+func (p notionPage) version(now time.Time) string {
+	sum := sha256.Sum256([]byte(p.id))
+	period := int64(notionReread / time.Second)
+	offset := int64(binary.BigEndian.Uint64(sum[:8]) % uint64(period))
+	return fmt.Sprintf("2|%s|%d", p.edited.UTC().Format(time.RFC3339Nano), (now.Unix()+offset)/period)
+}
 
 // notionPageOf reads a listed page, or a data source's row. One without
 // both times fails the read: they order the read and version the page's document.
@@ -545,7 +565,8 @@ func (c *notionClient) pages(ctx context.Context, w RowWriter, docs DocumentWrit
 	written, missing := 0, 0
 	for _, p := range listed {
 		var doc Document
-		wanted := docs.Want(notionPagesStream.Name, p.id, p.version())
+		version := p.version(c.now)
+		wanted := docs.Want(notionPagesStream.Name, p.id, version)
 		if wanted {
 			md, err := c.markdown(ctx, p.id)
 			if err != nil {
@@ -555,7 +576,7 @@ func (c *notionClient) pages(ctx context.Context, w RowWriter, docs DocumentWrit
 				missing++
 				continue
 			}
-			doc, wanted = notionDocument(p, *md)
+			doc, wanted = notionDocument(p, *md, version)
 		}
 		if err := w.Write(p.row()); err != nil {
 			return err
@@ -603,22 +624,23 @@ func (c *notionClient) markdown(ctx context.Context, id string) (*notionMarkdown
 	return &md, nil
 }
 
-// notionDocument is a page's document: its title, last edit and id, then
-// its body, and a line saying so when Notion cut the body short. ok is
-// false for an empty body, which is not Put.
-func notionDocument(p notionPage, md notionMarkdown) (_ Document, ok bool) {
+// notionDocument is a page's document at version: its title and id, then
+// its body, and a line saying so when Notion cut the body short. Its last
+// edit is its At and its row's, not its text, so an edit of the row's
+// properties alone leaves the text as it was. ok is false for an empty
+// body, which has no document.
+func notionDocument(p notionPage, md notionMarkdown, version string) (_ Document, ok bool) {
 	body := strings.TrimSpace(*md.Markdown)
 	if body == "" {
 		return Document{}, false
 	}
 	title := strings.Join(strings.Fields(p.title), " ")
 	var text strings.Builder
-	fmt.Fprintf(&text, "# %s\n\nLast edited: %s\nPage id: %s\n\n%s\n", cmp.Or(title, "Untitled"),
-		p.edited.UTC().Format("2006-01-02 15:04 UTC"), p.id, body)
+	fmt.Fprintf(&text, "# %s\n\nPage id: %s\n\n%s\n", cmp.Or(title, "Untitled"), p.id, body)
 	if md.Truncated {
 		text.WriteString("\nNotion cut this page short at its block limit; the rest of it is not here.\n")
 	}
-	return Document{ExternalID: p.id, Version: p.version(), At: p.edited, Title: title, URL: p.url, Text: []byte(text.String())}, true
+	return Document{ExternalID: p.id, Version: version, At: p.edited, Title: title, URL: p.url, Text: []byte(text.String())}, true
 }
 
 // notionSource is a shared data source and its table.

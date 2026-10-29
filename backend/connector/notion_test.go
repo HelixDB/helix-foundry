@@ -17,6 +17,9 @@ import (
 
 const notionTestSecret = "ntn_0123456789abcdefABCDEF"
 
+// notionTestNow is the time reads version their documents at.
+var notionTestNow = time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+
 type notionRoutes = map[string]func(*http.Request) (int, string)
 
 // notionAt serves routes, checking every request carries the secret, the
@@ -24,9 +27,9 @@ type notionRoutes = map[string]func(*http.Request) (int, string)
 // reading from them, unpaced.
 func notionAt(t *testing.T, routes notionRoutes) *notionKind {
 	t.Helper()
-	saved := notionInterval
-	notionInterval = 0
-	t.Cleanup(func() { notionInterval = saved })
+	savedInterval, savedNow := notionInterval, notionNow
+	notionInterval, notionNow = 0, func() time.Time { return notionTestNow }
+	t.Cleanup(func() { notionInterval, notionNow = savedInterval, savedNow })
 	checked := notionRoutes{}
 	for path, handler := range routes {
 		checked[path] = func(r *http.Request) (int, string) {
@@ -1119,7 +1122,7 @@ func TestNotionDocuments(t *testing.T) {
 	}
 	roadmap := notionTestPage("pg_1", "  Product\nroadmap ", "2026-01-06T10:45:30.000Z", notionWorkspace)
 
-	t.Run("writes each page's Markdown under its title, last edit and id", func(t *testing.T) {
+	t.Run("writes each page's Markdown under its title and id", func(t *testing.T) {
 		reads := &sync.Map{}
 		routes := searchOf(roadmap, notionTestPage("pg_2", "", "2026-01-05T10:00:00.000Z", notionWorkspace))
 		maps.Copy(routes, notionMarkdownOf(map[string]string{
@@ -1131,14 +1134,14 @@ func TestNotionDocuments(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(docs.offers, []string{"pages pg_1 1|2026-01-06T10:45:30Z", "pages pg_2 1|2026-01-05T10:00:00Z"}) || len(sink.rows) != 2 {
+		if !slices.Equal(docs.offers, []string{"pages pg_1 2|2026-01-06T10:45:30Z|2923", "pages pg_2 2|2026-01-05T10:00:00Z|2924"}) || len(sink.rows) != 2 {
 			t.Fatalf("offers = %q, rows = %v", docs.offers, sink.rows)
 		}
 		want := []Document{
-			{ExternalID: "pg_1", Version: "1|2026-01-06T10:45:30Z", At: time.Date(2026, 1, 6, 10, 45, 30, 0, time.UTC), Title: "Product roadmap",
-				URL: "https://www.notion.so/pg_1", Text: []byte("# Product roadmap\n\nLast edited: 2026-01-06 10:45 UTC\nPage id: pg_1\n\n## Q1\n\n- Ship it\n")},
-			{ExternalID: "pg_2", Version: "1|2026-01-05T10:00:00Z", At: time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC), Title: "",
-				URL: "https://www.notion.so/pg_2", Text: []byte("# Untitled\n\nLast edited: 2026-01-05 10:00 UTC\nPage id: pg_2\n\nLong page\n" +
+			{ExternalID: "pg_1", Version: "2|2026-01-06T10:45:30Z|2923", At: time.Date(2026, 1, 6, 10, 45, 30, 0, time.UTC), Title: "Product roadmap",
+				URL: "https://www.notion.so/pg_1", Text: []byte("# Product roadmap\n\nPage id: pg_1\n\n## Q1\n\n- Ship it\n")},
+			{ExternalID: "pg_2", Version: "2|2026-01-05T10:00:00Z|2924", At: time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC), Title: "",
+				URL: "https://www.notion.so/pg_2", Text: []byte("# Untitled\n\nPage id: pg_2\n\nLong page\n" +
 					"\nNotion cut this page short at its block limit; the rest of it is not here.\n")},
 		}
 		if len(docs.puts) != len(want) {
@@ -1149,6 +1152,35 @@ func TestNotionDocuments(t *testing.T) {
 				fmt.Sprint(p.doc.ExternalID, p.doc.Version, p.doc.Title, p.doc.URL) != fmt.Sprint(want[i].ExternalID, want[i].Version, want[i].Title, want[i].URL) {
 				t.Errorf("put %d = %+v\n%s\nwant %+v\n%s", i, p.doc, p.doc.Text, want[i], want[i].Text)
 			}
+		}
+	})
+	// A page is read again once a week at a time of its own, and at each edit.
+	t.Run("versions a page's document by its last edit and the week of its re-read", func(t *testing.T) {
+		edited := time.Date(2026, 1, 6, 10, 45, 30, 0, time.UTC)
+		if v := (notionPage{id: "pg_1", edited: edited}).version(notionTestNow); v != "2|2026-01-06T10:45:30Z|2923" {
+			t.Fatalf("version = %q", v)
+		}
+		// The first minute each version has moved by, over two weeks.
+		changes := map[string][]time.Time{}
+		for _, id := range []string{"pg_1", "pg_2", "pg_b"} {
+			p := notionPage{id: id, edited: edited}
+			last := p.version(notionTestNow)
+			for at := notionTestNow; at.Before(notionTestNow.Add(14 * 24 * time.Hour)); at = at.Add(time.Minute) {
+				if v := p.version(at); v != last {
+					changes[id], last = append(changes[id], at), v
+				}
+			}
+		}
+		want := map[string][]time.Time{
+			"pg_1": {time.Date(2026, 1, 14, 0, 45, 0, 0, time.UTC), time.Date(2026, 1, 21, 0, 45, 0, 0, time.UTC)},
+			"pg_2": {time.Date(2026, 1, 16, 17, 13, 0, 0, time.UTC), time.Date(2026, 1, 23, 17, 13, 0, 0, time.UTC)},
+			"pg_b": {time.Date(2026, 1, 10, 19, 38, 0, 0, time.UTC), time.Date(2026, 1, 17, 19, 38, 0, 0, time.UTC)},
+		}
+		if fmt.Sprint(changes) != fmt.Sprint(want) {
+			t.Fatalf("version changes = %v\nwant %v", changes, want)
+		}
+		if v := (notionPage{id: "pg_1", edited: edited.Add(time.Minute)}).version(notionTestNow); v != "2|2026-01-06T10:46:30Z|2923" {
+			t.Fatalf("version after an edit = %q", v)
 		}
 	})
 	t.Run("puts no document for a page with an empty body", func(t *testing.T) {
@@ -1214,7 +1246,7 @@ func TestNotionDocuments(t *testing.T) {
 		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", "Body", false)}, reads))
 		docs := &granolaDocs{want: map[string]bool{"pages": true}}
 		sink, err := pass(t, notionAt(t, routes), docs)
-		if err != nil || len(sink.rows) != 1 || !slices.Equal(docs.offers, []string{"pages pg_1 1|2026-01-07T08:00:00Z"}) || readCount(reads)["pg_1"] != 1 {
+		if err != nil || len(sink.rows) != 1 || !slices.Equal(docs.offers, []string{"pages pg_1 2|2026-01-07T08:00:00Z|2923"}) || readCount(reads)["pg_1"] != 1 {
 			t.Fatalf("SyncPass = %v, rows = %v, offers = %q, reads = %v", err, sink.rows, docs.offers, readCount(reads))
 		}
 	})
@@ -1224,7 +1256,7 @@ func TestNotionDocuments(t *testing.T) {
 		_, err := pass(t, notionAt(t, searchOf(notionTestPage("pg_b", "B", "2026-01-05T10:00:00.000Z", notionWorkspace),
 			notionTestPage("pg_c", "C", "2026-01-07T10:00:00.000Z", notionWorkspace),
 			notionTestPage("pg_a", "A", "2026-01-05T10:00:00.000Z", notionWorkspace))), docs)
-		want := []string{"pages pg_c 1|2026-01-07T10:00:00Z", "pages pg_a 1|2026-01-05T10:00:00Z", "pages pg_b 1|2026-01-05T10:00:00Z"}
+		want := []string{"pages pg_c 2|2026-01-07T10:00:00Z|2924", "pages pg_a 2|2026-01-05T10:00:00Z|2924", "pages pg_b 2|2026-01-05T10:00:00Z|2923"}
 		if err != nil || !slices.Equal(docs.offers, want) {
 			t.Fatalf("SyncPass = %v, offers = %q", err, docs.offers)
 		}

@@ -111,8 +111,10 @@ func (w *notionWorkspace) took() map[string]int {
 
 // TestNotionSyncDocuments runs Notion through the syncer: the first sync
 // fills the Pages set from one Markdown read per page, an unchanged sync
-// reads only the page that has no document, an edit replaces its page's
-// document, and a page no longer shared loses its rows and its document.
+// reads only the page that has no document, an edit of a row's properties
+// alone updates its document in place, an edit of a body replaces its
+// page's document, and a page no longer shared loses its rows and its
+// document.
 func TestNotionSyncDocuments(t *testing.T) {
 	workspace := &notionWorkspace{reads: map[string]int{}, pages: map[string]notionTestPage{
 		"pg_1": {edited: "2026-10-01T10:00:00.000Z", title: "Roadmap", body: "## Q4\n\nShip the connector."},
@@ -123,8 +125,8 @@ func TestNotionSyncDocuments(t *testing.T) {
 	endpoints := connector.DefaultEndpoints()
 	endpoints.Notion = workspace.serve(t)
 	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
-	document := func(id, title, edited, body string) string {
-		return fmt.Sprintf("# %s\n\nLast edited: %s\nPage id: %s\n\n%s\n", title, edited, id, body)
+	document := func(id, title, body string) string {
+		return fmt.Sprintf("# %s\n\nPage id: %s\n\n%s\n", title, id, body)
 	}
 
 	res := f.run(t, "sync-1")
@@ -135,8 +137,8 @@ func TestNotionSyncDocuments(t *testing.T) {
 		t.Fatalf("Markdown reads = %v; want each page once", reads)
 	}
 	pages := f.held(t, "pages")
-	if pages["pg_1"] != document("pg_1", "Roadmap", "2026-10-01 10:00 UTC", "## Q4\n\nShip the connector.") ||
-		pages["pg_2"] != document("pg_2", "Write the guide", "2026-10-02 10:00 UTC", "Draft, then review.") || len(pages) != 2 {
+	if pages["pg_1"] != document("pg_1", "Roadmap", "## Q4\n\nShip the connector.") ||
+		pages["pg_2"] != document("pg_2", "Write the guide", "Draft, then review.") || len(pages) != 2 {
 		t.Fatalf("pages = %q", pages)
 	}
 	if set := f.store.setOf("pages"); set.Name != "Pages" || set.Owner.ConnectorID != "conn-1" {
@@ -152,6 +154,18 @@ func TestNotionSyncDocuments(t *testing.T) {
 		t.Fatalf("Markdown reads = %v", reads)
 	}
 
+	// A row's properties edited, its body not: its last edit moves, so it
+	// is read again, and its document, the same bytes, is updated in place
+	// rather than replaced and extracted again.
+	task := f.liveID("pages", "pg_2")
+	workspace.mu.Lock()
+	workspace.pages["pg_2"] = notionTestPage{edited: "2026-10-03T12:00:00.000Z", title: "Write the guide", body: "Draft, then review.", task: true}
+	workspace.mu.Unlock()
+	f.run(t, "sync-2b")
+	if reads := workspace.took(); fmt.Sprint(reads) != "map[pg_2:1 pg_3:1]" || f.liveID("pages", "pg_2") != task {
+		t.Fatalf("Markdown reads = %v; pg_2's document %s, was %s", reads, f.liveID("pages", "pg_2"), task)
+	}
+
 	// An edit moves its page's last edit, so its document is read and
 	// replaced; a page no longer shared leaves the search, its table's rows
 	// and its set.
@@ -163,7 +177,7 @@ func TestNotionSyncDocuments(t *testing.T) {
 	if reads := workspace.took(); fmt.Sprint(reads) != "map[pg_1:1 pg_3:1]" {
 		t.Fatalf("Markdown reads = %v", reads)
 	}
-	if pages := f.held(t, "pages"); len(pages) != 1 || pages["pg_1"] != document("pg_1", "Roadmap", "2026-10-04 08:30 UTC", "## Q4\n\nShipped.") {
+	if pages := f.held(t, "pages"); len(pages) != 1 || pages["pg_1"] != document("pg_1", "Roadmap", "## Q4\n\nShipped.") {
 		t.Fatalf("pages = %q", pages)
 	}
 	if tasks, pages := f.store.tables["tasks"].RowCount, f.store.tables["pages"].RowCount; tasks != 0 || pages != 2 {
