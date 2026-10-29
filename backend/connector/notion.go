@@ -37,9 +37,11 @@ const (
 	// 2025-09-03 a database holds data sources, whose rows are pages.
 	notionVersion = "2026-03-11"
 	// notionPageSize is the most any Notion list returns per page, and
-	// notionPreviewRows the rows a test shows of each data source.
+	// notionPreviewRows the rows a test shows of each of the first
+	// notionPreviews data sources.
 	notionPageSize    = 100
 	notionPreviewRows = 5
+	notionPreviews    = 20
 	// notionMinPageSize is the fewest results list asks for of a page Notion
 	// could not build in time.
 	notionMinPageSize = 10
@@ -149,7 +151,7 @@ func (k *notionKind) Hint(secret string) string { return keyHint(strings.TrimSpa
 // users list and a search each of pages and data sources, one result each.
 // A secret that may not read users makes the users table unavailable; one
 // shared with nothing is refused. Every shared data source is a table, its
-// columns from its schema, with a few rows when a test asks.
+// columns from its schema; a test shows a few rows of each of the oldest 20.
 func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	c := k.client(src.Secret)
 	status, _, err := c.do(ctx, "/v1/users/me", nil, nil)
@@ -196,9 +198,9 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 	if err != nil {
 		return Discovery{}, err
 	}
-	for _, s := range sources {
+	for i, s := range sources {
 		t := s.table
-		if !src.ForSync {
+		if !src.ForSync && i < notionPreviews {
 			l, err := c.page(ctx, s.path(), nil, map[string]any{"page_size": notionPreviewRows, "result_type": "page"})
 			if err != nil {
 				return Discovery{}, err

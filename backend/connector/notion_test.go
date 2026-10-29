@@ -272,6 +272,28 @@ func TestNotionConnector(t *testing.T) {
 			t.Fatalf("Discover = %v", err)
 		}
 	})
+	// One query a data source; a test of many stops at 20.
+	t.Run("shows rows of the oldest 20 data sources only", func(t *testing.T) {
+		var mu sync.Mutex
+		queried := map[string]bool{}
+		var sources []string
+		routes := notionRoutes{}
+		for i := range 22 {
+			id := fmt.Sprintf("ds_%02d", i)
+			sources = append(sources, notionTestSource(id, "Source "+id, fmt.Sprintf("2026-01-%02dT00:00:00.000Z", i+1), notionAccountsSchema))
+			routes["/v1/data_sources/"+id+"/query"] = func(*http.Request) (int, string) {
+				mu.Lock()
+				queried[id] = true
+				mu.Unlock()
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues))
+			}
+		}
+		d, err := notionAt(t, notionShared(t, pages, sources, routes)).Discover(ctx, Source{Secret: notionTestSecret})
+		if err != nil || len(d.Tables) != 24 || len(queried) != 20 || queried["ds_20"] || queried["ds_21"] ||
+			len(d.Tables[21].Preview) != 1 || d.Tables[22].Preview != nil || d.Tables[23].Preview != nil {
+			t.Fatalf("Discover = (%v, %v), queried %d", tableNames(d), err, len(queried))
+		}
+	})
 	// A sync reads every row anyway, so it asks for no preview.
 	t.Run("reads no rows for a sync", func(t *testing.T) {
 		d, err := notionAt(t, notionShared(t, pages, []string{accounts}, nil)).Discover(ctx, Source{Secret: notionTestSecret, ForSync: true})
