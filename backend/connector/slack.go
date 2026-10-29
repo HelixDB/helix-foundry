@@ -79,9 +79,10 @@ var slackObjects = []saasTable{
 	// Discover keys a channel's members by (channel_id, user_id).
 	{"channel_members", "channel_id"},
 	// The top-level messages and thread broadcasts conversations.history
-	// lists. A thread's replies show only in its day's document, and
-	// replies to a thread started before the window in neither: a read of
-	// every thread's replies would be a conversations.replies call each.
+	// lists, each with the UTC day it was sent on and that day's
+	// channel_days row. A thread's replies show only in its day's document,
+	// and replies to a thread started before the window in neither: a read
+	// of every thread's replies would be a conversations.replies call each.
 	{"messages", "message_id"},
 	{"channel_days", "channel_day_id"},
 }
@@ -89,8 +90,9 @@ var slackObjects = []saasTable{
 var slackForeignKeys = map[string][]ForeignKey{
 	"channels":        {foreignKey("creator_id", "users", "user_id")},
 	"channel_members": {foreignKey("channel_id", "channels", "channel_id"), foreignKey("user_id", "users", "user_id")},
-	"messages":        {foreignKey("channel_id", "channels", "channel_id"), foreignKey("user_id", "users", "user_id")},
-	"channel_days":    {foreignKey("channel_id", "channels", "channel_id")},
+	"messages": {foreignKey("channel_id", "channels", "channel_id"), foreignKey("user_id", "users", "user_id"),
+		foreignKey("channel_day_id", "channel_days", "channel_day_id")},
+	"channel_days": {foreignKey("channel_id", "channels", "channel_id")},
 }
 
 // slackSkipped are the subtypes Slack posts about a channel itself, which
@@ -356,13 +358,25 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 // ones the stream holds stay, but none is fetched: they wait for the next
 // sync.
 func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
+	p, err := k.pass(ctx, src, tables, rows, docs)
+	if err != nil {
+		return tables, err
+	}
+	return tables, p.run(ctx)
+}
+
+// pass starts a read of tables, full or of changes, on the UTC day it is
+// now: its window is the history_days days before that day, and that day.
+func (k *slackKind) pass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) (*slackPass, error) {
 	var s SlackSettings
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
-	p := &slackPass{c: k.client(src.Secret), read: map[string]bool{}, rows: rows, docs: docs,
-		channels: map[string]string{}, days: map[string]*slackDay{}, today: slackNow().UTC().Format(time.DateOnly)}
+	now := slackNow().UTC()
+	p := &slackPass{c: k.client(src.Secret), read: map[string]bool{}, rows: rows, docs: docs, channels: map[string]string{},
+		days: map[string]*slackDay{}, historyDays: cmp.Or(s.HistoryDays, defaultSlackHistoryDays), today: now.Format(time.DateOnly)}
+	p.window = now.Truncate(24*time.Hour).AddDate(0, 0, -p.historyDays)
 	for _, table := range tables {
 		if !slices.ContainsFunc(slackObjects, func(o saasTable) bool { return o.name == table.Name }) {
-			return tables, invalid("Slack has no object %q", table.Name)
+			return nil, invalid("Slack has no object %q", table.Name)
 		}
 		p.read[table.Name] = true
 	}
@@ -370,11 +384,12 @@ func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, ro
 	if deadline, ok := ctx.Deadline(); ok {
 		p.stop = deadline.Add(-min(time.Until(deadline)/4, slackDocumentMargin))
 	}
-	return tables, p.run(ctx, cmp.Or(s.HistoryDays, defaultSlackHistoryDays))
+	return p, nil
 }
 
-// slackPass is one SyncPass: the tables it reads, the names its documents
-// give people and channels, and each channel day of the window.
+// slackPass is one read, a SyncPass or a change read: the tables it reads,
+// the names its documents give people and channels, and each channel day
+// it reads.
 type slackPass struct {
 	c    *slackClient
 	read map[string]bool
@@ -388,34 +403,39 @@ type slackPass struct {
 	// people names user ids by real name, else handle, once users.list is
 	// read, and is nil before; byID is set when the app may not read users,
 	// so documents name people by id.
-	people   map[string]string
-	byID     bool
-	channels map[string]string // channel id: name
-	days     map[string]*slackDay
-	kept     int // the bytes of messages days keep
-	// today is the UTC day the pass runs on, YYYY-MM-DD. Its days get rows
-	// but no document until it is over: a channel still talking would
-	// otherwise replace its document, and have it extracted again, at
-	// every sync.
+	people map[string]string
+	byID   bool
+	// channels names channel ids: the channels the app is in, and every
+	// channel conversations.list lists once listed is set. A change read
+	// reads no channels table, so it sets nameChannels and lists them once
+	// a document mentions one it can't name, as a full read, which lists
+	// them, names it.
+	channels     map[string]string
+	listed       bool
+	nameChannels bool
+	days         map[string]*slackDay
+	kept         int // the bytes of messages days keep
+	historyDays  int
+	// window is the first instant the pass reads history from: midnight
+	// UTC, historyDays before today.
+	window time.Time
+	// today is the UTC day the pass runs on, YYYY-MM-DD. Its days, and any
+	// later one a clock ahead of the pass's lists, get rows but no document
+	// until they are over: a channel still talking would otherwise replace
+	// its document, and have it extracted again, at every sync.
 	today string
-	// stop is when the pass stops fetching documents; zero for never.
+	// stop is when the pass stops fetching documents; zero for never. late
+	// is the earliest day whose document it then wanted but did not fetch.
 	stop time.Time
+	late string
 }
 
-func (p *slackPass) run(ctx context.Context, historyDays int) error {
-	c := p.c
+func (p *slackPass) run(ctx context.Context) error {
 	history := p.read["messages"] || p.read["channel_days"]
 	if p.read["channels"] || p.read["channel_members"] || history {
-		auth, err := c.auth(ctx)
-		if err != nil {
+		if err := p.auth(ctx); err != nil {
 			return err
 		}
-		p.team, p.scopes = auth.team, auth.scopes
-	}
-	// Discover makes a table unavailable that no history can be read for;
-	// a token that lost both scopes since is refused with the fix.
-	if history && !p.scopes.has("channels:history") && !p.scopes.has("groups:history") {
-		return refused(errMissingScope, "add the channels:history scope to the app and reinstall it")
 	}
 	if p.read["users"] {
 		if err := p.users(ctx); err != nil {
@@ -424,43 +444,23 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 	}
 	p.byID = p.people == nil && !p.scopes.has("users:read")
 	if p.read["channels"] {
-		err := c.pages(ctx, "conversations.list", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
-			func(raw json.RawMessage) error {
-				var ch slackChannel
-				if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
-					return errors.New("slack conversations.list: a listed channel has no id")
-				}
-				p.channels[ch.ID] = ch.Name
-				return p.rows["channels"].Write(ch.row())
-			})
-		if err != nil {
+		if err := p.listChannels(ctx); err != nil {
 			return err
 		}
 	}
 	if !p.read["channel_members"] && !history {
 		return nil
 	}
-	var member []slackChannel
-	err := c.pages(ctx, "users.conversations", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
-		func(raw json.RawMessage) error {
-			var ch slackChannel
-			if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
-				return errors.New("slack users.conversations: a listed channel has no id")
-			}
-			p.channels[ch.ID] = ch.Name
-			member = append(member, ch)
-			return nil
-		})
+	member, err := p.joined(ctx)
 	if err != nil {
 		return err
 	}
-	since := slackNow().UTC().Truncate(24*time.Hour).AddDate(0, 0, -historyDays)
 	// A channel the app was removed from, or that was deleted, since it was
 	// listed is skipped: the rows of it already written stay, and its days
 	// are left out.
 	for _, ch := range member {
 		if p.read["channel_members"] {
-			err := c.pages(ctx, "conversations.members", "members", url.Values{"channel": {ch.ID}, "limit": {slackListPage}},
+			err := p.c.pages(ctx, "conversations.members", "members", url.Values{"channel": {ch.ID}, "limit": {slackListPage}},
 				func(raw json.RawMessage) error {
 					var user string
 					if json.Unmarshal(raw, &user) != nil || user == "" {
@@ -480,20 +480,87 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		if !history || !p.scopes.has(slackHistoryScope(ch.IsPrivate)) {
 			continue
 		}
-		err := c.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) })
-		if errors.Is(err, errChannelGone) {
-			for id, d := range p.days {
-				if d.channel.ID == ch.ID {
-					p.kept -= d.bytes
-					delete(p.days, id)
-				}
-			}
-			continue
-		}
-		if err != nil {
+		if err := p.history(ctx, ch, p.window); err != nil && !errors.Is(err, errChannelGone) {
 			return err
 		}
 	}
+	return p.channelDays(ctx)
+}
+
+// auth reads the workspace and the token's scopes with auth.test. Discover
+// makes a table unavailable that no history can be read for; a read of
+// history by a token that lost both scopes since is refused with the fix.
+func (p *slackPass) auth(ctx context.Context) error {
+	auth, err := p.c.auth(ctx)
+	if err != nil {
+		return err
+	}
+	p.team, p.scopes = auth.team, auth.scopes
+	if (p.read["messages"] || p.read["channel_days"]) && !p.scopes.has("channels:history") && !p.scopes.has("groups:history") {
+		return refused(errMissingScope, "add the channels:history scope to the app and reinstall it")
+	}
+	return nil
+}
+
+// listChannels reads conversations.list for every channel's name, writing
+// the channels table's rows when it is read. A channel the app is in keeps
+// the name users.conversations gave it.
+func (p *slackPass) listChannels(ctx context.Context) error {
+	p.listed = true
+	return p.c.pages(ctx, "conversations.list", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
+		func(raw json.RawMessage) error {
+			var ch slackChannel
+			if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
+				return errors.New("slack conversations.list: a listed channel has no id")
+			}
+			if _, ok := p.channels[ch.ID]; !ok {
+				p.channels[ch.ID] = ch.Name
+			}
+			if !p.read["channels"] {
+				return nil
+			}
+			return p.rows["channels"].Write(ch.row())
+		})
+}
+
+// joined lists the channels the app is in with users.conversations, of the
+// types the token may list, naming them.
+func (p *slackPass) joined(ctx context.Context) ([]slackChannel, error) {
+	var member []slackChannel
+	err := p.c.pages(ctx, "users.conversations", "channels", url.Values{"limit": {slackListPage}, "types": {p.scopes.types()}},
+		func(raw json.RawMessage) error {
+			var ch slackChannel
+			if json.Unmarshal(raw, &ch) != nil || ch.ID == "" {
+				return errors.New("slack users.conversations: a listed channel has no id")
+			}
+			p.channels[ch.ID] = ch.Name
+			member = append(member, ch)
+			return nil
+		})
+	return member, err
+}
+
+// history reads ch's messages from since on (message). A channel the app
+// was removed from, or that was deleted, since it was listed loses the days
+// it read, and the error wraps errChannelGone.
+func (p *slackPass) history(ctx context.Context, ch slackChannel, since time.Time) error {
+	err := p.c.history(ctx, ch.ID, since, time.Time{}, func(m slackMessage) error { return p.message(ch, m) })
+	if errors.Is(err, errChannelGone) {
+		for id, d := range p.days {
+			if d.channel.ID == ch.ID {
+				p.kept -= d.bytes
+				delete(p.days, id)
+			}
+		}
+	}
+	return err
+}
+
+// channelDays writes the row of each day the pass read, when channel_days
+// is read, and offers its document once the day is over. A change read
+// first lists the channels, for their names, when a day mentions one it
+// can't name.
+func (p *slackPass) channelDays(ctx context.Context) error {
 	if !p.read["channel_days"] {
 		return nil
 	}
@@ -506,8 +573,16 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 		if err := p.rows["channel_days"].Write(d.row()); err != nil {
 			return err
 		}
-		if d.day == p.today {
+		if d.day >= p.today {
 			continue
+		}
+		if p.nameChannels && !p.listed && slices.ContainsFunc(slices.Collect(maps.Keys(d.mentioned)), func(id string) bool {
+			_, named := p.channels[id]
+			return !named
+		}) {
+			if err := p.listChannels(ctx); err != nil && !errors.Is(err, errMissingScope) {
+				return err
+			}
 		}
 		version, named := p.version(d)
 		if !named {
@@ -521,7 +596,13 @@ func (p *slackPass) run(ctx context.Context, historyDays int) error {
 				version = held
 			}
 		}
-		if !p.docs.Want(slackConversations.Name, d.id(), version) || !p.stop.IsZero() && !time.Now().Before(p.stop) {
+		if !p.docs.Want(slackConversations.Name, d.id(), version) {
+			continue
+		}
+		if !p.stop.IsZero() && !time.Now().Before(p.stop) {
+			if p.late == "" || d.day < p.late {
+				p.late = d.day
+			}
 			continue
 		}
 		if !named {
@@ -930,8 +1011,9 @@ type slackMessage struct {
 }
 
 func (m slackMessage) row(channel string) map[string]any {
+	day := m.at.Format(time.DateOnly)
 	return map[string]any{
-		"message_id": channel + ":" + m.TS, "channel_id": channel, "ts": m.TS, "thread_ts": orNull(m.ThreadTS),
+		"message_id": channel + ":" + m.TS, "channel_id": channel, "day": day, "channel_day_id": channel + ":" + day, "ts": m.TS, "thread_ts": orNull(m.ThreadTS),
 		"user_id": orNull(m.User), "bot_id": orNull(m.BotID), "subtype": orNull(m.Subtype), "text": m.Text,
 		"sent_at": m.at.Format(time.RFC3339), "edited_at": slackStamp(m.Edited.TS), "reply_count": m.ReplyCount,
 		"reply_users_count": m.ReplyUsersCount, "latest_reply_at": slackStamp(m.LatestReply),

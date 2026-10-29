@@ -325,7 +325,8 @@ func TestSlackConnector(t *testing.T) {
 			{Name: "channel_members", PrimaryKey: []string{"channel_id", "user_id"},
 				ForeignKeys: []ForeignKey{foreignKey("channel_id", "channels", "channel_id"), foreignKey("user_id", "users", "user_id")}},
 			{Name: "messages", PrimaryKey: []string{"message_id"}, Windowed: true,
-				ForeignKeys: []ForeignKey{foreignKey("channel_id", "channels", "channel_id"), foreignKey("user_id", "users", "user_id")}},
+				ForeignKeys: []ForeignKey{foreignKey("channel_id", "channels", "channel_id"), foreignKey("user_id", "users", "user_id"),
+					foreignKey("channel_day_id", "channel_days", "channel_day_id")}},
 			{Name: "channel_days", PrimaryKey: []string{"channel_day_id"}, Windowed: true, ForeignKeys: []ForeignKey{foreignKey("channel_id", "channels", "channel_id")}},
 		}
 		if fmt.Sprint(d.Tables) != fmt.Sprint(want) || len(d.Unavailable) != 0 || len(d.Warnings) != 0 {
@@ -700,7 +701,7 @@ func TestSlackSync(t *testing.T) {
 			t.Fatalf("message ids = %q", ids)
 		}
 		want := map[string]any{
-			"message_id": "C1:" + slackParent, "channel_id": "C1", "ts": slackParent, "thread_ts": slackParent, "user_id": "U1", "bot_id": nil,
+			"message_id": "C1:" + slackParent, "channel_id": "C1", "day": "2026-10-28", "channel_day_id": "C1:2026-10-28", "ts": slackParent, "thread_ts": slackParent, "user_id": "U1", "bot_id": nil,
 			"subtype": nil, "text": "Morning <@U2>, see <#C2|design> and <https://example.com/a?b=1&amp;c=2|the doc> or <https://example.com>\n&lt;3 &amp; more",
 			"sent_at": "2026-10-28T09:15:00Z", "edited_at": "2026-10-28T09:16:00Z", "reply_count": 3, "reply_users_count": 2,
 			"latest_reply_at": "2026-10-29T08:00:00Z",
@@ -709,7 +710,8 @@ func TestSlackSync(t *testing.T) {
 			t.Fatalf("thread parent = %v", rows[2])
 		}
 		broadcast := map[string]any{
-			"message_id": "C1:" + slackTS("2026-10-28T10:05:00Z"), "channel_id": "C1", "ts": slackTS("2026-10-28T10:05:00Z"), "thread_ts": slackParent,
+			"message_id": "C1:" + slackTS("2026-10-28T10:05:00Z"), "channel_id": "C1", "day": "2026-10-28", "channel_day_id": "C1:2026-10-28",
+			"ts": slackTS("2026-10-28T10:05:00Z"), "thread_ts": slackParent,
 			"user_id": "U2", "bot_id": nil, "subtype": "thread_broadcast", "text": "Shipping it", "sent_at": "2026-10-28T10:05:00Z",
 			"edited_at": nil, "reply_count": 0, "reply_users_count": 0, "latest_reply_at": nil,
 		}
