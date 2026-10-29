@@ -1155,9 +1155,11 @@
 .on-tour-sources small {
   color: var(--hf-text-2);
 }
-.on-tour-questions {
+/* The tour's first answer, as Ask shows it, and the questions to ask next. */
+.on-tour-answer {
   margin: 4px 0 14px;
-  padding-left: 18px;
-  color: var(--hf-text-2);
-  line-height: 1.6;
+}
+.on-tour-asks {
+  justify-content: flex-start;
+  margin: 0 0 14px;
 }

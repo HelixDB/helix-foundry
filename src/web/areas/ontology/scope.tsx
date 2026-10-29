@@ -1,4 +1,10 @@
-import { createContext, useContext, useEffect, useRef } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { Outlet, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shapes } from "lucide-react";
@@ -50,6 +56,31 @@ export type OntologyScopeValue = {
   ontology: FoundryOntology;
 };
 const OntologyContext = createContext<OntologyScopeValue | null>(null);
+
+/**
+ * What useOntology() and the reads of `ontology`'s database need, for
+ * `children`: OntologyScope's, and a page outside the ontology's routes
+ * that shows one of its parts (the sample's tour, its first answer).
+ */
+export function InOntology({
+  ontology,
+  children,
+}: {
+  ontology: FoundryOntology;
+  children: ReactNode;
+}) {
+  return (
+    <OntologyContext.Provider value={{ id: ontology.id, ontology }}>
+      {/* Keyed: a page switched to another ontology starts afresh. */}
+      <TenantReadsProvider
+        key={ontology.id}
+        database={ontologyDatabase(ontology)}
+      >
+        {children}
+      </TenantReadsProvider>
+    </OntologyContext.Provider>
+  );
+}
 
 /** The ontology the page is under. Only valid inside its context. */
 export function useOntology(): OntologyScopeValue {
@@ -202,17 +233,9 @@ export function OntologyScope({ explores = false }: { explores?: boolean }) {
       </Page>
     );
   return (
-    <OntologyContext.Provider
-      value={{ id: ontologyId, ontology: query.data.ontology }}
-    >
-      {/* Keyed: a page switched to another ontology starts afresh. */}
-      <TenantReadsProvider
-        key={ontologyId}
-        database={ontologyDatabase(query.data.ontology)}
-      >
-        <Outlet />
-      </TenantReadsProvider>
-    </OntologyContext.Provider>
+    <InOntology ontology={query.data.ontology}>
+      <Outlet />
+    </InOntology>
   );
 }
 

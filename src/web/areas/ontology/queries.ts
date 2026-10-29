@@ -260,7 +260,7 @@ export const reviseOntologyVersion = (
 // ---------------------------------------------------------------- questions
 
 const questions = (ws: string, o: string) => `${at(ws, o)}/questions`;
-const isLiveQuestion = (q?: { status?: string } | null) =>
+export const isLiveQuestion = (q?: { status?: string } | null) =>
   q?.status === "queued" || q?.status === "running";
 
 export const questionQueries = {

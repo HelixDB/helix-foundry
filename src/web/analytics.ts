@@ -45,6 +45,9 @@ export type AnalyticsEvents = {
   sample_ontology_ready: undefined;
   sample_loaded: undefined;
   sample_ask_opened: undefined;
+  // The tour's first question answered, then Connect your own data.
+  sample_answered: undefined;
+  sample_own_data_clicked: undefined;
 
   // The workspace's own data.
   connector_created: { kind: ConnectorKindName };
