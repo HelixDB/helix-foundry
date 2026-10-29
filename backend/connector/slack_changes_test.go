@@ -261,6 +261,40 @@ func TestSlackChanges(t *testing.T) {
 		}
 		assertMerged(t, c, prev, prev)
 	})
+	// #design's 29th mentions #old, a channel the app isn't in, by id alone:
+	// whichever tables are chosen, both reads list the channels to name it.
+	t.Run("names a channel the app isn't in as a full read of the same tables does", func(t *testing.T) {
+		for _, tables := range [][]Table{slackTables, slackTables[3:], slackTables[4:]} {
+			w := newSlackWorkspace()
+			w.history["C2"][0] = strings.Replace(w.history["C2"][0], "<#C7>", "<#C3>", 1)
+			kind, _ := slackAt(t, w.routes())
+			held := &granolaDocs{want: map[string]bool{"conversations": true}}
+			if _, err := slackRead(t, kind, tables, held); err != nil {
+				t.Fatal(err)
+			}
+			var followed []Table
+			for _, table := range tables {
+				if kind.Capture(slackSource, table.Name) != CaptureFull {
+					followed = append(followed, table)
+				}
+			}
+			docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+			kind, _ = slackAt(t, w.routes())
+			if _, err := kind.Changes(ctx, slackSource, followed, slackCursorAt("2026-10-29", "C1", "C2"), newSlackChanges(docs)); err != nil {
+				t.Fatal(err)
+			}
+			var full *granolaPut
+			for i, p := range held.puts {
+				if p.doc.ExternalID == "C2:2026-10-29" {
+					full = &held.puts[i]
+				}
+			}
+			if full == nil || len(docs.puts) != 1 || !strings.Contains(string(full.doc.Text), "#old, #general") ||
+				string(docs.puts[0].doc.Text) != string(full.doc.Text) || docs.puts[0].doc.Version != full.doc.Version {
+				t.Fatalf("%d tables: change read put %v, full read %v", len(tables), docs.putNames(), held.putNames())
+			}
+		}
+	})
 	t.Run("names people by id without users:read, as a full read does, without asking users.list", func(t *testing.T) {
 		scopes := strings.ReplaceAll(slackAllScopes, ",users:read,", ",")
 		w := newSlackWorkspace()

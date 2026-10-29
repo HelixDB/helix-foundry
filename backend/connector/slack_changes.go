@@ -92,7 +92,6 @@ func (k *slackKind) Changes(ctx context.Context, src Source, tables []Table, cur
 	if err != nil {
 		return nil, err
 	}
-	p.nameChannels = true
 	channels, err := p.followed(ctx)
 	if err != nil {
 		return nil, err

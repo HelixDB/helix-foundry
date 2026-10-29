@@ -1466,12 +1466,30 @@ func TestSlackDocuments(t *testing.T) {
 			t.Fatalf("puts = %v, calls = %q", docs.putNames(), calls.log)
 		}
 	})
-	t.Run("reads users for documents though their table is not read", func(t *testing.T) {
+	// #design's 29th mentions #C7, which the app isn't in: the channels are listed once for its name.
+	t.Run("reads users and channels for documents though their tables are not read", func(t *testing.T) {
 		kind, calls := slackAt(t, newSlackWorkspace().routes())
 		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
 		sinks, err := slackRead(t, kind, slackTables[4:], docs)
-		if err != nil || len(sinks) != 1 || texts(docs)["C1:2026-10-28"] != general28 || len(calls.of("users.list")) != 1 ||
-			len(calls.of("conversations.list")) != 0 || len(calls.of("conversations.members")) != 0 {
+		if err != nil || len(sinks) != 1 || texts(docs)["C1:2026-10-28"] != general28 || texts(docs)["C2:2026-10-29"] != design29 ||
+			len(calls.of("users.list")) != 1 || len(calls.of("conversations.list")) != 1 || len(calls.of("conversations.members")) != 0 {
+			t.Fatalf("SyncPass = %v, calls = %q", err, calls.log)
+		}
+	})
+	t.Run("names a channel it may not list by id", func(t *testing.T) {
+		kind, calls := slackAt(t, with(newSlackWorkspace().routes(), map[string]string{"conversations.list": slackScope("channels:read")}))
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		if _, err := slackRead(t, kind, slackTables[3:], docs); err != nil || texts(docs)["C2:2026-10-29"] != design29 || len(calls.of("conversations.list")) != 1 {
+			t.Fatalf("SyncPass = %v, documents = %q, calls = %q", err, texts(docs), calls.log)
+		}
+	})
+	// A day that names only channels the app is in lists none.
+	t.Run("lists no channels while every day names only channels it is in", func(t *testing.T) {
+		w := newSlackWorkspace()
+		w.history["C2"][0] = strings.Replace(w.history["C2"][0], "<#C7>, ", "", 1)
+		kind, calls := slackAt(t, w.routes())
+		if _, err := slackRead(t, kind, slackTables[3:], &granolaDocs{want: map[string]bool{"conversations": true}}); err != nil ||
+			len(calls.of("conversations.list")) != 0 {
 			t.Fatalf("SyncPass = %v, calls = %q", err, calls.log)
 		}
 	})

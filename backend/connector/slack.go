@@ -352,8 +352,10 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 // whose history the token's scopes allow. The messages make the
 // channel_days rows and, when that table is read, its documents, offered
 // most recently active first once every channel is read; a day's thread
-// replies are read only when its document is wanted, and users.list, to
-// name people, once a document is (or the users table is read). Near
+// replies are read only when its document is wanted, users.list, to name
+// people, once a document is (or the users table is read), and
+// conversations.list, to name a channel the app isn't in, once a finished
+// day mentions one (or the channels table is read). Near
 // ctx's deadline (slackDocumentMargin), the days are still offered, so the
 // ones the stream holds stay, but none is fetched: they wait for the next
 // sync that reads their day, the next full read on a plan that follows
@@ -407,16 +409,15 @@ type slackPass struct {
 	people map[string]string
 	byID   bool
 	// channels names channel ids: the channels the app is in, and every
-	// channel conversations.list lists once listed is set. A change read
-	// reads no channels table, so it sets nameChannels and lists them once
-	// a document mentions one it can't name, as a full read, which lists
-	// them, names it.
-	channels     map[string]string
-	listed       bool
-	nameChannels bool
-	days         map[string]*slackDay
-	kept         int // the bytes of messages days keep
-	historyDays  int
+	// channel conversations.list lists once listed is set. A read lists
+	// them when it reads the channels table, else once a finished day
+	// mentions one it can't name, so a full read and a change read name
+	// the same channels whichever tables are chosen.
+	channels    map[string]string
+	listed      bool
+	days        map[string]*slackDay
+	kept        int // the bytes of messages days keep
+	historyDays int
 	// window is the first instant the pass reads history from: midnight
 	// UTC, historyDays before today.
 	window time.Time
@@ -558,9 +559,9 @@ func (p *slackPass) history(ctx context.Context, ch slackChannel, since time.Tim
 }
 
 // channelDays writes the row of each day the pass read, when channel_days
-// is read, and offers its document once the day is over. A change read
-// first lists the channels, for their names, when a day mentions one it
-// can't name.
+// is read, and offers its document once the day is over. A day that
+// mentions a channel the pass can't name first lists the channels, once,
+// for their names; a token that may not list them names it by id.
 func (p *slackPass) channelDays(ctx context.Context) error {
 	if !p.read["channel_days"] {
 		return nil
@@ -577,7 +578,7 @@ func (p *slackPass) channelDays(ctx context.Context) error {
 		if d.day >= p.today {
 			continue
 		}
-		if p.nameChannels && !p.listed && slices.ContainsFunc(slices.Collect(maps.Keys(d.mentioned)), func(id string) bool {
+		if !p.listed && slices.ContainsFunc(slices.Collect(maps.Keys(d.mentioned)), func(id string) bool {
 			_, named := p.channels[id]
 			return !named
 		}) {
