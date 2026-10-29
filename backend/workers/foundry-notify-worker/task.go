@@ -35,8 +35,10 @@ const Name = "foundry-notify-worker"
 // send.
 const sendWait = time.Minute
 
-// lease is how long a claim holds an email, well past sendWait, so an email
-// being sent is never claimed again.
+// lease is how long a claim holds an email, well past sendWait and
+// finishWait, so another replica never claims an email while it is being
+// sent. Only a worker killed between sending an email and recording it
+// leaves one to be claimed, and sent, again.
 const lease = 5 * time.Minute
 
 // finishWait is how long recording an email's end may take, even while the
@@ -151,9 +153,11 @@ func (t *Task) tick(ctx context.Context) {
 	}
 }
 
-// deliver sends one claimed email, then records how that went.
+// deliver sends one claimed email, then records how that went. A worker
+// stopping lets the email it is sending finish, within sendWait, rather
+// than cut a send the host may have made short and send it again later.
 func (t *Task) deliver(ctx context.Context, n *model.FoundryNotification) {
-	sendCtx, cancel := context.WithTimeout(ctx, sendWait)
+	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendWait)
 	defer cancel()
 	outcome, label := t.send(sendCtx, n)
 	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), finishWait)

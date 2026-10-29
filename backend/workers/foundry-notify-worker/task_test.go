@@ -137,6 +137,8 @@ type mailbox struct {
 	sendErr    error
 	sent       []sentEmail
 	recipients int
+	// onSend runs as each send starts.
+	onSend func()
 }
 
 type sentEmail struct {
@@ -158,10 +160,16 @@ func (m *mailbox) Recipient(_ context.Context, userID string) (ports.Recipient, 
 	return r, nil
 }
 
-func (m *mailbox) Send(_ context.Context, to ports.Recipient, e ports.Email) error {
+func (m *mailbox) Send(ctx context.Context, to ports.Recipient, e ports.Email) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.sendErr != nil {
+	if m.onSend != nil {
+		m.onSend()
+	}
+	switch {
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case m.sendErr != nil:
 		return m.sendErr
 	}
 	m.sent = append(m.sent, sentEmail{to, e})
@@ -556,6 +564,20 @@ func TestFoundryNotifyWorkerTick(t *testing.T) {
 		if len(mail.sent) != 2 {
 			t.Fatalf("finish failing with %v: sent %d", err, len(mail.sent))
 		}
+	}
+	// A worker stopping while it sends lets that email finish, and claims
+	// no other.
+	box, _ = firstDraft("Billing", model.OntologyGenerationSucceeded)
+	box.pending = append(box.pending, second)
+	stopping, stop := context.WithCancel(context.Background())
+	mail = ada()
+	mail.onSend = stop
+	newTask(box, mail).tick(stopping)
+	if len(mail.sent) != 1 || len(box.ended) != 1 {
+		t.Fatalf("stopped while sending: sent %d, ended %v", len(mail.sent), box.ended)
+	}
+	if _, ok := box.ended["n-1"].(model.FoundryNotificationDelivered); !ok {
+		t.Fatalf("the email being sent ended %#v", box.ended["n-1"])
 	}
 	// A stopping worker claims nothing more.
 	box, _ = firstDraft("Billing", model.OntologyGenerationSucceeded)
