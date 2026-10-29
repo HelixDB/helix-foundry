@@ -45,6 +45,9 @@ const (
 	// notionMinPageSize is the fewest results list asks for of a page Notion
 	// could not build in time.
 	notionMinPageSize = 10
+	// notionMinWindow is the shortest span of creation time rows splits a
+	// data source's query into.
+	notionMinWindow = time.Second
 	// maxNotionName is the longest name, in bytes, a table or column takes
 	// from a Notion title, before any suffix that makes it unique.
 	maxNotionName = 63
@@ -265,7 +268,21 @@ func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 				return written, refused(nil, "Notion no longer shares the database of table %s with this integration; try again", table.Name)
 			}
 			written[i] = s.table
-			err = c.rows(ctx, s, rows[table.Name])
+			w := rows[table.Name]
+			err = c.rows(ctx, s, nil, func(p notionPage, item map[string]any) error {
+				row, more := s.row(p, item)
+				for _, col := range more {
+					switch ids, ok, err := c.references(ctx, p.id, col.id); {
+					case err != nil:
+						return err
+					case ok && len(ids) == 0:
+						row[col.name] = nil
+					case ok:
+						row[col.name] = ids
+					}
+				}
+				return w.Write(row)
+			})
 		}
 		if err != nil {
 			return written, err
@@ -760,19 +777,43 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 	return sources, nil
 }
 
-// rows writes every row of a data source's table, oldest first by
-// creation. Notion answers at most 10,000 rows per query and says when it
-// cut one short; the read then queries again from the last row's creation
-// time, which Notion keeps to the minute, skipping that minute's rows it
-// has. More than one query's rows created in one minute can't be read. A
+// rows reads every row of a data source, oldest first by creation, and
+// passes each to each. Notion answers at most 10,000 rows per query and
+// says when it cut one short; the read then queries again from the last
+// row's creation time, which Notion shows to the minute, skipping the rows
+// of that minute it has. A minute of more rows than one query answers, as
+// an import or a duplicated database makes, is read in windows of it,
+// halved until each answers whole, since Notion compares a filter's time
+// to the millisecond; a window of a second or less that one query can't
+// answer fails the read. query is the queries' own (filter_properties). A
 // wiki's query also lists the data sources under it, which are not rows.
-func (c *notionClient) rows(ctx context.Context, s notionSource, w RowWriter) error {
+func (c *notionClient) rows(ctx context.Context, s notionSource, query url.Values, each func(p notionPage, item map[string]any) error) error {
 	body := map[string]any{"result_type": "page", "sorts": []any{map[string]any{"timestamp": "created_time", "direction": "ascending"}}}
 	var since time.Time
 	at := map[string]bool{} // the rows created at since
-	for {
-		added := 0
-		cut, err := c.list(ctx, s.path(), nil, body, func(item map[string]any) error {
+	// windows are the spans of creation time [from, until) left to read,
+	// the next one last; a zero time is no bound.
+	windows := [][2]time.Time{{}}
+	for len(windows) > 0 {
+		from, until := windows[len(windows)-1][0], windows[len(windows)-1][1]
+		windows = windows[:len(windows)-1]
+		var filter []any
+		bound := func(op string, t time.Time) {
+			if !t.IsZero() {
+				filter = append(filter, map[string]any{"timestamp": "created_time", "created_time": map[string]any{op: t.UTC().Format(time.RFC3339Nano)}})
+			}
+		}
+		bound("on_or_after", from)
+		bound("before", until)
+		switch len(filter) {
+		case 0:
+			delete(body, "filter")
+		case 1:
+			body["filter"] = filter[0]
+		default:
+			body["filter"] = map[string]any{"and": filter}
+		}
+		cut, err := c.list(ctx, s.path(), query, body, func(item map[string]any) error {
 			p, err := notionPageOf(s.path(), item)
 			switch {
 			case err != nil:
@@ -783,29 +824,32 @@ func (c *notionClient) rows(ctx context.Context, s notionSource, w RowWriter) er
 				since, at = p.created, map[string]bool{}
 			}
 			at[p.id] = true
-			added++
-			row, more := s.row(p, item)
-			for _, col := range more {
-				switch ids, ok, err := c.references(ctx, p.id, col.id); {
-				case err != nil:
-					return err
-				case ok && len(ids) == 0:
-					row[col.name] = nil
-				case ok:
-					row[col.name] = ids
-				}
-			}
-			return w.Write(row)
+			return each(p, item)
 		})
-		if err != nil || !cut {
+		switch {
+		case err != nil:
 			return err
+		case !cut:
+			continue
+		case since.After(from):
+			// Every row created before since's minute is read.
+			windows = append(windows, [2]time.Time{since, until})
+			continue
 		}
-		if added == 0 {
-			return invalid("Notion answers at most 10,000 rows of a database at a time, and more rows of %s were created in one minute; "+
+		// One query can't answer the rows of the window's first minute, or
+		// of the part of a minute the window is.
+		end := until
+		if minute := from.Add(time.Minute); until.IsZero() || until.After(minute) {
+			windows, end = append(windows, [2]time.Time{minute, until}), minute
+		}
+		if end.Sub(from) <= notionMinWindow {
+			return invalid("Notion answers at most 10,000 rows of a database at a time, and more rows of %s were created within one second; "+
 				"Helix can't read them all", s.table.Name)
 		}
-		body["filter"] = map[string]any{"timestamp": "created_time", "created_time": map[string]any{"on_or_after": since.UTC().Format(time.RFC3339Nano)}}
+		mid := from.Add(end.Sub(from) / 2)
+		windows = append(windows, [2]time.Time{mid, end}, [2]time.Time{from, mid})
 	}
+	return nil
 }
 
 // row is a data source's row: every column, null where the page has no

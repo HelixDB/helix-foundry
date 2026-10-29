@@ -800,16 +800,77 @@ func TestNotionSync(t *testing.T) {
 			t.Fatalf("rows = %v, filters = %v", ids, filters)
 		}
 	})
-	t.Run("fails a data source with more rows made in one minute than one query answers", func(t *testing.T) {
+	// Notion shows a creation time to the minute but filters to the
+	// millisecond: a minute one query can't answer is read in halves.
+	t.Run("reads a minute of more rows than one query answers in windows of it", func(t *testing.T) {
+		const limit = 3 // as Notion's 10,000
+		minute := time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
+		var created []time.Time // row_i's, to the millisecond
+		for _, second := range []float64{5, 10, 20, 20.5, 35, 40, 50, 55, 59.999} {
+			created = append(created, minute.Add(time.Duration(second*float64(time.Second))))
+		}
+		created = append(created, minute.Add(2*time.Minute), minute.Add(2*time.Minute+time.Second))
+		var windows []string
+		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Imported", "2026-01-01T00:00:00.000Z", `{}`)},
+			notionRoutes{"/v1/data_sources/ds_1/query": func(r *http.Request) (int, string) {
+				filter, _ := notionBody(t, r)["filter"].(map[string]any)
+				bounds := []any{filter}
+				if and, ok := filter["and"].([]any); ok {
+					bounds = and
+				}
+				var from, until time.Time
+				for _, b := range bounds {
+					op, _ := b.(map[string]any)["created_time"].(map[string]any)
+					if at, ok := op["on_or_after"].(string); ok {
+						from, _ = time.Parse(time.RFC3339Nano, at)
+					}
+					if at, ok := op["before"].(string); ok {
+						until, _ = time.Parse(time.RFC3339Nano, at)
+					}
+				}
+				windows = append(windows, from.Format("15:04:05.000")+"-"+until.Format("15:04:05.000"))
+				var rows []string
+				for i, at := range created {
+					if !at.Before(from) && (until.IsZero() || at.Before(until)) {
+						rows = append(rows, notionTestRow(fmt.Sprintf("row_%d", i), at.Truncate(time.Minute).Format(time.RFC3339Nano), `{}`))
+					}
+				}
+				if len(rows) > limit {
+					return http.StatusOK, notionCut(rows[:limit]...)
+				}
+				return http.StatusOK, notionResults(rows...)
+			}}))
+		rows, err := read(t, kind, "imported")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, row := range rows {
+			ids = append(ids, row["page_id"].(string))
+		}
+		if want := "[row_0 row_1 row_2 row_3 row_4 row_5 row_6 row_7 row_8 row_9 row_10]"; fmt.Sprint(ids) != want {
+			t.Fatalf("rows = %v, want %s; windows = %v", ids, want, windows)
+		}
+		want := []string{"00:00:00.000-00:00:00.000", "09:00:00.000-00:00:00.000", "09:00:00.000-09:00:30.000",
+			"09:00:00.000-09:00:15.000", "09:00:15.000-09:00:30.000", "09:00:30.000-09:01:00.000",
+			"09:00:30.000-09:00:45.000", "09:00:45.000-09:01:00.000", "09:01:00.000-00:00:00.000"}
+		if !slices.Equal(windows, want) {
+			t.Fatalf("windows = %v\nwant %v", windows, want)
+		}
+	})
+	t.Run("fails a data source with more rows made within one second than one query answers", func(t *testing.T) {
+		calls := 0
 		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Imported", "2026-01-01T00:00:00.000Z", `{}`)},
 			notionRoutes{"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				calls++
 				return http.StatusOK, notionCut(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", `{}`), notionTestRow("row_2", "2026-01-05T09:00:00.000Z", `{}`))
 			}}))
 		rows, err := read(t, kind, "imported")
-		notionInvalid(t, err, "Notion answers at most 10,000 rows of a database at a time, and more rows of imported were created in one minute; "+
+		notionInvalid(t, err, "Notion answers at most 10,000 rows of a database at a time, and more rows of imported were created within one second; "+
 			"Helix can't read them all")
-		if len(rows) != 2 {
-			t.Fatalf("rows = %v", rows)
+		// The whole table, its minute, then halves of 30 s down to 0.9375 s.
+		if len(rows) != 2 || calls != 8 {
+			t.Fatalf("rows = %v after %d queries", rows, calls)
 		}
 	})
 	// A page shows 25 ids of a relation or people value; the rest are read
