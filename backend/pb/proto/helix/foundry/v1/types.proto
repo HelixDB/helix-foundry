@@ -58,8 +58,8 @@ message FoundryCatalogPlan {
 
 // ConnectorKind is one type of Helix Foundry data source.
 message ConnectorKind {
-  // stripe, workos, posthog, github, linear, calcom, granola, postgres, mysql,
-  // s3 or events.
+  // stripe, workos, posthog, github, linear, calcom, granola, slack, notion,
+  // google, postgres, mysql, s3 or events.
   string kind         = 1;
   string display_name = 2;
   bool   requires_pro = 3;
@@ -191,6 +191,35 @@ message GranolaConnectorConfig {
   bool transcripts = 2;
 }
 
+// SlackConnectorConfig reads the channels a Slack app was added to.
+message SlackConnectorConfig {
+  // Bot User OAuth token (xoxb-…) of an app installed in the Slack
+  // workspace; write-only.
+  string bot_token = 1;
+  // Days of channel history to keep, 1 to 365; 0 is 90.
+  int32 history_days = 2;
+}
+
+// NotionConnectorConfig reads the pages and databases shared with a Notion
+// integration.
+message NotionConnectorConfig {
+  // Internal integration secret (ntn_… or secret_…); write-only.
+  string token = 1;
+}
+
+// GoogleWorkspaceConnectorConfig reads Drive, Calendar and the Directory
+// as one Workspace user, through a service account with domain-wide
+// delegation.
+message GoogleWorkspaceConnectorConfig {
+  // The service account's JSON key; write-only.
+  string service_account_key = 1;
+  // The Workspace user the service account acts as; an admin, to read
+  // the Directory's users.
+  string subject = 2;
+  // Days of past calendar events to keep, 1 to 365; 0 is 90.
+  int32 event_days = 3;
+}
+
 // EventsConnectorConfig is an event source: pieces of data, JSON objects
 // with an id, that people and their agents send to Foundry. It has no
 // credential.
@@ -220,18 +249,21 @@ message EventSourceField {
 // ConnectorConfig is a connector's settings. Write-only fields come back empty.
 message ConnectorConfig {
   oneof kind {
-    StripeConnectorConfig   stripe   = 1;
-    WorkOSConnectorConfig   workos   = 2;
-    PostHogConnectorConfig  posthog  = 3;
-    DatabaseConnectorConfig postgres = 4;
-    DatabaseConnectorConfig mysql    = 5;
-    S3ConnectorConfig       s3       = 6;
-    GitHubConnectorConfig   github   = 7;
-    LinearConnectorConfig   linear   = 8;
-    CalcomConnectorConfig   calcom   = 9;
-    GranolaConnectorConfig  granola  = 10;
+    StripeConnectorConfig          stripe   = 1;
+    WorkOSConnectorConfig          workos   = 2;
+    PostHogConnectorConfig         posthog  = 3;
+    DatabaseConnectorConfig        postgres = 4;
+    DatabaseConnectorConfig        mysql    = 5;
+    S3ConnectorConfig              s3       = 6;
+    GitHubConnectorConfig          github   = 7;
+    LinearConnectorConfig          linear   = 8;
+    CalcomConnectorConfig          calcom   = 9;
+    GranolaConnectorConfig         granola  = 10;
     // 11 and 12 are gdrive's and gmail's (Google connectors).
-    EventsConnectorConfig   events   = 13;
+    EventsConnectorConfig          events   = 13;
+    SlackConnectorConfig           slack    = 14;
+    NotionConnectorConfig          notion   = 15;
+    GoogleWorkspaceConnectorConfig google   = 16;
   }
 }
 
