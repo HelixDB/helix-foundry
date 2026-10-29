@@ -267,12 +267,16 @@ test("data: each connector's form", async ({ page }) => {
   const slug: Record<string, string> = {
     "Amazon S3": "s3",
     "Cal.com": "calcom",
+    "Google Workspace": "google",
   };
   for (const [kind, fill] of [
     ["WorkOS", { "API key": "sk_live_DocsExample" }],
     ["PostHog", { "Personal API key": "phx_DocsExample" }],
     ["Cal.com", { "API key": "cal_live_DocsExample" }],
     ["Granola", { "API key": "grn_DocsExample" }],
+    ["Slack", { "Bot token": "xoxb-DocsExample" }],
+    ["Notion", { "Integration secret": "ntn_DocsExample" }],
+    ["Google Workspace", { "Acts as": "admin@example.com" }],
     [
       "PostgreSQL",
       {

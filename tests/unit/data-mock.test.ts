@@ -59,6 +59,36 @@ const syncOf = (connectorId: string, ws = ACME) =>
   ok<{ sync: ConnectorSync }>(
     call("POST", `${base(ws)}/connectors/${connectorId}:sync`, {}),
   ).sync;
+/** A Google service account's JSON key, with `extra` over its fields. */
+const googleKey = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    type: "service_account",
+    project_id: "acme-data",
+    private_key_id: "0123456789abcdef9f3a",
+    private_key:
+      "-----BEGIN PRIVATE KEY-----\nMIIEmock\n-----END PRIVATE KEY-----\n",
+    client_email: "foundry@acme-data.iam.gserviceaccount.com",
+    client_id: "104857600000000000000",
+    ...extra,
+  });
+// A tested table's foreign keys, and every table's key, in a line each.
+const links = (body: any, table: string) =>
+  body.discovery.tables
+    .find((t: { name: string }) => t.name === table)
+    .foreignKeys.map(
+      (f: {
+        column: string;
+        referencedTable: string;
+        referencedColumn: string;
+      }) => `${f.column}>${f.referencedTable}.${f.referencedColumn}`,
+    );
+const keys = (body: any) =>
+  Object.fromEntries(
+    body.discovery.tables.map((t: { name: string; primaryKey: string[] }) => [
+      t.name,
+      t.primaryKey.join("+"),
+    ]),
+  );
 const pg = (extra: object = {}) => ({
   postgres: {
     host: "db.example.com",
@@ -88,6 +118,8 @@ afterEach(() => vi.useRealTimers());
 
 describe("connector kinds", () => {
   it("offers every kind, the database and file ones only on Foundry Pro", () => {
+    // Slack, Notion and Google Workspace are on every plan, as the other
+    // apps are.
     // API sources (events) are on every plan.
     const kinds = (ws: string) =>
       ok<{ kinds: { kind: string; available: boolean }[] }>(
@@ -101,6 +133,9 @@ describe("connector kinds", () => {
       "linear:true",
       "calcom:true",
       "granola:true",
+      "slack:true",
+      "notion:true",
+      "google:true",
       "postgres:true",
       "mysql:true",
       "s3:true",
@@ -114,6 +149,9 @@ describe("connector kinds", () => {
       "linear:true",
       "calcom:true",
       "granola:true",
+      "slack:true",
+      "notion:true",
+      "google:true",
       "postgres:false",
       "mysql:false",
       "s3:false",
@@ -303,25 +341,6 @@ describe("testing and creating", () => {
   it("lists what a Cal.com key without teams and a personal Granola key can't read, and drops keys into it", () => {
     const tested = (config: unknown) =>
       ok<any>(call("POST", `${base()}/connectors:test`, { config }));
-    const links = (body: any, table: string) =>
-      body.discovery.tables
-        .find((t: { name: string }) => t.name === table)
-        .foreignKeys.map(
-          (f: {
-            column: string;
-            referencedTable: string;
-            referencedColumn: string;
-          }) => `${f.column}>${f.referencedTable}.${f.referencedColumn}`,
-        );
-    const keys = (body: any) =>
-      Object.fromEntries(
-        body.discovery.tables.map(
-          (t: { name: string; primaryKey: string[] }) => [
-            t.name,
-            t.primaryKey.join("+"),
-          ],
-        ),
-      );
 
     const cal = tested({ calcom: { apiKey: " cal_live_1 " } });
     expect(cal.config).toEqual({ calcom: { apiKey: "" } });
@@ -484,6 +503,326 @@ describe("testing and creating", () => {
     const listed = JSON.stringify(call("GET", `${base()}/connectors`).body);
     expect(listed).not.toContain(calKey);
     expect(listed).not.toContain(grnKey);
+  });
+
+  it("checks Slack's, Notion's and Google Workspace's settings and refuses their rejected credentials", () => {
+    const test = (config: unknown) =>
+      refusal(call("POST", `${base()}/connectors:test`, { config }));
+    for (const botToken of ["", "xoxp-1-2", "xoxb_1", "xoxb-1 2", "xoxb-"])
+      expect(test({ slack: { botToken } }).message).toBe(
+        "enter a Slack bot token (xoxb-…)",
+      );
+    for (const historyDays of [366, -1])
+      expect(test({ slack: { botToken: "xoxb-1", historyDays } }).message).toBe(
+        "keep 1 to 365 days of history",
+      );
+    expect(test({ slack: { botToken: "xoxb-1-bad" } })).toEqual({
+      status: 400,
+      message: "Slack rejected this token; check it and enter it again",
+    });
+    for (const token of ["", "ntn_", "secret-1", "ntn_a-1", "lin_api_1"])
+      expect(test({ notion: { token } }).message).toBe(
+        "enter a Notion integration secret (ntn_…)",
+      );
+    expect(test({ notion: { token: "secret_bad1" } })).toEqual({
+      status: 400,
+      message: "Notion rejected this secret; check it and enter it again",
+    });
+    // Nothing shared is a setting to fix in Notion, said as the WFE says it.
+    expect(test({ notion: { token: "ntn_empty1" } })).toEqual({
+      status: 400,
+      message:
+        "nothing is shared with this integration yet: in Notion, add it to a page or database from its ••• menu › Connections, then test again",
+    });
+    const subject = "ada@example.com";
+    for (const serviceAccountKey of [
+      "",
+      "not json",
+      "[]",
+      googleKey({ type: "authorized_user" }),
+      googleKey({ client_email: "" }),
+      googleKey({ private_key: undefined }),
+    ])
+      expect(test({ google: { serviceAccountKey, subject } }).message).toBe(
+        "paste the service account's JSON key",
+      );
+    for (const s of ["", "ada", "ada@example", "a da@example.com"])
+      expect(
+        test({ google: { serviceAccountKey: googleKey(), subject: s } })
+          .message,
+      ).toBe("enter the email of the Workspace user Foundry acts as");
+    expect(
+      test({
+        google: { serviceAccountKey: googleKey(), subject, eventDays: 400 },
+      }).message,
+    ).toBe("keep 1 to 365 days of past events");
+    expect(
+      test({
+        google: {
+          serviceAccountKey: googleKey({ private_key: "bad" }),
+          subject,
+        },
+      }),
+    ).toEqual({
+      status: 400,
+      message:
+        "Google rejected this service account key; check it and paste it again",
+    });
+    expect(
+      test({
+        google: {
+          serviceAccountKey: googleKey(),
+          subject: "nobody@example.com",
+        },
+      }),
+    ).toEqual({
+      status: 400,
+      message:
+        "Google has no user nobody@example.com, or the service account may not act as them; check the email",
+    });
+  });
+
+  it("lists Slack's tables and says which scope a token lacks, or that the app is in no channel", () => {
+    const tested = (botToken: string) =>
+      ok<any>(
+        call("POST", `${base()}/connectors:test`, {
+          config: { slack: { botToken } },
+        }),
+      );
+    const all = tested(" xoxb-1-2-abcd ");
+    // Its days default to 90 and the token is never returned.
+    expect(all.config).toEqual({ slack: { botToken: "", historyDays: 90 } });
+    expect(keys(all)).toEqual({
+      users: "user_id",
+      channels: "channel_id",
+      channel_members: "channel_id+user_id",
+      messages: "message_id",
+      channel_days: "channel_day_id",
+    });
+    expect(links(all, "channel_members")).toEqual([
+      "channel_id>channels.channel_id",
+      "user_id>users.user_id",
+    ]);
+    expect(links(all, "messages")).toEqual([
+      "channel_id>channels.channel_id",
+      "user_id>users.user_id",
+    ]);
+    expect(links(all, "channel_days")).toEqual([
+      "channel_id>channels.channel_id",
+    ]);
+    expect(all.discovery.unavailable).toEqual([]);
+    expect(all.discovery.warnings).toEqual([]);
+    // Without channels:history, its three tables say which scope to add.
+    const noscope = tested("xoxb-1-noscope");
+    expect(noscope.discovery.unavailable).toEqual(
+      ["channel_members", "messages", "channel_days"].map(
+        (t) =>
+          `${t}: add the channels:history scope to the app and reinstall it`,
+      ),
+    );
+    expect(Object.keys(keys(noscope))).toEqual(["users", "channels"]);
+    // An app in no channel reads every table, with a warning to invite it.
+    const lonely = tested("xoxb-1-lonely");
+    expect(lonely.discovery.unavailable).toEqual([]);
+    expect(lonely.discovery.warnings).toEqual([
+      "the app is in no channels yet: invite it to each channel to sync with /invite @Foundry, then test again",
+    ]);
+    expect(
+      ok<any>(
+        call("POST", `${base()}/connectors:test`, {
+          config: { slack: { botToken: "xoxb-1", historyDays: 7 } },
+        }),
+      ).config.slack.historyDays,
+    ).toBe(7);
+  });
+
+  it("lists Notion's users, pages and each shared database with its typed columns and first rows", () => {
+    const tested = (token: string) =>
+      ok<any>(
+        call("POST", `${base()}/connectors:test`, {
+          config: { notion: { token } },
+        }),
+      );
+    const all = tested("ntn_team1234");
+    expect(all.config).toEqual({ notion: { token: "" } });
+    expect(keys(all)).toEqual({
+      users: "user_id",
+      pages: "page_id",
+      customer_accounts: "page_id",
+      projects: "page_id",
+    });
+    expect(links(all, "pages")).toEqual([
+      "created_by>users.user_id",
+      "last_edited_by>users.user_id",
+    ]);
+    const accounts = all.discovery.tables.find(
+      (t: { name: string }) => t.name === "customer_accounts",
+    );
+    expect(accounts.columns.map((c: { name: string }) => c.name)).toEqual([
+      "page_id",
+      "url",
+      "created_at",
+      "last_edited_at",
+      "name",
+      "stage",
+      "arr",
+      "renewal_date",
+      "owner",
+      "active",
+    ]);
+    expect(accounts.columns[6]).toEqual({
+      name: "arr",
+      type: "float",
+      nullable: false,
+    });
+    expect(accounts.preview).toHaveLength(5);
+    expect(JSON.parse(accounts.preview[0])).toMatchObject({
+      name: "Globex",
+      stage: "Customer",
+      arr: 48000,
+      renewal_date: "2026-11-30",
+      owner: ["Ada Lovelace"],
+      active: true,
+    });
+    // Users and pages are API objects: names come with the first sync.
+    expect(all.discovery.tables[0]).toMatchObject({ columns: [], preview: [] });
+    const nousers = tested("secret_nousers1");
+    expect(nousers.discovery.unavailable).toEqual([
+      "users: turn on Read user information in the integration's capabilities",
+    ]);
+    expect(links(nousers, "pages")).toEqual([]);
+  });
+
+  it("lists Google Workspace's tables, and what a member or an undelegated scope can't read", () => {
+    const tested = (subject: string, email?: string) =>
+      ok<any>(
+        call("POST", `${base()}/connectors:test`, {
+          config: {
+            google: {
+              serviceAccountKey: googleKey(
+                email ? { client_email: email } : {},
+              ),
+              subject: ` ${subject} `,
+            },
+          },
+        }),
+      );
+    const all = tested("ada@example.com");
+    // The key is never returned; the subject is kept trimmed, and the days
+    // default to 90.
+    expect(all.config).toEqual({
+      google: {
+        serviceAccountKey: "",
+        subject: "ada@example.com",
+        eventDays: 90,
+      },
+    });
+    expect(keys(all)).toEqual({
+      users: "user_id",
+      files: "file_id",
+      calendars: "calendar_id",
+      calendar_events: "event_id",
+      event_attendees: "event_id+email",
+    });
+    expect(links(all, "calendar_events")).toEqual([
+      "calendar_id>calendars.calendar_id",
+      "recurring_event_id>calendar_events.event_id",
+    ]);
+    expect(links(all, "event_attendees")).toEqual([
+      "event_id>calendar_events.event_id",
+    ]);
+    expect(all.discovery.unavailable).toEqual([]);
+    expect(tested("ada.member@example.com").discovery.unavailable).toEqual([
+      "users: ada.member@example.com is not an admin, so the Directory's users can't be read",
+    ]);
+    const nocalendar = tested(
+      "ada@example.com",
+      "nocalendar@acme-data.iam.gserviceaccount.com",
+    );
+    expect(nocalendar.discovery.unavailable).toEqual(
+      ["calendars", "calendar_events", "event_attendees"].map(
+        (t) =>
+          `${t}: allow the scope https://www.googleapis.com/auth/calendar.readonly for the service account's client ID in the Admin console's domain-wide delegation`,
+      ),
+    );
+    expect(Object.keys(keys(nocalendar))).toEqual(["users", "files"]);
+  });
+
+  it("syncs Slack, Notion and Google Workspace with their hints, never the credential", () => {
+    const slackToken = "xoxb-1234-5678-" + "a".repeat(16) + "WXYZ",
+      notionToken = "ntn_" + "b".repeat(20) + "QRST",
+      key = googleKey();
+    const slack = create({ slack: { botToken: slackToken, historyDays: 30 } }),
+      lonely = create({ slack: { botToken: "xoxb-lonely-" + "c".repeat(8) } }),
+      notion = create({ notion: { token: notionToken } }),
+      secret = create({ notion: { token: "secret_" + "d".repeat(12) } }),
+      google = create({
+        google: { serviceAccountKey: key, subject: "ada@example.com" },
+      });
+    expect(slack.secretHint).toBe("xoxb…WXYZ");
+    expect(slack.config).toEqual({
+      slack: { botToken: "", historyDays: 30 },
+    });
+    expect(notion.secretHint).toBe("ntn…QRST");
+    expect(secret.secretHint).toBe("secret…dddd");
+    // The key's service account and its key id's last four characters.
+    expect(google.secretHint).toBe(
+      "foundry@acme-data.iam.gserviceaccount.com…9f3a",
+    );
+    for (const c of [slack, lonely, notion, google]) syncOf(c.id);
+    vi.advanceTimersByTime(3000);
+    const rows = (id: string) =>
+      Object.fromEntries(
+        ok<{ connector: Connector }>(
+          call("GET", `${base()}/connectors/${id}`),
+        ).connector.tables!.map((t) => [t.name, Number(t.rowCount)]),
+      );
+    // 30 days of history: the 29 before the sync's, two of every three of
+    // them with messages in each of four channels, three messages a day.
+    const days = rows(slack.id).channel_days!;
+    expect(days).toBe(77);
+    expect(rows(slack.id)).toEqual({
+      channel_days: days,
+      channel_members: 31,
+      channels: 5,
+      messages: days * 3,
+      users: 18,
+    });
+    // An app in no channel reads no history.
+    expect(rows(lonely.id)).toEqual({
+      channel_days: 0,
+      channel_members: 0,
+      channels: 5,
+      messages: 0,
+      users: 18,
+    });
+    expect(rows(notion.id)).toEqual({
+      customer_accounts: 38,
+      pages: 74,
+      projects: 21,
+      users: 12,
+    });
+    expect(rows(google.id)).toEqual({
+      calendar_events: 684,
+      calendars: 6,
+      event_attendees: 2140,
+      files: 312,
+      users: 26,
+    });
+    // A Notion database keeps its typed columns once synced.
+    const synced = ok<{ connector: Connector }>(
+      call("GET", `${base()}/connectors/${notion.id}`),
+    ).connector.tables!.find((t) => t.name === "projects")!;
+    expect(synced.columns!.slice(4).map((c) => `${c.name}:${c.type}`)).toEqual([
+      "name:string",
+      "status:string",
+      "lead:json",
+      "due:date",
+      "tags:json",
+    ]);
+    const listed = JSON.stringify(call("GET", `${base()}/connectors`).body);
+    for (const credential of [slackToken, notionToken, key, "PRIVATE KEY"])
+      expect(listed).not.toContain(credential);
   });
 
   it("keeps a key's type and last four characters, never more of it", () => {
@@ -879,19 +1218,51 @@ describe("editing and deleting", () => {
     );
     expect(replaced.connector.secretHint).toBe("rk_live…9999");
     // Cal.com's and Granola's are their API keys; GitHub's is its token.
-    for (const [kind, key, hint] of [
-      ["calcom", "cal_live_" + "e".repeat(12) + "4f2a", "cal_live…4f2a"],
-      ["granola", "grn_" + "f".repeat(12) + "QRST", "grn…QRST"],
+    // Slack's is its bot token, Notion's its secret and Google
+    // Workspace's its service account key, each kept beside new settings.
+    for (const [kind, field, key, hint, settings] of [
+      [
+        "calcom",
+        "apiKey",
+        "cal_live_" + "e".repeat(12) + "4f2a",
+        "cal_live…4f2a",
+        {},
+      ],
+      ["granola", "apiKey", "grn_" + "f".repeat(12) + "QRST", "grn…QRST", {}],
+      [
+        "slack",
+        "botToken",
+        "xoxb-1-" + "g".repeat(12) + "ABCD",
+        "xoxb…ABCD",
+        { historyDays: 14 },
+      ],
+      ["notion", "token", "ntn_" + "h".repeat(12) + "EFGH", "ntn…EFGH", {}],
+      [
+        "google",
+        "serviceAccountKey",
+        googleKey(),
+        "foundry@acme-data.iam.gserviceaccount.com…9f3a",
+        { subject: "alan@example.com", eventDays: 30 },
+      ],
     ] as const) {
-      const c = create({ [kind]: { apiKey: key } }, kind);
+      const c = create(
+        {
+          [kind]: {
+            [field]: key,
+            ...(kind === "google" ? { subject: "ada@example.com" } : {}),
+          },
+        },
+        kind,
+      );
       const kept = ok<any>(
         call("PATCH", `${base()}/connectors/${c.id}`, {
           name: "Renamed",
-          config: { [kind]: { apiKey: "" } },
+          config: { [kind]: { [field]: "", ...settings } },
         }),
       );
       expect(kept.connector.secretHint).toBe(hint);
       expect(kept.connector.name).toBe("Renamed");
+      expect(kept.connector.config[kind]).toMatchObject(settings);
       expect(JSON.stringify(kept)).not.toContain(key);
     }
     const gh = create({ github: { token: "ghp_" + "a".repeat(16) + "WXYZ" } });
