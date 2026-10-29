@@ -27,6 +27,7 @@
     "test:coverage": "vitest run --coverage --coverage.include=src/server --coverage.include=src/shared --coverage.include=src/web/api.ts --coverage.include=src/web/workspaces.ts --coverage.include='src/web/areas/*/model.ts' --coverage.include=src/web/areas/data/layout.ts --coverage.include=src/web/areas/explore/naming.ts --coverage.include=src/web/areas/workspace/plan.ts --coverage.include=src/web/areas/workspace/enrichment-api.ts --coverage.include=src/web/areas/workspace/ai-api.ts --coverage.include=src/web/areas/workspace/usage.ts --coverage.include=src/web/areas/reviews/api.ts --coverage.include=src/web/areas/ontology/edit-model.ts --coverage.include=src/web/areas/ontology/goal-prompt.ts --coverage.include=src/web/areas/ontology/ask-visuals.ts --coverage.include=src/web/areas/ontology/onboarding-prompt.ts"
   },
   "dependencies": {
+    "@databuddy/sdk": "3.3.0",
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
     "@tanstack/react-query": "5.103.2",

@@ -179,6 +179,18 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
 test("walks a new install through the sample company, from its database to Ask", async ({
   page,
 }) => {
+  // A local build loads no analytics tracker, nor the SDK's loader, and
+  // sends nothing (src/web/telemetry.tsx).
+  const tracked: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).hostname.endsWith("databuddy.cc"))
+      tracked.push(request.url());
+  });
+  page.on("response", async (response) => {
+    if (response.request().resourceType() !== "script") return;
+    const text = await response.text().catch(() => "");
+    if (text.includes("cdn.databuddy.cc")) tracked.push(response.url());
+  });
   await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
   await page.getByRole("button", { name: "Use the sample" }).click();
@@ -215,6 +227,8 @@ test("walks a new install through the sample company, from its database to Ask",
   await expect(
     page.getByText("Acme Corp", { exact: true }).first(),
   ).toBeVisible();
+  expect(await page.locator("script[data-databuddy-injected]").count()).toBe(0);
+  expect(tracked).toEqual([]);
 });
 
 // With no provider, the sample asks for one; Settings has the way back to

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Connector } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { useWorkspace } from "../../ui";
 import { ProGate, isProRequired } from "../workspace/pro-gate";
 import { createConnector, updateConnector } from "./data-api";
@@ -62,6 +63,7 @@ export function EventSourceForm({
         return;
       }
       const created = await createConnector(id, { name: name.trim(), config });
+      trackEvent("connector_created", { kind: "events" });
       onCreated?.(created.connector);
       await qc.invalidateQueries({ queryKey: [id, "connectors"] });
       setMade(created.connector);

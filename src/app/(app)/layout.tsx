@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { THEME_BACKGROUNDS, THEME_BOOT } from "@/shared/theme";
+import { Telemetry } from "@/web/telemetry";
 // Global styles, in helix-foundry's order (apps/web/src/main.tsx).
 import "@/web/style.css";
 import "@/web/minimal.css";
@@ -44,7 +45,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Telemetry />
+      </body>
     </html>
   );
 }

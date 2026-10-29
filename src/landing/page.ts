@@ -1,3 +1,9 @@
+import { trackEvent } from "@/web/analytics";
+
+// What each copy button's text sets up, for analytics: the agent's prompt
+// (Helix Cloud through the Helix MCP) or a local install.
+const SETUP = { "agent-prompt": "agent", "setup-text": "local" } as const;
+
 // The page's small behaviours: cells that rise into view, and the copy
 // button. Returns what undoes them.
 export function page() {
@@ -56,11 +62,14 @@ export function page() {
           button.dataset.copied = "false";
         }, 2200);
       };
-      const click = () =>
-        copy(source.textContent!.trim()).then(
+      const setup = SETUP[button.dataset.copy as keyof typeof SETUP];
+      const click = () => {
+        if (setup) trackEvent("setup_prompt_copied", { setup });
+        return copy(source.textContent!.trim()).then(
           () => say("Copied"),
           () => say("Select it and copy"),
         );
+      };
       button.addEventListener("click", click);
       undo.push(() => {
         clearTimeout(revert);
