@@ -79,7 +79,7 @@ describe("onboardingPrompt without an ontology", () => {
   it("says where things stand: no ontology, every connector and set by id, the kinds left", () => {
     expect(text).toContain("- Workspace: “Acme” (`ws1`).\n- No ontology yet.");
     expect(text).toContain("**Shop** (PostgreSQL, id `c1`), 1 table:");
-    expect(text).toContain("**General** (id `s1`), 1 document.\n- terms.md");
+    expect(text).toContain("**General** (id `s1`), 1 document.\n- `terms.md`");
     expect(text).toContain(
       "### Also connected\n\n- Billing (Stripe, id `c2`), not synced yet\n",
     );
