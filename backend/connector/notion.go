@@ -75,8 +75,19 @@ const notionReread = 7 * 24 * time.Hour
 
 var notionNow = time.Now
 
-// errNotionSlow is a page of results Notion could not build in time.
-var errNotionSlow = errors.New("notion could not answer in time")
+// errNotionSlow is a page of results Notion could not build in time, and
+// errNotionEnough a list read as far as it needs.
+var (
+	errNotionSlow   = errors.New("notion could not answer in time")
+	errNotionEnough = errors.New("notion list read far enough")
+)
+
+// notionShownReferences is the most ids of a relation or people value a
+// page shows, and maxNotionReferences the most references reads of one.
+const (
+	notionShownReferences = 25
+	maxNotionReferences   = 1000
+)
 
 // The fixed tables' columns, and those every data source's table starts
 // with. Columns are typed by the JSON they hold, as an API source's are;
@@ -197,7 +208,8 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 				if err != nil {
 					return Discovery{}, err
 				}
-				row, _ := json.Marshal(s.row(p, item)) // values decoded from JSON always encode
+				values, _ := s.row(p, item)    // a preview shows the references a row shows
+				row, _ := json.Marshal(values) // values decoded from JSON always encode
 				t.Preview = append(t.Preview, row)
 			}
 		}
@@ -339,16 +351,29 @@ func (c *notionClient) do(ctx context.Context, path string, query url.Values, bo
 	}
 }
 
+// notionStatus refuses an answer that is not a success, with its status.
 func notionStatus(status int, path string) error {
 	switch {
 	case status == http.StatusUnauthorized:
-		return refused(nil, "Notion rejected this secret; check it and enter it again")
+		return refused(notionHTTPError(status), "Notion rejected this secret; check it and enter it again")
 	case status == http.StatusForbidden || status == http.StatusNotFound:
-		return refused(nil, "this integration cannot read %s; check its capabilities in Notion and test again", path)
+		return refused(notionHTTPError(status), "this integration cannot read %s; check its capabilities in Notion and test again", path)
 	case status >= 300:
-		return refused(nil, "Notion returned HTTP %d for %s", status, path)
+		return refused(notionHTTPError(status), "Notion returned HTTP %d for %s", status, path)
 	}
 	return nil
+}
+
+// notionHTTPError is the status of an answer notionStatus refused.
+type notionHTTPError int
+
+func (e notionHTTPError) Error() string { return "HTTP " + strconv.Itoa(int(e)) }
+
+// notionOneRefused says Notion refused the one object a request asked
+// for, not the read: a 4xx but 401, the secret's, and 429, which do
+// refuses first.
+func notionOneRefused(status int) bool {
+	return status >= 400 && status < 500 && status != http.StatusUnauthorized && status != http.StatusTooManyRequests
 }
 
 // notionList is one page of a Notion list. Notion says a list it stopped
@@ -757,7 +782,18 @@ func (c *notionClient) rows(ctx context.Context, s notionSource, w RowWriter) er
 			}
 			at[p.id] = true
 			added++
-			return w.Write(s.row(p, item))
+			row, more := s.row(p, item)
+			for _, col := range more {
+				switch ids, ok, err := c.references(ctx, p.id, col.id); {
+				case err != nil:
+					return err
+				case ok && len(ids) == 0:
+					row[col.name] = nil
+				case ok:
+					row[col.name] = ids
+				}
+			}
+			return w.Write(row)
 		})
 		if err != nil || !cut {
 			return err
@@ -770,9 +806,12 @@ func (c *notionClient) rows(ctx context.Context, s notionSource, w RowWriter) er
 	}
 }
 
-// row is a data source's row: every column, null where the page has no value.
-func (s notionSource) row(p notionPage, item map[string]any) map[string]any {
-	row := map[string]any{"page_id": p.id, "url": orNull(p.url),
+// row is a data source's row: every column, null where the page has no
+// value. more are its relation and people columns whose value the page
+// cut at notionShownReferences, for references to read whole: a relation
+// says so with has_more, a people value doesn't.
+func (s notionSource) row(p notionPage, item map[string]any) (row map[string]any, more []notionColumn) {
+	row = map[string]any{"page_id": p.id, "url": orNull(p.url),
 		"created_at": p.created.UTC().Format(time.RFC3339), "last_edited_at": p.edited.UTC().Format(time.RFC3339)}
 	properties, _ := item["properties"].(map[string]any)
 	byID := map[string]map[string]any{}
@@ -782,13 +821,44 @@ func (s notionSource) row(p notionPage, item map[string]any) map[string]any {
 		byID[id] = value
 	}
 	for _, col := range s.columns {
-		value, end := notionValue(byID[col.id])
+		v := byID[col.id]
+		value, end := notionValue(v)
 		row[col.name] = value
 		if col.end != "" {
 			row[col.end] = end
 		}
+		if shown, _ := v["people"].([]any); v["has_more"] == true || v["type"] == "people" && len(shown) >= notionShownReferences {
+			more = append(more, col)
+		}
 	}
-	return row
+	return row, more
+}
+
+// references reads the ids of a relation's or people value of page whole,
+// 100 a request, up to maxNotionReferences: one of more keeps its first.
+// ok is false for a value Notion refused to read (notionOneRefused), such
+// as one of a page deleted since its query; its row keeps the ids it showed.
+func (c *notionClient) references(ctx context.Context, pageID, propertyID string) (ids []any, ok bool, err error) {
+	_, err = c.list(ctx, "/v1/pages/"+url.PathEscape(pageID)+"/properties/"+url.PathEscape(propertyID), nil, nil, func(item map[string]any) error {
+		kind, _ := item["type"].(string)
+		ref, _ := item[kind].(map[string]any)
+		if id, _ := ref["id"].(string); id != "" {
+			ids = append(ids, id)
+		}
+		if len(ids) == maxNotionReferences {
+			return errNotionEnough
+		}
+		return nil
+	})
+	var status notionHTTPError
+	switch {
+	case errors.Is(err, errNotionEnough):
+	case errors.As(err, &status) && notionOneRefused(int(status)):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, err
+	}
+	return ids, true, nil
 }
 
 // notionValue is a property value, or a formula's or rollup's result, as

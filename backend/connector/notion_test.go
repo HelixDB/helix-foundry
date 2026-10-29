@@ -790,6 +790,106 @@ func TestNotionSync(t *testing.T) {
 			t.Fatalf("rows = %v", rows)
 		}
 	})
+	// A page shows 25 ids of a relation or people value; the rest are read
+	// from the property, 100 a request.
+	t.Run("reads a relation or people value the row cut at 25 whole", func(t *testing.T) {
+		refs := func(kind, prefix string, from, n int) []string {
+			var items []string
+			for i := from; i < from+n; i++ {
+				ref := fmt.Sprintf(`{"id":"%s%d"}`, prefix, i)
+				if kind == "people" {
+					ref = fmt.Sprintf(`{"object":"user","id":"%s%d"}`, prefix, i)
+				}
+				items = append(items, fmt.Sprintf(`{"object":"property_item","id":"x","type":%q,%q:%s}`, kind, kind, ref))
+			}
+			return items
+		}
+		values := func(relation, people int, more bool) string {
+			var projects, users []string
+			for i := range relation {
+				projects = append(projects, fmt.Sprintf(`{"id":"pg_%d"}`, i))
+			}
+			for i := range people {
+				users = append(users, fmt.Sprintf(`{"object":"user","id":"usr_%d"}`, i))
+			}
+			return fmt.Sprintf(`{"Projects":{"id":"pr","type":"relation","relation":[%s],"has_more":%t},"Owners":{"id":"ow","type":"people","people":[%s]}}`,
+				strings.Join(projects, ","), more, strings.Join(users, ","))
+		}
+		var asked []string
+		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",
+			`{"Projects":{"id":"pr","type":"relation","relation":{}},"Owners":{"id":"ow","type":"people","people":{}}}`)}, notionRoutes{
+			"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", values(25, 25, true)),
+					notionTestRow("row_2", "2026-01-05T09:01:00.000Z", values(3, 24, false)))
+			},
+			"/v1/pages/row_1/properties/pr": func(r *http.Request) (int, string) {
+				q := r.URL.Query()
+				asked = append(asked, "pr "+q.Get("page_size")+" "+q.Get("start_cursor"))
+				if q.Get("start_cursor") == "" {
+					return http.StatusOK, notionMore("c1", refs("relation", "pg_", 0, 100)...)
+				}
+				return http.StatusOK, notionResults(refs("relation", "pg_", 100, 30)...)
+			},
+			"/v1/pages/row_1/properties/ow": func(r *http.Request) (int, string) {
+				asked = append(asked, "ow "+r.URL.Query().Get("page_size"))
+				return http.StatusOK, notionResults(refs("people", "usr_", 0, 30)...)
+			},
+		}))
+		rows, err := read(t, kind, "deals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		projects, _ := rows[0]["projects"].([]any)
+		owners, _ := rows[0]["owners"].([]any)
+		if len(projects) != 130 || projects[129] != "pg_129" || len(owners) != 30 || owners[29] != "usr_29" ||
+			len(rows[1]["projects"].([]any)) != 3 || len(rows[1]["owners"].([]any)) != 24 || fmt.Sprint(asked) != "[ow 100 pr 100  pr 100 c1]" {
+			t.Fatalf("row_1 = %d projects, %d owners; row_2 = %v; asked = %q", len(projects), len(owners), rows[1], asked)
+		}
+	})
+	t.Run("reads at most 1,000 ids of one value", func(t *testing.T) {
+		calls := 0
+		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",
+			`{"Projects":{"id":"pr","type":"relation","relation":{}}}`)}, notionRoutes{
+			"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z",
+					`{"Projects":{"id":"pr","type":"relation","relation":[{"id":"pg_0"}],"has_more":true}}`))
+			},
+			"/v1/pages/row_1/properties/pr": func(*http.Request) (int, string) {
+				calls++
+				var items []string
+				for i := range 100 {
+					items = append(items, fmt.Sprintf(`{"type":"relation","relation":{"id":"pg_%d_%d"}}`, calls, i))
+				}
+				return http.StatusOK, notionMore(fmt.Sprintf("c%d", calls), items...)
+			},
+		}))
+		rows, err := read(t, kind, "deals")
+		if projects, _ := rows[0]["projects"].([]any); err != nil || len(projects) != 1000 || calls != 10 {
+			t.Fatalf("Sync = %v, %d projects after %d calls", err, len(projects), calls)
+		}
+	})
+	// The page went since its query, say: the row keeps what it showed.
+	for status, want := range map[int]string{http.StatusNotFound: "", http.StatusBadRequest: "",
+		http.StatusUnauthorized: "Notion rejected this secret; check it and enter it again"} {
+		t.Run(fmt.Sprintf("keeps the ids a row showed when Notion answers %d for the rest, unless the secret is refused", status), func(t *testing.T) {
+			kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",
+				`{"Projects":{"id":"pr","type":"relation","relation":{}}}`)}, notionRoutes{
+				"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+					return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z",
+						`{"Projects":{"id":"pr","type":"relation","relation":[{"id":"pg_0"}],"has_more":true}}`))
+				},
+				"/v1/pages/row_1/properties/pr": func(*http.Request) (int, string) { return status, `{"object":"error"}` },
+			}))
+			rows, err := read(t, kind, "deals")
+			if want != "" {
+				notionRefusal(t, err, want)
+				return
+			}
+			if err != nil || fmt.Sprint(rows[0]["projects"]) != "[pg_0]" {
+				t.Fatalf("Sync = (%v, %v)", rows, err)
+			}
+		})
+	}
 	t.Run("fails a search Notion cut short", func(t *testing.T) {
 		kind := notionAt(t, notionRoutes{"/v1/search": func(*http.Request) (int, string) {
 			return http.StatusOK, notionCut(notionTestPage("pg_1", "Roadmap", "2026-01-06T10:00:00.000Z", notionWorkspace))
