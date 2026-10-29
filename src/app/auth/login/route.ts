@@ -1,6 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { authConfig, isTrustedUrl } from "@/server/config";
-import { cookieOptions, loginCookiePrefix } from "@/server/cookies";
+import {
+  cookieOptions,
+  expireCookie,
+  loginCookiePrefix,
+} from "@/server/cookies";
 import {
   LOGIN_TRANSACTION_TTL_SECONDS,
   loginCookieName,
@@ -31,6 +35,9 @@ const PROVIDERS: Record<string, AuthProvider> = {
 };
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
+
+// Earlier sign-ins still pending that a new one keeps, for other tabs.
+const KEPT_LOGINS = 2;
 
 function fail(
   request: NextRequest,
@@ -94,8 +101,9 @@ export async function GET(request: NextRequest) {
   }
   if (!isTrustedUrl(authorize)) return unavailable();
 
-  const flowId = loginFlowId(authorize.searchParams.get("state") || ""),
-    name = flowId && loginCookieName(loginCookiePrefix(config), flowId),
+  const prefix = loginCookiePrefix(config),
+    flowId = loginFlowId(authorize.searchParams.get("state") || ""),
+    name = flowId && loginCookieName(prefix, flowId),
     sealed = sealLoginTransaction(
       { sessionId: started.sessionId, returnPath },
       config.cookiePassword,
@@ -111,5 +119,13 @@ export async function GET(request: NextRequest) {
     ...cookieOptions(config),
     maxAge: LOGIN_TRANSACTION_TTL_SECONDS,
   });
+  // An abandoned sign-in's cookie stays until it expires, so a page starting
+  // sign-in after sign-in could grow the Cookie header until the site refuses
+  // every request. Only the newest few stay; browsers send the oldest first.
+  request.cookies
+    .getAll()
+    .filter((c) => c.name.startsWith(prefix) && c.name !== name)
+    .slice(0, -KEPT_LOGINS)
+    .forEach((c) => expireCookie(response, c.name, config));
   return response;
 }
