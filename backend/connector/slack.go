@@ -78,6 +78,10 @@ var slackObjects = []saasTable{
 	{"channels", "channel_id"},
 	// Discover keys a channel's members by (channel_id, user_id).
 	{"channel_members", "channel_id"},
+	// The top-level messages and thread broadcasts conversations.history
+	// lists. A thread's replies show only in its day's document, and
+	// replies to a thread started before the window in neither: a read of
+	// every thread's replies would be a conversations.replies call each.
 	{"messages", "message_id"},
 	{"channel_days", "channel_day_id"},
 }
@@ -150,7 +154,9 @@ type slackAuth struct {
 var slackConversations = Stream{Name: "conversations", Table: "channel_days", Title: "Conversations", Format: Markdown,
 	Description: "Each day of one Slack channel the app is in, as Markdown: a heading with the channel and the UTC day, " +
 		"the channel's name and id, then each message posted that day in time order as \"**Name** HH:MM: text\", in UTC, " +
-		"with the replies of a thread it started listed beneath it, dated when sent on a later day. People are named " +
+		"with the replies of a thread it started listed beneath it, dated when sent on a later day. Replies show only here, " +
+		"so replies to a thread started before the kept days are left out, and a reply edited later reads as first written " +
+		"until its day changes again. A day too long for one document keeps its earliest messages. People are named " +
 		"by their Slack real name, else their handle, and mentions read @Name and #channel."}
 
 type slackKind struct {
@@ -335,14 +341,15 @@ func (k *slackKind) SyncDocuments(ctx context.Context, src Source, table Table, 
 // SyncPass reads users and channels from their lists, then each channel
 // the app is in: its members, and its messages of the window, the
 // history_days UTC days before today and today, with one
-// conversations.history page per 999 messages. The messages make the
+// conversations.history page per 999 messages, of each kind of channel
+// whose history the token's scopes allow. The messages make the
 // channel_days rows and, when that table is read, its documents, offered
 // most recently active first once every channel is read; a day's thread
 // replies are read only when its document is wanted, and users.list, to
-// name people, once a document is (or the users table is read). Past
-// slackDocumentMargin before ctx's deadline, the days are still offered, so
-// the ones the stream holds stay, but none is fetched: they wait for the
-// next sync.
+// name people, once a document is (or the users table is read). Near
+// ctx's deadline (slackDocumentMargin), the days are still offered, so the
+// ones the stream holds stay, but none is fetched: they wait for the next
+// sync.
 func (k *slackKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
 	var s SlackSettings
 	_ = json.Unmarshal(orEmpty(src.Settings), &s) // stored by Prepare
