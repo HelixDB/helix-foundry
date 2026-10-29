@@ -1,0 +1,164 @@
+package syncer
+
+import (
+	"fmt"
+	"maps"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/helixdb/helix-foundry/backend/connector"
+	"github.com/helixdb/helix-foundry/backend/store/model"
+)
+
+// slackAccount is a Slack workspace a test edits between syncs: Ada, and
+// #general, the one channel the app is in, with its messages and each
+// thread's replies by their ts. It counts conversations.replies calls.
+type slackAccount struct {
+	mu       sync.Mutex
+	messages map[string]string   // ts: text
+	replies  map[string][]string // a thread parent's ts: its replies' ts, each said "Re: <parent's text>"
+	threads  int
+}
+
+func (a *slackAccount) serve(t *testing.T) string {
+	t.Helper()
+	page := func(field string, items []string) string {
+		return fmt.Sprintf(`{"ok":true,%q:[%s],"response_metadata":{"next_cursor":""}}`, field, strings.Join(items, ","))
+	}
+	message := func(ts, text string, replies []string) string {
+		thread := ""
+		if len(replies) > 0 {
+			thread = fmt.Sprintf(`,"thread_ts":%q,"reply_count":%d,"latest_reply":%q`, ts, len(replies), replies[len(replies)-1])
+		}
+		return fmt.Sprintf(`{"type":"message","user":"U1","text":%q,"ts":%q%s}`, text, ts, thread)
+	}
+	general := `{"id":"C1","name":"general","is_member":true}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		var body string
+		switch strings.TrimPrefix(r.URL.Path, "/api/") {
+		case "auth.test":
+			body = `{"ok":true,"user":"foundry","team_id":"T1"}`
+		case "users.list":
+			body = page("members", []string{`{"id":"U1","name":"ada","real_name":"Ada Lovelace"}`})
+		case "conversations.list", "users.conversations":
+			body = page("channels", []string{general})
+		case "conversations.members":
+			body = page("members", []string{`"U1"`})
+		case "conversations.history":
+			var listed []string
+			for _, ts := range slices.Backward(slices.Sorted(maps.Keys(a.messages))) {
+				listed = append(listed, message(ts, a.messages[ts], a.replies[ts]))
+			}
+			body = page("messages", listed)
+		case "conversations.replies":
+			a.threads++
+			parent := r.URL.Query().Get("ts")
+			listed := []string{message(parent, a.messages[parent], a.replies[parent])}
+			for _, ts := range a.replies[parent] {
+				listed = append(listed, fmt.Sprintf(`{"user":"U1","text":%q,"ts":%q,"thread_ts":%q}`, "Re: "+a.messages[parent], ts, parent))
+			}
+			body = page("messages", listed)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/api"
+}
+
+// took is how many threads were read since the last call.
+func (a *slackAccount) took() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	threads := a.threads
+	a.threads = 0
+	return threads
+}
+
+// TestSlackSyncDocuments runs Slack through the syncer: the first sync
+// fills the conversations set with a document per channel day, an
+// unchanged sync reads no thread and writes nothing, a reply replaces only
+// its day's document, and a day whose messages are gone loses its document
+// with its row.
+func TestSlackSyncDocuments(t *testing.T) {
+	// The connector counts its window from the wall clock.
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	at := func(days int, clock time.Duration) time.Time { return today.AddDate(0, 0, -days).Add(clock) }
+	ts := func(t time.Time) string { return fmt.Sprintf("%d.000000", t.Unix()) }
+	kickoff, standup := at(2, 9*time.Hour), at(1, 9*time.Hour)
+	account := &slackAccount{
+		messages: map[string]string{ts(kickoff): "Kickoff", ts(standup): "Standup"},
+		replies:  map[string][]string{ts(kickoff): {ts(kickoff.Add(30 * time.Minute))}},
+	}
+	f := newFixture(t, "http://unused", "slack", `{"history_days":7}`, plan{code: "pro"})
+	endpoints := connector.DefaultEndpoints()
+	endpoints.Slack = account.serve(t)
+	f.syncer.Catalog = connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: true}, connector.S3Options{}, connector.EventsOptions{})
+	day := func(t time.Time) string { return "C1:" + t.Format(time.DateOnly) }
+	document := func(t time.Time, lines string) string {
+		return fmt.Sprintf("# #general, %s\n\nChannel: #general (C1)\n\n%s", t.Format(time.DateOnly), lines)
+	}
+
+	res := f.run(t, "sync-1")
+	if res.Mode != model.ConnectorSyncFull || len(f.store.tables) != 5 {
+		t.Fatalf("mode = %s, tables = %v", res.Mode, slices.Sorted(maps.Keys(f.store.tables)))
+	}
+	if threads := account.took(); threads != 1 {
+		t.Fatalf("threads read = %d; want the kickoff's", threads)
+	}
+	conversations := f.held(t, "conversations")
+	want := map[string]string{
+		day(kickoff): document(kickoff, "**Ada Lovelace** 09:00: Kickoff\n  - **Ada Lovelace** 09:30: Re: Kickoff\n"),
+		day(standup): document(standup, "**Ada Lovelace** 09:00: Standup\n"),
+	}
+	if fmt.Sprint(conversations) != fmt.Sprint(want) {
+		t.Fatalf("conversations = %q", conversations)
+	}
+	if set := f.store.setOf("conversations"); set.Name != "Conversations" || set.Owner.ConnectorID != "conn-1" {
+		t.Fatalf("conversations set = %+v", set)
+	}
+
+	// Nothing changed: every day is held at its version, so no thread is read and nothing is written.
+	publishes := len(f.store.publishes)
+	f.run(t, "sync-2")
+	if threads := account.took(); threads != 0 || len(f.store.publishes) != publishes {
+		t.Fatalf("threads read = %d, publishes = %d", threads, len(f.store.publishes)-publishes)
+	}
+
+	// A reply to the standup replaces its day's document and reads only its thread.
+	kept := f.liveID("conversations", day(kickoff))
+	account.mu.Lock()
+	account.replies[ts(standup)] = []string{ts(standup.Add(time.Hour))}
+	account.mu.Unlock()
+	f.run(t, "sync-3")
+	if threads := account.took(); threads != 1 {
+		t.Fatalf("threads read = %d; want the standup's", threads)
+	}
+	if got := f.held(t, "conversations")[day(standup)]; got != document(standup, "**Ada Lovelace** 09:00: Standup\n  - **Ada Lovelace** 10:00: Re: Standup\n") {
+		t.Fatalf("standup = %q", got)
+	}
+	if f.liveID("conversations", day(kickoff)) != kept {
+		t.Fatalf("the kickoff's document was replaced")
+	}
+
+	// The kickoff deleted, its day has no row, and its document goes.
+	account.mu.Lock()
+	delete(account.messages, ts(kickoff))
+	account.mu.Unlock()
+	f.run(t, "sync-4")
+	if conversations := f.held(t, "conversations"); len(conversations) != 1 || conversations[day(standup)] == "" {
+		t.Fatalf("conversations = %q", conversations)
+	}
+	if threads := account.took(); threads != 0 {
+		t.Fatalf("threads read = %d", threads)
+	}
+}
