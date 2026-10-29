@@ -387,7 +387,7 @@ test("connects Google Workspace, keeps its stored key on an edit, and keeps its 
     page.getByRole("link", { name: "Open in Google Workspace" }),
   ).toHaveAttribute(
     "href",
-    /^https:\/\/docs\.google\.com\/document\/d\/1mockDoc0001\w+\/edit$/,
+    /^https:\/\/docs\.google\.com\/document\/d\/1mockDoc0001\w+\/edit\?usp=drivesdk$/,
   );
   await expect(
     page.getByRole("heading", { name: "Next steps", exact: true }),

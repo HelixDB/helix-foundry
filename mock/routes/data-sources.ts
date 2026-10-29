@@ -12,6 +12,7 @@ import type {
   S3ConnectorConfig,
   S3ConnectorSetup,
 } from "../../src/shared/wfe";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { columnsOf, textFieldProblem } from "../event-pieces";
 import { PEOPLE, PEOPLE_COLUMNS } from "../fixtures/sales-graph";
@@ -783,14 +784,18 @@ const slackObjects = [
     "user_id",
     [
       "user_id",
+      "team_id",
       "name",
       "real_name",
       "display_name",
       "email",
       "title",
       "is_bot",
+      "is_admin",
+      "is_owner",
       "deleted",
       "tz",
+      "updated_at",
     ],
     18,
   ),
@@ -800,13 +805,14 @@ const slackObjects = [
     [
       "channel_id",
       "name",
-      "topic",
-      "purpose",
       "is_private",
       "is_archived",
       "is_member",
+      "topic",
+      "purpose",
+      "creator_id",
+      "created_at",
       "num_members",
-      "created",
     ],
     5,
   ),
@@ -825,9 +831,14 @@ const slackObjects = [
       "ts",
       "thread_ts",
       "user_id",
+      "bot_id",
+      "subtype",
       "text",
-      "reply_count",
+      "sent_at",
       "edited_at",
+      "reply_count",
+      "reply_users_count",
+      "latest_reply_at",
     ],
     0,
   ),
@@ -839,13 +850,14 @@ const slackObjects = [
       "channel_id",
       "day",
       "message_count",
-      "first_at",
-      "last_at",
+      "first_message_at",
+      "last_message_at",
     ],
     0,
   ),
 ];
 const slackForeignKeys: Record<string, ConnectorForeignKey[]> = {
+  channels: [fk("creator_id", "users", "user_id")],
   channel_members: [fk("channel_id", "channels"), fk("user_id", "users")],
   messages: [fk("channel_id", "channels"), fk("user_id", "users")],
   channel_days: [fk("channel_id", "channels")],
@@ -912,7 +924,8 @@ const slackChannels = [
   },
   { id: "C0MOCKRND", name: "random", lines: [] },
 ];
-const SLACK_PEOPLE = [
+// The mock's people in Slack, Notion and Google Workspace.
+const PEOPLE_AT_WORK = [
   "Ada Lovelace",
   "Alan Turing",
   "Hedy Lamarr",
@@ -928,48 +941,23 @@ const SLACK_REPLIES = [
 
 // Notion's API (api.notion.com), as notion.go reads it with an internal
 // integration's secret: the workspace's people, the pages shared with it,
-// and each shared database as a table of its own, named by its title in
-// snake_case and keyed by its pages' ids, with page_id, url, created_at,
-// last_edited_at and a column per property, typed at a test, which shows
-// its first rows. Each shared page with a body is a document.
-const notionObjects = [
-  object("users", "user_id", ["user_id", "name", "email", "type"], 12),
-  object(
-    "pages",
-    "page_id",
-    [
-      "page_id",
-      "title",
-      "url",
-      "parent_type",
-      "parent_id",
-      "created_by",
-      "last_edited_by",
-      "created_at",
-      "last_edited_at",
-      "archived",
-    ],
-    74,
-  ),
-];
-const notionForeignKeys: Record<string, ConnectorForeignKey[]> = {
-  pages: [
-    fk("created_by", "users", "user_id"),
-    fk("last_edited_by", "users", "user_id"),
-  ],
-};
-type NotionDatabase = {
+// and each shared database (data source) as a table of its own, named by
+// its title in snake_case and keyed by its pages' ids, with page_id, url,
+// created_at, last_edited_at and a column per property in name order (a
+// date's end too), typed by the JSON it holds. A test shows each
+// database's first rows. Each shared page with a body is a document.
+type NotionTable = {
   name: string;
-  columns: [name: string, type: string][];
+  columns: [name: string, type: string, nullable?: true][];
   preview: Record<string, unknown>[];
   rows: number;
 };
-const notionPageColumns: [string, string][] = [
-  ["page_id", "string"],
-  ["url", "string"],
-  ["created_at", "timestamptz"],
-  ["last_edited_at", "timestamptz"],
-];
+const notionUsers = Object.fromEntries(
+  PEOPLE_AT_WORK.map((name, i) => [
+    name,
+    `6f1c${String(i + 1).padStart(4, "0")}-2b3a-4c5d-9e8f-1a2b3c4d5e6f`,
+  ]),
+);
 const notionRow = (n: number, title: string, row: Record<string, unknown>) => {
   const id = `1b7e${String(n).padStart(4, "0")}-3c2d-4e5f-8a9b-0c1d2e3f4a5b`;
   return {
@@ -980,18 +968,53 @@ const notionRow = (n: number, title: string, row: Record<string, unknown>) => {
     ...row,
   };
 };
-const notionDatabases: NotionDatabase[] = [
+const notionRowColumns: NotionTable["columns"] = [
+  ["page_id", "string"],
+  ["url", "string", true],
+  ["created_at", "string"],
+  ["last_edited_at", "string"],
+];
+const notionTables: NotionTable[] = [
   {
-    // "Customer Accounts".
+    name: "users",
+    columns: [
+      ["user_id", "string"],
+      ["type", "string"],
+      ["name", "string", true],
+      ["email", "string", true],
+    ],
+    preview: [],
+    rows: 12,
+  },
+  {
+    name: "pages",
+    columns: [
+      ["page_id", "string"],
+      ["title", "string", true],
+      ["url", "string", true],
+      ["parent_type", "string", true],
+      ["parent_id", "string", true],
+      ["data_source_id", "string", true],
+      ["created_at", "string"],
+      ["last_edited_at", "string"],
+      ["created_by_id", "string", true],
+      ["last_edited_by_id", "string", true],
+    ],
+    preview: [],
+    rows: 74,
+  },
+  {
+    // "Customer Accounts": ARR, Active, Name, Owner, Renewal date, Stage.
     name: "customer_accounts",
     columns: [
-      ...notionPageColumns,
-      ["name", "string"],
-      ["stage", "string"],
-      ["arr", "float"],
-      ["renewal_date", "date"],
-      ["owner", "json"],
-      ["active", "boolean"],
+      ...notionRowColumns,
+      ["arr", "number", true],
+      ["active", "boolean", true],
+      ["name", "string", true],
+      ["owner", "array", true],
+      ["renewal_date", "string", true],
+      ["renewal_date_end", "string", true],
+      ["stage", "string", true],
     ],
     preview: (
       [
@@ -1003,26 +1026,28 @@ const notionDatabases: NotionDatabase[] = [
       ] as const
     ).map(([name, stage, arr, renewal, owner, active], i) =>
       notionRow(i + 1, name, {
-        name,
-        stage,
         arr,
-        renewal_date: renewal,
-        owner: [owner],
         active,
+        name,
+        owner: [notionUsers[owner]],
+        renewal_date: renewal,
+        renewal_date_end: null,
+        stage,
       }),
     ),
     rows: 38,
   },
   {
-    // "Projects".
+    // "Projects": Due, Lead, Name, Status, Tags.
     name: "projects",
     columns: [
-      ...notionPageColumns,
-      ["name", "string"],
-      ["status", "string"],
-      ["lead", "json"],
-      ["due", "date"],
-      ["tags", "json"],
+      ...notionRowColumns,
+      ["due", "string", true],
+      ["due_end", "string", true],
+      ["lead", "array", true],
+      ["name", "string", true],
+      ["status", "string", true],
+      ["tags", "array", true],
     ],
     preview: (
       [
@@ -1034,16 +1059,23 @@ const notionDatabases: NotionDatabase[] = [
       ] as const
     ).map(([name, status, lead, due], i) =>
       notionRow(i + 101, name, {
+        due,
+        due_end: null,
+        lead: [notionUsers[lead]],
         name,
         status,
-        lead: [lead],
-        due,
         tags: i % 2 ? ["platform"] : ["growth", "q4"],
       }),
     ),
     rows: 21,
   },
 ];
+const notionForeignKeys: Record<string, ConnectorForeignKey[]> = {
+  pages: [
+    fk("created_by_id", "users", "user_id"),
+    fk("last_edited_by_id", "users", "user_id"),
+  ],
+};
 const NOTION_PAGE_TITLES = [
   "Onboarding playbook",
   "Globex account plan",
@@ -1067,16 +1099,16 @@ const notionPages = Array.from({ length: 60 }, (_, i) => {
     editedAt: new Date(
       Date.parse("2026-10-27T14:05:00.000Z") - i * 29 * 3_600_000,
     ).toISOString(),
-    owner: SLACK_PEOPLE[i % SLACK_PEOPLE.length]!,
+    owner: PEOPLE_AT_WORK[i % PEOPLE_AT_WORK.length]!,
   };
 });
 
 // Google Workspace's APIs (googleapis.com), as google.go reads them as one
 // user through a service account's domain-wide delegation: the Directory's
 // users (an admin's), the Drive files the user can open, their calendars,
-// and the events of the last event_days with their attendees. Each Google
-// Doc is a document, exported as Markdown. A scope the admin didn't
-// delegate makes its tables unavailable.
+// and the events of the last event_days (and the next 30) with their
+// attendees. Each Google Doc is a document, exported as Markdown. A scope
+// the admin didn't delegate makes its API's tables unavailable.
 const googleObjects = [
   object(
     "users",
@@ -1084,12 +1116,16 @@ const googleObjects = [
     [
       "user_id",
       "primary_email",
-      "name",
+      "full_name",
       "given_name",
       "family_name",
-      "org_unit_path",
       "is_admin",
       "suspended",
+      "archived",
+      "org_unit_path",
+      "title",
+      "department",
+      "manager_email",
       "created_at",
       "last_login_at",
     ],
@@ -1102,13 +1138,16 @@ const googleObjects = [
       "file_id",
       "name",
       "mime_type",
-      "owner_email",
+      "drive_id",
       "parent_id",
-      "web_view_link",
-      "shared",
-      "size",
+      "owner_email",
+      "last_modifying_user_email",
       "created_at",
       "modified_at",
+      "size",
+      "web_view_link",
+      "shared",
+      "starred",
     ],
     312,
   ),
@@ -1131,17 +1170,21 @@ const googleObjects = [
     [
       "event_id",
       "calendar_id",
+      "ical_uid",
       "summary",
       "description",
       "location",
-      "start",
-      "end",
       "status",
+      "start_at",
+      "end_at",
+      "all_day",
       "organizer_email",
+      "creator_email",
       "recurring_event_id",
       "html_link",
       "created_at",
       "updated_at",
+      "attendee_count",
     ],
     684,
   ),
@@ -1153,21 +1196,18 @@ const googleObjects = [
       "email",
       "display_name",
       "response_status",
-      "organizer",
       "optional",
+      "organizer",
+      "is_self",
     ],
     2140,
   ),
 ];
 const googleForeignKeys: Record<string, ConnectorForeignKey[]> = {
-  files: [fk("parent_id", "files", "file_id")],
-  calendar_events: [
-    fk("calendar_id", "calendars"),
-    fk("recurring_event_id", "calendar_events", "event_id"),
-  ],
+  calendar_events: [fk("calendar_id", "calendars")],
   event_attendees: [fk("event_id", "calendar_events")],
 };
-// The scope each table needs; a key whose client_email contains
+// The scope each table's API needs; a key whose client_email contains
 // "nocalendar" wasn't delegated Calendar's.
 const googleScopes: Record<string, string> = {
   users: "admin.directory.user.readonly",
@@ -1192,18 +1232,18 @@ const GOOGLE_DOC_NAMES = [
   "Umbrella Holdings call notes",
   "Engineering principles",
 ];
-// The Docs in Drive, newest change first.
+// The Docs in Drive, newest change first, each owned by one of the people
+// ("ada@example.com").
 const googleDocs = GOOGLE_DOC_NAMES.map((name, i) => ({
   id: `1mockDoc${String(i + 1).padStart(4, "0")}aBcDeFgHiJkLmNoPq`,
   name,
-  owner: SLACK_PEOPLE[i % SLACK_PEOPLE.length]!,
+  owner: `${PEOPLE_AT_WORK[i % PEOPLE_AT_WORK.length]!.split(" ")[0]!.toLowerCase()}@example.com`,
   modifiedAt: new Date(
     Date.parse("2026-10-27T16:20:00.000Z") - i * 61 * 3_600_000,
   ).toISOString(),
+  // Drive's version of the file.
+  driveVersion: String(40 + i * 3),
 }));
-/** A person's work email in the mock's Acme ("ada@example.com"). */
-const workEmail = (name: string) =>
-  `${name.split(" ")[0]!.toLowerCase()}@example.com`;
 
 // ---------------------------------------------------------------- Documents
 
@@ -1293,8 +1333,10 @@ const slackStream: MockStream = {
   table: "channel_days",
   title: "Conversations",
   description:
-    "Each day of each Slack channel the app is in, as Markdown: the channel and the day, then one " +
-    '"**Name** HH:MM: text" line per message, its thread\'s replies indented under it.',
+    "Each day of one Slack channel the app is in, as Markdown: a heading with the channel and the UTC day, " +
+    'the channel\'s name and id, then each message posted that day in time order as "**Name** HH:MM: text", in UTC, ' +
+    "with the replies of a thread it started listed beneath it, dated when sent on a later day. People are named " +
+    "by their Slack real name, else their handle, and mentions read @Name and #channel.",
   mediaType: "text/markdown",
 };
 const notionStream: MockStream = {
@@ -1302,7 +1344,8 @@ const notionStream: MockStream = {
   table: "pages",
   title: "Pages",
   description:
-    "Each Notion page shared with the integration that has a body, as Markdown: its title, when it was last edited and its id, then the page.",
+    "Each Notion page shared with the integration, database rows included, as Markdown: its title, " +
+    "when it was last edited and its page id, then the page's content as Notion exports it.",
   mediaType: "text/markdown",
 };
 const googleStream: MockStream = {
@@ -1310,7 +1353,8 @@ const googleStream: MockStream = {
   table: "files",
   title: "Docs",
   description:
-    "Each Google Doc in Drive the user can open, as Markdown: its name, owner, when it was last modified and its file id, then the Doc.",
+    "Each Google Doc the connection's user can open in Drive, as Markdown: its title, owner, last modified time " +
+    "and file id, then the Doc's text as Drive exports it, with its headings, lists, tables and links.",
   mediaType: "text/markdown",
 };
 
@@ -1319,7 +1363,8 @@ const clock = (at: number) => new Date(at).toISOString().slice(11, 16);
  * The channel days a Slack sync at `syncedAt` reads, newest first: each day
  * of the history before the sync's that a channel the app is in has
  * messages on (two of every three), each with a message, a reply in its
- * thread and a later message. A day's messages are the same at every sync.
+ * thread and a later message. A day's messages are the same at every sync,
+ * and so is its version: "1|" and 40 hex digits of a hash of them.
  */
 function slackDays(src: Source, syncedAt: string) {
   if (!("slack" in src.settings) || src.secret.includes("lonely")) return [];
@@ -1338,7 +1383,7 @@ function slackDays(src: Source, syncedAt: string) {
           const minute = ((n * 7 + j * 11) % 40) + 5,
             at = (h: number, m: number) => midnight + (h * 60 + m) * 60_000,
             who = (k: number) =>
-              SLACK_PEOPLE[(n + j + k) % SLACK_PEOPLE.length]!;
+              PEOPLE_AT_WORK[(n + j + k) % PEOPLE_AT_WORK.length]!;
           const first = {
             at: at(9, minute),
             who: who(0),
@@ -1373,9 +1418,10 @@ function slackDays(src: Source, syncedAt: string) {
  * The streams `src`'s kind has, each with the documents a sync at `syncedAt`
  * reads into it, newest first, or null when its settings turn it off, or
  * its table can't be read. A kind without documents has none. A
- * document's version is "1|" and its time at the source (a Granola note's
- * updated_at, a channel day's last message's ts, a page's or Doc's last
- * edit), as the kinds write it; an edited Granola note's is the sync's time.
+ * document's version is "1|" and what changes it at the source, as the
+ * kinds write it: a Granola note's updated_at (an edited one's is the
+ * sync's time), a hash of a channel day's messages, a Notion page's last
+ * edit, a Doc's modified time and Drive's version.
  */
 export function documentStreams(
   src: Source,
@@ -1389,26 +1435,32 @@ export function documentStreams(
         documents: src.secret.includes("noscope")
           ? null
           : slackDays(src, syncedAt).map(({ channel, day, messages }) => {
+              // slack.go's document: each message after a blank line, its
+              // thread's replies listed beneath it.
               const line = (m: { at: number; who: string; text: string }) =>
-                `**${m.who}** ${clock(m.at)}: ${m.text}`;
-              const last = messages.at(-1)!.at;
+                `**${m.who}** ${clock(m.at)}: ${m.text}\n`;
+              const text =
+                `# #${channel.name}, ${day}\n\nChannel: #${channel.name} (${channel.id})\n` +
+                messages
+                  .map(
+                    (m) =>
+                      "\n" +
+                      line(m) +
+                      m.replies.map((r) => "  - " + line(r)).join(""),
+                  )
+                  .join("");
               return {
                 externalId: `${channel.id}:${day}`,
-                version: `1|${last / 1000}.000100`,
-                at: new Date(last).toISOString(),
+                version:
+                  "1|" +
+                  createHash("sha256")
+                    .update(`${channel.name}\0${text}`)
+                    .digest("hex")
+                    .slice(0, 40),
+                at: new Date(messages.at(-1)!.at).toISOString(),
                 title: `#${channel.name}, ${day}`,
                 url: `https://app.slack.com/client/${SLACK_TEAM}/${channel.id}`,
-                text: [
-                  `# #${channel.name}, ${day}`,
-                  "",
-                  `Channel: #${channel.name} (${channel.id})`,
-                  "",
-                  ...messages.flatMap((m) => [
-                    line(m),
-                    ...m.replies.map((r) => "  " + line(r)),
-                  ]),
-                  "",
-                ].join("\n"),
+                text,
               };
             }),
       },
@@ -1446,20 +1498,20 @@ export function documentStreams(
         stream: googleStream,
         documents: googleDocs.map((d) => ({
           externalId: d.id,
-          version: `1|${d.modifiedAt.replace(/\.?0+Z$/, "Z")}`,
+          version: `1|${d.modifiedAt}|${d.driveVersion}`,
           at: d.modifiedAt,
           title: d.name,
-          url: `https://docs.google.com/document/d/${d.id}/edit`,
+          url: `https://docs.google.com/document/d/${d.id}/edit?usp=drivesdk`,
           text: [
             `# ${d.name}`,
             "",
-            `Owner: ${d.owner} <${workEmail(d.owner)}>`,
+            `Owner: ${d.owner}`,
             `Last modified: ${d.modifiedAt.slice(0, 16).replace("T", " ")} UTC`,
             `File id: ${d.id}`,
             "",
             "## Summary",
             "",
-            `${d.owner} wrote this for the team.`,
+            "Written for the team, to read before the next review.",
             "",
             "## Next steps",
             "",
@@ -2339,7 +2391,9 @@ export function prepare(
       const key = String(raw.serviceAccountKey || "").trim();
       if (!serviceAccount(key))
         return invalid("paste the service account's JSON key");
-      const subject = String(raw.subject || "").trim();
+      const subject = String(raw.subject || "")
+        .trim()
+        .toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(subject))
         return invalid("enter the email of the Workspace user Foundry acts as");
       const eventDays = raw.eventDays || 90;
@@ -2515,38 +2569,51 @@ export function discover(
     // A test (not a sync) warns when the app is in no channel, so reads none.
     if (src.secret.includes("lonely"))
       discovery.warnings = [
-        `the app is in no channels yet: invite it to each channel to sync with /invite @${SLACK_BOT}, then test again`,
+        `The app is in no channels yet: invite it to each channel to sync with /invite @${SLACK_BOT}, then test again`,
       ];
     return { discovery, settings: s };
   }
   if ("notion" in s) {
     if (src.secret.includes("empty"))
-      return invalid(
+      return refused(
         "nothing is shared with this integration yet: in Notion, add it to a page or database from its ••• menu › Connections, then test again",
       );
-    const discovery = apiDiscovery(
-      notionObjects,
-      notionForeignKeys,
-      (name) => !src.secret.includes("nousers") || name !== "users",
-      () => "turn on Read user information in the integration's capabilities",
-    );
-    // Each shared database, typed, with its first rows.
-    discovery.tables!.push(
-      ...notionDatabases.map((d) => ({
-        name: d.name,
-        columns: d.columns.map(([name, type]) => ({ name, type })),
-        primaryKey: ["page_id"],
-        foreignKeys: [],
-        preview: d.preview.map((row) => JSON.stringify(row)),
-      })),
-    );
-    return { discovery, settings: s };
+    // Every table is typed; each shared database shows its first rows.
+    const users = !src.secret.includes("nousers");
+    const tables = notionTables
+      .filter((t) => users || t.name !== "users")
+      .map(
+        (t): ConnectorTable => ({
+          name: t.name,
+          columns: t.columns.map(([name, type, nullable]) => ({
+            name,
+            type,
+            ...(nullable ? { nullable } : {}),
+          })),
+          primaryKey: [t.name === "users" ? "user_id" : "page_id"],
+          foreignKeys: (users && notionForeignKeys[t.name]) || [],
+          ...(t.preview.length
+            ? { preview: t.preview.map((row) => JSON.stringify(row)) }
+            : {}),
+        }),
+      );
+    return {
+      discovery: users
+        ? { tables }
+        : {
+            tables,
+            unavailable: [
+              "users: turn on Read user information in the integration's capabilities",
+            ],
+          },
+      settings: s,
+    };
   }
   if ("google" in s) {
     const subject = s.google.subject || "",
       email = serviceAccount(src.secret)?.client_email || "";
     if (subject.includes("nobody"))
-      return invalid(
+      return refused(
         `Google has no user ${subject}, or the service account may not act as them; check the email`,
       );
     const notAdmin = (name: string) =>
@@ -2635,12 +2702,7 @@ export function syncTables(src: Source): SyncedSnapshot[] | string {
           calcom: calcomObjects,
           granola: granolaObjects,
           slack: slackObjects,
-          notion: [
-            ...notionObjects,
-            ...notionDatabases.map((d) =>
-              object(d.name, "page_id", [], d.rows),
-            ),
-          ],
+          notion: notionTables.map((t) => object(t.name, [], [], t.rows)),
           google: googleObjects,
         } as Partial<Record<ConnectorKindName, ApiObject[]>>
       )[src.kind]!;

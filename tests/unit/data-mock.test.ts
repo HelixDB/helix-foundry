@@ -599,6 +599,7 @@ describe("testing and creating", () => {
       messages: "message_id",
       channel_days: "channel_day_id",
     });
+    expect(links(all, "channels")).toEqual(["creator_id>users.user_id"]);
     expect(links(all, "channel_members")).toEqual([
       "channel_id>channels.channel_id",
       "user_id>users.user_id",
@@ -625,7 +626,7 @@ describe("testing and creating", () => {
     const lonely = tested("xoxb-1-lonely");
     expect(lonely.discovery.unavailable).toEqual([]);
     expect(lonely.discovery.warnings).toEqual([
-      "the app is in no channels yet: invite it to each channel to sync with /invite @Foundry, then test again",
+      "The app is in no channels yet: invite it to each channel to sync with /invite @Foundry, then test again",
     ]);
     expect(
       ok<any>(
@@ -652,40 +653,54 @@ describe("testing and creating", () => {
       projects: "page_id",
     });
     expect(links(all, "pages")).toEqual([
-      "created_by>users.user_id",
-      "last_edited_by>users.user_id",
+      "created_by_id>users.user_id",
+      "last_edited_by_id>users.user_id",
+    ]);
+    const columns = (body: any, table: string) =>
+      body.discovery.tables
+        .find((t: { name: string }) => t.name === table)
+        .columns.map(
+          (c: { name: string; type: string; nullable: boolean }) =>
+            `${c.name}:${c.type}${c.nullable ? "?" : ""}`,
+        );
+    // Every table is typed by the JSON it holds; times are strings.
+    expect(columns(all, "users")).toEqual([
+      "user_id:string",
+      "type:string",
+      "name:string?",
+      "email:string?",
+    ]);
+    expect(columns(all, "pages")).toContain("created_by_id:string?");
+    // A database's own columns, then its properties in name order, a
+    // date's end beside it.
+    expect(columns(all, "customer_accounts")).toEqual([
+      "page_id:string",
+      "url:string?",
+      "created_at:string",
+      "last_edited_at:string",
+      "arr:number?",
+      "active:boolean?",
+      "name:string?",
+      "owner:array?",
+      "renewal_date:string?",
+      "renewal_date_end:string?",
+      "stage:string?",
     ]);
     const accounts = all.discovery.tables.find(
       (t: { name: string }) => t.name === "customer_accounts",
     );
-    expect(accounts.columns.map((c: { name: string }) => c.name)).toEqual([
-      "page_id",
-      "url",
-      "created_at",
-      "last_edited_at",
-      "name",
-      "stage",
-      "arr",
-      "renewal_date",
-      "owner",
-      "active",
-    ]);
-    expect(accounts.columns[6]).toEqual({
-      name: "arr",
-      type: "float",
-      nullable: false,
-    });
     expect(accounts.preview).toHaveLength(5);
     expect(JSON.parse(accounts.preview[0])).toMatchObject({
       name: "Globex",
       stage: "Customer",
       arr: 48000,
       renewal_date: "2026-11-30",
-      owner: ["Ada Lovelace"],
+      renewal_date_end: null,
+      owner: ["6f1c0001-2b3a-4c5d-9e8f-1a2b3c4d5e6f"],
       active: true,
     });
-    // Users and pages are API objects: names come with the first sync.
-    expect(all.discovery.tables[0]).toMatchObject({ columns: [], preview: [] });
+    // Users and pages show no rows at a test.
+    expect(all.discovery.tables[0].preview).toEqual([]);
     const nousers = tested("secret_nousers1");
     expect(nousers.discovery.unavailable).toEqual([
       "users: turn on Read user information in the integration's capabilities",
@@ -708,8 +723,8 @@ describe("testing and creating", () => {
         }),
       );
     const all = tested("ada@example.com");
-    // The key is never returned; the subject is kept trimmed, and the days
-    // default to 90.
+    // The key is never returned; the subject is kept trimmed and in lower
+    // case, and the days default to 90.
     expect(all.config).toEqual({
       google: {
         serviceAccountKey: "",
@@ -717,6 +732,9 @@ describe("testing and creating", () => {
         eventDays: 90,
       },
     });
+    expect(tested("Ada@Example.com").config.google.subject).toBe(
+      "ada@example.com",
+    );
     expect(keys(all)).toEqual({
       users: "user_id",
       files: "file_id",
@@ -724,9 +742,9 @@ describe("testing and creating", () => {
       calendar_events: "event_id",
       event_attendees: "event_id+email",
     });
+    expect(links(all, "files")).toEqual([]);
     expect(links(all, "calendar_events")).toEqual([
       "calendar_id>calendars.calendar_id",
-      "recurring_event_id>calendar_events.event_id",
     ]);
     expect(links(all, "event_attendees")).toEqual([
       "event_id>calendar_events.event_id",
@@ -814,11 +832,12 @@ describe("testing and creating", () => {
       call("GET", `${base()}/connectors/${notion.id}`),
     ).connector.tables!.find((t) => t.name === "projects")!;
     expect(synced.columns!.slice(4).map((c) => `${c.name}:${c.type}`)).toEqual([
+      "due:string",
+      "due_end:string",
+      "lead:array",
       "name:string",
       "status:string",
-      "lead:json",
-      "due:date",
-      "tags:json",
+      "tags:array",
     ]);
     const listed = JSON.stringify(call("GET", `${base()}/connectors`).body);
     for (const credential of [slackToken, notionToken, key, "PRIVATE KEY"])

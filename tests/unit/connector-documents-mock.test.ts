@@ -316,15 +316,14 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
         at: "2026-10-22T14:21:00.000Z",
       },
     });
-    // The version is "1|" and the day's last message's ts.
-    expect(newest!.source!.version).toBe(
-      `1|${Date.parse("2026-10-22T14:21:00Z") / 1000}.000100`,
-    );
+    // The version is "1|" and 40 hex digits of a hash of its messages.
+    expect(newest!.source!.version).toMatch(/^1\|[0-9a-f]{40}$/);
     const at = first.documents.map((d) => d.source!.at!);
     expect(at).toEqual([...at].sort().reverse());
     expect(first.documents.some((d) => d.name!.startsWith("#random"))).toBe(
       false,
     );
+    // Each message after a blank line, its thread's replies listed under it.
     const text = (await call("GET", `${DOCS}/${newest!.id}:content`)).body.text;
     expect(text).toBe(
       [
@@ -333,7 +332,8 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
         "Channel: #support (C0MOCKSUP)",
         "",
         "**Hedy Lamarr** 09:23: Umbrella Holdings asked how to rotate their API key.",
-        "  **Margaret Hamilton** 09:35: Thanks, on it.",
+        "  - **Margaret Hamilton** 09:35: Thanks, on it.",
+        "",
         "**Ada Lovelace** 14:21: Initech can't reset passwords for two users, looking now.",
         "",
       ].join("\n"),
@@ -427,15 +427,16 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       name: "Q4 planning",
       source: {
         externalId: id,
-        version: "1|2026-10-27T16:20:00Z",
-        url: `https://docs.google.com/document/d/${id}/edit`,
+        // Its modified time and Drive's version.
+        version: "1|2026-10-27T16:20:00.000Z|40",
+        url: `https://docs.google.com/document/d/${id}/edit?usp=drivesdk`,
       },
     });
     expect(
       (await call("GET", `${DOCS}/${newest!.id}:content`)).body.text,
     ).toMatch(
       new RegExp(
-        `^# Q4 planning\\n\\nOwner: Ada Lovelace <ada@example\\.com>\\nLast modified: 2026-10-27 16:20 UTC\\nFile id: ${id}\\n\\n## Summary\\n`,
+        `^# Q4 planning\\n\\nOwner: ada@example\\.com\\nLast modified: 2026-10-27 16:20 UTC\\nFile id: ${id}\\n\\n## Summary\\n`,
       ),
     );
   });
