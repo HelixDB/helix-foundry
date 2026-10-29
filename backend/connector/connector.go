@@ -119,6 +119,8 @@ func WindowedTable(kind, table string) bool {
 		return table == "events" || table == "daily_event_counts"
 	case "github":
 		return table == "pull_request_reviews"
+	case "slack":
+		return table == "messages" || table == "channel_days"
 	}
 	return false
 }
