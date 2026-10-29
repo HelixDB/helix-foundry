@@ -8,8 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const sdk = vi.hoisted(() => ({
   track: vi.fn(),
   isTrackerAvailable: vi.fn(() => true),
-  getAnonymousId: vi.fn((): string | null => "anon_1"),
-  getSessionId: vi.fn(() => "sess_1"),
+  getTracker: vi.fn(() => ({
+    getTrackingIds: (): { anonId: string | null; sessionId: string | null } =>
+      sdk.ids,
+  })),
+  ids: { anonId: "anon_1", sessionId: "sess_1" } as {
+    anonId: string | null;
+    sessionId: string | null;
+  },
   setGlobalProperties: vi.fn(),
 }));
 vi.mock("@databuddy/sdk", () => sdk);
@@ -51,8 +57,9 @@ const PENDING = "foundry.analytics.pending.v1";
 
 beforeEach(() => {
   sdk.track.mockReset();
+  sdk.getTracker.mockClear();
   sdk.isTrackerAvailable.mockReset().mockReturnValue(true);
-  sdk.getAnonymousId.mockReset().mockReturnValue("anon_1");
+  sdk.ids = { anonId: "anon_1", sessionId: "sess_1" };
   sdk.setGlobalProperties.mockReset();
 });
 afterEach(() => {
@@ -158,13 +165,34 @@ describe("trackBeforeLeaving", () => {
     expect(sent()).toEqual([["setup_prompt_copied", { setup: "local" }]]);
   });
 
-  it("goes through the tracker before it has a visitor", async () => {
+  // The tracker, which drops it, has no visitor while the visitor opts out.
+  it("goes through the tracker when it has no visitor", async () => {
     const a = await load();
     const beacons = beacon();
-    sdk.getAnonymousId.mockReturnValue(null);
+    sdk.ids = { anonId: null, sessionId: null };
     await a.trackBeforeLeaving("setup_prompt_copied", { setup: "agent" });
     expect(beacons).toEqual([]);
     expect(sent()).toEqual([["setup_prompt_copied", { setup: "agent" }]]);
+  });
+
+  // Never a visitor id the SDK reads from storage, which it would before the
+  // tracker loads, or when it is blocked.
+  it("goes through the tracker when it never loads", async () => {
+    vi.useFakeTimers();
+    const a = await load();
+    const beacons = beacon();
+    sdk.isTrackerAvailable.mockReturnValue(false);
+    sdk.getTracker.mockReturnValueOnce(null as never);
+    const done = a.trackBeforeLeaving("upgrade_clicked", {
+      tier: "pro",
+      from: "free",
+    });
+    await vi.advanceTimersByTimeAsync(1100);
+    await done;
+    expect(beacons).toEqual([]);
+    expect(sent()).toEqual([
+      ["upgrade_clicked", { tier: "pro", from: "free" }],
+    ]);
   });
 
   it("waits for the tracker to load before sending", async () => {

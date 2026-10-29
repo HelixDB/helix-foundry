@@ -1,9 +1,4 @@
-import {
-  getAnonymousId,
-  getSessionId,
-  isTrackerAvailable,
-  track,
-} from "@databuddy/sdk";
+import { getTracker, isTrackerAvailable, track } from "@databuddy/sdk";
 import type {
   ConnectorKindName,
   DocumentMediaType,
@@ -103,9 +98,12 @@ const TRACK_URL = "https://basket.databuddy.cc/track";
  * and a call made before it loads waits in the SDK's queue, which the
  * navigation drops. So this waits for the tracker, at most a second, then
  * sends the event at once with a beacon to the events API, under the
- * tracker's visitor and session so it joins the same funnel. Without a
- * beacon, or before the tracker has a visitor, it goes through the tracker.
- * Only for pages whose path names nothing: it isn't masked.
+ * running tracker's visitor and session so it joins the same funnel. The
+ * tracker has none while the visitor opts out (Do Not Track, Global Privacy
+ * Control, databuddyOptOut()), and the SDK would read a stored one before
+ * the tracker loads: without the tracker's, or a beacon, the event goes
+ * through the tracker, which honours the opt-out. Only for pages whose path
+ * names nothing: it isn't masked.
  */
 export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
   name: Name,
@@ -118,13 +116,14 @@ export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
 
   )
     await new Promise((resolve) => setTimeout(resolve, 50));
-  const anonymousId = getAnonymousId(),
+  const ids = getTracker()?.getTrackingIds?.();
+  const anonymousId = ids?.anonId,
     event = {
       eventId: crypto.randomUUID(),
       name,
       properties: properties[0],
       anonymousId,
-      sessionId: getSessionId(),
+      sessionId: ids?.sessionId,
       // As the tracker sends its own: the visitor id is hashed on arrival.
       anonymizeVisitorIds: true,
       path: location.origin + location.pathname,
