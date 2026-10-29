@@ -442,7 +442,6 @@ func (p *slackPass) run(ctx context.Context) error {
 			return err
 		}
 	}
-	p.byID = p.people == nil && !p.scopes.has("users:read")
 	if p.read["channels"] {
 		if err := p.listChannels(ctx); err != nil {
 			return err
@@ -487,15 +486,16 @@ func (p *slackPass) run(ctx context.Context) error {
 	return p.channelDays(ctx)
 }
 
-// auth reads the workspace and the token's scopes with auth.test. Discover
-// makes a table unavailable that no history can be read for; a read of
-// history by a token that lost both scopes since is refused with the fix.
+// auth reads the workspace and the token's scopes with auth.test; without
+// users:read, documents name people by id. Discover makes a table
+// unavailable that no history can be read for; a read of history by a
+// token that lost both scopes since is refused with the fix.
 func (p *slackPass) auth(ctx context.Context) error {
 	auth, err := p.c.auth(ctx)
 	if err != nil {
 		return err
 	}
-	p.team, p.scopes = auth.team, auth.scopes
+	p.team, p.scopes, p.byID = auth.team, auth.scopes, !auth.scopes.has("users:read")
 	if (p.read["messages"] || p.read["channel_days"]) && !p.scopes.has("channels:history") && !p.scopes.has("groups:history") {
 		return refused(errMissingScope, "add the channels:history scope to the app and reinstall it")
 	}
@@ -667,7 +667,7 @@ func (p *slackPass) message(ch slackChannel, m slackMessage) error {
 	d := p.days[ch.ID+":"+day]
 	if d == nil {
 		d = &slackDay{channel: ch, day: day, first: m.at, last: m.at, active: m.at, users: map[string]bool{}, mentioned: map[string]bool{},
-			dropped: !p.keep || day == p.today}
+			dropped: !p.keep || day >= p.today}
 		p.days[d.id()] = d
 	}
 	d.count++
@@ -1013,8 +1013,8 @@ type slackMessage struct {
 func (m slackMessage) row(channel string) map[string]any {
 	day := m.at.Format(time.DateOnly)
 	return map[string]any{
-		"message_id": channel + ":" + m.TS, "channel_id": channel, "day": day, "channel_day_id": channel + ":" + day, "ts": m.TS, "thread_ts": orNull(m.ThreadTS),
-		"user_id": orNull(m.User), "bot_id": orNull(m.BotID), "subtype": orNull(m.Subtype), "text": m.Text,
+		"message_id": channel + ":" + m.TS, "channel_id": channel, "day": day, "channel_day_id": channel + ":" + day,
+		"ts": m.TS, "thread_ts": orNull(m.ThreadTS), "user_id": orNull(m.User), "bot_id": orNull(m.BotID), "subtype": orNull(m.Subtype), "text": m.Text,
 		"sent_at": m.at.Format(time.RFC3339), "edited_at": slackStamp(m.Edited.TS), "reply_count": m.ReplyCount,
 		"reply_users_count": m.ReplyUsersCount, "latest_reply_at": slackStamp(m.LatestReply),
 	}

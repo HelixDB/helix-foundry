@@ -261,6 +261,21 @@ func TestSlackChanges(t *testing.T) {
 		}
 		assertMerged(t, c, prev, prev)
 	})
+	t.Run("names people by id without users:read, as a full read does, without asking users.list", func(t *testing.T) {
+		scopes := strings.ReplaceAll(slackAllScopes, ",users:read,", ",")
+		w := newSlackWorkspace()
+		kind, _ := slackScoped(t, scopes, w.routes())
+		held := &granolaDocs{}
+		if _, err := slackRead(t, kind, slackTables[1:], held); err != nil {
+			t.Fatal(err)
+		}
+		docs := &granolaDocs{want: map[string]bool{"conversations": true}}
+		_, _, calls := changes(t, w, scopes, slackCursorAt("2026-10-29", "C1", "C2"), docs)
+		if len(docs.puts) != 1 || !strings.HasSuffix(docs.puts[0].doc.Version, "|ids") || !slices.Contains(held.offers, docs.offers[0]) ||
+			len(calls.of("users.list")) != 0 {
+			t.Fatalf("puts = %v, offers = %q, full read's = %q, calls = %q", docs.putNames(), docs.offers, held.offers, calls.log)
+		}
+	})
 	t.Run("drops a message deleted on a day it reads again, and the day's document changes", func(t *testing.T) {
 		w := newSlackWorkspace()
 		prev, versions := full(t, w, slackAllScopes)
