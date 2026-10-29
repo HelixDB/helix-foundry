@@ -315,7 +315,8 @@ func TestNotionConnector(t *testing.T) {
 			t.Fatalf("tables = %v, unavailable = %v", d.Tables, d.Unavailable)
 		}
 	})
-	// Only the probes search when no data source is shared.
+	// The data source search and a probe of pages search when no data
+	// source is shared; with one shared, the data sources alone.
 	t.Run("lists no data source when none is shared", func(t *testing.T) {
 		var mu sync.Mutex
 		searches := 0
@@ -327,6 +328,17 @@ func TestNotionConnector(t *testing.T) {
 			return search(r)
 		}})).Discover(ctx, Source{Secret: notionTestSecret})
 		if err != nil || !slices.Equal(tableNames(d), []string{"users", "pages"}) || searches != 2 {
+			t.Fatalf("Discover = (%v, %v) after %d searches", tableNames(d), err, searches)
+		}
+		searches = 0
+		search = notionSearchOf(t, pages, []string{accounts})
+		d, err = notionAt(t, notionShared(t, nil, nil, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			mu.Lock()
+			searches++
+			mu.Unlock()
+			return search(r)
+		}})).Discover(ctx, Source{Secret: notionTestSecret, ForSync: true})
+		if err != nil || !slices.Equal(tableNames(d), []string{"users", "pages", "customer_accounts"}) || searches != 1 {
 			t.Fatalf("Discover = (%v, %v) after %d searches", tableNames(d), err, searches)
 		}
 	})
@@ -1021,6 +1033,29 @@ func TestNotionSync(t *testing.T) {
 			t.Fatalf("SyncPass = %v, pages = %v, deals = %v, asked = %q", err, pages.rows, deals.rows, asked)
 		}
 	})
+	// Notion's lists are eventually consistent: one may show a page or row
+	// just trashed, which a full read leaves out.
+	t.Run("leaves out a page or row a list shows in the trash", func(t *testing.T) {
+		trashed := func(item string) string { return strings.Replace(item, `"parent"`, `"in_trash":true,"parent"`, 1) }
+		kind := notionAt(t, notionRoutes{
+			"/v1/search": notionSearchOf(t, []string{notionTestPage("pg_1", "Roadmap", "2026-01-06T10:00:00.000Z", notionWorkspace),
+				strings.Replace(notionTestPage("pg_2", "Gone", "2026-01-06T10:00:00.000Z", notionWorkspace), `"in_trash":false`, `"in_trash":true`, 1)},
+				[]string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z", notionAccountsSchema)}),
+			"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues),
+					trashed(notionTestRow("row_2", "2026-01-05T09:00:00.000Z", notionAccountValues)))
+			},
+		})
+		pages, deals := &rowSink{}, &rowSink{}
+		_, err := kind.SyncPass(ctx, src, []Table{{Name: "pages"}, {Name: "deals"}}, map[string]RowWriter{"pages": pages, "deals": deals}, noDocuments{})
+		var ids []any
+		for _, row := range pages.rows {
+			ids = append(ids, row["page_id"])
+		}
+		if err != nil || fmt.Sprint(ids) != "[pg_1 row_1]" || len(deals.rows) != 1 || deals.rows[0]["page_id"] != "row_1" {
+			t.Fatalf("SyncPass = %v, pages = %v, deals = %v", err, ids, deals.rows)
+		}
+	})
 	// The pass searches data sources again to find a table's.
 	t.Run("refuses a table whose data source is no longer shared", func(t *testing.T) {
 		_, err := read(t, notionAt(t, notionShared(t, nil, nil, nil)), "customer_accounts")
@@ -1411,6 +1446,35 @@ func TestNotionDocuments(t *testing.T) {
 		}
 		if v := (notionPage{id: "pg_1", edited: edited.Add(time.Minute)}).version(notionTestNow); v != "2|2026-01-06T10:46:30Z|2923" {
 			t.Fatalf("version after an edit = %q", v)
+		}
+	})
+	// Text read within a minute and the overlap of a page's last edit may
+	// still change under that edit's minute: its version is provisional, so
+	// the next read, which lists the page again, reads it once more.
+	t.Run("versions a document read before its last edit settles as provisional", func(t *testing.T) {
+		edited := time.Date(2026, 1, 6, 10, 45, 0, 0, time.UTC)
+		p := notionPage{id: "pg_1", edited: edited}
+		settled := edited.Add(time.Minute + ChangeOverlap)
+		for _, at := range []time.Time{edited.Add(-time.Minute), edited, edited.Add(25 * time.Second), settled.Add(-time.Millisecond)} {
+			if v := p.version(at); v != p.version(settled)+"|provisional" {
+				t.Errorf("version at %s = %q", at.Format(time.RFC3339Nano), v)
+			}
+		}
+		if v := p.version(settled); v != "2|2026-01-06T10:45:00Z|2922" {
+			t.Fatalf("settled version = %q", v)
+		}
+		// The clock is read as each page's Markdown is.
+		routes := searchOf(notionTestPage("pg_1", "Roadmap", "2026-01-06T10:45:00.000Z", notionWorkspace))
+		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", "Body", false)}, &sync.Map{}))
+		kind := notionAt(t, routes)
+		for at, want := range map[time.Time]string{edited.Add(20 * time.Second): "pages pg_1 2|2026-01-06T10:45:00Z|2922|provisional",
+			settled: "pages pg_1 2|2026-01-06T10:45:00Z|2922"} {
+			notionNow = func() time.Time { return at }
+			docs := &granolaDocs{want: map[string]bool{"pages": true}}
+			if _, err := pass(t, kind, docs); err != nil || !slices.Equal(docs.offers, []string{want}) || len(docs.puts) != 1 ||
+				docs.puts[0].doc.Version != strings.TrimPrefix(want, "pages pg_1 ") {
+				t.Fatalf("SyncPass at %s = %v, offers = %q", at, err, docs.offers)
+			}
 		}
 	})
 	t.Run("puts no document for a page with an empty body", func(t *testing.T) {

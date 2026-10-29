@@ -16,16 +16,18 @@ import (
 )
 
 // notionEdits is a workspace a change read reads: its data sources by id,
-// its pages by id, each page's Markdown, and the requests it answered. It
-// filters a query by last edit and a search by the trash, and sorts a
-// search by last edit, as Notion does.
+// those its search leaves out (unsearched), its pages by id, each page's
+// Markdown, and the requests it answered. It filters a query by last edit
+// and a search by the trash, and sorts a search by last edit, as Notion
+// does; a data source read by id is one it has, else 404.
 type notionEdits struct {
-	t       *testing.T
-	sources map[string]string
-	pages   map[string]notionEdit
-	bodies  map[string]string
-	mu      sync.Mutex
-	asked   []string
+	t          *testing.T
+	sources    map[string]string
+	unsearched map[string]bool
+	pages      map[string]notionEdit
+	bodies     map[string]string
+	mu         sync.Mutex
+	asked      []string
 }
 
 // notionEdit is a page: its last edit, the data source it is a row of ("" for
@@ -100,7 +102,7 @@ func (e *notionEdits) kind(extra notionRoutes) *notionKind {
 				e.ask("search data sources")
 				return http.StatusOK, notionResults(slices.Collect(func(yield func(string) bool) {
 					for _, id := range slices.Sorted(maps.Keys(e.sources)) {
-						if !yield(e.sources[id]) {
+						if !e.unsearched[id] && !yield(e.sources[id]) {
 							return
 						}
 					}
@@ -113,6 +115,16 @@ func (e *notionEdits) kind(extra notionRoutes) *notionKind {
 			e.ask(fmt.Sprintf("search %s %v", map[bool]string{false: "pages", true: "trash"}[trash], order["direction"]))
 			return http.StatusOK, notionResults(e.listed(func(p notionEdit) bool { return p.trashed == trash }, order["direction"] == "descending")...)
 		},
+	}
+	// The data sources the tests' cursors name, shared or not.
+	for _, id := range []string{"ds_1", "ds_2", "ds_gone"} {
+		routes["/v1/data_sources/"+id] = func(*http.Request) (int, string) {
+			e.ask("data source " + id)
+			if source, ok := e.sources[id]; ok {
+				return http.StatusOK, source
+			}
+			return http.StatusNotFound, `{"object":"error","status":404,"code":"object_not_found"}`
+		}
 	}
 	for id := range e.sources {
 		routes["/v1/data_sources/"+id+"/query"] = func(r *http.Request) (int, string) {
@@ -189,8 +201,9 @@ func TestNotionChanges(t *testing.T) {
 	ctx := context.Background()
 	src := Source{Secret: notionTestSecret}
 	tables := []Table{{Name: "pages"}, {Name: "customer_accounts"}, {Name: "deals"}}
+	// before is an edit older than the searches reach back to (notionSearchLag).
 	since := time.Date(2026, 1, 8, 0, 0, 0, 0, time.UTC)
-	before, after := "2026-01-07T23:59:00.000Z", "2026-01-08T10:00:00.000Z"
+	before, after := "2026-01-07T23:00:00.000Z", "2026-01-08T10:00:00.000Z"
 	deals := `{"Name":{"id":"title","name":"Name","type":"title","title":{}},
 		"Projects":{"id":"pr","name":"Projects","type":"relation","relation":{}}}`
 	title := func(name string) string {
@@ -210,7 +223,7 @@ func TestNotionChanges(t *testing.T) {
 		maps.Copy(e.pages, edits)
 		return e
 	}
-	// cursorOf is Start's cursor at since, edited by edit.
+	// cursorOf is Start's cursor at since, a full read's, edited by edit.
 	cursorOf := func(t *testing.T, e *notionEdits, edit func(*notionCursor)) json.RawMessage {
 		t.Helper()
 		start, err := e.kind(nil).Start(ctx, src, tables)
@@ -221,7 +234,7 @@ func TestNotionChanges(t *testing.T) {
 		if err := json.Unmarshal(start.Cursor, &c); err != nil {
 			t.Fatal(err)
 		}
-		c.Since = since
+		c.Since, c.Full = since, since
 		if edit != nil {
 			edit(&c)
 		}
@@ -266,8 +279,8 @@ func TestNotionChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 		low, high := before.Add(-ChangeOverlap).Truncate(time.Minute), after.Add(-ChangeOverlap)
-		if c.Since.Before(low) || c.Since.After(high) || !c.Since.Equal(c.Since.Truncate(time.Minute)) {
-			t.Fatalf("since = %s, want the read's start less %s to the minute", c.Since, ChangeOverlap)
+		if c.Since.Before(low) || c.Since.After(high) || !c.Since.Equal(c.Since.Truncate(time.Minute)) || !c.Full.Equal(c.Since) || c.Trashed != nil {
+			t.Fatalf("since = %s, full = %s, trashed = %q, want the read's start less %s to the minute", c.Since, c.Full, c.Trashed, ChangeOverlap)
 		}
 		if fmt.Sprint(c.Tables) != "[pages customer_accounts deals]" || len(c.Sources) != 2 || c.Sources["ds_1"].Table != "customer_accounts" ||
 			c.Sources["ds_2"].Table != "deals" || len(c.Sources["ds_1"].Schema) != 16 || c.Sources["ds_1"].Schema == c.Sources["ds_2"].Schema {
@@ -275,6 +288,59 @@ func TestNotionChanges(t *testing.T) {
 		}
 		if asked := e.took(); !slices.Equal(asked, []string{"search data sources"}) {
 			t.Fatalf("requests = %q", asked)
+		}
+	})
+	// One sync's Discover, Start, Changes and full read search the data
+	// sources once, and name their tables alike.
+	t.Run("reads the data sources its sync discovered rather than searching again", func(t *testing.T) {
+		e := workspace(t, nil)
+		kind := e.kind(nil)
+		sync := Source{Secret: notionTestSecret, ForSync: true, ConnectorID: "conn-1"}
+		if _, err := kind.Discover(ctx, sync); err != nil {
+			t.Fatal(err)
+		}
+		start, err := kind.Start(ctx, sync, tables)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := kind.Changes(ctx, sync, tables, start.Cursor, newNotionChanges()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := kind.SyncPass(ctx, sync, []Table{{Name: "deals"}}, map[string]RowWriter{"deals": &rowSink{}}, noDocuments{}); err != nil {
+			t.Fatal(err)
+		}
+		searches := func() int {
+			return len(slices.DeleteFunc(e.took(), func(r string) bool { return r != "search data sources" }))
+		}
+		if n := searches(); n != 1 {
+			t.Fatalf("%d searches of data sources", n)
+		}
+		// Not for another connector, a test, another secret, or once stale.
+		for name, src := range map[string]Source{"another connector": {Secret: notionTestSecret, ForSync: true, ConnectorID: "conn-2"},
+			"a test": {Secret: notionTestSecret, ConnectorID: "conn-1"}} {
+			if _, err := kind.Start(ctx, src, tables); err != nil || searches() != 1 {
+				t.Fatalf("%s: Start = %v, searched again: %v", name, err, err == nil)
+			}
+		}
+		for name, edit := range map[string]func(*notionListing){
+			"another secret": func(l *notionListing) { l.secret = "ntn_other" },
+			"once stale":     func(l *notionListing) { l.at = l.at.Add(-notionListingFresh) },
+		} {
+			l := kind.listings["conn-1"]
+			edit(&l)
+			kind.listings["conn-1"] = l
+			if _, err := kind.Start(ctx, sync, tables); err != nil || searches() != 1 {
+				t.Fatalf("%s: Start = %v, searched again: %v", name, err, err == nil)
+			}
+			kind.remember("conn-1", notionTestSecret, nil)
+		}
+		// A listing no read may use is forgotten at the next one kept.
+		l := kind.listings["conn-1"]
+		l.at = l.at.Add(-notionListingFresh)
+		kind.listings["conn-1"] = l
+		kind.remember("conn-3", notionTestSecret, nil)
+		if _, kept := kind.listings["conn-1"]; kept || len(kind.listings) != 1 {
+			t.Fatalf("listings = %v", kind.listings)
 		}
 	})
 	t.Run("refuses a start Notion refuses", func(t *testing.T) {
@@ -300,7 +366,7 @@ func TestNotionChanges(t *testing.T) {
 		if err := json.Unmarshal(next, &c); err != nil {
 			t.Fatal(err)
 		}
-		if c.Since.Before(before.Add(-ChangeOverlap).Truncate(time.Minute)) || c.Since.After(after.Add(-ChangeOverlap)) ||
+		if c.Since.Before(before.Add(-ChangeOverlap).Truncate(time.Minute)) || c.Since.After(after.Add(-ChangeOverlap)) || !c.Full.Equal(since) ||
 			fmt.Sprint(c.Tables) != "[pages customer_accounts deals]" || c.Sources["ds_1"].Table != "customer_accounts" {
 			t.Fatalf("next cursor = %s", next)
 		}
@@ -371,8 +437,8 @@ func TestNotionChanges(t *testing.T) {
 		}
 	})
 	// The search lists rows too, newest first: it stops at the first older
-	// than the cursor, and a row a query read is that query's.
-	t.Run("searches back to the cursor only, leaving out the rows the queries read", func(t *testing.T) {
+	// than notionSearchLag before the cursor, and a row a query read is that query's.
+	t.Run("searches back to its lag before the cursor only, leaving out the rows the queries read", func(t *testing.T) {
 		e := workspace(t, map[string]notionEdit{"row_1": {edited: after, source: "ds_1", properties: notionAccountValues}})
 		var cursors []string
 		kind := e.kind(notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
@@ -448,11 +514,18 @@ func TestNotionChanges(t *testing.T) {
 			"pg_9":  {edited: after, properties: title("Gone"), trashed: true},
 			"pg_2":  {edited: after, properties: title("New")}})
 		w := newNotionChanges()
-		changes(t, e, cursorOf(t, e, func(c *notionCursor) {
+		start := time.Now()
+		next := changes(t, e, cursorOf(t, e, func(c *notionCursor) {
 			c.Tables = []string{"customer_accounts", "deals"}
 			c.Sources["ds_2"] = notionSourceCursor{Table: "deals"}
+			c.Trashed = []string{"pg_1"}
 		}), w)
 		asked := e.took()
+		// The pages table's full read in this sync ranks its documents again.
+		var c notionCursor
+		if err := json.Unmarshal(next, &c); err != nil || c.Full.Before(start.Add(-ChangeOverlap).Truncate(time.Minute)) || c.Trashed != nil {
+			t.Fatalf("next cursor = %s", next)
+		}
 		if want := []string{"search data sources", "search trash descending", "query ds_1 since 2026-01-08T00:00:00Z whole"}; !slices.Equal(asked, want) {
 			t.Fatalf("requests = %q\nwant %q", asked, want)
 		}
@@ -464,7 +537,7 @@ func TestNotionChanges(t *testing.T) {
 	t.Run("reads nothing when every table is reset", func(t *testing.T) {
 		e := workspace(t, nil)
 		w := newNotionChanges()
-		next := changes(t, e, json.RawMessage(`{"since":"2026-01-08T00:00:00Z","tables":[],"sources":{}}`), w)
+		next := changes(t, e, json.RawMessage(`{"since":"2026-01-08T00:00:00Z","full":"2026-01-08T00:00:00Z","tables":[],"sources":{}}`), w)
 		if !slices.Equal(w.resets, []string{"pages", "customer_accounts", "deals"}) || !slices.Equal(e.took(), []string{"search data sources"}) ||
 			!strings.Contains(string(next), `"tables":["pages","customer_accounts","deals"]`) {
 			t.Fatalf("resets = %v, next = %s", w.resets, next)
@@ -501,10 +574,14 @@ func TestNotionChanges(t *testing.T) {
 		})
 		e.bodies["pg_2"] = "New."
 		w := newNotionChanges()
-		changes(t, e, cursorOf(t, e, nil), w)
+		next := changes(t, e, cursorOf(t, e, nil), w)
 		want := []string{"delete pages pg_1", "delete customer_accounts row_1", "delete pages row_1", "upsert pages pg_2"}
 		if !slices.Equal(w.log, want) {
 			t.Fatalf("changes = %q\nwant %q", w.log, want)
+		}
+		// Both held their documents, from the full read: restored, each has it back.
+		if !strings.Contains(string(next), `"trashed":["pg_1","row_1"]`) {
+			t.Fatalf("next cursor = %s", next)
 		}
 	})
 	t.Run("deletes the pages rows of a data source no longer shared", func(t *testing.T) {
@@ -513,6 +590,148 @@ func TestNotionChanges(t *testing.T) {
 		changes(t, e, cursorOf(t, e, func(c *notionCursor) { c.Sources["ds_gone"] = notionSourceCursor{Table: "old"} }), w)
 		if !slices.Equal(w.log, []string{"cascade pages data_source_id=ds_gone"}) || len(w.resets) != 0 {
 			t.Fatalf("changes = %q, resets = %v", w.log, w.resets)
+		}
+	})
+	// Notion's search is eventually consistent: one that leaves out a data
+	// source the cursor has must not cost its rows and their documents.
+	t.Run("reads a data source the search leaves out by id, and follows it as listed", func(t *testing.T) {
+		e := workspace(t, map[string]notionEdit{"row_2": {edited: after, source: "ds_2", properties: title("Bigger deal")}})
+		cursor := cursorOf(t, e, nil)
+		e.unsearched = map[string]bool{"ds_2": true}
+		w := newNotionChanges()
+		next := changes(t, e, cursor, w)
+		asked := e.took()
+		if !slices.Contains(asked, "data source ds_2") || !slices.Contains(asked, "query ds_2 since 2026-01-08T00:00:00Z whole") ||
+			len(w.resets) != 0 || !slices.Equal(w.log, []string{"upsert deals row_2", "upsert pages row_2"}) ||
+			!strings.Contains(string(next), `"ds_2":{"table":"deals"`) {
+			t.Fatalf("requests = %q, resets = %v, changes = %q, next = %s", asked, w.resets, w.log, next)
+		}
+	})
+	for name, answer := range map[string]func(*http.Request) (int, string){
+		"answers 403 for": func(*http.Request) (int, string) {
+			return http.StatusForbidden, `{"object":"error","status":403,"code":"restricted_resource"}`
+		},
+		"has in the trash": func(*http.Request) (int, string) {
+			return http.StatusOK, strings.Replace(notionTestSource("ds_2", "Deals", "2026-01-02T00:00:00.000Z", deals), `"in_trash":false`, `"in_trash":true`, 1)
+		},
+	} {
+		t.Run("deletes the pages rows of a data source Notion "+name, func(t *testing.T) {
+			e := workspace(t, nil)
+			cursor := cursorOf(t, e, nil)
+			e.unsearched = map[string]bool{"ds_2": true}
+			w := newNotionChanges()
+			next, err := e.kind(notionRoutes{"/v1/data_sources/ds_2": answer}).Changes(ctx, src, tables, cursor, w)
+			if err != nil || !slices.Equal(w.log, []string{"cascade pages data_source_id=ds_2"}) || !slices.Equal(w.resets, []string{"deals"}) ||
+				strings.Contains(string(next), `"ds_2"`) {
+				t.Fatalf("Changes = %v, changes = %q, resets = %v, next = %s", err, w.log, w.resets, next)
+			}
+		})
+	}
+	t.Run("fails the read when Notion won't say whether it still shares a data source", func(t *testing.T) {
+		e := workspace(t, nil)
+		cursor := cursorOf(t, e, nil)
+		e.unsearched = map[string]bool{"ds_2": true}
+		w := newNotionChanges()
+		_, err := e.kind(notionRoutes{"/v1/data_sources/ds_2": func(*http.Request) (int, string) {
+			return http.StatusBadRequest, `{"object":"error","status":400,"code":"validation_error"}`
+		}}).Changes(ctx, src, tables, cursor, w)
+		notionRefusal(t, err, "Notion returned HTTP 400 for /v1/data_sources/ds_2")
+		if len(w.log) != 0 {
+			t.Fatalf("changes = %q", w.log)
+		}
+	})
+	// A page joins the search late, out of its place by last edit: the
+	// searches reach back notionSearchLag before the cursor and stop only
+	// past it. A page listed again unchanged writes nothing new.
+	t.Run("reads an edit a lagging search lists late or out of order", func(t *testing.T) {
+		lagged := "2026-01-07T23:45:00.000Z"
+		e := workspace(t, map[string]notionEdit{
+			"pg_1":  {edited: lagged, properties: title("Roadmap")},
+			"row_1": {edited: lagged, source: "ds_1", properties: notionAccountValues},
+			"pg_9":  {edited: lagged, properties: title("Gone"), trashed: true},
+			"pg_10": {edited: after, created: after, properties: title("Late")},
+		})
+		e.bodies["pg_1"], e.bodies["pg_10"] = "## Q1\n\nShipped.", "Late."
+		order := []string{"pg_1", "pg_10"} // pg_10, newer, is listed after pg_1
+		kind := e.kind(notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			body := notionBody(t, r)
+			filter, _ := body["filter"].(map[string]any)
+			switch {
+			case filter["value"] == "data_source":
+				return http.StatusOK, notionResults(e.sources["ds_1"], e.sources["ds_2"])
+			case filter["in_trash"] == true:
+				return http.StatusOK, notionResults(e.pages["pg_9"].item("pg_9"), e.pages["row_1"].item("row_1"))
+			}
+			var items []string
+			for _, id := range append(order, "row_2") {
+				items = append(items, e.pages[id].item(id))
+			}
+			return http.StatusOK, notionResults(items...)
+		}})
+		w := newNotionChanges()
+		if _, err := kind.Changes(ctx, src, tables, cursorOf(t, e, nil), w); err != nil {
+			t.Fatal(err)
+		}
+		// row_1, listed by the trash but not in it, keeps its row.
+		want := []string{"delete pages pg_9", "upsert pages pg_1", "upsert pages pg_10"}
+		if !slices.Equal(w.log, want) || !slices.Equal(w.putNames(), []string{"pages pg_1", "pages pg_10"}) {
+			t.Fatalf("changes = %q, puts = %v\nwant %q", w.log, w.putNames(), want)
+		}
+	})
+	// A page just trashed may still be listed by the search, and one just
+	// restored by the trash's: each is left to the search it is in.
+	t.Run("leaves out a listed page whose trash isn't the search's", func(t *testing.T) {
+		e := workspace(t, map[string]notionEdit{"pg_2": {edited: after, created: after, properties: title("Trashed"), trashed: true},
+			"pg_3": {edited: after, properties: title("Restored")}})
+		kind := e.kind(notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			body := notionBody(t, r)
+			if filter, _ := body["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults(e.sources["ds_1"], e.sources["ds_2"])
+			}
+			// Both searches list both pages, as a lagging index does.
+			return http.StatusOK, notionResults(e.pages["pg_2"].item("pg_2"), e.pages["pg_3"].item("pg_3"))
+		}})
+		w := newNotionChanges()
+		if _, err := kind.Changes(ctx, src, tables, cursorOf(t, e, nil), w); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(w.log, []string{"delete pages pg_2", "upsert pages pg_3"}) {
+			t.Fatalf("changes = %q", w.log)
+		}
+	})
+	// The full read that kept a trashed page's document would keep it again.
+	t.Run("gives a page restored from the trash its document back", func(t *testing.T) {
+		e := workspace(t, map[string]notionEdit{"pg_1": {edited: after, properties: title("Roadmap"), trashed: true}})
+		w := newNotionChanges()
+		next := changes(t, e, cursorOf(t, e, nil), w)
+		if !slices.Equal(w.log, []string{"delete pages pg_1"}) {
+			t.Fatalf("changes = %q", w.log)
+		}
+		var c notionCursor
+		if err := json.Unmarshal(next, &c); err != nil {
+			t.Fatal(err)
+		}
+		c.Since = since.Add(time.Hour)
+		cursor, _ := json.Marshal(c)
+		e.pages["pg_1"] = notionEdit{edited: "2026-01-08T11:00:00.000Z", properties: title("Roadmap")}
+		w = newNotionChanges()
+		w.held = map[string]bool{"row_1": true}
+		next = changes(t, e, cursor, w)
+		if !slices.Equal(w.log, []string{"upsert pages pg_1"}) || !slices.Equal(w.putNames(), []string{"pages pg_1"}) ||
+			!strings.Contains(string(next), `"trashed":["pg_1"]`) {
+			t.Fatalf("changes = %q, puts = %v, next = %s", w.log, w.putNames(), next)
+		}
+	})
+	// A page made since the full read, empty then, gets its document once it
+	// has a body, though cursors have moved past its making since.
+	t.Run("offers a document for a page made since the last full read, filled later", func(t *testing.T) {
+		made := "2026-01-07T23:30:00.000Z"
+		e := workspace(t, map[string]notionEdit{"pg_2": {edited: after, created: made, properties: title("Launch plan")}})
+		e.bodies["pg_2"] = "Launch in May."
+		w := newNotionChanges()
+		changes(t, e, cursorOf(t, e, func(c *notionCursor) { c.Full = since.Add(-time.Hour) }), w)
+		if !slices.Equal(w.log, []string{"upsert pages pg_2"}) || !slices.Equal(w.putNames(), []string{"pages pg_2"}) {
+			t.Fatalf("changes = %q, puts = %v", w.log, w.putNames())
 		}
 	})
 	// A page shows 25 ids of a relation; the rest are read from the property.
@@ -541,7 +760,8 @@ func TestNotionChanges(t *testing.T) {
 		}
 	})
 	// A cursor the reader can't decode, or with no time, leaves no point to resume from.
-	for _, cursor := range []string{`"2026-01-08"`, `{}`, `{"since":"soon"}`, `{"tables":["pages"]}`, `[]`} {
+	for _, cursor := range []string{`"2026-01-08"`, `{}`, `{"since":"soon"}`, `{"tables":["pages"]}`, `[]`,
+		`{"since":"2026-01-08T00:00:00Z","tables":["pages"],"sources":{}}`} {
 		t.Run("asks for a full read when the cursor is "+cursor, func(t *testing.T) {
 			e := workspace(t, nil)
 			if _, err := e.kind(nil).Changes(ctx, src, tables, json.RawMessage(cursor), newNotionChanges()); !errors.Is(err, ErrCursorExpired) {
@@ -617,11 +837,11 @@ func TestNotionSchema(t *testing.T) {
 	schemaOf := func(t *testing.T, properties string) string {
 		t.Helper()
 		kind := notionAt(t, notionRoutes{"/v1/search": notionSearchOf(t, nil, []string{notionTestSource("ds_1", "Accounts", "2026-01-01T00:00:00.000Z", properties)})})
-		sources, err := kind.client(notionTestSecret).sources(context.Background())
-		if err != nil || len(sources) != 1 {
-			t.Fatalf("sources = %v, %v", sources, err)
+		listed, err := kind.client(notionTestSecret).listSources(context.Background())
+		if err != nil || len(listed) != 1 {
+			t.Fatalf("sources = %v, %v", listed, err)
 		}
-		return sources[0].schema
+		return notionSources(listed)[0].schema
 	}
 	base := `{"Name":{"id":"title","type":"title","title":{}},"Plan":{"id":"pl","type":"select","select":{"options":[{"name":"Gold"}]}},
 		"Score":{"id":"sc","type":"formula","formula":{"expression":"1"}},"Ticket":{"id":"tk","type":"unique_id","unique_id":{"prefix":"T"}}}`

@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -79,8 +80,8 @@ var notionWait = func(attempt int, retryAfter string) time.Duration {
 }
 
 // notionReread is how often a page's document is read again though the
-// page shows no edit, and notionNow the clock of a read's versions, which
-// tests replace.
+// page shows no edit, and notionNow the clock a page's document is
+// versioned by when its Markdown is read, which tests replace.
 const notionReread = 7 * 24 * time.Hour
 
 var notionNow = time.Now
@@ -135,6 +136,9 @@ var notionPagesStream = Stream{Name: "pages", Table: "pages", Title: "Pages", Fo
 type notionKind struct {
 	base string
 	http *http.Client
+	// listings are by connector id (notionListing), under mu.
+	mu       sync.Mutex
+	listings map[string]notionListing
 }
 
 func (k *notionKind) Name() string        { return "notion" }
@@ -155,11 +159,13 @@ func (k *notionKind) Streams(Source) []Stream { return []Stream{notionPagesStrea
 
 func (k *notionKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }
 
-// Discover proves the secret on the integration's own user, then probes the
-// users list and a search each of pages and data sources, one result each.
-// A secret that may not read users makes the users table unavailable; one
-// shared with nothing is refused. Every shared data source is a table, its
-// columns from its schema; a test shows a few rows of each of the oldest 20.
+// Discover proves the secret on the integration's own user, lists the
+// shared data sources, then probes the users list and, when no data source
+// is shared, a search of pages, one result each. A secret that may not
+// read users makes the users table unavailable; one shared with nothing is
+// refused. Every shared data source is a table, its columns from its
+// schema; a test shows a few rows of each of the oldest 20. A sync's reads
+// use the data sources it listed (remember).
 func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	c := k.client(src.Secret)
 	status, _, err := c.do(ctx, "/v1/users/me", nil, nil)
@@ -169,8 +175,16 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 	if err := notionStatus(status, "/v1/users/me"); err != nil {
 		return Discovery{}, err
 	}
-	found, err := probeAll(ctx, []string{"users", "page", "data_source"}, func(ctx context.Context, probe string) (bool, error) {
-		if probe != "users" {
+	listed, err := c.listSources(ctx)
+	if err != nil {
+		return Discovery{}, err
+	}
+	probes := []string{"users"}
+	if len(listed) == 0 {
+		probes = append(probes, "page")
+	}
+	found, err := probeAll(ctx, probes, func(ctx context.Context, probe string) (bool, error) {
+		if probe == "page" {
 			l, err := c.page(ctx, "/v1/search", nil, map[string]any{"filter": map[string]any{"property": "object", "value": probe}, "page_size": 1})
 			return len(l.Results) > 0, err
 		}
@@ -186,7 +200,7 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 	if err != nil {
 		return Discovery{}, err
 	}
-	if !found["page"] && !found["data_source"] {
+	if len(listed) == 0 && !found["page"] {
 		return Discovery{}, refused(nil, "nothing is shared with this integration yet: in Notion, add it to a page or database "+
 			"from its ••• menu › Connections, then test again")
 	}
@@ -199,14 +213,7 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 		d.Unavailable = append(d.Unavailable, Unavailable{Name: "users", Reason: "turn on Read user information in the integration's capabilities"})
 	}
 	d.Tables = append(d.Tables, pages)
-	if !found["data_source"] {
-		return d, nil
-	}
-	sources, err := c.sources(ctx)
-	if err != nil {
-		return Discovery{}, err
-	}
-	for i, s := range sources {
+	for i, s := range notionSources(listed) {
 		t := s.table
 		if !src.ForSync && i < notionPreviews {
 			l, err := c.page(ctx, s.path(), nil, map[string]any{"page_size": notionPreviewRows, "result_type": "page"})
@@ -224,6 +231,9 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 			}
 		}
 		d.Tables = append(d.Tables, t)
+	}
+	if src.ForSync && src.ConnectorID != "" {
+		k.remember(src.ConnectorID, c.secret, listed)
 	}
 	return d, nil
 }
@@ -245,10 +255,10 @@ func (k *notionKind) SyncDocuments(ctx context.Context, src Source, table Table,
 // read), and every other page from a search, which Notion doesn't promise
 // is complete; one Markdown read per page whose document is wanted. A table
 // names its data source only by the name Discover gave it, so the pass
-// searches the data sources again and names them the same way; a data
-// source renamed in Notion is a new table, and its old one goes. Each data
-// source's table is returned with the columns of the schema this search
-// read.
+// names the data sources its sync's Discover listed the same way, or, past
+// notionListingFresh, searches them again; a data source renamed in
+// Notion is a new table, and its old one goes. Each data source's table is
+// returned with the columns of the schema that listing read.
 func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
 	c := k.client(src.Secret)
 	written := slices.Clone(tables)
@@ -269,10 +279,11 @@ func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 	if pages == nil && len(read) == 0 {
 		return written, nil
 	}
-	sources, err := c.sources(ctx)
+	listed, err := k.listed(ctx, c, src)
 	if err != nil {
 		return written, err
 	}
+	sources := notionSources(listed)
 	for _, table := range tables {
 		if _, ok := read[table.Name]; ok && !slices.ContainsFunc(sources, func(s notionSource) bool { return s.table.Name == table.Name }) {
 			return written, refused(nil, "Notion no longer shares the database of table %s with this integration; try again", table.Name)
@@ -315,17 +326,15 @@ func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 	return written, c.pages(ctx, pages, queried, docs)
 }
 
-// notionClient is one read's requests, paced together under Notion's rate
-// limit, and the time its documents are versioned at.
+// notionClient is one read's requests, paced together under Notion's rate limit.
 type notionClient struct {
 	k      *notionKind
 	secret string
 	pace   *rate.Limiter
-	now    time.Time
 }
 
 func (k *notionKind) client(secret string) *notionClient {
-	return &notionClient{k: k, secret: strings.TrimSpace(secret), pace: rate.NewLimiter(rate.Every(notionInterval), 1), now: notionNow()}
+	return &notionClient{k: k, secret: strings.TrimSpace(secret), pace: rate.NewLimiter(rate.Every(notionInterval), 1)}
 }
 
 // do sends one Notion request, paced: a GET of path with query, or with
@@ -507,10 +516,19 @@ func (c *notionClient) list(ctx context.Context, path string, query url.Values, 
 // object, its id alone, is read whole first, with query
 // (filter_properties), and left out if Notion refuses it
 // (notionOneRefused). Notion lists no trashed object unless the filter
-// asks for the trash (in_trash), and says when it cut a search at its
-// result limit, which fails the read: what it left out would go.
+// asks for the trash (in_trash), but its search is eventually consistent:
+// an object whose in_trash is not what the filter asked, just trashed or
+// restored, is left out. Notion says when it cut a search at its result
+// limit, which fails the read: what it left out would go.
 func (c *notionClient) search(ctx context.Context, filter map[string]any, direction string, query url.Values, each func(item map[string]any) error) error {
 	object, _ := filter["value"].(string)
+	trash := filter["in_trash"] == true
+	listed := func(item map[string]any) error {
+		if trashed, _ := item["in_trash"].(bool); trashed != trash {
+			return nil
+		}
+		return each(item)
+	}
 	cut, err := c.list(ctx, "/v1/search", query, map[string]any{
 		"filter": filter,
 		"sort":   map[string]any{"timestamp": "last_edited_time", "direction": direction},
@@ -520,7 +538,7 @@ func (c *notionClient) search(ctx context.Context, filter map[string]any, direct
 			return fmt.Errorf("notion /v1/search: a listed %s has no id", object)
 		}
 		if _, full := item["properties"]; full {
-			return each(item)
+			return listed(item)
 		}
 		path := "/v1/" + object + "s/" + url.PathEscape(id)
 		status, raw, err := c.do(ctx, path, query, nil)
@@ -537,7 +555,7 @@ func (c *notionClient) search(ctx context.Context, filter map[string]any, direct
 		if json.Unmarshal(raw, &whole) != nil || whole["id"] != id {
 			return fmt.Errorf("notion %s: the response is not the %s", path, strings.ReplaceAll(object, "_", " "))
 		}
-		return each(whole)
+		return listed(whole)
 	})
 	switch {
 	case err != nil:
@@ -564,28 +582,40 @@ func (c *notionClient) users(ctx context.Context, w RowWriter) error {
 	return err
 }
 
-// notionPage is a listed page: what its row and document need.
+// notionPage is a listed page: what its row and document need, and
+// whether it is in the trash.
 type notionPage struct {
 	id, title, url                     string
 	parentType, parentID, dataSourceID string
 	createdBy, editedBy                string
 	created, edited                    time.Time
+	trashed                            bool
 }
 
-// version is the version of the page's document as of now: a render
+// version is the version of the page's document read at now: a render
 // revision, to bump whenever its text changes for the same page; the
-// page's last edit; and the week of its re-read. Notion keeps an edit to
-// the minute, so a second edit in the minute of a sync shows at the page's
-// next edit or re-read. A page shows content from elsewhere (a synced
+// page's last edit; the week of its re-read; and "|provisional" when its
+// text may not have settled. A page shows content from elsewhere (a synced
 // block, a child page's title, a mention) that changes no edit of its own,
 // so its version also moves once every notionReread, at an offset its id
 // sets so a workspace's pages are not all read again in one sync; read
 // again unchanged, its document is updated in place, not extracted again.
+//
+// Notion keeps an edit's time to the minute, so text edited later in the
+// minute of a read, or that Notion's export had not caught up with, keeps
+// the page's last edit: a read before a minute and ChangeOverlap have
+// passed since it is provisional. The next read lists the page again (its
+// cursor reaches back ChangeOverlap from this read's start, to the minute)
+// and, once settled, reads it once more; the same bytes update in place.
 func (p notionPage) version(now time.Time) string {
 	sum := sha256.Sum256([]byte(p.id))
 	period := int64(notionReread / time.Second)
 	offset := int64(binary.BigEndian.Uint64(sum[:8]) % uint64(period))
-	return fmt.Sprintf("2|%s|%d", p.edited.UTC().Format(time.RFC3339Nano), (now.Unix()+offset)/period)
+	version := fmt.Sprintf("2|%s|%d", p.edited.UTC().Format(time.RFC3339Nano), (now.Unix()+offset)/period)
+	if now.Before(p.edited.Add(time.Minute + ChangeOverlap)) {
+		version += "|provisional"
+	}
+	return version
 }
 
 // notionPageOf reads a listed page, or a data source's row. One without
@@ -603,6 +633,7 @@ func notionPageOf(path string, item map[string]any) (notionPage, error) {
 		return p, fmt.Errorf("notion %s: page %s is listed without its created_time and last_edited_time", path, p.id)
 	}
 	p.url, _ = item["url"].(string)
+	p.trashed, _ = item["in_trash"].(bool)
 	parent, _ := item["parent"].(map[string]any)
 	kind, _ := parent["type"].(string)
 	// workspace, page_id, data_source_id or block_id; a workspace's value is true.
@@ -743,7 +774,9 @@ func (c *notionClient) offer(ctx context.Context, ps *notionPages, docs Document
 // its document as held, and the read goes on. A body empty has no
 // document, and takes back the one held.
 func (c *notionClient) document(ctx context.Context, p notionPage, docs DocumentWriter) (gone bool, _ error) {
-	version := p.version(c.now)
+	// Taken before the read, so a read the clock puts at the edge of p's
+	// settling is provisional.
+	version := p.version(notionNow())
 	if !docs.Want(notionPagesStream.Name, p.id, version) {
 		return false, nil
 	}
@@ -837,26 +870,28 @@ type notionColumn struct {
 
 func (s notionSource) path() string { return "/v1/data_sources/" + url.PathEscape(s.id) + "/query" }
 
-// sources lists every shared data source with its table, named from its
-// title (notionSlug), or data_source for a title with no letter or digit
-// Helix keeps. A name is never users or pages, and is held by the oldest
-// data source by creation, then id; any other that would take it takes it
-// with its id's suffix (notionSuffixed) instead, so sharing a newer one
-// moves no table.
-func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
-	type listed struct {
-		id, title  string
-		created    time.Time
-		properties map[string]any
-	}
-	// A data source listed twice keeps its last listing.
-	var all []listed
+// notionListed is a shared data source as Notion lists it, before it is named.
+type notionListed struct {
+	id, title  string
+	created    time.Time
+	properties map[string]any
+}
+
+func notionListedOf(item map[string]any) notionListed {
+	l := notionListed{title: notionText(item["title"])}
+	l.id, _ = item["id"].(string)
+	l.created, _ = notionTime(item["created_time"]) // none sorts first
+	l.properties, _ = item["properties"].(map[string]any)
+	return l
+}
+
+// listSources lists every shared data source; one listed twice keeps its
+// last listing.
+func (c *notionClient) listSources(ctx context.Context) ([]notionListed, error) {
+	var all []notionListed
 	at := map[string]int{}
 	err := c.search(ctx, map[string]any{"property": "object", "value": "data_source"}, "ascending", nil, func(item map[string]any) error {
-		l := listed{title: notionText(item["title"])}
-		l.id, _ = item["id"].(string)
-		l.created, _ = notionTime(item["created_time"]) // none sorts first
-		l.properties, _ = item["properties"].(map[string]any)
+		l := notionListedOf(item)
 		if i, ok := at[l.id]; ok {
 			all[i] = l
 			return nil
@@ -865,10 +900,85 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 		all = append(all, l)
 		return nil
 	})
-	if err != nil {
-		return nil, err
+	return all, err
+}
+
+// dataSource reads one data source by id, as a search lists it: ok is
+// false when Notion no longer shares it (404 or 403) or it is in the trash.
+func (c *notionClient) dataSource(ctx context.Context, id string) (_ notionListed, ok bool, _ error) {
+	path := "/v1/data_sources/" + url.PathEscape(id)
+	status, raw, err := c.do(ctx, path, nil, nil)
+	switch {
+	case err != nil:
+		return notionListed{}, false, err
+	case status == http.StatusNotFound || status == http.StatusForbidden:
+		return notionListed{}, false, nil
 	}
-	slices.SortFunc(all, func(a, b listed) int { return cmp.Or(a.created.Compare(b.created), strings.Compare(a.id, b.id)) })
+	if err := notionStatus(status, path); err != nil {
+		return notionListed{}, false, err
+	}
+	var item map[string]any
+	if json.Unmarshal(raw, &item) != nil || item["id"] != id {
+		return notionListed{}, false, fmt.Errorf("notion %s: the response is not the data source", path)
+	}
+	if item["in_trash"] == true {
+		return notionListed{}, false, nil
+	}
+	return notionListedOf(item), true, nil
+}
+
+// notionListing is the data sources a sync's Discover listed, which the
+// same sync's Start, Changes and SyncPass read rather than searching
+// again, for notionListingFresh: a sync searches its data sources once,
+// and names its tables as its discovery did.
+type notionListing struct {
+	secret string
+	at     time.Time
+	listed []notionListed
+}
+
+// notionListingFresh is how long a sync's discovered data sources serve
+// its reads: past it, as after a long change read, a read searches again,
+// so a data source unshared meanwhile isn't queried.
+const notionListingFresh = time.Minute
+
+// remember keeps what a sync's Discover listed for the connector, and
+// forgets the listings no read may use any longer.
+func (k *notionKind) remember(connectorID, secret string, listed []notionListed) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	now := time.Now()
+	maps.DeleteFunc(k.listings, func(_ string, l notionListing) bool { return now.Sub(l.at) >= notionListingFresh })
+	if k.listings == nil {
+		k.listings = map[string]notionListing{}
+	}
+	k.listings[connectorID] = notionListing{secret: secret, at: now, listed: listed}
+}
+
+// listed is the data sources a sync of src reads: those its Discover
+// listed (remember), while fresh and for the same secret, else a search.
+func (k *notionKind) listed(ctx context.Context, c *notionClient, src Source) ([]notionListed, error) {
+	if src.ForSync && src.ConnectorID != "" {
+		k.mu.Lock()
+		l, ok := k.listings[src.ConnectorID]
+		k.mu.Unlock()
+		if ok && l.secret == c.secret && time.Since(l.at) < notionListingFresh {
+			return slices.Clone(l.listed), nil
+		}
+	}
+	return c.listSources(ctx)
+}
+
+// notionSources names each listed data source's table from its title
+// (notionSlug), or data_source for a title with no letter or digit Helix
+// keeps. A name is never users or pages, and is held by the oldest data
+// source by creation, then id; any other that would take it takes it with
+// its id's suffix (notionSuffixed) instead, so sharing a newer one moves
+// no table.
+func notionSources(listed []notionListed) []notionSource {
+	all := slices.SortedFunc(slices.Values(listed), func(a, b notionListed) int {
+		return cmp.Or(a.created.Compare(b.created), strings.Compare(a.id, b.id))
+	})
 	tables := map[string]bool{"users": true, "pages": true}
 	sources := make([]notionSource, len(all))
 	for i, l := range all {
@@ -929,7 +1039,7 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 		s.schema = hex.EncodeToString(schema.Sum(nil)[:8])
 		sources[i] = s
 	}
-	return sources, nil
+	return sources
 }
 
 // rows reads every row of a data source, oldest first by creation, and
@@ -942,7 +1052,9 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 // to the millisecond; a window of a second or less that one query can't
 // answer fails the read. query is the queries' own (filter_properties),
 // and a non-zero edited reads only the rows last edited at or after it. A
-// wiki's query also lists the data sources under it, which are not rows.
+// wiki's query also lists the data sources under it, which are not rows,
+// and a row in the trash, which Notion may list while it catches up, is
+// left out.
 func (c *notionClient) rows(ctx context.Context, s notionSource, query url.Values, edited time.Time,
 	each func(p notionPage, item map[string]any) error) error {
 	body := map[string]any{"result_type": "page", "sorts": []any{map[string]any{"timestamp": "created_time", "direction": "ascending"}}}
@@ -982,6 +1094,9 @@ func (c *notionClient) rows(ctx context.Context, s notionSource, query url.Value
 				since, at = p.created, map[string]bool{}
 			}
 			at[p.id] = true
+			if p.trashed {
+				return nil
+			}
 			return each(p, item)
 		})
 		switch {

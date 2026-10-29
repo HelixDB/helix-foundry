@@ -20,8 +20,8 @@ import (
 // notionWorkspace is a Notion workspace a test edits between syncs: its
 // data sources and the pages shared with the integration, by id. It filters
 // a query by last edit and a search by the trash, and sorts a search by
-// last edit, as Notion does, and counts every Markdown read by page and
-// every query by data source and filter.
+// last edit, as Notion does, and counts every Markdown read by page, every
+// query by data source and filter, and every read of a data source by id.
 type notionWorkspace struct {
 	mu      sync.Mutex
 	sources map[string]notionTestSource
@@ -30,9 +30,12 @@ type notionWorkspace struct {
 	queries map[string]int
 }
 
-// notionTestSource is a shared data source: its title and its properties
-// but its title property, Name.
-type notionTestSource struct{ title, properties string }
+// notionTestSource is a shared data source: its title, its properties but
+// its title property, Name, and whether the search misses it, as Notion's may.
+type notionTestSource struct {
+	title, properties string
+	unsearched        bool
+}
 
 // notionTestTasks is the Tasks data source: a title and a checkbox.
 var notionTestTasks = notionTestSource{title: "Tasks", properties: `"Done":{"id":"dn","type":"checkbox","checkbox":{}}`}
@@ -51,6 +54,10 @@ func (w *notionWorkspace) serve(t *testing.T) string {
 	t.Helper()
 	list := func(items []string) string {
 		return `{"object":"list","results":[` + strings.Join(items, ",") + `],"next_cursor":null,"has_more":false}`
+	}
+	source := func(id string, s notionTestSource) string {
+		return fmt.Sprintf(`{"object":"data_source","id":%q,"created_time":"2026-10-01T00:00:00.000Z",
+			"title":[{"plain_text":%q}],"properties":{"Name":{"id":"title","type":"title","title":{}},%s}}`, id, s.title, s.properties)
 	}
 	page := func(id string, p notionTestPage) string {
 		parent := `{"type":"workspace","workspace":true}`
@@ -108,9 +115,9 @@ func (w *notionWorkspace) serve(t *testing.T) string {
 			items = []string{`{"object":"user","id":"usr_ada","type":"person","name":"Ada Lovelace","person":{"email":"ada@example.com"}}`}
 		case path == "/v1/search" && body.Filter.Value == "data_source":
 			for _, id := range slices.Sorted(maps.Keys(w.sources)) {
-				s := w.sources[id]
-				items = append(items, fmt.Sprintf(`{"object":"data_source","id":%q,"created_time":"2026-10-01T00:00:00.000Z",
-					"title":[{"plain_text":%q}],"properties":{"Name":{"id":"title","type":"title","title":{}},%s}}`, id, s.title, s.properties))
+				if !w.sources[id].unsearched {
+					items = append(items, source(id, w.sources[id]))
+				}
 			}
 		case path == "/v1/search":
 			items = listed(func(p notionTestPage) bool { return !p.unsearched && p.trashed == body.Filter.InTrash }, body.Sort.Direction == "descending")
@@ -126,6 +133,17 @@ func (w *notionWorkspace) serve(t *testing.T) string {
 				edited, _ := time.Parse(time.RFC3339, p.edited)
 				return p.source == id && !p.trashed && !edited.Before(since)
 			}, false)
+		case strings.HasPrefix(path, "/v1/data_sources/") && r.Method == http.MethodGet:
+			id := strings.TrimPrefix(path, "/v1/data_sources/")
+			w.queries[id+" by id"]++
+			s, ok := w.sources[id]
+			if !ok {
+				rw.WriteHeader(http.StatusNotFound)
+				_, _ = rw.Write([]byte(`{"object":"error","status":404,"code":"object_not_found"}`))
+				return
+			}
+			_, _ = rw.Write([]byte(source(id, s)))
+			return
 		case strings.HasSuffix(path, "/markdown"):
 			id := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/pages/"), "/markdown")
 			w.reads[id]++
@@ -450,5 +468,156 @@ func TestNotionSyncChanges(t *testing.T) {
 	}
 	if _, queries := workspace.took(); fmt.Sprint(queries) != "map[ds_notes all whole:1 ds_tasks all whole:1]" {
 		t.Fatalf("queries = %v", queries)
+	}
+}
+
+// TestNotionSyncReconcile runs Notion's change reads through the syncer on
+// Pro, then the daily reconcile, which writes nothing: each change read
+// wrote what a full read writes. Between them, a row's text is edited, a
+// page is made with a body and another empty, filled after the next sync, a
+// page is trashed then restored, and an edit joins the search a sync late,
+// dated well before the cursor.
+func TestNotionSyncReconcile(t *testing.T) {
+	t.Parallel() // Notion's pacing makes it slow; it shares nothing with another test
+	workspace := &notionWorkspace{sources: map[string]notionTestSource{"ds_tasks": notionTestTasks}, pages: map[string]notionTestPage{
+		"pg_1": {edited: "2026-10-01T10:00:00.000Z", title: "Roadmap", body: "## Q4\n\nShip the connector."},
+		"pg_2": {edited: "2026-10-02T10:00:00.000Z", title: "Write the guide", body: "Draft, then review.", source: "ds_tasks", done: true},
+		"pg_3": {edited: "2026-10-03T10:00:00.000Z", title: "Handbook", body: "Be kind."},
+	}}
+	f := notionFixture(t, "pro", workspace)
+	// Edits are after the cursor, which is the wall clock's.
+	minute := 0
+	edited := func() string {
+		minute++
+		return time.Now().UTC().Truncate(time.Minute).Add(time.Duration(minute) * time.Minute).Format(time.RFC3339)
+	}
+	changes := func(t *testing.T, id string) {
+		t.Helper()
+		if res := f.run(t, id); res.Mode != model.ConnectorSyncChanges {
+			t.Fatalf("sync %s mode = %s, want changes", id, res.Mode)
+		}
+	}
+	page := func(id string, edit func(p *notionTestPage)) {
+		p := workspace.pages[id]
+		edit(&p)
+		workspace.pages[id] = p
+	}
+
+	f.run(t, "sync-1")
+	// A row's text edited; a page made with a body, one made empty; a page
+	// trashed; and an edit Notion's search has yet to list, made before the
+	// next cursor.
+	workspace.edit(func() {
+		page("pg_2", func(p *notionTestPage) { p.edited, p.body = edited(), "Draft, review, ship." })
+		at := edited()
+		workspace.pages["pg_4"] = notionTestPage{edited: at, created: at, title: "Launch", body: "Launch in May."}
+		at = edited()
+		workspace.pages["pg_5"] = notionTestPage{edited: at, created: at, title: "Retro", body: "\n"}
+		page("pg_3", func(p *notionTestPage) { p.edited, p.trashed = edited(), true })
+		page("pg_1", func(p *notionTestPage) {
+			p.edited, p.body, p.unsearched = time.Now().UTC().Add(-10*time.Minute).Truncate(time.Minute).Format(time.RFC3339), "## Q4\n\nShipped.", true
+		})
+	})
+	changes(t, "sync-2")
+	if pages := f.held(t, "pages"); len(pages) != 3 || pages["pg_2"] != notionDocument("pg_2", "Write the guide", "Draft, review, ship.") ||
+		pages["pg_4"] == "" || pages["pg_3"] != "" || pages["pg_1"] != notionDocument("pg_1", "Roadmap", "## Q4\n\nShip the connector.") {
+		t.Fatalf("pages = %q", pages)
+	}
+
+	// Ten minutes on, as a sync at 15-minute intervals is: pg_5 was made
+	// before this sync's cursor.
+	minute = 10
+	var cursor map[string]json.RawMessage
+	if err := json.Unmarshal(f.store.connectors["conn-1"].ChangeCursor, &cursor); err != nil {
+		t.Fatal(err)
+	}
+	cursor["since"], _ = json.Marshal(time.Now().UTC().Truncate(time.Minute).Add(8 * time.Minute))
+	f.store.connectors["conn-1"].ChangeCursor, _ = json.Marshal(cursor)
+	// The empty page filled, the trashed one restored, and the late edit
+	// listed, older than this sync's cursor.
+	workspace.edit(func() {
+		page("pg_5", func(p *notionTestPage) { p.edited, p.body = edited(), "Went well." })
+		page("pg_3", func(p *notionTestPage) { p.edited, p.trashed = edited(), false })
+		page("pg_1", func(p *notionTestPage) { p.unsearched = false })
+	})
+	changes(t, "sync-3")
+	pages := f.held(t, "pages")
+	if len(pages) != 5 || pages["pg_5"] != notionDocument("pg_5", "Retro", "Went well.") || pages["pg_3"] != notionDocument("pg_3", "Handbook", "Be kind.") ||
+		pages["pg_1"] != notionDocument("pg_1", "Roadmap", "## Q4\n\nShipped.") || f.store.tables["pages"].RowCount != 5 {
+		t.Fatalf("pages = %q, %d rows", pages, f.store.tables["pages"].RowCount)
+	}
+
+	// The reconcile reads everything in full and finds nothing to change.
+	batches, publishes := len(slices.Concat(slices.Collect(maps.Values(f.store.batches))...)), len(f.store.publishes)
+	snapshots := map[string]string{}
+	for name, table := range f.store.tables {
+		snapshots[name] = table.S3Key
+		old := time.Now().Add(-25 * time.Hour)
+		table.ReconciledAt = &old
+	}
+	ids := map[string]string{}
+	for id := range pages {
+		ids[id] = f.liveID("pages", id)
+	}
+	if res := f.run(t, "sync-4"); res.Mode != model.ConnectorSyncFull || len(res.Changed) != 0 {
+		t.Fatalf("mode = %s, changed = %v", res.Mode, res.Changed)
+	}
+	if n := len(slices.Concat(slices.Collect(maps.Values(f.store.batches))...)); n != batches {
+		t.Fatalf("the reconcile recorded %d change batches", n-batches)
+	}
+	for name, table := range f.store.tables {
+		if table.S3Key != snapshots[name] {
+			t.Errorf("the reconcile replaced %s's snapshot", name)
+		}
+	}
+	for _, p := range f.store.publishes[publishes:] {
+		if len(p.Add)+len(p.Remove) != 0 {
+			t.Fatalf("the reconcile added %d documents and removed %d", len(p.Add), len(p.Remove))
+		}
+	}
+	for id, was := range ids {
+		if f.liveID("pages", id) != was {
+			t.Fatalf("the reconcile replaced %s's document", id)
+		}
+	}
+}
+
+// TestNotionSyncUnsearchedSource runs a change sync whose search of data
+// sources leaves one out, as Notion's eventually consistent search may: the
+// data source, read by id, keeps its rows of the pages table and their
+// documents. Its table, not discovered this sync, comes back at the next,
+// which reads it in full.
+func TestNotionSyncUnsearchedSource(t *testing.T) {
+	t.Parallel() // Notion's pacing makes it slow; it shares nothing with another test
+	workspace := &notionWorkspace{sources: map[string]notionTestSource{"ds_tasks": notionTestTasks}, pages: map[string]notionTestPage{
+		"pg_1": {edited: "2026-10-01T10:00:00.000Z", title: "Roadmap", body: "## Q4\n\nShip the connector."},
+		"pg_2": {edited: "2026-10-02T10:00:00.000Z", title: "Write the guide", body: "Draft, then review.", source: "ds_tasks", done: true},
+	}}
+	f := notionFixture(t, "pro", workspace)
+	f.run(t, "sync-1")
+	task := f.liveID("pages", "pg_2")
+	workspace.took()
+
+	workspace.edit(func() {
+		s := workspace.sources["ds_tasks"]
+		s.unsearched = true
+		workspace.sources["ds_tasks"] = s
+	})
+	if res := f.run(t, "sync-2"); res.Mode != model.ConnectorSyncChanges {
+		t.Fatalf("mode = %s", res.Mode)
+	}
+	if _, queries := workspace.took(); fmt.Sprint(queries) != "map[ds_tasks by id:1 ds_tasks since title:1]" ||
+		f.liveID("pages", "pg_2") != task || f.store.tables["pages"].RowCount != 2 {
+		t.Fatalf("queries = %v; pg_2's document %q, was %q; %d pages", queries, f.liveID("pages", "pg_2"), task, f.store.tables["pages"].RowCount)
+	}
+
+	workspace.edit(func() {
+		s := workspace.sources["ds_tasks"]
+		s.unsearched = false
+		workspace.sources["ds_tasks"] = s
+	})
+	if res := f.run(t, "sync-3"); res.Mode != model.ConnectorSyncFull || f.store.tables["tasks"] == nil || f.store.tables["tasks"].RowCount != 1 ||
+		f.liveID("pages", "pg_2") != task {
+		t.Fatalf("mode = %s, tables = %v, pg_2's document %q", res.Mode, slices.Sorted(maps.Keys(f.store.tables)), f.liveID("pages", "pg_2"))
 	}
 }

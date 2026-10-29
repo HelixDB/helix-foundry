@@ -13,15 +13,30 @@ import (
 
 var _ ChangeReader = (*notionKind)(nil)
 
+// notionSearchLag is how far a change read's searches reach back before
+// its cursor, past the queries' overlap: Notion's search is eventually
+// consistent, its trash most of all, so an edit may join it, in its place
+// by last edit, well after it was made. A page listed again costs little:
+// its unchanged row merges to nothing, and a held version reads no Markdown.
+const notionSearchLag = 30 * time.Minute
+
 // notionCursor is where a change read begins: the rows of Tables last
 // edited from Since, and the data sources shared when it was taken, by id,
 // each with the table it was read into and its schema. Every read moves
 // each table it follows to its own start, a table it resets too, since the
 // full read of it comes after, so one time holds for all of them.
+//
+// Full is where the last full read of the pages table began, kept through
+// change reads: a page made since was never ranked against its stream's
+// cap. Trashed are the pages made before Full whose document the stream
+// held when a change read since took them out for the trash, so one
+// restored has its document back: at most as many as that full read kept.
 type notionCursor struct {
 	Since   time.Time                     `json:"since"`
+	Full    time.Time                     `json:"full"`
 	Tables  []string                      `json:"tables"`
 	Sources map[string]notionSourceCursor `json:"sources"`
+	Trashed []string                      `json:"trashed,omitempty"`
 }
 
 type notionSourceCursor struct {
@@ -33,8 +48,8 @@ type notionSourceCursor struct {
 // start: timeCursor's, to the minute Notion keeps an edit's time to.
 func notionSince(start time.Time) time.Time { return timeCursor(start).Truncate(time.Minute) }
 
-func notionCursorOf(since time.Time, tables []Table, sources []notionSource) (json.RawMessage, error) {
-	c := notionCursor{Since: since, Tables: []string{}, Sources: make(map[string]notionSourceCursor, len(sources))}
+func notionCursorOf(since, full time.Time, trashed []string, tables []Table, sources []notionSource) (json.RawMessage, error) {
+	c := notionCursor{Since: since, Full: full, Tables: []string{}, Sources: make(map[string]notionSourceCursor, len(sources)), Trashed: trashed}
 	for _, t := range tables {
 		c.Tables = append(c.Tables, t.Name)
 	}
@@ -56,11 +71,11 @@ func (k *notionKind) Capture(_ Source, table string) Capture {
 
 func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Start, error) {
 	since := notionSince(time.Now())
-	sources, err := k.client(src.Secret).sources(ctx)
+	listed, err := k.listed(ctx, k.client(src.Secret), src)
 	if err != nil {
 		return Start{}, err
 	}
-	cursor, err := notionCursorOf(since, tables, sources)
+	cursor, err := notionCursorOf(since, since, nil, tables, notionSources(listed))
 	return Start{Cursor: cursor}, err
 }
 
@@ -68,34 +83,57 @@ func (k *notionKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 //  1. A table the cursor doesn't follow is reset, and so is a data
 //     source's table that held another data source's rows (the name moves
 //     to another when its holder is unshared) or whose data source's schema
-//     changed: its stored rows aren't what a full read would write now.
-//  2. The trash, newest edit first, back to the cursor: a page trashed
-//     since loses its rows, and the syncer its document with them. It
-//     comes first, so a page restored since is upserted after.
-//  3. A data source the cursor has that Notion no longer shares loses its
+//     changed: its stored rows aren't what a full read would write now. A
+//     data source the cursor has that the search of them leaves out is read
+//     by id, since the search is eventually consistent: one Notion still
+//     shares is read as if listed.
+//  2. The trash, newest edit first, back to notionSearchLag before the
+//     cursor: a page trashed since loses its rows, and the syncer its
+//     document with them. It comes first, so a page restored since is
+//     upserted after.
+//  3. A data source the cursor has that Notion no longer shares (it
+//     answers 404 or 403, or the data source is in the trash) loses its
 //     rows of the pages table, as a full read would leave them out.
 //  4. Each shared data source's rows edited since, from one query: its
 //     table's whole rows, and the pages table's (of their titles alone
 //     where its table isn't followed).
-//  5. The other pages a search lists, newest edit first, back to the cursor.
+//  5. The other pages a search lists, newest edit first, back to
+//     notionSearchLag before the cursor.
 //
-// Each page the pages table upserts whose document the stream holds, or
-// that was made since the cursor, has its document offered as a full read
-// offers it (document); one Notion no longer finds loses its pages row. What moves no page's last edit waits for the daily reconcile: a
-// page shared, unshared or trashed without one, a row moved out of its data
-// source (its old table keeps it), a formula or rollup whose inputs are on
-// other pages, and a select option renamed.
+// Each page the pages table upserts has its document offered as a full
+// read offers it (document) when the stream holds one, when it was made
+// since the last full read of the pages table began, or when a change read
+// since took it out for the trash with its document; one Notion no longer
+// finds loses its pages row. What moves no page's last edit waits for the
+// daily reconcile: a page shared, unshared or trashed without one, a row
+// moved out of its data source (its old table keeps it), a formula or
+// rollup whose inputs are on other pages, and a select option renamed.
 func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cursor json.RawMessage, w ChangeWriter) (json.RawMessage, error) {
 	next := notionSince(time.Now())
 	var prev notionCursor
-	if err := json.Unmarshal(cursor, &prev); err != nil || prev.Since.IsZero() {
+	if err := json.Unmarshal(cursor, &prev); err != nil || prev.Since.IsZero() || prev.Full.IsZero() {
 		return nil, fmt.Errorf("decode notion change cursor: %w", ErrCursorExpired)
 	}
 	c := k.client(src.Secret)
-	sources, err := c.sources(ctx)
+	listed, err := k.listed(ctx, c, src)
 	if err != nil {
 		return nil, err
 	}
+	var unshared []string // the cursor's data sources Notion no longer shares
+	for _, id := range slices.Sorted(maps.Keys(prev.Sources)) {
+		if slices.ContainsFunc(listed, func(l notionListed) bool { return l.id == id }) {
+			continue
+		}
+		switch l, shared, err := c.dataSource(ctx, id); {
+		case err != nil:
+			return nil, err
+		case shared:
+			listed = append(listed, l)
+		default:
+			unshared = append(unshared, id)
+		}
+	}
+	sources := notionSources(listed)
 	pages := false
 	followed := map[string]string{} // the data sources' tables this read follows, by data source id
 	for _, t := range tables {
@@ -119,10 +157,27 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 			followed[sources[i].id] = t.Name
 		}
 	}
+	// The pages table read in full after this read, if at all, ranks its
+	// documents against the cap again.
+	full, trashed := next, map[string]bool{}
+	if pages {
+		full = prev.Full
+		for _, id := range prev.Trashed {
+			trashed[id] = true
+		}
+	}
+	done := func() (json.RawMessage, error) {
+		return notionCursorOf(next, full, slices.Sorted(maps.Keys(trashed)), tables, sources)
+	}
 	if !pages && len(followed) == 0 {
-		return notionCursorOf(next, tables, sources)
+		return done()
+	}
+	held := func(id string) bool {
+		_, ok := w.Held(notionPagesStream.Name, id)
+		return ok
 	}
 	titles := url.Values{"filter_properties": {"title"}}
+	back := prev.Since.Add(-notionSearchLag)
 	newest := func(trash bool, each func(p notionPage) error) error {
 		filter := map[string]any{"property": "object", "value": "page"}
 		if trash {
@@ -133,7 +188,7 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 			switch {
 			case err != nil:
 				return err
-			case p.edited.Before(prev.Since):
+			case p.edited.Before(back):
 				return errNotionEnough
 			}
 			return each(p)
@@ -150,31 +205,33 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 				return err
 			}
 		}
-		if pages {
-			return w.Delete("pages", key)
+		if !pages {
+			return nil
 		}
-		return nil
+		if p.created.Before(full) && held(p.id) {
+			trashed[p.id] = true
+		}
+		return w.Delete("pages", key)
 	})
 	if err != nil {
 		return nil, err
 	}
 	if pages {
-		for _, id := range slices.Sorted(maps.Keys(prev.Sources)) {
-			if !slices.ContainsFunc(sources, func(s notionSource) bool { return s.id == id }) {
-				if err := w.DeleteWhere("pages", "data_source_id", id); err != nil {
-					return nil, err
-				}
+		for _, id := range unshared {
+			if err := w.DeleteWhere("pages", "data_source_id", id); err != nil {
+				return nil, err
 			}
 		}
 	}
 	page := func(p notionPage) error {
-		// A change read has no cap. A page whose document the stream doesn't
-		// hold may be one the last full read left past it (a workspace of
-		// more pages than the stream keeps), and a document for it now would
-		// go at the next reconcile, extracted for nothing: so only a page
-		// made since the cursor is offered one. An older page that has just
-		// gained a body waits for the reconcile.
-		if _, held := w.Held(notionPagesStream.Name, p.id); !held && p.created.Before(prev.Since) {
+		// A change read has no cap. A page made before the last full read
+		// whose document the stream doesn't hold may be one that read left
+		// past the cap (a workspace of more pages than the stream keeps), and
+		// a document for it now would go at the next reconcile, extracted for
+		// nothing: so only a page made since, or one taken out for the trash
+		// with its document since, is offered one. An older page that has
+		// just gained a body waits for the reconcile.
+		if !held(p.id) && p.created.Before(full) && !trashed[p.id] {
 			return w.Upsert("pages", p.row())
 		}
 		gone, err := c.document(ctx, p, w)
@@ -217,18 +274,18 @@ func (k *notionKind) Changes(ctx context.Context, src Source, tables []Table, cu
 		}
 	}
 	if !pages {
-		return notionCursorOf(next, tables, sources)
+		return done()
 	}
-	listed := map[string]bool{}
+	listedPages := map[string]bool{}
 	err = newest(false, func(p notionPage) error {
-		if queried[p.dataSourceID] || listed[p.id] {
+		if queried[p.dataSourceID] || listedPages[p.id] {
 			return nil
 		}
-		listed[p.id] = true
+		listedPages[p.id] = true
 		return page(p)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return notionCursorOf(next, tables, sources)
+	return done()
 }
