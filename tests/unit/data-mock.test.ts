@@ -844,6 +844,15 @@ describe("testing and creating", () => {
       files: 312,
       users: 26,
     });
+    // An event says when Google left its attendees out.
+    expect(
+      ok<{ connector: Connector }>(
+        call("GET", `${base()}/connectors/${google.id}`),
+      )
+        .connector.tables!.find((t) => t.name === "calendar_events")!
+        .columns!.map((c) => c.name)
+        .slice(-2),
+    ).toEqual(["attendee_count", "attendees_omitted"]);
     // A Notion database keeps its typed columns once synced.
     const synced = ok<{ connector: Connector }>(
       call("GET", `${base()}/connectors/${notion.id}`),

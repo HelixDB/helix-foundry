@@ -1117,10 +1117,12 @@ const notionPages = Array.from({ length: 60 }, (_, i) => {
 
 // Google Workspace's APIs (googleapis.com), as google.go reads them as one
 // user through a service account's domain-wide delegation: the Directory's
-// users (an admin's), the Drive files the user can open, their calendars,
-// and the events of the last event_days (and the next 30) with their
-// attendees. Each Google Doc is a document, exported as Markdown. A scope
-// the admin didn't delegate makes its API's tables unavailable.
+// users (an admin's), the Drive files the user can open (My Drive and what
+// is shared with them, then each shared drive), their calendars, and the
+// events of the last event_days (and the next 30) with their attendees,
+// saying when Google left them out. Each Google Doc the user may download
+// is a document, exported as Markdown without its images. A scope the
+// admin didn't delegate makes its API's tables unavailable.
 const googleObjects = [
   object(
     "users",
@@ -1197,6 +1199,7 @@ const googleObjects = [
       "created_at",
       "updated_at",
       "attendee_count",
+      "attendees_omitted",
     ],
     684,
   ),
@@ -1246,16 +1249,21 @@ const GOOGLE_DOC_NAMES = [
 ];
 // The Docs in Drive, newest change first, each owned by one of the people
 // ("ada@example.com").
-const googleDocs = GOOGLE_DOC_NAMES.map((name, i) => ({
-  id: `1mockDoc${String(i + 1).padStart(4, "0")}aBcDeFgHiJkLmNoPq`,
-  name,
-  owner: `${PEOPLE_AT_WORK[i % PEOPLE_AT_WORK.length]!.split(" ")[0]!.toLowerCase()}@example.com`,
-  modifiedAt: new Date(
-    Date.parse("2026-10-27T16:20:00.000Z") - i * 61 * 3_600_000,
-  ).toISOString(),
-  // Drive's version of the file.
-  driveVersion: String(40 + i * 3),
-}));
+const googleDocs = GOOGLE_DOC_NAMES.map((name, i) => {
+  const id = `1mockDoc${String(i + 1).padStart(4, "0")}aBcDeFgHiJkLmNoPq`;
+  return {
+    id,
+    name,
+    // Its webViewLink.
+    link: `https://docs.google.com/document/d/${id}/edit?usp=drivesdk`,
+    owner: `${PEOPLE_AT_WORK[i % PEOPLE_AT_WORK.length]!.split(" ")[0]!.toLowerCase()}@example.com`,
+    modifiedAt: new Date(
+      Date.parse("2026-10-27T16:20:00.000Z") - i * 61 * 3_600_000,
+    ).toISOString(),
+    // Drive's version of the file.
+    driveVersion: String(40 + i * 3),
+  };
+});
 
 // ---------------------------------------------------------------- Documents
 
@@ -1367,8 +1375,9 @@ const googleStream: MockStream = {
   table: "files",
   title: "Docs",
   description:
-    "Each Google Doc the connection's user can open in Drive, as Markdown: its title, owner, last modified time " +
-    "and file id, then the Doc's text as Drive exports it, with its headings, lists, tables and links.",
+    "Each Google Doc the connection's user can open and download in Drive, as Markdown: its title, owner, last " +
+    "modified time and file id, then the Doc's text as Drive exports it, with its headings, lists, tables and links; its " +
+    "images are left out, keeping their alt text, and a Doc whose export is over Drive's 10 MB limit is its plain text.",
   mediaType: "text/markdown",
 };
 
@@ -1553,10 +1562,13 @@ export function documentStreams(
         stream: googleStream,
         documents: googleDocs.map((d) => ({
           externalId: d.id,
-          version: `1|${d.modifiedAt}|${d.driveVersion}`,
+          // google.go's version: "1|", the Doc's modified time as Drive
+          // gives it, Drive's version, then 16 hex digits of a hash of what
+          // the document shows beside the export (its name, owner and link).
+          version: `1|${d.modifiedAt}|${d.driveVersion}|${sha(`${d.name}\0${d.owner}\0${d.link}`, 16)}`,
           at: d.modifiedAt,
           title: d.name,
-          url: `https://docs.google.com/document/d/${d.id}/edit?usp=drivesdk`,
+          url: d.link,
           text: [
             `# ${d.name}`,
             "",

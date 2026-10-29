@@ -455,15 +455,20 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       documents: 14,
       connector: { connectorId, stream: "docs" },
     });
+    expect(docs!.description).toContain(
+      "can open and download in Drive, as Markdown",
+    );
     const [newest] = (await page(`setId=${docs!.id}`)).documents;
-    const id = "1mockDoc0001aBcDeFgHiJkLmNoPq";
+    const id = "1mockDoc0001aBcDeFgHiJkLmNoPq",
+      url = `https://docs.google.com/document/d/${id}/edit?usp=drivesdk`;
     expect(newest).toMatchObject({
       name: "Q4 planning",
       source: {
         externalId: id,
-        // Its modified time and Drive's version.
-        version: "1|2026-10-27T16:20:00.000Z|40",
-        url: `https://docs.google.com/document/d/${id}/edit?usp=drivesdk`,
+        // Its modified time, Drive's version and a hash of its name, owner
+        // and link.
+        version: `1|2026-10-27T16:20:00.000Z|40|${sha(`Q4 planning\0ada@example.com\0${url}`).slice(0, 16)}`,
+        url,
       },
     });
     expect(
