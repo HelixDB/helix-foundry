@@ -2272,24 +2272,23 @@ function syncS3(s: S3ConnectorConfig, found: ConnectorDiscovery) {
 
 /**
  * A Google service account's JSON key, or undefined for anything else: an
- * object of type service_account with its client_email and private_key.
+ * object of type service_account with its client_email, private_key_id and
+ * a PEM private_key, as the backend's parseGoogleKey takes them (the mock
+ * doesn't parse the RSA key inside).
  */
 function serviceAccount(
   key: string,
-): { client_email: string; private_key_id?: string } | undefined {
+): { client_email: string; private_key_id: string } | undefined {
   try {
     const k = JSON.parse(key) as Record<string, unknown>;
     return k?.type === "service_account" &&
       typeof k.client_email === "string" &&
       k.client_email &&
+      typeof k.private_key_id === "string" &&
+      k.private_key_id &&
       typeof k.private_key === "string" &&
-      k.private_key
-      ? {
-          client_email: k.client_email,
-          ...(typeof k.private_key_id === "string"
-            ? { private_key_id: k.private_key_id }
-            : {}),
-        }
+      /-----BEGIN (RSA )?PRIVATE KEY-----/.test(k.private_key)
+      ? { client_email: k.client_email, private_key_id: k.private_key_id }
       : undefined;
   } catch {
     return undefined;
@@ -2723,7 +2722,7 @@ export function hint(src: Source) {
   // The key's service account and its key id's last four characters.
   if (src.kind === "google") {
     const k = serviceAccount(src.secret);
-    return k ? `${k.client_email}…${(k.private_key_id || "").slice(-4)}` : "…";
+    return k ? `${k.client_email}…${k.private_key_id.slice(-4)}` : "…";
   }
   if (src.kind === "slack")
     return src.secret.length < 12 ? "…" : "xoxb…" + src.secret.slice(-4);

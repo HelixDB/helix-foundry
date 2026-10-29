@@ -542,6 +542,8 @@ describe("testing and creating", () => {
       googleKey({ type: "authorized_user" }),
       googleKey({ client_email: "" }),
       googleKey({ private_key: undefined }),
+      googleKey({ private_key: "not a PEM key" }),
+      googleKey({ private_key_id: undefined }),
     ])
       expect(test({ google: { serviceAccountKey, subject } }).message).toBe(
         "paste the service account's JSON key",
@@ -559,7 +561,7 @@ describe("testing and creating", () => {
     expect(
       test({
         google: {
-          serviceAccountKey: googleKey({ private_key: "bad" }),
+          serviceAccountKey: googleKey({ client_id: "bad" }),
           subject,
         },
       }),
