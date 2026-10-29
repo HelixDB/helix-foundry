@@ -368,7 +368,7 @@ func TestGoogleSyncChanges(t *testing.T) {
 			"doc1": {modified: "2026-10-01T10:00:00Z", text: "One.", owner: "ada@acme.com"},
 		}, map[string]googleTestEvent{
 			"ev1": {start: soon, summary: "Roadmap", attendees: []string{"ada@acme.com", "grace@acme.com"}},
-			"ev2": {start: soon.Add(time.Hour), summary: "Standup"},
+			"ev2": {start: soon.Add(time.Hour), summary: "Standup", attendees: []string{"ada@acme.com"}},
 			"ev3": {start: soon.Add(2 * time.Hour), summary: "Review", attendees: []string{"ada@acme.com"}},
 		})
 	}
@@ -451,7 +451,7 @@ func TestGoogleSyncChanges(t *testing.T) {
 	if got := ids(t, f, "event_attendees", "email"); fmt.Sprint(got) != "[ada@acme.com ada@acme.com alan@acme.com]" {
 		t.Fatalf("attendees = %v", got)
 	}
-	if b := batch(f, "event_attendees"); b.Inserts != 1 || b.Deletes != 1 {
+	if b := batch(f, "event_attendees"); b.Inserts != 1 || b.Deletes != 2 {
 		t.Fatalf("event_attendees batch = %+v", b)
 	}
 

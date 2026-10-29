@@ -538,13 +538,13 @@ func googleError(body []byte) (reasons []string, message string) {
 // pages lists a Google collection a page at a time, following
 // nextPageToken, and passes each item of field to each, once by its id: a
 // list that changes while it is paged may show an item twice. Google
-// leaves an empty list out. It returns the last page's nextSyncToken,
-// which Calendar gives a list of events, and "" for a list without one. Only the first page refused (errNoAccess) says
-// the user can't read the list. A later page refused, a page that isn't an
-// object, whose list isn't one of objects, that lists an item without an
-// id, that gives back the token it was asked with, or that Drive says
-// searched only part of what the user can read fails the read: ending
-// early would publish a partial table.
+// leaves an empty list out. It returns the last page's nextSyncToken, which
+// Calendar gives a list of events, and "" for a list without one. Only the
+// first page refused (errNoAccess) says the user can't read the list. A
+// later page refused, a page that isn't an object, whose list isn't one of
+// objects, that lists an item without an id, that gives back the token it
+// was asked with, or that Drive says searched only part of what the user
+// can read fails the read: ending early would publish a partial table.
 func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, query url.Values, field string,
 	each func(id string, item map[string]any) error) (string, error) {
 	seen := map[string]bool{}
