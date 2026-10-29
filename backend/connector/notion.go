@@ -158,7 +158,7 @@ func (k *notionKind) Discover(ctx context.Context, src Source) (Discovery, error
 	for _, s := range sources {
 		t := s.table
 		if !src.ForSync {
-			l, err := c.page(ctx, s.path(), nil, map[string]any{"page_size": notionPreviewRows})
+			l, err := c.page(ctx, s.path(), nil, map[string]any{"page_size": notionPreviewRows, "result_type": "page"})
 			if err != nil {
 				return Discovery{}, err
 			}
@@ -576,7 +576,7 @@ type notionSource struct {
 // notionColumn is a property's column: rows give its value under the
 // property's id, and a date's end goes to a column of its own.
 type notionColumn struct {
-	id, kind, name, end string
+	id, name, end string
 }
 
 func (s notionSource) path() string { return "/v1/data_sources/" + url.PathEscape(s.id) + "/query" }
@@ -615,7 +615,7 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 			if !ok {
 				continue
 			}
-			col := notionColumn{kind: kind, name: notionUnique(columns, notionSlug(name), "property")}
+			col := notionColumn{name: notionUnique(columns, notionSlug(name), "property")}
 			col.id, _ = property["id"].(string)
 			s.table.Columns = append(s.table.Columns, Column{Name: col.name, Type: typ, Nullable: true})
 			if kind == "date" {
@@ -633,9 +633,10 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 // creation. Notion answers at most 10,000 rows per query and says when it
 // cut one short; the read then queries again from the last row's creation
 // time, which Notion keeps to the minute, skipping that minute's rows it
-// has. More than one query's rows created in one minute can't be read.
+// has. More than one query's rows created in one minute can't be read. A
+// wiki's query also lists the data sources under it, which are not rows.
 func (c *notionClient) rows(ctx context.Context, s notionSource, w RowWriter) error {
-	body := map[string]any{"sorts": []any{map[string]any{"timestamp": "created_time", "direction": "ascending"}}}
+	body := map[string]any{"result_type": "page", "sorts": []any{map[string]any{"timestamp": "created_time", "direction": "ascending"}}}
 	var since time.Time
 	at := map[string]bool{} // the rows created at since
 	for {
@@ -661,7 +662,7 @@ func (c *notionClient) rows(ctx context.Context, s notionSource, w RowWriter) er
 			return invalid("Notion answers at most 10,000 rows of a database at a time, and more rows of %s were created in one minute; "+
 				"Helix can't read them all", s.table.Name)
 		}
-		body["filter"] = map[string]any{"timestamp": "created_time", "created_time": map[string]any{"on_or_after": since.UTC().Format(time.RFC3339)}}
+		body["filter"] = map[string]any{"timestamp": "created_time", "created_time": map[string]any{"on_or_after": since.UTC().Format(time.RFC3339Nano)}}
 	}
 }
 

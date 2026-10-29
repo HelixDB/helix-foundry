@@ -210,7 +210,7 @@ func TestNotionConnector(t *testing.T) {
 	accounts := notionTestSource("ds_1", "Customer Accounts", "2026-01-01T00:00:00.000Z", notionAccountsSchema)
 	accountRows := func(n int) func(r *http.Request) (int, string) {
 		return func(r *http.Request) (int, string) {
-			if body := notionBody(t, r); body["page_size"] != float64(notionPreviewRows) {
+			if body := notionBody(t, r); body["page_size"] != float64(notionPreviewRows) || body["result_type"] != "page" {
 				t.Errorf("preview query = %v", body)
 			}
 			var rows []string
@@ -672,7 +672,8 @@ func TestNotionSync(t *testing.T) {
 			notionRoutes{"/v1/data_sources/ds_1/query": func(r *http.Request) (int, string) {
 				body := notionBody(t, r)
 				cursor, _ := body["start_cursor"].(string)
-				if body["page_size"] != 100.0 || fmt.Sprint(body["sorts"]) != "[map[direction:ascending timestamp:created_time]]" || body["filter"] != nil {
+				if body["page_size"] != 100.0 || body["result_type"] != "page" || fmt.Sprint(body["sorts"]) != "[map[direction:ascending timestamp:created_time]]" ||
+					body["filter"] != nil {
 					t.Errorf("query body = %v", body)
 				}
 				cursors = append(cursors, cursor)
