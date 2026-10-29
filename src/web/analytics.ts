@@ -1,4 +1,4 @@
-import { flush, track } from "@databuddy/sdk";
+import { isTrackerAvailable, track } from "@databuddy/sdk";
 import type {
   ConnectorKindName,
   DocumentMediaType,
@@ -86,13 +86,27 @@ export function trackEvent<Name extends AnalyticsEventName>(
   track(name, properties);
 }
 
+// How long a page about to leave waits for the tracker to load.
+const LEAVE_WAIT_MS = 1000;
+
 /**
- * Sends what is queued now, for an event just before the page leaves (for
- * WorkOS, or Stripe): the tracker's own flush as the page unloads misses
- * calls it hasn't loaded yet.
+ * Sends an event just before the page leaves. The tracker sends what it
+ * holds with a beacon as the page unloads, but a call made before it has
+ * loaded waits in the SDK's own queue, which the navigation drops: this
+ * waits for the tracker first, for at most a second.
  */
-export function flushEvents(): void {
-  if (DATABUDDY_CLIENT_ID) flush();
+export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
+  name: Name,
+  ...properties: EventArgs<Name>
+): Promise<void> {
+  if (!DATABUDDY_CLIENT_ID) return;
+  for (
+    const end = Date.now() + LEAVE_WAIT_MS;
+    !isTrackerAvailable() && Date.now() < end;
+
+  )
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  trackEvent(name, ...properties);
 }
 
 // ---------------------------------------------------------------- sign-in
@@ -101,19 +115,19 @@ export function flushEvents(): void {
 const SIGNING_IN = "foundry.analytics.signing-in";
 
 /**
- * The sign-in page's provider button, just before the page leaves for
- * WorkOS: remembered until the user is signed in.
+ * The sign-in page's provider button, before the page leaves for WorkOS:
+ * remembered until the user is signed in. Resolves once it may leave.
  */
-export function signInStarted(
+export async function signInStarted(
   method: AnalyticsEvents["sign_in_started"]["method"],
-) {
-  trackEvent("sign_in_started", { method });
-  flushEvents();
+): Promise<void> {
+  if (!DATABUDDY_CLIENT_ID) return;
   try {
     sessionStorage.setItem(SIGNING_IN, "1");
   } catch {
     // Storage blocked: login_completed goes unreported.
   }
+  await trackBeforeLeaving("sign_in_started", { method });
 }
 
 /** The app signed in, with its workspaces read: reports a sign-in this tab started, once. */

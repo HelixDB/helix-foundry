@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sdk = vi.hoisted(() => ({
   track: vi.fn(),
-  flush: vi.fn(),
+  isTrackerAvailable: vi.fn(() => true),
   setGlobalProperties: vi.fn(),
 }));
 vi.mock("@databuddy/sdk", () => sdk);
@@ -45,7 +45,7 @@ const PENDING = "foundry.analytics.pending.v1";
 
 beforeEach(() => {
   sdk.track.mockReset();
-  sdk.flush.mockReset();
+  sdk.isTrackerAvailable.mockReset().mockReturnValue(true);
   sdk.setGlobalProperties.mockReset();
 });
 afterEach(() => {
@@ -69,27 +69,28 @@ describe("trackEvent", () => {
     const a = await load("");
     expect(a.DATABUDDY_CLIENT_ID).toBe("");
     a.trackEvent("sample_clicked");
-    a.signInStarted("github");
+    await a.signInStarted("github");
+    await a.trackBeforeLeaving("upgrade_clicked", {
+      tier: "pro",
+      from: "free",
+    });
     a.jobStarted("load", "load_1");
-    a.flushEvents();
     expect(sent()).toEqual([]);
-    expect(sdk.flush).not.toHaveBeenCalled();
-    expect(local.values.size).toBe(0);
+    expect(sdk.isTrackerAvailable).not.toHaveBeenCalled();
+    expect(local.values.size + session.values.size).toBe(0);
   });
 });
 
 describe("sign-in", () => {
   it("reports the sign-in this tab started, once", async () => {
     const a = await load();
-    a.signInStarted("google");
+    await a.signInStarted("google");
     a.signedIn("onboarding");
     a.signedIn("onboarding");
     expect(sent()).toEqual([
       ["sign_in_started", { method: "google" }],
       ["login_completed", { destination: "onboarding" }],
     ]);
-    // Sent before the page leaves for WorkOS.
-    expect(sdk.flush).toHaveBeenCalledTimes(1);
     expect(session.values.size).toBe(0);
   });
 
@@ -101,9 +102,42 @@ describe("sign-in", () => {
 
   it("still reports the start when storage is blocked", async () => {
     const a = await load("client-test", true);
-    a.signInStarted("microsoft");
+    await a.signInStarted("microsoft");
     a.signedIn("workspace");
     expect(sent()).toEqual([["sign_in_started", { method: "microsoft" }]]);
+  });
+});
+
+describe("trackBeforeLeaving", () => {
+  it("waits for the tracker to load before sending", async () => {
+    vi.useFakeTimers();
+    const a = await load();
+    sdk.isTrackerAvailable.mockReturnValue(false);
+    let left = false;
+    void a.signInStarted("github").then(() => (left = true));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(left).toBe(false);
+    expect(sent()).toEqual([]);
+    sdk.isTrackerAvailable.mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(left).toBe(true);
+    expect(sent()).toEqual([["sign_in_started", { method: "github" }]]);
+  });
+
+  it("lets the page leave after a second without the tracker", async () => {
+    vi.useFakeTimers();
+    const a = await load();
+    sdk.isTrackerAvailable.mockReturnValue(false);
+    let left = false;
+    void a
+      .trackBeforeLeaving("upgrade_clicked", { tier: "max", from: "pro" })
+      .then(() => (left = true));
+    await vi.advanceTimersByTimeAsync(950);
+    expect(left).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(left).toBe(true);
+    // Queued in the SDK, in case the tracker loads before the page goes.
+    expect(sent()).toEqual([["upgrade_clicked", { tier: "max", from: "pro" }]]);
   });
 });
 

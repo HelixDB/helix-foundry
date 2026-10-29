@@ -12,7 +12,7 @@ import {
   cx,
   formatDate,
 } from "../../kit";
-import { flushEvents, trackEvent } from "../../analytics";
+import { trackEvent } from "../../analytics";
 import { useWorkspace } from "../../ui";
 import { connectorKindsQuery } from "../data/data-api";
 import {
@@ -95,7 +95,6 @@ async function purchase(
     });
     rememberCheckout(workspaceId, tier);
     if (result.kind === "redirect") {
-      flushEvents();
       window.location.assign(result.url);
       return null;
     }
