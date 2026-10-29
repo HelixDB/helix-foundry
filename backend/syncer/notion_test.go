@@ -471,6 +471,117 @@ func TestNotionSyncChanges(t *testing.T) {
 	}
 }
 
+// TestNotionSyncReconcile runs Notion's change reads through the syncer on
+// Pro, then the daily reconcile, which writes nothing: each change read
+// wrote what a full read writes. Between them, a row's text is edited, a
+// page is made with a body and another empty, filled after the next sync, a
+// page is trashed then restored, and an edit joins the search a sync late,
+// dated well before the cursor.
+func TestNotionSyncReconcile(t *testing.T) {
+	t.Parallel() // Notion's pacing makes it slow; it shares nothing with another test
+	workspace := &notionWorkspace{sources: map[string]notionTestSource{"ds_tasks": notionTestTasks}, pages: map[string]notionTestPage{
+		"pg_1": {edited: "2026-10-01T10:00:00.000Z", title: "Roadmap", body: "## Q4\n\nShip the connector."},
+		"pg_2": {edited: "2026-10-02T10:00:00.000Z", title: "Write the guide", body: "Draft, then review.", source: "ds_tasks", done: true},
+		"pg_3": {edited: "2026-10-03T10:00:00.000Z", title: "Handbook", body: "Be kind."},
+	}}
+	f := notionFixture(t, "pro", workspace)
+	// Edits are after the cursor, which is the wall clock's.
+	minute := 0
+	edited := func() string {
+		minute++
+		return time.Now().UTC().Truncate(time.Minute).Add(time.Duration(minute) * time.Minute).Format(time.RFC3339)
+	}
+	changes := func(t *testing.T, id string) {
+		t.Helper()
+		if res := f.run(t, id); res.Mode != model.ConnectorSyncChanges {
+			t.Fatalf("sync %s mode = %s, want changes", id, res.Mode)
+		}
+	}
+	page := func(id string, edit func(p *notionTestPage)) {
+		p := workspace.pages[id]
+		edit(&p)
+		workspace.pages[id] = p
+	}
+
+	f.run(t, "sync-1")
+	// A row's text edited; a page made with a body, one made empty; a page
+	// trashed; and an edit Notion's search has yet to list, made before the
+	// next cursor.
+	workspace.edit(func() {
+		page("pg_2", func(p *notionTestPage) { p.edited, p.body = edited(), "Draft, review, ship." })
+		at := edited()
+		workspace.pages["pg_4"] = notionTestPage{edited: at, created: at, title: "Launch", body: "Launch in May."}
+		at = edited()
+		workspace.pages["pg_5"] = notionTestPage{edited: at, created: at, title: "Retro", body: "\n"}
+		page("pg_3", func(p *notionTestPage) { p.edited, p.trashed = edited(), true })
+		page("pg_1", func(p *notionTestPage) {
+			p.edited, p.body, p.unsearched = time.Now().UTC().Add(-10*time.Minute).Truncate(time.Minute).Format(time.RFC3339), "## Q4\n\nShipped.", true
+		})
+	})
+	changes(t, "sync-2")
+	if pages := f.held(t, "pages"); len(pages) != 3 || pages["pg_2"] != notionDocument("pg_2", "Write the guide", "Draft, review, ship.") ||
+		pages["pg_4"] == "" || pages["pg_3"] != "" || pages["pg_1"] != notionDocument("pg_1", "Roadmap", "## Q4\n\nShip the connector.") {
+		t.Fatalf("pages = %q", pages)
+	}
+
+	// Ten minutes on, as a sync at 15-minute intervals is: pg_5 was made
+	// before this sync's cursor.
+	minute = 10
+	var cursor map[string]json.RawMessage
+	if err := json.Unmarshal(f.store.connectors["conn-1"].ChangeCursor, &cursor); err != nil {
+		t.Fatal(err)
+	}
+	cursor["since"], _ = json.Marshal(time.Now().UTC().Truncate(time.Minute).Add(8 * time.Minute))
+	f.store.connectors["conn-1"].ChangeCursor, _ = json.Marshal(cursor)
+	// The empty page filled, the trashed one restored, and the late edit
+	// listed, older than this sync's cursor.
+	workspace.edit(func() {
+		page("pg_5", func(p *notionTestPage) { p.edited, p.body = edited(), "Went well." })
+		page("pg_3", func(p *notionTestPage) { p.edited, p.trashed = edited(), false })
+		page("pg_1", func(p *notionTestPage) { p.unsearched = false })
+	})
+	changes(t, "sync-3")
+	pages := f.held(t, "pages")
+	if len(pages) != 5 || pages["pg_5"] != notionDocument("pg_5", "Retro", "Went well.") || pages["pg_3"] != notionDocument("pg_3", "Handbook", "Be kind.") ||
+		pages["pg_1"] != notionDocument("pg_1", "Roadmap", "## Q4\n\nShipped.") || f.store.tables["pages"].RowCount != 5 {
+		t.Fatalf("pages = %q, %d rows", pages, f.store.tables["pages"].RowCount)
+	}
+
+	// The reconcile reads everything in full and finds nothing to change.
+	batches, publishes := len(slices.Concat(slices.Collect(maps.Values(f.store.batches))...)), len(f.store.publishes)
+	snapshots := map[string]string{}
+	for name, table := range f.store.tables {
+		snapshots[name] = table.S3Key
+		old := time.Now().Add(-25 * time.Hour)
+		table.ReconciledAt = &old
+	}
+	ids := map[string]string{}
+	for id := range pages {
+		ids[id] = f.liveID("pages", id)
+	}
+	if res := f.run(t, "sync-4"); res.Mode != model.ConnectorSyncFull || len(res.Changed) != 0 {
+		t.Fatalf("mode = %s, changed = %v", res.Mode, res.Changed)
+	}
+	if n := len(slices.Concat(slices.Collect(maps.Values(f.store.batches))...)); n != batches {
+		t.Fatalf("the reconcile recorded %d change batches", n-batches)
+	}
+	for name, table := range f.store.tables {
+		if table.S3Key != snapshots[name] {
+			t.Errorf("the reconcile replaced %s's snapshot", name)
+		}
+	}
+	for _, p := range f.store.publishes[publishes:] {
+		if len(p.Add)+len(p.Remove) != 0 {
+			t.Fatalf("the reconcile added %d documents and removed %d", len(p.Add), len(p.Remove))
+		}
+	}
+	for id, was := range ids {
+		if f.liveID("pages", id) != was {
+			t.Fatalf("the reconcile replaced %s's document", id)
+		}
+	}
+}
+
 // TestNotionSyncUnsearchedSource runs a change sync whose search of data
 // sources leaves one out, as Notion's eventually consistent search may: the
 // data source, read by id, keeps its rows of the pages table and their
