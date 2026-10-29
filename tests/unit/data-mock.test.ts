@@ -613,15 +613,21 @@ describe("testing and creating", () => {
     ]);
     expect(all.discovery.unavailable).toEqual([]);
     expect(all.discovery.warnings).toEqual([]);
-    // Without channels:history, its three tables say which scope to add.
+    // Without the history scope of its channels, the history's tables say
+    // which scope to add; the members need only the channel lists.
     const noscope = tested("xoxb-1-noscope");
     expect(noscope.discovery.unavailable).toEqual(
-      ["channel_members", "messages", "channel_days"].map(
+      ["messages", "channel_days"].map(
         (t) =>
           `${t}: add the channels:history scope to the app and reinstall it`,
       ),
     );
-    expect(Object.keys(keys(noscope))).toEqual(["users", "channels"]);
+    expect(Object.keys(keys(noscope))).toEqual([
+      "users",
+      "channels",
+      "channel_members",
+    ]);
+    expect(noscope.discovery.warnings).toEqual([]);
     // An app in no channel reads every table, with a warning to invite it.
     const lonely = tested("xoxb-1-lonely");
     expect(lonely.discovery.unavailable).toEqual([]);
@@ -772,6 +778,9 @@ describe("testing and creating", () => {
       key = googleKey();
     const slack = create({ slack: { botToken: slackToken, historyDays: 30 } }),
       lonely = create({ slack: { botToken: "xoxb-lonely-" + "c".repeat(8) } }),
+      noscope = create({
+        slack: { botToken: "xoxb-noscope-" + "e".repeat(8) },
+      }),
       notion = create({ notion: { token: notionToken } }),
       secret = create({ notion: { token: "secret_" + "d".repeat(12) } }),
       google = create({
@@ -787,7 +796,7 @@ describe("testing and creating", () => {
     expect(google.secretHint).toBe(
       "foundry@acme-data.iam.gserviceaccount.com…9f3a",
     );
-    for (const c of [slack, lonely, notion, google]) syncOf(c.id);
+    for (const c of [slack, lonely, noscope, notion, google]) syncOf(c.id);
     vi.advanceTimersByTime(3000);
     const rows = (id: string) =>
       Object.fromEntries(
@@ -795,15 +804,22 @@ describe("testing and creating", () => {
           call("GET", `${base()}/connectors/${id}`),
         ).connector.tables!.map((t) => [t.name, Number(t.rowCount)]),
       );
-    // 30 days of history: the 29 before the sync's, two of every three of
-    // them with messages in each of four channels, three messages a day.
+    // 30 days of history: the 30 before the sync's, two of every three of
+    // them with messages in each of four channels, two messages a day (a
+    // thread's reply is no row).
     const days = rows(slack.id).channel_days!;
-    expect(days).toBe(77);
+    expect(days).toBe(80);
     expect(rows(slack.id)).toEqual({
       channel_days: days,
       channel_members: 31,
       channels: 5,
-      messages: days * 3,
+      messages: days * 2,
+      users: 18,
+    });
+    // Without the history scope, the members are still read.
+    expect(rows(noscope.id)).toEqual({
+      channel_members: 31,
+      channels: 5,
       users: 18,
     });
     // An app in no channel reads no history.

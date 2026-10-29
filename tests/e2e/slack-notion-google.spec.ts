@@ -86,7 +86,10 @@ test("connects Slack, says which scope its token lacks, and keeps a document per
   await expect(
     guide.getByRole("link", { name: "your apps in Slack" }),
   ).toHaveAttribute("href", "https://api.slack.com/apps");
-  await expect(guide).toContainText("channels:history");
+  // Each kind of channel's scopes, as the kind reads them.
+  await expect(guide).toContainText(
+    "channels:read and channels:history for public channels, groups:read and groups:history for private ones",
+  );
   await expect(guide).toContainText("/invite @Helix Foundry");
   await expect(guide).toContainText("Direct messages are never read.");
   const tokenField = dialog(page).getByLabel("Bot token");
@@ -105,16 +108,18 @@ test("connects Slack, says which scope its token lacks, and keeps a document per
   await expect(dialog(page).getByRole("alert")).toHaveText(
     "Slack rejected this token; check it and enter it again",
   );
-  // Without channels:history, the history's tables say what to add.
+  // Without channels:history, the history's tables say what to add; the
+  // members need only the channel lists.
   await tokenField.fill("xoxb-1234-noscope");
   await runTest(page);
   const objects = dialog(page).getByRole("group", {
     name: "Slack objects this key can read",
   });
-  await expect(listed(objects)).toHaveCount(2);
+  await expect(listed(objects)).toHaveCount(3);
+  await expect(listed(objects).last()).toContainText("channel_members");
   const unreadable = dialog(page).locator(".dc-unavailable li");
   await expect(unreadable).toHaveText(
-    ["channel_members", "messages", "channel_days"].map(
+    ["messages", "channel_days"].map(
       (t) => `${t}: add the channels:history scope to the app and reinstall it`,
     ),
   );

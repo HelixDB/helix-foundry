@@ -290,11 +290,11 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
       slack: { botToken: "xoxb-1-team1234" },
     });
     const conversations = await setOf("conversations");
-    // 89 days before the sync's, two of every three in each of four
+    // The 90 days before the sync's, two of every three in each of four
     // channels: the app isn't in #random.
     expect(conversations).toMatchObject({
       name: "Conversations",
-      documents: 237,
+      documents: 240,
       connector: {
         connectorId,
         stream: "conversations",
@@ -302,22 +302,32 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
         connectorName: "Acme Slack",
       },
     });
-    expect(conversations!.description).toContain("thread");
+    expect(conversations!.description).toContain(
+      "Replies show only here, so replies to a thread started before the kept days are left out",
+    );
     const first = await page(`setId=${conversations!.id}`);
     expect(first.documents).toHaveLength(50);
     expect(first.nextPageToken).not.toBe("");
-    const [newest] = first.documents;
+    const [newest, next] = first.documents;
+    // A day's time is its latest activity: here its thread's reply, after
+    // its last message.
     expect(newest).toMatchObject({
-      name: "#support, 2026-10-22",
+      name: "#sales, 2026-10-22",
       mediaType: "text/markdown",
       source: {
-        externalId: "C0MOCKSUP:2026-10-22",
-        url: "https://app.slack.com/client/T0MOCKACME/C0MOCKSUP",
-        at: "2026-10-22T14:21:00.000Z",
+        externalId: "C0MOCKSAL:2026-10-22",
+        url: "https://app.slack.com/client/T0MOCKACME/C0MOCKSAL",
+        at: "2026-10-22T16:24:00.000Z",
       },
     });
-    // The version is "1|" and 40 hex digits of a hash of its messages.
-    expect(newest!.source!.version).toMatch(/^1\|[0-9a-f]{40}$/);
+    // And its last message where no reply is later.
+    expect(next).toMatchObject({
+      name: "#support, 2026-10-22",
+      source: { at: "2026-10-22T14:21:00.000Z" },
+    });
+    // The version is "2|", 40 hex digits of a hash of its messages and 16
+    // of the names they show.
+    expect(newest!.source!.version).toMatch(/^2\|[0-9a-f]{40}\|[0-9a-f]{16}$/);
     const at = first.documents.map((d) => d.source!.at!);
     expect(at).toEqual([...at].sort().reverse());
     expect(first.documents.some((d) => d.name!.startsWith("#random"))).toBe(
@@ -327,14 +337,14 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
     const text = (await call("GET", `${DOCS}/${newest!.id}:content`)).body.text;
     expect(text).toBe(
       [
-        "# #support, 2026-10-22",
+        "# #sales, 2026-10-22",
         "",
-        "Channel: #support (C0MOCKSUP)",
+        "Channel: #sales (C0MOCKSAL)",
         "",
-        "**Hedy Lamarr** 09:23: Umbrella Holdings asked how to rotate their API key.",
-        "  - **Margaret Hamilton** 09:35: Thanks, on it.",
+        "**Alan Turing** 09:12: Closed the Hooli expansion: 25 more seats from November.",
+        "  - **Hedy Lamarr** 16:24: Noted, thanks for the heads-up.",
         "",
-        "**Ada Lovelace** 14:21: Initech can't reset passwords for two users, looking now.",
+        "**Margaret Hamilton** 14:08: Initech asked for a revised quote for 40 seats.",
         "",
       ].join("\n"),
     );
@@ -349,13 +359,13 @@ describe("Slack's, Notion's and Google Workspace's documents", () => {
     await connect("Week", {
       slack: { botToken: "xoxb-1-week1234", historyDays: 7 },
     });
-    // The 6 days before the sync's.
+    // The 7 days before the sync's.
     const week = (await setOf("conversations"))!;
-    expect(week.documents).toBe(16);
+    expect(week.documents).toBe(18);
     const days = (await page(`setId=${week.id}`)).documents.map((d) =>
       d.name!.slice(-10),
     );
-    expect(days.at(-1)! >= "2026-10-17").toBe(true);
+    expect(days.at(-1)).toBe("2026-10-16");
     Object.assign(config, { documentsPerStream: 30 });
     await connect("Capped", { notion: { token: "ntn_team1234" } });
     expect(await setOf("pages")).toMatchObject({

@@ -34,7 +34,7 @@ import { layout, type Listed } from "./data-files";
 //   teams and team memberships can't be read, and one containing "member"
 //   is warned that it isn't a team admin; a Granola key containing
 //   "personal" cannot read spaces. A Slack token containing "noscope"
-//   lacks channels:history (channel_members, messages and channel_days
+//   lacks channels:history and groups:history (messages and channel_days
 //   can't be read, and nothing is a document), and one containing "lonely"
 //   is in no channels, so the test warns and syncs read no history. A
 //   Notion secret containing "nousers" can't read users, and one containing
@@ -56,7 +56,7 @@ import { layout, type Listed } from "./data-files";
 //   `transcripts` is on. A note whose title holds "edited" (the third
 //   newest) is edited before every sync: a new version with new text. A
 //   Slack sync reads each day with messages of the channels the app is in
-//   (two of every three days of its history before the sync's, in each of
+//   (two of every three of the history_days before the sync's, in each of
 //   four channels) into Conversations, a Notion sync its 60 pages with a
 //   body into Pages, and a Google Workspace sync its 14 Docs into Docs.
 // - S3 (Pro): every bucket holds the plan's V1 fixture folder (./data-files.ts
@@ -775,9 +775,12 @@ const granolaForeignKeys: Record<string, ConnectorForeignKey[]> = {
 // Slack's Web API (slack.com/api), as slack.go reads it with a bot token:
 // the workspace's people, its channels, and the members and the messages
 // of the channels the app is in, over the last history_days. A message is
-// keyed by its channel and ts; channel_days holds one row per channel and
-// day with messages, each a document (`documentStreams`). A table whose
-// scope the app lacks is unavailable, saying which scope to add.
+// keyed by its channel and ts, and is one conversations.history lists: a
+// thread's replies show only in its day's document. channel_days holds one
+// row per channel and day with messages, each a document
+// (`documentStreams`). Messages and days need the history scope of the
+// channels the app is in (channels:history for public ones, groups:history
+// for private); without it they are unavailable, saying which scope to add.
 const slackObjects = [
   object(
     "users",
@@ -862,12 +865,12 @@ const slackForeignKeys: Record<string, ConnectorForeignKey[]> = {
   messages: [fk("channel_id", "channels"), fk("user_id", "users")],
   channel_days: [fk("channel_id", "channels")],
 };
-// The scope each table needs; a token containing "noscope" lacks
-// channels:history.
+// The scope each table needs of the mock's public channels; a token
+// containing "noscope" lacks channels:history (and groups:history).
 const slackScopes: Record<string, string> = {
   users: "users:read",
   channels: "channels:read",
-  channel_members: "channels:history",
+  channel_members: "channels:read",
   messages: "channels:history",
   channel_days: "channels:history",
 };
@@ -1335,7 +1338,9 @@ const slackStream: MockStream = {
   description:
     "Each day of one Slack channel the app is in, as Markdown: a heading with the channel and the UTC day, " +
     'the channel\'s name and id, then each message posted that day in time order as "**Name** HH:MM: text", in UTC, ' +
-    "with the replies of a thread it started listed beneath it, dated when sent on a later day. People are named " +
+    "with the replies of a thread it started listed beneath it, dated when sent on a later day. Replies show only here, " +
+    "so replies to a thread started before the kept days are left out, and a reply edited later reads as first written " +
+    "until its day changes again. A day too long for one document keeps its earliest messages. People are named " +
     "by their Slack real name, else their handle, and mentions read @Name and #channel.",
   mediaType: "text/markdown",
 };
@@ -1359,21 +1364,24 @@ const googleStream: MockStream = {
 };
 
 const clock = (at: number) => new Date(at).toISOString().slice(11, 16);
+/** The first `digits` hex digits of `text`'s SHA-256. */
+const sha = (text: string, digits: number) =>
+  createHash("sha256").update(text).digest("hex").slice(0, digits);
 /**
- * The channel days a Slack sync at `syncedAt` reads, newest first: each day
- * of the history before the sync's that a channel the app is in has
+ * The channel days a Slack sync at `syncedAt` reads, most recently active
+ * first: each of the history_days before the sync's (the mock's channels
+ * say nothing on the sync's own day) that a channel the app is in has
  * messages on (two of every three), each with a message, a reply in its
- * thread and a later message. A day's messages are the same at every sync,
- * and so is its version: "1|" and 40 hex digits of a hash of them.
+ * thread (every other day in the afternoon, after the day's last message)
+ * and a later message. A day's messages are the same at every sync. Its
+ * time is its latest activity, as slack.go's: its last message, or a
+ * thread's latest reply when later.
  */
 function slackDays(src: Source, syncedAt: string) {
   if (!("slack" in src.settings) || src.secret.includes("lonely")) return [];
   const days = src.settings.slack.historyDays || 90,
     today = Date.parse(syncedAt.slice(0, 10));
-  return Array.from(
-    { length: days - 1 },
-    (_, i) => today - (i + 1) * 86_400_000,
-  )
+  return Array.from({ length: days }, (_, i) => today - (i + 1) * 86_400_000)
     .flatMap((midnight) => {
       const n = midnight / 86_400_000;
       return slackChannels
@@ -1390,7 +1398,7 @@ function slackDays(src: Source, syncedAt: string) {
             text: c.lines[n % c.lines.length]!,
             replies: [
               {
-                at: at(9, minute + 12),
+                at: at((n + j) % 2 ? 16 : 9, minute + 12),
                 who: who(1),
                 text: SLACK_REPLIES[(n + j) % SLACK_REPLIES.length]!,
               },
@@ -1402,26 +1410,39 @@ function slackDays(src: Source, syncedAt: string) {
             text: c.lines[(n + 3) % c.lines.length]!,
             replies: [],
           };
+          const messages = [first, second];
           return [
             {
               channel: c,
               day: new Date(midnight).toISOString().slice(0, 10),
-              messages: [first, second],
+              messages,
+              active: Math.max(
+                ...messages.flatMap((m) => [
+                  m.at,
+                  ...m.replies.map((r) => r.at),
+                ]),
+              ),
             },
           ];
         });
     })
-    .sort((a, b) => b.messages[1]!.at - a.messages[1]!.at);
+    .sort(
+      (a, b) =>
+        b.active - a.active ||
+        `${a.channel.id}:${a.day}`.localeCompare(`${b.channel.id}:${b.day}`),
+    );
 }
 
 /**
  * The streams `src`'s kind has, each with the documents a sync at `syncedAt`
  * reads into it, newest first, or null when its settings turn it off, or
  * its table can't be read. A kind without documents has none. A
- * document's version is "1|" and what changes it at the source, as the
- * kinds write it: a Granola note's updated_at (an edited one's is the
- * sync's time), a hash of a channel day's messages, a Notion page's last
- * edit, a Doc's modified time and Drive's version.
+ * document's version is a render revision and what changes it at the
+ * source, as the kinds write it: a Granola note's "1|" and updated_at (an
+ * edited one's is the sync's time), a channel day's "2|" and hashes of its
+ * messages and of the names they show, a Notion page's "2|", last edit and
+ * week of its weekly re-read, and a Doc's "1|", modified time, Drive's
+ * version and a hash of its name, owner and link.
  */
 export function documentStreams(
   src: Source,
@@ -1434,35 +1455,49 @@ export function documentStreams(
         stream: slackStream,
         documents: src.secret.includes("noscope")
           ? null
-          : slackDays(src, syncedAt).map(({ channel, day, messages }) => {
-              // slack.go's document: each message after a blank line, its
-              // thread's replies listed beneath it.
-              const line = (m: { at: number; who: string; text: string }) =>
-                `**${m.who}** ${clock(m.at)}: ${m.text}\n`;
-              const text =
-                `# #${channel.name}, ${day}\n\nChannel: #${channel.name} (${channel.id})\n` +
-                messages
-                  .map(
-                    (m) =>
-                      "\n" +
-                      line(m) +
-                      m.replies.map((r) => "  - " + line(r)).join(""),
-                  )
-                  .join("");
-              return {
-                externalId: `${channel.id}:${day}`,
-                version:
-                  "1|" +
-                  createHash("sha256")
-                    .update(`${channel.name}\0${text}`)
-                    .digest("hex")
-                    .slice(0, 40),
-                at: new Date(messages.at(-1)!.at).toISOString(),
-                title: `#${channel.name}, ${day}`,
-                url: `https://app.slack.com/client/${SLACK_TEAM}/${channel.id}`,
-                text,
-              };
-            }),
+          : slackDays(src, syncedAt).map(
+              ({ channel, day, messages, active }) => {
+                // slack.go's document: each message after a blank line, its
+                // thread's replies listed beneath it.
+                const line = (m: { at: number; who: string; text: string }) =>
+                  `**${m.who}** ${clock(m.at)}: ${m.text}\n`;
+                const text =
+                  `# #${channel.name}, ${day}\n\nChannel: #${channel.name} (${channel.id})\n` +
+                  messages
+                    .map(
+                      (m) =>
+                        "\n" +
+                        line(m) +
+                        m.replies.map((r) => "  - " + line(r)).join(""),
+                    )
+                    .join("");
+                return {
+                  externalId: `${channel.id}:${day}`,
+                  // slack.go's "2|<content>|<people>": 40 hex digits of a hash
+                  // of the channel's name and what history says of each
+                  // message (its time, text, author, reply count and latest
+                  // reply), then 16 of the names of who wrote them. A reply's
+                  // text or author changes neither.
+                  version: `2|${sha(
+                    [
+                      channel.name,
+                      ...messages.flatMap((m) => [
+                        m.at,
+                        m.text,
+                        m.who,
+                        m.replies.length,
+                        m.replies.at(-1)?.at ?? "",
+                      ]),
+                    ].join("\0"),
+                    40,
+                  )}|${sha([...new Set(messages.map((m) => m.who))].sort().join("\0"), 16)}`,
+                  at: new Date(active).toISOString(),
+                  title: `#${channel.name}, ${day}`,
+                  url: `https://app.slack.com/client/${SLACK_TEAM}/${channel.id}`,
+                  text,
+                };
+              },
+            ),
       },
     ];
   if ("notion" in s)
@@ -2556,6 +2591,10 @@ export function discover(
       settings: s,
     };
   if ("slack" in s) {
+    // slack.go's Discover reads the token's scopes from auth.test: without
+    // the history scope of the channels the app is in (the mock's are
+    // public), messages and days are unavailable, saying which to add;
+    // channel_members needs only the channel lists.
     const noHistory = (name: string) =>
       src.secret.includes("noscope") &&
       slackScopes[name] === "channels:history";
@@ -2706,13 +2745,14 @@ export function syncTables(src: Source): SyncedSnapshot[] | string {
           google: googleObjects,
         } as Partial<Record<ConnectorKindName, ApiObject[]>>
       )[src.kind]!;
-  // Slack's history is what its days hold: three messages each, and none
-  // (nor members) where the app is in no channel.
+  // Slack's history is what its days hold: two messages each, as history
+  // lists them (a thread's reply is no row), and none (nor members) where
+  // the app is in no channel.
   const days = "slack" in s ? slackDays(src, new Date().toISOString()) : [],
     counted: Record<string, number> =
       "slack" in s
         ? {
-            messages: days.length * 3,
+            messages: days.length * 2,
             channel_days: days.length,
             ...(src.secret.includes("lonely") ? { channel_members: 0 } : {}),
           }

@@ -259,9 +259,10 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
       </li>
       <li>
         Under <strong>OAuth &amp; Permissions</strong>, add the Bot Token Scopes{" "}
-        <code>channels:read</code>, <code>channels:history</code>,{" "}
-        <code>groups:read</code>, <code>groups:history</code>,{" "}
-        <code>users:read</code> and <code>users:read.email</code>.
+        <code>channels:read</code> and <code>channels:history</code> for public
+        channels, <code>groups:read</code> and <code>groups:history</code> for
+        private ones, and <code>users:read</code> and{" "}
+        <code>users:read.email</code> to name people.
       </li>
       <li>
         Click <strong>Install to Workspace</strong>, copy the{" "}
@@ -269,9 +270,9 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
         below.
       </li>
       <li>
-        Invite the app to each channel to sync with{" "}
-        <code>/invite @Helix Foundry</code>. Private channels need the{" "}
-        <code>groups:</code> scopes and the invite too. Direct messages are
+        Invite the app to each channel to sync, public or private, with{" "}
+        <code>/invite @Helix Foundry</code>. The messages of a kind of channel
+        whose history scope the app lacks are not read. Direct messages are
         never read.
       </li>
     </ol>
