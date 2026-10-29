@@ -25,7 +25,8 @@ type googleCursor struct {
 	Files *googleFilesCursor `json:"files"`
 	// Events is each calendar's sync token, by calendar id: Calendar's
 	// nextSyncToken of its events, listed as a full read lists them. A
-	// calendar the user can't read the events of has none.
+	// calendar the user can't read the events of has none, as has one whose
+	// list Calendar gave none: a change read lists its window instead.
 	Events map[string]string `json:"events"`
 }
 
@@ -86,8 +87,9 @@ func (k *googleKind) Start(ctx context.Context, src Source, tables []Table) (Sta
 				continue
 			case err != nil:
 				return Start{}, err
+			case token != "":
+				cursor.Events[calendar] = token
 			}
-			cursor.Events[calendar] = token
 		}
 	}
 	b, err := json.Marshal(cursor)
@@ -369,25 +371,15 @@ func googleEventQuery() url.Values {
 }
 
 // eventToken lists calendar's events in the window from to to, as a full
-// read lists them, passing each to each, and returns the list's sync token.
+// read lists them, passing each to each, and returns the list's sync token,
+// which Calendar gives on its last page, as Google's own full sync takes
+// one; "" if it gave none.
 func (c *googleClient) eventToken(ctx context.Context, calendar string, from, to time.Time,
 	each func(id string, e map[string]any) error) (string, error) {
 	query := googleEventQuery()
 	query.Set("timeMin", from.Format(time.RFC3339))
 	query.Set("timeMax", to.Format(time.RFC3339))
-	return c.eventPages(ctx, calendar, query, each)
-}
-
-// eventPages lists calendar's events under query, passing each to each, and
-// returns the list's sync token, which Calendar gives every list of events
-// without a filter that refuses one.
-func (c *googleClient) eventPages(ctx context.Context, calendar string, query url.Values,
-	each func(id string, e map[string]any) error) (string, error) {
-	token, err := c.pages(ctx, googleCalendar, googleEventsPath(calendar), query, "items", each)
-	if err == nil && token == "" {
-		return "", fmt.Errorf("google %s: the last page has no nextSyncToken", googleEventsPath(calendar))
-	}
-	return token, err
+	return c.pages(ctx, googleCalendar, googleEventsPath(calendar), query, "items", each)
 }
 
 // eventChanges reads each listed calendar's events changed after its sync
@@ -397,8 +389,9 @@ func (c *googleClient) eventPages(ctx context.Context, calendar string, query ur
 // outside the window is left as it is, as a full read leaves it: the tables
 // are windowed, so its row, if any, leaves when the next full read drops it,
 // and is no delete. A calendar without a token, newly listed or refused
-// before, is listed in the window, as a full read lists it; one whose events
-// are refused is skipped.
+// before, or one Calendar gave no token, is listed in the window, as a full
+// read lists it, cancelled events included; one whose events are refused is
+// skipped.
 //
 // The event tables are reset, and read in full, when there is no cursor,
 // when a calendar with a token left the list or its events are refused (a
@@ -435,10 +428,12 @@ func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string,
 		if token, ok := prev[calendar]; ok {
 			query := googleEventQuery()
 			query.Set("syncToken", token)
-			token, err := c.eventPages(ctx, calendar, query, each)
+			token, err := c.pages(ctx, googleCalendar, googleEventsPath(calendar), query, "items", each)
 			switch {
-			case err == nil:
+			case err == nil && token != "":
 				next[calendar] = token
+				continue
+			case err == nil:
 				continue
 			case errors.Is(err, errNoAccess):
 				reset = "the user can no longer read the events of calendar " + calendar
@@ -454,8 +449,9 @@ func (c *googleClient) eventChanges(ctx context.Context, prev map[string]string,
 			continue
 		case err != nil:
 			return nil, err
+		case token != "":
+			next[calendar] = token
 		}
-		next[calendar] = token
 	}
 	if reset != "" {
 		for _, table := range []string{"calendar_events", "event_attendees"} {

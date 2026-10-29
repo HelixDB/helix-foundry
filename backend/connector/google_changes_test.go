@@ -325,10 +325,31 @@ func TestGoogleChanges(t *testing.T) {
 		if _, err := googleAt(t, &googleWorkspace{routes: routes}).Start(ctx, src, allFollowed); err == nil {
 			t.Error("Start took an answer without a token")
 		}
-		routes = unchanged()
-		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, map[string]string{"window": `{"items":[]}`})
-		if _, err := googleAt(t, &googleWorkspace{routes: routes}).Start(ctx, src, allFollowed); err == nil || !strings.Contains(err.Error(), "no nextSyncToken") {
-			t.Errorf("Start error = %v, want the list without a sync token refused", err)
+	})
+	// Google's own full sync takes its token from a list from a time; should
+	// Calendar give a window's list none, the calendar is listed from its
+	// window at every change read.
+	t.Run("lists the window of a calendar Calendar gives no sync token", func(t *testing.T) {
+		routes := unchanged()
+		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, map[string]string{
+			"window": `{"items":[` + googleTestEvent("ev1", soon, "") + `,{"id":"ev2","status":"cancelled"}]}`})
+		routes["/calendar/v3/calendars/en.uk#holiday@group.v.calendar.google.com/events"] = googleEventFeed(t, 90, map[string]string{
+			"window": `{"nextSyncToken":"hw"}`, "hw": `{"nextSyncToken":"h3"}`, "h1": `{"nextSyncToken":"h2"}`})
+		start, err := googleAt(t, &googleWorkspace{routes: routes}).Start(ctx, src, allFollowed[1:])
+		if err != nil || string(start.Cursor) != `{"files":null,"events":{"en.uk#holiday@group.v.calendar.google.com":"hw"}}` {
+			t.Fatalf("Start = (%s, %v)", start.Cursor, err)
+		}
+		got, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], start.Cursor, nil)
+		want := []string{"upsert calendar_events ada@acme.com:ev1", "cascade event_attendees event_id=ada@acme.com:ev1",
+			"delete calendar_events ada@acme.com:ev2", "cascade event_attendees event_id=ada@acme.com:ev2"}
+		if !slices.Equal(got.log, want) || len(got.resets) != 0 || next != `{"files":null,"events":{"en.uk#holiday@group.v.calendar.google.com":"h3"}}` {
+			t.Fatalf("log = %v, resets = %v, next = %s", got.log, got.resets, next)
+		}
+		// A sync token's list without a new one leaves the calendar to its window next time.
+		routes["/calendar/v3/calendars/ada@acme.com/events"] = googleEventFeed(t, 90, map[string]string{"s1": `{"items":[]}`})
+		if _, next := changes(t, &googleWorkspace{routes: routes}, allFollowed[1:], cursor, nil); next !=
+			`{"files":null,"events":{"en.uk#holiday@group.v.calendar.google.com":"h2"}}` {
+			t.Fatalf("next = %s", next)
 		}
 	})
 	// An hourly read of nothing: one page of each feed, and the list and one page of each calendar.
