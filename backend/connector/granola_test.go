@@ -607,11 +607,12 @@ func (s refusingSink) Write(map[string]any) error { return s.err }
 func (s refusingSink) WriteJSON([]byte) error     { return s.err }
 
 // granolaDocs is a DocumentWriter that says yes to the streams want names
-// and records each offer and Put; a set fail fails every Put.
+// and records each offer, Put and Drop; a set fail fails every Put.
 type granolaDocs struct {
 	want   map[string]bool
 	offers []string
 	puts   []granolaPut
+	drops  []string
 	fail   error
 }
 
@@ -628,6 +629,11 @@ func (d *granolaDocs) Want(stream, id, version string) bool {
 func (d *granolaDocs) Put(_ context.Context, stream string, doc Document) error {
 	d.puts = append(d.puts, granolaPut{stream, doc})
 	return d.fail
+}
+
+func (d *granolaDocs) Drop(stream, id string) error {
+	d.drops = append(d.drops, stream+" "+id)
+	return nil
 }
 
 func (d *granolaDocs) Held(string, string) (string, bool) { return "", false }

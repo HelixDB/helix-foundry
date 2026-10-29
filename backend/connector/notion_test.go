@@ -1193,5 +1193,6 @@ type onlyDocs struct{ id string }
 
 func (d *onlyDocs) Want(_, id, _ string) bool                   { return id == d.id }
 func (d *onlyDocs) Put(context.Context, string, Document) error { return nil }
+func (d *onlyDocs) Drop(string, string) error                   { return nil }
 func (d *onlyDocs) Held(string, string) (string, bool)          { return "", false }
 func (d *onlyDocs) Paused(string) bool                          { return false }

@@ -23,17 +23,6 @@ import (
 	"time"
 )
 
-// Every DocumentKind is listed in documentKinds (TestStreamCatalog);
-// Google's is listed here, beside its tests.
-func init() {
-	documentKinds["google"] = struct {
-		settings json.RawMessage
-		keys     map[string][]string
-	}{settings: googleSettings, keys: map[string][]string{
-		"users": {"user_id"}, "files": {"file_id"}, "calendars": {"calendar_id"},
-		"calendar_events": {"event_id"}, "event_attendees": {"event_id", "email"}}}
-}
-
 const googleSubject = "ada@acme.com"
 
 var googleSettings = json.RawMessage(`{"subject":"ada@acme.com","event_days":90}`)
