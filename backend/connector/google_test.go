@@ -590,7 +590,8 @@ const googleCalendars = `{"kind":"calendar#calendarList","items":[
 	{"id":"grace@acme.com","summary":"Grace Hopper","accessRole":"freeBusyReader"},
 	{"id":"gone@acme.com","summary":"Gone","accessRole":"reader"}]}`
 
-// googleEvents are each calendar's events by page token: Ada's in two pages.
+// googleEvents are each calendar's events by page token: Ada's in two pages,
+// the second with an event whose attendees Google left out.
 var googleEvents = map[string]map[string]string{
 	"ada@acme.com": {
 		"": `{"items":[{"id":"ev1","status":"confirmed","htmlLink":"https://www.google.com/calendar/event?eid=ev1","created":"2026-10-01T09:00:00.000Z",
@@ -602,7 +603,7 @@ var googleEvents = map[string]map[string]string{
 				{"email":"room-1@resource.calendar.google.com","displayName":"Room 1","resource":true,"responseStatus":"accepted"},
 				{"email":"ADA@acme.com","responseStatus":"declined"},{"displayName":"No email"}]}],"nextPageToken":"e1"}`,
 		"e1": `{"items":[{"id":"ev2","status":"cancelled"},{"id":"ev3_20261101T090000Z","status":"tentative","recurringEventId":"ev3",
-			"iCalUID":"ev3@google.com","organizer":{"email":"grace@acme.com"},"start":{"dateTime":"2026-11-01T09:00:00Z"},
+			"iCalUID":"ev3@google.com","organizer":{"email":"grace@acme.com"},"attendeesOmitted":true,"start":{"dateTime":"2026-11-01T09:00:00Z"},
 			"end":{"dateTime":"2026-11-01T09:30:00Z"}}]}`,
 	},
 	"en.uk#holiday@group.v.calendar.google.com": {
@@ -724,23 +725,23 @@ func TestGoogleSync(t *testing.T) {
 			t.Fatalf("listed events %v for the calendars table", events)
 		}
 	})
-	// Cancelled events are left out; a calendar that won't list its events is skipped.
+	// Cancelled events are left out; a calendar whose first page is refused is skipped.
 	t.Run("lists each calendar's events in the window", func(t *testing.T) {
 		want := []map[string]any{
 			{"event_id": "ada@acme.com:ev1", "calendar_id": "ada@acme.com", "ical_uid": "ev1@google.com", "summary": "Roadmap",
 				"description": "Q4 plans", "location": "Room 1", "status": "confirmed", "start_at": "2026-10-30T09:00:00Z", "end_at": "2026-10-30T10:00:00Z",
 				"all_day": false, "organizer_email": "ada@acme.com", "creator_email": "ada@acme.com", "recurring_event_id": nil,
 				"html_link": "https://www.google.com/calendar/event?eid=ev1", "created_at": "2026-10-01T09:00:00Z", "updated_at": "2026-10-02T09:00:00Z",
-				"attendee_count": 2},
+				"attendee_count": 2, "attendees_omitted": false},
 			{"event_id": "ada@acme.com:ev3_20261101T090000Z", "calendar_id": "ada@acme.com", "ical_uid": "ev3@google.com", "summary": nil,
 				"description": nil, "location": nil, "status": "tentative", "start_at": "2026-11-01T09:00:00Z", "end_at": "2026-11-01T09:30:00Z",
 				"all_day": false, "organizer_email": "grace@acme.com", "creator_email": nil, "recurring_event_id": "ev3",
-				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0},
+				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0, "attendees_omitted": true},
 			// An all-day event keeps its dates.
 			{"event_id": "en.uk#holiday@group.v.calendar.google.com:hol1", "calendar_id": "en.uk#holiday@group.v.calendar.google.com", "ical_uid": nil,
 				"summary": "Christmas Day", "description": nil, "location": nil, "status": "confirmed", "start_at": "2026-12-25", "end_at": "2026-12-26",
 				"all_day": true, "organizer_email": "en.uk#holiday@group.v.calendar.google.com", "creator_email": nil, "recurring_event_id": nil,
-				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0},
+				"html_link": nil, "created_at": nil, "updated_at": nil, "attendee_count": 0, "attendees_omitted": false},
 		}
 		w := &googleWorkspace{routes: googleRoutes(t, 90)}
 		rows, err := read(t, googleAt(t, w), googleSource(), "calendar_events")
@@ -843,6 +844,8 @@ func TestGoogleSync(t *testing.T) {
 			words: "could not reach Google; try again"},
 		"events of a disabled API": {events: googleFailure(http.StatusForbidden, "Calendar API is disabled", "accessNotConfigured"),
 			words: "enable the Google Calendar API in the service account's Google Cloud project"},
+		"events over a quota": {events: googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+			words: "this service account has used up its Google rate limit; try again in a few minutes"},
 		"events refused the token": {events: func(*http.Request) (int, string) { return http.StatusUnauthorized, `{}` },
 			words: "Google refused the Google Calendar API's access token for ada@acme.com; try again"},
 	} {
@@ -861,6 +864,33 @@ func TestGoogleSync(t *testing.T) {
 				}
 				if _, err := read(t, googleAt(t, &googleWorkspace{routes: routes}), googleSource(), table); refusalOf(err) != tc.words {
 					t.Fatalf("%s: Sync error = %v, want %q", table, err, tc.words)
+				}
+			}
+		})
+	}
+	// A calendar listed in part would publish as whole: only its first page refused skips it.
+	for name, answer := range map[string]func(*http.Request) (int, string){
+		"404":   googleFailure(http.StatusNotFound, "Not Found", "notFound"),
+		"403":   googleFailure(http.StatusForbidden, "Forbidden", "forbidden"),
+		"quota": googleFailure(http.StatusForbidden, "Calendar usage limits exceeded.", "quotaExceeded"),
+	} {
+		t.Run("fails a calendar whose later page is refused: "+name, func(t *testing.T) {
+			noBackoff(t)
+			routes := googleRoutes(t, 90)
+			first := routes["/calendar/v3/calendars/ada@acme.com/events"]
+			routes["/calendar/v3/calendars/ada@acme.com/events"] = func(r *http.Request) (int, string) {
+				if r.URL.Query().Get("pageToken") == "" {
+					return first(r)
+				}
+				return answer(r)
+			}
+			words := "Google stopped listing /calendar/v3/calendars/ada@acme.com/events as ada@acme.com part way through; try again"
+			if name == "quota" {
+				words = "this service account has used up its Google rate limit; try again in a few minutes"
+			}
+			for _, table := range []string{"calendar_events", "event_attendees"} {
+				if _, err := read(t, googleAt(t, &googleWorkspace{routes: routes}), googleSource(), table); refusalOf(err) != words {
+					t.Fatalf("%s: Sync error = %v, want %q", table, err, words)
 				}
 			}
 		})

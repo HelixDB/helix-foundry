@@ -498,11 +498,12 @@ func googleError(body []byte) (reasons []string, message string) {
 // pages lists a Google collection a page at a time, following
 // nextPageToken, and passes each item of field to each, once by its id: a
 // list that changes while it is paged may show an item twice. Google
-// leaves an empty list out. A page that isn't an object, whose list isn't
-// one of objects, that lists an item without an id, that gives back the
-// token it was asked with, or that Drive says searched only part of what
-// the user can read fails the read: ending early would publish a partial
-// table.
+// leaves an empty list out. Only the first page refused (errNoAccess) says
+// the user can't read the list. A later page refused, a page that isn't an
+// object, whose list isn't one of objects, that lists an item without an
+// id, that gives back the token it was asked with, or that Drive says
+// searched only part of what the user can read fails the read: ending
+// early would publish a partial table.
 func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, query url.Values, field string,
 	each func(id string, item map[string]any) error) error {
 	seen := map[string]bool{}
@@ -516,6 +517,9 @@ func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, qu
 			return err
 		}
 		if err := c.status(status, body, api, target); err != nil {
+			if page > 0 && errors.Is(err, errNoAccess) {
+				return refused(nil, "Google stopped listing %s as %s part way through; try again", path, c.settings.Subject)
+			}
 			return err
 		}
 		var (
@@ -677,8 +681,10 @@ func (c *googleClient) files(ctx context.Context, w RowWriter, docs DocumentWrit
 // calendars lists the user's calendar list into the calendars table and,
 // when an event table is read, each calendar's events in the window, from
 // event_days ago to googleFutureDays ahead, a recurring event as its
-// instances and a cancelled one left out. A calendar that won't list its
-// events, as one the user sees only the free/busy of, is skipped.
+// instances and a cancelled one left out. A calendar whose first page of
+// events is refused (errNoAccess), as one the user sees only the free/busy
+// of or one deleted since the list, is skipped. An event whose attendees
+// Google left out says so (attendees_omitted).
 func (c *googleClient) calendars(ctx context.Context, rows map[string]RowWriter) error {
 	var calendars []string
 	err := c.pages(ctx, googleCalendar, "/calendar/v3/users/me/calendarList", url.Values{"maxResults": {"250"}}, "items",
@@ -744,6 +750,7 @@ func (c *googleClient) calendars(ctx context.Context, rows map[string]RowWriter)
 					"organizer_email": googleEmail(organizer["email"]), "creator_email": googleEmail(creator["email"]),
 					"recurring_event_id": e["recurringEventId"], "html_link": e["htmlLink"],
 					"created_at": googleTime(e["created"]), "updated_at": googleTime(e["updated"]), "attendee_count": len(people),
+					"attendees_omitted": e["attendeesOmitted"] == true,
 				}); err != nil {
 					return err
 				}
