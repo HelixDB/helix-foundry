@@ -711,6 +711,13 @@ func TestNotionSync(t *testing.T) {
 		var cursors []string
 		kind := notionAt(t, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
 			body := notionBody(t, r)
+			if filter, _ := body["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults()
+			}
+			// Only the title: a database row's other properties are its table's.
+			if fields := r.URL.Query()["filter_properties"]; !slices.Equal(fields, []string{"title"}) {
+				t.Errorf("search filter_properties = %q", fields)
+			}
 			want := map[string]any{"filter": map[string]any{"property": "object", "value": "page"}, "page_size": 100.0,
 				"sort": map[string]any{"direction": "ascending", "timestamp": "last_edited_time"}}
 			cursor, _ := body["start_cursor"].(string)
@@ -974,13 +981,44 @@ func TestNotionSync(t *testing.T) {
 		})
 	}
 	t.Run("fails a search Notion cut short", func(t *testing.T) {
-		kind := notionAt(t, notionRoutes{"/v1/search": func(*http.Request) (int, string) {
+		kind := notionAt(t, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			if filter, _ := notionBody(t, r)["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults()
+			}
 			return http.StatusOK, notionCut(notionTestPage("pg_1", "Roadmap", "2026-01-06T10:00:00.000Z", notionWorkspace))
 		}})
 		rows, err := read(t, kind, "pages")
 		notionInvalid(t, err, "Notion stopped listing the pages shared with this integration at its result limit; share fewer with it")
 		if len(rows) != 0 {
 			t.Fatalf("rows = %v", rows)
+		}
+	})
+	// A search may list an object by its id alone: it is read whole, and
+	// left out if Notion no longer finds it.
+	t.Run("reads a page or data source a search lists partially whole", func(t *testing.T) {
+		var asked []string
+		kind := notionAt(t, notionRoutes{
+			"/v1/search": notionSearchOf(t, []string{`{"object":"page","id":"pg_9"}`, `{"object":"page","id":"pg_8"}`},
+				[]string{`{"object":"data_source","id":"ds_2"}`, `{"object":"data_source","id":"ds_3"}`}),
+			"/v1/pages/pg_9": func(r *http.Request) (int, string) {
+				asked = append(asked, "pg_9 "+r.URL.RawQuery)
+				return http.StatusOK, notionTestPage("pg_9", "Found", "2026-01-06T10:00:00.000Z", notionWorkspace)
+			},
+			"/v1/pages/pg_8": func(*http.Request) (int, string) { return http.StatusNotFound, `{"code":"object_not_found"}` },
+			"/v1/data_sources/ds_2": func(r *http.Request) (int, string) {
+				asked = append(asked, "ds_2 "+r.URL.RawQuery)
+				return http.StatusOK, notionTestSource("ds_2", "Deals", "2026-01-01T00:00:00.000Z", notionAccountsSchema)
+			},
+			"/v1/data_sources/ds_3": func(*http.Request) (int, string) { return http.StatusForbidden, `{"code":"restricted_resource"}` },
+			"/v1/data_sources/ds_2/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues))
+			},
+		})
+		pages, deals := &rowSink{}, &rowSink{}
+		written, err := kind.SyncPass(ctx, src, []Table{{Name: "pages"}, {Name: "deals"}}, map[string]RowWriter{"pages": pages, "deals": deals}, noDocuments{})
+		if err != nil || len(pages.rows) != 2 || pages.rows[0]["page_id"] != "pg_9" || len(deals.rows) != 1 || deals.rows[0]["plan"] != "Gold" ||
+			len(written[1].Columns) != 8 || fmt.Sprint(asked) != "[ds_2  pg_9 filter_properties=title]" {
+			t.Fatalf("SyncPass = %v, pages = %v, deals = %v, asked = %q", err, pages.rows, deals.rows, asked)
 		}
 	})
 	// The pass searches data sources again to find a table's.
@@ -998,12 +1036,15 @@ func TestNotionSync(t *testing.T) {
 		"says more follow with an empty cursor":  `{"results":[],"has_more":true,"next_cursor":""}`,
 		"lists a result that is not an object":   `{"results":["pg_1"],"has_more":false,"next_cursor":null}`,
 		"lists a page without an id":             `{"results":[{"object":"page"}],"has_more":false,"next_cursor":null}`,
-		"lists a page without its times":         `{"results":[{"id":"pg_1","created_time":"2026-01-05T09:00:00Z"}],"has_more":false,"next_cursor":null}`,
+		"lists a page without its times":         `{"results":[{"id":"pg_1","created_time":"2026-01-05T09:00:00Z","properties":{}}],"has_more":false,"next_cursor":null}`,
 		"gives back the cursor it was asked for": "",
 	} {
 		t.Run("fails a search page that "+name, func(t *testing.T) {
 			kind := notionAt(t, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
-				if page != "" {
+				switch filter, _ := notionBody(t, r)["filter"].(map[string]any); {
+				case filter["value"] == "data_source":
+					return http.StatusOK, notionResults()
+				case page != "":
 					return http.StatusOK, page
 				}
 				return http.StatusOK, notionMore("c1")
@@ -1220,8 +1261,15 @@ func TestNotionSync(t *testing.T) {
 		var mu sync.Mutex
 		searches := map[string]int{}
 		sources := []string{notionTestSource("ds_1", "Accounts", "2026-01-01T00:00:00.000Z", `{}`), notionTestSource("ds_2", "Deals", "2026-01-02T00:00:00.000Z", `{}`)}
+		queries := 0
 		rows := func(id string) func(*http.Request) (int, string) {
-			return func(*http.Request) (int, string) {
+			return func(r *http.Request) (int, string) {
+				mu.Lock()
+				queries++
+				mu.Unlock()
+				if r.URL.Query().Has("filter_properties") {
+					t.Errorf("%s: a table read asks for its titles only", r.URL.Path)
+				}
 				return http.StatusOK, notionResults(notionTestRow(id, "2026-01-05T09:00:00.000Z", `{}`))
 			}
 		}
@@ -1253,7 +1301,8 @@ func TestNotionSync(t *testing.T) {
 		for name, sink := range sinks {
 			counts[name] = len(sink.rows)
 		}
-		if fmt.Sprint(counts) != "map[accounts:1 deals:1 pages:1 users:3]" || fmt.Sprint(searches) != "map[data_source:1 page:1]" ||
+		// The pages table has the rows of both data sources, from their one query each.
+		if fmt.Sprint(counts) != "map[accounts:1 deals:1 pages:3 users:3]" || fmt.Sprint(searches) != "map[data_source:1 page:1]" || queries != 2 ||
 			!slices.Equal(tableNames(Discovery{Tables: written}), []string{"users", "pages", "accounts", "deals"}) || len(written[3].Columns) != 4 {
 			t.Fatalf("rows = %v, searches = %v, written = %v", counts, searches, written)
 		}
@@ -1300,9 +1349,7 @@ func TestNotionDocuments(t *testing.T) {
 		_, err := kind.SyncPass(ctx, src, []Table{{Name: "pages"}}, map[string]RowWriter{"pages": sink}, docs)
 		return sink, err
 	}
-	searchOf := func(pages ...string) notionRoutes {
-		return notionRoutes{"/v1/search": func(*http.Request) (int, string) { return http.StatusOK, notionResults(pages...) }}
-	}
+	searchOf := func(pages ...string) notionRoutes { return notionRoutes{"/v1/search": notionSearchOf(t, pages, nil)} }
 	roadmap := notionTestPage("pg_1", "  Product\nroadmap ", "2026-01-06T10:45:30.000Z", notionWorkspace)
 
 	t.Run("writes each page's Markdown under its title and id", func(t *testing.T) {
@@ -1372,8 +1419,58 @@ func TestNotionDocuments(t *testing.T) {
 		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", " \n\n ", false)}, reads))
 		docs := &granolaDocs{want: map[string]bool{"pages": true}}
 		sink, err := pass(t, notionAt(t, routes), docs)
-		if err != nil || len(sink.rows) != 1 || len(docs.puts) != 0 || readCount(reads)["pg_1"] != 1 {
-			t.Fatalf("SyncPass = %v, rows = %v, puts = %v", err, sink.rows, docs.putNames())
+		if err != nil || len(sink.rows) != 1 || len(docs.puts)+len(docs.drops) != 0 || readCount(reads)["pg_1"] != 1 {
+			t.Fatalf("SyncPass = %v, rows = %v, puts = %v, drops = %v", err, sink.rows, docs.putNames(), docs.drops)
+		}
+	})
+	// Emptied, a page's body has no document; the one held goes, the row stays.
+	t.Run("takes back the held document of a page whose body is now empty", func(t *testing.T) {
+		routes := searchOf(roadmap)
+		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", "\n", false)}, &sync.Map{}))
+		docs := &notionHeld{granolaDocs: &granolaDocs{want: map[string]bool{"pages": true}}, held: map[string]bool{"pg_1": true}}
+		sink, err := pass(t, notionAt(t, routes), docs)
+		if err != nil || len(sink.rows) != 1 || len(docs.puts) != 0 || !slices.Equal(docs.drops, []string{"pages pg_1"}) {
+			t.Fatalf("SyncPass = %v, rows = %v, puts = %v, drops = %v", err, sink.rows, docs.putNames(), docs.drops)
+		}
+	})
+	// A search may miss a page: a data source's rows come from its query,
+	// which also reads only their titles when its table isn't read, and a
+	// row the search lists of a data source queried is that query's.
+	t.Run("takes database rows from their data sources' queries and the other pages from the search", func(t *testing.T) {
+		search := notionSearchOf(t, []string{roadmap, notionTestRow("row_2", "2026-01-05T09:00:00.000Z", `{}`),
+			notionTestPage("row_9", "Elsewhere", "2026-01-07T10:00:00.000Z", notionUnder("data_source_id", "ds_9"))},
+			[]string{notionTestSource("ds_1", "Accounts", "2026-01-01T00:00:00.000Z", notionAccountsSchema)})
+		routes := notionRoutes{"/v1/search": search, "/v1/data_sources/ds_1/query": func(r *http.Request) (int, string) {
+			if fields := r.URL.Query()["filter_properties"]; !slices.Equal(fields, []string{"title"}) {
+				t.Errorf("query filter_properties = %q", fields)
+			}
+			return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues))
+		}}
+		docs := &granolaDocs{}
+		sink, err := pass(t, notionAt(t, routes), docs)
+		var ids []any
+		for _, row := range sink.rows {
+			ids = append(ids, row["page_id"])
+		}
+		// Pages that aren't rows are offered first, though older.
+		want := []string{"pages pg_1 2|2026-01-06T10:45:30Z|2923", "pages row_9 2|2026-01-07T10:00:00Z|2923", "pages row_1 2|2026-01-06T10:00:00Z|2923"}
+		if err != nil || fmt.Sprint(ids) != "[pg_1 row_9 row_1]" || !slices.Equal(docs.offers, want) || sink.rows[2]["title"] != "Acme" {
+			t.Fatalf("SyncPass = %v, rows = %v, offers = %q", err, ids, docs.offers)
+		}
+	})
+	// A read holds the pages a full read could keep the documents of, and
+	// writes the rest as they are listed.
+	t.Run("holds the 1,000 newest pages for their documents and writes the others as listed", func(t *testing.T) {
+		var listed []string
+		start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		for i := range 1001 {
+			listed = append(listed, notionTestPage(fmt.Sprintf("pg_%04d", i), "Page", start.Add(time.Duration(i)*time.Minute).Format(time.RFC3339), notionWorkspace))
+		}
+		docs := &granolaDocs{}
+		sink, err := pass(t, notionAt(t, searchOf(listed...)), docs)
+		if err != nil || len(sink.rows) != 1001 || sink.rows[0]["page_id"] != "pg_0000" || len(docs.offers) != 1000 ||
+			!strings.HasPrefix(docs.offers[0], "pages pg_1000 ") || !strings.HasPrefix(docs.offers[999], "pages pg_0001 ") {
+			t.Fatalf("SyncPass = %v, %d rows, the first %v; %d offers", err, len(sink.rows), sink.rows[0]["page_id"], len(docs.offers))
 		}
 	})
 	// A page the stream holds at this version costs no Markdown read.
@@ -1418,10 +1515,15 @@ func TestNotionDocuments(t *testing.T) {
 			t.Fatalf("SyncPass = %v, rows = %v", err, sink.rows)
 		}
 	})
-	t.Run("reads a page listed twice once, as last listed", func(t *testing.T) {
+	// The edit that moved it shows at its next sync.
+	t.Run("reads a page listed twice once, as first listed", func(t *testing.T) {
 		reads := &sync.Map{}
 		routes := notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
-			if cursor, _ := notionBody(t, r)["start_cursor"].(string); cursor == "" {
+			body := notionBody(t, r)
+			if filter, _ := body["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults()
+			}
+			if cursor, _ := body["start_cursor"].(string); cursor == "" {
 				return http.StatusOK, notionMore("p1", roadmap)
 			}
 			return http.StatusOK, notionResults(strings.Replace(roadmap, "2026-01-06T10:45:30.000Z", "2026-01-07T08:00:00.000Z", 1))
@@ -1429,7 +1531,7 @@ func TestNotionDocuments(t *testing.T) {
 		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", "Body", false)}, reads))
 		docs := &granolaDocs{want: map[string]bool{"pages": true}}
 		sink, err := pass(t, notionAt(t, routes), docs)
-		if err != nil || len(sink.rows) != 1 || !slices.Equal(docs.offers, []string{"pages pg_1 2|2026-01-07T08:00:00Z|2923"}) || readCount(reads)["pg_1"] != 1 {
+		if err != nil || len(sink.rows) != 1 || !slices.Equal(docs.offers, []string{"pages pg_1 2|2026-01-06T10:45:30Z|2923"}) || readCount(reads)["pg_1"] != 1 {
 			t.Fatalf("SyncPass = %v, rows = %v, offers = %q, reads = %v", err, sink.rows, docs.offers, readCount(reads))
 		}
 	})
@@ -1457,11 +1559,26 @@ func TestNotionDocuments(t *testing.T) {
 			}
 		})
 	}
-	t.Run("refuses a page the integration may not read", func(t *testing.T) {
+	// One page Notion won't export fails neither the read nor the others.
+	for _, status := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusNotAcceptable, http.StatusConflict} {
+		t.Run(fmt.Sprintf("keeps the row and document of a page whose body Notion refuses with %d, and reads on", status), func(t *testing.T) {
+			routes := searchOf(roadmap, notionTestPage("pg_2", "Two", "2026-01-05T10:00:00.000Z", notionWorkspace))
+			maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_2": notionMarkdownJSON("pg_2", "Two", false)}, &sync.Map{}))
+			routes["/v1/pages/pg_1/markdown"] = func(*http.Request) (int, string) {
+				return status, `{"object":"error","code":"row_limit_exceeded"}`
+			}
+			docs := &notionHeld{granolaDocs: &granolaDocs{want: map[string]bool{"pages": true}}, held: map[string]bool{"pg_1": true}}
+			sink, err := pass(t, notionAt(t, routes), docs)
+			if err != nil || len(sink.rows) != 2 || !slices.Equal(docs.putNames(), []string{"pages pg_2"}) || len(docs.drops) != 0 {
+				t.Fatalf("SyncPass = %v, rows = %v, puts = %v, drops = %v", err, sink.rows, docs.putNames(), docs.drops)
+			}
+		})
+	}
+	t.Run("refuses a secret revoked between pages", func(t *testing.T) {
 		routes := searchOf(roadmap)
-		routes["/v1/pages/pg_1/markdown"] = func(*http.Request) (int, string) { return http.StatusForbidden, `{"code":"restricted_resource"}` }
+		routes["/v1/pages/pg_1/markdown"] = func(*http.Request) (int, string) { return http.StatusUnauthorized, `{"code":"unauthorized"}` }
 		_, err := pass(t, notionAt(t, routes), &granolaDocs{want: map[string]bool{"pages": true}})
-		notionRefusal(t, err, "this integration cannot read /v1/pages/pg_1/markdown; check its capabilities in Notion and test again")
+		notionRefusal(t, err, "Notion rejected this secret; check it and enter it again")
 	})
 	t.Run("stops at Put's error", func(t *testing.T) {
 		routes := searchOf(roadmap, notionTestPage("pg_2", "Two", "2026-01-05T10:00:00.000Z", notionWorkspace))
@@ -1503,6 +1620,14 @@ func TestNotionDocuments(t *testing.T) {
 		}
 	})
 }
+
+// notionHeld is granolaDocs holding a document of each id of held.
+type notionHeld struct {
+	*granolaDocs
+	held map[string]bool
+}
+
+func (d *notionHeld) Held(_, id string) (string, bool) { return "1|held", d.held[id] }
 
 // onlyDocs is a DocumentWriter that wants only the document of id, as one
 // that holds every other at its version.

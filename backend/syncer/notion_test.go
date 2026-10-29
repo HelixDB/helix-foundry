@@ -24,11 +24,12 @@ type notionWorkspace struct {
 	reads map[string]int
 }
 
-// notionTestPage is a shared page: its last edit, title and body, and
-// whether it is a row of the Tasks data source.
+// notionTestPage is a shared page: its last edit, title and body, whether
+// it is a row of the Tasks data source, and whether the search misses it,
+// as Notion's may.
 type notionTestPage struct {
 	edited, title, body string
-	task                bool
+	task, unsearched    bool
 }
 
 func (w *notionWorkspace) serve(t *testing.T) string {
@@ -71,7 +72,7 @@ func (w *notionWorkspace) serve(t *testing.T) string {
 				"properties":{"Name":{"id":"title","type":"title","title":{}},"Done":{"id":"dn","type":"checkbox","checkbox":{}}}}`}
 		case path == "/v1/search" || path == "/v1/data_sources/ds_tasks/query":
 			for _, id := range slices.Sorted(maps.Keys(w.pages)) {
-				if p := w.pages[id]; path == "/v1/search" || p.task {
+				if p := w.pages[id]; path == "/v1/search" && !p.unsearched || path != "/v1/search" && p.task {
 					items = append(items, page(id, p))
 				}
 			}
@@ -112,8 +113,9 @@ func (w *notionWorkspace) took() map[string]int {
 // TestNotionSyncDocuments runs Notion through the syncer: the first sync
 // fills the Pages set from one Markdown read per page, an unchanged sync
 // reads only the page that has no document, an edit of a row's properties
-// alone updates its document in place, an edit of a body replaces its
-// page's document, and a page no longer shared loses its rows and its
+// alone updates its document in place, a row the search misses keeps its
+// own, an edit of a body replaces its page's document, a page no longer
+// shared loses its rows and its document, and a body emptied loses its
 // document.
 func TestNotionSyncDocuments(t *testing.T) {
 	workspace := &notionWorkspace{reads: map[string]int{}, pages: map[string]notionTestPage{
@@ -166,6 +168,18 @@ func TestNotionSyncDocuments(t *testing.T) {
 		t.Fatalf("Markdown reads = %v; pg_2's document %s, was %s", reads, f.liveID("pages", "pg_2"), task)
 	}
 
+	// A search that misses a row of a data source leaves its row and
+	// document as they are: its query lists it.
+	workspace.mu.Lock()
+	p := workspace.pages["pg_2"]
+	p.unsearched = true
+	workspace.pages["pg_2"] = p
+	workspace.mu.Unlock()
+	f.run(t, "sync-2c")
+	if reads := workspace.took(); fmt.Sprint(reads) != "map[pg_3:1]" || f.liveID("pages", "pg_2") != task || f.store.tables["pages"].RowCount != 3 {
+		t.Fatalf("Markdown reads = %v; pg_2's document %s, was %s; %d pages", reads, f.liveID("pages", "pg_2"), task, f.store.tables["pages"].RowCount)
+	}
+
 	// An edit moves its page's last edit, so its document is read and
 	// replaced; a page no longer shared leaves the search, its table's rows
 	// and its set.
@@ -182,5 +196,14 @@ func TestNotionSyncDocuments(t *testing.T) {
 	}
 	if tasks, pages := f.store.tables["tasks"].RowCount, f.store.tables["pages"].RowCount; tasks != 0 || pages != 2 {
 		t.Fatalf("rows: tasks = %d, pages = %d", tasks, pages)
+	}
+
+	// A body emptied takes its document back; the page keeps its row.
+	workspace.mu.Lock()
+	workspace.pages["pg_1"] = notionTestPage{edited: "2026-10-05T08:30:00.000Z", title: "Roadmap", body: " \n"}
+	workspace.mu.Unlock()
+	f.run(t, "sync-4")
+	if pages := f.held(t, "pages"); len(pages) != 0 || f.store.tables["pages"].RowCount != 2 {
+		t.Fatalf("pages = %q, rows = %d", pages, f.store.tables["pages"].RowCount)
 	}
 }

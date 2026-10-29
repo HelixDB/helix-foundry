@@ -3,6 +3,7 @@ package connector
 import (
 	"bytes"
 	"cmp"
+	"container/heap"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -22,8 +23,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/text/unicode/norm"
 	"golang.org/x/time/rate"
+
+	"github.com/helixdb/helix-foundry/backend/config"
 )
 
 var _ PassKind = (*notionKind)(nil)
@@ -234,61 +239,87 @@ func (k *notionKind) SyncDocuments(ctx context.Context, src Source, table Table,
 	return written[0], err
 }
 
-// SyncPass reads users from their list, pages from a search with one
-// Markdown read per page whose document is wanted, and each data source's
-// table from a query of its rows. A table names its data source only by
-// the name Discover gave it, so the pass searches the data sources again
-// and names them the same way; a data source renamed in Notion is a new
-// table, and its old one goes. Each data source's table is returned with
-// the columns of the schema this search read.
+// SyncPass reads users from their list, and each data source's table from
+// a query of its rows. The pages table is the rows of every shared data
+// source, from those queries (of their titles alone where the table isn't
+// read), and every other page from a search, which Notion doesn't promise
+// is complete; one Markdown read per page whose document is wanted. A table
+// names its data source only by the name Discover gave it, so the pass
+// searches the data sources again and names them the same way; a data
+// source renamed in Notion is a new table, and its old one goes. Each data
+// source's table is returned with the columns of the schema this search
+// read.
 func (k *notionKind) SyncPass(ctx context.Context, src Source, tables []Table, rows map[string]RowWriter, docs DocumentWriter) ([]Table, error) {
 	c := k.client(src.Secret)
 	written := slices.Clone(tables)
-	var sources map[string]notionSource
+	var pages *notionPages
+	read := map[string]int{} // the data sources' tables read, by name, at their place in tables
 	for i, table := range tables {
-		var err error
 		switch table.Name {
 		case "users":
-			err = c.users(ctx, rows[table.Name])
+			if err := c.users(ctx, rows[table.Name]); err != nil {
+				return written, err
+			}
 		case "pages":
-			err = c.pages(ctx, rows[table.Name], docs)
+			pages = &notionPages{w: rows[table.Name]}
 		default:
-			if sources == nil {
-				listed, err := c.sources(ctx)
-				if err != nil {
-					return written, err
-				}
-				sources = map[string]notionSource{}
-				for _, s := range listed {
-					sources[s.table.Name] = s
-				}
-			}
-			s, ok := sources[table.Name]
-			if !ok {
-				return written, refused(nil, "Notion no longer shares the database of table %s with this integration; try again", table.Name)
-			}
-			written[i] = s.table
-			w := rows[table.Name]
-			err = c.rows(ctx, s, nil, func(p notionPage, item map[string]any) error {
-				row, more := s.row(p, item)
-				for _, col := range more {
-					switch ids, ok, err := c.references(ctx, p.id, col.id); {
-					case err != nil:
-						return err
-					case ok && len(ids) == 0:
-						row[col.name] = nil
-					case ok:
-						row[col.name] = ids
-					}
-				}
-				return w.Write(row)
-			})
+			read[table.Name] = i
 		}
+	}
+	if pages == nil && len(read) == 0 {
+		return written, nil
+	}
+	sources, err := c.sources(ctx)
+	if err != nil {
+		return written, err
+	}
+	for _, table := range tables {
+		if _, ok := read[table.Name]; ok && !slices.ContainsFunc(sources, func(s notionSource) bool { return s.table.Name == table.Name }) {
+			return written, refused(nil, "Notion no longer shares the database of table %s with this integration; try again", table.Name)
+		}
+	}
+	queried := map[string]bool{}
+	for _, s := range sources {
+		i, ok := read[s.table.Name]
+		if !ok && pages == nil {
+			continue
+		}
+		queried[s.id] = true
+		var w RowWriter
+		query := url.Values{"filter_properties": {"title"}}
+		if ok {
+			written[i], w, query = s.table, rows[s.table.Name], nil
+		}
+		err := c.rows(ctx, s, query, func(p notionPage, item map[string]any) error {
+			if pages != nil {
+				if err := pages.add(p); err != nil {
+					return err
+				}
+			}
+			if w == nil {
+				return nil
+			}
+			row, more := s.row(p, item)
+			for _, col := range more {
+				switch ids, ok, err := c.references(ctx, p.id, col.id); {
+				case err != nil:
+					return err
+				case ok && len(ids) == 0:
+					row[col.name] = nil
+				case ok:
+					row[col.name] = ids
+				}
+			}
+			return w.Write(row)
+		})
 		if err != nil {
 			return written, err
 		}
 	}
-	return written, nil
+	if pages == nil {
+		return written, nil
+	}
+	return written, c.pages(ctx, pages, queried, docs)
 }
 
 // notionClient is one read's requests, paced together under Notion's rate
@@ -476,15 +507,16 @@ func (c *notionClient) list(ctx context.Context, path string, query url.Values, 
 	}
 }
 
-// notionSearch lists every shared object of a type, "page" or
-// "data_source", each read by parse, by last edit oldest first: one edited
-// while the search is paged moves to its end rather than out of it, and an
-// object listed twice keeps its last listing. Notion lists no trashed
-// object unless asked.
-func notionSearch[T any](ctx context.Context, c *notionClient, object string, parse func(id string, item map[string]any) (T, error)) ([]T, error) {
-	at := map[string]int{}
-	var all []T
-	cut, err := c.list(ctx, "/v1/search", nil, map[string]any{
+// search lists every shared object of a type, "page" or "data_source", by
+// last edit oldest first, and passes each to each: one edited while the
+// search is paged moves to its end rather than out of it, so it may come
+// twice. A partial object, its id alone, is read whole first, with query
+// (filter_properties), and left out if Notion refuses it
+// (notionOneRefused). Notion lists no trashed object unless asked, and
+// says when it cut a search at its result limit, which fails the read:
+// what it left out would go.
+func (c *notionClient) search(ctx context.Context, object string, query url.Values, each func(item map[string]any) error) error {
+	cut, err := c.list(ctx, "/v1/search", query, map[string]any{
 		"filter": map[string]any{"property": "object", "value": object},
 		"sort":   map[string]any{"timestamp": "last_edited_time", "direction": "ascending"},
 	}, func(item map[string]any) error {
@@ -492,26 +524,34 @@ func notionSearch[T any](ctx context.Context, c *notionClient, object string, pa
 		if id == "" {
 			return fmt.Errorf("notion /v1/search: a listed %s has no id", object)
 		}
-		v, err := parse(id, item)
-		if err != nil {
-			return err
+		if _, full := item["properties"]; full {
+			return each(item)
 		}
-		if i, ok := at[id]; ok {
-			all[i] = v
+		path := "/v1/" + object + "s/" + url.PathEscape(id)
+		status, raw, err := c.do(ctx, path, query, nil)
+		switch {
+		case err != nil:
+			return err
+		case notionOneRefused(status):
 			return nil
 		}
-		at[id] = len(all)
-		all = append(all, v)
-		return nil
+		if err := notionStatus(status, path); err != nil {
+			return err
+		}
+		var whole map[string]any
+		if json.Unmarshal(raw, &whole) != nil || whole["id"] != id {
+			return fmt.Errorf("notion %s: the response is not the %s", path, strings.ReplaceAll(object, "_", " "))
+		}
+		return each(whole)
 	})
 	switch {
 	case err != nil:
-		return nil, err
+		return err
 	case cut:
-		return nil, invalid("Notion stopped listing the %ss shared with this integration at its result limit; share fewer with it",
+		return invalid("Notion stopped listing the %ss shared with this integration at its result limit; share fewer with it",
 			strings.ReplaceAll(object, "_", " "))
 	}
-	return all, nil
+	return nil
 }
 
 // users writes the users table. Notion lists the workspace's people and
@@ -591,51 +631,143 @@ func (p notionPage) row() map[string]any {
 	}
 }
 
-// pages writes the pages table from one search, offering each page's
-// document to docs newest edit first, since a full read keeps the first
-// documents it offers up to its cap; Markdown is read only for a document
-// docs wants. A page whose Markdown Notion no longer finds, unshared or
-// deleted since the search, is left out, and so is its document. A page
-// whose body is empty has no document; one emptied keeps its last until
-// the page goes.
-func (c *notionClient) pages(ctx context.Context, w RowWriter, docs DocumentWriter) error {
-	listed, err := notionSearch(ctx, c, "page", func(_ string, item map[string]any) (notionPage, error) {
-		return notionPageOf("/v1/search", item)
+// notionPages is the pages table of one read, its rows written as their
+// pages are listed, but for the candidates for a document: the first
+// config.MaxDocumentsPerStream in notionOrder, the most a full read keeps,
+// held in a heap whose top is the last, and written once their Markdown is
+// read (offer). So a read holds that many pages, not all of them.
+type notionPages struct {
+	w          RowWriter
+	candidates notionHeap
+	listed     int
+}
+
+func (ps *notionPages) add(p notionPage) error {
+	ps.listed++
+	switch {
+	case len(ps.candidates) < config.MaxDocumentsPerStream:
+		heap.Push(&ps.candidates, p)
+		return nil
+	case notionOrder(p, ps.candidates[0]) > 0:
+		return ps.w.Write(p.row())
+	}
+	last := ps.candidates[0]
+	ps.candidates[0] = p
+	heap.Fix(&ps.candidates, 0)
+	return ps.w.Write(last.row())
+}
+
+// notionOrder is the order a read offers its pages' documents in: pages
+// that aren't database rows first, since a row more often has an empty
+// body, which takes a place under the cap and is read on every sync, as it
+// has no document to hold its version; then the newest edit, since a full
+// read keeps the first documents it offers up to its cap; then the lower id.
+func notionOrder(a, b notionPage) int {
+	if aRow, bRow := a.parentType == "data_source", b.parentType == "data_source"; aRow != bRow {
+		if aRow {
+			return 1
+		}
+		return -1
+	}
+	return cmp.Or(b.edited.Compare(a.edited), strings.Compare(a.id, b.id))
+}
+
+// notionHeap is a heap of pages, the last in notionOrder on top.
+type notionHeap []notionPage
+
+func (h notionHeap) Len() int           { return len(h) }
+func (h notionHeap) Less(i, j int) bool { return notionOrder(h[i], h[j]) > 0 }
+func (h notionHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *notionHeap) Push(p any)        { *h = append(*h, p.(notionPage)) }
+func (h *notionHeap) Pop() any {
+	p := (*h)[len(*h)-1]
+	*h = (*h)[:len(*h)-1]
+	return p
+}
+
+// notionPagesRead counts the bodies of Notion pages syncs read.
+var notionPagesRead = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "foundry_connector_notion_pages_total",
+	Help: "Notion pages whose Markdown a sync read, by outcome: read, empty, gone (Notion no longer finds it) or refused (Notion refused that page's body).",
+}, []string{"outcome"})
+
+// pages adds every page a search lists to ps but the rows of the data
+// sources the read queried, which their queries listed, then offers their
+// documents. listed is the ids the search passed, so a page it lists twice
+// is added once, at its first listing; its next sync reads the edit that
+// moved it.
+func (c *notionClient) pages(ctx context.Context, ps *notionPages, queried map[string]bool, docs DocumentWriter) error {
+	listed := map[string]bool{}
+	err := c.search(ctx, "page", url.Values{"filter_properties": {"title"}}, func(item map[string]any) error {
+		p, err := notionPageOf("/v1/search", item)
+		switch {
+		case err != nil:
+			return err
+		case queried[p.dataSourceID] || listed[p.id]:
+			return nil
+		}
+		listed[p.id] = true
+		return ps.add(p)
 	})
 	if err != nil {
 		return err
 	}
-	slices.SortFunc(listed, func(a, b notionPage) int { return cmp.Or(b.edited.Compare(a.edited), strings.Compare(a.id, b.id)) })
-	written, missing := 0, 0
-	for _, p := range listed {
-		var doc Document
+	return c.offer(ctx, ps, docs)
+}
+
+// offer offers each candidate's document to docs in notionOrder, reads its
+// Markdown only when docs wants it, and writes its row. A page Notion no
+// longer finds, unshared or deleted since it was listed, is left out, and
+// so is its document. One whose body Notion refuses (another
+// notionOneRefused: past a limit of Notion's, say) keeps its row and its
+// document as held, and the read goes on. A body empty has no document,
+// and takes back the one held. Notion finding none of the pages it listed
+// is Notion failing, not every page going between the two: an empty table
+// would drop them all.
+func (c *notionClient) offer(ctx context.Context, ps *notionPages, docs DocumentWriter) error {
+	missing := 0
+	for _, p := range slices.SortedFunc(slices.Values(ps.candidates), notionOrder) {
 		version := p.version(c.now)
-		wanted := docs.Want(notionPagesStream.Name, p.id, version)
-		if wanted {
-			md, err := c.markdown(ctx, p.id)
-			if err != nil {
+		if !docs.Want(notionPagesStream.Name, p.id, version) {
+			if err := ps.w.Write(p.row()); err != nil {
 				return err
 			}
-			if md == nil {
-				missing++
-				continue
-			}
-			doc, wanted = notionDocument(p, *md, version)
-		}
-		if err := w.Write(p.row()); err != nil {
-			return err
-		}
-		written++
-		if !wanted {
 			continue
 		}
+		md, refusal, err := c.markdown(ctx, p.id)
+		switch {
+		case err != nil:
+			return err
+		case refusal == http.StatusNotFound:
+			notionPagesRead.WithLabelValues("gone").Inc()
+			missing++
+			continue
+		case refusal != 0:
+			notionPagesRead.WithLabelValues("refused").Inc()
+			if err := ps.w.Write(p.row()); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := ps.w.Write(p.row()); err != nil {
+			return err
+		}
+		doc, ok := notionDocument(p, *md, version)
+		if !ok {
+			notionPagesRead.WithLabelValues("empty").Inc()
+			if _, held := docs.Held(notionPagesStream.Name, p.id); held {
+				if err := docs.Drop(notionPagesStream.Name, p.id); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		notionPagesRead.WithLabelValues("read").Inc()
 		if err := docs.Put(ctx, notionPagesStream.Name, doc); err != nil {
 			return err
 		}
 	}
-	// Notion finding none of the pages its search showed is Notion failing,
-	// not every page going between the two: an empty table would drop them all.
-	if written == 0 && missing > 0 {
+	if missing > 0 && missing == ps.listed {
 		return refused(nil, "Notion listed %d pages but returned none of them; try again", missing)
 	}
 	return nil
@@ -648,24 +780,25 @@ type notionMarkdown struct {
 	Truncated bool    `json:"truncated"`
 }
 
-// markdown reads a page's body; nil is a page Notion no longer finds.
-func (c *notionClient) markdown(ctx context.Context, id string) (*notionMarkdown, error) {
+// markdown reads a page's body, or the status of Notion's refusing it
+// (notionOneRefused): 404 for a page it no longer finds.
+func (c *notionClient) markdown(ctx context.Context, id string) (_ *notionMarkdown, refusal int, _ error) {
 	path := "/v1/pages/" + url.PathEscape(id) + "/markdown"
 	status, raw, err := c.do(ctx, path, nil, nil)
 	switch {
 	case err != nil:
-		return nil, err
-	case status == http.StatusNotFound:
-		return nil, nil
+		return nil, 0, err
+	case notionOneRefused(status):
+		return nil, status, nil
 	}
 	if err := notionStatus(status, path); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var md notionMarkdown
 	if json.Unmarshal(raw, &md) != nil || md.Markdown == nil {
-		return nil, fmt.Errorf("notion %s: the response has no markdown", path)
+		return nil, 0, fmt.Errorf("notion %s: the response has no markdown", path)
 	}
-	return &md, nil
+	return &md, 0, nil
 }
 
 // notionDocument is a page's document at version: its title and id, then
@@ -714,11 +847,21 @@ func (c *notionClient) sources(ctx context.Context) ([]notionSource, error) {
 		created    time.Time
 		properties map[string]any
 	}
-	all, err := notionSearch(ctx, c, "data_source", func(id string, item map[string]any) (listed, error) {
-		l := listed{id: id, title: notionText(item["title"])}
+	// A data source listed twice keeps its last listing.
+	var all []listed
+	at := map[string]int{}
+	err := c.search(ctx, "data_source", nil, func(item map[string]any) error {
+		l := listed{title: notionText(item["title"])}
+		l.id, _ = item["id"].(string)
 		l.created, _ = notionTime(item["created_time"]) // none sorts first
 		l.properties, _ = item["properties"].(map[string]any)
-		return l, nil
+		if i, ok := at[l.id]; ok {
+			all[i] = l
+			return nil
+		}
+		at[l.id] = len(all)
+		all = append(all, l)
+		return nil
 	})
 	if err != nil {
 		return nil, err
