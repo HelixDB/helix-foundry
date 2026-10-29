@@ -17,6 +17,9 @@ import (
 
 const notionTestSecret = "ntn_0123456789abcdefABCDEF"
 
+// notionTestNow is the time reads version their documents at.
+var notionTestNow = time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
+
 type notionRoutes = map[string]func(*http.Request) (int, string)
 
 // notionAt serves routes, checking every request carries the secret, the
@@ -24,9 +27,9 @@ type notionRoutes = map[string]func(*http.Request) (int, string)
 // reading from them, unpaced.
 func notionAt(t *testing.T, routes notionRoutes) *notionKind {
 	t.Helper()
-	saved := notionInterval
-	notionInterval = 0
-	t.Cleanup(func() { notionInterval = saved })
+	savedInterval, savedNow := notionInterval, notionNow
+	notionInterval, notionNow = 0, func() time.Time { return notionTestNow }
+	t.Cleanup(func() { notionInterval, notionNow = savedInterval, savedNow })
 	checked := notionRoutes{}
 	for path, handler := range routes {
 		checked[path] = func(r *http.Request) (int, string) {
@@ -269,6 +272,28 @@ func TestNotionConnector(t *testing.T) {
 			t.Fatalf("Discover = %v", err)
 		}
 	})
+	// One query a data source; a test of many stops at 20.
+	t.Run("shows rows of the oldest 20 data sources only", func(t *testing.T) {
+		var mu sync.Mutex
+		queried := map[string]bool{}
+		var sources []string
+		routes := notionRoutes{}
+		for i := range 22 {
+			id := fmt.Sprintf("ds_%02d", i)
+			sources = append(sources, notionTestSource(id, "Source "+id, fmt.Sprintf("2026-01-%02dT00:00:00.000Z", i+1), notionAccountsSchema))
+			routes["/v1/data_sources/"+id+"/query"] = func(*http.Request) (int, string) {
+				mu.Lock()
+				queried[id] = true
+				mu.Unlock()
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues))
+			}
+		}
+		d, err := notionAt(t, notionShared(t, pages, sources, routes)).Discover(ctx, Source{Secret: notionTestSecret})
+		if err != nil || len(d.Tables) != 24 || len(queried) != 20 || queried["ds_20"] || queried["ds_21"] ||
+			len(d.Tables[21].Preview) != 1 || d.Tables[22].Preview != nil || d.Tables[23].Preview != nil {
+			t.Fatalf("Discover = (%v, %v), queried %d", tableNames(d), err, len(queried))
+		}
+	})
 	// A sync reads every row anyway, so it asks for no preview.
 	t.Run("reads no rows for a sync", func(t *testing.T) {
 		d, err := notionAt(t, notionShared(t, pages, []string{accounts}, nil)).Discover(ctx, Source{Secret: notionTestSecret, ForSync: true})
@@ -392,19 +417,27 @@ func TestNotionNaming(t *testing.T) {
 			t.Errorf("notionSlug(%q) = %q, want %q", title, got, want)
 		}
 	}
-	taken := map[string]bool{"users": true}
-	for _, tc := range []struct{ name, fallback, want string }{
-		{"users", "x", "users_2"}, {"users", "x", "users_3"}, {"tasks", "x", "tasks"}, {"", "data_source", "data_source"},
-		{"", "data_source", "data_source_2"}, {"data_source_2", "x", "data_source_2_2"},
-	} {
-		if got := notionUnique(taken, tc.name, tc.fallback); got != tc.want {
-			t.Errorf("notionUnique(%q) = %q, want %q", tc.name, got, tc.want)
-		}
+	// A suffix is of the id alone, longer only should another id's take it.
+	taken := map[string]bool{"tasks__5837f7a6": true}
+	if got := notionSuffixed(taken, "tasks", "ds_1"); got != "tasks__5837f7a66d" || !taken[got] {
+		t.Errorf("notionSuffixed = %q", got)
+	}
+	if got := notionSuffixed(taken, "tasks", "ds_b"); got != "tasks__f248edc1" {
+		t.Errorf("notionSuffixed = %q", got)
 	}
 
-	// Older data sources name first; ties go by id.
-	t.Run("names data sources uniquely in the order they were made", func(t *testing.T) {
-		sources := []string{
+	discover := func(t *testing.T, sources ...string) Discovery {
+		t.Helper()
+		d, err := notionAt(t, notionShared(t, nil, sources, nil)).Discover(context.Background(), Source{Secret: notionTestSecret, ForSync: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	// The oldest data source holds a name, ties by id; the others take it
+	// with their id's suffix, and none takes users or pages.
+	t.Run("names data sources uniquely, the oldest holding a name", func(t *testing.T) {
+		d := discover(t,
 			notionTestSource("ds_1", "Tasks", "2026-01-03T00:00:00.000Z", `{}`),
 			notionTestSource("ds_2", "Tasks", "2026-01-01T00:00:00.000Z", `{}`),
 			notionTestSource("ds_3", "tasks", "2026-01-03T00:00:00.000Z", `{}`),
@@ -414,33 +447,64 @@ func TestNotionNaming(t *testing.T) {
 			notionTestSource("ds_7", "🚀🚀", "2026-01-01T00:00:00.000Z", `{}`),
 			notionTestSource("ds_8", "Tasks 2", "2026-01-02T00:00:00.000Z", `{}`),
 			`{"object":"data_source","id":"ds_9","title":[{"plain_text":"Zeta"}],"properties":{}}`,
-		}
-		d, err := notionAt(t, notionShared(t, nil, sources, nil)).Discover(context.Background(), Source{Secret: notionTestSecret, ForSync: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := []string{"users", "pages", "zeta", "tasks", "users_2", "pages_2", "data_source", "data_source_2", "tasks_2", "tasks_3", "tasks_4"}
+		)
+		want := []string{"users", "pages", "zeta", "tasks", "users__e3972d4b", "pages__65bf4c9f", "data_source", "data_source__945a3f58",
+			"tasks_2", "tasks__5837f7a6", "tasks__c6fb397c"}
 		if got := tableNames(d); !slices.Equal(got, want) {
 			t.Fatalf("tables = %v, want %v", got, want)
 		}
 	})
-	// Columns go in property name order, never take a fixed column's name,
-	// and a date's end takes the next free name.
+	// A newer data source of the same title, shared later, moves no name;
+	// one unshared frees no name for another.
+	t.Run("keeps every table's name as newer data sources of its title come and go", func(t *testing.T) {
+		older := notionTestSource("ds_a", "Tasks", "2026-01-01T00:00:00.000Z", `{}`)
+		b := notionTestSource("ds_b", "Tasks", "2026-02-01T00:00:00.000Z", `{}`)
+		c := notionTestSource("ds_c", "Tasks", "2026-01-15T00:00:00.000Z", `{}`)
+		for _, tc := range []struct {
+			sources []string
+			want    string
+		}{
+			{[]string{older}, "[users pages tasks]"},
+			{[]string{older, b}, "[users pages tasks tasks__f248edc1]"},
+			{[]string{older, b, c}, "[users pages tasks tasks__ceef22ea tasks__f248edc1]"},
+			{[]string{b, c}, "[users pages tasks tasks__f248edc1]"},
+		} {
+			if got := fmt.Sprint(tableNames(discover(t, tc.sources...))); got != tc.want {
+				t.Errorf("tables = %s, want %s", got, tc.want)
+			}
+		}
+	})
+	// Columns go in property name order. A name two properties would take,
+	// or a fixed column's, each takes with its property id's suffix, and a
+	// date's end column is its name and _end.
 	t.Run("names a data source's columns uniquely by property", func(t *testing.T) {
 		schema := `{"Page ID":{"id":"a","type":"rich_text"},"URL":{"id":"b","type":"url"},"Due":{"id":"c","type":"date"},
 			"Due End":{"id":"d","type":"rich_text"},"Ünïcode Näme":{"id":"e","type":"people"},"🔥":{"id":"f","type":"checkbox"},
 			"✨":{"id":"g","type":"number"},"Button":{"id":"h","type":"button"},"Verify":{"id":"i","type":"verification"},
 			"Place":{"id":"j","type":"place"},"Weird":{"id":"k","type":"something_new"},"Odd":"not a property"}`
-		d, err := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Projects", "2026-01-01T00:00:00.000Z", schema)}, nil)).
-			Discover(context.Background(), Source{Secret: notionTestSecret, ForSync: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		d := discover(t, notionTestSource("ds_1", "Projects", "2026-01-01T00:00:00.000Z", schema))
 		want := "[{page_id string false} {url string true} {created_at string false} {last_edited_at string false} " +
-			"{due string true} {due_end string true} {due_end_2 string true} {page_id_2 string true} {url_2 string true} " +
-			"{unicode_name array true} {property number true} {property_2 boolean true}]"
+			"{due string true} {due_end__2e7d2c03 string true} {due_end__18ac3e73 string true} {page_id__ca978112 string true} " +
+			"{url__3e23e816 string true} {unicode_name array true} {property__cd0aa985 number true} {property__252f10c8 boolean true}]"
 		if got := fmt.Sprint(findTable(t, d, "projects").Columns); got != want {
 			t.Fatalf("columns = %s\nwant %s", got, want)
+		}
+	})
+	// Adding "Due Date" beside "Due date" leaves due_date to neither.
+	t.Run("gives a column no other property's name as properties come", func(t *testing.T) {
+		one := `{"Due date":{"id":"c","type":"date"}}`
+		two := `{"Due date":{"id":"c","type":"date"},"Due Date":{"id":"d","type":"rich_text"}}`
+		for schema, want := range map[string]string{
+			one: "[due_date due_date_end]",
+			two: "[due_date__18ac3e73 due_date__2e7d2c03 due_date_end]",
+		} {
+			var names []string
+			for _, c := range findTable(t, discover(t, notionTestSource("ds_1", "Projects", "2026-01-01T00:00:00.000Z", schema)), "projects").Columns[4:] {
+				names = append(names, c.Name)
+			}
+			if got := fmt.Sprint(names); got != want {
+				t.Errorf("columns = %s, want %s", got, want)
+			}
 		}
 	})
 }
@@ -588,6 +652,23 @@ func TestNotionValues(t *testing.T) {
 	}
 }
 
+// notionWaits makes do's retries wait no time, and records the Retry-After
+// each was asked to wait.
+func notionWaits(t *testing.T) *[]string {
+	t.Helper()
+	saved := notionWait
+	var mu sync.Mutex
+	var asked []string
+	notionWait = func(_ int, retryAfter string) time.Duration {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, retryAfter)
+		return 0
+	}
+	t.Cleanup(func() { notionWait = saved })
+	return &asked
+}
+
 // notionUsers serves the users list in two pages.
 func notionUsers(t *testing.T) func(*http.Request) (int, string) {
 	return func(r *http.Request) (int, string) {
@@ -630,6 +711,13 @@ func TestNotionSync(t *testing.T) {
 		var cursors []string
 		kind := notionAt(t, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
 			body := notionBody(t, r)
+			if filter, _ := body["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults()
+			}
+			// Only the title: a database row's other properties are its table's.
+			if fields := r.URL.Query()["filter_properties"]; !slices.Equal(fields, []string{"title"}) {
+				t.Errorf("search filter_properties = %q", fields)
+			}
 			want := map[string]any{"filter": map[string]any{"property": "object", "value": "page"}, "page_size": 100.0,
 				"sort": map[string]any{"direction": "ascending", "timestamp": "last_edited_time"}}
 			cursor, _ := body["start_cursor"].(string)
@@ -719,26 +807,218 @@ func TestNotionSync(t *testing.T) {
 			t.Fatalf("rows = %v, filters = %v", ids, filters)
 		}
 	})
-	t.Run("fails a data source with more rows made in one minute than one query answers", func(t *testing.T) {
+	// Notion shows a creation time to the minute but filters to the
+	// millisecond: a minute one query can't answer is read in halves.
+	t.Run("reads a minute of more rows than one query answers in windows of it", func(t *testing.T) {
+		const limit = 3 // as Notion's 10,000
+		minute := time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
+		var created []time.Time // row_i's, to the millisecond
+		for _, second := range []float64{5, 10, 20, 20.5, 35, 40, 50, 55, 59.999} {
+			created = append(created, minute.Add(time.Duration(second*float64(time.Second))))
+		}
+		created = append(created, minute.Add(2*time.Minute), minute.Add(2*time.Minute+time.Second))
+		var windows []string
+		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Imported", "2026-01-01T00:00:00.000Z", `{}`)},
+			notionRoutes{"/v1/data_sources/ds_1/query": func(r *http.Request) (int, string) {
+				filter, _ := notionBody(t, r)["filter"].(map[string]any)
+				bounds := []any{filter}
+				if and, ok := filter["and"].([]any); ok {
+					bounds = and
+				}
+				var from, until time.Time
+				for _, b := range bounds {
+					op, _ := b.(map[string]any)["created_time"].(map[string]any)
+					if at, ok := op["on_or_after"].(string); ok {
+						from, _ = time.Parse(time.RFC3339Nano, at)
+					}
+					if at, ok := op["before"].(string); ok {
+						until, _ = time.Parse(time.RFC3339Nano, at)
+					}
+				}
+				windows = append(windows, from.Format("15:04:05.000")+"-"+until.Format("15:04:05.000"))
+				var rows []string
+				for i, at := range created {
+					if !at.Before(from) && (until.IsZero() || at.Before(until)) {
+						rows = append(rows, notionTestRow(fmt.Sprintf("row_%d", i), at.Truncate(time.Minute).Format(time.RFC3339Nano), `{}`))
+					}
+				}
+				if len(rows) > limit {
+					return http.StatusOK, notionCut(rows[:limit]...)
+				}
+				return http.StatusOK, notionResults(rows...)
+			}}))
+		rows, err := read(t, kind, "imported")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, row := range rows {
+			ids = append(ids, row["page_id"].(string))
+		}
+		if want := "[row_0 row_1 row_2 row_3 row_4 row_5 row_6 row_7 row_8 row_9 row_10]"; fmt.Sprint(ids) != want {
+			t.Fatalf("rows = %v, want %s; windows = %v", ids, want, windows)
+		}
+		want := []string{"00:00:00.000-00:00:00.000", "09:00:00.000-00:00:00.000", "09:00:00.000-09:00:30.000",
+			"09:00:00.000-09:00:15.000", "09:00:15.000-09:00:30.000", "09:00:30.000-09:01:00.000",
+			"09:00:30.000-09:00:45.000", "09:00:45.000-09:01:00.000", "09:01:00.000-00:00:00.000"}
+		if !slices.Equal(windows, want) {
+			t.Fatalf("windows = %v\nwant %v", windows, want)
+		}
+	})
+	t.Run("fails a data source with more rows made within one second than one query answers", func(t *testing.T) {
+		calls := 0
 		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Imported", "2026-01-01T00:00:00.000Z", `{}`)},
 			notionRoutes{"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				calls++
 				return http.StatusOK, notionCut(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", `{}`), notionTestRow("row_2", "2026-01-05T09:00:00.000Z", `{}`))
 			}}))
 		rows, err := read(t, kind, "imported")
-		notionInvalid(t, err, "Notion answers at most 10,000 rows of a database at a time, and more rows of imported were created in one minute; "+
+		notionInvalid(t, err, "Notion answers at most 10,000 rows of a database at a time, and more rows of imported were created within one second; "+
 			"Helix can't read them all")
-		if len(rows) != 2 {
-			t.Fatalf("rows = %v", rows)
+		// The whole table, its minute, then halves of 30 s down to 0.9375 s.
+		if len(rows) != 2 || calls != 8 {
+			t.Fatalf("rows = %v after %d queries", rows, calls)
 		}
 	})
+	// A page shows 25 ids of a relation or people value; the rest are read
+	// from the property, 100 a request.
+	t.Run("reads a relation or people value the row cut at 25 whole", func(t *testing.T) {
+		refs := func(kind, prefix string, from, n int) []string {
+			var items []string
+			for i := from; i < from+n; i++ {
+				ref := fmt.Sprintf(`{"id":"%s%d"}`, prefix, i)
+				if kind == "people" {
+					ref = fmt.Sprintf(`{"object":"user","id":"%s%d"}`, prefix, i)
+				}
+				items = append(items, fmt.Sprintf(`{"object":"property_item","id":"x","type":%q,%q:%s}`, kind, kind, ref))
+			}
+			return items
+		}
+		values := func(relation, people int, more bool) string {
+			var projects, users []string
+			for i := range relation {
+				projects = append(projects, fmt.Sprintf(`{"id":"pg_%d"}`, i))
+			}
+			for i := range people {
+				users = append(users, fmt.Sprintf(`{"object":"user","id":"usr_%d"}`, i))
+			}
+			return fmt.Sprintf(`{"Projects":{"id":"pr","type":"relation","relation":[%s],"has_more":%t},"Owners":{"id":"ow","type":"people","people":[%s]}}`,
+				strings.Join(projects, ","), more, strings.Join(users, ","))
+		}
+		var asked []string
+		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",
+			`{"Projects":{"id":"pr","type":"relation","relation":{}},"Owners":{"id":"ow","type":"people","people":{}}}`)}, notionRoutes{
+			"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", values(25, 25, true)),
+					notionTestRow("row_2", "2026-01-05T09:01:00.000Z", values(3, 24, false)))
+			},
+			"/v1/pages/row_1/properties/pr": func(r *http.Request) (int, string) {
+				q := r.URL.Query()
+				asked = append(asked, "pr "+q.Get("page_size")+" "+q.Get("start_cursor"))
+				if q.Get("start_cursor") == "" {
+					return http.StatusOK, notionMore("c1", refs("relation", "pg_", 0, 100)...)
+				}
+				return http.StatusOK, notionResults(refs("relation", "pg_", 100, 30)...)
+			},
+			"/v1/pages/row_1/properties/ow": func(r *http.Request) (int, string) {
+				asked = append(asked, "ow "+r.URL.Query().Get("page_size"))
+				return http.StatusOK, notionResults(refs("people", "usr_", 0, 30)...)
+			},
+		}))
+		rows, err := read(t, kind, "deals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		projects, _ := rows[0]["projects"].([]any)
+		owners, _ := rows[0]["owners"].([]any)
+		if len(projects) != 130 || projects[129] != "pg_129" || len(owners) != 30 || owners[29] != "usr_29" ||
+			len(rows[1]["projects"].([]any)) != 3 || len(rows[1]["owners"].([]any)) != 24 || fmt.Sprint(asked) != "[ow 100 pr 100  pr 100 c1]" {
+			t.Fatalf("row_1 = %d projects, %d owners; row_2 = %v; asked = %q", len(projects), len(owners), rows[1], asked)
+		}
+	})
+	t.Run("reads at most 1,000 ids of one value", func(t *testing.T) {
+		calls := 0
+		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",
+			`{"Projects":{"id":"pr","type":"relation","relation":{}}}`)}, notionRoutes{
+			"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z",
+					`{"Projects":{"id":"pr","type":"relation","relation":[{"id":"pg_0"}],"has_more":true}}`))
+			},
+			"/v1/pages/row_1/properties/pr": func(*http.Request) (int, string) {
+				calls++
+				var items []string
+				for i := range 100 {
+					items = append(items, fmt.Sprintf(`{"type":"relation","relation":{"id":"pg_%d_%d"}}`, calls, i))
+				}
+				return http.StatusOK, notionMore(fmt.Sprintf("c%d", calls), items...)
+			},
+		}))
+		rows, err := read(t, kind, "deals")
+		if projects, _ := rows[0]["projects"].([]any); err != nil || len(projects) != 1000 || calls != 10 {
+			t.Fatalf("Sync = %v, %d projects after %d calls", err, len(projects), calls)
+		}
+	})
+	// The page went since its query, say: the row keeps what it showed.
+	for status, want := range map[int]string{http.StatusNotFound: "", http.StatusBadRequest: "",
+		http.StatusUnauthorized: "Notion rejected this secret; check it and enter it again"} {
+		t.Run(fmt.Sprintf("keeps the ids a row showed when Notion answers %d for the rest, unless the secret is refused", status), func(t *testing.T) {
+			kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",
+				`{"Projects":{"id":"pr","type":"relation","relation":{}}}`)}, notionRoutes{
+				"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+					return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z",
+						`{"Projects":{"id":"pr","type":"relation","relation":[{"id":"pg_0"}],"has_more":true}}`))
+				},
+				"/v1/pages/row_1/properties/pr": func(*http.Request) (int, string) { return status, `{"object":"error"}` },
+			}))
+			rows, err := read(t, kind, "deals")
+			if want != "" {
+				notionRefusal(t, err, want)
+				return
+			}
+			if err != nil || fmt.Sprint(rows[0]["projects"]) != "[pg_0]" {
+				t.Fatalf("Sync = (%v, %v)", rows, err)
+			}
+		})
+	}
 	t.Run("fails a search Notion cut short", func(t *testing.T) {
-		kind := notionAt(t, notionRoutes{"/v1/search": func(*http.Request) (int, string) {
+		kind := notionAt(t, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
+			if filter, _ := notionBody(t, r)["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults()
+			}
 			return http.StatusOK, notionCut(notionTestPage("pg_1", "Roadmap", "2026-01-06T10:00:00.000Z", notionWorkspace))
 		}})
 		rows, err := read(t, kind, "pages")
 		notionInvalid(t, err, "Notion stopped listing the pages shared with this integration at its result limit; share fewer with it")
 		if len(rows) != 0 {
 			t.Fatalf("rows = %v", rows)
+		}
+	})
+	// A search may list an object by its id alone: it is read whole, and
+	// left out if Notion no longer finds it.
+	t.Run("reads a page or data source a search lists partially whole", func(t *testing.T) {
+		var asked []string
+		kind := notionAt(t, notionRoutes{
+			"/v1/search": notionSearchOf(t, []string{`{"object":"page","id":"pg_9"}`, `{"object":"page","id":"pg_8"}`},
+				[]string{`{"object":"data_source","id":"ds_2"}`, `{"object":"data_source","id":"ds_3"}`}),
+			"/v1/pages/pg_9": func(r *http.Request) (int, string) {
+				asked = append(asked, "pg_9 "+r.URL.RawQuery)
+				return http.StatusOK, notionTestPage("pg_9", "Found", "2026-01-06T10:00:00.000Z", notionWorkspace)
+			},
+			"/v1/pages/pg_8": func(*http.Request) (int, string) { return http.StatusNotFound, `{"code":"object_not_found"}` },
+			"/v1/data_sources/ds_2": func(r *http.Request) (int, string) {
+				asked = append(asked, "ds_2 "+r.URL.RawQuery)
+				return http.StatusOK, notionTestSource("ds_2", "Deals", "2026-01-01T00:00:00.000Z", notionAccountsSchema)
+			},
+			"/v1/data_sources/ds_3": func(*http.Request) (int, string) { return http.StatusForbidden, `{"code":"restricted_resource"}` },
+			"/v1/data_sources/ds_2/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues))
+			},
+		})
+		pages, deals := &rowSink{}, &rowSink{}
+		written, err := kind.SyncPass(ctx, src, []Table{{Name: "pages"}, {Name: "deals"}}, map[string]RowWriter{"pages": pages, "deals": deals}, noDocuments{})
+		if err != nil || len(pages.rows) != 2 || pages.rows[0]["page_id"] != "pg_9" || len(deals.rows) != 1 || deals.rows[0]["plan"] != "Gold" ||
+			len(written[1].Columns) != 8 || fmt.Sprint(asked) != "[ds_2  pg_9 filter_properties=title]" {
+			t.Fatalf("SyncPass = %v, pages = %v, deals = %v, asked = %q", err, pages.rows, deals.rows, asked)
 		}
 	})
 	// The pass searches data sources again to find a table's.
@@ -756,12 +1036,15 @@ func TestNotionSync(t *testing.T) {
 		"says more follow with an empty cursor":  `{"results":[],"has_more":true,"next_cursor":""}`,
 		"lists a result that is not an object":   `{"results":["pg_1"],"has_more":false,"next_cursor":null}`,
 		"lists a page without an id":             `{"results":[{"object":"page"}],"has_more":false,"next_cursor":null}`,
-		"lists a page without its times":         `{"results":[{"id":"pg_1","created_time":"2026-01-05T09:00:00Z"}],"has_more":false,"next_cursor":null}`,
+		"lists a page without its times":         `{"results":[{"id":"pg_1","created_time":"2026-01-05T09:00:00Z","properties":{}}],"has_more":false,"next_cursor":null}`,
 		"gives back the cursor it was asked for": "",
 	} {
 		t.Run("fails a search page that "+name, func(t *testing.T) {
 			kind := notionAt(t, notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
-				if page != "" {
+				switch filter, _ := notionBody(t, r)["filter"].(map[string]any); {
+				case filter["value"] == "data_source":
+					return http.StatusOK, notionResults()
+				case page != "":
 					return http.StatusOK, page
 				}
 				return http.StatusOK, notionMore("c1")
@@ -835,7 +1118,7 @@ func TestNotionSync(t *testing.T) {
 	})
 	// A limit that outlasts the retries fails the attempt with a message the syncer retries on.
 	t.Run("refuses a rate limit that outlasts the retries, saying when to try again", func(t *testing.T) {
-		noBackoff(t)
+		waits := notionWaits(t)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Retry-After", "120")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -854,6 +1137,52 @@ func TestNotionSync(t *testing.T) {
 		at := strings.TrimPrefix(refusedErr.Message, prefix)
 		if early, late := before.Add(2*time.Minute).UTC().Format("15:04 UTC"), after.Add(2*time.Minute).UTC().Format("15:04 UTC"); at != early && at != late {
 			t.Fatalf("retry at %q, want %s", at, early)
+		}
+		if fmt.Sprint(*waits) != "[120 120 120 120 120 120]" {
+			t.Fatalf("waits = %v, want each of the 6 retries to wait the Retry-After", *waits)
+		}
+	})
+	// Notion's own SDK waits as long as Retry-After asks, up to a minute.
+	t.Run("waits the Retry-After Notion asks for, up to a minute", func(t *testing.T) {
+		noBackoff(t)
+		for retryAfter, want := range map[string]time.Duration{"45": 45 * time.Second, "60": time.Minute, "120": time.Minute, "": 0, "soon": 0, "-5": 0} {
+			if got := notionWait(2, retryAfter); got != want {
+				t.Errorf("notionWait(%q) = %s, want %s", retryAfter, got, want)
+			}
+		}
+	})
+	// Notion's remedy for a query it can't answer in time is a smaller page_size.
+	t.Run("asks for half the results of a page Notion could not build in time, for the rest of the list", func(t *testing.T) {
+		var asked []string
+		kind := notionAt(t, notionRoutes{"/v1/users": func(r *http.Request) (int, string) {
+			q := r.URL.Query()
+			asked = append(asked, q.Get("page_size")+" "+q.Get("start_cursor"))
+			switch len(asked) {
+			case 1:
+				return http.StatusServiceUnavailable, `{"code":"service_unavailable"}`
+			case 2:
+				return http.StatusGatewayTimeout, `{"code":"gateway_timeout"}`
+			case 3:
+				return http.StatusOK, notionMore("u1", notionAdaJSON)
+			}
+			return http.StatusOK, notionResults(notionGraceJSON)
+		}})
+		rows, err := read(t, kind, "users")
+		if err != nil || len(rows) != 2 || fmt.Sprint(asked) != "[100  50  25  25 u1]" {
+			t.Fatalf("Sync = (%v, %v), asked = %q", rows, err, asked)
+		}
+	})
+	t.Run("retries a page that times out at the fewest results, then refuses", func(t *testing.T) {
+		noBackoff(t)
+		var asked []string
+		kind := notionAt(t, notionRoutes{"/v1/users": func(r *http.Request) (int, string) {
+			asked = append(asked, r.URL.Query().Get("page_size"))
+			return http.StatusGatewayTimeout, `{"code":"gateway_timeout"}`
+		}})
+		_, err := read(t, kind, "users")
+		notionRefusal(t, err, "could not reach Notion; try again")
+		if want := "[100 50 25 12 10 10 10 10 10 10 10]"; fmt.Sprint(asked) != want || !strings.Contains(err.Error(), "HTTP 504 for /v1/users") {
+			t.Fatalf("asked = %v, want %s; error = %v", asked, want, err)
 		}
 	})
 	t.Run("refuses an outage that outlasts the retries", func(t *testing.T) {
@@ -932,8 +1261,15 @@ func TestNotionSync(t *testing.T) {
 		var mu sync.Mutex
 		searches := map[string]int{}
 		sources := []string{notionTestSource("ds_1", "Accounts", "2026-01-01T00:00:00.000Z", `{}`), notionTestSource("ds_2", "Deals", "2026-01-02T00:00:00.000Z", `{}`)}
+		queries := 0
 		rows := func(id string) func(*http.Request) (int, string) {
-			return func(*http.Request) (int, string) {
+			return func(r *http.Request) (int, string) {
+				mu.Lock()
+				queries++
+				mu.Unlock()
+				if r.URL.Query().Has("filter_properties") {
+					t.Errorf("%s: a table read asks for its titles only", r.URL.Path)
+				}
 				return http.StatusOK, notionResults(notionTestRow(id, "2026-01-05T09:00:00.000Z", `{}`))
 			}
 		}
@@ -965,7 +1301,8 @@ func TestNotionSync(t *testing.T) {
 		for name, sink := range sinks {
 			counts[name] = len(sink.rows)
 		}
-		if fmt.Sprint(counts) != "map[accounts:1 deals:1 pages:1 users:3]" || fmt.Sprint(searches) != "map[data_source:1 page:1]" ||
+		// The pages table has the rows of both data sources, from their one query each.
+		if fmt.Sprint(counts) != "map[accounts:1 deals:1 pages:3 users:3]" || fmt.Sprint(searches) != "map[data_source:1 page:1]" || queries != 2 ||
 			!slices.Equal(tableNames(Discovery{Tables: written}), []string{"users", "pages", "accounts", "deals"}) || len(written[3].Columns) != 4 {
 			t.Fatalf("rows = %v, searches = %v, written = %v", counts, searches, written)
 		}
@@ -1012,12 +1349,10 @@ func TestNotionDocuments(t *testing.T) {
 		_, err := kind.SyncPass(ctx, src, []Table{{Name: "pages"}}, map[string]RowWriter{"pages": sink}, docs)
 		return sink, err
 	}
-	searchOf := func(pages ...string) notionRoutes {
-		return notionRoutes{"/v1/search": func(*http.Request) (int, string) { return http.StatusOK, notionResults(pages...) }}
-	}
+	searchOf := func(pages ...string) notionRoutes { return notionRoutes{"/v1/search": notionSearchOf(t, pages, nil)} }
 	roadmap := notionTestPage("pg_1", "  Product\nroadmap ", "2026-01-06T10:45:30.000Z", notionWorkspace)
 
-	t.Run("writes each page's Markdown under its title, last edit and id", func(t *testing.T) {
+	t.Run("writes each page's Markdown under its title and id", func(t *testing.T) {
 		reads := &sync.Map{}
 		routes := searchOf(roadmap, notionTestPage("pg_2", "", "2026-01-05T10:00:00.000Z", notionWorkspace))
 		maps.Copy(routes, notionMarkdownOf(map[string]string{
@@ -1029,14 +1364,14 @@ func TestNotionDocuments(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(docs.offers, []string{"pages pg_1 1|2026-01-06T10:45:30Z", "pages pg_2 1|2026-01-05T10:00:00Z"}) || len(sink.rows) != 2 {
+		if !slices.Equal(docs.offers, []string{"pages pg_1 2|2026-01-06T10:45:30Z|2923", "pages pg_2 2|2026-01-05T10:00:00Z|2924"}) || len(sink.rows) != 2 {
 			t.Fatalf("offers = %q, rows = %v", docs.offers, sink.rows)
 		}
 		want := []Document{
-			{ExternalID: "pg_1", Version: "1|2026-01-06T10:45:30Z", At: time.Date(2026, 1, 6, 10, 45, 30, 0, time.UTC), Title: "Product roadmap",
-				URL: "https://www.notion.so/pg_1", Text: []byte("# Product roadmap\n\nLast edited: 2026-01-06 10:45 UTC\nPage id: pg_1\n\n## Q1\n\n- Ship it\n")},
-			{ExternalID: "pg_2", Version: "1|2026-01-05T10:00:00Z", At: time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC), Title: "",
-				URL: "https://www.notion.so/pg_2", Text: []byte("# Untitled\n\nLast edited: 2026-01-05 10:00 UTC\nPage id: pg_2\n\nLong page\n" +
+			{ExternalID: "pg_1", Version: "2|2026-01-06T10:45:30Z|2923", At: time.Date(2026, 1, 6, 10, 45, 30, 0, time.UTC), Title: "Product roadmap",
+				URL: "https://www.notion.so/pg_1", Text: []byte("# Product roadmap\n\nPage id: pg_1\n\n## Q1\n\n- Ship it\n")},
+			{ExternalID: "pg_2", Version: "2|2026-01-05T10:00:00Z|2924", At: time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC), Title: "",
+				URL: "https://www.notion.so/pg_2", Text: []byte("# Untitled\n\nPage id: pg_2\n\nLong page\n" +
 					"\nNotion cut this page short at its block limit; the rest of it is not here.\n")},
 		}
 		if len(docs.puts) != len(want) {
@@ -1049,14 +1384,93 @@ func TestNotionDocuments(t *testing.T) {
 			}
 		}
 	})
+	// A page is read again once a week at a time of its own, and at each edit.
+	t.Run("versions a page's document by its last edit and the week of its re-read", func(t *testing.T) {
+		edited := time.Date(2026, 1, 6, 10, 45, 30, 0, time.UTC)
+		if v := (notionPage{id: "pg_1", edited: edited}).version(notionTestNow); v != "2|2026-01-06T10:45:30Z|2923" {
+			t.Fatalf("version = %q", v)
+		}
+		// The first minute each version has moved by, over two weeks.
+		changes := map[string][]time.Time{}
+		for _, id := range []string{"pg_1", "pg_2", "pg_b"} {
+			p := notionPage{id: id, edited: edited}
+			last := p.version(notionTestNow)
+			for at := notionTestNow; at.Before(notionTestNow.Add(14 * 24 * time.Hour)); at = at.Add(time.Minute) {
+				if v := p.version(at); v != last {
+					changes[id], last = append(changes[id], at), v
+				}
+			}
+		}
+		want := map[string][]time.Time{
+			"pg_1": {time.Date(2026, 1, 14, 0, 45, 0, 0, time.UTC), time.Date(2026, 1, 21, 0, 45, 0, 0, time.UTC)},
+			"pg_2": {time.Date(2026, 1, 16, 17, 13, 0, 0, time.UTC), time.Date(2026, 1, 23, 17, 13, 0, 0, time.UTC)},
+			"pg_b": {time.Date(2026, 1, 10, 19, 38, 0, 0, time.UTC), time.Date(2026, 1, 17, 19, 38, 0, 0, time.UTC)},
+		}
+		if fmt.Sprint(changes) != fmt.Sprint(want) {
+			t.Fatalf("version changes = %v\nwant %v", changes, want)
+		}
+		if v := (notionPage{id: "pg_1", edited: edited.Add(time.Minute)}).version(notionTestNow); v != "2|2026-01-06T10:46:30Z|2923" {
+			t.Fatalf("version after an edit = %q", v)
+		}
+	})
 	t.Run("puts no document for a page with an empty body", func(t *testing.T) {
 		reads := &sync.Map{}
 		routes := searchOf(roadmap)
 		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", " \n\n ", false)}, reads))
 		docs := &granolaDocs{want: map[string]bool{"pages": true}}
 		sink, err := pass(t, notionAt(t, routes), docs)
-		if err != nil || len(sink.rows) != 1 || len(docs.puts) != 0 || readCount(reads)["pg_1"] != 1 {
-			t.Fatalf("SyncPass = %v, rows = %v, puts = %v", err, sink.rows, docs.putNames())
+		if err != nil || len(sink.rows) != 1 || len(docs.puts)+len(docs.drops) != 0 || readCount(reads)["pg_1"] != 1 {
+			t.Fatalf("SyncPass = %v, rows = %v, puts = %v, drops = %v", err, sink.rows, docs.putNames(), docs.drops)
+		}
+	})
+	// Emptied, a page's body has no document; the one held goes, the row stays.
+	t.Run("takes back the held document of a page whose body is now empty", func(t *testing.T) {
+		routes := searchOf(roadmap)
+		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", "\n", false)}, &sync.Map{}))
+		docs := &notionHeld{granolaDocs: &granolaDocs{want: map[string]bool{"pages": true}}, held: map[string]bool{"pg_1": true}}
+		sink, err := pass(t, notionAt(t, routes), docs)
+		if err != nil || len(sink.rows) != 1 || len(docs.puts) != 0 || !slices.Equal(docs.drops, []string{"pages pg_1"}) {
+			t.Fatalf("SyncPass = %v, rows = %v, puts = %v, drops = %v", err, sink.rows, docs.putNames(), docs.drops)
+		}
+	})
+	// A search may miss a page: a data source's rows come from its query,
+	// which also reads only their titles when its table isn't read, and a
+	// row the search lists of a data source queried is that query's.
+	t.Run("takes database rows from their data sources' queries and the other pages from the search", func(t *testing.T) {
+		search := notionSearchOf(t, []string{roadmap, notionTestRow("row_2", "2026-01-05T09:00:00.000Z", `{}`),
+			notionTestPage("row_9", "Elsewhere", "2026-01-07T10:00:00.000Z", notionUnder("data_source_id", "ds_9"))},
+			[]string{notionTestSource("ds_1", "Accounts", "2026-01-01T00:00:00.000Z", notionAccountsSchema)})
+		routes := notionRoutes{"/v1/search": search, "/v1/data_sources/ds_1/query": func(r *http.Request) (int, string) {
+			if fields := r.URL.Query()["filter_properties"]; !slices.Equal(fields, []string{"title"}) {
+				t.Errorf("query filter_properties = %q", fields)
+			}
+			return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z", notionAccountValues))
+		}}
+		docs := &granolaDocs{}
+		sink, err := pass(t, notionAt(t, routes), docs)
+		var ids []any
+		for _, row := range sink.rows {
+			ids = append(ids, row["page_id"])
+		}
+		// Pages that aren't rows are offered first, though older.
+		want := []string{"pages pg_1 2|2026-01-06T10:45:30Z|2923", "pages row_9 2|2026-01-07T10:00:00Z|2923", "pages row_1 2|2026-01-06T10:00:00Z|2923"}
+		if err != nil || fmt.Sprint(ids) != "[pg_1 row_9 row_1]" || !slices.Equal(docs.offers, want) || sink.rows[2]["title"] != "Acme" {
+			t.Fatalf("SyncPass = %v, rows = %v, offers = %q", err, ids, docs.offers)
+		}
+	})
+	// A read holds the pages a full read could keep the documents of, and
+	// writes the rest as they are listed.
+	t.Run("holds the 1,000 newest pages for their documents and writes the others as listed", func(t *testing.T) {
+		var listed []string
+		start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		for i := range 1001 {
+			listed = append(listed, notionTestPage(fmt.Sprintf("pg_%04d", i), "Page", start.Add(time.Duration(i)*time.Minute).Format(time.RFC3339), notionWorkspace))
+		}
+		docs := &granolaDocs{}
+		sink, err := pass(t, notionAt(t, searchOf(listed...)), docs)
+		if err != nil || len(sink.rows) != 1001 || sink.rows[0]["page_id"] != "pg_0000" || len(docs.offers) != 1000 ||
+			!strings.HasPrefix(docs.offers[0], "pages pg_1000 ") || !strings.HasPrefix(docs.offers[999], "pages pg_0001 ") {
+			t.Fatalf("SyncPass = %v, %d rows, the first %v; %d offers", err, len(sink.rows), sink.rows[0]["page_id"], len(docs.offers))
 		}
 	})
 	// A page the stream holds at this version costs no Markdown read.
@@ -1101,10 +1515,15 @@ func TestNotionDocuments(t *testing.T) {
 			t.Fatalf("SyncPass = %v, rows = %v", err, sink.rows)
 		}
 	})
-	t.Run("reads a page listed twice once, as last listed", func(t *testing.T) {
+	// The edit that moved it shows at its next sync.
+	t.Run("reads a page listed twice once, as first listed", func(t *testing.T) {
 		reads := &sync.Map{}
 		routes := notionRoutes{"/v1/search": func(r *http.Request) (int, string) {
-			if cursor, _ := notionBody(t, r)["start_cursor"].(string); cursor == "" {
+			body := notionBody(t, r)
+			if filter, _ := body["filter"].(map[string]any); filter["value"] == "data_source" {
+				return http.StatusOK, notionResults()
+			}
+			if cursor, _ := body["start_cursor"].(string); cursor == "" {
 				return http.StatusOK, notionMore("p1", roadmap)
 			}
 			return http.StatusOK, notionResults(strings.Replace(roadmap, "2026-01-06T10:45:30.000Z", "2026-01-07T08:00:00.000Z", 1))
@@ -1112,7 +1531,7 @@ func TestNotionDocuments(t *testing.T) {
 		maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_1": notionMarkdownJSON("pg_1", "Body", false)}, reads))
 		docs := &granolaDocs{want: map[string]bool{"pages": true}}
 		sink, err := pass(t, notionAt(t, routes), docs)
-		if err != nil || len(sink.rows) != 1 || !slices.Equal(docs.offers, []string{"pages pg_1 1|2026-01-07T08:00:00Z"}) || readCount(reads)["pg_1"] != 1 {
+		if err != nil || len(sink.rows) != 1 || !slices.Equal(docs.offers, []string{"pages pg_1 2|2026-01-06T10:45:30Z|2923"}) || readCount(reads)["pg_1"] != 1 {
 			t.Fatalf("SyncPass = %v, rows = %v, offers = %q, reads = %v", err, sink.rows, docs.offers, readCount(reads))
 		}
 	})
@@ -1122,7 +1541,7 @@ func TestNotionDocuments(t *testing.T) {
 		_, err := pass(t, notionAt(t, searchOf(notionTestPage("pg_b", "B", "2026-01-05T10:00:00.000Z", notionWorkspace),
 			notionTestPage("pg_c", "C", "2026-01-07T10:00:00.000Z", notionWorkspace),
 			notionTestPage("pg_a", "A", "2026-01-05T10:00:00.000Z", notionWorkspace))), docs)
-		want := []string{"pages pg_c 1|2026-01-07T10:00:00Z", "pages pg_a 1|2026-01-05T10:00:00Z", "pages pg_b 1|2026-01-05T10:00:00Z"}
+		want := []string{"pages pg_c 2|2026-01-07T10:00:00Z|2924", "pages pg_a 2|2026-01-05T10:00:00Z|2924", "pages pg_b 2|2026-01-05T10:00:00Z|2923"}
 		if err != nil || !slices.Equal(docs.offers, want) {
 			t.Fatalf("SyncPass = %v, offers = %q", err, docs.offers)
 		}
@@ -1140,11 +1559,26 @@ func TestNotionDocuments(t *testing.T) {
 			}
 		})
 	}
-	t.Run("refuses a page the integration may not read", func(t *testing.T) {
+	// One page Notion won't export fails neither the read nor the others.
+	for _, status := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusNotAcceptable, http.StatusConflict} {
+		t.Run(fmt.Sprintf("keeps the row and document of a page whose body Notion refuses with %d, and reads on", status), func(t *testing.T) {
+			routes := searchOf(roadmap, notionTestPage("pg_2", "Two", "2026-01-05T10:00:00.000Z", notionWorkspace))
+			maps.Copy(routes, notionMarkdownOf(map[string]string{"pg_2": notionMarkdownJSON("pg_2", "Two", false)}, &sync.Map{}))
+			routes["/v1/pages/pg_1/markdown"] = func(*http.Request) (int, string) {
+				return status, `{"object":"error","code":"row_limit_exceeded"}`
+			}
+			docs := &notionHeld{granolaDocs: &granolaDocs{want: map[string]bool{"pages": true}}, held: map[string]bool{"pg_1": true}}
+			sink, err := pass(t, notionAt(t, routes), docs)
+			if err != nil || len(sink.rows) != 2 || !slices.Equal(docs.putNames(), []string{"pages pg_2"}) || len(docs.drops) != 0 {
+				t.Fatalf("SyncPass = %v, rows = %v, puts = %v, drops = %v", err, sink.rows, docs.putNames(), docs.drops)
+			}
+		})
+	}
+	t.Run("refuses a secret revoked between pages", func(t *testing.T) {
 		routes := searchOf(roadmap)
-		routes["/v1/pages/pg_1/markdown"] = func(*http.Request) (int, string) { return http.StatusForbidden, `{"code":"restricted_resource"}` }
+		routes["/v1/pages/pg_1/markdown"] = func(*http.Request) (int, string) { return http.StatusUnauthorized, `{"code":"unauthorized"}` }
 		_, err := pass(t, notionAt(t, routes), &granolaDocs{want: map[string]bool{"pages": true}})
-		notionRefusal(t, err, "this integration cannot read /v1/pages/pg_1/markdown; check its capabilities in Notion and test again")
+		notionRefusal(t, err, "Notion rejected this secret; check it and enter it again")
 	})
 	t.Run("stops at Put's error", func(t *testing.T) {
 		routes := searchOf(roadmap, notionTestPage("pg_2", "Two", "2026-01-05T10:00:00.000Z", notionWorkspace))
@@ -1186,6 +1620,14 @@ func TestNotionDocuments(t *testing.T) {
 		}
 	})
 }
+
+// notionHeld is granolaDocs holding a document of each id of held.
+type notionHeld struct {
+	*granolaDocs
+	held map[string]bool
+}
+
+func (d *notionHeld) Held(_, id string) (string, bool) { return "1|held", d.held[id] }
 
 // onlyDocs is a DocumentWriter that wants only the document of id, as one
 // that holds every other at its version.
