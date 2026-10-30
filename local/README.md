@@ -67,6 +67,25 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 `docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
 
+The backend and ontology agent must speak the same agent contract. A running
+agent's health check only says it is serving; it does not check that its
+contract matches the backend. To check a running local stack using a backend
+image built from this checkout, run:
+
+```sh
+docker compose exec foundry /usr/local/bin/foundry check-agent
+```
+
+This compares the sidecar's reported contract with the contract compiled into
+that backend image. It makes no model calls and reads no workspace data. A
+mismatch or an unavailable agent returns a nonzero exit code; use a matching
+agent image before starting graph work. The command is part of the backend
+built from this checkout and is not available in older released images. Use
+matching release images when running the published release; don't assume the
+release agent matches a backend built from a newer checkout. For a non-default
+loopback address pass `--addr 127.0.0.1:PORT`. See the [agent contract](../backend/pb/proto/ontology_agent/v1/README.md)
+for the version required by this checkout.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.
