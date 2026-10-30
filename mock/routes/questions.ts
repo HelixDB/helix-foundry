@@ -123,6 +123,9 @@ type StoredQuestion = {
   focusJson: string;
   clientToken: string;
   askedByUserId: string;
+  // The principal a grantee asked as (./access.ts); unset for anyone else.
+  // A grantee sees only its own questions, as the backend's samePrincipal.
+  grantee?: string;
   createdAt: string;
   status: QuestionStatus;
   attempts: number;
@@ -989,11 +992,16 @@ function scope(req: Parameters<MockRoute["handle"]>[0]) {
   const s = ontologyOf(req);
   if (
     isScope(s) &&
+    !req.grantee &&
     (config as { ontologyDatabaseHidden?: boolean }).ontologyDatabaseHidden
   )
     return fail("PERMISSION_DENIED", "permission denied");
   return s;
 }
+
+/** Whether a question is one the caller may see: any, but a grantee's own only. */
+const visible = (req: Parameters<MockRoute["handle"]>[0], q: StoredQuestion) =>
+  !req.grantee || q.grantee === req.grantee.principal;
 
 function question(
   req: Parameters<MockRoute["handle"]>[0],
@@ -1002,7 +1010,7 @@ function question(
   if (!isScope(s)) return s;
   advanceAll(s.m.workspaceId);
   const q = state.questions.find(
-    (x) => x.id === req.params.id && x.ontologyId === s.o.id,
+    (x) => x.id === req.params.id && x.ontologyId === s.o.id && visible(req, x),
   );
   return q || fail("NOT_FOUND", "question not found");
 }
@@ -1067,13 +1075,17 @@ export const questionRoutes: MockRoute[] = [
         (q) => q.ontologyId === s.o.id && q.clientToken === clientToken,
       );
       if (again)
-        return again.question === text
+        return again.question === text && visible(req, again)
           ? ok({ question: toQuestion(again) } satisfies QuestionResponse)
           : fail(
               "INVALID_ARGUMENT",
               "client_token was already used for another question",
             );
-      const loadId = body.loadId || currentLoadId(s.o.id);
+      // A grantee asks only the load its grants were checked against.
+      const granted = req.grantee?.load?.loadId;
+      if (granted && body.loadId && body.loadId !== granted)
+        return fail("NOT_FOUND", "load not found");
+      const loadId = granted || body.loadId || currentLoadId(s.o.id);
       if (!loadId)
         return fail(
           "FAILED_PRECONDITION",
@@ -1093,7 +1105,8 @@ export const questionRoutes: MockRoute[] = [
           (q) =>
             q.ontologyId === s.o.id &&
             q.id === body.threadId &&
-            q.threadId === q.id,
+            q.threadId === q.id &&
+            visible(req, q),
         )
       )
         return fail("NOT_FOUND", "thread not found");
@@ -1123,6 +1136,7 @@ export const questionRoutes: MockRoute[] = [
         focusJson,
         clientToken,
         askedByUserId: req.principal.user.id,
+        ...(req.grantee ? { grantee: req.grantee.principal } : {}),
         createdAt: now(),
         status: "queued",
         attempts: 0,
@@ -1151,7 +1165,10 @@ export const questionRoutes: MockRoute[] = [
       advanceAll(s.m.workspaceId);
       const thread = req.query.get("threadId") || "";
       const all = state.questions.filter(
-        (q) => q.ontologyId === s.o.id && (!thread || q.threadId === thread),
+        (q) =>
+          q.ontologyId === s.o.id &&
+          (!thread || q.threadId === thread) &&
+          visible(req, q),
       );
       const from = Number(req.query.get("pageToken") || 0) || 0;
       return ok({

@@ -341,6 +341,19 @@ export const currentLoadId = (ontologyId: string) =>
 export const currentLoadVersionId = (ontologyId: string) =>
   loadById(currentLoadId(ontologyId) || "")?.versionId;
 
+/**
+ * For ./access.ts: an ontology's current load when it can be read (ready or
+ * partial), and whether it applied People enrichment's profiles: every load
+ * of a version that enriches has a step.
+ */
+export function servableLoad(ontologyId: string) {
+  advanceLoads(ontologyId);
+  const l = loadById(currentLoadId(ontologyId) || "");
+  return l && (l.status === "ready" || l.status === "partial")
+    ? { loadId: l.id, versionId: l.versionId, enrichment: !!l.enrichment }
+    : undefined;
+}
+
 /** The ontology's live job, of any kind. */
 export const liveJob = (ontologyId: string) => {
   advanceLoads(ontologyId);
@@ -1506,6 +1519,20 @@ const toLoad = (l: StoredLoad): FoundryLoad => {
   };
 };
 
+/**
+ * The load a grantee reads, as it may see it: which version it holds and
+ * when it was written, without its jobs, their spend or its People
+ * enrichment step.
+ */
+const granteeLoad = (l: StoredLoad): FoundryLoad => ({
+  ...toLoad(l),
+  current: true,
+  jobs: [],
+  jobCount: 0,
+  usdMicros: "0",
+  enrichment: null,
+});
+
 const BASE =
   "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/loads" as const;
 
@@ -1605,8 +1632,13 @@ export const loadRoutes: MockRoute[] = [
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
       advanceLoads(s.o.id);
+      const granted = req.grantee?.load?.loadId;
       return ok({
-        loads: loadsOf(s.o.id).map(toLoad),
+        loads: granted
+          ? loadsOf(s.o.id)
+              .filter((l) => l.id === granted)
+              .map(granteeLoad)
+          : loadsOf(s.o.id).map(toLoad),
       } satisfies ListLoadsResponse);
     },
   },
@@ -1617,10 +1649,13 @@ export const loadRoutes: MockRoute[] = [
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
       advanceLoads(s.o.id);
+      const granted = req.grantee?.load?.loadId;
       const l = loadsOf(s.o.id).find((x) => x.id === req.params.id);
-      return l
-        ? ok({ load: toLoad(l) } satisfies LoadResponse)
-        : fail("NOT_FOUND", "load not found");
+      if (!l || (granted && l.id !== granted))
+        return fail("NOT_FOUND", "load not found");
+      return ok({
+        load: granted ? granteeLoad(l) : toLoad(l),
+      } satisfies LoadResponse);
     },
   },
   {
@@ -1662,8 +1697,11 @@ export const loadRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      if (knobs.ontologyDatabaseHidden)
+      // A grantee reads its granted load whatever the database's project.
+      if (knobs.ontologyDatabaseHidden && !req.grantee)
         return fail("PERMISSION_DENIED", "permission denied");
+      if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
+        return fail("NOT_FOUND", "load not found");
       const reads = readsOf(
         (req.body as Partial<ReadFoundryGraphRequest> | undefined)?.readsJson,
       );

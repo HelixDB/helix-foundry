@@ -16,6 +16,25 @@ export type MockRequest = {
   body: any;
   // The signed-in caller. Always set unless the route is `public`.
   principal: Principal;
+  // Set when the caller reads only through source grants (./routes/access.ts
+  // admitted it, as the backend's access check does): handlers answer only
+  // what its grants cover.
+  grantee?: MockGrantee;
+};
+
+/**
+ * A caller admitted only through source grants, as the backend's
+ * access.Grantee: who it is (a principal key, "KIND_USER:usr_eve"), the
+ * current loads its grants cover by ontology, the one an ontology's route
+ * was admitted on, whether its grants cover a document set, and whether a
+ * load they cover holds a document (of `ontologyId`'s, or any).
+ */
+export type MockGrantee = {
+  principal: string;
+  covered: Map<string, { loadId: string; versionId: string }>;
+  load?: { loadId: string; versionId: string };
+  coversSet: (setId: string) => boolean;
+  holds: (documentId: string, ontologyId?: string) => boolean;
 };
 
 export type MockReply = {

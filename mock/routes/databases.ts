@@ -10,7 +10,7 @@ import { runQuery } from "../graph/query";
 import { MockGraph } from "../graph/store";
 import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import { LOCAL_TOKEN, config, isReply, membership, onReset } from "../state";
-import { manages } from "./workspaces";
+import { manages, queryReads } from "./workspaces";
 
 // Helix's own projects, databases (tenants) and query broker, as
 // the Helix WFE serves them to the Helix dashboard: GET/POST /v1/projects,
@@ -31,8 +31,9 @@ import { manages } from "./workspaces";
 //   with ErrorInfo NO_WORKSPACE_SUBSCRIPTION (state "expired"), as
 //   requireTenantSubscription answers. A local API (mock/state.ts) has no
 //   subscriptions and never asks.
-// - query-read needs membership of the database's workspace; a cluster
-//   reference is refused, as the broker refuses a shared cluster's.
+// - query-read needs membership of the database's workspace with query
+//   access (./workspaces.ts queryReads); a cluster reference is refused, as
+//   the broker refuses a shared cluster's.
 // - `{"startingQueries": {"<slug>": n}}`: that database refuses its next n
 //   requests with the gateway's 503 rate_limit_unavailable, as a database
 //   does until the gateway has its rate limit: n reads, and an attempt of a load
@@ -398,6 +399,7 @@ export const databaseRoutes: MockRoute[] = [
       if (!t) return fail("NOT_FOUND", "database not found");
       const m = membership(t.workspaceId, user.id);
       if (isReply(m)) return m;
+      if (!queryReads(m)) return fail("PERMISSION_DENIED", "permission denied");
       let request: unknown;
       try {
         request = decode(b.queryJson || "");

@@ -425,6 +425,21 @@ export function ontologyVersion(
   );
 }
 /**
+ * For ./access.ts: what a version's generation drafted from (its tables and
+ * table files), as a load of it reads; undefined for a version without one.
+ */
+export function versionInputs(ontologyId: string, versionId: string) {
+  const v = ontologyVersion(ontologyId, versionId),
+    g = state.generations.find((x) => x.id === v?.generationId);
+  return v && g
+    ? {
+        tables: g.tables || [],
+        documents: (g.documents || []).flatMap((d) => (d.id ? [d.id] : [])),
+      }
+    : undefined;
+}
+
+/**
  * A version's scope as the WFE stores it: the sets given that are live in
  * the workspace, in their order, once each.
  */
@@ -691,13 +706,15 @@ const listed = (v: StoredVersion): OntologyVersion => ({
 });
 // For a caller who can't query the ontology's database (the
 // `ontologyDatabaseHidden` knob), a revised version's draft items go without
-// their cards, which Revise measured on its load, as the backend answers.
-const full = (v: StoredVersion): OntologyVersion => {
+// their cards, which Revise measured on its load, as the backend answers; a
+// grantee's (`granted`) go without any draft's cards.
+const full = (v: StoredVersion, granted = false): OntologyVersion => {
   const definition = structuredClone(v.definition) as AgentBundleDefinition &
     Record<string, unknown>;
   const items = Object.values(definition.draft?.draft?.items || {});
   const hidden =
-    !!knobs.ontologyDatabaseHidden && !!definition.parent_version_id;
+    granted ||
+    (!!knobs.ontologyDatabaseHidden && !!definition.parent_version_id);
   const withheld = hidden && items.some((i) => i.card != null);
   if (hidden) for (const i of items) delete i.card;
   return {
@@ -893,10 +910,14 @@ export const ontologyRoutes: MockRoute[] = [
     handle: (req) => {
       const scope = ontologyOf(req);
       if (!isScope(scope)) return scope;
+      // A grantee reads only its load's version, without the cards its
+      // draft's generation measured.
       const v = ontologyVersion(scope.o.id, req.params.id!);
-      return v
-        ? ok({ version: full(v) } satisfies OntologyVersionResponse)
-        : fail("NOT_FOUND", "ontology version not found");
+      if (!v || (req.grantee && v.id !== req.grantee.load?.versionId))
+        return fail("NOT_FOUND", "ontology version not found");
+      return ok({
+        version: full(v, !!req.grantee),
+      } satisfies OntologyVersionResponse);
     },
   },
   {
