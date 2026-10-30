@@ -180,6 +180,8 @@ func sqlRows(ctx context.Context, q queryer, query string, args []any, each func
 
 func (k *mysqlKind) Hint(string) string { return "password set" }
 
+func (k *mysqlKind) Target(settings json.RawMessage) (string, error) { return databaseTarget(settings) }
+
 // Sync copies one table from a consistent snapshot, with MySQL encoding each
 // row as a JSON object.
 func (k *mysqlKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {

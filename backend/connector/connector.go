@@ -52,6 +52,15 @@ type Kind interface {
 	Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error)
 }
 
+// Targeted is a kind whose settings choose the server its credential is sent
+// to. An edit keeps the stored credential only while the target is the same,
+// so new settings cannot send it to a server it was never entered for.
+type Targeted interface {
+	// Target names where prepared settings send the credential; two settings
+	// with equal targets send it to the same server.
+	Target(settings json.RawMessage) (string, error)
+}
+
 // SecretContext binds a sealed credential to its connector row, so a
 // ciphertext copied to another row does not open.
 func SecretContext(connectorID string) string { return "connector:" + connectorID }

@@ -78,7 +78,7 @@ services:
 
   # Owns the shared network namespace; restarting the others leaves it be.
   pod:
-    image: registry.k8s.io/pause:3.10
+    image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
     ports: ["127.0.0.1:8333:8333"]
     # Connectors reach a database on this machine as host.docker.internal,
     # on Linux as on Docker Desktop.
@@ -168,7 +168,7 @@ services:
     restart: unless-stopped
 
   storage:
-    image: chrislusf/seaweedfs:4.47
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
     network_mode: service:pod
     entrypoint: ["/bin/sh", "-c"]
     # One identity, for foundry, written at start from the secret in the
@@ -196,7 +196,7 @@ services:
   # Its password from the volume: the image reads MYSQL_PASSWORD_FILE as
   # root and again as mysql, whose group the file is.
   mysql:
-    image: mysql:8.0
+    image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
     environment:
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
       MYSQL_DATABASE: helix
@@ -225,7 +225,7 @@ services:
   # acme_reader, who can only select. Its data is made up and starts
   # afresh with the container (no volume); it publishes no port.
   acme-db:
-    image: postgres:17.11-alpine
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     environment:
       POSTGRES_DB: acme
       POSTGRES_USER: acme
