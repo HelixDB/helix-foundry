@@ -7,6 +7,7 @@ import {
   parseFailure,
   parsePatternResult,
   parsePred,
+  parseQueryResult,
   parseReadResult,
   parseStepPred,
   parseVia,
@@ -656,5 +657,147 @@ describe("an evidence read", () => {
         i.kind === "quote" ? i.value : null,
       ),
     ).toEqual(["net_30", 30, undefined]);
+  });
+});
+
+describe("a query read", () => {
+  const echo = {
+    start: { type: "Invoice", where: [], ids: null, text: null },
+    steps: [{ via: "billed_to", dir: "out", to: "Customer", where: [] }],
+    filters: [],
+    return: {
+      rows: {
+        columns: [
+          { at: 0, prop: null },
+          { at: 1, prop: null },
+        ],
+        order_by: null,
+        limit: 50,
+      },
+    },
+  };
+  const stats = { matched: 2, patterns: 1, terminal: "rust" };
+
+  it("keeps rows, their cells as given and the edges well formed", () => {
+    const ok = {
+      kind: "query",
+      query_echo: echo,
+      result: {
+        kind: "rows",
+        rows: [
+          {
+            cells: [
+              { type: "Invoice", id: "in_1", name: "in_1" },
+              { ...globex, name: "Globex" },
+            ],
+            edges: [
+              {
+                step: 0,
+                fact: {
+                  link: "billed_to",
+                  subject: { type: "Invoice", id: "in_1" },
+                  object: globex,
+                },
+              },
+            ],
+          },
+          {
+            cells: [
+              { type: "Invoice", id: "in_2", name: "in_2" },
+              { ...initech, name: "Initech" },
+            ],
+            edges: [
+              {
+                step: 0,
+                derived: {
+                  pred: "relation:billed",
+                  args: [{ type: "Invoice", id: "in_2" }, initech],
+                },
+              },
+            ],
+          },
+        ],
+        total: 7,
+      },
+      stats,
+    };
+    fits(ok);
+    expect(parseQueryResult(ok)).toEqual({
+      kind: "rows",
+      rows: [
+        {
+          cells: ok.result.rows[0]!.cells,
+          edges: [
+            {
+              step: 0,
+              fact: {
+                link: "billed_to",
+                subject: { type: "Invoice", id: "in_1" },
+                object: globex,
+              },
+            },
+          ],
+        },
+        {
+          cells: ok.result.rows[1]!.cells,
+          edges: [
+            {
+              step: 0,
+              derived: {
+                pred: "relation:billed",
+                args: [{ type: "Invoice", id: "in_2" }, initech],
+              },
+            },
+          ],
+        },
+      ],
+      total: 7,
+    });
+    // An edge or row that isn't well formed is left out.
+    expect(
+      parseQueryResult({
+        kind: "query",
+        result: {
+          kind: "rows",
+          rows: [
+            {
+              cells: [1],
+              edges: [
+                { step: -1, fact: {} },
+                { step: 0, fact: { link: "x" } },
+                { step: 0, derived: { pred: "p", args: [{}] } },
+                "e",
+              ],
+            },
+            { edges: [] },
+            "row",
+          ],
+          total: 1,
+        },
+      }),
+    ).toEqual({ kind: "rows", rows: [{ cells: [1], edges: [] }], total: 1 });
+  });
+
+  it("keeps a count, and refuses other answers", () => {
+    const ok = {
+      kind: "query",
+      query_echo: { ...echo, return: { count: { distinct_at: null } } },
+      result: { kind: "count", count: 3 },
+      stats,
+    };
+    fits(ok);
+    expect(parseQueryResult(ok)).toEqual({ kind: "count", count: 3 });
+    for (const bad of [
+      { kind: "query", result: { kind: "count", count: -1 } },
+      { kind: "query", result: { kind: "rows", rows: [] } },
+      { kind: "query", result: { kind: "rows", rows: {}, total: 1 } },
+      {
+        kind: "query",
+        result: { kind: "group_count", groups: [], total_groups: 0 },
+      },
+      { kind: "evidence", items: [] },
+      null,
+    ])
+      expect(parseQueryResult(bad)).toBeUndefined();
   });
 });

@@ -112,7 +112,7 @@ const total = (v: unknown) =>
  * (the agent refuses such names).
  *
  * @example
- * recordTypes({ version: null, types: new Map(), links: new Set() }); // []
+ * recordTypes(NO_NAMING); // []
  */
 export function recordTypes(naming: Naming): TypeNaming[] {
   return [...naming.types.values()]
@@ -556,6 +556,10 @@ export type RecordsPage = {
   more: boolean;
   // A search's or filter's matches: `capped` when there are more than countCap.
   matched: { count: number; capped: boolean } | null;
+  // Read through source grants (../explore/typed-reads.ts), only the first
+  // matches are read, with no way past them: how many, of how many in all,
+  // when there are more.
+  first?: { read: number; total: number };
 };
 
 /** Reads pageRead's answer. */

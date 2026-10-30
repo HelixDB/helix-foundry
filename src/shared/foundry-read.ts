@@ -256,6 +256,28 @@ export type EvidenceItem =
     };
 export type EvidenceResult = { items: EvidenceItem[] };
 
+/**
+ * The edge of one step of a query's row, when the columns name both its
+ * positions: a stored fact, or one only rules give (`pred` `<kind>:<name>`).
+ */
+export type QueryEdge = { step: number } & (
+  | { fact: FactRef }
+  | { derived: { pred: string; args: EntityRef[] } }
+);
+/**
+ * A typed query's answer, of the kinds pages ask for: rows (each cell the
+ * entity at a column without a prop, as an EntityCell `{type, id, name}`,
+ * else the prop's value, null when absent; the caller knows which, from its
+ * columns) with how many there are in all, or a count.
+ */
+export type QueryResult =
+  | {
+      kind: "rows";
+      rows: { cells: unknown[]; edges: QueryEdge[] }[];
+      total: number;
+    }
+  | { kind: "count"; count: number };
+
 /** One read's outcome, raw: its `ok` is parsed by the read's own parser. */
 export type Outcome<T> =
   | { ok: true; value: T }
@@ -606,5 +628,48 @@ export function parseEvidenceResult(ok: unknown): EvidenceResult | undefined {
           ]
         : [];
     }),
+  };
+}
+
+/**
+ * A query read's `ok`: its rows or count. Undefined for another kind of
+ * answer (counts by value, aggregates) or one that isn't well formed; an
+ * edge that isn't is left out.
+ *
+ * @example
+ * parseQueryResult({ kind: "query", result: { kind: "count", count: 3 } }); // { kind: "count", count: 3 }
+ */
+export function parseQueryResult(ok: unknown): QueryResult | undefined {
+  const r = isKind(ok, "query") ? ok.result : undefined;
+  if (isKind(r, "count")) {
+    const n = count(r.count);
+    return n === undefined ? undefined : { kind: "count", count: n };
+  }
+  if (!isKind(r, "rows") || !Array.isArray(r.rows)) return undefined;
+  const total = count(r.total);
+  if (total === undefined) return undefined;
+  const edge = (e: unknown): QueryEdge[] => {
+    const step = isRow(e) ? count(e.step) : undefined;
+    if (!isRow(e) || step === undefined) return [];
+    if (isRow(e.fact)) {
+      const link = str(e.fact.link),
+        subject = entityRef(e.fact.subject),
+        object = entityRef(e.fact.object);
+      return link && subject && object
+        ? [{ step, fact: { link, subject, object } }]
+        : [];
+    }
+    const pred = isRow(e.derived) ? str(e.derived.pred) : undefined,
+      args = isRow(e.derived) ? refs(e.derived.args) : undefined;
+    return pred && args ? [{ step, derived: { pred, args } }] : [];
+  };
+  return {
+    kind: "rows",
+    rows: r.rows.flatMap((row) =>
+      isRow(row) && Array.isArray(row.cells)
+        ? [{ cells: row.cells, edges: list(row.edges).flatMap(edge) }]
+        : [],
+    ),
+    total,
   };
 }

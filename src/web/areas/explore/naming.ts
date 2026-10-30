@@ -30,6 +30,8 @@ export type Naming = {
   types: ReadonlyMap<string, TypeNaming>;
   // The version's link names: fact edges between its types.
   links: ReadonlySet<string>;
+  // Each link's ends: the types it goes from and to.
+  ends: ReadonlyMap<string, { from: string; to: string }>;
 };
 
 /** No version: every label keeps its raw label and id. */
@@ -37,6 +39,7 @@ export const NO_NAMING: Naming = {
   version: null,
   types: new Map(),
   links: new Set(),
+  ends: new Map(),
 };
 
 /**
@@ -63,6 +66,7 @@ export function namingOf(v?: OntologyVersion | null): Naming {
         ]),
       ),
       links: new Set(o.links.map((l) => l.name)),
+      ends: new Map(o.links.map((l) => [l.name, { from: l.from, to: l.to }])),
     };
   }
   const view = readFoundry(v.definition);
@@ -80,6 +84,9 @@ export function namingOf(v?: OntologyVersion | null): Naming {
       ]),
     ),
     links: new Set(view.relationships.map((r) => r.name)),
+    ends: new Map(
+      view.relationships.map((r) => [r.name, { from: r.from, to: r.to }]),
+    ),
   };
 }
 
