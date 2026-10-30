@@ -403,15 +403,15 @@
   font-size: var(--hf-text-sm);
   line-height: 1.5;
 }
-/* The steps, as tool calls: one row each (its mark, number, the tool's
-   name, what it was asked in words, and what it returned), which opens on
-   its Input and Output. The numbers are a counter, as an ordered list's
+/* The steps, as tool calls in one list: a row each (its mark, number, the
+   tool's name, what it was asked in words, and what it returned), which
+   opens on its Input and Output, indented under it. The numbers are a counter, as an ordered list's
    markers are (a result citation names the step that read it), and stay
    out of copied text. */
 .ak-calls {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
+  gap: 1px;
   min-width: 0;
   margin: 0;
   padding: 4px 0 0;
@@ -421,19 +421,12 @@
 .ak-call {
   counter-increment: ak-step;
   min-width: 0;
-  border: 1px solid var(--hf-border);
-  border-radius: var(--hf-radius);
-  background: var(--hf-raised);
+  margin: 0 -8px;
+  border-radius: var(--hf-radius-sm);
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
   line-height: 20px;
-  transition:
-    border-color var(--hf-duration) var(--hf-ease),
-    background var(--hf-duration) var(--hf-ease);
-}
-.ak-call.is-end {
-  border-color: transparent;
-  background: transparent;
+  transition: background var(--hf-duration) var(--hf-ease);
 }
 .ak-call-head {
   display: flex;
@@ -441,7 +434,7 @@
   gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 5px 10px;
+  padding: 3px 8px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -518,9 +511,6 @@ button.ak-call-head:hover {
 .ak-call.is-done .ak-step-mark {
   color: var(--hf-accent-text);
 }
-.ak-call.is-running {
-  border-color: color-mix(in srgb, var(--hf-info-text) 30%, var(--hf-border));
-}
 .ak-call.is-running .ak-call-what {
   color: var(--hf-text);
 }
@@ -533,12 +523,12 @@ button.ak-call-head:hover {
 }
 /* A result citation lights, and opens, the step that returned it. */
 .ak-call.is-lit {
-  border-color: var(--hf-accent);
   background: var(--hf-accent-soft);
+  box-shadow: inset 2px 0 0 var(--hf-accent);
 }
 .ak-call-note {
   margin: 0;
-  padding: 0 10px 6px 50px;
+  padding: 0 8px 4px 58px;
   color: var(--hf-text-2);
   overflow-wrap: anywhere;
 }
@@ -547,8 +537,9 @@ button.ak-call-head:hover {
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
-  padding: 8px 10px 10px;
-  border-top: 1px solid var(--hf-border);
+  margin: 2px 8px 8px 57px;
+  padding: 2px 0 2px 12px;
+  border-left: 1px solid var(--hf-border);
 }
 .ak-call-part {
   display: grid;
