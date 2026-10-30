@@ -4,11 +4,13 @@ import { expect, explorer, mock, signIn, test } from "./support/mock";
 
 // Settings › Access and restricted mode: an owner makes an agent's key and
 // gives it sources, then sees what it can read; restricts a member, who
-// then sees only Analyst and the ontologies their sources cover and calls
-// nothing the WFE refuses; taking a source away takes the ontology away;
-// and a change that would cut someone off asks first. Eve is a member of
-// Acme restricted to the General set; Alan, a member who queries databases,
-// can't be restricted.
+// then sees only Analyst, the ontologies their sources cover and their
+// Records, entities and documents, read through typed reads, and calls
+// nothing the WFE refuses and never the database; a member who can't query
+// databases reads the same way, and only what their sources cover; taking
+// a source away takes the ontology away; and a change that would cut
+// someone off asks first. Eve is a member of Acme restricted to the General
+// set; Alan, a member who queries databases, can't be restricted.
 
 const O = "/ontology/ont_acme_contracts";
 const CONTRACT = readFileSync(
@@ -185,14 +187,20 @@ test("a restricted member sees only what their sources cover", async ({
   // Analyst opens on the one ontology shared with her.
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
   const nav = as.getByRole("list", { name: "Workspace" });
-  await expect(nav.getByRole("link")).toHaveText(["Analyst", "Ontologies"]);
+  await expect(nav.getByRole("link")).toHaveText([
+    "Analyst",
+    "Ontologies",
+    "Explorer",
+  ]);
   await expect(as.getByRole("link", { name: "Settings" })).toHaveCount(0);
   await expect(as.getByRole("button", { name: "Search" })).toHaveCount(0);
   await expect(
     as.getByRole("combobox", { name: "Load", exact: true }),
   ).toHaveCount(0);
 
-  // She asks, and the answer's sources open their steps, not pages.
+  // She asks; the answer's sources open the pages her sources read, named
+  // as those pages name them. A rule break has no page there: its source
+  // opens its step.
   const form = as.getByRole("form", { name: "Ask a question" });
   await form
     .getByRole("textbox", { name: /^Question/ })
@@ -200,10 +208,74 @@ test("a restricted member sees only what their sources cover", async ({
   await form.getByRole("button", { name: "Ask", exact: true }).click();
   const answer = as.getByRole("region", { name: "Answer" });
   await expect(answer).toBeVisible({ timeout: 20_000 });
-  await expect(answer.getByRole("link")).toHaveCount(0);
   await expect(as.getByRole("group", { name: "Questions budget" })).toHaveCount(
     0,
   );
+  await expect(
+    answer.getByRole("button", {
+      name: "Source 7: A break of invoice_under_contract",
+    }),
+  ).toBeVisible();
+  // An entity's page: its properties with what states them, its facts;
+  // where documents name it isn't hers.
+  const thread = as.url();
+  await answer
+    .getByRole("link", { name: "Source 1: Customer Globex Corporation" })
+    .click();
+  await expect(
+    as.getByRole("heading", { level: 1, name: "Globex Corporation" }),
+  ).toBeVisible();
+  await expect(as.getByRole("main")).toContainText("emailap@globex.example");
+  await as.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(
+    as.getByRole("region", { name: /^billed_to from/ }),
+  ).toBeVisible();
+  await as.getByRole("tab", { name: "Mentions" }).click();
+  await expect(
+    as.getByText("Where documents name it is the load’s own record"),
+  ).toBeVisible();
+  // A quote opens its document, as uploaded.
+  await as.goto(thread);
+  await answer
+    .getByRole("link", { name: "Source 4: Quote in contract.md" })
+    .click();
+  await expect(
+    as.getByRole("heading", { level: 1, name: "contract.md" }),
+  ).toBeVisible();
+  await expect(as.getByLabel("Document text")).toContainText(
+    "Globex Corporation",
+  );
+
+  // Records is her Explorer: the graph opens it, with no Graph view, and it
+  // pages, searches and opens a record.
+  await nav.getByRole("link", { name: "Explorer" }).click();
+  await expect(as).toHaveURL(/\/explore\/ont_acme_contracts\/records$/);
+  await expect(as.getByRole("radio", { name: "Graph" })).toHaveCount(0);
+  const types = as.getByRole("list", { name: "Types" });
+  await expect(types.getByRole("button")).toHaveText([
+    "Contract1",
+    "Customer64",
+    "Invoice65",
+  ]);
+  await types.getByRole("button", { name: /^Customer/ }).click();
+  const customers = as.getByRole("grid", { name: "Customer records" });
+  await expect(as.getByText("1–50 of 64")).toBeVisible();
+  await as.getByRole("button", { name: "Next" }).click();
+  await expect(as.getByText("51–64 of 64")).toBeVisible();
+  await as
+    .getByRole("searchbox", { name: "Search Customer records" })
+    .fill("globex");
+  await expect(customers.getByRole("row")).toHaveCount(2);
+  await customers.getByRole("row").nth(1).click();
+  const record = as.getByRole("dialog", { name: "Globex Corporation" });
+  await expect(record).toContainText("Customer · cus_GLOBEX01");
+  await expect(
+    record.getByRole("button", { name: "Open in graph" }),
+  ).toHaveCount(0);
+  await record.getByRole("link", { name: "Open its page" }).click();
+  await expect(
+    as.getByRole("heading", { level: 1, name: "Globex Corporation" }),
+  ).toBeVisible();
 
   // The Ontologies panel lists only what is shared; the overview is the
   // schema alone.
@@ -228,7 +300,6 @@ test("a restricted member sees only what their sources cover", async ({
   // Everything else opens Analyst.
   for (const path of [
     "/data",
-    "/explore/ont_acme_contracts",
     "/settings",
     "/settings/access",
     `${O}/loads`,
@@ -244,11 +315,83 @@ test("a restricted member sees only what their sources cover", async ({
   ).toHaveCount(0);
   await as.keyboard.press("Escape");
 
-  // Nothing she did asked for what the WFE refuses her.
-  const refused = (await mock.stats()).requests
-    .slice(before)
-    .filter((r) => / 40[34]$/.test(r));
-  expect(refused).toEqual([]);
+  // Nothing she did asked for what the WFE refuses her, or read the
+  // database.
+  const requests = (await mock.stats()).requests.slice(before);
+  expect(requests.filter((r) => / 40[34]$/.test(r))).toEqual([]);
+  expect(requests.filter((r) => r.includes("databases:query-read"))).toEqual(
+    [],
+  );
+  expect(requests.some((r) => /\/loads\/load_\w+:read 200$/.test(r))).toBe(
+    true,
+  );
+});
+
+test("a member who can't query reads only what their sources cover", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200, askStepMs: 100 });
+  await signIn(page);
+  await loadContract(page);
+  // Alan can't query databases: he reads through what he is given.
+  await mock.configure({ memberQueryRead: false });
+  const sources = await openSources(page, "people", "Alan Turing");
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("checkbox", { name: /^General/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
+    "Customer contracts",
+  );
+  await page.close();
+
+  const before = (await mock.stats()).requests.length;
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const as = await context.newPage();
+  await signIn(as, "alan@example.com");
+  // Not restricted: every section. Analyst opens the one ontology he reads,
+  // and offers no other.
+  await expect(
+    as.getByRole("list", { name: "Workspace" }).getByRole("link"),
+  ).toHaveText(["Analyst", "Ontologies", "Explorer", "Connectors"]);
+  await as.goto("/ask");
+  await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
+  await as.getByRole("combobox", { name: "Ontology" }).click();
+  await expect(as.getByRole("listbox").getByRole("option")).toHaveText([
+    "Customer contracts",
+  ]);
+  await as.keyboard.press("Escape");
+  await expect(
+    as.getByRole("combobox", { name: "Load", exact: true }),
+  ).toHaveCount(0);
+  // One he doesn't read says so, and reads nothing.
+  await as.goto("/ask/ont_acme_sales");
+  await expect(
+    as.getByRole("heading", { name: "Not shared with you" }),
+  ).toBeVisible();
+  await expect(as.getByRole("navigation", { name: "Threads" })).toContainText(
+    "Not shared with you.",
+  );
+  await as.goto("/explore/ont_acme_sales/records");
+  await expect(
+    as.getByRole("heading", { name: "Not shared with you" }),
+  ).toBeVisible();
+  // The one he reads: Records through typed reads.
+  await as.goto("/explore/ont_acme_contracts");
+  await expect(as).toHaveURL(/\/explore\/ont_acme_contracts\/records$/);
+  await as
+    .getByRole("list", { name: "Types" })
+    .getByRole("button", { name: /^Invoice/ })
+    .click();
+  await expect(as.getByText("1–50 of 65")).toBeVisible();
+
+  const requests = (await mock.stats()).requests.slice(before);
+  expect(requests.filter((r) => / 40[34]$/.test(r))).toEqual([]);
+  expect(requests.filter((r) => r.includes("databases:query-read"))).toEqual(
+    [],
+  );
 });
 
 test("taking a source away takes the ontology away", async ({

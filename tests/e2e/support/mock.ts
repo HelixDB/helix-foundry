@@ -79,6 +79,8 @@ export const mock = {
     dataLayoutConflicts?: number;
     // Alan's role in Acme (a member by default).
     alanRole?: "WORKSPACE_ROLE_ADMIN" | "WORKSPACE_ROLE_MEMBER";
+    // Alan can't query databases: he reads through source grants.
+    memberQueryRead?: boolean;
     // People enrichment: a batch of lookups (and the wait for a slot), and
     // how the lookups stop: the credit cap, context.dev, the time limit, or
     // no free slot.
