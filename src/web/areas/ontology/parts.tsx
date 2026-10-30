@@ -49,6 +49,7 @@ import {
   ruleEvaluationRefusal,
 } from "./model";
 import { ontologyName, useOntology } from "./scope";
+import { useAccessCheck } from "../workspace/access-guard";
 
 // Pieces several Ontology pages share.
 
@@ -336,6 +337,8 @@ export function MakeCurrent({
     qc = useQueryClient();
   const [confirming, setConfirming] = useState(false),
     [pending, setPending] = useState(false);
+  // Who would stop reading through source grants, asked before it changes.
+  const access = useAccessCheck();
   if (!canManage(role) || version.isCurrent) return null;
   // Lists omit definitions. Open the immutable version to check its rules,
   // instead of fetching a potentially large definition for every list row.
@@ -353,6 +356,15 @@ export function MakeCurrent({
   if (refusal) return <p className="on-muted">{refusal}</p>;
   const run = async () => {
     setPending(true);
+    if (
+      !(await access.check({
+        loadVersion: { ontologyId: o, versionId: version.id },
+      }))
+    ) {
+      setPending(false);
+      setConfirming(false);
+      return;
+    }
     try {
       await setCurrentVersion(id, o, {
         versionId: version.id,
@@ -394,6 +406,7 @@ export function MakeCurrent({
           onCancel={() => setConfirming(false)}
         />
       )}
+      {access.dialog}
     </>
   );
 }

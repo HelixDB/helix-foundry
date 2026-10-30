@@ -63,6 +63,7 @@ import {
 } from "./queries";
 import { useOntology } from "./scope";
 import { documentSetQueries } from "../documents/documents-api";
+import { useAccessCheck } from "../workspace/access-guard";
 
 /**
  * A revision this page started: its generation, and the batch it sent.
@@ -514,9 +515,13 @@ function SavedVersion({ versionId }: { versionId: string }) {
     navigate = useNavigate();
   const version = useQuery(ontologyQueries.version(ws, o, versionId));
   const [pending, setPending] = useState(false);
+  // Who would stop reading through source grants, asked before it changes.
+  const access = useAccessCheck();
   const n = version.data?.version?.version;
   const makeCurrent = async () => {
     setPending(true);
+    if (!(await access.check({ loadVersion: { ontologyId: o, versionId } })))
+      return setPending(false);
     try {
       await setCurrentVersion(ws, o, {
         versionId,
@@ -549,6 +554,7 @@ function SavedVersion({ versionId }: { versionId: string }) {
           View version {n ?? ""}
         </ButtonLink>
       </div>
+      {access.dialog}
     </div>
   );
 }

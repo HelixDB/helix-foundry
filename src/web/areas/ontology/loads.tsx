@@ -98,6 +98,7 @@ import {
 } from "./queries";
 import { ontologyName, useOntology } from "./scope";
 import { useSources, type SourceInfo } from "./sources";
+import { useAccessCheck } from "../workspace/access-guard";
 
 // Loading an ontology's database: Load on the current version (an agent
 // draft whose status is done), behind a dialog that says what it reads and
@@ -182,6 +183,8 @@ export function LoadButton({
     sets = useQuery(documentSetQueries.list(id)),
     settings = useQuery(enrichmentQuery(id));
   const { bundle, tables, ids, files } = useLoadPlan(version);
+  // Who would stop reading through source grants, asked before it loads.
+  const access = useAccessCheck();
   const [open, setOpen] = useState(opened),
     [pending, setPending] = useState(false),
     [error, setError] = useState(""),
@@ -232,6 +235,12 @@ export function LoadButton({
   const start = async () => {
     setPending(true);
     setError("");
+    if (
+      !(await access.check({
+        loadVersion: { ontologyId: o, versionId: version.id },
+      }))
+    )
+      return setPending(false);
     try {
       const { load } = await createLoad(id, o, {
         versionId: version.id,
@@ -372,6 +381,7 @@ export function LoadButton({
           )}
         </Dialog>
       )}
+      {access.dialog}
     </>
   );
 }
