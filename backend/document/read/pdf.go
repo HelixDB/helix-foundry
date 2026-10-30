@@ -153,6 +153,12 @@ func (p *PDFs) Read(ctx context.Context, doc *model.FoundryDocument) (model.Foun
 // An error is not the file's: PDFium could not start, or ctx ended, which
 // kills the read where it is.
 func (p *PDFs) Text(ctx context.Context, data []byte) (text string, pages int, bad *model.FoundryFileUnreadable, err error) {
+	// The pool hands out an idle instance whatever ctx, and AfterFunc kills
+	// it in a goroutine of its own, which a short read can outrun: an ended
+	// ctx starts no PDFium at all.
+	if err := ctx.Err(); err != nil {
+		return "", 0, nil, err
+	}
 	instance, err := p.PDFium.instance(ctx)
 	if err != nil {
 		return "", 0, nil, err
