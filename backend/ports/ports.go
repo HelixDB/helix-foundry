@@ -37,6 +37,11 @@ const (
 	SourceMCP
 	// SourceEventSource is an event source's sender, holding its send token.
 	SourceEventSource
+	// SourceGrantee is a user or service credential the front end's own
+	// permissions did not admit, so Foundry decides from its source grants
+	// (package access). It names exactly one of UserID and
+	// ServiceCredentialID, a WorkspaceID, and no query scope.
+	SourceGrantee
 )
 
 // Actor is who calls Foundry's API, as the front end that authenticated the
@@ -44,10 +49,15 @@ const (
 // authorized the call. It never comes from a request body.
 type Actor struct {
 	Source Source
-	// UserID is the user's id; empty for an event source.
+	// UserID is the user's id; empty for an event source and for a service
+	// credential.
 	UserID string
 	// EventSourceTokenID is the send token's id; set only for SourceEventSource.
 	EventSourceTokenID string
+	// ServiceCredentialID is the workspace service credential (an agent's
+	// key) the caller authenticated with; set only for SourceMCP and
+	// SourceGrantee, and then UserID is empty.
+	ServiceCredentialID string
 	// WorkspaceID is the workspace QueryRead and QueryWrite are of: the
 	// request's. A scope of another workspace grants nothing.
 	WorkspaceID string
@@ -173,6 +183,29 @@ type People interface {
 	// DisplayName is the name Foundry shows for a user: their display name,
 	// else their email; store.ErrNotFound when there is no such user.
 	DisplayName(ctx context.Context, userID string) (string, error)
+	// Member is userID's membership of workspaceID, RoleNone when they are
+	// not a member.
+	Member(ctx context.Context, workspaceID, userID string) (Member, error)
+}
+
+// Role is a member's role in a workspace.
+type Role uint8
+
+const (
+	// RoleNone is no member.
+	RoleNone Role = iota
+	RoleMember
+	RoleAdmin
+	RoleOwner
+)
+
+// Member is what Foundry's source grants need of a workspace member.
+type Member struct {
+	Role Role
+	// RawAccess is that the member may write a project, or query a
+	// project's databases, outside Foundry: grants can't restrict what they
+	// read.
+	RawAccess bool
 }
 
 // PlanReader reads the Foundry plan a workspace holds now. Optional: where

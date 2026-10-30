@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 	"strings"
 	"time"
@@ -13,7 +14,8 @@ import (
 
 const foundryQuestionColumns = `id, workspace_id, ontology_id, load_id, version_id, thread_id, question, focus, status, result, error,
        client_token, lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros,
-       input_tokens, output_tokens, last_seq, asked_by_user_id, created_at, started_at, finished_at`
+       input_tokens, output_tokens, last_seq, asked_by_user_id, created_at, started_at, finished_at,
+       (SELECT CONCAT(g.principal_kind, ' ', g.principal_id) FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id)`
 
 // claimFoundryQuestionTries bounds the questions one claim looks at: each one
 // its workspace's limits hold back is deferred, or failed, so the next is
@@ -70,8 +72,23 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
 		if isDuplicateKey(err) {
 			return ErrConflict
 		}
+		if err != nil || q.Grantee == nil {
+			return err
+		}
+		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_question_grantees (question_id, ontology_id, principal_kind, principal_id)
+VALUES (?, ?, ?, ?)`, q.ID, q.OntologyID, q.Grantee.Kind.String(), q.Grantee.ID)
 		return err
 	})
+}
+
+// askedBy is the condition that a question was asked by grantee: always
+// true for nil, the host's caller, who sees every question.
+func askedBy(grantee *access.Principal) (string, []any) {
+	if grantee == nil {
+		return "", nil
+	}
+	return "id IN (SELECT question_id FROM foundry_question_grantees WHERE principal_kind=? AND principal_id=?)",
+		[]any{grantee.Kind.String(), grantee.ID}
 }
 
 func (s *mysqlDB) GetFoundryQuestion(ctx context.Context, ontologyID, id string) (*model.FoundryQuestion, error) {
@@ -85,10 +102,16 @@ FROM foundry_questions WHERE ontology_id=? AND client_token=?`, ontologyID, clie
 }
 
 // ListFoundryQuestions returns the ontology's questions, or one thread's when
-// threadID is set, newest first, a page of limit at a time.
-func (s *mysqlDB) ListFoundryQuestions(ctx context.Context, ontologyID, threadID, pageToken string, limit int) ([]*model.FoundryQuestion, string, error) {
+// threadID is set, newest first, a page of limit at a time: only those
+// grantee asked, unless it is nil.
+func (s *mysqlDB) ListFoundryQuestions(ctx context.Context, ontologyID, threadID, pageToken string, limit int,
+	grantee *access.Principal) ([]*model.FoundryQuestion, string, error) {
 	conds := []string{"ontology_id=?"}
 	args := []any{ontologyID}
+	if cond, condArgs := askedBy(grantee); cond != "" {
+		conds = append(conds, cond)
+		args = append(args, condArgs...)
+	}
 	if threadID != "" {
 		conds = append(conds, "thread_id=?")
 		args = append(args, threadID)
@@ -111,11 +134,17 @@ func (s *mysqlDB) ListFoundryQuestions(ctx context.Context, ontologyID, threadID
 }
 
 // ListFoundryQuestionHistory returns up to limit answered questions of q's
-// thread asked before q, oldest first: what the agent is told was said.
+// thread asked before q, oldest first: what the agent is told was said. A
+// grantee's question is told only what the same grantee asked.
 func (s *mysqlDB) ListFoundryQuestionHistory(ctx context.Context, q *model.FoundryQuestion, limit int) ([]*model.FoundryQuestion, error) {
+	cond, args := askedBy(q.Grantee)
+	if cond != "" {
+		cond = " AND " + cond
+	}
+	args = append([]any{q.ThreadID, q.OntologyID, q.CreatedAt, q.CreatedAt, q.ID}, append(args, limit)...)
 	out, err := s.queryFoundryQuestions(ctx, "SELECT "+foundryQuestionColumns+` FROM foundry_questions
-WHERE thread_id=? AND ontology_id=? AND status='answered' AND (created_at < ? OR (created_at = ? AND id < ?))
-ORDER BY created_at DESC, id DESC LIMIT ?`, q.ThreadID, q.OntologyID, q.CreatedAt, q.CreatedAt, q.ID, limit)
+WHERE thread_id=? AND ontology_id=? AND status='answered' AND (created_at < ? OR (created_at = ? AND id < ?))`+cond+`
+ORDER BY created_at DESC, id DESC LIMIT ?`, args...)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
@@ -379,13 +408,13 @@ func (s *mysqlDB) queryFoundryQuestions(ctx context.Context, query string, args 
 func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 	var q model.FoundryQuestion
 	var status string
-	var focus, result, errText, clientToken, leaseOwner, askedBy sql.NullString
+	var focus, result, errText, clientToken, leaseOwner, askedBy, grantee sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &q.Spend
 	if err := scanner.Scan(&q.ID, &q.WorkspaceID, &q.OntologyID, &q.LoadID, &q.VersionID, &q.ThreadID, &q.Question, &focus, &status,
 		&result, &errText, &clientToken, &leaseOwner, &leaseUntil, &q.Attempts, &q.NextAttemptAt, &q.MaxUSDMicros,
 		&q.ReservedMicros, &spend.USDMicros, &spend.InputTokens, &spend.OutputTokens, &q.LastSeq, &askedBy, &q.CreatedAt,
-		&startedAt, &finishedAt,
+		&startedAt, &finishedAt, &grantee,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -393,6 +422,14 @@ func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 		return nil, err
 	}
 	q.Status = model.FoundryQuestionStatus(status)
+	if grantee.Valid {
+		kind, id, _ := strings.Cut(grantee.String, " ")
+		k, err := access.ParsePrincipalKind(kind)
+		if err != nil {
+			return nil, err
+		}
+		q.Grantee = &access.Principal{Kind: k, ID: id}
+	}
 	for _, f := range []struct {
 		src sql.NullString
 		dst *json.RawMessage

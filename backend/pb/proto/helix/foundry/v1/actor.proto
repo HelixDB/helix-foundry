@@ -10,7 +10,7 @@ option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/fo
 // only Foundry's internal port reads it.
 message Actor {
   Source source = 1;
-  // The user's id; empty for an event source.
+  // The user's id; empty for an event source and for a service credential.
   string user_id = 2;
   // The send token's id; set only for SOURCE_EVENT_SOURCE.
   string event_source_token_id = 3;
@@ -20,6 +20,10 @@ message Actor {
   // write with queries.
   ProjectScope query_read  = 5;
   ProjectScope query_write = 6;
+  // The workspace service credential (an agent's hlxs_ key) the caller
+  // authenticated with; set only for SOURCE_MCP and SOURCE_GRANTEE, and
+  // then user_id is empty.
+  string service_credential_id = 7;
 }
 
 // Source is the kind of caller an Actor is.
@@ -32,6 +36,12 @@ enum Source {
   SOURCE_MCP = 2;
   // An event source's sender, holding its send token.
   SOURCE_EVENT_SOURCE = 3;
+  // A user or service credential admitted only through Foundry's source
+  // grants: the front end's own permissions did not admit the call, so
+  // Foundry decides, from the grants of exactly one of user_id and
+  // service_credential_id in workspace_id. It carries no query scope. A
+  // Foundry that predates it refuses it as an unknown source.
+  SOURCE_GRANTEE = 4;
 }
 
 // ProjectScope is none, every or some of a workspace's projects.

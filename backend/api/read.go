@@ -38,6 +38,9 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	if err != nil {
 		return nil, err
 	}
+	if granted, ok := granteeLoad(ctx); ok && req.GetLoadId() != granted.LoadID {
+		return nil, status.Error(codes.NotFound, "load not found")
+	}
 	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, req.GetLoadId())
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && load.Status == foundrymodel.FoundryLoadDeleted:

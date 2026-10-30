@@ -40,6 +40,10 @@ type FoundryReviewDecision struct {
 	Value           json.RawMessage
 	DecidedByUserID string
 	DecidedAt       time.Time
+	// DocumentIDs are the documents the review quoted, which a prop
+	// decision's value came from; settling records them, and nothing reads
+	// them back into the decision.
+	DocumentIDs []string
 }
 
 func (d FoundryReviewDecision) Validate() error {

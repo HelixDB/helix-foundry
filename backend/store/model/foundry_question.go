@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"time"
 )
 
@@ -65,9 +66,12 @@ type FoundryQuestion struct {
 	// LastSeq is the seq of its newest event; 0 before any.
 	LastSeq       int
 	AskedByUserID *string
-	CreatedAt     time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
+	// Grantee is who asked through source grants, set only for such a
+	// question: the question is that principal's own, and runs as its.
+	Grantee    *access.Principal
+	CreatedAt  time.Time
+	StartedAt  *time.Time
+	FinishedAt *time.Time
 }
 
 // FoundryQuestionEvent is one event of a question's run, in its order.

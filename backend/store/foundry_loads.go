@@ -176,7 +176,8 @@ func (s *mysqlDB) queueFullFoundryRefresh(ctx context.Context, o *model.FoundryO
 }
 
 // insertFoundryLoad writes load job job's load, with the documents and
-// review decisions it starts from, and queues the job. The caller holds the
+// review decisions it starts from and its mark that grants may cover it,
+// and queues the job. The caller holds the
 // ontology's lock and has checked no other job is live.
 func (s *mysqlDB) insertFoundryLoad(ctx context.Context, job *model.FoundryGraphJob) error {
 	origin := job.Origin
@@ -195,6 +196,11 @@ VALUES (?, ?, ?, ?, 'writing', ?, ?)`, job.ID, job.WorkspaceID, job.OntologyID, 
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`)
 SELECT ?, `+foundryReviewDecisionColumns+` FROM foundry_review_decisions WHERE ontology_id=?`, job.LoadID, job.OntologyID); err != nil {
+		return err
+	}
+	// Made since grants could cover a load: the decisions it copied had
+	// their documents recorded when they were settled.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_access (load_id) VALUES (?)`, job.LoadID); err != nil {
 		return err
 	}
 	return s.insertFoundryGraphJob(ctx, job)

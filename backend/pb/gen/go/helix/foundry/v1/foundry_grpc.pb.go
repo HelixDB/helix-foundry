@@ -100,6 +100,14 @@ const (
 	FoundryService_UpdateFoundryAI_FullMethodName                       = "/helix.foundry.v1.FoundryService/UpdateFoundryAI"
 	FoundryService_DetectFoundryAIDefault_FullMethodName                = "/helix.foundry.v1.FoundryService/DetectFoundryAIDefault"
 	FoundryService_ListFoundryOllamaModels_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryOllamaModels"
+	FoundryService_ListFoundryAccess_FullMethodName                     = "/helix.foundry.v1.FoundryService/ListFoundryAccess"
+	FoundryService_SetFoundryAccessGrants_FullMethodName                = "/helix.foundry.v1.FoundryService/SetFoundryAccessGrants"
+	FoundryService_PreviewFoundryAccessChange_FullMethodName            = "/helix.foundry.v1.FoundryService/PreviewFoundryAccessChange"
+	FoundryService_GetMyFoundryAccess_FullMethodName                    = "/helix.foundry.v1.FoundryService/GetMyFoundryAccess"
+	FoundryService_SetFoundryMemberRestricted_FullMethodName            = "/helix.foundry.v1.FoundryService/SetFoundryMemberRestricted"
+	FoundryService_CreateFoundryTeam_FullMethodName                     = "/helix.foundry.v1.FoundryService/CreateFoundryTeam"
+	FoundryService_UpdateFoundryTeam_FullMethodName                     = "/helix.foundry.v1.FoundryService/UpdateFoundryTeam"
+	FoundryService_DeleteFoundryTeam_FullMethodName                     = "/helix.foundry.v1.FoundryService/DeleteFoundryTeam"
 )
 
 // FoundryServiceClient is the client API for FoundryService service.
@@ -220,6 +228,38 @@ type FoundryServiceClient interface {
 	// A local install's only (FAILED_PRECONDITION elsewhere): the models an
 	// Ollama server has, for the Ollama card's model choice.
 	ListFoundryOllamaModels(ctx context.Context, in *ListFoundryOllamaModelsRequest, opts ...grpc.CallOption) (*ListFoundryOllamaModelsResponse, error)
+	// Helix Foundry source grants. An owner or admin grants a principal (a
+	// user, a team, or a service credential: an agent's key) the workspace's
+	// sources; a principal the front end's own permissions don't admit reads an
+	// ontology's current load, and asks it questions, only while every source
+	// that load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants
+	// only add: a workspace that grants nothing behaves as it did without them.
+	//
+	// Every grant, and what each ontology's current load holds and who may
+	// read it through grants.
+	ListFoundryAccess(ctx context.Context, in *ListFoundryAccessRequest, opts ...grpc.CallOption) (*ListFoundryAccessResponse, error)
+	// Replaces one principal's grants.
+	SetFoundryAccessGrants(ctx context.Context, in *SetFoundryAccessGrantsRequest, opts ...grpc.CallOption) (*SetFoundryAccessGrantsResponse, error)
+	// Who would stop reading which ontologies through grants after a change:
+	// loading or making current a version, deleting a connector, or moving a
+	// document to another set. The site asks before it makes one.
+	PreviewFoundryAccessChange(ctx context.Context, in *PreviewFoundryAccessChangeRequest, opts ...grpc.CallOption) (*PreviewFoundryAccessChangeResponse, error)
+	// What the caller reads through grants: whether it came as a grantee, and
+	// the ontologies its grants cover.
+	GetMyFoundryAccess(ctx context.Context, in *GetMyFoundryAccessRequest, opts ...grpc.CallOption) (*GetMyFoundryAccessResponse, error)
+	// Restricts a member to what grants give, or lifts it. A restricted
+	// member is a grantee on every Foundry call while their role is member:
+	// they see only the ontologies their grants cover, and change nothing.
+	// Only a plain member holding no project write or query scope can be
+	// restricted (FAILED_PRECONDITION otherwise): either reads the database
+	// outside Foundry.
+	SetFoundryMemberRestricted(ctx context.Context, in *SetFoundryMemberRestrictedRequest, opts ...grpc.CallOption) (*SetFoundryMemberRestrictedResponse, error)
+	// Teams of the workspace's members, which hold grants for them.
+	CreateFoundryTeam(ctx context.Context, in *CreateFoundryTeamRequest, opts ...grpc.CallOption) (*FoundryTeamResponse, error)
+	// Renames a team and replaces its members.
+	UpdateFoundryTeam(ctx context.Context, in *UpdateFoundryTeamRequest, opts ...grpc.CallOption) (*FoundryTeamResponse, error)
+	// Deletes a team with its grants.
+	DeleteFoundryTeam(ctx context.Context, in *DeleteFoundryTeamRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type foundryServiceClient struct {
@@ -1030,6 +1070,86 @@ func (c *foundryServiceClient) ListFoundryOllamaModels(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *foundryServiceClient) ListFoundryAccess(ctx context.Context, in *ListFoundryAccessRequest, opts ...grpc.CallOption) (*ListFoundryAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryAccessResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) SetFoundryAccessGrants(ctx context.Context, in *SetFoundryAccessGrantsRequest, opts ...grpc.CallOption) (*SetFoundryAccessGrantsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetFoundryAccessGrantsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_SetFoundryAccessGrants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) PreviewFoundryAccessChange(ctx context.Context, in *PreviewFoundryAccessChangeRequest, opts ...grpc.CallOption) (*PreviewFoundryAccessChangeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreviewFoundryAccessChangeResponse)
+	err := c.cc.Invoke(ctx, FoundryService_PreviewFoundryAccessChange_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetMyFoundryAccess(ctx context.Context, in *GetMyFoundryAccessRequest, opts ...grpc.CallOption) (*GetMyFoundryAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMyFoundryAccessResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetMyFoundryAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) SetFoundryMemberRestricted(ctx context.Context, in *SetFoundryMemberRestrictedRequest, opts ...grpc.CallOption) (*SetFoundryMemberRestrictedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetFoundryMemberRestrictedResponse)
+	err := c.cc.Invoke(ctx, FoundryService_SetFoundryMemberRestricted_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) CreateFoundryTeam(ctx context.Context, in *CreateFoundryTeamRequest, opts ...grpc.CallOption) (*FoundryTeamResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryTeamResponse)
+	err := c.cc.Invoke(ctx, FoundryService_CreateFoundryTeam_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) UpdateFoundryTeam(ctx context.Context, in *UpdateFoundryTeamRequest, opts ...grpc.CallOption) (*FoundryTeamResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryTeamResponse)
+	err := c.cc.Invoke(ctx, FoundryService_UpdateFoundryTeam_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DeleteFoundryTeam(ctx context.Context, in *DeleteFoundryTeamRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, FoundryService_DeleteFoundryTeam_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FoundryServiceServer is the server API for FoundryService service.
 // All implementations should embed UnimplementedFoundryServiceServer
 // for forward compatibility.
@@ -1148,6 +1268,38 @@ type FoundryServiceServer interface {
 	// A local install's only (FAILED_PRECONDITION elsewhere): the models an
 	// Ollama server has, for the Ollama card's model choice.
 	ListFoundryOllamaModels(context.Context, *ListFoundryOllamaModelsRequest) (*ListFoundryOllamaModelsResponse, error)
+	// Helix Foundry source grants. An owner or admin grants a principal (a
+	// user, a team, or a service credential: an agent's key) the workspace's
+	// sources; a principal the front end's own permissions don't admit reads an
+	// ontology's current load, and asks it questions, only while every source
+	// that load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants
+	// only add: a workspace that grants nothing behaves as it did without them.
+	//
+	// Every grant, and what each ontology's current load holds and who may
+	// read it through grants.
+	ListFoundryAccess(context.Context, *ListFoundryAccessRequest) (*ListFoundryAccessResponse, error)
+	// Replaces one principal's grants.
+	SetFoundryAccessGrants(context.Context, *SetFoundryAccessGrantsRequest) (*SetFoundryAccessGrantsResponse, error)
+	// Who would stop reading which ontologies through grants after a change:
+	// loading or making current a version, deleting a connector, or moving a
+	// document to another set. The site asks before it makes one.
+	PreviewFoundryAccessChange(context.Context, *PreviewFoundryAccessChangeRequest) (*PreviewFoundryAccessChangeResponse, error)
+	// What the caller reads through grants: whether it came as a grantee, and
+	// the ontologies its grants cover.
+	GetMyFoundryAccess(context.Context, *GetMyFoundryAccessRequest) (*GetMyFoundryAccessResponse, error)
+	// Restricts a member to what grants give, or lifts it. A restricted
+	// member is a grantee on every Foundry call while their role is member:
+	// they see only the ontologies their grants cover, and change nothing.
+	// Only a plain member holding no project write or query scope can be
+	// restricted (FAILED_PRECONDITION otherwise): either reads the database
+	// outside Foundry.
+	SetFoundryMemberRestricted(context.Context, *SetFoundryMemberRestrictedRequest) (*SetFoundryMemberRestrictedResponse, error)
+	// Teams of the workspace's members, which hold grants for them.
+	CreateFoundryTeam(context.Context, *CreateFoundryTeamRequest) (*FoundryTeamResponse, error)
+	// Renames a team and replaces its members.
+	UpdateFoundryTeam(context.Context, *UpdateFoundryTeamRequest) (*FoundryTeamResponse, error)
+	// Deletes a team with its grants.
+	DeleteFoundryTeam(context.Context, *DeleteFoundryTeamRequest) (*emptypb.Empty, error)
 }
 
 // UnimplementedFoundryServiceServer should be embedded to have
@@ -1396,6 +1548,30 @@ func (UnimplementedFoundryServiceServer) DetectFoundryAIDefault(context.Context,
 }
 func (UnimplementedFoundryServiceServer) ListFoundryOllamaModels(context.Context, *ListFoundryOllamaModelsRequest) (*ListFoundryOllamaModelsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryOllamaModels not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryAccess(context.Context, *ListFoundryAccessRequest) (*ListFoundryAccessResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryAccess not implemented")
+}
+func (UnimplementedFoundryServiceServer) SetFoundryAccessGrants(context.Context, *SetFoundryAccessGrantsRequest) (*SetFoundryAccessGrantsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetFoundryAccessGrants not implemented")
+}
+func (UnimplementedFoundryServiceServer) PreviewFoundryAccessChange(context.Context, *PreviewFoundryAccessChangeRequest) (*PreviewFoundryAccessChangeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreviewFoundryAccessChange not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetMyFoundryAccess(context.Context, *GetMyFoundryAccessRequest) (*GetMyFoundryAccessResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMyFoundryAccess not implemented")
+}
+func (UnimplementedFoundryServiceServer) SetFoundryMemberRestricted(context.Context, *SetFoundryMemberRestrictedRequest) (*SetFoundryMemberRestrictedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetFoundryMemberRestricted not implemented")
+}
+func (UnimplementedFoundryServiceServer) CreateFoundryTeam(context.Context, *CreateFoundryTeamRequest) (*FoundryTeamResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateFoundryTeam not implemented")
+}
+func (UnimplementedFoundryServiceServer) UpdateFoundryTeam(context.Context, *UpdateFoundryTeamRequest) (*FoundryTeamResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateFoundryTeam not implemented")
+}
+func (UnimplementedFoundryServiceServer) DeleteFoundryTeam(context.Context, *DeleteFoundryTeamRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteFoundryTeam not implemented")
 }
 func (UnimplementedFoundryServiceServer) testEmbeddedByValue() {}
 
@@ -2857,6 +3033,150 @@ func _FoundryService_ListFoundryOllamaModels_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_ListFoundryAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryAccess(ctx, req.(*ListFoundryAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_SetFoundryAccessGrants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetFoundryAccessGrantsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).SetFoundryAccessGrants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_SetFoundryAccessGrants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).SetFoundryAccessGrants(ctx, req.(*SetFoundryAccessGrantsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_PreviewFoundryAccessChange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewFoundryAccessChangeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).PreviewFoundryAccessChange(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_PreviewFoundryAccessChange_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).PreviewFoundryAccessChange(ctx, req.(*PreviewFoundryAccessChangeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetMyFoundryAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMyFoundryAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetMyFoundryAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetMyFoundryAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetMyFoundryAccess(ctx, req.(*GetMyFoundryAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_SetFoundryMemberRestricted_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetFoundryMemberRestrictedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).SetFoundryMemberRestricted(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_SetFoundryMemberRestricted_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).SetFoundryMemberRestricted(ctx, req.(*SetFoundryMemberRestrictedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_CreateFoundryTeam_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateFoundryTeamRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).CreateFoundryTeam(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_CreateFoundryTeam_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).CreateFoundryTeam(ctx, req.(*CreateFoundryTeamRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_UpdateFoundryTeam_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateFoundryTeamRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).UpdateFoundryTeam(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_UpdateFoundryTeam_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).UpdateFoundryTeam(ctx, req.(*UpdateFoundryTeamRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DeleteFoundryTeam_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFoundryTeamRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DeleteFoundryTeam(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DeleteFoundryTeam_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DeleteFoundryTeam(ctx, req.(*DeleteFoundryTeamRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FoundryService_ServiceDesc is the grpc.ServiceDesc for FoundryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3183,6 +3503,38 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListFoundryOllamaModels",
 			Handler:    _FoundryService_ListFoundryOllamaModels_Handler,
+		},
+		{
+			MethodName: "ListFoundryAccess",
+			Handler:    _FoundryService_ListFoundryAccess_Handler,
+		},
+		{
+			MethodName: "SetFoundryAccessGrants",
+			Handler:    _FoundryService_SetFoundryAccessGrants_Handler,
+		},
+		{
+			MethodName: "PreviewFoundryAccessChange",
+			Handler:    _FoundryService_PreviewFoundryAccessChange_Handler,
+		},
+		{
+			MethodName: "GetMyFoundryAccess",
+			Handler:    _FoundryService_GetMyFoundryAccess_Handler,
+		},
+		{
+			MethodName: "SetFoundryMemberRestricted",
+			Handler:    _FoundryService_SetFoundryMemberRestricted_Handler,
+		},
+		{
+			MethodName: "CreateFoundryTeam",
+			Handler:    _FoundryService_CreateFoundryTeam_Handler,
+		},
+		{
+			MethodName: "UpdateFoundryTeam",
+			Handler:    _FoundryService_UpdateFoundryTeam_Handler,
+		},
+		{
+			MethodName: "DeleteFoundryTeam",
+			Handler:    _FoundryService_DeleteFoundryTeam_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

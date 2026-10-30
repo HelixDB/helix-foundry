@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/events"
@@ -145,7 +146,7 @@ type ReadStore interface {
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 	GetFoundryQuestion(ctx context.Context, ontologyID, id string) (*model.FoundryQuestion, error)
 	GetFoundryQuestionByClientToken(ctx context.Context, ontologyID, clientToken string) (*model.FoundryQuestion, error)
-	ListFoundryQuestions(ctx context.Context, ontologyID, threadID, pageToken string, limit int) ([]*model.FoundryQuestion, string, error)
+	ListFoundryQuestions(ctx context.Context, ontologyID, threadID, pageToken string, limit int, grantee *access.Principal) ([]*model.FoundryQuestion, string, error)
 	ListFoundryQuestionHistory(ctx context.Context, q *model.FoundryQuestion, limit int) ([]*model.FoundryQuestion, error)
 	ListFoundryQuestionEvents(ctx context.Context, questionID string, afterSeq, limit int) ([]model.FoundryQuestionEvent, error)
 	SumFoundryQuestionSpend(ctx context.Context, workspaceID string, since time.Time) (model.FoundryQuestionSpend, error)
@@ -163,6 +164,16 @@ type ReadStore interface {
 	CheckFoundryLoadEnrichment(ctx context.Context, loadID, provider string) (model.FoundryEnrichmentChecks, error)
 	ListFoundryEnrichmentSweeps(ctx context.Context, callsBefore, supersededBefore, wholeBefore time.Time, limit int) ([]model.FoundryEnrichmentSweep, error)
 	ListFoundryEnrichmentPurges(ctx context.Context, maxAttempts, limit int) ([]*model.FoundryEnrichmentPurge, error)
+
+	// Foundry source grants and what current loads hold
+	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
+	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
+	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
+	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
+	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)
+	ListFoundryTeams(ctx context.Context, workspaceID string) ([]model.FoundryTeam, error)
+	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
+	ListFoundryOntologiesHoldingDocument(ctx context.Context, workspaceID, documentID string) ([]string, error)
 
 	// Foundry model providers: the workspace's setting and its configs
 	GetFoundryAIView(ctx context.Context, workspaceID string) (model.FoundryAIView, error)
@@ -246,6 +257,13 @@ type Store interface {
 	RecordFoundryDocumentExtraction(ctx context.Context, jobID, workerID string, e *model.FoundryDocumentExtraction, keepExisting bool) error
 	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	FinishFoundryGraphJob(ctx context.Context, jobID, workerID string, outcome model.FoundryGraphJobOutcome) (model.FoundryGraphJobFinish, error)
+	SetFoundryAccessGrants(ctx context.Context, workspaceID string, principal access.Principal, targets []access.Target, byUserID *string) error
+	DeleteFoundryAccessPrincipal(ctx context.Context, exec Executor, workspaceID string, principal access.Principal) error
+	SetFoundryMemberRestricted(ctx context.Context, workspaceID, userID string, restricted bool, byUserID *string) error
+	CreateFoundryTeam(ctx context.Context, team *model.FoundryTeam) error
+	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
+	DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error
+	RemoveFoundryAccessMember(ctx context.Context, exec Executor, workspaceID, userID string) error
 	CreateFoundryQuestion(ctx context.Context, q *model.FoundryQuestion, limits model.FoundryQuestionLimits) error
 	ClaimFoundryQuestion(ctx context.Context, workerID string, claim model.FoundryQuestionClaim) (*model.FoundryQuestion, error)
 	RenewFoundryQuestionLease(ctx context.Context, id, workerID string, lease time.Duration) error

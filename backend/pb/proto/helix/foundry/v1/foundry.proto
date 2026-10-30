@@ -294,6 +294,55 @@ service FoundryService {
   rpc ListFoundryOllamaModels(ListFoundryOllamaModelsRequest) returns (ListFoundryOllamaModelsResponse) {
     option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ai/ollama-models" };
   }
+
+  // Helix Foundry source grants. An owner or admin grants a principal (a
+  // user, a team, or a service credential: an agent's key) the workspace's
+  // sources; a principal the front end's own permissions don't admit reads an
+  // ontology's current load, and asks it questions, only while every source
+  // that load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants
+  // only add: a workspace that grants nothing behaves as it did without them.
+  //
+  // Every grant, and what each ontology's current load holds and who may
+  // read it through grants.
+  rpc ListFoundryAccess(ListFoundryAccessRequest) returns (ListFoundryAccessResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/access" };
+  }
+  // Replaces one principal's grants.
+  rpc SetFoundryAccessGrants(SetFoundryAccessGrantsRequest) returns (SetFoundryAccessGrantsResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/grants" body: "*" };
+  }
+  // Who would stop reading which ontologies through grants after a change:
+  // loading or making current a version, deleting a connector, or moving a
+  // document to another set. The site asks before it makes one.
+  rpc PreviewFoundryAccessChange(PreviewFoundryAccessChangeRequest) returns (PreviewFoundryAccessChangeResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/access:preview" body: "*" };
+  }
+  // What the caller reads through grants: whether it came as a grantee, and
+  // the ontologies its grants cover.
+  rpc GetMyFoundryAccess(GetMyFoundryAccessRequest) returns (GetMyFoundryAccessResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/access/me" };
+  }
+  // Restricts a member to what grants give, or lifts it. A restricted
+  // member is a grantee on every Foundry call while their role is member:
+  // they see only the ontologies their grants cover, and change nothing.
+  // Only a plain member holding no project write or query scope can be
+  // restricted (FAILED_PRECONDITION otherwise): either reads the database
+  // outside Foundry.
+  rpc SetFoundryMemberRestricted(SetFoundryMemberRestrictedRequest) returns (SetFoundryMemberRestrictedResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/members/{user_id}" body: "*" };
+  }
+  // Teams of the workspace's members, which hold grants for them.
+  rpc CreateFoundryTeam(CreateFoundryTeamRequest) returns (FoundryTeamResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/access/teams" body: "*" };
+  }
+  // Renames a team and replaces its members.
+  rpc UpdateFoundryTeam(UpdateFoundryTeamRequest) returns (FoundryTeamResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/teams/{team_id}" body: "*" };
+  }
+  // Deletes a team with its grants.
+  rpc DeleteFoundryTeam(DeleteFoundryTeamRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/access/teams/{team_id}" };
+  }
 }
 
 // GetFoundryUsageRequest reads the workspace's AI spend this calendar month
@@ -1087,3 +1136,106 @@ message DeleteFoundryReviewDecisionRequest {
   string id = 3;
 }
 message DeleteFoundryReviewDecisionResponse {}
+
+// ListFoundryAccessRequest reads the workspace's grants.
+message ListFoundryAccessRequest {
+  string workspace_id = 1;
+}
+message ListFoundryAccessResponse {
+  // Every grant, oldest first.
+  repeated FoundryAccessGrant grants = 1;
+  // Each live ontology with a current load: what it holds, and who reads it
+  // through grants.
+  repeated FoundryOntologyAccess ontologies = 2;
+  // The workspace's teams, by name.
+  repeated FoundryTeam teams = 3;
+  // The members restricted to what grants give.
+  repeated string restricted_user_ids = 4;
+}
+
+// SetFoundryAccessGrantsRequest replaces a principal's grants with targets,
+// none to take them all away. Every target must be of a live connector or
+// set of the workspace (NOT_FOUND otherwise).
+message SetFoundryAccessGrantsRequest {
+  string                       workspace_id = 1;
+  FoundryPrincipal             principal    = 2;
+  repeated FoundryAccessTarget targets      = 3;
+}
+message SetFoundryAccessGrantsResponse {
+  // The principal's grants now.
+  repeated FoundryAccessGrant grants = 1;
+}
+
+// PreviewFoundryAccessChangeRequest asks what a change would take away.
+message PreviewFoundryAccessChangeRequest {
+  string              workspace_id = 1;
+  FoundryAccessChange change       = 2;
+}
+// FoundryAccessChange is one change the site warns about.
+message FoundryAccessChange {
+  // A load of an ontology's version, or making it current.
+  message LoadVersion {
+    string ontology_id = 1;
+    string version_id  = 2;
+  }
+  // A document moved to another set.
+  message MoveDocument {
+    string document_id     = 1;
+    string document_set_id = 2;
+  }
+  oneof change {
+    LoadVersion  load_version     = 1;
+    string       delete_connector = 2;
+    MoveDocument move_document    = 3;
+  }
+}
+message PreviewFoundryAccessChangeResponse {
+  // Each principal that reads an ontology through grants now and wouldn't
+  // after the change.
+  repeated FoundryAccessLoss losses = 1;
+}
+
+// GetMyFoundryAccessRequest reads what the caller reads through grants.
+message GetMyFoundryAccessRequest {
+  string workspace_id = 1;
+}
+message GetMyFoundryAccessResponse {
+  // The call came as a grantee: the caller reads only through grants.
+  bool grantee = 1;
+  // The caller holds grants, through itself or its teams.
+  bool has_grants = 2;
+  // The live ontologies whose current loads its grants cover.
+  repeated string ontology_ids = 3;
+}
+
+// SetFoundryMemberRestrictedRequest restricts user_id, or lifts it.
+message SetFoundryMemberRestrictedRequest {
+  string workspace_id = 1;
+  string user_id      = 2;
+  bool   restricted   = 3;
+}
+message SetFoundryMemberRestrictedResponse {
+  bool restricted = 1;
+}
+
+// CreateFoundryTeamRequest makes a team of members. Names are unique in the
+// workspace (ALREADY_EXISTS otherwise), 1 to 120 characters.
+message CreateFoundryTeamRequest {
+  string          workspace_id    = 1;
+  string          name            = 2;
+  repeated string member_user_ids = 3;
+}
+message UpdateFoundryTeamRequest {
+  string          workspace_id    = 1;
+  string          team_id         = 2;
+  string          name            = 3;
+  repeated string member_user_ids = 4;
+}
+message DeleteFoundryTeamRequest {
+  string workspace_id = 1;
+  string team_id      = 2;
+}
+message FoundryTeamResponse {
+  FoundryTeam team = 1;
+}
+

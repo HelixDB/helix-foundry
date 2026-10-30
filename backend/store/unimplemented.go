@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -564,7 +565,7 @@ func (u Unimplemented) GetFoundryQuestionByClientToken(context.Context, string, 
 	u.unimplemented("GetFoundryQuestionByClientToken")
 	return nil, nil
 }
-func (u Unimplemented) ListFoundryQuestions(context.Context, string, string, string, int) ([]*model.FoundryQuestion, string, error) {
+func (u Unimplemented) ListFoundryQuestions(context.Context, string, string, string, int, *access.Principal) ([]*model.FoundryQuestion, string, error) {
 	u.unimplemented("ListFoundryQuestions")
 	return nil, "", nil
 }
@@ -798,5 +799,80 @@ func (u Unimplemented) ClaimFoundryNotification(context.Context, string, time.Du
 }
 func (u Unimplemented) FinishFoundryNotification(context.Context, string, string, model.FoundryNotificationOutcome) error {
 	u.unimplemented("FinishFoundryNotification")
+	return nil
+}
+
+func (u Unimplemented) ListFoundryAccessGrants(context.Context, string, []access.Principal) ([]model.FoundryAccessGrant, error) {
+	u.unimplemented("ListFoundryAccessGrants")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryCurrentLoadInputs(context.Context, string, []string) (map[string]model.FoundryLoadInputs, error) {
+	u.unimplemented("ListFoundryCurrentLoadInputs")
+	return nil, nil
+}
+
+func (u Unimplemented) SetFoundryAccessGrants(context.Context, string, access.Principal, []access.Target, *string) error {
+	u.unimplemented("SetFoundryAccessGrants")
+	return nil
+}
+
+func (u Unimplemented) DeleteFoundryAccessPrincipal(context.Context, Executor, string, access.Principal) error {
+	u.unimplemented("DeleteFoundryAccessPrincipal")
+	return nil
+}
+
+func (u Unimplemented) FoundryVersionInputs(context.Context, string, string, string) (access.Inputs, error) {
+	u.unimplemented("FoundryVersionInputs")
+	return access.Inputs{}, nil
+}
+
+func (u Unimplemented) ListFoundryOntologiesHoldingDocument(context.Context, string, string) ([]string, error) {
+	u.unimplemented("ListFoundryOntologiesHoldingDocument")
+	return nil, nil
+}
+
+func (u Unimplemented) IsFoundryMemberRestricted(context.Context, string, string) (bool, error) {
+	u.unimplemented("IsFoundryMemberRestricted")
+	return false, nil
+}
+
+func (u Unimplemented) ListFoundryRestrictedMembers(context.Context, string) ([]string, error) {
+	u.unimplemented("ListFoundryRestrictedMembers")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryTeams(context.Context, string) ([]model.FoundryTeam, error) {
+	u.unimplemented("ListFoundryTeams")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundryTeamsOf(context.Context, string, string) ([]string, error) {
+	u.unimplemented("FoundryTeamsOf")
+	return nil, nil
+}
+
+func (u Unimplemented) SetFoundryMemberRestricted(context.Context, string, string, bool, *string) error {
+	u.unimplemented("SetFoundryMemberRestricted")
+	return nil
+}
+
+func (u Unimplemented) CreateFoundryTeam(context.Context, *model.FoundryTeam) error {
+	u.unimplemented("CreateFoundryTeam")
+	return nil
+}
+
+func (u Unimplemented) UpdateFoundryTeam(context.Context, string, string, string, []string) error {
+	u.unimplemented("UpdateFoundryTeam")
+	return nil
+}
+
+func (u Unimplemented) DeleteFoundryTeam(context.Context, string, string) error {
+	u.unimplemented("DeleteFoundryTeam")
+	return nil
+}
+
+func (u Unimplemented) RemoveFoundryAccessMember(context.Context, Executor, string, string) error {
+	u.unimplemented("RemoveFoundryAccessMember")
 	return nil
 }

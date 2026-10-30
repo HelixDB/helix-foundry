@@ -85,6 +85,10 @@ func (s *Service) GetOntologyVersion(ctx context.Context, req *foundryv1.GetOnto
 	if err != nil {
 		return nil, err
 	}
+	granted, grantee := granteeLoad(ctx)
+	if grantee && req.GetId() != granted.VersionID {
+		return nil, status.Error(codes.NotFound, "ontology version not found")
+	}
 	v, err := s.loadOntologyVersion(ctx, o.ID, req.GetId())
 	if err != nil {
 		return nil, err
@@ -93,7 +97,13 @@ func (s *Service) GetOntologyVersion(ctx context.Context, req *foundryv1.GetOnto
 	if err != nil {
 		return nil, err
 	}
-	return ontologyResponse(v, o.CurrentVersionID != nil && v.ID == *o.CurrentVersionID, loadEvidence(ctx, o), scope)
+	resp, err := ontologyResponse(v, o.CurrentVersionID != nil && v.ID == *o.CurrentVersionID, loadEvidence(ctx, o), scope)
+	if err == nil && grantee {
+		// A draft's cards measured what its generation read, and its
+		// rationale says how; a grantee reads only the load.
+		resp.Version.EvidenceWithheld = withoutCards(resp.Version.Definition) || resp.Version.EvidenceWithheld
+	}
+	return resp, err
 }
 
 // CreateOntologyVersion stores a hand-written version after validating it
@@ -255,16 +265,24 @@ func ontologyResponse(v *foundrymodel.OntologyVersion, current, evidence bool, s
 		return nil, status.Errorf(codes.Internal, "read ontology version %s: %v", v.ID, err)
 	}
 	if !evidence && def.Fields["parent_version_id"].GetStringValue() != "" {
-		// definition.draft is the DraftView, its draft the engine's Draft.
-		items := def.Fields["draft"].GetStructValue().GetFields()["draft"].GetStructValue().GetFields()["items"].GetStructValue().GetFields()
-		for _, item := range items {
-			fields := item.GetStructValue().GetFields()
-			pv.EvidenceWithheld = pv.EvidenceWithheld || fields["card"].GetStructValue() != nil
-			delete(fields, "card")
-		}
+		pv.EvidenceWithheld = withoutCards(&def)
 	}
 	pv.Definition = &def
 	return &foundryv1.OntologyVersionResponse{Version: pv}, nil
+}
+
+// withoutCards takes every item's card out of a draft's definition, and
+// reports whether there were any.
+func withoutCards(def *structpb.Struct) bool {
+	// definition.draft is the DraftView, its draft the engine's Draft.
+	items := def.GetFields()["draft"].GetStructValue().GetFields()["draft"].GetStructValue().GetFields()["items"].GetStructValue().GetFields()
+	withheld := false
+	for _, item := range items {
+		fields := item.GetStructValue().GetFields()
+		withheld = withheld || fields["card"].GetStructValue() != nil
+		delete(fields, "card")
+	}
+	return withheld
 }
 
 // loadEvidence reports whether the caller may see what was measured on o's

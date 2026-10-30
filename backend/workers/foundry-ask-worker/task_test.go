@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"log/slog"
 	"maps"
 	"net"
@@ -149,6 +150,12 @@ type memStore struct {
 	renews int
 	// aiConfig is the workspace's AI setting; nil is Helix's Claude.
 	aiConfig *model.FoundryAIConfig
+	// grants and currentLoads are what a grantee's question is checked
+	// against: the workspace's grants, and each ontology's current load.
+	grants       []model.FoundryAccessGrant
+	currentLoads map[string]model.FoundryLoadInputs
+	// teams are each user's teams.
+	teams map[string][]string
 }
 
 func (s *memStore) GetActiveFoundryAIConfig(context.Context, string) (*model.FoundryAIConfig, error) {
@@ -236,6 +243,36 @@ func (s *memStore) GetOntologyVersionScope(_ context.Context, ontologyID, id str
 		return []string{}, nil
 	}
 	return *s.version.DocumentSetIDs, nil
+}
+
+func (s *memStore) ListFoundryAccessGrants(_ context.Context, _ string, principals []access.Principal) ([]model.FoundryAccessGrant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []model.FoundryAccessGrant
+	for _, g := range s.grants {
+		if slices.Contains(principals, g.Principal) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) ListFoundryCurrentLoadInputs(_ context.Context, _ string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]model.FoundryLoadInputs{}
+	for _, id := range ontologyIDs {
+		if l, ok := s.currentLoads[id]; ok {
+			out[id] = l
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) FoundryTeamsOf(_ context.Context, _, userID string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.teams[userID], nil
 }
 
 func (s *memStore) ListFoundryQuestionHistory(context.Context, *model.FoundryQuestion, int) ([]*model.FoundryQuestion, error) {

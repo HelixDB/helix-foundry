@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/document"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
@@ -270,6 +271,10 @@ func (s *Service) ListFoundryDocuments(ctx context.Context, req *foundryv1.ListF
 	if req.GetWorkspaceId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
+	g, grantee := access.GranteeFrom(ctx)
+	if grantee && len(req.GetIds()) == 0 {
+		return nil, status.Error(codes.PermissionDenied, "source grants let a grantee name documents only by id")
+	}
 	if ids := req.GetIds(); len(ids) > 0 {
 		switch {
 		case len(ids) > maxFoundryDocumentIDs:
@@ -280,6 +285,13 @@ func (s *Service) ListFoundryDocuments(ctx context.Context, req *foundryv1.ListF
 		byID, err := s.deps.DB.ListFoundryDocumentsByID(ctx, req.GetWorkspaceId(), ids)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "list documents: %v", err)
+		}
+		if grantee {
+			// A grantee names only documents in sets it holds: those its loads'
+			// citations name.
+			if err := s.granteeDocuments(ctx, g, byID); err != nil {
+				return nil, err
+			}
 		}
 		resp := &foundryv1.ListFoundryDocumentsResponse{}
 		for _, id := range ids {
@@ -303,6 +315,31 @@ func (s *Service) ListFoundryDocuments(ctx context.Context, req *foundryv1.ListF
 		resp.Documents = append(resp.Documents, foundryDocumentProto(d, nil))
 	}
 	return resp, nil
+}
+
+// granteeDocuments takes out of byID every document in a set g's grants
+// don't cover.
+func (s *Service) granteeDocuments(ctx context.Context, g access.Grantee, byID map[string]*foundrymodel.FoundryDocument) error {
+	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	if err != nil {
+		return err
+	}
+	sets, err := s.deps.DB.ListFoundryDocumentSets(ctx, g.WorkspaceID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "list sets: %v", err)
+	}
+	owner := map[string]string{}
+	for _, set := range sets {
+		if set.Owner != nil {
+			owner[set.ID] = set.Owner.ConnectorID
+		}
+	}
+	for id, d := range byID {
+		if !grants.CoversSet(access.SetRef{SetID: d.SetID, ConnectorID: owner[d.SetID]}) {
+			delete(byID, id)
+		}
+	}
+	return nil
 }
 
 // GetFoundryDocument returns a document of the workspace with the

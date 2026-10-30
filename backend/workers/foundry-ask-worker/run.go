@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -39,6 +40,9 @@ type store interface {
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
 	ListFoundryQuestionHistory(ctx context.Context, q *model.FoundryQuestion, limit int) ([]*model.FoundryQuestion, error)
 	AppendFoundryQuestionEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
+	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
+	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
+	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
 }
 
 // agent is the sidecar; *ontologyagent.Client calls it.
@@ -188,11 +192,66 @@ func (r *runner) run(ctx context.Context, q *model.FoundryQuestion, lost func())
 	if err != nil {
 		return a, permanent("the question could not be sent to the agent", err)
 	}
-	return a, r.ask(ctx, q, body, resolved, lost, a)
+	if err := r.ask(ctx, q, body, resolved, lost, a); err != nil {
+		return a, err
+	}
+	// A grantee whose grants were taken away while it ran gets no answer.
+	if _, err := r.granted(ctx, q); err != nil {
+		a.outcome.Result = nil
+		return a, err
+	}
+	return a, nil
 }
 
-// request builds the question's AskRequest, all but its Helix target.
+// noLongerGranted fails a grantee's question its grants no longer cover.
+const noLongerGranted = "your access to this ontology changed; ask again"
+
+var errNoLongerGranted = permanent(noLongerGranted, nil)
+
+// granted is what the grants of the grantee that asked q (and of its teams,
+// now) cover, nil for a question someone else asked: q's load must still be
+// its ontology's current one, and covered, or the question fails
+// (errNoLongerGranted).
+func (r *runner) granted(ctx context.Context, q *model.FoundryQuestion) (*access.Grants, error) {
+	if q.Grantee == nil {
+		return nil, nil
+	}
+	principals := []access.Principal{*q.Grantee}
+	if q.Grantee.Kind == access.PrincipalUser {
+		teams, err := r.db.FoundryTeamsOf(ctx, q.WorkspaceID, q.Grantee.ID)
+		if err != nil {
+			return nil, retry("could not read your access; Helix will retry", err)
+		}
+		principals = access.Grantee{Principal: *q.Grantee, Teams: teams}.Principals()
+	}
+	held, err := r.db.ListFoundryAccessGrants(ctx, q.WorkspaceID, principals)
+	if err != nil {
+		return nil, retry("could not read your access; Helix will retry", err)
+	}
+	targets := make([]access.Target, len(held))
+	for i, g := range held {
+		targets[i] = g.Target
+	}
+	grants := access.NewGrants(targets)
+	loads, err := r.db.ListFoundryCurrentLoadInputs(ctx, q.WorkspaceID, []string{q.OntologyID})
+	if err != nil {
+		return nil, retry("could not read your access; Helix will retry", err)
+	}
+	if load, ok := loads[q.OntologyID]; !ok || load.LoadID != q.LoadID || !grants.Covers(load.Inputs) {
+		return nil, errNoLongerGranted
+	}
+	return &grants, nil
+}
+
+// request builds the question's AskRequest, all but its Helix target. A
+// grantee's question is asked only while its grants cover the load, without
+// the goal its ontology was drafted from, and with only the document sets of
+// the catalog it holds.
 func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontologyagent.AskRequest, error) {
+	grants, err := r.granted(ctx, q)
+	if err != nil {
+		return nil, err
+	}
 	load, err := r.db.GetFoundryLoad(ctx, q.OntologyID, q.LoadID)
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && load.Status == model.FoundryLoadDeleted:
@@ -240,7 +299,7 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontolo
 		case err != nil:
 			return nil, retry("could not read the version's generation; Helix will retry", err)
 		default:
-			if gen.Goal != nil {
+			if gen.Goal != nil && grants == nil {
 				req.Goal = *gen.Goal
 			}
 			tables, files = gen.Input.Tables, gen.Input.Documents
@@ -250,7 +309,7 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontolo
 	if err != nil {
 		return nil, retry("could not read the version's document sets; Helix will retry", err)
 	}
-	if req.Catalog, err = r.catalog(ctx, q.WorkspaceID, tables, files, scope); err != nil {
+	if req.Catalog, err = r.catalog(ctx, q.WorkspaceID, tables, files, scope, grants); err != nil {
 		return nil, err
 	}
 	history, err := r.db.ListFoundryQuestionHistory(ctx, q, ontologyagent.MaxAskHistory)
@@ -269,7 +328,7 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontolo
 // document set by its id, as the generator gave them. A connector, file or
 // set deleted since is named by its id.
 func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model.OntologyGenerationTable, files []model.OntologyGenerationDocument,
-	scope []string) ([]ontologyagent.CatalogEntry, error) {
+	scope []string, grants *access.Grants) ([]ontologyagent.CatalogEntry, error) {
 	connectors, err := r.db.ListConnectors(ctx, workspaceID)
 	if err != nil {
 		return nil, retry("could not read the workspace's connectors; Helix will retry", err)
@@ -297,7 +356,15 @@ func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model
 	}
 	setNames := make(map[string]string, len(sets))
 	for _, s := range sets {
-		setNames[s.ID] = s.DisplayName()
+		ref := access.SetRef{SetID: s.ID}
+		if s.Owner != nil {
+			ref.ConnectorID = s.Owner.ConnectorID
+		}
+		// A grantee's catalog names only the sets it holds; its load's tables
+		// and files are all covered, or it wasn't asked.
+		if grants == nil || grants.CoversSet(ref) {
+			setNames[s.ID] = s.DisplayName()
+		}
 	}
 	if len(files) > 0 {
 		ids := make([]string, len(files))
@@ -322,6 +389,9 @@ func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model
 	}
 	for _, id := range scope {
 		name, ok := setNames[id]
+		if !ok && grants != nil {
+			continue
+		}
 		if !ok {
 			name = id
 		}
