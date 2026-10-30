@@ -107,7 +107,7 @@ func (s *mysqlDB) DeleteFoundryTeam(ctx context.Context, workspaceID, teamID str
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_team_members WHERE team_id=?`, teamID); err != nil {
 			return err
 		}
-		return tx.DeleteFoundryAccessPrincipal(ctx, nil, workspaceID, access.Principal{Kind: access.PrincipalTeam, ID: teamID})
+		return tx.DeleteFoundryAccessPrincipal(ctx, workspaceID, access.Principal{Kind: access.PrincipalTeam, ID: teamID})
 	})
 }
 
@@ -156,14 +156,11 @@ func (s *mysqlDB) FoundryTeamsOf(ctx context.Context, workspaceID, userID string
 // workspace: their own grants and their teams. Their restriction stays, so
 // one let back in is still restricted. The host calls it when it removes a
 // member, in its own transaction or not.
-func (s *mysqlDB) RemoveFoundryAccessMember(ctx context.Context, exec Executor, workspaceID, userID string) error {
-	if exec == nil {
-		exec = s.db
-	}
-	if _, err := exec.ExecContext(ctx, `DELETE FROM foundry_team_members WHERE workspace_id=? AND user_id=?`, workspaceID, userID); err != nil {
+func (s *mysqlDB) RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_team_members WHERE workspace_id=? AND user_id=?`, workspaceID, userID); err != nil {
 		return err
 	}
-	_, err := exec.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND principal_kind='user' AND principal_id=?`,
+	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND principal_kind='user' AND principal_id=?`,
 		workspaceID, userID)
 	return err
 }

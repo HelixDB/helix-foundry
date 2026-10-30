@@ -258,12 +258,12 @@ type Store interface {
 	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	FinishFoundryGraphJob(ctx context.Context, jobID, workerID string, outcome model.FoundryGraphJobOutcome) (model.FoundryGraphJobFinish, error)
 	SetFoundryAccessGrants(ctx context.Context, workspaceID string, principal access.Principal, targets []access.Target, byUserID *string) error
-	DeleteFoundryAccessPrincipal(ctx context.Context, exec Executor, workspaceID string, principal access.Principal) error
+	DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID string, principal access.Principal) error
 	SetFoundryMemberRestricted(ctx context.Context, workspaceID, userID string, restricted bool, byUserID *string) error
 	CreateFoundryTeam(ctx context.Context, team *model.FoundryTeam) error
 	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
 	DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error
-	RemoveFoundryAccessMember(ctx context.Context, exec Executor, workspaceID, userID string) error
+	RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error
 	CreateFoundryQuestion(ctx context.Context, q *model.FoundryQuestion, limits model.FoundryQuestionLimits) error
 	ClaimFoundryQuestion(ctx context.Context, workerID string, claim model.FoundryQuestionClaim) (*model.FoundryQuestion, error)
 	RenewFoundryQuestionLease(ctx context.Context, id, workerID string, lease time.Duration) error

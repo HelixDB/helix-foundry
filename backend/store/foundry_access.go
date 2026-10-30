@@ -113,13 +113,10 @@ VALUES `+strings.Join(rows, ", "), args...)
 }
 
 // DeleteFoundryAccessPrincipal deletes every grant principal holds in the
-// workspace: the host calls it when it revokes a service credential, removes
-// a member or deletes a team, in its own transaction or not.
-func (s *mysqlDB) DeleteFoundryAccessPrincipal(ctx context.Context, exec Executor, workspaceID string, principal access.Principal) error {
-	if exec == nil {
-		exec = s.db
-	}
-	_, err := exec.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND principal_kind=? AND principal_id=?`,
+// workspace: the host calls it when it revokes a service credential, in its
+// own transaction or not.
+func (s *mysqlDB) DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID string, principal access.Principal) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND principal_kind=? AND principal_id=?`,
 		workspaceID, principal.Kind.String(), principal.ID)
 	return err
 }

@@ -98,9 +98,9 @@ func TestFoundryAccessGrants(t *testing.T) {
 		assert.Empty(t, targetsOf(t, f.db, ws, team))
 	})
 	t.Run("the host deletes a principal's grants", func(t *testing.T) {
-		require.NoError(t, f.db.DeleteFoundryAccessPrincipal(ctx, nil, ws, agent))
+		require.NoError(t, f.db.DeleteFoundryAccessPrincipal(ctx, ws, agent))
 		assert.Empty(t, targetsOf(t, f.db, ws, agent))
-		require.NoError(t, f.db.DeleteFoundryAccessPrincipal(ctx, testDB, ws, agent), "again, within the host's own executor")
+		require.NoError(t, f.db.DeleteFoundryAccessPrincipal(ctx, ws, agent), "again changes nothing")
 	})
 }
 
@@ -410,7 +410,7 @@ func TestFoundryTeamsAndRestrictedMembers(t *testing.T) {
 	require.NoError(t, f.db.UpdateFoundryTeam(ctx, ws, team.ID, "Billing", []string{ada, grace}))
 
 	t.Run("a member who leaves", func(t *testing.T) {
-		require.NoError(t, f.db.RemoveFoundryAccessMember(ctx, nil, ws, ada))
+		require.NoError(t, f.db.RemoveFoundryAccessMember(ctx, ws, ada))
 		assert.Empty(t, targetsOf(t, f.db, ws, adaPrincipal))
 		of, err := f.db.FoundryTeamsOf(ctx, ws, ada)
 		require.NoError(t, err)
@@ -419,7 +419,7 @@ func TestFoundryTeamsAndRestrictedMembers(t *testing.T) {
 		of, err = f.db.FoundryTeamsOf(ctx, ws, grace)
 		require.NoError(t, err)
 		assert.Equal(t, []string{team.ID}, of, "the others stay")
-		require.NoError(t, f.db.RemoveFoundryAccessMember(ctx, testDB, ws, ada), "again, in the host's executor")
+		require.NoError(t, f.db.RemoveFoundryAccessMember(ctx, ws, ada), "again changes nothing")
 	})
 	t.Run("a team deleted", func(t *testing.T) {
 		require.NoError(t, f.db.DeleteFoundryTeam(ctx, ws, team.ID))

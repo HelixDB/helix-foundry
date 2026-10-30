@@ -23,7 +23,8 @@ export type PapiArea =
   | "data"
   | "ontology"
   | "databases"
-  | "explore";
+  | "explore"
+  | "access";
 export type PapiRoute = {
   area: PapiArea;
   method: HttpMethod;
@@ -430,6 +431,70 @@ export const papiRoutes = [
   // Explore: reads of an ontology's database with the user's session, through
   // the query broker. Never query-write.
   { area: "explore", method: "POST", path: "/v1/databases:query-read" },
+
+  // Access: source grants (owners and admins grant a member, a team or an
+  // agent's key the workspace's sources, and read who reads what through
+  // them), who a change would cut off, restricting a member, teams, and
+  // what the caller itself reads through grants (any member).
+  {
+    area: "access",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/access",
+  },
+  {
+    area: "access",
+    method: "PUT",
+    path: "/v1/workspaces/{workspaceId}/foundry/access/grants",
+  },
+  {
+    area: "access",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/access:preview",
+  },
+  {
+    area: "access",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/access/me",
+  },
+  {
+    area: "access",
+    method: "PUT",
+    path: "/v1/workspaces/{workspaceId}/foundry/access/members/{userId}",
+  },
+  {
+    area: "access",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/access/teams",
+  },
+  {
+    area: "access",
+    method: "PUT",
+    path: "/v1/workspaces/{workspaceId}/foundry/access/teams/{teamId}",
+  },
+  {
+    area: "access",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/foundry/access/teams/{teamId}",
+  },
+  // Agents' keys (the WFE's workspace service credentials): listed, made
+  // (the token shown once) and revoked, to grant them sources. Never read
+  // one by id or changed here: a key's project grants stay in the Helix
+  // dashboard.
+  {
+    area: "access",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/service-credentials",
+  },
+  {
+    area: "access",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/service-credentials",
+  },
+  {
+    area: "access",
+    method: "DELETE",
+    path: "/v1/workspaces/{workspaceId}/service-credentials/{id}",
+  },
 ] as const satisfies readonly PapiRoute[];
 
 type Compiled = PapiRoute & { compiled: CompiledTemplate };

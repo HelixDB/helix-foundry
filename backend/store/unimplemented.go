@@ -817,7 +817,7 @@ func (u Unimplemented) SetFoundryAccessGrants(context.Context, string, access.Pr
 	return nil
 }
 
-func (u Unimplemented) DeleteFoundryAccessPrincipal(context.Context, Executor, string, access.Principal) error {
+func (u Unimplemented) DeleteFoundryAccessPrincipal(context.Context, string, access.Principal) error {
 	u.unimplemented("DeleteFoundryAccessPrincipal")
 	return nil
 }
@@ -872,7 +872,7 @@ func (u Unimplemented) DeleteFoundryTeam(context.Context, string, string) error 
 	return nil
 }
 
-func (u Unimplemented) RemoveFoundryAccessMember(context.Context, Executor, string, string) error {
+func (u Unimplemented) RemoveFoundryAccessMember(context.Context, string, string) error {
 	u.unimplemented("RemoveFoundryAccessMember")
 	return nil
 }
