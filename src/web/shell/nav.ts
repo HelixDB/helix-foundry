@@ -52,6 +52,11 @@ export const primaryNav: NavItem[] = [
   item("explore", "/explore", "Explorer", Waypoints, ["/explore"]),
   item("data", "/data", "Connectors", Cable, ["/data"]),
 ];
+// A grantee's sections (a member restricted to what source grants give):
+// Analyst and the ontologies its grants cover.
+export const granteeNav: NavItem[] = primaryNav.filter(
+  (n) => n.id === "ask" || n.id === "ontology",
+);
 // While the workspace is onboarding, its one section: the wizard, so Settings
 // (where an AI provider is chosen) has a way back.
 export const onboardingNav: NavItem[] = [

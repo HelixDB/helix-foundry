@@ -31,7 +31,7 @@ import { lastOntology, ontologyName, useOntology } from "./scope";
  * skips it, and only while the address is still its own: a link followed
  * while the list loads isn't taken back. A workspace without one is
  * onboarding, which main.tsx sends to /ontology/new, as this does while the
- * routes catch up.
+ * routes catch up. A grantee with nothing shared is told so instead.
  */
 export function OpenOntology({
   title,
@@ -40,12 +40,16 @@ export function OpenOntology({
   title: string;
   to: (ontologyId: string) => string;
 }) {
-  const { id: ws } = useWorkspace();
+  const { id: ws, grantee } = useWorkspace();
   const list = useQuery(ontologyQueries.list(ws));
   const ontologies = list.data?.ontologies || [],
     last = lastOntology(ws);
   const open = ontologies.find((o) => o.id === last) ?? ontologies[0];
-  const target = open ? to(open.id) : list.data ? paths.newOntology() : null;
+  const target = open
+    ? to(open.id)
+    : list.data && !grantee
+      ? paths.newOntology()
+      : null;
   const { pathname } = useLocation(),
     navigate = useNavigate();
   // The router renders a followed link's route in a transition, so this page
@@ -58,7 +62,13 @@ export function OpenOntology({
   return (
     <Page>
       <PageHeader title={title} />
-      {list.error ? (
+      {list.data ? (
+        <EmptyState
+          icon={Shapes}
+          title="Nothing shared with you yet"
+          text="An owner or admin of this workspace chooses what you can read. The ontologies they share with you show here."
+        />
+      ) : list.error ? (
         <EmptyState
           icon={Shapes}
           title="Couldn’t load the ontologies"

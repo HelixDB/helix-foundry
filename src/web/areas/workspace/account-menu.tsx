@@ -92,7 +92,7 @@ function Usage({ workspaceId }: { workspaceId: string }) {
 
 // The signed-in user in the sidebar's footer: the workspace's settings,
 // members and plan (only the plan while it is onboarding), this month's AI
-// usage, the theme, and sign out. A local build has only its settings and
+// usage, the theme, and sign out; a grantee's only the theme and sign out. A local build has only its settings and
 // the theme: it bills nothing.
 export function AccountMenu({
   user,
@@ -105,7 +105,7 @@ export function AccountMenu({
 }) {
   const [theme, setTheme] = useTheme(),
     [leaving, setLeaving] = useState(false),
-    { onboarding } = useWorkspace();
+    { onboarding, grantee } = useWorkspace();
   return (
     <DropdownMenu
       label="Account"
@@ -131,17 +131,17 @@ export function AccountMenu({
         subtitle={`${roleLabel[current.role]} · ${current.name}`}
       />
       <MenuSeparator />
-      {!onboarding && (
+      {!onboarding && !grantee && (
         <MenuItem icon={Settings} to={paths.settings()}>
           Settings
         </MenuItem>
       )}
-      {!onboarding && !LOCAL && (
+      {!onboarding && !grantee && !LOCAL && (
         <MenuItem icon={Users} to={paths.settings("members")}>
           Members
         </MenuItem>
       )}
-      {!LOCAL && (
+      {!LOCAL && !grantee && (
         <MenuItem
           icon={CreditCard}
           to={paths.settings("billing")}
@@ -150,8 +150,8 @@ export function AccountMenu({
           Plan & billing
         </MenuItem>
       )}
-      <MenuSeparator />
-      {!LOCAL && <Usage workspaceId={current.id} />}
+      {!grantee && <MenuSeparator />}
+      {!LOCAL && !grantee && <Usage workspaceId={current.id} />}
       <MenuLabel>Theme</MenuLabel>
       {themeOptions.map(({ value, label }) => (
         <MenuItem

@@ -159,7 +159,7 @@ function focusOf(param: string | null): EntityRef | undefined {
 }
 
 export function AskPage() {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, grantee } = useWorkspace(),
     { id: o, ontology } = useOntology();
   const [params, setParams] = useSearchParams();
   const focus = focusOf(params.get("focus"));
@@ -196,13 +196,16 @@ export function AskPage() {
       },
       { replace: false },
     );
+  // A grantee asks the one load its grants cover: no Load picker.
   const picker = (
     <>
       <OntologyPicker ontologyId={o} to={paths.ask} />
-      <LoadPicker selection={selection} />
+      {!grantee && <LoadPicker selection={selection} />}
     </>
   );
-  if (!ontology.tenantId)
+  // A grantee reads through its grants, never the database: the WFE leaves
+  // the database out of what it is sent.
+  if (!ontology.tenantId && !grantee)
     return (
       <div className="ak-chat">
         <ChatBar title="Analyst">{picker}</ChatBar>
@@ -506,7 +509,7 @@ function useCitations(
 ): Omit<CitationContext, "name" | "result"> & {
   named: ReadonlyMap<string, string>;
 } {
-  const { id: ws } = useWorkspace(),
+  const { id: ws, grantee } = useWorkspace(),
     { id: o } = useOntology(),
     { readLater } = useTenantReads();
   const loads = useQuery(ontologyQueries.loads(ws, o));
@@ -516,9 +519,10 @@ function useCitations(
     loads.data?.loads?.find((l) => l.id === loadId)?.versionId ||
     "";
   const { naming } = useNaming(versionId);
-  const names = useQuery(
-    readQueries.names(ws, o, readLater, loadId, cited, naming),
-  );
+  // A grantee can't read the database: entities read as the steps name
+  // them, and citations open their steps, not pages it can't open.
+  const named = readQueries.names(ws, o, readLater, loadId, cited, naming);
+  const names = useQuery({ ...named, enabled: named.enabled && !grantee });
   // A citation names any document of the workspace, a connector's too.
   const docName = useDocumentNames(ws, "a document");
   const sources = useSources();
@@ -526,6 +530,7 @@ function useCitations(
     named: names.data ?? new Map(),
     ontologyId: o,
     loadId,
+    ...(grantee ? { unlinked: true as const } : {}),
     keyed: (type) => {
       const t = naming.types.get(type);
       return t ? t.key.length > 0 : undefined;
@@ -1082,7 +1087,8 @@ function Outcome({
   entityHref: (r: EntityRef) => string | undefined;
   reading: boolean;
 }) {
-  const { id: o } = useOntology();
+  const { id: o } = useOntology(),
+    { grantee } = useWorkspace();
   switch (view.kind) {
     case "waiting":
     case "queued":
@@ -1134,16 +1140,18 @@ function Outcome({
             <>
               {view.result.reason || "What it holds doesn’t say."}
               {view.result.gap && <> It lacks: {view.result.gap}</>}
-              <span className="ak-draft">
-                <ButtonLink
-                  size="sm"
-                  to={paths.generate(o, {
-                    goal: draftGoal(q.question || "", view.result),
-                  })}
-                >
-                  Draft a new version with this
-                </ButtonLink>
-              </span>
+              {!grantee && (
+                <span className="ak-draft">
+                  <ButtonLink
+                    size="sm"
+                    to={paths.generate(o, {
+                      goal: draftGoal(q.question || "", view.result),
+                    })}
+                  >
+                    Draft a new version with this
+                  </ButtonLink>
+                </span>
+              )}
             </>
           }
         />

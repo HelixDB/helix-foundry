@@ -72,6 +72,7 @@ async function render(
             role: "owner",
             user: { id: "usr_1", name: "Ada", email: "ada@example.com" },
             onboarding: false,
+            grantee: false,
             notify: () => {},
           },
         },

@@ -23,6 +23,10 @@ export const WorkspaceContext = createContext({
   // The workspace has no ontology yet: the shell offers nothing but the
   // onboarding (main.tsx's OnboardingRoutes).
   onboarding: false,
+  // The user reads only through source grants (a member an owner or admin
+  // restricted, GET .../foundry/access/me): the shell offers Analyst and
+  // the ontologies those grants cover, read only, and nothing else.
+  grantee: false,
   notify: (_text: string, _error?: boolean) => {},
 });
 export const useWorkspace = () => useContext(WorkspaceContext);

@@ -1473,6 +1473,9 @@ export type CitationContext = {
   name: (r: EntityRef) => string;
   // A result citation's words: the step that recorded it (resultLabel).
   result: (evidenceId: string) => string;
+  // A grantee's: it reads only Analyst, so no citation opens a page; each
+  // opens the step it came from.
+  unlinked?: true;
 };
 
 /** `relation:co_signed` as "co signed". */
@@ -1537,6 +1540,7 @@ export function citationHref(
   t: CitationTarget,
   ctx: CitationContext,
 ): string | undefined {
+  if (ctx.unlinked) return undefined;
   const o = ctx.ontologyId;
   const entity = (r: EntityRef, tab?: string) => {
     const keyed = ctx.keyed(r.type);

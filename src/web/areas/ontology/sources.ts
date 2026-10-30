@@ -49,10 +49,15 @@ export type SourceInfo = {
 const none: Connector[] = [];
 
 export function useSources(drafted: OntologyGenerationTable[] = []) {
-  const { id } = useWorkspace();
-  const connectors = useQuery(connectorsQuery(id)),
-    documents = useQuery(documentQueries.workspace(id)),
-    sets = useQuery(documentSetQueries.list(id));
+  // A grantee reads no connector, document list or set: its sources go
+  // unnamed.
+  const { id, grantee } = useWorkspace();
+  const connectors = useQuery({ ...connectorsQuery(id), enabled: !grantee }),
+    documents = useQuery({
+      ...documentQueries.workspace(id),
+      enabled: !grantee,
+    }),
+    sets = useQuery({ ...documentSetQueries.list(id), enabled: !grantee });
   const list = connectors.data?.connectors || none;
   const info = (connectorId: string, table: string): SourceInfo => {
     const c = list.find((x) => x.id === connectorId),
@@ -124,9 +129,10 @@ export function useSources(drafted: OntologyGenerationTable[] = []) {
     key: `${connectors.dataUpdatedAt}:${agentIds.dataUpdatedAt}:${documents.dataUpdatedAt}:${sets.dataUpdatedAt}`,
     // The names are still loading.
     pending:
-      connectors.isPending ||
-      documents.isPending ||
-      (connectors.isSuccess && agentIds.isPending),
+      !grantee &&
+      (connectors.isPending ||
+        documents.isPending ||
+        (connectors.isSuccess && agentIds.isPending)),
     resolve,
     byAgentId: (sourceId: string) => resolve({ kind: "agent", sourceId }),
     // A schema card's member: the table, its connector's logo and name.

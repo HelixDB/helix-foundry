@@ -117,7 +117,8 @@ function PanelAside({
 // Workspace chrome: the sidebar on every page, with the open section's
 // panel beside it when it has one, mobile bar and drawer, and the command
 // palette. While the workspace is onboarding, the sidebar holds only the
-// workspace and the account, and there is no palette.
+// workspace and the account, and there is no palette; a grantee has no
+// palette either (what it lists, a grantee can't read).
 export function Shell({
   workspaces,
   current,
@@ -131,7 +132,8 @@ export function Shell({
   onSwitch: (id: string) => void;
   children: ReactNode;
 }) {
-  const { notify, onboarding } = useWorkspace();
+  const { notify, onboarding, grantee } = useWorkspace(),
+    searchable = !onboarding && !grantee;
   const [palette, setPalette] = useState<{ query: string } | null>(null),
     [drawer, setDrawer] = useState(false);
   const { pathname } = useLocation();
@@ -166,7 +168,7 @@ export function Shell({
     return pageSlot && { element: pageSlot, claim };
   }, [panel?.kind, drawerSlot, pageSlot, closeDrawer, claim]);
   useEffect(() => {
-    if (onboarding) return;
+    if (!searchable) return;
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -175,7 +177,7 @@ export function Shell({
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [onboarding]);
+  }, [searchable]);
   const shell = useMemo(
     () => ({
       openPalette: (query = "") => {
@@ -239,7 +241,7 @@ export function Shell({
                   </span>
                 </Link>
                 <span className="hf-mobile-ws">{current.name}</span>
-                {!onboarding && (
+                {searchable && (
                   <button
                     type="button"
                     className="hf-btn hf-btn--ghost hf-btn--md hf-btn--icon"

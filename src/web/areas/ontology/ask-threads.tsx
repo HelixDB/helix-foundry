@@ -43,7 +43,8 @@ function Threads({
   ontologyId: string;
   onNavigate?: () => void;
 }) {
-  const { id: ws } = useWorkspace(),
+  // A grantee doesn't see the workspace's spend.
+  const { id: ws, grantee } = useWorkspace(),
     [params] = useSearchParams(),
     now = useNow(60_000);
   const list = useQuery(questionQueries.list(ws, o));
@@ -133,7 +134,7 @@ function Threads({
           ))
         )}
       </nav>
-      {budget && (
+      {budget && !grantee && (
         <details className="ak-budget" aria-label="Questions budget">
           <summary>
             <Gauge size={14} aria-hidden />

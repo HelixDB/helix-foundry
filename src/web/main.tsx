@@ -34,6 +34,8 @@ import { NotFound, RouteErrorBoundary } from "./shell/ErrorBoundary";
 import { applyTheme, readTheme } from "./shell/theme";
 import { SignInPage, SignedInAs } from "./sign-in";
 import { WorkspacePicker } from "./areas/workspace/picker";
+import { myAccessQuery } from "./areas/workspace/access-api";
+import { granteeRedirect } from "./areas/workspace/access-model";
 import { ontologyQueries } from "./areas/ontology/queries";
 import {
   Loading,
@@ -105,10 +107,20 @@ function ToOnboarding() {
 // documents in place, the pages of the ontology it creates (they open
 // before the list has it), and Settings, for the plan a database connection
 // needs. One table either way, so a page open as the first ontology arrives
-// stays mounted.
-function WorkspaceRoutes({ onboarding }: { onboarding: boolean }) {
-  const { search } = useLocation();
+// stays mounted. A grantee (restricted to what source grants give) is never
+// onboarding, and stays on Ask and its ontologies' overviews
+// (granteeRedirect).
+function WorkspaceRoutes({
+  onboarding,
+  grantee,
+}: {
+  onboarding: boolean;
+  grantee: boolean;
+}) {
+  const { pathname, search } = useLocation();
   const offered = (page: ReactNode) => (onboarding ? <ToOnboarding /> : page);
+  const away = grantee ? granteeRedirect(pathname) : undefined;
+  if (away) return <Navigate to={away} replace />;
   return (
     <Routes>
       <Route
@@ -160,7 +172,10 @@ function GateError({
 
 // The chosen workspace's shell and pages, once its ontologies are read: with
 // none, it is onboarding. A list that couldn't be read leaves its pages to
-// say so.
+// say so. Hosted, what the user reads through source grants is read first:
+// a grantee sees only Ask and the ontologies its grants cover, never the
+// onboarding. If it can't be read, the user is taken as no grantee: the WFE
+// still refuses what a grantee can't do.
 function WorkspaceApp({
   workspaces,
   current,
@@ -175,19 +190,23 @@ function WorkspaceApp({
   notify: (text: string, error?: boolean) => void;
 }) {
   const location = useLocation();
-  const list = useQuery(ontologyQueries.list(current.id));
-  const onboarding = !!list.data && !list.data.ontologies?.length;
+  const list = useQuery(ontologyQueries.list(current.id)),
+    access = useQuery({ ...myAccessQuery(current.id), enabled: !LOCAL });
+  const grantee = !LOCAL && !!access.data?.grantee,
+    onboarding = !grantee && !!list.data && !list.data.ontologies?.length;
   useEffect(() => {
     if (onboarding) trackEvent("onboarding_shown");
   }, [onboarding, current.id]);
-  if (list.isPending)
+  if (list.isPending || (!LOCAL && access.isPending))
     return (
       <div className="hf-center">
         <Loading />
       </div>
     );
   return (
-    <WorkspaceContext.Provider value={{ ...current, user, onboarding, notify }}>
+    <WorkspaceContext.Provider
+      value={{ ...current, user, onboarding, grantee, notify }}
+    >
       <Shell
         workspaces={workspaces}
         current={current}
@@ -198,7 +217,7 @@ function WorkspaceApp({
           <Suspense fallback={<RouteFallback />}>
             {/* Keyed by workspace: switching starts every page afresh. */}
             <div key={current.id} className="hf-route">
-              <WorkspaceRoutes onboarding={onboarding} />
+              <WorkspaceRoutes onboarding={onboarding} grantee={grantee} />
             </div>
           </Suspense>
         </RouteErrorBoundary>
