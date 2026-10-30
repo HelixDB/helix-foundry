@@ -232,6 +232,104 @@ describe("an entity through grants", () => {
     ).toThrow("Too deep to compute live");
   });
 
+  it("trusts nothing in an answer: odd cells, failed parts", () => {
+    const plan = entityPlan(globex, naming);
+    const outcomes = run({
+      reads: plan.reads,
+      parse: (o) => o,
+    }) as Outcome<unknown>[];
+    const failing = {
+      ok: false as const,
+      error: { code: "invalid" as const, message: "m" },
+    };
+    // The entity's cell isn't one, or of a type the version doesn't know.
+    for (const cell of [
+      { type: "Customer" },
+      { type: "Ghost", id: "x", name: "x" },
+      "x",
+    ])
+      expect(
+        plan.parse([
+          {
+            ok: true,
+            value: {
+              kind: "query",
+              result: {
+                kind: "rows",
+                rows: [{ cells: [cell], edges: [] }],
+                total: 1,
+              },
+            },
+          },
+          ...outcomes.slice(1),
+        ]).entity,
+      ).toBeNull();
+    // What states it and the rules it breaks couldn't be read: none, said
+    // as cut short.
+    const evidenceAt = plan.reads.findIndex((r) => "evidence" in r),
+      breaksAt = plan.reads.findIndex((r) => "violations" in r);
+    const cut = plan.parse(
+      outcomes.map((o, i) =>
+        i === evidenceAt || i === breaksAt || i > evidenceAt ? failing : o,
+      ),
+    );
+    expect(cut.rows).toEqual([]);
+    expect(cut.propEvidence).toEqual([]);
+    expect(cut.violations).toEqual([]);
+    expect(cut.truncated.about).toBe(true);
+    // Without the rows that state it, the rows that set its props still do.
+    const fromProps = plan.parse(
+      outcomes.map((o, i) => (i === evidenceAt ? failing : o)),
+    );
+    expect(fromProps.rows).toEqual([
+      {
+        source: "src_1",
+        mapping: "customers",
+        rowKey: "cus_1",
+        props: ["id", "company_name", "currency"],
+      },
+    ]);
+    // A fact whose edge isn't a stated fact (one rules give) isn't listed.
+    const linkAt = plan.reads.findIndex((r) => "query" in r && r.query.steps);
+    const derivedOnly = plan.parse(
+      outcomes.map((o, i) =>
+        i === linkAt
+          ? {
+              ok: true,
+              value: {
+                kind: "query",
+                result: {
+                  kind: "rows",
+                  rows: [
+                    {
+                      cells: [
+                        { type: "Customer", id: "cus_1", name: "G" },
+                        { type: "Place", id: "paris", name: "Paris" },
+                      ],
+                      edges: [
+                        {
+                          step: 0,
+                          derived: {
+                            pred: "link:based_in",
+                            args: [
+                              { type: "Customer", id: "cus_1" },
+                              { type: "Place", id: "paris" },
+                            ],
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                  total: 1,
+                },
+              },
+            }
+          : o,
+      ),
+    );
+    expect(derivedOnly.facts.map((f) => f.other?.name)).not.toContain("Paris");
+  });
+
   it("reads a type known by its name, and marks what it couldn't read", () => {
     const plan = entityPlan({ type: "Place", name: "london" }, naming);
     // No props of its own: one read of the entity.

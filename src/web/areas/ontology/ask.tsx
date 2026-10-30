@@ -525,7 +525,7 @@ function useCitations(
   named: ReadonlyMap<string, string>;
 } {
   const { id: ws } = useWorkspace(),
-    { id: o } = useOntology(),
+    { id: o, ontology } = useOntology(),
     { access, reader } = useGraphReader(true);
   const loads = useQuery(ontologyQueries.loads(ws, o));
   const loadId = q.loadId || "";
@@ -534,10 +534,15 @@ function useCitations(
     loads.data?.loads?.find((l) => l.id === loadId)?.versionId ||
     "";
   const { naming } = useNaming(versionId);
-  // Through grants, the names are typed reads of the load they cover.
-  const names = useQuery(
-    readQueries.names(ws, o, reader, loadId, cited, naming),
-  );
+  // Through grants, the names are typed reads of the one load they cover:
+  // a question asked of an earlier load names its entities as its steps do.
+  const named = readQueries.names(ws, o, reader, loadId, cited, naming);
+  const names = useQuery({
+    ...named,
+    enabled:
+      named.enabled &&
+      (access !== "grants" || loadId === ontology.currentLoad?.id),
+  });
   // A citation names any document of the workspace, a connector's too.
   const docName = useDocumentNames(ws, "a document");
   const sources = useSources();

@@ -582,7 +582,8 @@ export function RecordsPage() {
                 <Button
                   onClick={() =>
                     update({
-                      // Back to the last page with rows, when it's known.
+                      // Back to the last page with rows, when it's known
+                      // (through grants, of the rows read).
                       page:
                         total === null
                           ? view.page - 1
@@ -590,7 +591,10 @@ export function RecordsPage() {
                               view.page - 1,
                               Math.max(
                                 0,
-                                Math.ceil(total / RECORDS_LIMITS.page) - 1,
+                                Math.ceil(
+                                  (data?.first?.read ?? total) /
+                                    RECORDS_LIMITS.page,
+                                ) - 1,
                               ),
                             ),
                     })
