@@ -11,9 +11,29 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # tsc's incremental state (tsconfig.json sets "incremental") and the
+      # ESLint and Prettier caches, kept from the last green run. The key
+      # holds the OS and architecture, the lockfile and the tools' configs,
+      # so a change to any of them starts from empty caches. Every tool
+      # re-hashes each file's content against its entry, so a stale entry
+      # only costs time; delete this step and the --cache flags to go back.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            tsconfig.tsbuildinfo
+            .eslintcache
+            .prettiercache
+          key: check-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'tsconfig.json', 'eslint.config.mjs', '.prettierignore') }}-${{ github.sha }}
+          restore-keys: check-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'tsconfig.json', 'eslint.config.mjs', '.prettierignore') }}-
       - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm test
+      # `pnpm lint`, with each tool's cache. ESLint's cache is sound only
+      # while no rule is type-aware (no parserOptions.project or
+      # projectService): drop its --cache flags if typed linting is added.
+      - run: pnpm exec eslint . --max-warnings 0 --cache --cache-strategy content --cache-location .eslintcache
+      - run: pnpm exec prettier --check . --cache --cache-strategy content --cache-location .prettiercache
+      # One worker per vCPU: Vitest's default leaves one idle, which is half
+      # of a 2-vCPU runner.
+      - run: pnpm test --maxWorkers=100%
   e2e:
     runs-on: ubuntu-latest
     steps:
