@@ -42,22 +42,14 @@ jobs:
     name: Image (${{ matrix.architecture }}${{ matrix.crucible && ', crucible' || '' }})
     strategy:
       fail-fast: false
+      # amd64 and arm64 on GitHub's runners and, unless releasing, arm64 on a
+      # Crucible runner too while it is tried: a release never waits on it.
       matrix:
-        include:
-          - architecture: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-          - architecture: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-          # Tried on a Crucible runner beside GitHub's: it never blocks a
-          # release, and never uploads the image a release publishes.
-          - architecture: arm64
-            platform: linux/arm64
-            runner: crucible-2vcpu-arm
-            crucible: true
+        include: >-
+          ${{ fromJSON(!inputs.release_version
+          && '[{"architecture":"amd64","platform":"linux/amd64","runner":"ubuntu-24.04"},{"architecture":"arm64","platform":"linux/arm64","runner":"ubuntu-24.04-arm"},{"architecture":"arm64","platform":"linux/arm64","runner":"crucible-2vcpu-arm","crucible":true}]'
+          || '[{"architecture":"amd64","platform":"linux/amd64","runner":"ubuntu-24.04"},{"architecture":"arm64","platform":"linux/arm64","runner":"ubuntu-24.04-arm"}]') }}
     runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.crucible == true }}
     timeout-minutes: 30
     env:
       CI_IMAGE: foundry-site:ci-${{ matrix.architecture }}
@@ -98,10 +90,10 @@ jobs:
           curl -fsS -o /dev/null http://localhost:3000/
           docker rm -f site
       - name: Save the tested image
-        if: github.event_name == 'workflow_dispatch' && inputs.release_version != '' && !matrix.crucible
+        if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
         run: docker save "$CI_IMAGE" | gzip > image-${{ matrix.architecture }}.tar.gz
       - name: Upload the tested image
-        if: github.event_name == 'workflow_dispatch' && inputs.release_version != '' && !matrix.crucible
+        if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
         uses: actions/upload-artifact@v4
         with:
           name: tested-image-${{ matrix.architecture }}
