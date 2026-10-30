@@ -403,94 +403,175 @@
   font-size: var(--hf-text-sm);
   line-height: 1.5;
 }
-.ak-steps {
+/* The steps, as tool calls: one row each (its mark, number, the tool's
+   name, what it was asked in words, and what it returned), which opens on
+   its Input and Output. The numbers are a counter, as an ordered list's
+   markers are (a result citation names the step that read it), and stay
+   out of copied text. */
+.ak-calls {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   margin: 0;
   padding: 4px 0 0;
   list-style: none;
   counter-reset: ak-step;
 }
-.ak-step {
+.ak-call {
   counter-increment: ak-step;
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  margin: 0 -6px;
-  padding: 3px 6px;
-  border-radius: var(--hf-radius-sm);
-  color: var(--hf-muted);
+  min-width: 0;
+  border: 1px solid var(--hf-border);
+  border-radius: var(--hf-radius);
+  background: var(--hf-raised);
+  color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
   line-height: 20px;
-  transition: background var(--hf-duration) var(--hf-ease);
+  transition:
+    border-color var(--hf-duration) var(--hf-ease),
+    background var(--hf-duration) var(--hf-ease);
 }
-.ak-step-mark {
-  margin-top: 3.5px;
-  color: var(--hf-faint);
+.ak-call.is-end {
+  border-color: transparent;
+  background: transparent;
 }
-.ak-step.is-done .ak-step-mark {
-  color: var(--hf-accent-text);
-}
-.ak-step.is-running {
-  color: var(--hf-text-2);
-}
-.ak-step.is-running .ak-step-mark {
-  color: var(--hf-info-text);
-}
-.ak-step.is-error .ak-step-mark {
-  color: var(--hf-danger-text);
-}
-/* A result citation lights the step that returned it. */
-.ak-step.is-lit {
-  background: var(--hf-accent-soft);
-  box-shadow: inset 2px 0 0 var(--hf-accent);
-}
-.ak-step-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
+.ak-call-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
-.ak-step-text {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
+button.ak-call-head {
+  cursor: pointer;
 }
-.ak-step-text strong {
-  color: var(--hf-text-2);
-  font-weight: 600;
+button.ak-call-head:hover {
+  background: var(--hf-hover);
 }
-.ak-step.is-running .ak-step-text strong {
-  color: var(--hf-text);
-}
-/* Steps are numbered, as an ordered list's markers are (a result citation
-   names the step that read it), and the numbers stay out of copied text. */
-.ak-step-text::before {
+.ak-call-head::before {
   content: counter(ak-step);
-  display: inline-block;
-  min-width: 18px;
+  flex: none;
+  order: 1;
+  min-width: 14px;
   color: var(--hf-muted);
   font-variant-numeric: tabular-nums;
 }
-.ak-sep {
-  color: var(--hf-muted);
+.ak-call.is-end .ak-call-head::before {
+  content: none;
 }
-.ak-step.is-error .ak-result {
+.ak-call-head > .ak-step-mark {
+  flex: none;
+  order: 0;
+}
+.ak-call-tool {
+  flex: none;
+  order: 2;
+  padding: 0 6px;
+  border-radius: var(--hf-radius-sm);
+  background: var(--hf-sunken);
+  color: var(--hf-text);
+  font-family: var(--hf-font-mono);
+  font-size: var(--hf-text-xs);
+  line-height: 20px;
+}
+.ak-call-what {
+  flex: 1;
+  order: 3;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hf-text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ak-call-what strong {
+  color: var(--hf-text-2);
+  font-weight: 600;
+}
+.ak-call-result {
+  flex: none;
+  order: 4;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--hf-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ak-call-chevron {
+  flex: none;
+  order: 5;
+  color: var(--hf-muted);
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.ak-call.is-open .ak-call-chevron {
+  transform: rotate(90deg);
+}
+.ak-step-mark {
+  color: var(--hf-faint);
+}
+.ak-call.is-done .ak-step-mark {
+  color: var(--hf-accent-text);
+}
+.ak-call.is-running {
+  border-color: color-mix(in srgb, var(--hf-info-text) 30%, var(--hf-border));
+}
+.ak-call.is-running .ak-call-what {
+  color: var(--hf-text);
+}
+.ak-call.is-running .ak-step-mark {
+  color: var(--hf-info-text);
+}
+.ak-call.is-error .ak-step-mark,
+.ak-call.is-error .ak-call-result {
   color: var(--hf-danger-text);
 }
-.ak-step-input {
+/* A result citation lights, and opens, the step that returned it. */
+.ak-call.is-lit {
+  border-color: var(--hf-accent);
+  background: var(--hf-accent-soft);
+}
+.ak-call-note {
   margin: 0;
-  padding-left: 18px;
+  padding: 0 10px 6px 50px;
+  color: var(--hf-text-2);
   overflow-wrap: anywhere;
+}
+.ak-call-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--hf-border);
+}
+.ak-call-part {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+}
+.ak-call-part > h4 {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.ak-call-part > .on-code {
+  max-height: 240px;
+  margin: 0;
 }
 .ak-query {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  padding-left: 18px;
   overflow-wrap: anywhere;
 }
 .ak-query code {
@@ -498,27 +579,10 @@
   font-family: var(--hf-font-mono);
   font-size: var(--hf-text-sm);
 }
-.ak-json {
-  min-width: 0;
-  padding-left: 18px;
-}
 /* The engine's words to the model, lines kept, never sideways. */
 .ak-told {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-.ak-json > summary {
-  width: fit-content;
-  padding: 0;
-  border-radius: var(--hf-radius-sm);
-  color: var(--hf-text-2);
-  font-size: var(--hf-text-sm);
-  font-weight: 500;
-  cursor: pointer;
-}
-.ak-json .on-code {
-  max-height: 240px;
-  margin-top: 6px;
 }
 
 /* Answer: the model's words, plain, then where they come from. */
@@ -729,25 +793,10 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
 }
-/* A query step's Result and JSON, side by side until one opens. */
-.ak-step-more {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 14px;
-  min-width: 0;
-  padding-left: 18px;
-}
-.ak-step-more > .ak-json {
-  padding-left: 0;
-}
-.ak-step-more > details[open] {
-  flex-basis: 100%;
-}
+/* A query step's Output: its result as a table or chart. */
 .ak-step-result > .ak-visual,
-.ak-step-result > .hf-skeleton,
-.ak-step-result > .ak-step-input {
-  margin-top: 6px;
-  padding-left: 0;
+.ak-step-result > .hf-skeleton {
+  margin-top: 2px;
 }
 
 /* Charts (ask-chart.tsx): hairline recessive grid and axes, 20px bars with

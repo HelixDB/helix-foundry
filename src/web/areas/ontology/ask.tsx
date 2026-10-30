@@ -19,6 +19,7 @@ import {
   Ban,
   Check,
   ChevronLeft,
+  ChevronRight,
   Circle,
   CircleAlert,
   FileQuestion,
@@ -122,9 +123,10 @@ import { useSources } from "./sources";
 // shell's sidebar under its sections (ask-threads.tsx); here, a slim bar with
 // the thread's title and the Ontology and Load pickers, then a thread as a conversation
 // in one centred column: each question as a bubble, then the reply, its
-// numbered steps as they stream (each input in words, a query as a
-// readable path, a graph query as its code, its JSON behind a disclosure;
-// once it ends, the query as the agent ran it, entity ids resolved; a
+// numbered steps as they stream, each a tool call: the tool's name, its
+// input in words (a query as a readable path) and what it returned, which
+// opens on its Input (the query, a graph query's code, or its arguments)
+// and Output (a query's result as a table or chart); once it ends, the query as the agent ran it, entity ids resolved; a
 // refused answer says why, for a person) and its answer: the model's
 // blocks as plain text with numbered citation chips that open the entity,
 // fact, derived fact, table row, document span or rule break they cite, or
@@ -423,8 +425,10 @@ function ThreadView({
           className="ak-log"
           ref={log}
           onClick={(e) => {
-            // A disclosure the reader opens or closes stays where it is.
-            if ((e.target as Element).closest("summary")) stick.current = false;
+            // A disclosure or step the reader opens or closes stays where
+            // it is.
+            if ((e.target as Element).closest("summary, [aria-expanded]"))
+              stick.current = false;
           }}
         >
           {notice}
@@ -692,11 +696,15 @@ export function QuestionCard({
   );
   const focus = questionFocus(q);
   const [lit, setLit] = useState("");
+  // The steps opened to their input and output, by index.
+  const [shown, setShown] = useState<ReadonlySet<number>>(new Set());
   const [cancelling, setCancelling] = useState(false);
   const stepId = (evidence: string) => `${q.id}-${evidence}`;
-  // A citation with no page opens the step that returned it.
+  // A citation with no page opens the step that returned it, and reads the
+  // outputs its Output shows.
   const showStep = (evidence: string) => {
     setLit("");
+    setOpened(true);
     requestAnimationFrame(() => {
       setLit(evidence);
       document
@@ -782,7 +790,7 @@ export function QuestionCard({
               </span>
             </div>
             {steps.length > 0 && (
-              <ol className="ak-steps" aria-label="Steps">
+              <ol className="ak-steps ak-calls" aria-label="Steps">
                 {steps.map((s, i) => {
                   const evidence =
                     s.result?.kind === "recorded"
@@ -805,20 +813,77 @@ export function QuestionCard({
                       ? s.result.error
                       : undefined;
                   const ended = s.result?.kind === "ended" && isEnding(s.tool);
-                  // Its input as JSON, unless that shows already (a graph
-                  // query's code) or holds nothing (the load's overview).
+                  // Its arguments, unless they show as a query or graph
+                  // code already, or hold nothing (the load's overview).
                   const raw = query ?? s.input;
-                  const rawShown =
+                  const args =
                     !ended &&
-                    raw !== null &&
+                    !t &&
                     graph === undefined &&
-                    JSON.stringify(raw) !== "{}";
+                    raw !== null &&
+                    JSON.stringify(raw) !== "{}"
+                      ? JSON.stringify(raw, null, 2)
+                      : undefined;
+                  const input = !!t || graph !== undefined || !!args;
+                  const opens = input || !!record || refusal !== undefined;
+                  const open =
+                    opens && (shown.has(i) || (!!evidence && evidence === lit));
+                  const body = `${q.id}-step-${i}`;
+                  const toggle = () => {
+                    if (open && evidence === lit) setLit("");
+                    if (!open && record) setOpened(true);
+                    setShown((was) => {
+                      const next = new Set(was);
+                      if (open) next.delete(i);
+                      else next.add(i);
+                      return next;
+                    });
+                  };
+                  // The call that ended the question closes the list in
+                  // words: how it ended, no call to open.
+                  if (ended)
+                    return (
+                      <li key={i} className="ak-call is-done is-end">
+                        <div className="ak-call-head">
+                          <StepMark step={s} live={live} />
+                          <span className="ak-call-what">
+                            <strong>{stepHeading(s)}</strong>
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  const head = (
+                    <>
+                      <StepMark step={s} live={live} />
+                      <code className="ak-call-tool">{s.tool || "result"}</code>
+                      <span className="ak-call-what" title={stepHeading(s)}>
+                        {t?.path ??
+                          said ??
+                          (graph !== undefined
+                            ? "A graph query"
+                            : s.tool === "answer"
+                              ? "Drafted an answer"
+                              : stepHeading(s))}
+                      </span>
+                      {result && (
+                        <span className="ak-call-result">{result}</span>
+                      )}
+                      {opens && (
+                        <ChevronRight
+                          size={14}
+                          className="ak-call-chevron"
+                          aria-hidden
+                        />
+                      )}
+                    </>
+                  );
                   return (
                     <li
                       key={i}
                       id={evidence && stepId(evidence)}
+                      aria-label={`Step ${i + 1}: ${stepHeading(s)}`}
                       className={cx(
-                        "ak-step",
+                        "ak-call",
                         s.result
                           ? failed
                             ? "is-error"
@@ -826,98 +891,104 @@ export function QuestionCard({
                           : live
                             ? "is-running"
                             : "is-stopped",
+                        open && "is-open",
                         !!evidence && evidence === lit && "is-lit",
                       )}
                     >
-                      <StepMark step={s} live={live} />
-                      <div className="ak-step-body">
-                        <p className="ak-step-text">
-                          <strong>{stepHeading(s)}</strong>
-                          {result && (
-                            <>
-                              <span className="ak-sep"> · </span>
-                              <span className="ak-result">{result}</span>
-                            </>
+                      {opens ? (
+                        <button
+                          type="button"
+                          className="ak-call-head"
+                          aria-expanded={open}
+                          aria-controls={body}
+                          onClick={toggle}
+                        >
+                          {head}
+                        </button>
+                      ) : (
+                        <div className="ak-call-head">{head}</div>
+                      )}
+                      {refusal !== undefined && (
+                        <p className="ak-call-note">
+                          {refusalText(
+                            refusal,
+                            steps
+                              .slice(i + 1)
+                              .some(
+                                (x) =>
+                                  isEnding(x.tool) &&
+                                  x.result?.kind === "ended",
+                              ),
                           )}
                         </p>
-                        {t && (
-                          <div className="ak-query" aria-label="Query">
-                            <code>{t.path}</code>
-                            {t.filters.map((f) => (
-                              <span key={f}>{f}</span>
-                            ))}
-                            <span>{t.returns}</span>
-                          </div>
-                        )}
-                        {said && <p className="ak-step-input">{said}</p>}
-                        {graph !== undefined && (
-                          <div className="ak-query" aria-label="Graph query">
-                            <pre className="on-code">
-                              <code>{graph}</code>
-                            </pre>
-                          </div>
-                        )}
-                        {refusal !== undefined && (
-                          <>
-                            <p className="ak-step-input">
-                              {refusalText(
-                                refusal,
-                                steps
-                                  .slice(i + 1)
-                                  .some(
-                                    (x) =>
-                                      isEnding(x.tool) &&
-                                      x.result?.kind === "ended",
-                                  ),
+                      )}
+                      {open && (
+                        <div className="ak-call-body" id={body}>
+                          {input && (
+                            <section
+                              className="ak-call-part"
+                              aria-label="Input"
+                            >
+                              <h4>Input</h4>
+                              {t ? (
+                                <div className="ak-query" aria-label="Query">
+                                  <code>{t.path}</code>
+                                  {t.filters.map((f) => (
+                                    <span key={f}>{f}</span>
+                                  ))}
+                                  <span>{t.returns}</span>
+                                </div>
+                              ) : (
+                                <pre
+                                  className="on-code"
+                                  aria-label={
+                                    graph !== undefined
+                                      ? "Graph query"
+                                      : "Arguments"
+                                  }
+                                >
+                                  <code>{graph ?? args}</code>
+                                </pre>
                               )}
-                            </p>
-                            <details className="ak-json">
-                              <summary>What the agent was told</summary>
+                            </section>
+                          )}
+                          {refusal !== undefined && (
+                            <section
+                              className="ak-call-part"
+                              aria-label="What the agent was told"
+                            >
+                              <h4>What the agent was told</h4>
                               <pre className="on-code ak-told">
                                 <code>{refusal}</code>
                               </pre>
-                            </details>
-                          </>
-                        )}
-                        {(record || rawShown) && (
-                          <div className="ak-step-more">
-                            {record && (
-                              <details
-                                className="ak-json ak-step-result"
-                                onToggle={(e) => {
-                                  if (e.currentTarget.open) setOpened(true);
-                                }}
-                              >
-                                <summary>Result</summary>
-                                {record.output ? (
-                                  <AskVisual
-                                    output={record.output}
-                                    query={record.query}
-                                    href={entityHref}
-                                    untitled
-                                  />
-                                ) : reading ? (
-                                  <Skeleton width="100%" height={120} />
-                                ) : (
-                                  <p className="ak-step-input">
-                                    {full.isError
-                                      ? "Its result couldn’t be read."
-                                      : "Its result wasn’t kept with the answer."}
-                                  </p>
-                                )}
-                              </details>
-                            )}
-                            {rawShown && (
-                              <details className="ak-json">
-                                <summary>JSON</summary>
-                                <pre className="on-code">
-                                  <code>{JSON.stringify(raw, null, 2)}</code>
-                                </pre>
-                              </details>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                            </section>
+                          )}
+                          {record && (
+                            <section
+                              className="ak-call-part ak-step-result"
+                              aria-label="Output"
+                            >
+                              <h4>Output</h4>
+                              {record.output ? (
+                                <AskVisual
+                                  output={record.output}
+                                  query={record.query}
+                                  href={entityHref}
+                                  untitled
+                                />
+                              ) : reading ? (
+                                <Skeleton width="100%" height={120} />
+                              ) : (
+                                <p className="ak-call-note">
+                                  {full.isError
+                                    ? "Its result couldn’t be read."
+                                    : "Its result wasn’t kept with the answer."}
+                                </p>
+                              )}
+                            </section>
+                          )}
+                        </div>
+                      )}
                     </li>
                   );
                 })}
