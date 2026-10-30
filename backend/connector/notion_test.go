@@ -948,6 +948,29 @@ func TestNotionSync(t *testing.T) {
 			t.Fatalf("row_1 = %d projects, %d owners; row_2 = %v; asked = %q", len(projects), len(owners), rows[1], asked)
 		}
 	})
+	// Notion gives a property's id URL-encoded: the path carries it once.
+	t.Run("reads the ids of a property whose id Notion gives encoded", func(t *testing.T) {
+		var paths []string
+		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",
+			`{"Projects":{"id":"%3AUPp","type":"relation","relation":{}}}`)}, notionRoutes{
+			"/v1/data_sources/ds_1/query": func(*http.Request) (int, string) {
+				return http.StatusOK, notionResults(notionTestRow("row_1", "2026-01-05T09:00:00.000Z",
+					`{"Projects":{"id":"%3AUPp","type":"relation","relation":[{"id":"pg_0"}],"has_more":true}}`))
+			},
+			"/v1/pages/row_1/properties/:UPp": func(r *http.Request) (int, string) {
+				paths = append(paths, r.URL.EscapedPath())
+				return http.StatusOK, notionResults(`{"object":"property_item","id":"x","type":"relation","relation":{"id":"pg_0"}}`,
+					`{"object":"property_item","id":"x","type":"relation","relation":{"id":"pg_1"}}`)
+			},
+		}))
+		rows, err := read(t, kind, "deals")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if projects, _ := rows[0]["projects"].([]any); fmt.Sprint(projects) != "[pg_0 pg_1]" || len(paths) != 1 || strings.Contains(paths[0], "%25") {
+			t.Fatalf("projects = %v, paths = %q", rows[0]["projects"], paths)
+		}
+	})
 	t.Run("reads at most 1,000 ids of one value", func(t *testing.T) {
 		calls := 0
 		kind := notionAt(t, notionShared(t, nil, []string{notionTestSource("ds_1", "Deals", "2026-01-01T00:00:00.000Z",

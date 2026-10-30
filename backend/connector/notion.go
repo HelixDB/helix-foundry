@@ -1177,6 +1177,11 @@ func (c *notionClient) tableRow(ctx context.Context, s notionSource, p notionPag
 // ok is false for a value Notion refused to read (notionOneRefused), such
 // as one of a page deleted since its query; its row keeps the ids it showed.
 func (c *notionClient) references(ctx context.Context, pageID, propertyID string) (ids []any, ok bool, err error) {
+	// Notion gives a property's id URL-encoded (":UPp" as "%3AUPp"), so it
+	// is decoded before it is escaped into the path, never encoded twice.
+	if decoded, err := url.PathUnescape(propertyID); err == nil {
+		propertyID = decoded
+	}
 	_, err = c.list(ctx, "/v1/pages/"+url.PathEscape(pageID)+"/properties/"+url.PathEscape(propertyID), nil, nil, func(item map[string]any) error {
 		kind, _ := item["type"].(string)
 		ref, _ := item[kind].(map[string]any)
