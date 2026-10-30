@@ -926,14 +926,11 @@ func TestGranteeOntologyDocuments(t *testing.T) {
 	s, store := accessService(t)
 	bucket := s.deps.Documents.(*documentBucket)
 	bucket.content = map[string]string{"docs/held": "# Held\n", "docs/loose": "# Loose\n"}
-	for _, d := range []*foundrymodel.FoundryDocument{
-		{ID: "doc-held", WorkspaceID: "ws-1", SetID: "set-general", Name: "held.md", MediaType: foundrymodel.FoundryMediaMarkdown,
+	store.documents = append(store.documents,
+		&foundrymodel.FoundryDocument{ID: "doc-held", WorkspaceID: "ws-1", SetID: "set-general", Name: "held.md", MediaType: foundrymodel.FoundryMediaMarkdown,
 			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/held"},
-		{ID: "doc-loose", WorkspaceID: "ws-1", SetID: "set-general", Name: "loose.md", MediaType: foundrymodel.FoundryMediaMarkdown,
-			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/loose"},
-	} {
-		store.documents = append(store.documents, d)
-	}
+		&foundrymodel.FoundryDocument{ID: "doc-loose", WorkspaceID: "ws-1", SetID: "set-general", Name: "loose.md", MediaType: foundrymodel.FoundryMediaMarkdown,
+			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/loose"})
 	store.members["load-1"] = []string{"doc-held"}
 	store.holding = map[string][]string{"doc-held": {"ont-1"}, "doc-loose": {"ont-3"}}
 	conn, as := served(t, s)
