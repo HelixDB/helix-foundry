@@ -222,8 +222,7 @@ export function useDocumentNames(ws: string, fallback: string) {
   );
   return (id: string) => {
     const name = names.get(id);
-    if (name === undefined && (uploads.data || grantee))
-      missed.current.add(id);
+    if (name === undefined && (uploads.data || grantee)) missed.current.add(id);
     return name ?? fallback;
   };
 }
