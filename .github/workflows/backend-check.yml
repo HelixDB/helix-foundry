@@ -14,11 +14,14 @@ jobs:
   # A branch protection check: named apart from the site CI's `check`. Also on
   # a Crucible runner while it is tried, as `backend-check (crucible)`.
   backend-check:
-    name: ${{ matrix.runner == 'crucible-2vcpu-arm' && 'backend-check (crucible)' || 'backend-check' }}
+    name: backend-check${{ matrix.suffix }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, crucible-2vcpu-arm]
+        include:
+          - runner: ubuntu-latest
+          - runner: crucible-2vcpu-arm
+            suffix: " (crucible)"
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4

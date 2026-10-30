@@ -1,14 +1,18 @@
 name: CI
 on: [push, pull_request]
+# Each job also runs on a Crucible runner while it is tried, as
+# `<job> (crucible)`: the required checks keep their names on GitHub's
+# runners, and a Crucible failure never cancels them.
 jobs:
-  # Also on a Crucible runner while it is tried: `check (crucible)` beside the
-  # required `check`, which a Crucible failure never cancels.
   check:
-    name: ${{ matrix.runner == 'crucible-2vcpu-arm' && 'check (crucible)' || 'check' }}
+    name: check${{ matrix.suffix }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, crucible-2vcpu-arm]
+        include:
+          - runner: ubuntu-latest
+          - runner: crucible-2vcpu-arm
+            suffix: " (crucible)"
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +26,15 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
   e2e:
-    runs-on: ubuntu-latest
+    name: e2e${{ matrix.suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: crucible-2vcpu-arm
+            suffix: " (crucible)"
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -37,7 +49,7 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report${{ matrix.suffix }}
           path: |
             playwright-report
             test-results
