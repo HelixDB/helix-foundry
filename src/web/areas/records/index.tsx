@@ -1,7 +1,10 @@
 // Records area: an ontology's database as a table, by type, beside the
 // Explorer's graph. Lazy-loaded by the Ontology area's Explorer route table
 // at /explore/:ontologyId/records; the URL holds the whole view (./model.ts
-// readView), the open record included.
+// readView), the open record included. Read through source grants
+// (../explore/graph-reader.ts), it is the Explorer: there is no graph, a
+// type shows the first 200 matches of typed reads (paged here), with as
+// many of its columns as one read returns.
 import "../explore/explore.css";
 import "./records.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -36,12 +39,14 @@ import { scopeKey, type Scope } from "../explore/load-scope";
 import type { TypeNaming } from "../explore/naming";
 import { ReadFailed, pausedOf, startingOf } from "../explore/reads";
 import { DatabasePaused, DatabaseStarting } from "../explore/starting";
-import { useTenantReads } from "../explore/tenant-reads";
+import { useGraphReader } from "../explore/graph-reader";
+import { typedColumns, typedRecordsPage } from "../explore/typed-reads";
 import { ExplorerTop } from "../explore/top-bar";
 import { useNaming } from "../explore/use-naming";
 import { typeHue } from "../ontology/colors";
 import {
   LoadNotice,
+  NotShared,
   NothingLoaded,
   useLoadSelection,
 } from "../ontology/load-selection";
@@ -110,13 +115,20 @@ export function RecordsPage() {
     error: versionError,
     refetch,
   } = useNaming(selection.versionId);
-  const { read } = useTenantReads();
-  const tenant = ontology.tenantId || "";
+  const { access, reader } = useGraphReader(),
+    shared = access === "grants";
+  // Through grants the WFE reads the load; else the user's own database.
+  const tenant = shared ? o : ontology.tenantId || "";
   const types = useMemo(() => recordTypes(naming), [naming]);
-  const countsRead = recordQueries.counts(ws, o, read, scope, naming);
+  const countsRead = recordQueries.counts(ws, o, reader, scope, naming);
   const counts = useQuery({
     ...countsRead,
-    enabled: ready && !!tenant && !!selection.scope && types.length > 0,
+    enabled:
+      access !== "none" &&
+      ready &&
+      !!tenant &&
+      !!selection.scope &&
+      types.length > 0,
   });
   // The URL's type, else the first that has records, else the first.
   const type =
@@ -126,7 +138,7 @@ export function RecordsPage() {
   const pageQuery = recordQueries.page(
     ws,
     o,
-    read,
+    reader,
     scope,
     naming,
     type || NO_TYPE,
@@ -136,6 +148,7 @@ export function RecordsPage() {
     ...pageQuery,
     enabled:
       pageQuery.enabled &&
+      access !== "none" &&
       ready &&
       !!tenant &&
       !!selection.scope &&
@@ -217,6 +230,7 @@ export function RecordsPage() {
       <div className="ex-frame">{content}</div>
     </div>
   );
+  if (access === "none") return frame(<NotShared />);
   if (!tenant)
     return frame(
       <>
@@ -286,16 +300,18 @@ export function RecordsPage() {
           }
           text="Records lists the types of the version a load wrote. The graph shows everything the database holds."
           action={
-            <>
-              <ButtonLink to={paths.versions(o)}>Schema versions</ButtonLink>
-              <ButtonLink
-                variant="ghost"
-                icon={Network}
-                to={selection.link(paths.explore(o))}
-              >
-                Open the graph
-              </ButtonLink>
-            </>
+            !shared && (
+              <>
+                <ButtonLink to={paths.versions(o)}>Schema versions</ButtonLink>
+                <ButtonLink
+                  variant="ghost"
+                  icon={Network}
+                  to={selection.link(paths.explore(o))}
+                >
+                  Open the graph
+                </ButtonLink>
+              </>
+            )
           }
         />
       </>,
@@ -328,16 +344,18 @@ export function RecordsPage() {
               : `Load the current version to fill ${ontology.databaseName || "the ontology’s database"} with its records.`
           }
           action={
-            <>
-              <ButtonLink to={paths.ontology(o)}>Load data</ButtonLink>
-              <ButtonLink
-                variant="ghost"
-                icon={Network}
-                to={selection.link(paths.explore(o))}
-              >
-                Open the graph
-              </ButtonLink>
-            </>
+            !shared && (
+              <>
+                <ButtonLink to={paths.ontology(o)}>Load data</ButtonLink>
+                <ButtonLink
+                  variant="ghost"
+                  icon={Network}
+                  to={selection.link(paths.explore(o))}
+                >
+                  Open the graph
+                </ButtonLink>
+              </>
+            )
           }
         />
       </>,
@@ -345,13 +363,19 @@ export function RecordsPage() {
 
   // The types' colours: every type with records, alphabetically, as the graph's.
   const hues = types.filter((t) => (count(t) || 0) > 0).map((t) => t.name);
-  const columns = columnsOf(type),
-    shown = shownColumns(type, chosen[type.name]),
+  // Through grants, as many columns as one typed read returns.
+  const readable = shared ? new Set(typedColumns(type)) : null;
+  const fits = (c: Column) =>
+    c.role === "record" || !readable || readable.has(c.key);
+  const columns = columnsOf(type).filter(fits),
+    shown = shownColumns(type, chosen[type.name]).filter(fits),
     isShown = (c: Column) => shown.some((x) => x.key === c.key);
   // A field picked with nothing typed yet filters nothing.
   const applied = activeFilter(view);
   const filter = applied ? filterOf(type, applied.field, applied.value) : null;
-  const data = page.data;
+  // A typed read's rows are cut into pages here.
+  const data =
+    shared && page.data ? typedRecordsPage(page.data, view.page) : page.data;
   const searching = !!view.search.trim() || !!applied;
   const total = searching ? (data?.matched?.count ?? null) : count(type);
   const span = pageSpan(
@@ -518,6 +542,13 @@ export function RecordsPage() {
         {refused && rows.length > 0 && (
           <p className="rx-hint" role="status">
             {refused}
+          </p>
+        )}
+        {data?.first && !refused && (
+          <p className="rx-hint" role="status">
+            Showing the first {formatNumber(data.first.read)} of{" "}
+            {formatNumber(data.first.total)}: search or filter to find the
+            others.
           </p>
         )}
         {startingOf(page.error ?? page.failureReason) ? (

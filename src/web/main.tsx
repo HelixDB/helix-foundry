@@ -205,7 +205,14 @@ function WorkspaceApp({
     );
   return (
     <WorkspaceContext.Provider
-      value={{ ...current, user, onboarding, grantee, notify }}
+      value={{
+        ...current,
+        user,
+        onboarding,
+        grantee,
+        granted: access.data?.ontologyIds || [],
+        notify,
+      }}
     >
       <Shell
         workspaces={workspaces}

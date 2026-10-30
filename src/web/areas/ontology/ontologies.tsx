@@ -14,6 +14,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
+import { readAccess } from "../workspace/access-model";
 import { canManage } from "./parts";
 import { deleteOntology, ontologyQueries } from "./queries";
 import { lastOntology, ontologyName, useOntology } from "./scope";
@@ -32,22 +33,30 @@ import { lastOntology, ontologyName, useOntology } from "./scope";
  * while the list loads isn't taken back. A workspace without one is
  * onboarding, which main.tsx sends to /ontology/new, as this does while the
  * routes catch up. A grantee with nothing shared is told so instead.
+ * `reads` (Ask and the Explorer) opens only an ontology the user reads
+ * (../workspace/access-model.ts readAccess): a member who can't query its
+ * database reads only those their source grants cover.
  */
 export function OpenOntology({
   title,
   to,
+  reads = false,
 }: {
   title: string;
   to: (ontologyId: string) => string;
+  reads?: boolean;
 }) {
-  const { id: ws, grantee } = useWorkspace();
+  const me = useWorkspace(),
+    { id: ws, grantee } = me;
   const list = useQuery(ontologyQueries.list(ws));
-  const ontologies = list.data?.ontologies || [],
+  const ontologies = (list.data?.ontologies || []).filter(
+      (o) => !reads || readAccess(me, o) !== "none",
+    ),
     last = lastOntology(ws);
   const open = ontologies.find((o) => o.id === last) ?? ontologies[0];
   const target = open
     ? to(open.id)
-    : list.data && !grantee
+    : list.data && !grantee && !list.data.ontologies?.length
       ? paths.newOntology()
       : null;
   const { pathname } = useLocation(),

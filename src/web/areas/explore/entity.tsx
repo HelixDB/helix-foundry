@@ -69,12 +69,14 @@ import {
 import {
   LoadNotice,
   LoadPicker,
+  NotShared,
   NothingLoaded,
   useLoadSelection,
 } from "../ontology/load-selection";
+import { useGraphReader } from "./graph-reader";
 import { pausedOf, readQueries, startingOf } from "./reads";
 import { DatabasePaused, DatabaseStarting } from "./starting";
-import { useTenantReads } from "./tenant-reads";
+import { TYPED_LIMITS } from "./typed-reads";
 import { useNaming } from "./use-naming";
 
 // /explore/:ontologyId/entities/:entityId: one entity of the ontology's
@@ -90,7 +92,10 @@ import { useNaming } from "./use-naming";
 // derive about it, evaluated when the page reads it (./derived.tsx), and
 // Needs review adds the rule breaks found then that the load keeps no record
 // of. A value People enrichment found carries its chip, which names the
-// profile and opens the load that looked it up.
+// profile and opens the load that looked it up. Read through source grants
+// (./graph-reader.ts), it reads the current load's typed reads
+// (./typed-reads.ts): the same page without mentions and reviews, which are
+// Foundry's own records, saying so where they would show.
 
 const tabs = ["overview", "facts", "derived", "mentions", "reviews"] as const;
 
@@ -264,7 +269,12 @@ function Provenance({
 export function EntityPage({ entityId }: { entityId: string }) {
   const identity = parseEntityId(entityId);
   const { id: o } = useOntology();
-  const crumbs = [{ label: "Explorer", to: paths.explore(o) }];
+  // Records is the Explorer of someone reading through grants.
+  const crumbs = [
+    useGraphReader().access === "database"
+      ? { label: "Explorer", to: paths.explore(o) }
+      : { label: "Records", to: paths.records(o) },
+  ];
   if (!identity)
     return (
       <Page>
@@ -293,22 +303,24 @@ function Entity({
 }) {
   const { id } = useWorkspace(),
     { id: o, ontology } = useOntology();
-  const tenant = ontology.tenantId || "";
+  const { access, reader } = useGraphReader(),
+    shared = access === "grants";
+  // Through grants the WFE reads the load; else the user's own database.
+  const tenant = shared ? o : ontology.tenantId || "";
   const selection = useLoadSelection(),
     { link } = selection,
     scope = selection.scope ?? { kind: "load", id: "" };
   const { naming, ready } = useNaming(selection.versionId);
-  const { read } = useTenantReads();
-  const entityRead = readQueries.entity(id, o, read, scope, identity, naming);
+  const entityRead = readQueries.entity(id, o, reader, scope, identity, naming);
   const query = useQuery({
     ...entityRead,
-    enabled: !!tenant && ready && !!selection.scope,
+    enabled: access !== "none" && !!tenant && ready && !!selection.scope,
   });
   const page = query.data;
   const evidenceRead = readQueries.evidence(
     id,
     o,
-    read,
+    reader,
     scope,
     identity,
     page?.facts,
@@ -345,6 +357,17 @@ function Entity({
       <LoadPicker selection={selection} />
     </>
   );
+  if (access === "none")
+    return (
+      <Page>
+        <PageHeader
+          breadcrumbs={crumbs}
+          title="Entity"
+          actions={<OntologyPicker ontologyId={o} to={paths.explore} />}
+        />
+        <NotShared />
+      </Page>
+    );
   if (!tenant)
     return (
       <Page>
@@ -583,9 +606,15 @@ function Entity({
                 Ask about this
               </Button>
             )}
-            <ButtonLink icon={Network} to={link(paths.explore(o))}>
-              Explorer
-            </ButtonLink>
+            {shared ? (
+              <ButtonLink icon={Table2} to={paths.records(o)}>
+                Records
+              </ButtonLink>
+            ) : (
+              <ButtonLink icon={Network} to={link(paths.explore(o))}>
+                Explorer
+              </ButtonLink>
+            )}
           </>
         }
         tabs={
@@ -607,7 +636,11 @@ function Entity({
                     },
                   ]
                 : []),
-              { id: "mentions", label: "Mentions", count: mentions.length },
+              {
+                id: "mentions",
+                label: "Mentions",
+                count: shared ? undefined : mentions.length,
+              },
               {
                 id: "reviews",
                 label: "Needs review",
@@ -678,7 +711,13 @@ function Entity({
             {page.truncated.facts && (
               <p className="on-muted">
                 It has more facts than this page reads: the first 200 each way
-                show here. The Explorer shows the rest.
+                show here.{!shared && " The Explorer shows the rest."}
+              </p>
+            )}
+            {shared && facts.length > TYPED_LIMITS.evidenceFacts && (
+              <p className="on-muted">
+                What states each fact shows for the first{" "}
+                {TYPED_LIMITS.evidenceFacts}.
               </p>
             )}
             {startingOf(evidence.error ?? evidence.failureReason) ? (
@@ -821,7 +860,13 @@ function Entity({
         </TabPanel>
       )}
       <TabPanel id="mentions" value={tab} idPrefix="tab">
-        {!mentions.length ? (
+        {shared ? (
+          <p className="on-muted">
+            Where documents name it is the load’s own record, which isn’t shared
+            with you. The quotes behind its properties and facts show on
+            Overview and Facts.
+          </p>
+        ) : !mentions.length ? (
           <EmptyState
             size="sm"
             icon={FileText}
@@ -887,6 +932,12 @@ function Entity({
         )}
       </TabPanel>
       <TabPanel id="reviews" value={tab} idPrefix="tab">
+        {shared && (
+          <p className="on-muted">
+            What documents left for review isn’t shared with you: only the rules
+            it breaks show here.
+          </p>
+        )}
         {liveFailed && (
           <p className="on-muted">
             The rules it breaks now couldn’t be worked out:{" "}
@@ -978,12 +1029,14 @@ function Entity({
             </ul>
           </Panel>
         )}
-        <SavedDecisions
-          entity={{
-            type: identity.type,
-            key: "key" in identity ? identity.key : identity.name,
-          }}
-        />
+        {!shared && (
+          <SavedDecisions
+            entity={{
+              type: identity.type,
+              key: "key" in identity ? identity.key : identity.name,
+            }}
+          />
+        )}
       </TabPanel>
       {asking && selection.choice.kind === "load" && (
         <AskDrawer

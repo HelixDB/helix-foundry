@@ -384,27 +384,78 @@ export function restrictable(
 
 /**
  * Where a grantee (a member restricted to what grants give) goes instead
- * of `pathname`, or undefined where it may stay: Ask and its ontologies'
- * overviews. Connectors, the Explorer, Settings and making an ontology
- * open Ask; an ontology's other pages open its overview.
+ * of `pathname`, or undefined where it may stay: Ask, its ontologies'
+ * overviews and the read-only pages of their shared loads (Records, an
+ * entity's page and a document's view). Connectors, Settings and making an
+ * ontology open Ask; the Explorer's graph opens Records, and an ontology's
+ * other pages its overview.
  *
  *     granteeRedirect("/data/connections/c") // "/ask"
+ *     granteeRedirect("/explore/o") // "/explore/o/records"
  *     granteeRedirect("/ontology/o/loads/l") // "/ontology/o"
  */
 export function granteeRedirect(pathname: string): string | undefined {
-  const [first = "", second, third] = pathname.split("/").filter(Boolean);
+  const [first = "", second, third, fourth] = pathname
+    .split("/")
+    .filter(Boolean);
   switch (first) {
     case "":
     case "ask":
       return undefined;
     case "ontology":
       if (second === "new" || second === "sample") return "/ask";
-      return third === undefined ? undefined : `/ontology/${second}`;
-    case "data":
+      return third === undefined || (third === "documents" && fourth)
+        ? undefined
+        : `/ontology/${second}`;
     case "explore":
+      return second === undefined ||
+        third === "records" ||
+        (third === "entities" && fourth)
+        ? undefined
+        : `/explore/${second}/records`;
+    case "data":
     case "settings":
       return "/ask";
     default:
       return undefined;
   }
+}
+
+/**
+ * How the user reads an ontology's loads: "database", through its database
+ * with their session (the host's callers, and anyone whose query access
+ * isn't known); "grants", through the WFE's typed reads of the current
+ * load their source grants cover (a grantee, or a member who can't query
+ * the ontology's project, on an ontology `granted` names); or "none".
+ */
+export type ReadAccess = "database" | "grants" | "none";
+
+/**
+ * The user's ReadAccess to an ontology: `granted` are the ontologies whose
+ * current loads their grants cover (.../foundry/access/me), `queryRead`
+ * the projects whose databases they query (whoami's projectAccess),
+ * undefined when that isn't known.
+ *
+ *     readAccess({ grantee: true, granted: ["o"] }, { id: "o" }) // "grants"
+ *     readAccess({ grantee: false, granted: [], queryRead: { mode: "all" } }, { id: "o" }) // "database"
+ *     readAccess({ grantee: false, granted: [], queryRead: {} }, { id: "o" }) // "none"
+ */
+export function readAccess(
+  me: {
+    grantee: boolean;
+    granted: readonly string[];
+    queryRead?: ResourceScope;
+  },
+  o: { id: string; projectId?: string },
+): ReadAccess {
+  const shared = me.granted.includes(o.id) ? "grants" : "none";
+  if (me.grantee) return shared;
+  const q = me.queryRead;
+  if (!q) return "database";
+  return q.mode === "all" ||
+    (q.mode === "selected" &&
+      !!o.projectId &&
+      !!q.projectIds?.includes(o.projectId))
+    ? "database"
+    : shared;
 }

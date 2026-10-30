@@ -110,7 +110,7 @@ describe("tenant reads", () => {
     const entity = readQueries.entity(
       "ws",
       "o",
-      reads.read,
+      { kind: "database", read: reads.read },
       { kind: "load", id: "load_1" },
       { type: "Customer", key: "c" },
     );

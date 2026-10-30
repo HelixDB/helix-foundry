@@ -70,7 +70,7 @@ import { canManage } from "./plan";
 // document set, or People enrichment; whoever it is for reads an
 // ontology's current load, and asks it questions, only while that load
 // reads nothing else. Agents' keys reach Foundry only that way; a member
-// restricted here sees only those ontologies, in Analyst and Ontologies;
+// restricted here sees only those ontologies, in Analyst, Ontologies and Records;
 // a team's members hold its grants. Grants only add: everyone else sees
 // what they saw before.
 
@@ -742,7 +742,7 @@ function PeoplePanel({ data }: { data: AccessData }) {
     <>
       <Panel
         title="People"
-        subtitle="Restrict a member to see only the ontologies their sources cover, in Analyst and Ontologies. Members who aren’t restricted see everything."
+        subtitle="Restrict a member to see only the ontologies their sources cover, in Analyst, Ontologies and Records. Members who aren’t restricted see everything."
         padded={false}
       >
         {data.members.isPending ? (

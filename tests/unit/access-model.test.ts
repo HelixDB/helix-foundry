@@ -11,6 +11,7 @@ import {
   missing,
   missingText,
   principalKey,
+  readAccess,
   readings,
   restrictable,
   setOwners,
@@ -351,13 +352,17 @@ describe("restricting members", () => {
 });
 
 describe("restricted mode", () => {
-  it("keeps a grantee on Ask and its ontologies' overviews", () => {
+  it("keeps a grantee on Ask, its ontologies' overviews and their shared pages", () => {
     for (const path of [
       "/",
       "/ask",
       "/ask/o?thread=q",
       "/ontology",
       "/ontology/o",
+      "/ontology/o/documents/d",
+      "/explore",
+      "/explore/o/records",
+      "/explore/o/entities/e",
       "/workspaces",
       "/nowhere",
     ])
@@ -365,8 +370,6 @@ describe("restricted mode", () => {
     for (const path of [
       "/data",
       "/data/connections/c",
-      "/explore",
-      "/explore/o/records",
       "/settings",
       "/settings/access",
       "/ontology/new",
@@ -375,5 +378,49 @@ describe("restricted mode", () => {
       expect(granteeRedirect(path), path).toBe("/ask");
     expect(granteeRedirect("/ontology/o/loads/l")).toBe("/ontology/o");
     expect(granteeRedirect("/ontology/o/versions/v")).toBe("/ontology/o");
+    expect(granteeRedirect("/ontology/o/documents")).toBe("/ontology/o");
+    // The graph isn't theirs: Records is their Explorer.
+    expect(granteeRedirect("/explore/o")).toBe("/explore/o/records");
+    expect(granteeRedirect("/explore/o/entities")).toBe("/explore/o/records");
+  });
+
+  it("reads through grants where the user can't query the database", () => {
+    const o = { id: "o", projectId: "p" };
+    // A grantee reads only what its grants cover.
+    expect(readAccess({ grantee: true, granted: ["o"] }, o)).toBe("grants");
+    expect(readAccess({ grantee: true, granted: [] }, o)).toBe("none");
+    // Query access not known (an owner, or a WFE that doesn't say): as today.
+    expect(readAccess({ grantee: false, granted: [] }, o)).toBe("database");
+    for (const queryRead of [
+      { mode: "all" },
+      { mode: "selected", projectIds: ["q", "p"] },
+    ])
+      expect(readAccess({ grantee: false, granted: ["o"], queryRead }, o)).toBe(
+        "database",
+      );
+    // A member who can't query the project reads what grants cover.
+    for (const queryRead of [
+      {},
+      { mode: "none" },
+      { mode: "selected", projectIds: ["q"] },
+    ]) {
+      expect(readAccess({ grantee: false, granted: ["o"], queryRead }, o)).toBe(
+        "grants",
+      );
+      expect(readAccess({ grantee: false, granted: [], queryRead }, o)).toBe(
+        "none",
+      );
+    }
+    // An ontology whose project they can't see can't be one they query.
+    expect(
+      readAccess(
+        {
+          grantee: false,
+          granted: [],
+          queryRead: { mode: "selected", projectIds: ["p"] },
+        },
+        { id: "o" },
+      ),
+    ).toBe("none");
   });
 });

@@ -53,9 +53,10 @@ export const primaryNav: NavItem[] = [
   item("data", "/data", "Connectors", Cable, ["/data"]),
 ];
 // A grantee's sections (a member restricted to what source grants give):
-// Analyst and the ontologies its grants cover.
+// Analyst, the ontologies its grants cover, and the Explorer, whose Records
+// read their shared loads (there is no graph for it).
 export const granteeNav: NavItem[] = primaryNav.filter(
-  (n) => n.id === "ask" || n.id === "ontology",
+  (n) => n.id === "ask" || n.id === "ontology" || n.id === "explore",
 );
 // While the workspace is onboarding, its one section: the wizard, so Settings
 // (where an AI provider is chosen) has a way back.

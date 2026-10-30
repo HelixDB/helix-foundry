@@ -53,7 +53,7 @@ import { useDocumentNames } from "../documents/documents-api";
 import { formatUsd } from "../documents/model";
 import { parseEntityId } from "../explore/model";
 import { readQueries } from "../explore/reads";
-import { useTenantReads } from "../explore/tenant-reads";
+import { useGraphReader, useReadAccess } from "../explore/graph-reader";
 import { useNaming } from "../explore/use-naming";
 import {
   AiRefusal,
@@ -94,6 +94,7 @@ import {
 import {
   LoadNotice,
   LoadPicker,
+  NotShared,
   NothingLoaded,
   useLoadSelection,
 } from "./load-selection";
@@ -159,12 +160,16 @@ function focusOf(param: string | null): EntityRef | undefined {
 }
 
 export function AskPage() {
-  const { id: ws, grantee } = useWorkspace(),
-    { id: o, ontology } = useOntology();
+  const { id: ws } = useWorkspace(),
+    { id: o, ontology } = useOntology(),
+    access = useReadAccess();
   const [params, setParams] = useSearchParams();
   const focus = focusOf(params.get("focus"));
   const selection = useLoadSelection();
-  const list = useQuery(questionQueries.list(ws, o));
+  const list = useQuery({
+    ...questionQueries.list(ws, o),
+    enabled: access !== "none",
+  });
   const threads = threadsOf(list.data?.questions || []);
   const load =
     selection.choice.kind === "load" ? selection.choice.load : undefined;
@@ -196,16 +201,26 @@ export function AskPage() {
       },
       { replace: false },
     );
-  // A grantee asks the one load its grants cover: no Load picker.
+  // Through source grants, Ask asks the one load they cover: the Load
+  // picker hides itself.
   const picker = (
     <>
       <OntologyPicker ontologyId={o} to={paths.ask} />
-      {!grantee && <LoadPicker selection={selection} />}
+      <LoadPicker selection={selection} />
     </>
   );
-  // A grantee reads through its grants, never the database: the WFE leaves
-  // the database out of what it is sent.
-  if (!ontology.tenantId && !grantee)
+  if (access === "none")
+    return (
+      <div className="ak-chat">
+        <ChatBar title="Analyst">{picker}</ChatBar>
+        <div className="ak-scroll ak-chat--empty">
+          <NotShared />
+        </div>
+      </div>
+    );
+  // Through grants, the WFE reads the load: the database isn't the user's
+  // to name (a grantee isn't sent it).
+  if (!ontology.tenantId && access === "database")
     return (
       <div className="ak-chat">
         <ChatBar title="Analyst">{picker}</ChatBar>
@@ -509,9 +524,9 @@ function useCitations(
 ): Omit<CitationContext, "name" | "result"> & {
   named: ReadonlyMap<string, string>;
 } {
-  const { id: ws, grantee } = useWorkspace(),
+  const { id: ws } = useWorkspace(),
     { id: o } = useOntology(),
-    { readLater } = useTenantReads();
+    { access, reader } = useGraphReader(true);
   const loads = useQuery(ontologyQueries.loads(ws, o));
   const loadId = q.loadId || "";
   const versionId =
@@ -519,10 +534,10 @@ function useCitations(
     loads.data?.loads?.find((l) => l.id === loadId)?.versionId ||
     "";
   const { naming } = useNaming(versionId);
-  // A grantee can't read the database: entities read as the steps name
-  // them, and citations open their steps, not pages it can't open.
-  const named = readQueries.names(ws, o, readLater, loadId, cited, naming);
-  const names = useQuery({ ...named, enabled: named.enabled && !grantee });
+  // Through grants, the names are typed reads of the load they cover.
+  const names = useQuery(
+    readQueries.names(ws, o, reader, loadId, cited, naming),
+  );
   // A citation names any document of the workspace, a connector's too.
   const docName = useDocumentNames(ws, "a document");
   const sources = useSources();
@@ -530,7 +545,7 @@ function useCitations(
     named: names.data ?? new Map(),
     ontologyId: o,
     loadId,
-    ...(grantee ? { unlinked: true as const } : {}),
+    ...(access === "grants" ? { shared: true as const } : {}),
     keyed: (type) => {
       const t = naming.types.get(type);
       return t ? t.key.length > 0 : undefined;

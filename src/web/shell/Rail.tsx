@@ -29,7 +29,7 @@ function HelixMark() {
  * link presses too, a link per section, then the workspace, the account and
  * settings. While the workspace is onboarding it holds only the mark, the
  * way back to the onboarding, the workspace and the account; for a grantee,
- * no search or settings, and only Analyst and Ontologies.
+ * no search or settings, and only Analyst, Ontologies and the Explorer.
  */
 export function Rail({
   workspaces,

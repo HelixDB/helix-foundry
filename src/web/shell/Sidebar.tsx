@@ -123,7 +123,7 @@ function NavLinks({
 // under them (Ask's threads), then the account and settings. While the
 // workspace is onboarding it holds only the mark, the workspace, the way
 // back to the onboarding and the account; for a grantee, no search or
-// settings, and only Analyst and Ontologies.
+// settings, and only Analyst, Ontologies and the Explorer.
 export function Sidebar({
   workspaces,
   current,

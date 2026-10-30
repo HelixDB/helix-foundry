@@ -21,10 +21,17 @@ import {
   type EntityGraph,
   type EntityIdentity,
   type EntityRow,
+  type Evidence,
   type Fact,
 } from "./model";
 import { NO_NAMING, namingKeys, readable, type Naming } from "./naming";
 import { entityNamesRequest, parseEntityNames, refKey } from "./rule-breaks";
+import {
+  entityPlan,
+  factEvidencePlan,
+  namesPlan,
+  runPlan,
+} from "./typed-reads";
 
 // The reads of ./model.ts as TanStack Query options, run against an
 // ontology's database (its tenant) with the user's session, through the
@@ -33,6 +40,22 @@ import { entityNamesRequest, parseEntityNames, refKey } from "./rule-breaks";
 // ends refreshes them. A failed read throws a ReadFailed carrying the
 // transport's description. Entities come back named by the load's version
 // (./naming.ts), whose id is in the key.
+
+/**
+ * How a page reads a load (chosen once, by ./graph-reader.ts): the
+ * ontology's database with the user's session, through its limiter, or the
+ * WFE's typed reads of the one load the user's source grants cover
+ * (./typed-reads.ts), which the same queries parse into the same shapes.
+ */
+export type GraphReader =
+  | { kind: "database"; read: QueryExecutor }
+  | { kind: "grants" };
+
+/** The load a typed read reads: grants cover a load, never Other data. */
+const loadOf = (scope: Scope) => {
+  if (scope.kind !== "load") throw new Error("Source grants read one load.");
+  return scope.id;
+};
 
 export class ReadFailed extends Error {
   constructor(readonly failure: DatabaseQueryFailure) {
@@ -187,7 +210,7 @@ export const readQueries = {
   entity: (
     ws: string,
     o: string,
-    read: QueryExecutor,
+    reader: GraphReader,
     scope: Scope,
     identity: EntityIdentity,
     naming: Naming = NO_NAMING,
@@ -201,15 +224,25 @@ export const readQueries = {
       "entity",
       identity,
       naming.version,
+      reader.kind,
     ],
     queryFn: async ({ signal }: { signal?: AbortSignal }) => {
-      const page: EntityGraph = parseEntity(
-        await runRead(
-          read,
-          entityRequest(scope, identity, namingKeys(naming)),
-          signal,
-        ),
-      );
+      const page: EntityGraph =
+        reader.kind === "grants"
+          ? await runPlan(
+              ws,
+              o,
+              loadOf(scope),
+              entityPlan(identity, naming),
+              signal,
+            )
+          : parseEntity(
+              await runRead(
+                reader.read,
+                entityRequest(scope, identity, namingKeys(naming)),
+                signal,
+              ),
+            );
       return {
         ...page,
         entity: page.entity && named(naming, page.entity),
@@ -226,11 +259,12 @@ export const readQueries = {
     },
     ...readOptions,
   }),
-  // What states its facts, by fact key.
+  // What states its facts, by fact key: through grants, those of the first
+  // TYPED_LIMITS.evidenceFacts facts.
   evidence: (
     ws: string,
     o: string,
-    read: QueryExecutor,
+    reader: GraphReader,
     scope: Scope,
     identity: EntityIdentity,
     facts: Fact[] | undefined,
@@ -244,12 +278,19 @@ export const readQueries = {
       "entity",
       identity,
       "evidence",
+      reader.kind,
     ],
     enabled: !!facts?.some((f) => f.factKey),
-    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+    queryFn: async ({
+      signal,
+    }: {
+      signal?: AbortSignal;
+    }): Promise<Map<string, Evidence[]>> => {
+      if (reader.kind === "grants")
+        return runPlan(ws, o, loadOf(scope), factEvidencePlan(facts!), signal);
       const req = factEvidenceRequest(scope, facts!);
       return req
-        ? parseFactEvidence(await runRead(read, req, signal))
+        ? parseFactEvidence(await runRead(reader.read, req, signal))
         : new Map();
     },
     ...readOptions,
@@ -261,13 +302,17 @@ export const readQueries = {
   names: (
     ws: string,
     o: string,
-    read: QueryExecutor,
+    reader: GraphReader,
     loadId: string,
     refs: readonly EntityRef[],
     naming: Naming,
   ) => {
     const unique = [...new Map(refs.map((r) => [refKey(r), r])).values()];
-    const request = entityNamesRequest(loadId, unique, naming);
+    const request =
+        reader.kind === "database"
+          ? entityNamesRequest(loadId, unique, naming)
+          : null,
+      plan = reader.kind === "grants" ? namesPlan(unique, naming) : null;
     return {
       queryKey: [
         ws,
@@ -278,10 +323,18 @@ export const readQueries = {
         "names",
         unique.map(refKey).sort(),
         naming.version,
+        reader.kind,
       ],
-      enabled: !!loadId && !!request,
+      enabled: !!loadId && !!(request || plan),
       queryFn: async ({ signal }: { signal?: AbortSignal }) =>
-        parseEntityNames(await runRead(read, request!, signal), naming),
+        plan
+          ? runPlan(ws, o, loadId, plan, signal)
+          : reader.kind === "database"
+            ? parseEntityNames(
+                await runRead(reader.read, request!, signal),
+                naming,
+              )
+            : new Map<string, string>(),
       staleTime: 60_000,
       ...readOptions,
     };

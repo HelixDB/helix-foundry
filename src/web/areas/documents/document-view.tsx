@@ -24,7 +24,9 @@ import {
 // shows the text Foundry read from it, its pages one after another, each
 // after a rule with its number, once that read is done, unless `pages`
 // asks for its pages. `source` shows a rendered view's text as uploaded.
-// Each viewer is loaded with the first document that needs it.
+// Each viewer is loaded with the first document that needs it. `textOnly`
+// (someone reading through source grants, who may read a document's text
+// but not its bytes) says what needs its bytes isn't shown, and reads none.
 
 const Markdown = lazy(() =>
   import("./markdown").then((m) => ({ default: m.Markdown })),
@@ -150,12 +152,15 @@ export function DocumentView({
   document: d,
   source,
   pages = false,
+  textOnly = false,
 }: {
   workspaceId: string;
   document: FoundryDocument;
   source: boolean;
   // A PDF's pages, even once its text is read.
   pages?: boolean;
+  // Its text only, never its bytes.
+  textOnly?: boolean;
 }) {
   const viewer = documentViewer(d.mediaType),
     pdfText = viewer.kind === "pdf" && !pages && fileRead(d).state === "ready",
@@ -166,8 +171,21 @@ export function DocumentView({
   });
   const raw = useQuery({
     ...documentQueries.bytes(workspaceId, d.id),
-    enabled: binary,
+    enabled: binary && !textOnly,
   });
+  if (binary && textOnly)
+    return (
+      <Callout
+        icon={FileQuestion}
+        tone="muted"
+        title="Only its text is shared with you"
+        text={
+          viewer.kind === "pdf"
+            ? "Its pages aren’t, and its text shows once Foundry has read it."
+            : "This file has no text to show: its rows aren’t shared with you."
+        }
+      />
+    );
   const read = binary ? raw : text;
   if (read.isPending) return <SkeletonText lines={8} />;
   if (read.error)

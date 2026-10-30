@@ -5,7 +5,7 @@ import { MockGraph } from "../../mock/graph/store";
 import { namingOf } from "@/web/areas/explore/naming";
 import type { QueryExecutor } from "@/web/areas/explore/database-query";
 import type { Scope } from "@/web/areas/explore/load-scope";
-import { ReadFailed } from "@/web/areas/explore/reads";
+import { ReadFailed, type GraphReader } from "@/web/areas/explore/reads";
 import type { RecordsView } from "@/web/areas/records/model";
 import { recordQueries } from "@/web/areas/records/queries";
 
@@ -15,7 +15,7 @@ import { recordQueries } from "@/web/areas/records/queries";
 
 let graph: MockGraph, calls: number, fail: boolean;
 // The database's shared reads, over the mock graph.
-const read: QueryExecutor = async (request) => {
+const execute: QueryExecutor = async (request) => {
   calls += 1;
   if (fail)
     return {
@@ -36,6 +36,7 @@ const read: QueryExecutor = async (request) => {
     elapsedMs: 0,
   };
 };
+const read: GraphReader = { kind: "database", read: execute };
 const LOAD = "load_1";
 const SCOPE: Scope = { kind: "load", id: LOAD };
 

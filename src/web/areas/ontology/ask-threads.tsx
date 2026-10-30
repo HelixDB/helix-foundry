@@ -15,7 +15,8 @@ import { useWorkspace } from "../../ui";
 import { formatUsd } from "../documents/model";
 import { askOntologyId, askView, threadGroups, threadsOf } from "./ask-model";
 import { withLoad } from "./model";
-import { questionQueries } from "./queries";
+import { readAccess } from "../workspace/access-model";
+import { ontologyQueries, questionQueries } from "./queries";
 
 // Ask's threads, in the shell's sidebar under the sections (and, on a narrow
 // screen, as the Ask page itself until a thread is chosen): New thread, the
@@ -43,11 +44,18 @@ function Threads({
   ontologyId: string;
   onNavigate?: () => void;
 }) {
-  // A grantee doesn't see the workspace's spend.
-  const { id: ws, grantee } = useWorkspace(),
+  // A grantee doesn't see the workspace's spend. Someone who can't read
+  // the ontology (readAccess) has no threads of it to list.
+  const me = useWorkspace(),
+    { id: ws, grantee } = me,
     [params] = useSearchParams(),
     now = useNow(60_000);
-  const list = useQuery(questionQueries.list(ws, o));
+  const ontology = useQuery(ontologyQueries.ontology(ws, o)).data?.ontology;
+  const unread = !!ontology && readAccess(me, ontology) === "none";
+  const list = useQuery({
+    ...questionQueries.list(ws, o),
+    enabled: !!ontology && !unread,
+  });
   const threads = threadsOf(list.data?.questions || []),
     budget = list.data?.budget;
   // What the page shows: on a narrow screen without a thread chosen, these
@@ -75,7 +83,9 @@ function Threads({
         </ButtonLink>
       </div>
       <nav className="ak-threads" aria-label="Threads">
-        {list.isPending ? (
+        {unread ? (
+          <p className="ak-threads-note">Not shared with you.</p>
+        ) : list.isPending ? (
           <div className="ak-threads-note" aria-busy="true">
             <SkeletonText lines={3} />
           </div>
