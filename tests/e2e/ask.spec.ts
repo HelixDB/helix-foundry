@@ -86,6 +86,12 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
   // event carries no result, and its input is empty), so nothing to open;
   // then each query as a path. A lookup the engine can't run yet fails, and
   // says why.
+  // Closed, the trace is one line: the step the question is on while it
+  // runs; Show the steps opens every step.
+  const status = question.getByRole("status");
+  await expect(status.locator(".ak-call-tool")).toBeVisible();
+  await expect(question.getByRole("list", { name: "Steps" })).toHaveCount(0);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   const steps = question.getByRole("list", { name: "Steps" });
   const step = (name: string | RegExp) =>
     steps.getByRole("listitem", {
@@ -109,7 +115,7 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
     "Failed: can't look entities up by identifier yet",
   );
   await expect(lookup).toHaveClass(/is-error/);
-  await expect(question.getByRole("status")).toContainText("Answering");
+  await expect(status.locator(".ak-call-tool")).toBeVisible();
   const queried = step("Queried").first();
   await expect(queried).toContainText("Contract → signed_with → Customer");
   await expect(queried.getByRole("region", { name: "Input" })).toHaveCount(0);
@@ -185,6 +191,14 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
   ).toContainText("citation c2: e4 didn't show");
   const answered = steps.getByRole("listitem").last();
   await expect(answered).toHaveText("Answered");
+  // Ended, its line says how long it worked; the steps stay open until
+  // closed.
+  await expect(
+    question.getByRole("status").filter({ hasText: /^Worked for/ }),
+  ).toHaveText(/^Worked for \d+s$/);
+  await question.getByRole("button", { name: "Hide the steps" }).click();
+  await expect(steps).toHaveCount(0);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   await expect(
     question.getByRole("link", { name: "Draft a new version with this" }),
   ).toHaveCount(0);
@@ -500,6 +514,7 @@ test("reads an answer from before visuals as text, its queries' results not kept
     timeout: 15_000,
   });
   await expect(answer.getByRole("figure")).toHaveCount(0);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   const signed = question
     .getByRole("list", { name: "Steps" })
     .getByRole("listitem")
@@ -527,6 +542,10 @@ test("drafts a new version from a question the ontology can't answer", async ({
   });
   await expect(question).toContainText("It lacks: A signed_by link");
   // The ending call shows as the callout, not its input.
+  await expect(
+    question.getByRole("status").filter({ hasText: /^Worked for/ }),
+  ).toHaveText(/^Worked for \d+s · Couldn’t answer$/);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   await expect(
     question.getByRole("list", { name: "Steps" }).getByRole("listitem").last(),
   ).toHaveText("Couldn’t answer");
@@ -616,6 +635,8 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
     })
     .click();
   await expect(page).toHaveURL(/\?thread=q_/);
+  // Its steps open while they stream; the conversation still follows them.
+  await page.getByRole("button", { name: "Show the steps" }).click();
   // The bar holds the thread's title; the panel lists it today.
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "What is each customer under contract billed?",

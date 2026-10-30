@@ -87,6 +87,7 @@ import {
   resultText,
   stepHeading,
   stepInput,
+  workedFor,
   threadsOf,
   usageText,
   type AnswerPart,
@@ -123,7 +124,9 @@ import { useSources } from "./sources";
 // shell's sidebar under its sections (ask-threads.tsx); here, a slim bar with
 // the thread's title and the Ontology and Load pickers, then a thread as a conversation
 // in one centred column: each question as a bubble, then the reply, its
-// numbered steps as they stream, each a tool call: the tool's name, its
+// trace: closed, one line (the step it is on while it runs, how long it
+// worked once it ended) that opens on its numbered steps as they stream,
+// each a tool call: the tool's name, its
 // input in words (a query as a readable path) and what it returned, which
 // opens on its Input (the query, a graph query's code, or its arguments)
 // and Output (a query's result as a table or chart); once it ends, the query as the agent ran it, entity ids resolved; a
@@ -426,8 +429,12 @@ function ThreadView({
           ref={log}
           onClick={(e) => {
             // A disclosure or step the reader opens or closes stays where
-            // it is.
-            if ((e.target as Element).closest("summary, [aria-expanded]"))
+            // it is; the trace opening keeps following its steps.
+            if (
+              (e.target as Element).closest(
+                "summary, .ak-call-head[aria-expanded]",
+              )
+            )
               stick.current = false;
           }}
         >
@@ -696,7 +703,9 @@ export function QuestionCard({
   );
   const focus = questionFocus(q);
   const [lit, setLit] = useState("");
-  // The steps opened to their input and output, by index.
+  // The trace opened to every step, and the steps opened to their input
+  // and output, by index.
+  const [traceOpen, setTraceOpen] = useState(false);
   const [shown, setShown] = useState<ReadonlySet<number>>(new Set());
   const [cancelling, setCancelling] = useState(false);
   const stepId = (evidence: string) => `${q.id}-${evidence}`;
@@ -705,6 +714,7 @@ export function QuestionCard({
   const showStep = (evidence: string) => {
     setLit("");
     setOpened(true);
+    setTraceOpen(true);
     requestAnimationFrame(() => {
       setLit(evidence);
       document
@@ -738,6 +748,10 @@ export function QuestionCard({
   );
   const ran = new Map([...records].map(([e, r]) => [e, r.query]));
   const known = knownOf(steps, citations, named);
+  // Closed, the trace says how long the question worked once it ended, and
+  // the step it is on while it runs.
+  const worked = live ? "" : workedFor(q.startedAt, q.finishedAt);
+  const current = live ? steps[steps.length - 1] : undefined;
   const ctx: CitationContext = {
     ...links,
     name: known.name,
@@ -764,14 +778,51 @@ export function QuestionCard({
         <div className="ak-reply-body">
           <section className={cx("ak-trace", `is-${trace.phase}`)}>
             <div className="ak-trace-head">
-              <span className="ak-trace-status" role="status">
-                <span className="ak-trace-dot" aria-hidden />
-                {trace.headline}
-              </span>
+              <button
+                type="button"
+                className="ak-trace-toggle"
+                aria-expanded={traceOpen}
+                aria-controls={`${q.id}-steps`}
+                aria-label={traceOpen ? "Hide the steps" : "Show the steps"}
+                disabled={!steps.length}
+                onClick={() => setTraceOpen((open) => !open)}
+              >
+                <span className="ak-trace-status" role="status">
+                  {current ? (
+                    <>
+                      <span className="ak-trace-dot" aria-hidden />
+                      <code className="ak-call-tool">{current.tool}</code>
+                      <span className="ak-trace-now">
+                        {(current.query && queryText(current.query).path) ??
+                          stepInput(current, known) ??
+                          stepHeading(current)}
+                      </span>
+                    </>
+                  ) : worked ? (
+                    trace.phase === "answered" ? (
+                      `Worked for ${worked}`
+                    ) : (
+                      `Worked for ${worked} · ${trace.headline}`
+                    )
+                  ) : (
+                    <>
+                      <span className="ak-trace-dot" aria-hidden />
+                      {trace.headline}
+                    </>
+                  )}
+                </span>
+                {steps.length > 0 && (
+                  <ChevronRight
+                    size={15}
+                    className="ak-trace-chevron"
+                    aria-hidden
+                  />
+                )}
+              </button>
               <span className="ak-trace-tools">
                 <span className="ak-trace-time">
                   {live
-                    ? trace.detail
+                    ? !current && trace.detail
                     : [formatUsd(q.usdMicros || 0), stream.model]
                         .filter(Boolean)
                         .join(" · ")}
@@ -789,8 +840,12 @@ export function QuestionCard({
                 )}
               </span>
             </div>
-            {steps.length > 0 && (
-              <ol className="ak-steps ak-calls" aria-label="Steps">
+            {traceOpen && steps.length > 0 && (
+              <ol
+                className="ak-steps ak-calls"
+                id={`${q.id}-steps`}
+                aria-label="Steps"
+              >
                 {steps.map((s, i) => {
                   const evidence =
                     s.result?.kind === "recorded"
@@ -994,7 +1049,7 @@ export function QuestionCard({
                 })}
               </ol>
             )}
-            {stream.unreadable > 0 && (
+            {traceOpen && stream.unreadable > 0 && (
               <p className="ak-trace-note">
                 {stream.unreadable === 1
                   ? "1 step couldn’t be read."
