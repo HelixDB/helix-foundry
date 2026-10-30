@@ -26,7 +26,7 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
-          - runner: crucible-2vcpu-arm
+          - runner: crucible-4vcpu-arm
             suffix: " (crucible)"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -49,7 +49,7 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
-          - runner: crucible-2vcpu-arm
+          - runner: crucible-4vcpu-arm
             suffix: " (crucible)"
     runs-on: ${{ matrix.runner }}
     steps:
