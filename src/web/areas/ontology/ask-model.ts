@@ -4,7 +4,6 @@ import type {
   AskEvent,
   AskFailure,
   AskResult,
-  AskUsage,
   AskVisual,
   CitationTarget,
   FoundryQuestion,
@@ -661,18 +660,6 @@ export const FAILURE_TEXT: Record<AskFailure, string> = {
   load_mismatch: "The load holds another version than the one asked about.",
   store_failed: "The graph couldn’t be read.",
 };
-
-/**
- * What a question spent, in a line.
- *
- * @example
- * usageText({ input: 6100, cache_read: 12000, cache_write: 0, output: 1450, usd: 0.0734 }); // "$0.07 · 18,100 tokens in (12,000 cached), 1,450 out"
- */
-export function usageText(u: AskUsage): string {
-  const n = (x: number) => x.toLocaleString("en-US");
-  const cached = u.cache_read + u.cache_write;
-  return `$${u.usd.toFixed(2)} · ${n(u.input + cached)} tokens in${cached ? ` (${n(cached)} cached)` : ""}, ${n(u.output)} out`;
-}
 
 // ---------------------------------------------------------------- the stream
 

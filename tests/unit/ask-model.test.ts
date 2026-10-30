@@ -41,7 +41,6 @@ import {
   threadGroups,
   threadsOf,
   toolLabel,
-  usageText,
   type AskStep,
   type CitationContext,
   type Thread,
@@ -1475,19 +1474,6 @@ describe("results", () => {
     expect(parseAskResult('{"status":"failed","reason":"gremlins"}')).toBe(
       undefined,
     );
-  });
-
-  it("says what a question spent", () => {
-    expect(
-      usageText({
-        input: 6_100,
-        cache_read: 12_000,
-        cache_write: 0,
-        output: 1_450,
-        usd: 0.0734,
-      }),
-    ).toBe("$0.07 · 18,100 tokens in (12,000 cached), 1,450 out");
-    expect(usageText(USAGE)).toBe("$0.00 · 0 tokens in, 0 out");
   });
 
   it("parses every citation target and refuses others", () => {
