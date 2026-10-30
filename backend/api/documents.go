@@ -458,6 +458,16 @@ func (s *Service) GetFoundryDocumentContent(ctx context.Context, req *foundryv1.
 	if err != nil {
 		return nil, err
 	}
+	if g, ok := access.GranteeFrom(ctx); ok {
+		// A grantee reads the text of a document a load its grants cover holds.
+		loads, err := s.granteeLoads(ctx, g, nil)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.heldBy(ctx, doc, func(ontologyID string) bool { _, ok := loads[ontologyID]; return ok }); err != nil {
+			return nil, err
+		}
+	}
 	var text []byte
 	switch {
 	case doc.MediaType.ReadKind() == foundrymodel.FoundryReadPDF:
@@ -575,6 +585,11 @@ func (s *Service) ListFoundryOntologyDocuments(ctx context.Context, req *foundry
 	if o.CurrentLoadID != nil {
 		currentLoad = *o.CurrentLoadID
 	}
+	// A grantee lists the documents of the load its grants cover, and no
+	// others of the scope.
+	if granted, ok := granteeLoad(ctx); ok {
+		currentLoad, reader.scope = granted.LoadID, []string{}
+	}
 	docs, next, err := s.deps.DB.ListFoundryOntologyDocuments(ctx, o.WorkspaceID, currentLoad, reader.scope, filter, req.GetPageToken(), foundryPageSize)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
@@ -612,6 +627,13 @@ func (s *Service) GetFoundryOntologyDocument(ctx context.Context, req *foundryv1
 	if err != nil {
 		return nil, err
 	}
+	if granted, ok := granteeLoad(ctx); ok {
+		// A grantee gets a document the load its grants cover holds.
+		if err := s.heldBy(ctx, doc, func(ontologyID string) bool { return ontologyID == o.ID }); err != nil {
+			return nil, err
+		}
+		o.CurrentLoadID = &granted.LoadID
+	}
 	if o.CurrentLoadID == nil {
 		return &foundryv1.FoundryDocumentResponse{Document: foundryDocumentProto(doc, nil)}, nil
 	}
@@ -620,6 +642,19 @@ func (s *Service) GetFoundryOntologyDocument(ctx context.Context, req *foundryv1
 		return nil, err
 	}
 	return &foundryv1.FoundryDocumentResponse{Document: foundryDocumentProto(doc, extraction)}, nil
+}
+
+// heldBy is NotFound unless a live ontology whose current load holds doc is
+// one of mine: as a document, a table file, or what a prop decision came from.
+func (s *Service) heldBy(ctx context.Context, doc *foundrymodel.FoundryDocument, mine func(ontologyID string) bool) error {
+	holding, err := s.deps.DB.ListFoundryOntologiesHoldingDocument(ctx, doc.WorkspaceID, doc.ID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "find the loads holding the document: %v", err)
+	}
+	if !slices.ContainsFunc(holding, mine) {
+		return status.Error(codes.NotFound, "document not found")
+	}
+	return nil
 }
 
 // foundryDocument is a document of the workspace.

@@ -919,3 +919,48 @@ func TestFoundryTeams(t *testing.T) {
 		t.Fatalf("an install has no members: %v", err)
 	}
 }
+
+// A grantee reads the documents a load its grants cover holds: their text,
+// their ontology's list of them and their page there, and no others.
+func TestGranteeOntologyDocuments(t *testing.T) {
+	s, store := accessService(t)
+	bucket := s.deps.Documents.(*documentBucket)
+	bucket.content = map[string]string{"docs/held": "# Held\n", "docs/loose": "# Loose\n"}
+	for _, d := range []*foundrymodel.FoundryDocument{
+		{ID: "doc-held", WorkspaceID: "ws-1", SetID: "set-general", Name: "held.md", MediaType: foundrymodel.FoundryMediaMarkdown,
+			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/held"},
+		{ID: "doc-loose", WorkspaceID: "ws-1", SetID: "set-general", Name: "loose.md", MediaType: foundrymodel.FoundryMediaMarkdown,
+			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/loose"},
+	} {
+		store.documents = append(store.documents, d)
+	}
+	store.members["load-1"] = []string{"doc-held"}
+	store.holding = map[string][]string{"doc-held": {"ont-1"}, "doc-loose": {"ont-3"}}
+	conn, as := served(t, s)
+	client := foundryv1.NewFoundryServiceClient(conn)
+
+	text, err := client.GetFoundryDocumentContent(as(agent), &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: "ws-1", Id: "doc-held"})
+	if err != nil || text.GetText() != "# Held\n" {
+		t.Fatalf("%+v, %v", text, err)
+	}
+	if _, err := client.GetFoundryDocumentContent(as(agent), &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: "ws-1", Id: "doc-loose"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("a document only Payroll's load holds: %v", err)
+	}
+	if _, err := client.GetFoundryDocumentContent(as(person), &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: "ws-1", Id: "doc-loose"}); err != nil {
+		t.Fatalf("the host's caller reads any: %v", err)
+	}
+	if _, err := client.GetFoundryDocumentBytes(as(agent), &foundryv1.GetFoundryDocumentBytesRequest{WorkspaceId: "ws-1", Id: "doc-held"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("a document's bytes: %v", err)
+	}
+	got, err := client.GetFoundryOntologyDocument(as(agent), &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "doc-held"})
+	if err != nil || got.GetDocument().GetId() != "doc-held" {
+		t.Fatalf("%+v, %v", got, err)
+	}
+	if _, err := client.GetFoundryOntologyDocument(as(agent), &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "doc-loose"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("another load's document: %v", err)
+	}
+	listed, err := client.ListFoundryOntologyDocuments(as(agent), &foundryv1.ListFoundryOntologyDocumentsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+	if err != nil || len(listed.GetDocuments()) != 1 || listed.GetDocuments()[0].GetId() != "doc-held" {
+		t.Fatalf("the load's documents, not the scope's waiting ones: %+v, %v", listed, err)
+	}
+}
