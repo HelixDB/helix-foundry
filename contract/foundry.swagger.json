@@ -3432,6 +3432,10 @@
         "sample": {
           "type": "string",
           "description": "Foundry's sample company to draft from in place of the AI: \"acme\" is\nthe only one (INVALID_ARGUMENT for another). The generation stores the\nsample's ready-made draft, mapped to this workspace's connection to the\nsample's database, and calls no model. connector_ids must name exactly\nthat connection and document_set_ids exactly the set of the sample's\ndocuments, with no event source (INVALID_ARGUMENT otherwise), and each\nof the sample's tables must be synced (FAILED_PRECONDITION until then)."
+        },
+        "loadWhenReady": {
+          "type": "boolean",
+          "description": "Once the draft is stored, while the ontology still has no current\nversion, make it current and load it, as set-current then create-load\nwould, and email the requester when that load ends; for an ontology's\nfirst draft. The caller must be able to write the ontology's database,\nas create-load needs (PERMISSION_DENIED otherwise); an ontology that\nalready has a current version is FAILED_PRECONDITION, and a sample\nINVALID_ARGUMENT. A draft a load would refuse, or one drafted once the\nworkspace's month of loads is spent, waits for review as without it,\nand the email says so; so does a draft that fails."
         }
       }
     },
@@ -3813,6 +3817,15 @@
         "events": {
           "$ref": "#/definitions/v1EventsConnectorConfig",
           "description": "11 and 12 are gdrive's and gmail's (Google connectors)."
+        },
+        "slack": {
+          "$ref": "#/definitions/v1SlackConnectorConfig"
+        },
+        "notion": {
+          "$ref": "#/definitions/v1NotionConnectorConfig"
+        },
+        "google": {
+          "$ref": "#/definitions/v1GoogleWorkspaceConnectorConfig"
         }
       },
       "description": "ConnectorConfig is a connector's settings. Write-only fields come back empty."
@@ -3868,7 +3881,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "stripe, workos, posthog, github, linear, calcom, granola, postgres, mysql,\ns3 or events."
+          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, postgres, mysql, s3 or events."
         },
         "displayName": {
           "type": "string"
@@ -6163,6 +6176,25 @@
         }
       }
     },
+    "v1GoogleWorkspaceConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "serviceAccountKey": {
+          "type": "string",
+          "description": "The service account's JSON key; write-only."
+        },
+        "subject": {
+          "type": "string",
+          "description": "The Workspace user the service account acts as; an admin, to read\nthe Directory's users."
+        },
+        "eventDays": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Days of past calendar events to keep, 1 to 365; 0 is 90."
+        }
+      },
+      "description": "GoogleWorkspaceConnectorConfig reads Drive, Calendar and the Directory\nas one Workspace user, through a service account with domain-wide\ndelegation."
+    },
     "v1GranolaConnectorConfig": {
       "type": "object",
       "properties": {
@@ -6408,6 +6440,16 @@
         }
       }
     },
+    "v1NotionConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "Internal integration secret (ntn_… or secret_…); write-only."
+        }
+      },
+      "description": "NotionConnectorConfig reads the pages and databases shared with a Notion\nintegration."
+    },
     "v1OntologyEdit": {
       "type": "object",
       "properties": {
@@ -6467,7 +6509,7 @@
         },
         "resultVersionId": {
           "type": "string",
-          "description": "The draft it stored, once succeeded. It is not made current."
+          "description": "The draft it stored, once succeeded. It is not made current, unless\nload_when_ready made it the ontology's first."
         },
         "model": {
           "type": "string"
@@ -6522,6 +6564,10 @@
         "sample": {
           "type": "string",
           "description": "The sample it drafts from in place of the AI\n(GenerateOntologyRequest.sample); empty for an AI draft."
+        },
+        "loadWhenReady": {
+          "type": "boolean",
+          "description": "Whether its draft is made current and loaded once stored, and its\nrequester emailed when that load ends\n(GenerateOntologyRequest.load_when_ready)."
         }
       },
       "description": "OntologyGeneration is one request to draft a version of an ontology."
@@ -6805,6 +6851,21 @@
           "type": "string"
         }
       }
+    },
+    "v1SlackConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "botToken": {
+          "type": "string",
+          "description": "Bot User OAuth token (xoxb-…) of an app installed in the Slack\nworkspace; write-only."
+        },
+        "historyDays": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Days of channel history to keep, 1 to 365; 0 is 90."
+        }
+      },
+      "description": "SlackConnectorConfig reads the channels a Slack app was added to."
     },
     "v1StripeConnectorConfig": {
       "type": "object",

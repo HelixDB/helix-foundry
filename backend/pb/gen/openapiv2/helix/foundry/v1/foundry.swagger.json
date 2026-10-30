@@ -3817,6 +3817,15 @@
         "events": {
           "$ref": "#/definitions/v1EventsConnectorConfig",
           "description": "11 and 12 are gdrive's and gmail's (Google connectors)."
+        },
+        "slack": {
+          "$ref": "#/definitions/v1SlackConnectorConfig"
+        },
+        "notion": {
+          "$ref": "#/definitions/v1NotionConnectorConfig"
+        },
+        "google": {
+          "$ref": "#/definitions/v1GoogleWorkspaceConnectorConfig"
         }
       },
       "description": "ConnectorConfig is a connector's settings. Write-only fields come back empty."
@@ -3872,7 +3881,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "stripe, workos, posthog, github, linear, calcom, granola, postgres, mysql,\ns3 or events."
+          "description": "stripe, workos, posthog, github, linear, calcom, granola, slack, notion,\ngoogle, postgres, mysql, s3 or events."
         },
         "displayName": {
           "type": "string"
@@ -6167,6 +6176,25 @@
         }
       }
     },
+    "v1GoogleWorkspaceConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "serviceAccountKey": {
+          "type": "string",
+          "description": "The service account's JSON key; write-only."
+        },
+        "subject": {
+          "type": "string",
+          "description": "The Workspace user the service account acts as; an admin, to read\nthe Directory's users."
+        },
+        "eventDays": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Days of past calendar events to keep, 1 to 365; 0 is 90."
+        }
+      },
+      "description": "GoogleWorkspaceConnectorConfig reads Drive, Calendar and the Directory\nas one Workspace user, through a service account with domain-wide\ndelegation."
+    },
     "v1GranolaConnectorConfig": {
       "type": "object",
       "properties": {
@@ -6411,6 +6439,16 @@
           }
         }
       }
+    },
+    "v1NotionConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "Internal integration secret (ntn_… or secret_…); write-only."
+        }
+      },
+      "description": "NotionConnectorConfig reads the pages and databases shared with a Notion\nintegration."
     },
     "v1OntologyEdit": {
       "type": "object",
@@ -6813,6 +6851,21 @@
           "type": "string"
         }
       }
+    },
+    "v1SlackConnectorConfig": {
+      "type": "object",
+      "properties": {
+        "botToken": {
+          "type": "string",
+          "description": "Bot User OAuth token (xoxb-…) of an app installed in the Slack\nworkspace; write-only."
+        },
+        "historyDays": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Days of channel history to keep, 1 to 365; 0 is 90."
+        }
+      },
+      "description": "SlackConnectorConfig reads the channels a Slack app was added to."
     },
     "v1StripeConnectorConfig": {
       "type": "object",

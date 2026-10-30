@@ -346,6 +346,8 @@ func (f fixture) liveID(stream, externalID string) string {
 type note struct {
 	id, version, text string
 	at                time.Time
+	// drop takes the document back with Drop once Want says yes.
+	drop bool
 }
 
 func (n note) row() map[string]any { return map[string]any{"id": n.id, "version": n.version} }
@@ -413,6 +415,12 @@ func (k *noteKind) offer(ctx context.Context, table string, notes []note, write 
 			version, ok := docs.Held(s.Name, n.id)
 			k.held = append(k.held, fmt.Sprintf("%s/%s=%s,%t", s.Name, n.id, version, ok))
 			if !k.skipWant && !docs.Want(s.Name, n.id, n.version) {
+				continue
+			}
+			if n.drop {
+				if err := docs.Drop(s.Name, n.id); err != nil && !k.swallow {
+					return err
+				}
 				continue
 			}
 			text := ""
@@ -617,6 +625,43 @@ func TestSyncerDocuments(t *testing.T) {
 			t.Fatalf("documents = %v, owed = %d", got, f.store.owed)
 		}
 	})
+	t.Run("removes a held document the kind drops, and holds none it drops first", func(t *testing.T) {
+		kind := newNoteKind(connector.CaptureFull, n2, n1)
+		f := newNoteFixture(t, kind)
+		f.run(t, "sync-1")
+		old, dropped := f.liveID("notes", "n1"), documentsCounted("dropped")
+		gone := edited(n1, "")
+		gone.drop = true
+		fresh := n3
+		fresh.drop = true
+		kind.notes["notes"] = []note{n2, gone, fresh}
+		f.run(t, "sync-2")
+		p := f.store.publishes[len(f.store.publishes)-1]
+		if got := f.held(t, "notes"); len(got) != 1 || got["n2"] != "notes: second" || !slices.Equal(p.Remove, []string{old}) ||
+			len(p.Add)+len(p.Update) != 0 || documentsCounted("dropped")-dropped != 2 {
+			t.Fatalf("documents = %v, publish = %+v", got, p)
+		}
+		kind.notes["notes"] = []note{n2, n1}
+		f.run(t, "sync-3")
+		if got := f.held(t, "notes"); len(got) != 2 || got["n1"] != "notes: first" {
+			t.Fatalf("documents after the source's document is back = %v", got)
+		}
+	})
+	t.Run("refuses a drop Want did not say yes to", func(t *testing.T) {
+		kind := newNoteKind(connector.CaptureFull, n1)
+		f := newNoteFixture(t, kind)
+		f.run(t, "sync-1")
+		kept := n1
+		kept.drop = true
+		kind.notes["notes"] = []note{kept}
+		kind.skipWant = true
+		if _, err := f.syncer.Run(context.Background(), newSync("sync-2")); err == nil || !strings.Contains(err.Error(), "Want did not say yes to it") {
+			t.Fatalf("sync = %v", err)
+		}
+		if got := f.held(t, "notes"); len(got) != 1 {
+			t.Fatalf("documents = %v", got)
+		}
+	})
 	t.Run("empties the set of a stream turned off or of a table not synced, and keeps the set", func(t *testing.T) {
 		kind := newNoteKind(connector.CaptureFull, n2, n1)
 		kind.streams = []connector.Stream{notesStream, transcriptsStream}
@@ -758,6 +803,16 @@ func TestSyncerDocumentChanges(t *testing.T) {
 		}}
 		f.run(t, "sync-2")
 		if got := f.held(t, "notes"); len(got) != 1 || got["n2"] == "" || f.store.owed != 1 {
+			t.Fatalf("documents = %v", got)
+		}
+	})
+	t.Run("removes a document the kind drops in a change read, its row kept", func(t *testing.T) {
+		kind, f := first(t)
+		gone := edited(n1, "")
+		gone.drop = true
+		kind.changes = []func(connector.ChangeWriter) error{kind.upsert("notes", gone)}
+		f.run(t, "sync-2")
+		if got := f.held(t, "notes"); len(got) != 1 || got["n2"] == "" {
 			t.Fatalf("documents = %v", got)
 		}
 	})

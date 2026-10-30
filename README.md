@@ -69,7 +69,7 @@ Open **http://localhost:3000**. There is no account and nothing to set up: one o
 
 ## What you get
 
-- **Connectors** for PostgreSQL, MySQL, Amazon S3, Stripe, PostHog, WorkOS, GitHub, Linear, Granola and Cal.com, documents (Markdown, text, PDF) and table files (CSV, TSV, JSON, JSON Lines, Parquet). On Helix Cloud, API sources also take records your apps and agents send.
+- **Connectors** for PostgreSQL, MySQL, Amazon S3, Stripe, PostHog, WorkOS, GitHub, Linear, Granola, Cal.com, Slack, Notion and Google Workspace, documents (Markdown, text, PDF) and table files (CSV, TSV, JSON, JSON Lines, Parquet). On Helix Cloud, API sources also take records your apps and agents send.
 - **Syncs that read only what changed:** PostgreSQL and MySQL change capture where the database allows it, and incremental reads from every other connector.
 - **An ontology agent** that drafts types, links, rules, and the tables and documents each comes from, from your data and your goal. You review it, edit it and make a version current.
 - **Loads into HelixDB** that keep where every value came from: a table row, or a quote in a document. Values documents disagree on wait for your review.

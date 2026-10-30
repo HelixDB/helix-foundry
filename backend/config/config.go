@@ -1058,7 +1058,7 @@ var CaptureMethods = []string{"full", "cursor", "events", "log"}
 // DefaultPlans is Free, Pro and Max, none of them sold.
 func DefaultPlans() []PlanConfig {
 	// Free has the SaaS kinds and event sources, whose rows Helix holds.
-	free := []string{"stripe", "workos", "posthog", "github", "linear", "calcom", "granola", "events"}
+	free := []string{"stripe", "workos", "posthog", "github", "linear", "calcom", "granola", "slack", "notion", "google", "events"}
 	every := append(slices.Clone(free), "postgres", "mysql", "s3")
 	return []PlanConfig{
 		{Code: "free", DisplayName: "Free", Kinds: free, Sync: SyncRulesConfig{

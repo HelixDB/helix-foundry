@@ -119,6 +119,11 @@ type DocumentWriter interface {
 	Want(stream, externalID, version string) bool
 	// Put takes a document Want said yes to, once.
 	Put(ctx context.Context, stream string, doc Document) error
+	// Drop takes back a document Want said yes to, in place of its Put: the
+	// source has it but it can't be a document now (a body emptied, a file
+	// its owner no longer lets anyone export). The stream holds none for
+	// externalID once the read publishes, whatever its row.
+	Drop(stream, externalID string) error
 	// Held is the version of the document the stream holds for externalID,
 	// from its live index; no I/O. ok is false when it holds none.
 	Held(stream, externalID string) (version string, ok bool)
@@ -141,6 +146,10 @@ func (noDocuments) Want(string, string, string) bool { return false }
 
 func (noDocuments) Put(_ context.Context, stream string, doc Document) error {
 	return &DocumentError{Stream: stream, ExternalID: doc.ExternalID, Reason: "Want did not say yes to it"}
+}
+
+func (noDocuments) Drop(stream, externalID string) error {
+	return &DocumentError{Stream: stream, ExternalID: externalID, Reason: "Want did not say yes to it"}
 }
 
 func (noDocuments) Held(string, string) (string, bool) { return "", false }

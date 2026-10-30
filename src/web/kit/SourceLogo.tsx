@@ -20,6 +20,9 @@ const logoFiles: Record<string, string> = {
   linear: "linear",
   calcom: "calcom",
   granola: "granola",
+  slack: "slack",
+  notion: "notion",
+  google: "google",
   stripe: "stripe",
   s3: "s3",
   postgres: "postgresql",
@@ -35,6 +38,9 @@ const labels: Record<string, string> = {
   linear: "Linear",
   calcom: "Cal.com",
   granola: "Granola",
+  slack: "Slack",
+  notion: "Notion",
+  google: "Google Workspace",
   stripe: "Stripe",
   s3: "Amazon S3",
   events: "API source",
@@ -75,6 +81,8 @@ const darkLogos = new Set([
   "github",
   "calcom",
   "granola",
+  "slack",
+  "notion",
 ]);
 /** The URL of a logo file in public/connectors, in the page's theme. */
 export const logoUrl = (file: string, theme: Theme) =>

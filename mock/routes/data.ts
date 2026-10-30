@@ -289,6 +289,19 @@ function responseConfig(
     return {
       granola: { apiKey: "", transcripts: !!settings.granola.transcripts },
     };
+  if ("slack" in settings)
+    return {
+      slack: { botToken: "", historyDays: settings.slack.historyDays || 0 },
+    };
+  if ("notion" in settings) return { notion: { token: "" } };
+  if ("google" in settings)
+    return {
+      google: {
+        serviceAccountKey: "",
+        subject: settings.google.subject || "",
+        eventDays: settings.google.eventDays || 0,
+      },
+    };
   if ("s3" in settings) {
     const s = settings.s3;
     return {
@@ -620,9 +633,13 @@ export const dataRoutes: MockRoute[] = [
             const field =
               c.kind === "postgres" || c.kind === "mysql"
                 ? "password"
-                : c.kind === "github"
+                : c.kind === "github" || c.kind === "notion"
                   ? "token"
-                  : "apiKey";
+                  : c.kind === "slack"
+                    ? "botToken"
+                    : c.kind === "google"
+                      ? "serviceAccountKey"
+                      : "apiKey";
             if (!part[field]) part[field] = c.source.secret;
           }
           const tested = testSource(c.workspaceId, config);

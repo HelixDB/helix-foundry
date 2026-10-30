@@ -834,6 +834,8 @@ func (d *pieceDocs) Put(_ context.Context, stream string, doc Document) error {
 	return d.fail
 }
 
+func (d *pieceDocs) Drop(_, id string) error { return fmt.Errorf("a Drop of piece %s", id) }
+
 func (d *pieceDocs) Held(_, id string) (string, bool) {
 	version, ok := d.held[id]
 	return version, ok

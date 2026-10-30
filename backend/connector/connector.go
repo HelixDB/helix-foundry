@@ -119,6 +119,10 @@ func WindowedTable(kind, table string) bool {
 		return table == "events" || table == "daily_event_counts"
 	case "github":
 		return table == "pull_request_reviews"
+	case "slack":
+		return table == "messages" || table == "channel_days"
+	case "google":
+		return table == "calendar_events" || table == "event_attendees"
 	}
 	return false
 }
@@ -184,6 +188,12 @@ type Endpoints struct {
 	Linear    string
 	Calcom    string
 	Granola   string
+	Slack     string
+	Notion    string
+	// Google serves Drive, Calendar and the Directory; GoogleToken is the
+	// OAuth token endpoint a service account's assertion is exchanged at.
+	Google      string
+	GoogleToken string
 	// S3 and STS replace AWS's own endpoints in tests; empty uses AWS's.
 	S3  string
 	STS string
@@ -191,14 +201,18 @@ type Endpoints struct {
 
 func DefaultEndpoints() Endpoints {
 	return Endpoints{
-		Stripe:    "https://api.stripe.com",
-		WorkOS:    "https://api.workos.com",
-		PostHogUS: "https://us.posthog.com",
-		PostHogEU: "https://eu.posthog.com",
-		GitHub:    "https://api.github.com",
-		Linear:    "https://api.linear.app",
-		Calcom:    "https://api.cal.com",
-		Granola:   "https://public-api.granola.ai",
+		Stripe:      "https://api.stripe.com",
+		WorkOS:      "https://api.workos.com",
+		PostHogUS:   "https://us.posthog.com",
+		PostHogEU:   "https://eu.posthog.com",
+		GitHub:      "https://api.github.com",
+		Linear:      "https://api.linear.app",
+		Calcom:      "https://api.cal.com",
+		Granola:     "https://public-api.granola.ai",
+		Slack:       "https://slack.com/api",
+		Notion:      "https://api.notion.com",
+		Google:      "https://www.googleapis.com",
+		GoogleToken: "https://oauth2.googleapis.com/token",
 	}
 }
 
@@ -223,6 +237,9 @@ func NewCatalog(endpoints Endpoints, guard Guard, s3 S3Options, pushed EventsOpt
 		&linearKind{base: endpoints.Linear, http: saas},
 		&calcomKind{base: endpoints.Calcom, http: saas},
 		&granolaKind{base: endpoints.Granola, http: saas},
+		&slackKind{base: endpoints.Slack, http: saas},
+		&notionKind{base: endpoints.Notion, http: saas},
+		&googleKind{base: endpoints.Google, tokenURL: endpoints.GoogleToken, http: saas},
 		&postgresKind{guard: guard},
 		&mysqlKind{guard: guard},
 		files,

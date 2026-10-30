@@ -246,6 +246,95 @@ const guides: Record<CredentialKind, (form: ConnectionForm) => ReactNode> = {
       </li>
     </ol>
   ),
+  slack: () => (
+    <ol>
+      <li>
+        Open{" "}
+        <External href="https://api.slack.com/apps">
+          your apps in Slack
+        </External>
+        , click <strong>Create New App</strong> and choose{" "}
+        <strong>From scratch</strong>. Name it “Helix Foundry” and pick your
+        workspace.
+      </li>
+      <li>
+        Under <strong>OAuth &amp; Permissions</strong>, add the Bot Token Scopes{" "}
+        <code>channels:read</code> and <code>channels:history</code> for public
+        channels, <code>groups:read</code> and <code>groups:history</code> for
+        private ones, and <code>users:read</code> and{" "}
+        <code>users:read.email</code> to name people.
+      </li>
+      <li>
+        Click <strong>Install to Workspace</strong>, copy the{" "}
+        <strong>Bot User OAuth Token</strong> (<code>xoxb-…</code>) and paste it
+        below.
+      </li>
+      <li>
+        Invite the app to each channel to sync, public or private, with{" "}
+        <code>/invite @Helix Foundry</code>. The messages of a kind of channel
+        whose history scope the app lacks are not read. Direct messages are
+        never read.
+      </li>
+    </ol>
+  ),
+  notion: () => (
+    <ol>
+      <li>
+        Open{" "}
+        <External href="https://www.notion.so/profile/integrations">
+          Integrations in Notion
+        </External>
+        , click <strong>New integration</strong> and make an{" "}
+        <strong>Internal</strong> one named “Helix Foundry” for your workspace.
+      </li>
+      <li>
+        Under <strong>Capabilities</strong>, keep <strong>Read content</strong>{" "}
+        only, and choose{" "}
+        <strong>Read user information including email addresses</strong>.
+      </li>
+      <li>
+        Copy the <strong>Internal Integration Secret</strong> (
+        <code>ntn_…</code>) and paste it below.
+      </li>
+      <li>
+        Share each page or database to sync with it, from its{" "}
+        <strong>•••</strong> menu › <strong>Connections</strong>. Sharing a page
+        shares the pages under it.
+      </li>
+    </ol>
+  ),
+  google: () => (
+    <ol>
+      <li>
+        In the{" "}
+        <External href="https://console.cloud.google.com/iam-admin/serviceaccounts">
+          Google Cloud console
+        </External>
+        , create a service account and add a JSON key under its{" "}
+        <strong>Keys</strong>. In its project, enable the Google Drive API,
+        Google Calendar API and Admin SDK API.
+      </li>
+      <li>
+        In the{" "}
+        <External href="https://admin.google.com">Admin console</External>, open
+        Security › Access and data control › API controls ›{" "}
+        <strong>Manage domain-wide delegation</strong> and add the service
+        account’s client ID with these scopes:
+        <pre>
+          {[
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/admin.directory.user.readonly",
+          ].join(",")}
+        </pre>
+      </li>
+      <li>
+        Paste the JSON key below, and an admin’s email as Acts as. Foundry reads
+        Drive and Calendar as that user, and each Google Doc they can open and
+        download becomes a document.
+      </li>
+    </ol>
+  ),
   postgres: () => (
     <>
       <p>Run this as an administrator, replacing the database and password:</p>
