@@ -31,11 +31,7 @@ import {
   X,
 } from "lucide-react";
 import type { EntityRef } from "../../../shared/foundry-read";
-import type {
-  AskUsage,
-  FoundryQuestion,
-  QuestionBudget,
-} from "../../../shared/wfe";
+import type { FoundryQuestion, QuestionBudget } from "../../../shared/wfe";
 import {
   Button,
   ButtonLink,
@@ -89,7 +85,6 @@ import {
   stepInput,
   workedFor,
   threadsOf,
-  usageText,
   type AnswerPart,
   type AskStep,
   type AskStream,
@@ -820,13 +815,9 @@ export function QuestionCard({
                 )}
               </button>
               <span className="ak-trace-tools">
-                <span className="ak-trace-time">
-                  {live
-                    ? !current && trace.detail
-                    : [formatUsd(q.usdMicros || 0), stream.model]
-                        .filter(Boolean)
-                        .join(" · ")}
-                </span>
+                {live && !current && trace.detail && (
+                  <span className="ak-trace-time">{trace.detail}</span>
+                )}
                 {live && (
                   <Button
                     size="sm"
@@ -1116,7 +1107,6 @@ function Outcome({
           text={
             <>
               <SettingsLinked text={view.error} />
-              {view.result && <Spent usage={view.result.usage} />}
             </>
           }
         />
@@ -1130,7 +1120,6 @@ function Outcome({
           text={
             <>
               {`It used what a question may (${formatUsd(budget?.questionUsdMicros || 500_000)}, ${budget?.maxSteps ?? 20} steps or ${Math.round((budget?.maxWallSecs ?? 240) / 60)} minutes) before it could answer. Ask something narrower.`}
-              <Spent usage={view.result.usage} />
             </>
           }
         />
@@ -1145,7 +1134,6 @@ function Outcome({
             <>
               {view.result.reason || "What it holds doesn’t say."}
               {view.result.gap && <> It lacks: {view.result.gap}</>}
-              <Spent usage={view.result.usage} />
               <span className="ak-draft">
                 <ButtonLink
                   size="sm"
@@ -1310,21 +1298,13 @@ function Answer({
             </ol>
           </>
         )}
-        <p className="ak-answer-meta">
-          {q.finishedAt && `Answered ${formatRelative(q.finishedAt)} · `}
-          {usageText(view.result.usage)}
-        </p>
+        {q.finishedAt && (
+          <p className="ak-answer-meta">
+            Answered {formatRelative(q.finishedAt)}
+          </p>
+        )}
       </div>
     </section>
-  );
-}
-
-/** What an ended question spent, after what its callout says. */
-function Spent({ usage }: { usage: AskUsage }) {
-  return (
-    <small className="ak-spent" aria-label="Spent">
-      {usageText(usage)}
-    </small>
   );
 }
 

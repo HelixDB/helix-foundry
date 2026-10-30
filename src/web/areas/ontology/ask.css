@@ -718,11 +718,6 @@ button.ak-call-head:hover {
   font-size: var(--hf-text-sm);
   line-height: 1.5;
 }
-.ak-spent {
-  display: block;
-  margin-top: 4px;
-  color: var(--hf-muted);
-}
 /* Visuals: a query result right after the block that introduces it, as
    wide as the conversation (the text keeps its measure), and a step's
    Result. One series in --hf-chart-1; text in text tokens. */
