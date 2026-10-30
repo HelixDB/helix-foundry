@@ -269,7 +269,9 @@ function GrantsDialog({
                       state={state(connection)}
                       onToggle={() => flip(connection)}
                     >
-                      <SourceLogo source={c.kind} size={18} />
+                      <span aria-hidden>
+                        <SourceLogo source={c.kind} size={18} />
+                      </span>
                       <span>
                         {c.name}
                         <small> · all of it, now and later</small>
@@ -681,11 +683,15 @@ function RestrictSwitch({
 }) {
   const { id, notify } = useWorkspace(),
     qc = useQueryClient(),
-    [pending, setPending] = useState(false);
+    [pending, setPending] = useState(false),
+    // Shown as asked at once; back as it was if the WFE refuses.
+    [shown, setShown] = useState(restricted);
+  useEffect(() => setShown(restricted), [restricted]);
   const can = restrictable(member);
   const name = nameOf(member);
   const flip = async (on: boolean) => {
     setPending(true);
+    setShown(on);
     try {
       await setRestricted(id, member.user?.id || "", on);
       await qc.invalidateQueries({ queryKey: accessQuery(id).queryKey });
@@ -695,6 +701,7 @@ function RestrictSwitch({
           : `${name} sees everything again.`,
       );
     } catch (e) {
+      setShown(restricted);
       notify((e as Error).message, true);
     } finally {
       setPending(false);
@@ -710,7 +717,7 @@ function RestrictSwitch({
         role="switch"
         aria-label={`Restrict ${name}`}
         aria-description={can.ok ? undefined : can.why}
-        checked={restricted}
+        checked={shown}
         disabled={pending || (!can.ok && !restricted)}
         onChange={(e) => void flip(e.target.checked)}
       />

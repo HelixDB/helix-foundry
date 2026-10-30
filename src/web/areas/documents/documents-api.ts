@@ -26,6 +26,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api, ApiError } from "../../api";
+import { useWorkspace } from "../../ui";
 import { POLL_MS } from "../ontology/queries";
 import {
   base64Bytes,
@@ -193,7 +194,12 @@ export const documentQueries = {
  * an ontology read (mentions, quotes, citations): any may be a connector's.
  */
 export function useDocumentNames(ws: string, fallback: string) {
-  const uploads = useQuery(documentQueries.workspace(ws));
+  // A grantee lists no documents: it names those its loads hold by id.
+  const { grantee } = useWorkspace();
+  const uploads = useQuery({
+    ...documentQueries.workspace(ws),
+    enabled: !grantee,
+  });
   // Only grows, so a name read stays read; an id with no document stays in
   // it, asked for once.
   const [wanted, setWanted] = useState<readonly string[]>([]);
@@ -216,7 +222,8 @@ export function useDocumentNames(ws: string, fallback: string) {
   );
   return (id: string) => {
     const name = names.get(id);
-    if (name === undefined && uploads.data) missed.current.add(id);
+    if (name === undefined && (uploads.data || grantee))
+      missed.current.add(id);
     return name ?? fallback;
   };
 }
