@@ -16,9 +16,19 @@ permissions:
 defaults:
   run:
     working-directory: backend
+# Each job also runs on a Crucible runner while it is tried, as
+# `<job> (crucible)`; a Crucible failure never cancels GitHub's run.
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test${{ matrix.suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: crucible-4vcpu-arm
+            suffix: " (crucible)"
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +43,15 @@ jobs:
         env:
           HELIX_TEST_ROOT_DSN: root:helix@tcp(127.0.0.1:3307)/
   image:
-    runs-on: ubuntu-latest
+    name: image${{ matrix.suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: crucible-4vcpu-arm
+            suffix: " (crucible)"
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - run: docker build --tag helix-foundry/foundry:ci .
