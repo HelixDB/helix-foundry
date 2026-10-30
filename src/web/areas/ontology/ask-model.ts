@@ -855,6 +855,27 @@ export const TOOL_LABELS: Record<string, string> = {
 export const toolLabel = (tool: string) =>
   TOOL_LABELS[tool] ?? (tool ? tool.replace(/_/g, " ") : "A result");
 
+/**
+ * How long a question worked, from its start to its end, as "22s",
+ * "1m 5s" or "1h 2m"; "" while either is unknown, or they disagree.
+ *
+ * @example
+ * workedFor("2026-10-30T10:00:00Z", "2026-10-30T10:00:22.4Z"); // "22s"
+ * workedFor("2026-10-30T10:00:00Z", "2026-10-30T10:01:05Z"); // "1m 5s"
+ * workedFor("2026-10-30T10:00:00Z", "2026-10-30T11:02:00Z"); // "1h 2m"
+ * workedFor("2026-10-30T10:00:00Z", null); // ""
+ */
+export function workedFor(start?: string | null, end?: string | null): string {
+  const ms = start && end ? Date.parse(end) - Date.parse(start) : NaN;
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const s = Math.max(1, Math.round(ms / 1000)),
+    m = Math.floor(s / 60),
+    h = Math.floor(m / 60);
+  if (s < 60) return `${s}s`;
+  if (m < 60) return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+  return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+}
+
 /** The tools whose accepted call ends the question. */
 export const isEnding = (tool: string) =>
   tool === "answer" || tool === "cannot_answer";

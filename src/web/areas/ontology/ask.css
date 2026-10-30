@@ -331,16 +331,51 @@
   padding-top: 2px;
 }
 
-/* Trace: the steps as they happen, between two fine rules and quieter than
-   the answer under them. */
+/* Trace: the steps as they happen, over a fine rule and quieter than the
+   answer under them. */
 .ak-trace {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 4px;
   min-width: 0;
-  padding: 6px 0 10px;
-  border-top: 1px solid var(--hf-border);
+  padding: 2px 0 8px;
   border-bottom: 1px solid var(--hf-border);
+}
+/* Closed, the trace is one line: how long it worked, or the step it is on,
+   and an arrow that opens every step. */
+.ak-trace-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--hf-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ak-trace-toggle:disabled {
+  cursor: default;
+}
+.ak-trace-toggle:hover:not(:disabled) {
+  color: var(--hf-text);
+}
+.ak-trace-chevron {
+  flex: none;
+  color: var(--hf-muted);
+  transition: transform var(--hf-duration) var(--hf-ease);
+}
+.ak-trace-toggle[aria-expanded="true"] .ak-trace-chevron {
+  transform: rotate(90deg);
+}
+.ak-trace-now {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ak-trace-head {
   display: flex;
@@ -355,7 +390,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  color: var(--hf-text-2);
+  color: inherit;
   font-size: var(--hf-text-base);
   font-weight: 500;
 }
@@ -1138,4 +1173,8 @@ button.ak-call-head:hover {
     width: 12px;
     height: 12px;
   }
+}
+/* The step a running question is on, in the trace's closed line. */
+.ak-trace-status > .ak-call-tool {
+  order: 0;
 }
