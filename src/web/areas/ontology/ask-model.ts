@@ -4,7 +4,6 @@ import type {
   AskEvent,
   AskFailure,
   AskResult,
-  AskUsage,
   AskVisual,
   CitationTarget,
   FoundryQuestion,
@@ -662,18 +661,6 @@ export const FAILURE_TEXT: Record<AskFailure, string> = {
   store_failed: "The graph couldn’t be read.",
 };
 
-/**
- * What a question spent, in a line.
- *
- * @example
- * usageText({ input: 6100, cache_read: 12000, cache_write: 0, output: 1450, usd: 0.0734 }); // "$0.07 · 18,100 tokens in (12,000 cached), 1,450 out"
- */
-export function usageText(u: AskUsage): string {
-  const n = (x: number) => x.toLocaleString("en-US");
-  const cached = u.cache_read + u.cache_write;
-  return `$${u.usd.toFixed(2)} · ${n(u.input + cached)} tokens in${cached ? ` (${n(cached)} cached)` : ""}, ${n(u.output)} out`;
-}
-
 // ---------------------------------------------------------------- the stream
 
 /**
@@ -854,6 +841,27 @@ export const TOOL_LABELS: Record<string, string> = {
 };
 export const toolLabel = (tool: string) =>
   TOOL_LABELS[tool] ?? (tool ? tool.replace(/_/g, " ") : "A result");
+
+/**
+ * How long a question worked, from its start to its end, as "22s",
+ * "1m 5s" or "1h 2m"; "" while either is unknown, or they disagree.
+ *
+ * @example
+ * workedFor("2026-10-30T10:00:00Z", "2026-10-30T10:00:22.4Z"); // "22s"
+ * workedFor("2026-10-30T10:00:00Z", "2026-10-30T10:01:05Z"); // "1m 5s"
+ * workedFor("2026-10-30T10:00:00Z", "2026-10-30T11:02:00Z"); // "1h 2m"
+ * workedFor("2026-10-30T10:00:00Z", null); // ""
+ */
+export function workedFor(start?: string | null, end?: string | null): string {
+  const ms = start && end ? Date.parse(end) - Date.parse(start) : NaN;
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const s = Math.max(1, Math.round(ms / 1000)),
+    m = Math.floor(s / 60),
+    h = Math.floor(m / 60);
+  if (s < 60) return `${s}s`;
+  if (m < 60) return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+  return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+}
 
 /** The tools whose accepted call ends the question. */
 export const isEnding = (tool: string) =>

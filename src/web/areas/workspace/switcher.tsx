@@ -11,6 +11,7 @@ import {
   MenuLabel,
   MenuSeparator,
 } from "../../kit";
+import { trackEvent } from "../../analytics";
 import { paths } from "../../paths";
 import type { ShellWorkspace } from "../../ui";
 import { createWorkspace, slugify } from "../../workspaces";
@@ -47,6 +48,7 @@ export function CreateWorkspaceDialog({
           setError("");
           try {
             const w = await createWorkspace(name);
+            trackEvent("workspace_created");
             await qc.invalidateQueries({ queryKey: ["whoami"] });
             await qc.invalidateQueries({ queryKey: ["workspaces"] });
             onCreated(w.id);

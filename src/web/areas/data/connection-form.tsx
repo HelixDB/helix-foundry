@@ -4,6 +4,7 @@ import type {
   ConnectorDiscovery,
   S3ConnectorSetup,
 } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { Select, Tag, connectorLabel } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { ProGate, isProRequired } from "../workspace/pro-gate";
@@ -46,6 +47,11 @@ import {
 // Granola writes each note as a document, and its transcript too when
 // Transcripts is on: a choice of what to sync, not of what the key reads,
 // so it leaves a test standing.
+//
+// A Google Workspace key is a service account's JSON key, pasted whole:
+// write-only like every credential, so an edit that leaves it blank keeps
+// the stored one. A Notion test lists each shared database as a table of
+// its own, with its columns and first rows.
 
 // Kinds whose credential is one API key: its field's label and placeholder.
 const keyFields: Record<
@@ -147,7 +153,9 @@ export function ConnectionForm({
   const tables = discovered?.tables || [],
     names = tables.map((t) => t.name),
     related = relatedTables(tables, chosen),
-    unavailable = discovered?.unavailable || [];
+    unavailable = discovered?.unavailable || [],
+    // Entries the source says why of ("name: reason") read as a list.
+    reasons = unavailable.some((u) => u.includes(": "));
   const selection = choice
     ? discovered
       ? tableSelection(names, chosen)
@@ -216,6 +224,7 @@ export function ConnectionForm({
         name: name.trim() || suggestedName(form),
         config,
       });
+      trackEvent("connector_created", { kind: form.kind });
       // The first sync starts with the connection; a refusal is reported but
       // the connection is kept.
       await syncConnector(id, created.connector.id).catch((e) =>
@@ -299,6 +308,91 @@ export function ConnectionForm({
               </span>
             </label>
           </div>
+        )}
+        {form.kind === "slack" && (
+          <>
+            <label className="span2">
+              Bot token
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                required={credentialRequired}
+                placeholder={
+                  secretHint ? `Leave blank to keep ${secretHint}` : "xoxb-…"
+                }
+                value={form.botToken}
+                onChange={(e) => update("botToken", e.target.value)}
+              />
+            </label>
+            <label>
+              Days of history
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={form.historyDays}
+                onChange={(e) => update("historyDays", e.target.value)}
+              />
+            </label>
+          </>
+        )}
+        {form.kind === "notion" && (
+          <label className="span2">
+            Integration secret
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              required={credentialRequired}
+              placeholder={
+                secretHint ? `Leave blank to keep ${secretHint}` : "ntn_…"
+              }
+              value={form.token}
+              onChange={(e) => update("token", e.target.value)}
+            />
+          </label>
+        )}
+        {form.kind === "google" && (
+          <>
+            <label className="span2">
+              Service account JSON key
+              <textarea
+                autoComplete="off"
+                spellCheck={false}
+                required={credentialRequired}
+                placeholder={
+                  secretHint
+                    ? `Leave blank to keep ${secretHint}`
+                    : '{"type": "service_account", …}'
+                }
+                value={form.serviceAccountKey}
+                onChange={(e) => update("serviceAccountKey", e.target.value)}
+              />
+            </label>
+            <label className="span2">
+              Acts as
+              <input
+                type="email"
+                required
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="admin@example.com"
+                value={form.subject}
+                onChange={(e) => update("subject", e.target.value)}
+              />
+            </label>
+            <label>
+              Days of past events
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={form.eventDays}
+                onChange={(e) => update("eventDays", e.target.value)}
+              />
+            </label>
+          </>
         )}
         {form.kind === "github" && (
           <>
@@ -622,21 +716,41 @@ export function ConnectionForm({
             <legend>{label} objects this key can read</legend>
             <div className="table-selection" role="list">
               {tables.map((t) => (
-                <div className="selection-row" key={t.name} role="listitem">
+                <div
+                  className={
+                    "selection-row" + (t.preview?.length ? " dc-file-row" : "")
+                  }
+                  key={t.name}
+                  role="listitem"
+                >
                   <span className="checkbox">
                     <span>
                       {t.name}
                       <small>{keySummary(t)}</small>
                     </span>
                   </span>
+                  {/* A source with tables of its own making, such as a
+                      Notion database, shows their columns and first rows. */}
+                  {!!t.preview?.length && <FileTableDetails table={t} />}
                 </div>
               ))}
             </div>
             <p className="muted small">
               Every object listed is synced.
-              {!!discovered.unavailable?.length &&
-                ` This key cannot read: ${discovered.unavailable.join(", ")}.`}
+              {!!unavailable.length &&
+                !reasons &&
+                ` This key cannot read: ${unavailable.join(", ")}.`}
             </p>
+            {reasons && (
+              <div className="muted small">
+                Helix can’t read:
+                <ul className="dc-unavailable">
+                  {unavailable.map((u) => (
+                    <li key={u}>{u}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </fieldset>
         )}
         {!!discovered?.warnings?.length && (

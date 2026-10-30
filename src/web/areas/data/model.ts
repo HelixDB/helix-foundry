@@ -13,11 +13,13 @@ import type {
   FoundryDocument,
   FoundryDocumentSet,
   GitHubConnectorConfig,
+  GoogleWorkspaceConnectorConfig,
   GranolaConnectorConfig,
   ListFoundryEventBatchesResponse,
   PostHogConnectorConfig,
   S3ConnectorConfig,
   S3ConnectorSetup,
+  SlackConnectorConfig,
   SyncedTable,
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
@@ -40,6 +42,9 @@ export const KINDS: readonly ConnectorKindName[] = [
   "linear",
   "calcom",
   "granola",
+  "slack",
+  "notion",
+  "google",
   "postgres",
   "mysql",
   "s3",
@@ -609,6 +614,23 @@ export type ConnectionForm =
       transcripts: boolean;
     }
   | {
+      kind: "slack";
+      botToken: string;
+      historyDays: string;
+    }
+  | {
+      kind: "notion";
+      token: string;
+    }
+  | {
+      kind: "google";
+      // The service account's JSON key, as pasted.
+      serviceAccountKey: string;
+      // The Workspace user's email the service account acts as.
+      subject: string;
+      eventDays: string;
+    }
+  | {
       kind: "github";
       token: string;
       // owner/name or repository URLs, one per line or comma-separated;
@@ -660,6 +682,12 @@ export function emptyForm(kind: CredentialKind): ConnectionForm {
       return { kind, apiKey: "" };
     case "granola":
       return { kind, apiKey: "", transcripts: false };
+    case "slack":
+      return { kind, botToken: "", historyDays: "90" };
+    case "notion":
+      return { kind, token: "" };
+    case "google":
+      return { kind, serviceAccountKey: "", subject: "", eventDays: "90" };
     case "github":
       return { kind, token: "", repos: "", reviewDays: "90" };
     case "posthog":
@@ -751,6 +779,21 @@ export function formFromConfig(
         transcripts: !!(config as { granola: GranolaConnectorConfig }).granola
           .transcripts,
       };
+    case "slack":
+      return {
+        ...form,
+        historyDays: String(
+          (config as { slack: SlackConnectorConfig }).slack.historyDays || 90,
+        ),
+      };
+    case "google": {
+      const g = (config as { google: GoogleWorkspaceConnectorConfig }).google;
+      return {
+        ...form,
+        subject: g.subject || "",
+        eventDays: String(g.eventDays || 90),
+      };
+    }
     case "postgres":
     case "mysql": {
       const d = databaseOf(config)!;
@@ -831,6 +874,23 @@ export function toConfig(
           transcripts: form.transcripts,
         },
       };
+    case "slack":
+      return {
+        slack: {
+          botToken: form.botToken.trim(),
+          historyDays: Number(form.historyDays) || 0,
+        },
+      };
+    case "notion":
+      return { notion: { token: form.token.trim() } };
+    case "google":
+      return {
+        google: {
+          serviceAccountKey: form.serviceAccountKey.trim(),
+          subject: form.subject.trim(),
+          eventDays: Number(form.eventDays) || 0,
+        },
+      };
     case "github":
       return {
         github: {
@@ -907,7 +967,12 @@ export function hasCredential(form: ConnectionForm) {
         ? !!form.roleArn.trim()
         : !!form.secretAccessKey.trim();
     case "github":
+    case "notion":
       return !!form.token.trim();
+    case "slack":
+      return !!form.botToken.trim();
+    case "google":
+      return !!form.serviceAccountKey.trim();
     default:
       return !!form.apiKey.trim();
   }
@@ -947,6 +1012,12 @@ export function suggestedName(form: ConnectionForm) {
       return "Cal.com";
     case "granola":
       return "Granola";
+    case "slack":
+      return "Slack";
+    case "notion":
+      return "Notion";
+    case "google":
+      return "Google Workspace";
     case "postgres":
       return form.database.trim() || "PostgreSQL";
     case "mysql":

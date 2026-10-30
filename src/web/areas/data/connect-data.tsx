@@ -32,6 +32,9 @@ const appChoices: [ConnectorKindName, string, string][] = [
   ["linear", "Linear", "Issues, projects and cycles"],
   ["calcom", "Cal.com", "Bookings and event types"],
   ["granola", "Granola", "Meeting notes and attendees"],
+  ["slack", "Slack", "Channels, messages and people"],
+  ["notion", "Notion", "Pages and databases"],
+  ["google", "Google Workspace", "Drive docs, calendars and people"],
 ];
 const databaseChoices: [ConnectorKindName, string, string][] = [
   ["postgres", "PostgreSQL", "Import tables from your database."],

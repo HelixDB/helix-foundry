@@ -80,36 +80,53 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
   await loadContract(page);
 
   const question = await ask(page, "Who signed the services agreement?");
-  // The steps stream in: first the engine's read of what the load holds,
-  // its summary only (its event carries no result, and its input is
-  // empty); then each query as a path, with its JSON. A lookup the engine
-  // can't run yet fails, and says why.
+  // The steps stream in as tool calls: each the tool's name, what it was
+  // asked in words and what it returned, opening on its Input and Output.
+  // First the engine's read of what the load holds, its summary only (its
+  // event carries no result, and its input is empty), so nothing to open;
+  // then each query as a path. A lookup the engine can't run yet fails, and
+  // says why.
+  // Closed, the trace is one line: the step the question is on while it
+  // runs; Show the steps opens every step.
+  const status = question.getByRole("status");
+  await expect(status.locator(".ak-call-tool")).toBeVisible();
+  await expect(question.getByRole("list", { name: "Steps" })).toHaveCount(0);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   const steps = question.getByRole("list", { name: "Steps" });
+  const step = (name: string | RegExp) =>
+    steps.getByRole("listitem", {
+      name:
+        typeof name === "string" ? new RegExp(`^Step \\d+: ${name}$`) : name,
+    });
   const profile = steps.getByRole("listitem").first();
-  await expect(profile).toContainText(
-    /Read what the load holds · \d+ of \d+ reads/,
+  await expect(profile).toHaveAccessibleName(
+    "Step 1: Read what the load holds",
   );
-  await expect(profile.getByText("JSON", { exact: true })).toHaveCount(0);
-  await expect(profile.getByText("Result", { exact: true })).toHaveCount(0);
+  await expect(profile).toContainText(/^load_profile/);
+  await expect(profile).toContainText(/\d+ of \d+ reads$/);
+  await expect(profile.getByRole("button")).toHaveCount(0);
   await expect(profile.locator("pre")).toHaveCount(0);
   const lookup = steps.getByRole("listitem").nth(1);
-  await expect(lookup).toContainText(
-    "Found entities · Failed: can't look entities up by identifier yet",
-  );
+  await expect(lookup).toContainText("find_entities");
   await expect(lookup).toContainText(
     "Customer with the identifier “cus_GLOBEX01”",
   );
-  await expect(lookup).toHaveClass(/is-error/);
-  await expect(question.getByRole("status")).toContainText("Answering");
-  const queried = steps
-    .getByRole("listitem")
-    .filter({ hasText: "Queried" })
-    .first();
-  await expect(queried.getByLabel("Query")).toContainText(
-    "Contract → signed_with → Customer",
+  await expect(lookup).toContainText(
+    "Failed: can't look entities up by identifier yet",
   );
-  await queried.getByText("JSON").click();
-  await expect(queried.locator("pre")).toContainText('"via": "signed_with"');
+  await expect(lookup).toHaveClass(/is-error/);
+  await expect(status.locator(".ak-call-tool")).toBeVisible();
+  const queried = step("Queried").first();
+  await expect(queried).toContainText("Contract → signed_with → Customer");
+  await expect(queried.getByRole("region", { name: "Input" })).toHaveCount(0);
+  await queried.getByRole("button").click();
+  await expect(queried.getByRole("button")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(
+    queried.getByRole("region", { name: "Input" }).getByLabel("Query"),
+  ).toContainText("Contract → signed_with → Customer");
 
   // The answer: plain text and numbered chips; the model's image, link and
   // emphasis are dropped, its words kept.
@@ -135,58 +152,57 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
     "The counts in step 9",
     "The query in step 10",
   ]);
-  // The graph query the model wrote shows as its code and its summary,
-  // with no Result: its event carries none.
-  const graph = steps
-    .getByRole("listitem")
-    .filter({ hasText: "Queried the graph directly" });
-  await expect(graph).toContainText(
-    "Queried the graph directly · a value" + "At most 50 results",
-  );
+  // The graph query the model wrote opens on its code, with no Output:
+  // its event carries none.
+  const graph = step("Queried the graph directly");
+  await expect(graph).toContainText("helix_query");
+  await expect(graph).toContainText("At most 50 results");
+  await expect(graph).toContainText(/a value$/);
+  await graph.getByRole("button").click();
   await expect(graph.getByLabel("Graph query")).toContainText(
     '"string": "Contract"',
   );
-  await expect(graph.getByText("JSON", { exact: true })).toHaveCount(0);
-  await expect(graph.getByText("Result", { exact: true })).toHaveCount(0);
+  await expect(graph.getByRole("region", { name: "Output" })).toHaveCount(0);
   // Each step's input reads in words, never as the model's handles; its
-  // JSON stays behind a disclosure.
-  const read = steps
-    .getByRole("listitem")
-    .filter({ hasText: "Read the evidence" });
+  // arguments show once it is opened.
+  const read = step("Read the evidence");
   await expect(read).toContainText(
-    "Read the evidence · 2 items" +
-      "For Contract Master services agreement signed_with Customer Globex Corporation",
+    "For Contract Master services agreement signed_with Customer Globex Corporation",
   );
-  await expect(read.locator(".ak-step-input")).not.toContainText("n1");
-  await read.getByText("JSON").click();
-  await expect(read.locator("pre")).toContainText('"subject": "n2"');
-  await expect(
-    steps.getByRole("listitem").filter({ hasText: "Explained" }),
-  ).toContainText(
+  await expect(read).toContainText(/2 items$/);
+  await expect(read.locator(".ak-call-what")).not.toContainText("n1");
+  await read.getByRole("button").click();
+  await expect(read.getByLabel("Arguments")).toContainText('"subject": "n2"');
+  await expect(step("Explained")).toContainText(
     "Why co_signed holds for Customer Globex Corporation and Customer Initech LLC",
   );
   // The first answer was refused: the page says why in its own words, the
-  // engine's words to the model behind a disclosure; the second answered,
-  // its blocks not repeated in the steps.
-  const refused = steps
-    .getByRole("listitem")
-    .filter({ hasText: "Answer · Refused" });
+  // engine's words to the model once the call is opened; the second
+  // answered, its blocks not repeated in the steps.
+  const refused = step("Answer");
+  await expect(refused).toContainText("Refused");
   await expect(refused).toContainText(
     "An answer cited something no step had shown; the agent corrected it.",
   );
-  await expect(refused.locator("pre").first()).toBeHidden();
-  await refused.getByText("What the agent was told").click();
-  await expect(refused.locator("pre").first()).toContainText(
-    "citation c2: e4 didn't show",
-  );
+  await expect(refused.locator("pre")).toHaveCount(0);
+  await refused.getByRole("button").click();
+  await expect(
+    refused.getByRole("region", { name: "What the agent was told" }),
+  ).toContainText("citation c2: e4 didn't show");
   const answered = steps.getByRole("listitem").last();
   await expect(answered).toHaveText("Answered");
+  // Ended, its line says how long it worked; the steps stay open until
+  // closed.
+  await expect(
+    question.getByRole("status").filter({ hasText: /^Worked for/ }),
+  ).toHaveText(/^Worked for \d+s$/);
+  await question.getByRole("button", { name: "Hide the steps" }).click();
+  await expect(steps).toHaveCount(0);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   await expect(
     question.getByRole("link", { name: "Draft a new version with this" }),
   ).toHaveCount(0);
-  await expect(
-    steps.getByRole("listitem").filter({ hasText: "Read rule breaks" }),
-  ).toContainText("5 records, more");
+  await expect(step("Read rule breaks")).toContainText("5 records, more");
   // Spend shows against the questions budget, under the threads, with the
   // limits behind it.
   const budget = page
@@ -386,12 +402,12 @@ test("shows query results after the paragraphs that introduce them, as charts an
   });
   await expect(ranked).toHaveClass(/is-lit/);
 
-  // Each query step's Result shows its output the same way: the contract's
+  // Each query step's Output shows its result the same way: the contract's
   // rows, the date a document gave shown as text.
   const signed = steps
     .getByRole("listitem")
     .filter({ hasText: "Contract → signed_with → Customer" });
-  await signed.getByText("Result", { exact: true }).click();
+  await signed.getByRole("button").click();
   const result = signed.getByRole("grid", {
     name: "Contract → signed_with → Customer",
   });
@@ -498,11 +514,12 @@ test("reads an answer from before visuals as text, its queries' results not kept
     timeout: 15_000,
   });
   await expect(answer.getByRole("figure")).toHaveCount(0);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   const signed = question
     .getByRole("list", { name: "Steps" })
     .getByRole("listitem")
     .filter({ hasText: "Contract → signed_with → Customer" });
-  await signed.getByText("Result", { exact: true }).click();
+  await signed.getByRole("button").click();
   await expect(signed).toContainText("Its result wasn’t kept with the answer.");
 });
 
@@ -525,6 +542,10 @@ test("drafts a new version from a question the ontology can't answer", async ({
   });
   await expect(question).toContainText("It lacks: A signed_by link");
   // The ending call shows as the callout, not its input.
+  await expect(
+    question.getByRole("status").filter({ hasText: /^Worked for/ }),
+  ).toHaveText(/^Worked for \d+s · Couldn’t answer$/);
+  await question.getByRole("button", { name: "Show the steps" }).click();
   await expect(
     question.getByRole("list", { name: "Steps" }).getByRole("listitem").last(),
   ).toHaveText("Couldn’t answer");
@@ -607,15 +628,15 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
     "Which customers are under contract, and which contracts are they signed with?",
     "What is each customer under contract billed?",
   ]);
+  // A click asks it at once.
   await suggestions
     .getByRole("button", {
       name: "What is each customer under contract billed?",
     })
     .click();
-  await expect(box).toHaveValue("What is each customer under contract billed?");
-  await expect(box).toBeFocused();
-  await form.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(page).toHaveURL(/\?thread=q_/);
+  // Its steps open while they stream; the conversation still follows them.
+  await page.getByRole("button", { name: "Show the steps" }).click();
   // The bar holds the thread's title; the panel lists it today.
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "What is each customer under contract billed?",
@@ -667,23 +688,23 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
   await expect(
     page.getByRole("button", { name: "Jump to latest" }),
   ).toHaveCount(0);
-  // A disclosure opened at the end stays where it is: the conversation
-  // stops following, and offers the way back.
-  const json = page
+  // A step opened at the end stays where it is: the conversation stops
+  // following, and offers the way back.
+  const call = page
     .getByRole("list", { name: "Steps" })
-    .getByText("JSON", { exact: true })
+    .getByRole("button")
     .last();
-  await expect(json).toBeInViewport();
-  const at = (await json.boundingBox())!.y;
-  await json.click();
-  await expect(json.locator("xpath=..").locator("pre")).toBeVisible();
+  await expect(call).toBeInViewport();
+  const at = (await call.boundingBox())!.y;
+  await call.click();
+  await expect(call).toHaveAttribute("aria-expanded", "true");
   await expect(
     page.getByRole("button", { name: "Jump to latest" }),
   ).toBeVisible();
-  expect((await json.boundingBox())!.y).toBeCloseTo(at, 0);
+  expect((await call.boundingBox())!.y).toBeCloseTo(at, 0);
 
-  // A version no page has read isn't read for suggestions: a new tab's
-  // new thread has none.
+  // Once something was asked, a version no page has read isn't read for
+  // suggestions: a new tab's new thread has none.
   await page.goto("/ask/ont_acme_contracts?new=1");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "What do you want to know about Customer contracts?",

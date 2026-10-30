@@ -10,8 +10,9 @@ import {
 // dev stamp's, which has Acme Corp's database (next.config.ts), so the sample
 // opens its own page: it connects the database over TLS, uploads the
 // documents, shows the goal and the ontology made from its ready-made draft
-// on a new Helix database, loads it, and offers its questions. A reload
-// carries on with what it made, and nothing is made twice.
+// on a new Helix database, loads it, asks its first question and answers
+// it, then offers its other questions and the user's own data. A reload
+// carries on with what it made, and nothing is made or asked twice.
 
 test("walks a new workspace through the sample company, from its database to Ask", async ({
   page,
@@ -34,7 +35,9 @@ test("walks a new workspace through the sample company, from its database to Ask
     page.getByRole("heading", { name: /Foundry Pro/ }),
   ).toContainText("Active", { timeout: 15_000 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Use the sample" }).click();
+  await page
+    .getByRole("button", { name: "See it on a sample company (1 min)" })
+    .click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
     page.getByRole("heading", {
@@ -50,12 +53,28 @@ test("walks a new workspace through the sample company, from its database to Ask
     timeout: 30_000,
   });
   await page.reload();
-  const ask = page.getByRole("link", { name: "Ask a question" });
-  await expect(ask).toBeVisible({ timeout: 60_000 });
-  await ask.click();
+  // Once loaded, the tour asks the draft's first question itself and shows
+  // how it ended, as Ask does (the mock can't answer this one); the others
+  // are a click away, then the user's own data.
+  const asked = steps.getByRole("article", { name: /^Question: / });
+  await expect(asked).toBeVisible({ timeout: 60_000 });
   await expect(
-    page.getByRole("group", { name: "Suggested questions" }),
-  ).toBeVisible();
+    steps.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByRole("link", { name: "Connect your own data" }),
+  ).toHaveAttribute("href", "/ontology/new");
+  const others = steps.getByRole("group", { name: "Suggested questions" });
+  await expect(others.getByRole("button").first()).toBeEnabled();
+  // A reload shows the same question: nothing is asked twice.
+  const first = (await asked.getAttribute("aria-label"))!;
+  await page.reload();
+  await expect(asked).toHaveCount(1, { timeout: 30_000 });
+  await expect(asked).toHaveAttribute("aria-label", first);
+  const next = (await others.getByRole("button").first().textContent())!;
+  await others.getByRole("button", { name: next }).click();
+  await expect(page).toHaveURL(/\/ask\/[^?]+\?thread=q_/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(next);
 
   // One Acme Corp database in Data, and one set of its documents.
   await page.goto("/data");

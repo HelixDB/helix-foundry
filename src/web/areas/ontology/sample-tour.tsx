@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   useQuery,
   useQueryClient,
@@ -15,6 +15,7 @@ import {
   formatNumber,
   plural,
 } from "../../kit";
+import { trackEvent } from "../../analytics";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import {
@@ -29,21 +30,28 @@ import {
   documentsChanged,
   uploadDocument,
 } from "../documents/documents-api";
+import { sentence } from "../../api";
 import { fileRead } from "../documents/model";
 import { AiGate, useAiConfigured } from "../workspace/ai-gate";
+import { AgentSetup } from "./agent-setup";
+import { QuestionCard } from "./ask";
 import { askSuggestions } from "./ask-model";
 import { createDatabase, createProject, databasesQuery } from "./databases-api";
 import { agentGraph, newDatabase, readAgentBundle, slugify } from "./model";
 import { Callout, FlowStep, canManage } from "./parts";
 import {
+  askQuestion,
   createLoad,
   createOntology,
   generateOntology,
   isLive,
+  isLiveQuestion,
   ontologyQueries,
+  questionQueries,
   setCurrentVersion,
 } from "./queries";
 import { SAMPLE, sampleDatabaseConfig } from "./sample";
+import { InOntology } from "./scope";
 import { OntologySchema } from "./suggested-ontology";
 
 // /ontology/sample: the sample company, Acme Corp, step by step, wherever its
@@ -58,7 +66,9 @@ import { OntologySchema } from "./suggested-ontology";
 //     draft (GenerateOntologyRequest's sample), made current, and drawn;
 //  4. its load: Acme Corp's records and their links written into the
 //     database, then its documents read with AI;
-//  5. Ask, with the draft's questions.
+//  5. Ask: the draft's first question, asked once the load is written, and
+//     its answer; its other questions, which a click asks in Ask;
+//  6. on to the user's own data.
 // Each step finds what an earlier visit made (the connector, the documents,
 // the ontology, its load) before making it, so a reload carries on where it
 // was, and a failure says why with Try again. Each step opens as its work
@@ -204,6 +214,7 @@ export function SampleTour() {
       }, "Reading Acme Corp’s documents");
 
       // 3. The ontology, on a new database, its ready-made draft current.
+      trackEvent("sample_data_ready");
       setStage("ontology");
       let ontology = (
         await qc.fetchQuery({ ...ontologyQueries.list(id), staleTime: 0 })
@@ -284,6 +295,7 @@ export function SampleTour() {
       setMade((m) => ({ ...m, versionId }));
 
       // 4. Its load: the records, their links, then the documents.
+      trackEvent("sample_ontology_ready");
       setStage("load");
       if (
         !(
@@ -331,7 +343,57 @@ export function SampleTour() {
   }).data?.loads?.[0];
   const job = load?.jobs?.[0];
   const loaded = load?.status === "ready" || load?.status === "partial";
+  useEffect(() => {
+    if (loaded) trackEvent("sample_loaded");
+  }, [loaded]);
   const suggestions = useMemo(() => askSuggestions(version), [version]);
+  // 5. Once the load is written, the draft's first question is asked, unless
+  // the ontology has questions already (a reload, or Ask's): the oldest is
+  // the tour's. The others are asked with a click, in Ask.
+  const navigate = useNavigate();
+  const questions = useQuery({
+    ...questionQueries.list(id, o),
+    enabled: loaded,
+  }).data;
+  const ontology = useQuery({
+    ...ontologyQueries.ontology(id, o),
+    enabled: loaded,
+  }).data?.ontology;
+  const first = questions?.questions?.at(-1);
+  const [askError, setAskError] = useState(""),
+    [asking, setAsking] = useState(false);
+  const firstAsked = useRef(false),
+    firstToken = useRef(crypto.randomUUID());
+  const ask = async (question: string, clientToken: string) => {
+    setAskError("");
+    setAsking(true);
+    try {
+      const { question: q } = await askQuestion(id, o, {
+        loadId: load!.id,
+        question,
+        clientToken,
+      });
+      await qc.invalidateQueries({
+        queryKey: [id, "ontology", o, "questions"],
+      });
+      return q;
+    } catch (e) {
+      setAskError(sentence((e as Error).message || "it couldn’t be asked"));
+    } finally {
+      setAsking(false);
+    }
+  };
+  useEffect(() => {
+    if (!loaded || !load || !questions || !suggestions[0] || firstAsked.current)
+      return;
+    firstAsked.current = true;
+    if (!questions.questions?.length)
+      void ask(suggestions[0], firstToken.current);
+  }, [loaded, load, questions, suggestions]);
+  const answered = !!first && !isLiveQuestion(first);
+  useEffect(() => {
+    if (answered) trackEvent("sample_answered");
+  }, [answered]);
   // What the load made of each document: read, or failed and why.
   const extractions = (
     useQuery({ ...documentQueries.list(id, o), enabled: loaded }).data
@@ -495,24 +557,96 @@ export function SampleTour() {
         <FlowStep
           number={5}
           title="Ask the Analyst"
-          text="Ask about Acme Corp in your own words."
-          state={loaded ? "current" : "upcoming"}
+          text="Questions about Acme Corp in plain words, answered from what the load wrote, with the records and documents each answer comes from."
+          state={
+            answered
+              ? "done"
+              : loaded && (first || asking)
+                ? "running"
+                : loaded
+                  ? "current"
+                  : "upcoming"
+          }
+          summary="Questions about Acme Corp in plain words, answered from what the load wrote, with the records and documents each answer comes from."
+          kept
         >
-          {suggestions.length > 0 && (
+          {first && ontology ? (
+            <div className="on-tour-answer">
+              <InOntology ontology={ontology}>
+                <QuestionCard question={first} budget={questions?.budget} />
+              </InOntology>
+            </div>
+          ) : askError ? (
+            <p className="hf-form-error" role="alert">
+              {askError}
+            </p>
+          ) : (
+            suggestions[0] && (
+              <p className="on-muted">Asking “{suggestions[0]}”…</p>
+            )
+          )}
+          {answered && suggestions.length > 1 && (
             <>
-              <p className="on-muted">For example:</p>
-              <ul className="on-tour-questions">
-                {suggestions.map((q) => (
-                  <li key={q}>{q}</li>
+              <p className="on-muted">Ask another:</p>
+              <div
+                className="ak-suggestions on-tour-asks"
+                role="group"
+                aria-label="Suggested questions"
+              >
+                {suggestions.slice(1).map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    className="ak-suggestion"
+                    disabled={asking}
+                    onClick={() =>
+                      void ask(q, crypto.randomUUID()).then(
+                        (asked) =>
+                          asked &&
+                          navigate(
+                            paths.ask(o, {
+                              thread: asked.threadId || asked.id,
+                            }),
+                          ),
+                      )
+                    }
+                  >
+                    {q}
+                  </button>
                 ))}
-              </ul>
+              </div>
             </>
           )}
           <span className="on-card-actions">
-            <ButtonLink variant="primary" to={paths.ask(o)}>
-              Ask a question
+            <ButtonLink
+              to={paths.ask(o, { new: true })}
+              onClick={() => trackEvent("sample_ask_opened")}
+            >
+              Ask your own question
             </ButtonLink>
             <ButtonLink to={paths.explore(o)}>See the records</ButtonLink>
+          </span>
+        </FlowStep>
+        <FlowStep
+          number={6}
+          title="Now connect your own data"
+          text="Your databases, apps and documents, made into an ontology the same way."
+          state={answered ? "current" : "upcoming"}
+        >
+          <p className="on-muted">
+            Pick what to draw from and say what it should serve. Foundry’s agent
+            drafts the ontology, loads it, and emails you when it’s ready to
+            ask, in a few minutes.
+          </p>
+          <span className="on-card-actions">
+            <ButtonLink
+              variant="primary"
+              to={paths.newOntology()}
+              onClick={() => trackEvent("sample_own_data_clicked")}
+            >
+              Connect your own data
+            </ButtonLink>
+            <AgentSetup compact />
           </span>
         </FlowStep>
       </ol>

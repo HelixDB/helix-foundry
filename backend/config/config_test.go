@@ -17,7 +17,8 @@ func helixClaude() AIDefault {
 	}}
 }
 
-// every runs each of Foundry's roles.
+// every runs each of Foundry's roles but foundry-notify-worker, which needs
+// the site's origin (TestFoundryNotifyValidate).
 var every = Roles{API: true, Read: true, Events: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true,
 	AskWorker: true, EnrichmentWorker: true}
 
@@ -461,4 +462,51 @@ func TestFoundryAICompatibleConfig(t *testing.T) {
 		t.Fatalf("a custom server as hosted Foundry's default: %v", err)
 	}
 
+}
+
+// The notify worker links into the site, so it needs the site's origin,
+// checked only where it runs; its windows must make sense.
+func TestFoundryNotifyValidate(t *testing.T) {
+	notify := Roles{NotifyWorker: true}
+	valid := func() Config {
+		c := Defaults()
+		c.Foundry.Notify.SiteURL = "https://foundry.helix-db.com"
+		return c
+	}
+	if c := valid(); c.Validate(notify) != nil {
+		t.Fatalf("defaults with a site: %v", c.Validate(notify))
+	}
+	if d := Defaults().Foundry.Notify; d.PollInterval != 30*time.Second || d.FollowUpAfter != 24*time.Hour || d.FollowUpWindow != 72*time.Hour ||
+		d.MaxAttempts != 5 || d.SiteURL != "" {
+		t.Fatalf("defaults = %+v", d)
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*NotifyConfig)
+		want   string
+	}{
+		"no site":            {func(n *NotifyConfig) { n.SiteURL = "" }, "foundry.notify.site_url must be set"},
+		"a site with a path": {func(n *NotifyConfig) { n.SiteURL = "https://foundry.helix-db.com/app" }, "foundry.notify.site_url"},
+		"a trailing slash":   {func(n *NotifyConfig) { n.SiteURL = "https://foundry.helix-db.com/" }, "must be an origin"},
+		"plain HTTP":         {func(n *NotifyConfig) { n.SiteURL = "http://foundry.helix-db.com" }, "HTTPS"},
+		"no poll":            {func(n *NotifyConfig) { n.PollInterval = 0 }, "poll_interval"},
+		"no attempt":         {func(n *NotifyConfig) { n.MaxAttempts = 0 }, "max_attempts"},
+		"no wait":            {func(n *NotifyConfig) { n.FollowUpAfter = 0 }, "follow_up_after"},
+		"a shut window":      {func(n *NotifyConfig) { n.FollowUpWindow = n.FollowUpAfter }, "follow_up_window"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := valid()
+			tc.mutate(&c.Foundry.Notify)
+			if err := c.Validate(notify); err == nil || !contains(err.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+			if err := c.Validate(Roles{}); err != nil {
+				t.Fatalf("checked without its role: %v", err)
+			}
+		})
+	}
+	c := valid()
+	c.Foundry.Notify.SiteURL = "http://localhost:3000"
+	if err := c.Validate(notify); err != nil {
+		t.Fatalf("a local site: %v", err)
+	}
 }

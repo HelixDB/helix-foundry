@@ -11,6 +11,8 @@ It opens in your first workspace, **My workspace**, made as the install first st
 
 **Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data.
 
+**No analytics.** A local build loads no tracker and sends no usage data anywhere; only the hosted site, foundry.helix-db.com, records product analytics.
+
 **An install set up with `setup.sh`** (before 0.1.1) keeps its `local/.env`: its first start of this version copies the `FOUNDRY_*` secrets there into the volume, so MySQL's password and the key that sealed its credentials still match. Keep running it from `local/` if its `.env` sets `COMPOSE_PROFILES` or `COMPOSE_FILE` (Ollama in Docker, the GPU file): Compose reads those from the project's own `.env` only.
 
 **Overrides** are optional, in `local/.env` (copy [`.env.example`](.env.example)): Compose reads it for this file whether it runs from the root or from here. Each is below.
@@ -63,7 +65,7 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 ## Images
 
-`docker compose up` pulls Foundry's release images: `foundry-site` and `foundry` 0.1.1, and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
 
 ## Connecting databases
 

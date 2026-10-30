@@ -81,13 +81,15 @@ type stream struct {
 	held map[string]model.ConnectorDocument
 	// pause is what the stream does this attempt under its kind's allowance.
 	pause pauseState
-	// reading is how its table is being read; offers, seen and wanted are
-	// that read's: the offers counted against the cap, the ids offered
-	// within it, and those Want said yes to that Put has not taken.
+	// reading is how its table is being read; offers, seen, wanted and
+	// dropped are that read's: the offers counted against the cap, the ids
+	// offered within it, those Want said yes to that Put has not taken, and
+	// those the kind took back with Drop.
 	reading readMode
 	offers  int
 	seen    map[string]bool
 	wanted  map[string]bool
+	dropped map[string]bool
 	batch   batch
 }
 
@@ -316,7 +318,7 @@ func (d *documents) begin(ctx context.Context, table string, mode readMode) erro
 		if err := d.flush(ctx, s); err != nil {
 			return err
 		}
-		s.reading, s.offers, s.seen, s.wanted = mode, 0, map[string]bool{}, map[string]bool{}
+		s.reading, s.offers, s.seen, s.wanted, s.dropped = mode, 0, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	}
 	return nil
 }
@@ -522,6 +524,25 @@ func older(a, b model.ConnectorDocument) int {
 	return cmp.Or(a.At.Compare(b.At), strings.Compare(b.ExternalID, a.ExternalID))
 }
 
+// Drop takes back a document Want said yes to: finish removes the one held,
+// in a full read or a change read alike.
+func (d *documents) Drop(name, externalID string) error {
+	if d.err != nil {
+		return d.err
+	}
+	s, err := d.reading(name)
+	if err != nil {
+		return d.fail(err)
+	}
+	if !s.wanted[externalID] {
+		return d.fail(&connector.DocumentError{Stream: name, ExternalID: externalID, Reason: "Want did not say yes to it"})
+	}
+	delete(s.wanted, externalID)
+	s.dropped[externalID] = true
+	d.count("dropped", 1)
+	return nil
+}
+
 func (d *documents) Held(name, externalID string) (string, bool) {
 	s := d.streams[name]
 	if s == nil {
@@ -620,7 +641,7 @@ func (d *documents) finish(ctx context.Context, table string, key []string, pair
 		if s.pause != paused {
 			rows := map[[16]byte]string{}
 			for externalID := range s.held {
-				if s.reading == readingFull && !s.seen[externalID] {
+				if s.dropped[externalID] || s.reading == readingFull && !s.seen[externalID] {
 					gone = append(gone, externalID)
 					continue
 				}
@@ -667,7 +688,7 @@ func (d *documents) finish(ctx context.Context, table string, key []string, pair
 			}
 			s.pause = unpaused
 		}
-		s.reading, s.offers, s.seen, s.wanted = notReading, 0, nil, nil
+		s.reading, s.offers, s.seen, s.wanted, s.dropped = notReading, 0, nil, nil, nil
 	}
 	return nil
 }

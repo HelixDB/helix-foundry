@@ -10,8 +10,8 @@ import { writeConnectorDocuments } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
 
 // A connector's documents in the mock WFE, as the reader release serves
-// them and the writer release writes them: a Granola sync fills a set per
-// stream, newest first and capped; those sets and documents are the
+// them and the writer release writes them: a Granola, Slack, Notion or
+// Google Workspace sync fills a set per stream, newest first and capped; those sets and documents are the
 // connector's alone; the upload rules, the workspace's list and the set cap
 // leave them out; `ids` reads them by id; and deleting the connection
 // deletes them.
@@ -265,6 +265,219 @@ describe("a Granola sync's documents", () => {
       { stream: { ...stream, name: "transcripts" }, documents: null },
     ]);
     expect(await setOf("transcripts")).toBeUndefined();
+  });
+});
+
+/** A connection of any kind, synced once; the sync takes 3 s. */
+async function connect(name: string, config: unknown) {
+  const created = await call("POST", `${WS}/connectors`, { name, config });
+  expect(created.status, JSON.stringify(created.body)).toBe(200);
+  const id: string = created.body.connector.id;
+  await sync(id);
+  return id;
+}
+const googleKey = JSON.stringify({
+  type: "service_account",
+  private_key_id: "0123456789abcdef9f3a",
+  private_key:
+    "-----BEGIN PRIVATE KEY-----\nMIIEmock\n-----END PRIVATE KEY-----\n",
+  client_email: "foundry@acme-data.iam.gserviceaccount.com",
+});
+
+describe("Slack's, Notion's and Google Workspace's documents", () => {
+  it("fills Slack's Conversations with a document per channel and day, newest first", async () => {
+    const connectorId = await connect("Acme Slack", {
+      slack: { botToken: "xoxb-1-team1234" },
+    });
+    const conversations = await setOf("conversations");
+    // The 90 days before the sync's, two of every three in each of four
+    // channels: the app isn't in #random.
+    expect(conversations).toMatchObject({
+      name: "Conversations",
+      documents: 240,
+      connector: {
+        connectorId,
+        stream: "conversations",
+        maxDocuments: 1000,
+        connectorName: "Acme Slack",
+      },
+    });
+    expect(conversations!.description).toContain(
+      "Replies show only here, so replies to a thread started before the kept days are left out",
+    );
+    const first = await page(`setId=${conversations!.id}`);
+    expect(first.documents).toHaveLength(50);
+    expect(first.nextPageToken).not.toBe("");
+    const [newest, next] = first.documents;
+    // A day's time is its latest activity: here its thread's reply, after
+    // its last message.
+    expect(newest).toMatchObject({
+      name: "#sales, 2026-10-22",
+      mediaType: "text/markdown",
+      source: {
+        externalId: "C0MOCKSAL:2026-10-22",
+        url: "https://app.slack.com/client/T0MOCKACME/C0MOCKSAL",
+        at: "2026-10-22T16:24:00.000Z",
+      },
+    });
+    // And its last message where no reply is later.
+    expect(next).toMatchObject({
+      name: "#support, 2026-10-22",
+      source: { at: "2026-10-22T14:21:00.000Z" },
+    });
+    // The version is "2|", 40 hex digits of a hash of its messages and 16
+    // of the names they show.
+    expect(newest!.source!.version).toMatch(/^2\|[0-9a-f]{40}\|[0-9a-f]{16}$/);
+    const at = first.documents.map((d) => d.source!.at!);
+    expect(at).toEqual([...at].sort().reverse());
+    expect(first.documents.some((d) => d.name!.startsWith("#random"))).toBe(
+      false,
+    );
+    // Each message after a blank line, its thread's replies listed under it.
+    const text = (await call("GET", `${DOCS}/${newest!.id}:content`)).body.text;
+    expect(text).toBe(
+      [
+        "# #sales, 2026-10-22",
+        "",
+        "Channel: #sales (C0MOCKSAL)",
+        "",
+        "**Alan Turing** 09:12: Closed the Hooli expansion: 25 more seats from November.",
+        "  - **Hedy Lamarr** 16:24: Noted, thanks for the heads-up.",
+        "",
+        "**Margaret Hamilton** 14:08: Initech asked for a revised quote for 40 seats.",
+        "",
+      ].join("\n"),
+    );
+    // A day's messages are the same at the next sync: nothing changes.
+    await sync(connectorId);
+    expect((await page(`setId=${conversations!.id}`)).documents).toEqual(
+      first.documents,
+    );
+  });
+
+  it("keeps fewer days for a shorter history and the newest documentsPerStream", async () => {
+    await connect("Week", {
+      slack: { botToken: "xoxb-1-week1234", historyDays: 7 },
+    });
+    // The 7 days before the sync's.
+    const week = (await setOf("conversations"))!;
+    expect(week.documents).toBe(18);
+    const days = (await page(`setId=${week.id}`)).documents.map((d) =>
+      d.name!.slice(-10),
+    );
+    expect(days.at(-1)).toBe("2026-10-16");
+    Object.assign(config, { documentsPerStream: 30 });
+    await connect("Capped", { notion: { token: "ntn_team1234" } });
+    expect(await setOf("pages")).toMatchObject({
+      documents: 30,
+      connector: { maxDocuments: 30 },
+    });
+  });
+
+  it("writes no Slack document without channels:history, and none from an app in no channel", async () => {
+    await connect("No history", { slack: { botToken: "xoxb-1-noscope1" } });
+    expect(await setOf("conversations")).toBeUndefined();
+    await connect("Lonely", { slack: { botToken: "xoxb-1-lonely1" } });
+    expect(await setOf("conversations")).toMatchObject({
+      name: "Conversations",
+      documents: 0,
+      connector: { connectorName: "Lonely" },
+    });
+  });
+
+  it("fills Notion's Pages with each page that has a body", async () => {
+    const connectorId = await connect("Acme Notion", {
+      notion: { token: "ntn_nousers1234" },
+    });
+    const pages = await setOf("pages");
+    // A secret that can't read users still reads the pages.
+    expect(pages).toMatchObject({
+      name: "Pages",
+      documents: 60,
+      connector: { connectorId, stream: "pages" },
+    });
+    expect(pages!.description).toBe(
+      "Each Notion page shared with the integration, database rows included, as Markdown: its title and " +
+        "page id, then the page's content as Notion exports it.",
+    );
+    const [newest] = (await page(`setId=${pages!.id}`)).documents;
+    const id = "2a1f0001-6c3b-4d2e-9f1a-7b8c9d0e1f2a";
+    expect(newest).toMatchObject({
+      name: "Onboarding playbook",
+      mediaType: "text/markdown",
+      source: {
+        externalId: id,
+        url: `https://www.notion.so/Onboarding-playbook-${id.replaceAll("-", "")}`,
+        at: "2026-10-27T14:05:00.000Z",
+      },
+    });
+    // "2|", its last edit and the week of its re-read, offset by its id.
+    const week = 7 * 24 * 3600,
+      offset = Number(
+        createHash("sha256").update(id).digest().readBigUInt64BE() %
+          BigInt(week),
+      ),
+      reread = (at: number) =>
+        Math.floor((Math.floor(at / 1000) + offset) / week);
+    expect(newest!.source!.version).toBe(
+      `2|2026-10-27T14:05:00Z|${reread(Date.now())}`,
+    );
+    // Its title and id, then its body: its last edit is no line of it.
+    expect(
+      (await call("GET", `${DOCS}/${newest!.id}:content`)).body.text,
+    ).toMatch(
+      new RegExp(
+        `^# Onboarding playbook\\n\\nPage id: ${id}\\n\\n## Overview\\n`,
+      ),
+    );
+    // A week on, each page is read again; unchanged, it keeps its document.
+    vi.setSystemTime(Date.now() + week * 1000);
+    await sync(connectorId);
+    const [again] = (await page(`setId=${pages!.id}`)).documents;
+    expect(again).toMatchObject({
+      id: newest!.id,
+      source: { version: `2|2026-10-27T14:05:00Z|${reread(Date.now())}` },
+    });
+    expect(again!.source!.version).not.toBe(newest!.source!.version);
+  });
+
+  it("fills Google Workspace's Docs with each Google Doc the user can open", async () => {
+    const connectorId = await connect("Acme Drive", {
+      google: {
+        serviceAccountKey: googleKey,
+        subject: "ada.member@example.com",
+      },
+    });
+    const docs = await setOf("docs");
+    // A subject who is no admin still reads Drive.
+    expect(docs).toMatchObject({
+      name: "Docs",
+      documents: 14,
+      connector: { connectorId, stream: "docs" },
+    });
+    expect(docs!.description).toContain(
+      "can open and download in Drive, as Markdown",
+    );
+    const [newest] = (await page(`setId=${docs!.id}`)).documents;
+    const id = "1mockDoc0001aBcDeFgHiJkLmNoPq",
+      url = `https://docs.google.com/document/d/${id}/edit?usp=drivesdk`;
+    expect(newest).toMatchObject({
+      name: "Q4 planning",
+      source: {
+        externalId: id,
+        // Its modified time, Drive's version and a hash of its name, owner
+        // and link.
+        version: `1|2026-10-27T16:20:00.000Z|40|${sha(`Q4 planning\0ada@example.com\0${url}`).slice(0, 16)}`,
+        url,
+      },
+    });
+    expect(
+      (await call("GET", `${DOCS}/${newest!.id}:content`)).body.text,
+    ).toMatch(
+      new RegExp(
+        `^# Q4 planning\\n\\nOwner: ada@example\\.com\\nLast modified: 2026-10-27 16:20 UTC\\nFile id: ${id}\\n\\n## Summary\\n`,
+      ),
+    );
   });
 });
 

@@ -2,6 +2,7 @@ import "./sign-in.css";
 import { useState, type ReactNode } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { signInStarted } from "./analytics";
 import { signOut } from "./api";
 import { Button, useTitle } from "./kit";
 import { whoamiQuery } from "./workspaces";
@@ -161,8 +162,9 @@ export function SignInPage() {
   // Already signed in: go straight on.
   const me = useQuery(whoamiQuery);
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
-  const start = (id: Provider["id"]) => {
+  const start = async (id: Provider["id"]) => {
     setPending(id);
+    await signInStarted(id);
     const q = new URLSearchParams({ provider: id });
     if (returnTo) q.set("return_to", returnTo);
     window.location.assign(`/auth/login?${q}`);
@@ -186,7 +188,7 @@ export function SignInPage() {
             className="hf-provider-button"
             pending={pending === p.id}
             disabled={!!pending}
-            onClick={() => start(p.id)}
+            onClick={() => void start(p.id)}
           >
             {pending !== p.id && <ProviderLogo id={p.id} />}
             <span>Continue with {p.label}</span>

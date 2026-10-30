@@ -69,7 +69,17 @@ type OntologyGenerationInput struct {
 	// the generation stores in place of the AI's, mapped to Documents; empty
 	// for an AI draft.
 	Sample string `json:"sample,omitempty"`
+	// LoadWhenReady asks for an ontology's first draft to be made current
+	// and loaded once stored (OntologyGenerationOutcome.Load), and its
+	// requester emailed when that ends (FoundryNotifyOntologyReady).
+	LoadWhenReady bool `json:"load_when_ready,omitempty"`
 }
+
+// FirstDraftLoadTokenPrefix, then the generation's id, is the client token
+// of a first draft's load (OntologyGenerationOutcome.Load), by which its
+// email finds it. A client token a user sends may be anything, so storing
+// the draft leaves a token already taken alone.
+const FirstDraftLoadTokenPrefix = "first-draft:"
 
 type OntologyGenerationTable struct {
 	ConnectorID string `json:"connector_id"`
@@ -99,6 +109,14 @@ type OntologyGenerationOutcome struct {
 	ModelProvider string
 	InputTokens   int
 	OutputTokens  int
+	// Load is set only beside Result, for a first draft
+	// (OntologyGenerationInput.LoadWhenReady) that a load takes and the
+	// month's budget has room for: the load of Result that storing it
+	// queues once it has made Result the ontology's current version, as
+	// CreateFoundryLoad would. It starts at provisioning and creates its
+	// load with its own id, under the token FirstDraftLoadTokenPrefix and
+	// the generation's id. Nil leaves the draft for review.
+	Load *FoundryGraphJob
 }
 
 // OntologyRevision is a queued edit of an immutable parent. Tables and sets

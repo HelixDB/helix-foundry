@@ -1,6 +1,7 @@
 // Package ports names what Foundry needs from the host that runs it: who is
 // calling, the databases ontologies load into, the plans workspaces hold,
-// the people in a workspace, and the rate-limit boosts a graph job may take.
+// the people in a workspace, the rate-limit boosts a graph job may take, and
+// the email it sends people.
 //
 // A host implements each port. A hosted deployment backs them with its own
 // identity, billing and database gateway; a standalone install backs them
@@ -225,4 +226,41 @@ type Boosts interface {
 	SyncedRevision(ctx context.Context, clusterID string) (uint64, error)
 	// SweepLoadBoosts removes up to limit lapsed leases, and says how many.
 	SweepLoadBoosts(ctx context.Context, limit int) (int, error)
+}
+
+// Recipient is where Foundry emails a user.
+type Recipient struct {
+	// Email is the user's address; never empty.
+	Email string
+	// FirstName is what a greeting calls them; empty when the host knows no
+	// name, and the email then greets no one by name.
+	FirstName string
+}
+
+// TopicFoundryTips is the subscription topic of Foundry's emails a user
+// didn't ask for, such as the follow-up a day after the sample.
+const TopicFoundryTips = "foundry-tips"
+
+// Email is one message Foundry sends: its subject and the same body as
+// plain text and as HTML.
+type Email struct {
+	Subject string
+	Text    string
+	HTML    string
+	// Topic is a subscription topic (TopicFoundryTips) for an email the
+	// recipient didn't ask for: the host adds a way to unsubscribe from it,
+	// and doesn't deliver it to someone who has. Empty for an email about
+	// the recipient's own work, which always goes.
+	Topic string
+}
+
+// Mail sends Foundry's emails. Optional: where it is nil Foundry sends
+// none, and the foundry-notify-worker doesn't run.
+type Mail interface {
+	// Recipient is where to email userID; store.ErrNotFound when the user
+	// is gone or has no address.
+	Recipient(ctx context.Context, userID string) (Recipient, error)
+	// Send sends e to `to`. An error may be retried; the host has not
+	// delivered the email.
+	Send(ctx context.Context, to Recipient, e Email) error
 }

@@ -54,10 +54,10 @@ test("a new user creates their first workspace", async ({ page }) => {
   await dialog.getByLabel("Workspace name").fill("Globex Corp");
   await expect(dialog).toContainText("globex-corp");
   await dialog.getByRole("button", { name: "Create workspace" }).click();
-  // It opens on its onboarding: the wizard for its first ontology.
+  // It opens on its onboarding: Get started, for its first ontology.
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Workspace: Globex Corp" }),
@@ -107,10 +107,7 @@ test("creates, switches and chooses workspaces", async ({ page }) => {
   await dialog.getByLabel("Workspace name").fill("Initech");
   await dialog.getByRole("button", { name: "Create workspace" }).click();
   // Without an ontology, Initech opens on its onboarding wizard.
-  const wizard = page.getByRole("heading", {
-    level: 1,
-    name: "Create your first ontology",
-  });
+  const wizard = page.getByRole("heading", { level: 1, name: "Get started" });
   await expect(wizard).toBeVisible();
 
   await page.getByRole("button", { name: "Workspace: Initech" }).click();

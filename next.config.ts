@@ -10,6 +10,27 @@ if (mode && mode !== "local")
     `NEXT_PUBLIC_FOUNDRY_MODE must be unset or "local", not "${mode}"`,
   );
 
+// Databuddy, the hosted site's product analytics (src/web/analytics.ts): each
+// stamp's site by its client id, which is public, and only in a build for
+// the stamp's own origin (its WorkOS redirect URI's), so its values built
+// anywhere else (pnpm docs:media builds prod's against the mock, pnpm dev
+// dev's) load no tracker. A local build, the mock and e2e have none.
+const DATABUDDY = {
+  dev: {
+    origin: "https://dev.foundry.helix-db.com",
+    clientId: "a4288db1-0535-4fdd-8cae-bc525f19a172",
+  },
+  prod: {
+    origin: "https://foundry.helix-db.com",
+    clientId: "81ea8e9c-0f0f-4696-885f-2fb34405e69b",
+  },
+};
+const databuddy =
+  appEnv === "dev" || appEnv === "prod" ? DATABUDDY[appEnv] : undefined;
+const origin = URL.parse(
+  process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ?? "",
+)?.origin;
+
 const nextConfig: NextConfig = {
   // e2e builds into its own directory so it never clobbers `pnpm dev`.
   distDir: process.env.NEXT_DIST_DIR || ".next",
@@ -59,6 +80,10 @@ const nextConfig: NextConfig = {
         : appEnv === "prod"
           ? "https://ingest.helix-db.com"
           : "https://ingest.dev.helix-db.com",
+    NEXT_PUBLIC_DATABUDDY_CLIENT_ID:
+      mode !== "local" && databuddy && databuddy.origin === origin
+        ? databuddy.clientId
+        : "",
   },
   async headers() {
     return [

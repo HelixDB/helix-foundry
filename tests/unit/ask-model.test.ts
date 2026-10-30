@@ -41,10 +41,10 @@ import {
   threadGroups,
   threadsOf,
   toolLabel,
-  usageText,
   type AskStep,
   type CitationContext,
   type Thread,
+  workedFor,
 } from "@/web/areas/ontology/ask-model";
 import { parseEntityId } from "@/web/areas/explore/model";
 import { formatDate } from "@/web/kit/util";
@@ -1476,19 +1476,6 @@ describe("results", () => {
     );
   });
 
-  it("says what a question spent", () => {
-    expect(
-      usageText({
-        input: 6_100,
-        cache_read: 12_000,
-        cache_write: 0,
-        output: 1_450,
-        usd: 0.0734,
-      }),
-    ).toBe("$0.07 · 18,100 tokens in (12,000 cached), 1,450 out");
-    expect(usageText(USAGE)).toBe("$0.00 · 0 tokens in, 0 out");
-  });
-
   it("parses every citation target and refuses others", () => {
     const e = { type: "Customer", id: "cus_1" };
     for (const t of [
@@ -2368,5 +2355,25 @@ describe("the threads panel", () => {
       kind: "threads",
     });
     expect(askView(p("load=L1"), true, 3)).toEqual({ kind: "threads" });
+  });
+});
+
+describe("workedFor", () => {
+  const at = (s: number) =>
+    new Date(Date.UTC(2026, 9, 30, 10) + s).toISOString();
+  it("says seconds, minutes and seconds, or hours and minutes", () => {
+    expect(workedFor(at(0), at(22_400))).toBe("22s");
+    expect(workedFor(at(0), at(200))).toBe("1s");
+    expect(workedFor(at(0), at(59_400))).toBe("59s");
+    expect(workedFor(at(0), at(59_600))).toBe("1m");
+    expect(workedFor(at(0), at(65_000))).toBe("1m 5s");
+    expect(workedFor(at(0), at(3_600_000))).toBe("1h");
+    expect(workedFor(at(0), at(3_720_000))).toBe("1h 2m");
+  });
+  it("is empty while a time is unknown, unreadable or out of order", () => {
+    expect(workedFor(at(0), null)).toBe("");
+    expect(workedFor(undefined, at(0))).toBe("");
+    expect(workedFor("not a time", at(0))).toBe("");
+    expect(workedFor(at(1000), at(0))).toBe("");
   });
 });

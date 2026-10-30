@@ -69,7 +69,7 @@ const connector = (c: Partial<Connector>): Connector => ({
 });
 
 describe("kinds and roles", () => {
-  it("knows the WFE's eleven kinds, which are databases and which offer tables", () => {
+  it("knows the WFE's fourteen kinds, which are databases and which offer tables", () => {
     expect(KINDS).toEqual([
       "stripe",
       "workos",
@@ -78,12 +78,18 @@ describe("kinds and roles", () => {
       "linear",
       "calcom",
       "granola",
+      "slack",
+      "notion",
+      "google",
       "postgres",
       "mysql",
       "s3",
       "events",
     ]);
     expect(isKnownKind("events")).toBe(true);
+    expect(isKnownKind("google")).toBe(true);
+    expect(isKnownKind("gdrive")).toBe(false);
+    expect(isDatabase("notion")).toBe(false);
     expect(isKnownKind("posthog")).toBe(true);
     expect(isKnownKind("s3")).toBe(true);
     expect(isKnownKind("calcom")).toBe(true);
@@ -1150,6 +1156,88 @@ describe("credential forms", () => {
       tls: "verify",
     });
     expect(emptyForm("mysql")).toMatchObject({ port: "3306" });
+    // Slack keeps 90 days of history and Google Workspace 90 days of past
+    // events, as the WFE's defaults do.
+    expect(emptyForm("slack")).toEqual({
+      kind: "slack",
+      botToken: "",
+      historyDays: "90",
+    });
+    expect(emptyForm("notion")).toEqual({ kind: "notion", token: "" });
+    expect(emptyForm("google")).toEqual({
+      kind: "google",
+      serviceAccountKey: "",
+      subject: "",
+      eventDays: "90",
+    });
+  });
+
+  it("sends Slack's, Notion's and Google Workspace's credentials trimmed, with their days", () => {
+    expect(
+      toConfig({ kind: "slack", botToken: " xoxb-1-2 \n", historyDays: "30" }),
+    ).toEqual({ slack: { botToken: "xoxb-1-2", historyDays: 30 } });
+    expect(toConfig(emptyForm("slack"))).toEqual({
+      slack: { botToken: "", historyDays: 90 },
+    });
+    // Blank days are left to the WFE's default.
+    expect(
+      toConfig({ kind: "slack", botToken: "xoxb-1", historyDays: "" }),
+    ).toEqual({ slack: { botToken: "xoxb-1", historyDays: 0 } });
+    expect(toConfig({ kind: "notion", token: "\tntn_1 " })).toEqual({
+      notion: { token: "ntn_1" },
+    });
+    const key = '{"type": "service_account", "client_email": "sa@p.iam"}';
+    expect(
+      toConfig({
+        kind: "google",
+        serviceAccountKey: `\n${key}\n`,
+        subject: " ada@example.com ",
+        eventDays: "14",
+      }),
+    ).toEqual({
+      google: {
+        serviceAccountKey: key,
+        subject: "ada@example.com",
+        eventDays: 14,
+      },
+    });
+    expect(
+      toConfig({ ...emptyForm("google"), eventDays: "" } as ConnectionForm),
+    ).toEqual({
+      google: { serviceAccountKey: "", subject: "", eventDays: 0 },
+    });
+  });
+
+  it("sends an edit's blank credential blank beside new settings, so the WFE keeps the stored one", () => {
+    expect(
+      toConfig({
+        ...formFromConfig("slack", {
+          slack: { botToken: "", historyDays: 30 },
+        }),
+        historyDays: "60",
+      } as ConnectionForm),
+    ).toEqual({ slack: { botToken: "", historyDays: 60 } });
+    expect(
+      toConfig(formFromConfig("notion", { notion: { token: "" } })),
+    ).toEqual({ notion: { token: "" } });
+    expect(
+      toConfig({
+        ...formFromConfig("google", {
+          google: {
+            serviceAccountKey: "",
+            subject: "ada@example.com",
+            eventDays: 30,
+          },
+        }),
+        subject: "alan@example.com",
+      } as ConnectionForm),
+    ).toEqual({
+      google: {
+        serviceAccountKey: "",
+        subject: "alan@example.com",
+        eventDays: 30,
+      },
+    });
   });
 
   it("sends API keys trimmed and nothing else", () => {
@@ -1311,6 +1399,25 @@ describe("credential forms", () => {
         token: "ghp_1",
       } as ConnectionForm),
     ).toBe(true);
+    expect(hasCredential(emptyForm("slack"))).toBe(false);
+    expect(
+      hasCredential({ kind: "slack", botToken: "xoxb-1", historyDays: "" }),
+    ).toBe(true);
+    expect(hasCredential({ kind: "notion", token: " " })).toBe(false);
+    expect(hasCredential({ kind: "notion", token: "ntn_1" })).toBe(true);
+    // An edit's Google form holds the subject, never the key.
+    expect(
+      hasCredential({
+        ...emptyForm("google"),
+        subject: "ada@example.com",
+      } as ConnectionForm),
+    ).toBe(false);
+    expect(
+      hasCredential({
+        ...emptyForm("google"),
+        serviceAccountKey: "{}",
+      } as ConnectionForm),
+    ).toBe(true);
     expect(hasCredential(emptyForm("postgres"))).toBe(false);
     expect(
       hasCredential({ ...emptyForm("mysql"), password: " " } as ConnectionForm),
@@ -1332,6 +1439,9 @@ describe("credential forms", () => {
       "Cal.com",
     );
     expect(suggestedName(emptyForm("granola"))).toBe("Granola");
+    expect(suggestedName(emptyForm("slack"))).toBe("Slack");
+    expect(suggestedName(emptyForm("notion"))).toBe("Notion");
+    expect(suggestedName(emptyForm("google"))).toBe("Google Workspace");
     expect(suggestedName(emptyForm("github"))).toBe("GitHub");
     const github = emptyForm("github") as Extract<
       ConnectionForm,
@@ -1444,9 +1554,40 @@ describe("editing a stored connector", () => {
     expect(
       formFromConfig("granola", { granola: { transcripts: false } }),
     ).toEqual(emptyForm("granola"));
+    // Slack's history and Google Workspace's subject and days, as stored,
+    // with the credential blank; a sparse config takes the defaults.
+    expect(
+      formFromConfig("slack", { slack: { botToken: "", historyDays: 30 } }),
+    ).toEqual({ kind: "slack", botToken: "", historyDays: "30" });
+    expect(formFromConfig("slack", { slack: { historyDays: 0 } })).toEqual(
+      emptyForm("slack"),
+    );
+    expect(formFromConfig("notion", { notion: { token: "" } })).toEqual(
+      emptyForm("notion"),
+    );
+    expect(
+      formFromConfig("google", {
+        google: {
+          serviceAccountKey: "",
+          subject: "ada@example.com",
+          eventDays: 14,
+        },
+      }),
+    ).toEqual({
+      kind: "google",
+      serviceAccountKey: "",
+      subject: "ada@example.com",
+      eventDays: "14",
+    });
+    expect(formFromConfig("google", { google: {} })).toEqual(
+      emptyForm("google"),
+    );
     // Another kind's config is not this form's.
     expect(formFromConfig("granola", { calcom: { apiKey: "" } })).toEqual(
       emptyForm("granola"),
+    );
+    expect(formFromConfig("google", { slack: { historyDays: 30 } })).toEqual(
+      emptyForm("google"),
     );
     expect(formFromConfig("stripe", { stripe: { apiKey: "" } })).toEqual({
       kind: "stripe",

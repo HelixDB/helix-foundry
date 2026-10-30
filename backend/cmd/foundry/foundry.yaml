@@ -36,7 +36,7 @@ billing:
       plans:
         - code: local
           display_name: Local
-          kinds: [stripe, workos, posthog, github, linear, calcom, granola, events, postgres, mysql, s3]
+          kinds: [stripe, workos, posthog, github, linear, calcom, granola, slack, notion, google, events, postgres, mysql, s3]
           sync: { every: 15m, shortest: 15m, capture: [full, cursor, events, log], reconcile_every: 24h, refresh_every: 15m }
 
 backend:

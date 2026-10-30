@@ -3,6 +3,7 @@ package foundryontologyworker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -17,13 +18,26 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-// queue hands out its generations in order and records what each attempt ended with.
+// queue hands out its generations in order and records what each attempt
+// ended with. spent is what the workspace's loads spent this month, and
+// spendErr what summing it fails with.
 type queue struct {
 	mu        sync.Mutex
 	pending   []*model.OntologyGeneration
 	outcomes  map[string]model.OntologyGenerationOutcome
 	renewals  int
 	loseLease bool
+	spent     int64
+	spendErr  error
+	// since is the month the last sum began at.
+	since time.Time
+}
+
+func (q *queue) SumFoundryGraphJobSpend(_ context.Context, _ string, since time.Time) (int64, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.since = since
+	return q.spent, q.spendErr
 }
 
 func (q *queue) ClaimOntologyGeneration(context.Context, string, time.Duration) (*model.OntologyGeneration, error) {
@@ -65,6 +79,7 @@ var now = time.Date(2026, time.October, 17, 12, 0, 0, 0, time.UTC)
 func newTask(q *queue, g generatorFunc) *Task {
 	return &Task{
 		cfg:   config.OntologyConfig{Lease: 30 * time.Millisecond, Timeout: time.Minute, MaxAttempts: 3},
+		graph: config.GraphConfig{MonthlyUSD: 100, MaxJobUSD: 20},
 		queue: q, generator: g, workerID: "worker-1", now: func() time.Time { return now },
 	}
 }
@@ -156,6 +171,84 @@ func TestFoundryOntologyWorker(t *testing.T) {
 		}).drain(context.Background())
 		if q.renewals == 0 {
 			t.Fatal("lease was never renewed")
+		}
+	})
+}
+
+// A first draft (LoadWhenReady) comes with its load when a load would take
+// it and the month has budget left; otherwise it waits for review, as a
+// draft without it does.
+func TestFoundryOntologyWorkerFirstDraft(t *testing.T) {
+	user := "user-1"
+	first := func() *model.OntologyGeneration {
+		return &model.OntologyGeneration{ID: "g1", WorkspaceID: "ws-1", OntologyID: "ont-1", Attempts: 1, RequestedByUserID: &user,
+			Input: model.OntologyGenerationInput{LoadWhenReady: true}}
+	}
+	// drafted answers an agent draft whose turn ended as status with
+	// evaluated of its 3 rules evaluated.
+	drafted := func(status string, evaluated int) generatorFunc {
+		return func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+			return ontologygen.Result{Format: model.OntologyFormatAgentBundle,
+				Definition: []byte(fmt.Sprintf(`{"format":"agent_bundle","status":%q,"rules":{"count":3,"evaluated":%d}}`, status, evaluated))}, nil
+		}
+	}
+
+	t.Run("loads a finished draft the month has room for", func(t *testing.T) {
+		q := newQueue(first())
+		q.spent = 99_999_999
+		newTask(q, drafted("done", 3)).drain(context.Background())
+		got := q.outcomes["g1"]
+		v, load := got.Result, got.Load
+		if got.Status != model.OntologyGenerationSucceeded || v == nil || load == nil {
+			t.Fatalf("outcome = %+v", got)
+		}
+		if load.ID == "" || load.LoadID != load.ID || load.Kind != model.FoundryGraphJobLoad || load.Phase != model.FoundryGraphJobProvisioning ||
+			load.WorkspaceID != "ws-1" || load.OntologyID != "ont-1" || load.VersionID != v.ID ||
+			load.RequestedByUserID == nil || *load.RequestedByUserID != "user-1" || load.ClientToken == nil || *load.ClientToken != "first-draft:g1" {
+			t.Fatalf("load = %+v", load)
+		}
+		if want := time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC); !q.since.Equal(want) {
+			t.Fatalf("spend summed since %v, want the month's first day %v", q.since, want)
+		}
+	})
+	// Each of these a load would refuse, or can't pay for: the draft is
+	// stored for review all the same.
+	for name, c := range map[string]struct {
+		gen      generatorFunc
+		spent    int64
+		spendErr error
+	}{
+		"a draft that needs input":       {gen: drafted("needs_input", 3)},
+		"a draft with rules unevaluated": {gen: drafted("done", 2)},
+		"a Definition v1":                {gen: spent(nil)},
+		"an unreadable draft": {gen: func(context.Context, *model.OntologyGeneration) (ontologygen.Result, error) {
+			return ontologygen.Result{Format: model.OntologyFormatAgentBundle, Definition: []byte(`not json`)}, nil
+		}},
+		"the month's budget spent":  {gen: drafted("done", 3), spent: 100_000_000},
+		"the month's spend unknown": {gen: drafted("done", 3), spendErr: errors.New("connection reset")},
+	} {
+		t.Run("leaves for review "+name, func(t *testing.T) {
+			q := newQueue(first())
+			q.spent, q.spendErr = c.spent, c.spendErr
+			newTask(q, c.gen).drain(context.Background())
+			got := q.outcomes["g1"]
+			if got.Status != model.OntologyGenerationSucceeded || got.Result == nil || got.Load != nil {
+				t.Fatalf("outcome = %+v", got)
+			}
+		})
+	}
+	t.Run("loads nothing without load_when_ready, or for a failure", func(t *testing.T) {
+		plain := first()
+		plain.Input.LoadWhenReady = false
+		q := newQueue(plain)
+		newTask(q, drafted("done", 3)).drain(context.Background())
+		if got := q.outcomes["g1"]; got.Result == nil || got.Load != nil {
+			t.Fatalf("outcome = %+v", got)
+		}
+		q = newQueue(first())
+		newTask(q, spent(&ontologygen.Failure{Message: "the generated ontology is not valid", Permanent: true})).drain(context.Background())
+		if got := q.outcomes["g1"]; got.Status != model.OntologyGenerationFailed || got.Load != nil {
+			t.Fatalf("outcome = %+v", got)
 		}
 	})
 }

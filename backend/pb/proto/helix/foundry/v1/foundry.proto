@@ -607,6 +607,16 @@ message GenerateOntologyRequest {
   // documents, with no event source (INVALID_ARGUMENT otherwise), and each
   // of the sample's tables must be synced (FAILED_PRECONDITION until then).
   string sample = 8;
+  // Once the draft is stored, while the ontology still has no current
+  // version, make it current and load it, as set-current then create-load
+  // would, and email the requester when that load ends; for an ontology's
+  // first draft. The caller must be able to write the ontology's database,
+  // as create-load needs (PERMISSION_DENIED otherwise); an ontology that
+  // already has a current version is FAILED_PRECONDITION, and a sample
+  // INVALID_ARGUMENT. A draft a load would refuse, or one drafted once the
+  // workspace's month of loads is spent, waits for review as without it,
+  // and the email says so; so does a draft that fails.
+  bool load_when_ready = 9;
 }
 message OntologyGenerationResponse {
   OntologyGeneration generation = 1;

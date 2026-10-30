@@ -88,7 +88,7 @@ func TestS3ConnectorKinds(t *testing.T) {
 				t.Fatalf("%s has a setup", k.GetKind())
 			}
 		}
-		if strings.Join(names, ",") != "stripe,workos,posthog,github,linear,calcom,granola,postgres,mysql,s3,events" || !s3.GetAvailable() || !s3.GetRequiresPro() ||
+		if strings.Join(names, ",") != "stripe,workos,posthog,github,linear,calcom,granola,slack,notion,google,postgres,mysql,s3,events" || !s3.GetAvailable() || !s3.GetRequiresPro() ||
 			s3.GetS3().GetPrincipalArn() != "arn:aws:iam::111122223333:role/example-foundry-connector" ||
 			s3.GetS3().GetExternalId() != "helix-foundry-ws-1" {
 			t.Fatalf("kinds = %v, s3 = %+v", names, s3)

@@ -434,6 +434,15 @@ func sourceFromProto(catalog *connector.Catalog, cfg *foundryv1.ConnectorConfig)
 	case *foundryv1.ConnectorConfig_Granola:
 		g := k.Granola
 		name, settings, secret = "granola", connector.GranolaSettings{Transcripts: g.GetTranscripts()}, strings.TrimSpace(g.GetApiKey())
+	case *foundryv1.ConnectorConfig_Slack:
+		sl := k.Slack
+		name, settings, secret = "slack", connector.SlackSettings{HistoryDays: int(sl.GetHistoryDays())}, strings.TrimSpace(sl.GetBotToken())
+	case *foundryv1.ConnectorConfig_Notion:
+		name, settings, secret = "notion", struct{}{}, strings.TrimSpace(k.Notion.GetToken())
+	case *foundryv1.ConnectorConfig_Google:
+		g := k.Google
+		name, secret = "google", strings.TrimSpace(g.GetServiceAccountKey())
+		settings = connector.GoogleSettings{Subject: g.GetSubject(), EventDays: int(g.GetEventDays())}
 	case *foundryv1.ConnectorConfig_Postgres:
 		name, settings, secret = "postgres", databaseSettings(k.Postgres), k.Postgres.GetPassword()
 	case *foundryv1.ConnectorConfig_Mysql:
@@ -519,6 +528,24 @@ func configToProto(kind string, settings json.RawMessage) (*foundryv1.ConnectorC
 		}
 		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Granola{Granola: &foundryv1.GranolaConnectorConfig{
 			Transcripts: g.Transcripts,
+		}}}, nil
+	case "slack":
+		var sl connector.SlackSettings
+		if err := json.Unmarshal(settings, &sl); err != nil {
+			return nil, err
+		}
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{
+			HistoryDays: int32(sl.HistoryDays),
+		}}}, nil
+	case "notion":
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Notion{Notion: &foundryv1.NotionConnectorConfig{}}}, nil
+	case "google":
+		var g connector.GoogleSettings
+		if err := json.Unmarshal(settings, &g); err != nil {
+			return nil, err
+		}
+		return &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{
+			Subject: g.Subject, EventDays: int32(g.EventDays),
 		}}}, nil
 	case "postgres", "mysql":
 		var d connector.DatabaseSettings

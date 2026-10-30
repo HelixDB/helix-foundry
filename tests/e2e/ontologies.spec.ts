@@ -275,13 +275,10 @@ test("gives a new workspace only the wizard until its first ontology", async ({
 }) => {
   await signInToNewWorkspace(page);
   // No Ontologies panel and one section, Get started: every page leads to
-  // the wizard, titled for the first ontology, with no way back to
+  // the wizard, which asks how to start first, with no way back to
   // Ontologies.
   const nav = page.getByRole("navigation", { name: "Main navigation" }),
-    wizard = page.getByRole("heading", {
-      level: 1,
-      name: "Create your first ontology",
-    });
+    wizard = page.getByRole("heading", { level: 1, name: "Get started" });
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(nav.getByRole("link")).toHaveText(["Get started"]);
   await expect(panelOf(page)).toHaveCount(0);
@@ -294,12 +291,25 @@ test("gives a new workspace only the wizard until its first ontology", async ({
     page.getByRole("navigation", { name: "Breadcrumb" }),
   ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+  // Use my own data asks only what to draft from and the goal: no name and
+  // no database, and Back returns to the start.
+  await page.getByRole("button", { name: "Use my own data" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Your first ontology" }),
+  ).toBeVisible();
+  await expect(page.getByRole("list", { name: "Steps" })).toContainText(
+    /^1Connect your data or upload documents.*2Goal.*3Review and create/s,
+  );
+  await expect(page.getByLabel("Ontology name")).toHaveCount(0);
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(wizard).toBeVisible();
 
-  // Its first ontology opens every page, and the panel lists it.
+  // Its first ontology, named from what it drafts from, opens every page,
+  // and the panel lists it.
   const overview = await createFirstOntology(page);
   await expect(nav).toBeVisible();
   await expect(
-    panelOf(page).getByRole("link", { name: /^Orders/ }),
+    panelOf(page).getByRole("link", { name: /^General/ }),
   ).toHaveAttribute("href", overview);
   await page.goto("/ontology");
   await expect(page).toHaveURL(new RegExp(`${overview}$`));
@@ -335,7 +345,7 @@ test("goes back to the wizard once the last ontology is deleted, and tells a mem
     .click();
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
   // The sidebar's one section is the onboarding.
   const nav = page.getByRole("navigation", { name: "Main navigation" });

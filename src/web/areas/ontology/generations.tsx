@@ -5,6 +5,7 @@ import {
   ArrowRight,
   CircleCheck,
   History,
+  Mail,
   RotateCcw,
   TriangleAlert,
 } from "lucide-react";
@@ -138,6 +139,13 @@ export function GenerationPage({ generationId }: { generationId: string }) {
   const failed = g.status === "ONTOLOGY_GENERATION_STATUS_FAILED",
     succeeded = g.status === "ONTOLOGY_GENERATION_STATUS_SUCCEEDED",
     title = generationTitle(g);
+  // A first ontology's draft (loadWhenReady) was made current and its load
+  // queued as it was stored, unless a version was current by then.
+  const loading =
+    succeeded &&
+    !!g.loadWhenReady &&
+    !!g.resultVersionId &&
+    ontology.currentVersionId === g.resultVersionId;
   // The tables it drafts from, under their connectors, then its table
   // files, under their sets.
   const status =
@@ -223,7 +231,15 @@ export function GenerationPage({ generationId }: { generationId: string }) {
           </>
         }
         actions={
-          succeeded && g.resultVersionId ? (
+          loading ? (
+            <ButtonLink
+              variant="primary"
+              iconRight={ArrowRight}
+              to={paths.ontology(o)}
+            >
+              Open {ontologyName(ontology)}
+            </ButtonLink>
+          ) : succeeded && g.resultVersionId ? (
             <ButtonLink
               variant="primary"
               iconRight={ArrowRight}
@@ -274,13 +290,30 @@ export function GenerationPage({ generationId }: { generationId: string }) {
             }
           />
         )}
-        {succeeded && (
+        {isLive(g) && g.loadWhenReady && (
+          <Callout
+            icon={Mail}
+            tone="muted"
+            title="Foundry loads it when it’s drafted"
+            text="Once the draft is ready, Foundry makes it current and loads it, then emails you when you can ask it questions. You can leave this page."
+          />
+        )}
+        {loading ? (
           <Callout
             icon={CircleCheck}
             tone="muted"
-            title={`Drafted version ${result.data?.version?.version ?? ""}`}
-            text="It isn’t current yet. Review it, then make it current to use it in this workspace."
+            title={`Drafted version ${result.data?.version?.version ?? ""}, now current`}
+            text="Foundry is loading it into its database, and emails you when you can ask it questions."
           />
+        ) : (
+          succeeded && (
+            <Callout
+              icon={CircleCheck}
+              tone="muted"
+              title={`Drafted version ${result.data?.version?.version ?? ""}`}
+              text="It isn’t current yet. Review it, then make it current to use it in this workspace."
+            />
+          )
         )}
         <DataFeed items={items} steps={steps} />
         {g.goal?.trim() && <Goal goal={g.goal.trim()} />}

@@ -1,6 +1,6 @@
 // Package store is Foundry's MySQL store: its connectors and syncs,
 // documents and document sets, ontologies, loads and graph jobs, questions,
-// People enrichment, event sources and model providers.
+// People enrichment, event sources, model providers and the emails it sends.
 //
 // Its host owns the workspaces Foundry's rows belong to. The store reads
 // and locks them through Workspaces, inside its own statements and
@@ -278,6 +278,13 @@ type Store interface {
 	ReturnFoundryAIProbe(ctx context.Context, configID, owner string) error
 	FinishFoundryAIProbe(ctx context.Context, configID, owner string, outcome model.FoundryAIProbeOutcome) (model.FoundryAIProbeState, error)
 	ActivateFoundryAIDefault(ctx context.Context, workspaceID, userID string) error
+
+	// Foundry notifications: the emails the foundry-notify-worker finds,
+	// claims and sends (foundry_notifications.go)
+	DiscoverFoundryOntologyReady(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
+	DiscoverFoundrySampleFollowUps(ctx context.Context, from, to time.Time, limit int, newID func() string) (int, error)
+	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
+	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

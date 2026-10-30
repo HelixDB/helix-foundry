@@ -116,7 +116,7 @@ async function createGlobex(page: Page) {
     page.getByRole("button", { name: "Workspace: Globex" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
 }
 
@@ -149,7 +149,7 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await page.goto("/");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Create your first ontology" }),
+    page.getByRole("heading", { level: 1, name: "Get started" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Workspace: My workspace" }),
@@ -179,9 +179,23 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
 test("walks a new install through the sample company, from its database to Ask", async ({
   page,
 }) => {
+  // A local build loads no analytics tracker, nor the SDK's loader, and
+  // sends nothing (src/web/telemetry.tsx).
+  const tracked: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).hostname.endsWith("databuddy.cc"))
+      tracked.push(request.url());
+  });
+  page.on("response", async (response) => {
+    if (response.request().resourceType() !== "script") return;
+    const text = await response.text().catch(() => "");
+    if (text.includes("cdn.databuddy.cc")) tracked.push(response.url());
+  });
   await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Use the sample" }).click();
+  await page
+    .getByRole("button", { name: "See it on a sample company (1 min)" })
+    .click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
   await expect(
     page.getByRole("heading", {
@@ -200,12 +214,13 @@ test("walks a new install through the sample company, from its database to Ask",
     timeout: 30_000,
   });
   await page.reload();
-  const ask = page.getByRole("link", { name: "Ask a question" });
-  await expect(ask).toBeVisible({ timeout: 60_000 });
-  await expect(steps).toContainText(
-    "Who are each account's people, and what role does each play?",
-  );
-  await ask.click();
+  // Once loaded, the tour asks the draft's first question itself.
+  await expect(
+    steps.getByRole("article", {
+      name: "Question: Who are each account's people, and what role does each play?",
+    }),
+  ).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("link", { name: "Ask your own question" }).click();
   await expect(
     page.getByRole("group", { name: "Suggested questions" }),
   ).toBeVisible();
@@ -215,6 +230,8 @@ test("walks a new install through the sample company, from its database to Ask",
   await expect(
     page.getByText("Acme Corp", { exact: true }).first(),
   ).toBeVisible();
+  expect(await page.locator("script[data-databuddy-injected]").count()).toBe(0);
+  expect(tracked).toEqual([]);
 });
 
 // With no provider, the sample asks for one; Settings has the way back to
@@ -231,13 +248,15 @@ test("asks for an AI provider before adding the sample company, then goes back t
     loadStepMs: 200,
   });
   await page.goto("/");
-  const sample = page.getByRole("button", { name: "Use the sample" }),
+  const sample = page.getByRole("button", {
+      name: "See it on a sample company (1 min)",
+    }),
     gate = page.getByRole("note").filter({
       hasText: "Adding the sample needs an AI provider",
     }),
     first = page.getByRole("heading", {
       level: 1,
-      name: "Create your first ontology",
+      name: "Get started",
     });
   await sample.click();
   await expect(gate).toBeVisible();
@@ -260,7 +279,9 @@ test("asks for an AI provider before adding the sample company, then goes back t
   await expect(first).toBeVisible();
   await sample.click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
-  await expect(page.getByRole("link", { name: "Ask a question" })).toBeVisible({
+  await expect(
+    page.getByRole("link", { name: "Ask your own question" }),
+  ).toBeVisible({
     timeout: 60_000,
   });
 });
@@ -294,8 +315,7 @@ test("keeps only settings and the theme in the account menu", async ({
 test("offers every connector to a new workspace", async ({ page }) => {
   // Its onboarding's sources step adds data through the Data area's picker.
   await createGlobex(page);
-  await startOntology(page, "Renewals");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Use my own data" }).click();
   await page.getByRole("button", { name: "Add data" }).first().click();
   const picker = page.locator("dialog[open]");
   await expect(picker).toHaveAccessibleName("Where is your data?");
@@ -337,19 +357,11 @@ test("creates a database in this computer's Helix, without a plan or keys to rev
   page,
 }) => {
   // Globex is new: in the hosted site it has no Helix plan for a database.
-  // A document uploaded in its onboarding gives the first draft something
-  // to read.
+  // Its first ontology goes on a new database, named as it, in a new
+  // project named as the workspace. A document uploaded in its onboarding
+  // gives the first draft something to read.
   await createGlobex(page);
-  await startOntology(page, "Renewals");
-  await page.getByRole("radio", { name: "Create a new one" }).click();
-  await page.getByLabel("Project name").fill("Foundry");
-  await page.getByLabel("Database name").fill("Renewals 2026");
-  await expect(
-    page.getByText(
-      "It is kept in the Helix that runs with Foundry on this computer.",
-    ),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Use my own data" }).click();
   // The sources step offers no API source, and says nothing of agents'
   // pieces.
   await expect(

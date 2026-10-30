@@ -19,6 +19,7 @@ import {
   Ban,
   Check,
   ChevronLeft,
+  ChevronRight,
   Circle,
   CircleAlert,
   FileQuestion,
@@ -30,11 +31,7 @@ import {
   X,
 } from "lucide-react";
 import type { EntityRef } from "../../../shared/foundry-read";
-import type {
-  AskUsage,
-  FoundryQuestion,
-  QuestionBudget,
-} from "../../../shared/wfe";
+import type { FoundryQuestion, QuestionBudget } from "../../../shared/wfe";
 import {
   Button,
   ButtonLink,
@@ -86,8 +83,8 @@ import {
   resultText,
   stepHeading,
   stepInput,
+  workedFor,
   threadsOf,
-  usageText,
   type AnswerPart,
   type AskStep,
   type AskStream,
@@ -122,16 +119,20 @@ import { useSources } from "./sources";
 // shell's sidebar under its sections (ask-threads.tsx); here, a slim bar with
 // the thread's title and the Ontology and Load pickers, then a thread as a conversation
 // in one centred column: each question as a bubble, then the reply, its
-// numbered steps as they stream (each input in words, a query as a
-// readable path, a graph query as its code, its JSON behind a disclosure;
-// once it ends, the query as the agent ran it, entity ids resolved; a
+// trace: closed, one line (the step it is on while it runs, how long it
+// worked once it ended) that opens on its numbered steps as they stream,
+// each a tool call: the tool's name, its
+// input in words (a query as a readable path) and what it returned, which
+// opens on its Input (the query, a graph query's code, or its arguments)
+// and Output (a query's result as a table or chart); once it ends, the query as the agent ran it, entity ids resolved; a
 // refused answer says why, for a person) and its answer: the model's
 // blocks as plain text with numbered citation chips that open the entity,
 // fact, derived fact, table row, document span or rule break they cite, or
 // light the step whose result they cite. The conversation follows the newest answer unless scrolled
 // up, and the follow-up composer stays pinned under it. A new thread asks
 // what the user wants to know, its composer centred, with the draft's
-// competency questions as suggestions when its version is already read.
+// competency questions as suggestions, which a click asks, when nothing
+// has been asked yet or its version is already read.
 // An answer's visuals (contract 3.11.0) follow the blocks the model put
 // them after: query results drawn from the output the engine recorded
 // (ask-visual.tsx), and each query step has its Result the same way (the
@@ -174,11 +175,12 @@ export function AskPage() {
     useMedia("(max-width: 800px)"),
     list.data ? threads.length : undefined,
   );
-  // The version the load holds names its suggestions, read only if a page
-  // already read it: a version can be large.
+  // The version the load holds names its suggestions. A version can be
+  // large: it is read for them only while nobody has asked anything yet,
+  // else only if a page already read it.
   const version = useQuery({
     ...ontologyQueries.version(ws, o, load?.versionId || ""),
-    enabled: false,
+    enabled: !!load?.versionId && list.data !== undefined && !threads.length,
   }).data?.version;
   const suggestions = useMemo(() => askSuggestions(version), [version]);
   useTitle(view.kind === "thread" ? undefined : "Analyst");
@@ -421,8 +423,14 @@ function ThreadView({
           className="ak-log"
           ref={log}
           onClick={(e) => {
-            // A disclosure the reader opens or closes stays where it is.
-            if ((e.target as Element).closest("summary")) stick.current = false;
+            // A disclosure or step the reader opens or closes stays where
+            // it is; the trace opening keeps following its steps.
+            if (
+              (e.target as Element).closest(
+                "summary, .ak-call-head[aria-expanded]",
+              )
+            )
+              stick.current = false;
           }}
         >
           {notice}
@@ -690,11 +698,18 @@ export function QuestionCard({
   );
   const focus = questionFocus(q);
   const [lit, setLit] = useState("");
+  // The trace opened to every step, and the steps opened to their input
+  // and output, by index.
+  const [traceOpen, setTraceOpen] = useState(false);
+  const [shown, setShown] = useState<ReadonlySet<number>>(new Set());
   const [cancelling, setCancelling] = useState(false);
   const stepId = (evidence: string) => `${q.id}-${evidence}`;
-  // A citation with no page opens the step that returned it.
+  // A citation with no page opens the step that returned it, and reads the
+  // outputs its Output shows.
   const showStep = (evidence: string) => {
     setLit("");
+    setOpened(true);
+    setTraceOpen(true);
     requestAnimationFrame(() => {
       setLit(evidence);
       document
@@ -728,6 +743,10 @@ export function QuestionCard({
   );
   const ran = new Map([...records].map(([e, r]) => [e, r.query]));
   const known = knownOf(steps, citations, named);
+  // Closed, the trace says how long the question worked once it ended, and
+  // the step it is on while it runs.
+  const worked = live ? "" : workedFor(q.startedAt, q.finishedAt);
+  const current = live ? steps[steps.length - 1] : undefined;
   const ctx: CitationContext = {
     ...links,
     name: known.name,
@@ -754,18 +773,51 @@ export function QuestionCard({
         <div className="ak-reply-body">
           <section className={cx("ak-trace", `is-${trace.phase}`)}>
             <div className="ak-trace-head">
-              <span className="ak-trace-status" role="status">
-                <span className="ak-trace-dot" aria-hidden />
-                {trace.headline}
-              </span>
-              <span className="ak-trace-tools">
-                <span className="ak-trace-time">
-                  {live
-                    ? trace.detail
-                    : [formatUsd(q.usdMicros || 0), stream.model]
-                        .filter(Boolean)
-                        .join(" · ")}
+              <button
+                type="button"
+                className="ak-trace-toggle"
+                aria-expanded={traceOpen}
+                aria-controls={`${q.id}-steps`}
+                aria-label={traceOpen ? "Hide the steps" : "Show the steps"}
+                disabled={!steps.length}
+                onClick={() => setTraceOpen((open) => !open)}
+              >
+                <span className="ak-trace-status" role="status">
+                  {current ? (
+                    <>
+                      <span className="ak-trace-dot" aria-hidden />
+                      <code className="ak-call-tool">{current.tool}</code>
+                      <span className="ak-trace-now">
+                        {(current.query && queryText(current.query).path) ??
+                          stepInput(current, known) ??
+                          stepHeading(current)}
+                      </span>
+                    </>
+                  ) : worked ? (
+                    trace.phase === "answered" ? (
+                      `Worked for ${worked}`
+                    ) : (
+                      `Worked for ${worked} · ${trace.headline}`
+                    )
+                  ) : (
+                    <>
+                      <span className="ak-trace-dot" aria-hidden />
+                      {trace.headline}
+                    </>
+                  )}
                 </span>
+                {steps.length > 0 && (
+                  <ChevronRight
+                    size={15}
+                    className="ak-trace-chevron"
+                    aria-hidden
+                  />
+                )}
+              </button>
+              <span className="ak-trace-tools">
+                {live && !current && trace.detail && (
+                  <span className="ak-trace-time">{trace.detail}</span>
+                )}
                 {live && (
                   <Button
                     size="sm"
@@ -779,8 +831,12 @@ export function QuestionCard({
                 )}
               </span>
             </div>
-            {steps.length > 0 && (
-              <ol className="ak-steps" aria-label="Steps">
+            {traceOpen && steps.length > 0 && (
+              <ol
+                className="ak-steps ak-calls"
+                id={`${q.id}-steps`}
+                aria-label="Steps"
+              >
                 {steps.map((s, i) => {
                   const evidence =
                     s.result?.kind === "recorded"
@@ -803,20 +859,77 @@ export function QuestionCard({
                       ? s.result.error
                       : undefined;
                   const ended = s.result?.kind === "ended" && isEnding(s.tool);
-                  // Its input as JSON, unless that shows already (a graph
-                  // query's code) or holds nothing (the load's overview).
+                  // Its arguments, unless they show as a query or graph
+                  // code already, or hold nothing (the load's overview).
                   const raw = query ?? s.input;
-                  const rawShown =
+                  const args =
                     !ended &&
-                    raw !== null &&
+                    !t &&
                     graph === undefined &&
-                    JSON.stringify(raw) !== "{}";
+                    raw !== null &&
+                    JSON.stringify(raw) !== "{}"
+                      ? JSON.stringify(raw, null, 2)
+                      : undefined;
+                  const input = !!t || graph !== undefined || !!args;
+                  const opens = input || !!record || refusal !== undefined;
+                  const open =
+                    opens && (shown.has(i) || (!!evidence && evidence === lit));
+                  const body = `${q.id}-step-${i}`;
+                  const toggle = () => {
+                    if (open && evidence === lit) setLit("");
+                    if (!open && record) setOpened(true);
+                    setShown((was) => {
+                      const next = new Set(was);
+                      if (open) next.delete(i);
+                      else next.add(i);
+                      return next;
+                    });
+                  };
+                  // The call that ended the question closes the list in
+                  // words: how it ended, no call to open.
+                  if (ended)
+                    return (
+                      <li key={i} className="ak-call is-done is-end">
+                        <div className="ak-call-head">
+                          <StepMark step={s} live={live} />
+                          <span className="ak-call-what">
+                            <strong>{stepHeading(s)}</strong>
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  const head = (
+                    <>
+                      <StepMark step={s} live={live} />
+                      <code className="ak-call-tool">{s.tool || "result"}</code>
+                      <span className="ak-call-what" title={stepHeading(s)}>
+                        {t?.path ??
+                          said ??
+                          (graph !== undefined
+                            ? "A graph query"
+                            : s.tool === "answer"
+                              ? "Drafted an answer"
+                              : stepHeading(s))}
+                      </span>
+                      {result && (
+                        <span className="ak-call-result">{result}</span>
+                      )}
+                      {opens && (
+                        <ChevronRight
+                          size={14}
+                          className="ak-call-chevron"
+                          aria-hidden
+                        />
+                      )}
+                    </>
+                  );
                   return (
                     <li
                       key={i}
                       id={evidence && stepId(evidence)}
+                      aria-label={`Step ${i + 1}: ${stepHeading(s)}`}
                       className={cx(
-                        "ak-step",
+                        "ak-call",
                         s.result
                           ? failed
                             ? "is-error"
@@ -824,104 +937,110 @@ export function QuestionCard({
                           : live
                             ? "is-running"
                             : "is-stopped",
+                        open && "is-open",
                         !!evidence && evidence === lit && "is-lit",
                       )}
                     >
-                      <StepMark step={s} live={live} />
-                      <div className="ak-step-body">
-                        <p className="ak-step-text">
-                          <strong>{stepHeading(s)}</strong>
-                          {result && (
-                            <>
-                              <span className="ak-sep"> · </span>
-                              <span className="ak-result">{result}</span>
-                            </>
+                      {opens ? (
+                        <button
+                          type="button"
+                          className="ak-call-head"
+                          aria-expanded={open}
+                          aria-controls={body}
+                          onClick={toggle}
+                        >
+                          {head}
+                        </button>
+                      ) : (
+                        <div className="ak-call-head">{head}</div>
+                      )}
+                      {refusal !== undefined && (
+                        <p className="ak-call-note">
+                          {refusalText(
+                            refusal,
+                            steps
+                              .slice(i + 1)
+                              .some(
+                                (x) =>
+                                  isEnding(x.tool) &&
+                                  x.result?.kind === "ended",
+                              ),
                           )}
                         </p>
-                        {t && (
-                          <div className="ak-query" aria-label="Query">
-                            <code>{t.path}</code>
-                            {t.filters.map((f) => (
-                              <span key={f}>{f}</span>
-                            ))}
-                            <span>{t.returns}</span>
-                          </div>
-                        )}
-                        {said && <p className="ak-step-input">{said}</p>}
-                        {graph !== undefined && (
-                          <div className="ak-query" aria-label="Graph query">
-                            <pre className="on-code">
-                              <code>{graph}</code>
-                            </pre>
-                          </div>
-                        )}
-                        {refusal !== undefined && (
-                          <>
-                            <p className="ak-step-input">
-                              {refusalText(
-                                refusal,
-                                steps
-                                  .slice(i + 1)
-                                  .some(
-                                    (x) =>
-                                      isEnding(x.tool) &&
-                                      x.result?.kind === "ended",
-                                  ),
+                      )}
+                      {open && (
+                        <div className="ak-call-body" id={body}>
+                          {input && (
+                            <section
+                              className="ak-call-part"
+                              aria-label="Input"
+                            >
+                              <h4>Input</h4>
+                              {t ? (
+                                <div className="ak-query" aria-label="Query">
+                                  <code>{t.path}</code>
+                                  {t.filters.map((f) => (
+                                    <span key={f}>{f}</span>
+                                  ))}
+                                  <span>{t.returns}</span>
+                                </div>
+                              ) : (
+                                <pre
+                                  className="on-code"
+                                  aria-label={
+                                    graph !== undefined
+                                      ? "Graph query"
+                                      : "Arguments"
+                                  }
+                                >
+                                  <code>{graph ?? args}</code>
+                                </pre>
                               )}
-                            </p>
-                            <details className="ak-json">
-                              <summary>What the agent was told</summary>
+                            </section>
+                          )}
+                          {refusal !== undefined && (
+                            <section
+                              className="ak-call-part"
+                              aria-label="What the agent was told"
+                            >
+                              <h4>What the agent was told</h4>
                               <pre className="on-code ak-told">
                                 <code>{refusal}</code>
                               </pre>
-                            </details>
-                          </>
-                        )}
-                        {(record || rawShown) && (
-                          <div className="ak-step-more">
-                            {record && (
-                              <details
-                                className="ak-json ak-step-result"
-                                onToggle={(e) => {
-                                  if (e.currentTarget.open) setOpened(true);
-                                }}
-                              >
-                                <summary>Result</summary>
-                                {record.output ? (
-                                  <AskVisual
-                                    output={record.output}
-                                    query={record.query}
-                                    href={entityHref}
-                                    untitled
-                                  />
-                                ) : reading ? (
-                                  <Skeleton width="100%" height={120} />
-                                ) : (
-                                  <p className="ak-step-input">
-                                    {full.isError
-                                      ? "Its result couldn’t be read."
-                                      : "Its result wasn’t kept with the answer."}
-                                  </p>
-                                )}
-                              </details>
-                            )}
-                            {rawShown && (
-                              <details className="ak-json">
-                                <summary>JSON</summary>
-                                <pre className="on-code">
-                                  <code>{JSON.stringify(raw, null, 2)}</code>
-                                </pre>
-                              </details>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                            </section>
+                          )}
+                          {record && (
+                            <section
+                              className="ak-call-part ak-step-result"
+                              aria-label="Output"
+                            >
+                              <h4>Output</h4>
+                              {record.output ? (
+                                <AskVisual
+                                  output={record.output}
+                                  query={record.query}
+                                  href={entityHref}
+                                  untitled
+                                />
+                              ) : reading ? (
+                                <Skeleton width="100%" height={120} />
+                              ) : (
+                                <p className="ak-call-note">
+                                  {full.isError
+                                    ? "Its result couldn’t be read."
+                                    : "Its result wasn’t kept with the answer."}
+                                </p>
+                              )}
+                            </section>
+                          )}
+                        </div>
+                      )}
                     </li>
                   );
                 })}
               </ol>
             )}
-            {stream.unreadable > 0 && (
+            {traceOpen && stream.unreadable > 0 && (
               <p className="ak-trace-note">
                 {stream.unreadable === 1
                   ? "1 step couldn’t be read."
@@ -988,7 +1107,6 @@ function Outcome({
           text={
             <>
               <SettingsLinked text={view.error} />
-              {view.result && <Spent usage={view.result.usage} />}
             </>
           }
         />
@@ -1002,7 +1120,6 @@ function Outcome({
           text={
             <>
               {`It used what a question may (${formatUsd(budget?.questionUsdMicros || 500_000)}, ${budget?.maxSteps ?? 20} steps or ${Math.round((budget?.maxWallSecs ?? 240) / 60)} minutes) before it could answer. Ask something narrower.`}
-              <Spent usage={view.result.usage} />
             </>
           }
         />
@@ -1017,7 +1134,6 @@ function Outcome({
             <>
               {view.result.reason || "What it holds doesn’t say."}
               {view.result.gap && <> It lacks: {view.result.gap}</>}
-              <Spent usage={view.result.usage} />
               <span className="ak-draft">
                 <ButtonLink
                   size="sm"
@@ -1182,21 +1298,13 @@ function Answer({
             </ol>
           </>
         )}
-        <p className="ak-answer-meta">
-          {q.finishedAt && `Answered ${formatRelative(q.finishedAt)} · `}
-          {usageText(view.result.usage)}
-        </p>
+        {q.finishedAt && (
+          <p className="ak-answer-meta">
+            Answered {formatRelative(q.finishedAt)}
+          </p>
+        )}
       </div>
     </section>
-  );
-}
-
-/** What an ended question spent, after what its callout says. */
-function Spent({ usage }: { usage: AskUsage }) {
-  return (
-    <small className="ak-spent" aria-label="Spent">
-      {usageText(usage)}
-    </small>
   );
 }
 
@@ -1265,7 +1373,7 @@ function Composer({
   focus?: EntityRef;
   busy?: boolean;
   docked?: boolean;
-  // Questions a click puts in the box, under it.
+  // Questions under the box that a click asks at once.
   suggestions?: string[];
   onAsked?: (q: FoundryQuestion) => void;
 }) {
@@ -1285,14 +1393,14 @@ function Composer({
   const ready = !!load && askable(load.status);
   const length = [...text.trim()].length,
     tooLong = length > MAX_QUESTION;
-  const submit = async () => {
+  const submit = async (question = text.trim()) => {
     if (!load) return;
     setPending(true);
     setError(null);
     try {
       const r = await askQuestion(ws, o, {
         loadId: load.id,
-        question: text.trim(),
+        question,
         ...(thread ? { threadId: thread } : {}),
         ...(about ? { focusJson: JSON.stringify(about) } : {}),
         clientToken: token,
@@ -1423,13 +1531,8 @@ function Composer({
               key={q}
               type="button"
               className="ak-suggestion"
-              onClick={() => {
-                setText(q);
-                requestAnimationFrame(() => {
-                  input.current?.focus();
-                  input.current?.setSelectionRange(q.length, q.length);
-                });
-              }}
+              disabled={pending || !ready || busy || aiReady === false}
+              onClick={() => void submit(q)}
             >
               {q}
             </button>

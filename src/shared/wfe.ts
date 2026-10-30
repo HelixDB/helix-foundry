@@ -326,6 +326,9 @@ export type ConnectorKindName =
   | "linear"
   | "calcom"
   | "granola"
+  | "slack"
+  | "notion"
+  | "google"
   | "postgres"
   | "mysql"
   | "s3"
@@ -384,6 +387,31 @@ export type GranolaConnectorConfig = {
   // Also keep each note's transcript as a document, in the connection's
   // Transcripts set beside its Notes. Off by default.
   transcripts?: boolean;
+};
+/** v1SlackConnectorConfig: the bot token (xoxb-…) of an app in a Slack workspace. */
+export type SlackConnectorConfig = {
+  // Write-only.
+  botToken?: string;
+  // Days of channel history to keep, 1 to 365; 0 means 90.
+  historyDays?: number;
+};
+/** v1NotionConnectorConfig: an internal integration's secret (ntn_… or secret_…). */
+export type NotionConnectorConfig = {
+  // Write-only.
+  token?: string;
+};
+/**
+ * v1GoogleWorkspaceConnectorConfig: Drive, Calendar and the Directory, read
+ * as one Workspace user through a service account with domain-wide
+ * delegation.
+ */
+export type GoogleWorkspaceConnectorConfig = {
+  // The service account's JSON key; write-only.
+  serviceAccountKey?: string;
+  // The Workspace user it acts as; an admin, to read the Directory's users.
+  subject?: string;
+  // Days of past calendar events to keep, 1 to 365; 0 means 90.
+  eventDays?: number;
 };
 /** v1DatabaseConnectorConfig: PostgreSQL and MySQL. */
 export type DatabaseConnectorConfig = {
@@ -476,6 +504,9 @@ export type ConnectorConfig =
   | { linear: LinearConnectorConfig }
   | { calcom: CalcomConnectorConfig }
   | { granola: GranolaConnectorConfig }
+  | { slack: SlackConnectorConfig }
+  | { notion: NotionConnectorConfig }
+  | { google: GoogleWorkspaceConnectorConfig }
   | { postgres: DatabaseConnectorConfig }
   | { mysql: DatabaseConnectorConfig }
   | { s3: S3ConnectorConfig }
@@ -800,6 +831,9 @@ export type OntologyGeneration = {
   // The sample it drafts from in place of the AI ("acme"); "" for an AI
   // draft.
   sample?: string;
+  // Asked for with GenerateOntologyRequest's loadWhenReady: its draft is
+  // made current and loaded once stored, if no version is current by then.
+  loadWhenReady?: boolean;
 };
 
 /**
@@ -883,6 +917,11 @@ export type GenerateOntologyRequest = {
   // (INVALID_ARGUMENT otherwise), and each of the sample's tables synced
   // (FAILED_PRECONDITION until then).
   sample?: string;
+  // Once the draft is stored, while the ontology still has no current
+  // version, make it current and load it, as set-current then create-load
+  // would, and email the requester when that load ends. The new-ontology
+  // wizard's first ontology sets it. Not with `sample`.
+  loadWhenReady?: boolean;
 };
 
 /**
