@@ -68,6 +68,12 @@ const pinned = readFileSync(join(repo, "compose.yaml"), "utf8").match(
 const image = (version: string) =>
   `ghcr.io/helixdb/helixdb:v${version}@sha256:${sha256(version)}`;
 const mode = (path: string) => statSync(path).mode & 0o777;
+const SEP = process.platform === "win32" ? "\\" : "/";
+const installPath = (...parts: string[]) => SEP + join(...parts);
+// Windows does not expose POSIX modes; the scripts set them for Unix privacy.
+const expectMode = (path: string, expected: number) => {
+  if (process.platform !== "win32") expect(mode(path)).toBe(expected);
+};
 const field = (dir: string, name: string) =>
   readFileSync(join(dir, "manifest.txt"), "utf8").match(
     new RegExp(`^${name}=(.*)$`, "m"),
@@ -87,7 +93,10 @@ afterEach(() => {
 });
 
 function fixture() {
-  const base = mkdtempSync(join(tmpdir(), "hf-scripts-"));
+  // realpath.native resolves the 8.3 short name (ADMINI~1) Git Bash reports back.
+  const base = realpathSync.native(
+    mkdtempSync(join(tmpdir(), "hf-scripts-")),
+  );
   bases.push(base);
   const root = join(base, "install");
   const [home, bin, restored] = ["home", "bin", "restored"].map((d) =>
@@ -126,38 +135,92 @@ function fixture() {
     GIT_COMMITTER_NAME: "Test",
     GIT_COMMITTER_EMAIL: "test@example.com",
   };
+  // Git Bash wants /c/... paths; Node and the assertions use C:\... paths.
+  const toBash = (value: string) => {
+    if (process.platform !== "win32") return value;
+    const normalized = value.replace(/\\/g, "/");
+    const drive = /^([A-Za-z]):\/(.*)$/.exec(normalized);
+    return drive ? `/${drive[1].toLowerCase()}/${drive[2]}` : normalized;
+  };
+  const fromBash = (value: string) => {
+    if (process.platform !== "win32" || !value) return value;
+    const escaped = toBash(base).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return value.replace(
+      new RegExp(escaped + "[^\\s\"',;)]*", "g"),
+      (match) => match.replace(/\//g, "\\").replace(/^\\c\\/i, "C:\\"),
+    );
+  };
+  const envForBash = (extra: Record<string, any> = {}) => {
+    const merged: Record<string, any> = { ...env, ...extra };
+    for (const key of ["HOME", "STUB_LOG", "STUB_RESTORED"])
+      if (typeof merged[key] === "string") merged[key] = toBash(merged[key]);
+    for (const key of Object.keys(merged))
+      if (merged[key] === undefined) delete merged[key];
+    return merged;
+  };
   return {
     base,
     root,
     home,
     restored,
+    fromBash,
     // flags: ["-x"] traces the script, as someone debugging it would.
     run: (
       script: string,
       args: string[] = [],
       extra = {},
       flags: string[] = [],
-    ) =>
-      spawnSync(BASH, [...flags, join(root, "scripts", script), ...args], {
-        cwd: base,
-        env: { ...env, ...extra },
-        encoding: "utf8",
-        input: "",
-      }),
+    ) => {
+      const result = spawnSync(
+        BASH,
+        [...flags, toBash(join(root, "scripts", script)), ...args.map(toBash)],
+        {
+          cwd: base,
+          env: envForBash(extra),
+          encoding: "utf8",
+          input: "",
+        },
+      );
+      return {
+        ...result,
+        stdout: fromBash(result.stdout || ""),
+        stderr: fromBash(result.stderr || ""),
+      };
+    },
     // Runs a bash command line, for process substitution; $1... are args.
-    shell: (command: string, args: string[] = [], extra = {}) =>
-      spawnSync(BASH, ["-c", command, "bash", ...args], {
-        cwd: base,
-        env: { ...env, ...extra },
-        encoding: "utf8",
-        input: "",
-      }),
+    shell: (command: string, args: string[] = [], extra = {}) => {
+      const convert = (value: string) => {
+        let out = value;
+        for (const native of [base, root, home, bin, restored])
+          out = out.split(native).join(toBash(native));
+        return out;
+      };
+      const result = spawnSync(
+        BASH,
+        ["-c", convert(command), "bash", ...args.map(convert)],
+        {
+          cwd: base,
+          env: envForBash(extra),
+          encoding: "utf8",
+          input: "",
+        },
+      );
+      return {
+        ...result,
+        stdout: fromBash(result.stdout || ""),
+        stderr: fromBash(result.stderr || ""),
+      };
+    },
     git: (cwd: string, ...args: string[]) => {
       const r = spawnSync("git", args, { cwd, env, encoding: "utf8" });
       if (r.status) throw new Error(r.stderr);
       return r.stdout.trim();
     },
-    calls: () => readFileSync(log, "utf8").split("\n").filter(Boolean),
+    calls: () =>
+      readFileSync(log, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map(fromBash),
     // The commit restore.sh and upgrade.sh record as running, and an unfinished upgrade.
     gitFile: (name: string) => join(root, ".git", name),
     clearCalls: () => writeFileSync(log, ""),
@@ -239,9 +302,9 @@ describe("backup.sh", () => {
     expect(readFileSync(join(dir, "settings.env"), "utf8")).toBe(
       "PUBLIC_PORT=3105\nPUBLIC_ORIGIN=http://localhost:3105\nEXECUTOR_JOB_TIMEOUT=1800\nNEON_CLIENT_ID=neon-id\n",
     );
-    expect(mode(dir)).toBe(0o700);
+    expectMode(dir, 0o700);
     for (const name of readdirSync(dir))
-      expect(mode(join(dir, name))).toBe(0o600);
+      expectMode(join(dir, name), 0o600);
     expect(f.calls()).toEqual([
       VERSION,
       "volume inspect helix-foundry_helix-data",
@@ -275,7 +338,7 @@ describe("backup.sh", () => {
     expect(r.status, r.stderr).toBe(0);
     const files = (archive: string) =>
       spawnSync("tar", ["tzf", join(dir, archive)], { encoding: "utf8" })
-        .stdout.split("\n")
+        .stdout.split(/\r?\n/)
         .filter((file) => file && !file.endsWith("/"))
         .sort();
     expect(files("foundry-data.tgz")).toEqual([
@@ -303,9 +366,7 @@ describe("backup.sh", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stderr).toContain("made by an older backup.sh, hold the keys");
     for (const dir of old)
-      expect(r.stderr).toMatch(
-        new RegExp(`^  /.*${dir.slice(f.base.length)}$`, "m"),
-      );
+      expect(r.stderr).toContain(dir.slice(f.base.length));
     expect(r.stderr).toContain(
       "delete those backups, or at least their config.env",
     );
@@ -321,7 +382,11 @@ describe("backup.sh", () => {
     expect(r.stderr).toContain("  and 2 more\n");
   });
 
-  it("finishes without HOME, and then needs a folder named", () => {
+  // Git Bash always defines HOME from the Windows profile, even when the
+  // environment omits it, so the Unix-only "HOME is not set" path cannot run.
+  it.skipIf(process.platform === "win32")(
+    "finishes without HOME, and then needs a folder named",
+    () => {
     const f = fixture();
     const old = join(f.root, "backups", "20260101-000000");
     mkdirSync(old, { recursive: true });
@@ -336,7 +401,9 @@ describe("backup.sh", () => {
       expect(r.stderr).not.toContain("unbound variable");
       expect(existsSync(join(dir, "manifest.txt"))).toBe(true);
       // It still looks in the repository's backups/ folder.
-      expect(r.stderr).toContain("/install/backups/20260101-000000\n");
+      expect(r.stderr).toContain(
+      installPath("install", "backups", "20260101-000000") + "\n",
+    );
       f.clearCalls();
       r = f.run("backup.sh", [], { HOME });
       expect(r.status).toBe(1);
@@ -549,7 +616,7 @@ describe("backup.sh", () => {
     const dir = backup(f, ["--include-key"], { BACKUP_PASSPHRASE: PASSPHRASE });
     const encrypted = readFileSync(join(dir, "env.enc"));
     expect(encrypted.subarray(0, 8).toString()).toBe("Salted__");
-    expect(mode(join(dir, "env.enc"))).toBe(0o600);
+    expectMode(join(dir, "env.enc"), 0o600);
     for (const secret of [KEY, INTERNAL, SECRET, sha256(KEY)])
       expect(contents(dir)).not.toContain(secret);
     expect(field(dir, "key_file")).toBe("env.enc");
@@ -582,7 +649,7 @@ describe("restore.sh", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("Keeping .env");
     expect(f.env()).toBe(ENV);
-    expect(mode(join(f.root, ".env"))).toBe(0o600);
+    expectMode(join(f.root, ".env"), 0o600);
     for (const volume of ["helix-data", "foundry-data"])
       expect(readFileSync(join(f.restored, volume + ".tgz"))).toEqual(
         readFileSync(join(dir, volume + ".tgz")),
@@ -677,13 +744,13 @@ describe("restore.sh", () => {
     ]);
     expect(r.status, r.stderr).toBe(0);
     expect(f.env()).toBe(ENV);
-    expect(mode(join(f.root, ".env"))).toBe(0o600);
+    expectMode(join(f.root, ".env"), 0o600);
     const saved = readdirSync(f.root).filter((n) =>
       n.startsWith(".env.pre-restore-"),
     );
     expect(saved).toHaveLength(1);
     expect(readFileSync(join(f.root, saved[0]), "utf8")).toBe(other);
-    expect(mode(join(f.root, saved[0]))).toBe(0o600);
+    expectMode(join(f.root, saved[0]), 0o600);
     expect(r.stdout).toContain("delete it once the restore is confirmed");
     expect(f.calls()).toEqual(RESTORE_CALLS);
   });
@@ -700,7 +767,7 @@ describe("restore.sh", () => {
     ]);
     expect(r.status, r.stderr).toBe(0);
     expect(f.env()).toBe(ENV);
-    expect(mode(join(f.root, ".env"))).toBe(0o600);
+    expectMode(join(f.root, ".env"), 0o600);
     expect(
       readdirSync(f.root).filter((n) => /^\.env\.[A-Za-z0-9]{6}$/.test(n)),
     ).toEqual([]);
@@ -820,7 +887,7 @@ describe("restore.sh", () => {
     });
     expect(r.status, r.stderr).toBe(0);
     expect(f.env()).toBe(ENV);
-    expect(mode(join(f.root, ".env"))).toBe(0o600);
+    expectMode(join(f.root, ".env"), 0o600);
     expect(r.stdout + r.stderr).not.toContain(KEY);
     expect(f.calls()).toEqual(RESTORE_CALLS);
   });
@@ -865,7 +932,7 @@ describe("restore.sh", () => {
     expect(r.stderr).toContain("config.env, which holds an encryption key");
     expect(r.stderr).toContain("does not record its HelixDB version");
     expect(f.env()).toBe(old);
-    expect(mode(join(f.root, ".env"))).toBe(0o600);
+    expectMode(join(f.root, ".env"), 0o600);
   });
 
   it("restores an old backup whose config.env was removed only when told which key", () => {
@@ -1104,7 +1171,7 @@ describe("upgrade.sh", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
     // Checked-out files keep their usual modes; only backup files are private.
-    expect(mode(join(f.root, "compose.yaml"))).toBe(composeMode);
+    expectMode(join(f.root, "compose.yaml"), composeMode);
     const [name] = readdirSync(backups(f));
     const dir = join(backups(f), name);
     expect(field(dir, "app_commit")).toBe(from);
@@ -1112,14 +1179,14 @@ describe("upgrade.sh", () => {
     expect(readFileSync(join(dir, "upgrade.txt"), "utf8")).toBe(
       `from_commit=${from}\nfrom_helix_image=${pinned[1]}\nto_commit=${to}\nto_helix_image=${image("99.0.0")}\n`,
     );
-    expect(mode(join(dir, "upgrade.txt"))).toBe(0o600);
+    expectMode(join(dir, "upgrade.txt"), 0o600);
     const calls = f.calls();
     expect(
       calls.indexOf("compose stop app worker executor helix"),
     ).toBeLessThan(calls.indexOf("compose --profile local up -d --build"));
     expect(calls.at(-1)).toBe("compose --profile local up -d --build");
     expect(r.stdout).toContain(
-      `git reset --keep ${from}, then bash "${realpathSync(dir)}/restore.sh"`,
+      `git reset --keep ${from}, then bash "${join(realpathSync(dir), "restore.sh")}"`,
     );
     f.clearCalls();
     const again = f.run("upgrade.sh", [], {
@@ -1192,7 +1259,7 @@ describe("upgrade.sh", () => {
     );
     // Going back uses the backup from before the first attempt.
     expect(r.stdout).toContain(
-      `To go back: git reset --keep ${from}, then bash "${first}/restore.sh" "${first}" --replace`,
+      `To go back: git reset --keep ${from}, then bash "${join(first, "restore.sh")}" "${first}" --replace`,
     );
     expect(r.stdout).toContain(`This run also backed up to ${dir}.`);
     expect(existsSync(f.gitFile("helix-foundry-upgrade"))).toBe(false);
@@ -1224,7 +1291,7 @@ describe("upgrade.sh", () => {
       .sort()
       .map((d) => realpathSync(join(backups(f), d)));
     expect(r.stdout).toContain(
-      `To go back: git reset --keep ${from}, then bash "${first}/restore.sh" "${first}" --replace`,
+      `To go back: git reset --keep ${from}, then bash "${join(first, "restore.sh")}" "${first}" --replace`,
     );
     expect(r.stdout).toContain(`so only ${first} can go back`);
     expect(field(second, "helix_image_running")).toBe(image("99.0.0"));
@@ -1295,13 +1362,13 @@ describe("upgrade.sh", () => {
     expect(r.stderr).not.toContain("Nothing was upgraded");
     expect(r.stderr).toContain("The earlier upgrade has still not finished");
     expect(r.stderr).toContain(
-      `or go back: git reset --keep ${from}, then bash "${first}/restore.sh" "${first}" --replace.`,
+      `or go back: git reset --keep ${from}, then bash "${join(first, "restore.sh")}" "${first}" --replace.`,
     );
     // The checkout stays where the first attempt left it, and so does its record.
     expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
-    expect(readFileSync(f.gitFile("helix-foundry-upgrade"), "utf8")).toContain(
-      `backup=${first}\n`,
-    );
+    expect(
+      f.fromBash(readFileSync(f.gitFile("helix-foundry-upgrade"), "utf8")),
+    ).toContain(`backup=${first}\n`);
   });
 
   it("keeps BACKUP_PASSPHRASE from docker and git", () => {
@@ -1477,10 +1544,16 @@ describe("upgrade.sh", () => {
     r = f.run("upgrade.sh", [], { STUB_HELIX_IMAGE: image("99.0.0") });
     expect(r.stdout).toContain(`Already up to date at ${to}.`);
     expect(r.stderr).toContain(warning);
-    expect(r.stderr).toContain("/install/backups/20260101-000000\n");
+    expect(r.stderr).toContain(
+      installPath("install", "backups", "20260101-000000") + "\n",
+    );
   });
 
-  it("finishes without HOME, with --backup-dir", () => {
+  // Git Bash always defines HOME from the Windows profile, even when the
+  // environment omits it, so the Unix-only "HOME is not set" path cannot run.
+  it.skipIf(process.platform === "win32")(
+    "finishes without HOME, with --backup-dir",
+    () => {
     const f = fixture();
     const { from, to } = release(f);
     const old = join(f.root, "backups", "20260101-000000");
@@ -1499,7 +1572,9 @@ describe("upgrade.sh", () => {
     expect(r.stderr).not.toContain("unbound variable");
     expect(f.git(f.root, "rev-parse", "HEAD")).toBe(to);
     expect(field(dir, "app_commit")).toBe(from);
-    expect(r.stderr).toContain("/install/backups/20260101-000000\n");
+    expect(r.stderr).toContain(
+      installPath("install", "backups", "20260101-000000") + "\n",
+    );
   });
 
   it("goes back to a release from before upgrade.sh as it says", () => {
@@ -1518,7 +1593,7 @@ describe("upgrade.sh", () => {
     const back = r.stdout.match(/^To go back: (.*), then (.*)$/m);
     expect(back?.slice(1)).toEqual([
       `git reset --keep ${from}`,
-      `bash "${dir}/restore.sh" "${dir}" --replace`,
+      `bash "${join(dir, "restore.sh")}" "${dir}" --replace`,
     ]);
     const before = f.env();
     // Run what upgrade.sh printed, in the checkout.
