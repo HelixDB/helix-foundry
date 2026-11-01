@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { execute as nativeExecute } from "../services/executor/src/engine.js";
 import { config } from "../apps/api/src/config.js";
 import { createApp } from "../apps/api/src/app.js";
-import { MemoryStore } from "../apps/api/src/store.js";
+import { MemoryStore, transaction } from "../apps/api/src/store.js";
 
 // These cover the graph compute routes end to end against the real DuckDB
 // executor, through the same HTTP boundary the web app uses.
@@ -229,6 +229,85 @@ it("persists fraud findings as a dataset", async () => {
   ).json();
   expect(scan.datasetId).toBeTruthy();
   expect(Array.isArray(scan.findings)).toBe(true);
+});
+
+it("does not let a viewer persist algorithm or fraud results", async () => {
+  const { flows } = await fixture();
+  const member = (await store.list("global", "member")).find(
+    (m: any) => m.data.workspaceId === scope,
+  )!;
+  await transaction(store, "global", async (tx) => {
+    const current = (await tx.get(member.id))!;
+    tx.update(current, { ...current.data, role: "viewer" });
+  });
+  const spec = {
+    kind: "degree",
+    name: "Viewer degrees",
+    projection: projection(flows.id),
+    persist: true,
+  };
+  await request("POST", "/graph/algorithms", spec, 403);
+  await request(
+    "POST",
+    "/graph/fraud/scan",
+    {
+      recipe: "structuring",
+      name: "Viewer structuring",
+      projection: projection(flows.id),
+      params: { amountColumn: "amount", topN: 20 },
+      persist: true,
+    },
+    403,
+  );
+  const datasets = await (
+    await request("GET", "/resources/dataset?limit=100")
+  ).json();
+  expect(
+    datasets.items.some(
+      (d: any) =>
+        d.name === "Viewer degrees" || d.name === "Viewer structuring",
+    ),
+  ).toBe(false);
+  // The same viewer may still run the computation without persisting.
+  await request("POST", "/graph/algorithms", { ...spec, persist: false });
+  await request("POST", "/graph/fraud/scan", {
+    recipe: "structuring",
+    name: "Viewer structuring",
+    projection: projection(flows.id),
+    params: { amountColumn: "amount", topN: 20 },
+    persist: false,
+  });
+});
+
+it("does not let a read-only token persist graph results", async () => {
+  const { flows } = await fixture();
+  const issued = await app.inject({
+    method: "POST",
+    url: base + "/tokens",
+    payload: { name: "Read-only graph client", readOnly: true },
+  });
+  expect(issued.statusCode, issued.body).toBe(200);
+  const headers = { authorization: `Bearer ${issued.json().token}` };
+  const spec = {
+    kind: "degree",
+    name: "Token degrees",
+    projection: projection(flows.id),
+    persist: true,
+  };
+  const denied = await app.inject({
+    method: "POST",
+    url: base + "/graph/algorithms",
+    headers,
+    payload: spec,
+  });
+  expect(denied.statusCode, denied.body.slice(0, 300)).toBe(403);
+  const allowed = await app.inject({
+    method: "POST",
+    url: base + "/graph/algorithms",
+    headers,
+    payload: { ...spec, persist: false },
+  });
+  expect(allowed.statusCode, allowed.body.slice(0, 300)).toBe(200);
 });
 
 it("computes vector search on its own, without a prior embeddings run", async () => {

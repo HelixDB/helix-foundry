@@ -36,6 +36,62 @@ Backups made by an older `backup.sh` do contain them: it copied `.env` into each
 
 Model weights are reproducible and excluded from application backups. Parquet versions and staged artifacts are immutable; unsuccessful previews can consume disk. Publication has the executor write each object type's and relationship's rows to a file in `DATA_DIR/results`, and deletes the file once it has read it, so one exists at a time per publication. The files are uncompressed JSON lines, often several times the size of the dataset's Parquet snapshot, and limited by `EXECUTOR_RESULT_LIMIT` (see [deployment limits](#deployment-limits)). A stopped publication leaves its file behind; the worker removes files there more than ten minutes old when it starts and every ten minutes. Backups leave out `results` and the executor's `scratch`, which hold nothing a restored installation needs. There is no automatic artifact garbage collector in this MVP. Remove unreferenced files only during offline maintenance, after checking proposal/run previews and version records.
 
+### Schedule backups
+
+A backup is the only way back from a damaged HelixDB volume, and it also captures the datasets and the workspace metadata. Take one on a schedule, not only before an upgrade:
+
+- Run `./scripts/backup.sh ~/helix-foundry-backups/TIME` daily, outside working hours. It briefly stops the writers and HelixDB, so do not run it while a long import or publication is active.
+- Keep at least seven daily backups, and copy them to private off-host storage. A backup on the same disk does not survive a disk failure.
+- Keep a separate copy of `.env` (password manager). Backups deliberately exclude `ENCRYPTION_KEY` and `INTERNAL_KEY`.
+- On Windows, create a daily Task Scheduler entry that runs Git Bash with the command above; use `$(date +%Y%m%d-%H%M%S)` inside Bash for the folder name, not a locale-dependent `%DATE%`.
+- Check the result: exit status 0 means the archives read back; status 3 means the backup exists but the services did not restart, so start them with the `docker compose up -d` command the script prints.
+
+## SlateDB recovery
+
+HelixDB uses SlateDB inside the `helix-foundry_helix-data` volume. A Windows shutdown, a Docker crash, or a full disk can leave a manifest or compaction file truncated at zero bytes. The database then refuses to open with `Data error: empty manifest`, and `app` and `worker` restart in a loop while `helix` stays unhealthy.
+
+This procedure is **non-destructive**: it renames the damaged files and never deletes the volume. It touches the data volume, so get explicit approval before running it, and take a backup first if the stack can still start read-only.
+
+1. Stop only the database, leaving the rest of the stack alone:
+
+   ```sh
+   docker compose --profile local stop helix
+   ```
+
+2. List the zero-byte files under the manifest and compaction directories. The volume name is prefixed by the Compose project name (`helix-foundry` by default):
+
+   ```sh
+   docker run --rm -v helix-foundry_helix-data:/data alpine:3.22 \
+     sh -c "find /data -type f -size 0 -print"
+   ```
+
+3. Rename every zero-byte file with a `.corrupt` suffix. Never delete a file, and never rename a file that has content: the newest healthy manifest is the one SlateDB must fall back to.
+
+   ```sh
+   docker run --rm -v helix-foundry_helix-data:/data alpine:3.22 sh -c '
+     cd /data/db/manifest 2>/dev/null && for f in *.manifest; do
+       [ -e "$f" ] && [ ! -s "$f" ] && mv "$f" "$f.corrupt"
+     done
+     cd /data/db/compactions 2>/dev/null || exit 0
+     for f in *.compactions; do
+       [ -e "$f" ] && [ ! -s "$f" ] && mv "$f" "$f.corrupt"
+     done
+   '
+   ```
+
+4. Start the database again and wait for health:
+
+   ```sh
+   docker compose --profile local up -d
+   curl -fsS http://localhost:3001/api/health
+   ```
+
+   `{"ok":true,"service":"helix-foundry"}` means HelixDB opened the last healthy manifest. `docker compose --profile local ps` must show `helix` up and `app` healthy.
+
+5. Take a fresh backup immediately, before doing anything else. If the database still refuses to open, or every manifest is zero bytes, do not remove the volume: restore the most recent backup (`./scripts/restore.sh PATH --replace`) after the user's approval, or check out the commit named in the backup's `manifest.txt` and restore with the `restore.sh` saved inside it.
+
+6. Prevention: stop Docker cleanly before shutting down Windows, keep at least 10% of the Docker disk free, and schedule the daily backup above. A repeated corruption is a signal to check the disk and Docker's memory/disk limits, not to reset the data.
+
 ## Deployment limits
 
 Two DuckDB jobs execute at a time, and up to 50 more wait for a turn. Each has a 512 MB per-process memory setting (`DUCKDB_MEMORY`) and a time limit, counted from when the executor receives it, so it includes time spent waiting for a turn:

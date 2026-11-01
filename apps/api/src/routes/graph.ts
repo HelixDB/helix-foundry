@@ -98,15 +98,19 @@ export function registerGraphRoutes(
     };
   });
 
+  // Computing is read-only, but persisting writes a dataset. A viewer or a
+  // read-only token may run the computation; only editor access may save it.
   app.post("/api/v1/workspaces/:w/graph/algorithms", async (req) => {
     const a = await access(req, "viewer"),
       spec = AlgorithmSpecSchema.parse(req.body);
+    if (spec.persist) await access(req, "editor");
     return runAlgorithm(store, a.scope, spec);
   });
 
   app.post("/api/v1/workspaces/:w/graph/fraud/scan", async (req) => {
     const a = await access(req, "viewer"),
       scan = FraudScanSchema.parse(req.body);
+    if (scan.persist) await access(req, "editor");
     return runFraudScan(store, a.scope, scan);
   });
 
