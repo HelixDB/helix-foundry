@@ -66,6 +66,22 @@ service FoundryService {
     option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/syncs" };
   }
 
+  // Connecting a connector by signing in at its provider: started by a user
+  // or their agent, authorized and finished in that user's browser. Only
+  // kinds whose ConnectorKind.sign_in is true.
+  rpc StartConnectorSignIn(StartConnectorSignInRequest) returns (ConnectorSignInResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/sign-ins" body: "*" };
+  }
+  rpc GetConnectorSignIn(GetConnectorSignInRequest) returns (ConnectorSignInResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/sign-ins/{id}" };
+  }
+  rpc AuthorizeConnectorSignIn(AuthorizeConnectorSignInRequest) returns (AuthorizeConnectorSignInResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/sign-ins/{id}:authorize" body: "*" };
+  }
+  rpc FinishConnectorSignIn(FinishConnectorSignInRequest) returns (ConnectorSignInResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/sign-ins/{id}:finish" body: "*" };
+  }
+
   // Helix Foundry event sources: connectors of kind events, made, changed and
   // deleted through the connector routes. No route sends pieces.
   rpc CreateFoundryEventSourceToken(CreateFoundryEventSourceTokenRequest) returns (CreateFoundryEventSourceTokenResponse) {
@@ -445,8 +461,48 @@ message ConnectorResponse {
   Connector          connector = 1;
   ConnectorDiscovery discovery = 2;
 }
+
+message StartConnectorSignInRequest {
+  string workspace_id = 1;
+  string kind         = 2;
+  string name         = 3;
+  // The connector's settings; its credential fields must be empty.
+  ConnectorConfig config = 4;
+  // Sign this connector in again instead of making one.
+  string connector_id = 5;
+  // Makes a retry return the sign-in the first attempt started.
+  string client_token = 6;
+}
+message GetConnectorSignInRequest {
+  string workspace_id = 1;
+  string id           = 2;
+}
+message AuthorizeConnectorSignInRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  // The site's callback; one of foundry.connectors.sign_in_return_to.
+  string return_to = 3;
+}
+message AuthorizeConnectorSignInResponse {
+  // The provider's authorization page, for the user's browser.
+  string url = 1;
+}
+message FinishConnectorSignInRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  // The connect_code the callback was given.
+  string connect_code = 3;
+  // The callback's error when it was given no code, such as access_denied.
+  string error = 4;
+}
+message ConnectorSignInResponse {
+  ConnectorSignIn sign_in = 1;
+}
 message ListConnectorsRequest {
   string workspace_id = 1;
+  // Only the connectors whose account needs signing in again, without their
+  // tables or syncs: the cheap read for the site's banner.
+  bool needs_sign_in = 2;
 }
 message ListConnectorsResponse {
   repeated Connector connectors = 1;

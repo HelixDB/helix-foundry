@@ -35,6 +35,10 @@ const (
 	FoundryService_SyncConnector_FullMethodName                         = "/helix.foundry.v1.FoundryService/SyncConnector"
 	FoundryService_GetConnectorSync_FullMethodName                      = "/helix.foundry.v1.FoundryService/GetConnectorSync"
 	FoundryService_ListConnectorSyncs_FullMethodName                    = "/helix.foundry.v1.FoundryService/ListConnectorSyncs"
+	FoundryService_StartConnectorSignIn_FullMethodName                  = "/helix.foundry.v1.FoundryService/StartConnectorSignIn"
+	FoundryService_GetConnectorSignIn_FullMethodName                    = "/helix.foundry.v1.FoundryService/GetConnectorSignIn"
+	FoundryService_AuthorizeConnectorSignIn_FullMethodName              = "/helix.foundry.v1.FoundryService/AuthorizeConnectorSignIn"
+	FoundryService_FinishConnectorSignIn_FullMethodName                 = "/helix.foundry.v1.FoundryService/FinishConnectorSignIn"
 	FoundryService_CreateFoundryEventSourceToken_FullMethodName         = "/helix.foundry.v1.FoundryService/CreateFoundryEventSourceToken"
 	FoundryService_ListFoundryEventSourceTokens_FullMethodName          = "/helix.foundry.v1.FoundryService/ListFoundryEventSourceTokens"
 	FoundryService_RevokeFoundryEventSourceToken_FullMethodName         = "/helix.foundry.v1.FoundryService/RevokeFoundryEventSourceToken"
@@ -130,6 +134,13 @@ type FoundryServiceClient interface {
 	SyncConnector(ctx context.Context, in *SyncConnectorRequest, opts ...grpc.CallOption) (*ConnectorSyncResponse, error)
 	GetConnectorSync(ctx context.Context, in *GetConnectorSyncRequest, opts ...grpc.CallOption) (*ConnectorSyncResponse, error)
 	ListConnectorSyncs(ctx context.Context, in *ListConnectorSyncsRequest, opts ...grpc.CallOption) (*ListConnectorSyncsResponse, error)
+	// Connecting a connector by signing in at its provider: started by a user
+	// or their agent, authorized and finished in that user's browser. Only
+	// kinds whose ConnectorKind.sign_in is true.
+	StartConnectorSignIn(ctx context.Context, in *StartConnectorSignInRequest, opts ...grpc.CallOption) (*ConnectorSignInResponse, error)
+	GetConnectorSignIn(ctx context.Context, in *GetConnectorSignInRequest, opts ...grpc.CallOption) (*ConnectorSignInResponse, error)
+	AuthorizeConnectorSignIn(ctx context.Context, in *AuthorizeConnectorSignInRequest, opts ...grpc.CallOption) (*AuthorizeConnectorSignInResponse, error)
+	FinishConnectorSignIn(ctx context.Context, in *FinishConnectorSignInRequest, opts ...grpc.CallOption) (*ConnectorSignInResponse, error)
 	// Helix Foundry event sources: connectors of kind events, made, changed and
 	// deleted through the connector routes. No route sends pieces.
 	CreateFoundryEventSourceToken(ctx context.Context, in *CreateFoundryEventSourceTokenRequest, opts ...grpc.CallOption) (*CreateFoundryEventSourceTokenResponse, error)
@@ -374,6 +385,46 @@ func (c *foundryServiceClient) ListConnectorSyncs(ctx context.Context, in *ListC
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListConnectorSyncsResponse)
 	err := c.cc.Invoke(ctx, FoundryService_ListConnectorSyncs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) StartConnectorSignIn(ctx context.Context, in *StartConnectorSignInRequest, opts ...grpc.CallOption) (*ConnectorSignInResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConnectorSignInResponse)
+	err := c.cc.Invoke(ctx, FoundryService_StartConnectorSignIn_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) GetConnectorSignIn(ctx context.Context, in *GetConnectorSignInRequest, opts ...grpc.CallOption) (*ConnectorSignInResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConnectorSignInResponse)
+	err := c.cc.Invoke(ctx, FoundryService_GetConnectorSignIn_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) AuthorizeConnectorSignIn(ctx context.Context, in *AuthorizeConnectorSignInRequest, opts ...grpc.CallOption) (*AuthorizeConnectorSignInResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthorizeConnectorSignInResponse)
+	err := c.cc.Invoke(ctx, FoundryService_AuthorizeConnectorSignIn_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) FinishConnectorSignIn(ctx context.Context, in *FinishConnectorSignInRequest, opts ...grpc.CallOption) (*ConnectorSignInResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConnectorSignInResponse)
+	err := c.cc.Invoke(ctx, FoundryService_FinishConnectorSignIn_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1058,6 +1109,13 @@ type FoundryServiceServer interface {
 	SyncConnector(context.Context, *SyncConnectorRequest) (*ConnectorSyncResponse, error)
 	GetConnectorSync(context.Context, *GetConnectorSyncRequest) (*ConnectorSyncResponse, error)
 	ListConnectorSyncs(context.Context, *ListConnectorSyncsRequest) (*ListConnectorSyncsResponse, error)
+	// Connecting a connector by signing in at its provider: started by a user
+	// or their agent, authorized and finished in that user's browser. Only
+	// kinds whose ConnectorKind.sign_in is true.
+	StartConnectorSignIn(context.Context, *StartConnectorSignInRequest) (*ConnectorSignInResponse, error)
+	GetConnectorSignIn(context.Context, *GetConnectorSignInRequest) (*ConnectorSignInResponse, error)
+	AuthorizeConnectorSignIn(context.Context, *AuthorizeConnectorSignInRequest) (*AuthorizeConnectorSignInResponse, error)
+	FinishConnectorSignIn(context.Context, *FinishConnectorSignInRequest) (*ConnectorSignInResponse, error)
 	// Helix Foundry event sources: connectors of kind events, made, changed and
 	// deleted through the connector routes. No route sends pieces.
 	CreateFoundryEventSourceToken(context.Context, *CreateFoundryEventSourceTokenRequest) (*CreateFoundryEventSourceTokenResponse, error)
@@ -1201,6 +1259,18 @@ func (UnimplementedFoundryServiceServer) GetConnectorSync(context.Context, *GetC
 }
 func (UnimplementedFoundryServiceServer) ListConnectorSyncs(context.Context, *ListConnectorSyncsRequest) (*ListConnectorSyncsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListConnectorSyncs not implemented")
+}
+func (UnimplementedFoundryServiceServer) StartConnectorSignIn(context.Context, *StartConnectorSignInRequest) (*ConnectorSignInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartConnectorSignIn not implemented")
+}
+func (UnimplementedFoundryServiceServer) GetConnectorSignIn(context.Context, *GetConnectorSignInRequest) (*ConnectorSignInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetConnectorSignIn not implemented")
+}
+func (UnimplementedFoundryServiceServer) AuthorizeConnectorSignIn(context.Context, *AuthorizeConnectorSignInRequest) (*AuthorizeConnectorSignInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AuthorizeConnectorSignIn not implemented")
+}
+func (UnimplementedFoundryServiceServer) FinishConnectorSignIn(context.Context, *FinishConnectorSignInRequest) (*ConnectorSignInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FinishConnectorSignIn not implemented")
 }
 func (UnimplementedFoundryServiceServer) CreateFoundryEventSourceToken(context.Context, *CreateFoundryEventSourceTokenRequest) (*CreateFoundryEventSourceTokenResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateFoundryEventSourceToken not implemented")
@@ -1683,6 +1753,78 @@ func _FoundryService_ListConnectorSyncs_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FoundryServiceServer).ListConnectorSyncs(ctx, req.(*ListConnectorSyncsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_StartConnectorSignIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartConnectorSignInRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).StartConnectorSignIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_StartConnectorSignIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).StartConnectorSignIn(ctx, req.(*StartConnectorSignInRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_GetConnectorSignIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetConnectorSignInRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).GetConnectorSignIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_GetConnectorSignIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).GetConnectorSignIn(ctx, req.(*GetConnectorSignInRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_AuthorizeConnectorSignIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthorizeConnectorSignInRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).AuthorizeConnectorSignIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_AuthorizeConnectorSignIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).AuthorizeConnectorSignIn(ctx, req.(*AuthorizeConnectorSignInRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_FinishConnectorSignIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinishConnectorSignInRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).FinishConnectorSignIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_FinishConnectorSignIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).FinishConnectorSignIn(ctx, req.(*FinishConnectorSignInRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2923,6 +3065,22 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListConnectorSyncs",
 			Handler:    _FoundryService_ListConnectorSyncs_Handler,
+		},
+		{
+			MethodName: "StartConnectorSignIn",
+			Handler:    _FoundryService_StartConnectorSignIn_Handler,
+		},
+		{
+			MethodName: "GetConnectorSignIn",
+			Handler:    _FoundryService_GetConnectorSignIn_Handler,
+		},
+		{
+			MethodName: "AuthorizeConnectorSignIn",
+			Handler:    _FoundryService_AuthorizeConnectorSignIn_Handler,
+		},
+		{
+			MethodName: "FinishConnectorSignIn",
+			Handler:    _FoundryService_FinishConnectorSignIn_Handler,
 		},
 		{
 			MethodName: "CreateFoundryEventSourceToken",

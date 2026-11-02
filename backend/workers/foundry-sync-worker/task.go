@@ -46,6 +46,8 @@ type Deps struct {
 	// sync; nil where none is sold.
 	Plans ports.PlanReader `optional:"true"`
 	AWS   aws.Config       `optional:"true"`
+	// Accounts gives signed-in connectors their tokens; nil where none sign in.
+	Accounts ports.ProviderAccounts `optional:"true"`
 }
 
 type syncQueue interface {

@@ -35,6 +35,9 @@ type Deps struct {
 	Databases ports.Databases
 	Graph     ports.GraphReader
 	People    ports.People
+	// Accounts keeps the provider accounts connectors sign in with; nil where
+	// none do, and every connector then takes a key.
+	Accounts ports.ProviderAccounts
 	// LocalAI is a local install's look at the model servers on its machine:
 	// it finds the install's default again, and lists an Ollama server's
 	// models. nil hosted, where DetectFoundryAIDefault and

@@ -68,6 +68,10 @@ type ReadStore interface {
 	// Foundry connectors
 	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
 	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
+	// ListConnectorAccounts is the provider account of each of the
+	// workspace's signed-in connectors, live or deleted but not yet purged:
+	// what a host deletes from its broker before DeleteWorkspaceConnectors.
+	ListConnectorAccounts(ctx context.Context, workspaceID string) ([]model.ConnectorAccountRef, error)
 	GetActiveConnectorSync(ctx context.Context, workspaceID, connectorID string) (*model.ConnectorSync, error)
 	GetConnectorSync(ctx context.Context, workspaceID, id string) (*model.ConnectorSync, error)
 	ListConnectorSyncs(ctx context.Context, workspaceID, connectorID string, limit int) ([]*model.ConnectorSync, error)
@@ -180,6 +184,11 @@ type Store interface {
 	UpdateConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate) error
 	DeleteConnector(ctx context.Context, workspaceID, id string) error
 	DeleteWorkspaceConnectors(ctx context.Context, workspaceID string) error
+	// BreakConnectorAccounts marks every connector of the workspace whose
+	// account acts as userID as needing signing in again, for reason (a
+	// ports.Account* reason), and stops it syncing. Its host calls it in the
+	// transaction that removes the member.
+	BreakConnectorAccounts(ctx context.Context, workspaceID, userID, reason string) error
 	EnqueueConnectorSync(ctx context.Context, sync *model.ConnectorSync) error
 	ClaimConnectorSync(ctx context.Context, workerID string, lease time.Duration) (*model.ConnectorSync, error)
 	RenewConnectorSyncLease(ctx context.Context, id, workerID string, lease time.Duration) error

@@ -407,6 +407,13 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "needsSignIn",
+            "description": "Only the connectors whose account needs signing in again, without their\ntables or syncs: the cheap read for the site's banner.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -3195,6 +3202,169 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins": {
+      "post": {
+        "summary": "Connecting a connector by signing in at its provider: started by a user\nor their agent, authorized and finished in that user's browser. Only\nkinds whose ConnectorKind.sign_in is true.",
+        "operationId": "FoundryService_StartConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceStartConnectorSignInBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}:authorize": {
+      "post": {
+        "operationId": "FoundryService_AuthorizeConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1AuthorizeConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAuthorizeConnectorSignInBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}:finish": {
+      "post": {
+        "operationId": "FoundryService_FinishConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceFinishConnectorSignInBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/usage": {
       "get": {
         "summary": "Helix Foundry usage: the workspace's AI spend this month, by task",
@@ -3253,6 +3423,15 @@
         }
       },
       "description": "AskFoundryQuestionRequest queues a question of a ready or partial load\n(FAILED_PRECONDITION otherwise, or when the workspace has spent this\nmonth's questions budget; RESOURCE_EXHAUSTED past its questions an hour).\nThe same client_token returns the question it queued."
+    },
+    "FoundryServiceAuthorizeConnectorSignInBody": {
+      "type": "object",
+      "properties": {
+        "returnTo": {
+          "type": "string",
+          "description": "The site's callback; one of foundry.connectors.sign_in_return_to."
+        }
+      }
     },
     "FoundryServiceCancelFoundryQuestionBody": {
       "type": "object",
@@ -3396,6 +3575,19 @@
       "type": "object",
       "description": "DetectFoundryAIDefaultRequest looks again for a local install's default;\nit answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION\nwhere the install names its default (FOUNDRY_AI_PROVIDER)."
     },
+    "FoundryServiceFinishConnectorSignInBody": {
+      "type": "object",
+      "properties": {
+        "connectCode": {
+          "type": "string",
+          "description": "The connect_code the callback was given."
+        },
+        "error": {
+          "type": "string",
+          "description": "The callback's error when it was given no code, such as access_denied."
+        }
+      }
+    },
     "FoundryServiceGenerateOntologyBody": {
       "type": "object",
       "properties": {
@@ -3522,6 +3714,29 @@
         }
       },
       "description": "Reads the current load's review. Stores a decision for the next load only."
+    },
+    "FoundryServiceStartConnectorSignInBody": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/definitions/v1ConnectorConfig",
+          "description": "The connector's settings; its credential fields must be empty."
+        },
+        "connectorId": {
+          "type": "string",
+          "description": "Sign this connector in again instead of making one."
+        },
+        "clientToken": {
+          "type": "string",
+          "description": "Makes a retry return the sign-in the first attempt started."
+        }
+      }
     },
     "FoundryServiceStopFoundryLoadEnrichmentBody": {
       "type": "object",
@@ -3678,6 +3893,15 @@
         }
       }
     },
+    "v1AuthorizeConnectorSignInResponse": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The provider's authorization page, for the user's browser."
+        }
+      }
+    },
     "v1CalcomConnectorConfig": {
       "type": "object",
       "properties": {
@@ -3743,8 +3967,66 @@
         "cdcStatus": {
           "$ref": "#/definitions/v1ConnectorCDCStatus",
           "description": "Set while the connector reads a database's log."
+        },
+        "account": {
+          "$ref": "#/definitions/v1ConnectorAccount",
+          "description": "Set when the connector was connected by signing in at its provider: the\naccount it reads with, in place of a stored key."
         }
       }
+    },
+    "v1ConnectorAccount": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Who the provider says signed in: a GitHub login; a Linear user and\nworkspace."
+        },
+        "state": {
+          "$ref": "#/definitions/v1ConnectorAccountState"
+        },
+        "broken": {
+          "$ref": "#/definitions/v1ConnectorAccountBroken",
+          "description": "Why it needs signing in again; unspecified while connected."
+        },
+        "brokenAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "userId": {
+          "type": "string",
+          "description": "The member whose access it reads with, and their name: \"a former\nmember\" once they have left the workspace."
+        },
+        "connectedBy": {
+          "type": "string"
+        },
+        "connectedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ConnectorAccount is the provider account a signed-in connector reads with.\nThe credential stays with the provider broker (hosted: WorkOS Pipes); the\nconnector asks it for a token each time it reads."
+    },
+    "v1ConnectorAccountBroken": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED",
+        "CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT",
+        "CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED",
+        "CONNECTOR_ACCOUNT_BROKEN_EXPIRED",
+        "CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING"
+      ],
+      "default": "CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED",
+      "description": " - CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT: The member it reads as left the workspace.\n - CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED: The provider rejected its access, or it was revoked there.\n - CONNECTOR_ACCOUNT_BROKEN_EXPIRED: Its access lapsed and couldn't be renewed.\n - CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING: The broker no longer has the account."
+    },
+    "v1ConnectorAccountState": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_ACCOUNT_STATE_UNSPECIFIED",
+        "CONNECTOR_ACCOUNT_STATE_CONNECTED",
+        "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN"
+      ],
+      "default": "CONNECTOR_ACCOUNT_STATE_UNSPECIFIED",
+      "description": " - CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN: It doesn't sync until an owner or admin signs it in again; its tables\nkeep what the last sync read."
     },
     "v1ConnectorCDCStatus": {
       "type": "object",
@@ -3896,9 +4178,16 @@
         "s3": {
           "$ref": "#/definitions/v1S3ConnectorSetup"
         },
+        "github": {
+          "$ref": "#/definitions/v1GitHubConnectorSetup"
+        },
         "planCode": {
           "type": "string",
           "description": "The lowest catalog plan that includes the kind."
+        },
+        "signIn": {
+          "type": "boolean",
+          "description": "True when the caller can connect the kind by signing in at its provider\n(StartConnectorSignIn) instead of entering a key."
         }
       },
       "description": "ConnectorKind is one type of Helix Foundry data source."
@@ -3938,6 +4227,93 @@
         }
       },
       "description": "ConnectorSchedule is when a connector syncs by itself."
+    },
+    "v1ConnectorSignIn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1ConnectorSignInStatus"
+        },
+        "failure": {
+          "$ref": "#/definitions/v1ConnectorSignInFailure",
+          "description": "Why it failed; set with CONNECTOR_SIGN_IN_STATUS_FAILED."
+        },
+        "connectorId": {
+          "type": "string",
+          "description": "The connector it made, or signs in again."
+        },
+        "discoveryProblem": {
+          "type": "string",
+          "description": "Set when the connector was made but can't read all it names, in\nFoundry's own words: a repository the GitHub App can't see, say."
+        },
+        "identityChanged": {
+          "type": "boolean",
+          "description": "Set when signing in again changed the provider account the connector\nreads with."
+        },
+        "mine": {
+          "type": "boolean",
+          "description": "True when the caller started it: only they can authorize and finish it."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "config": {
+          "$ref": "#/definitions/v1ConnectorConfig",
+          "description": "The connector's settings, chosen before signing in; never a credential."
+        }
+      },
+      "description": "ConnectorSignIn connects a provider account by signing in. A user, or\ntheir agent, starts it; that user authorizes it in their browser; the\nsite's callback finishes it. Finishing creates the connector, or signs one\nin again."
+    },
+    "v1ConnectorSignInFailure": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED",
+        "CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR",
+        "CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED",
+        "CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE",
+        "CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED",
+        "CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID",
+        "CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE"
+      ],
+      "default": "CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED",
+      "description": " - CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR: The provider or the broker answered with an error.\n - CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED: The callback's code had lapsed or was already used.\n - CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE: The account isn't this workspace's, or wasn't made by its starter.\n - CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED: The provider refused the token it issued.\n - CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID: The connector's settings were refused.\n - CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE: The broker couldn't be reached."
+    },
+    "v1ConnectorSignInResponse": {
+      "type": "object",
+      "properties": {
+        "signIn": {
+          "$ref": "#/definitions/v1ConnectorSignIn"
+        }
+      }
+    },
+    "v1ConnectorSignInStatus": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED",
+        "CONNECTOR_SIGN_IN_STATUS_PENDING",
+        "CONNECTOR_SIGN_IN_STATUS_AUTHORIZING",
+        "CONNECTOR_SIGN_IN_STATUS_FINISHING",
+        "CONNECTOR_SIGN_IN_STATUS_CONNECTED",
+        "CONNECTOR_SIGN_IN_STATUS_DECLINED",
+        "CONNECTOR_SIGN_IN_STATUS_FAILED",
+        "CONNECTOR_SIGN_IN_STATUS_EXPIRED"
+      ],
+      "default": "CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED",
+      "description": " - CONNECTOR_SIGN_IN_STATUS_PENDING: Started; its link not yet followed.\n - CONNECTOR_SIGN_IN_STATUS_AUTHORIZING: Sent to the provider to authorize.\n - CONNECTOR_SIGN_IN_STATUS_FINISHING: Its callback arrived and is being finished.\n - CONNECTOR_SIGN_IN_STATUS_DECLINED: The user declined at the provider. Authorizing again retries it.\n - CONNECTOR_SIGN_IN_STATUS_FAILED: See failure. Authorizing again retries it."
     },
     "v1ConnectorSync": {
       "type": "object",
@@ -6175,6 +6551,16 @@
           "description": "Reviews are read for pull requests updated in the last this many days, 1 to 365; 0 means 90."
         }
       }
+    },
+    "v1GitHubConnectorSetup": {
+      "type": "object",
+      "properties": {
+        "installUrl": {
+          "type": "string",
+          "description": "Installs Helix Foundry's GitHub App on an account or organization, which\na signed-in connector needs to read its private repositories."
+        }
+      },
+      "description": "GitHubConnectorSetup is what a GitHub connector that signs in needs from\nthe customer."
     },
     "v1GoogleWorkspaceConnectorConfig": {
       "type": "object",

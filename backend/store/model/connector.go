@@ -228,3 +228,13 @@ type FoundryLoadSource struct {
 //
 //	ConnectorPartName("Granola", "Notes") // "Granola / Notes"
 func ConnectorPartName(connectorName, name string) string { return connectorName + " / " + name }
+
+// ConnectorAccountRef is a signed-in connector's provider account.
+type ConnectorAccountRef struct {
+	ConnectorID string
+	WorkspaceID string
+	Kind        string
+	AccountID   string
+	// UserID is the member the account acts as.
+	UserID string
+}
