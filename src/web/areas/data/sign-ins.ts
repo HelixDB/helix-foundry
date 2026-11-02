@@ -6,6 +6,7 @@ import type {
   FoundryEventSourceMode,
 } from "../../../shared/wfe";
 import { parseReturnPath } from "../../../shared/return-path";
+import { ApiError } from "../../api";
 import { formatDate } from "../../kit/util";
 
 // Connecting a source by signing in at its provider: which kinds may, and
@@ -260,6 +261,44 @@ export function isProviderUrl(url: string, page: string) {
 /** Whether the code came back too long ago to finish. */
 export const codeStale = (entry: ConnectEntry, now = Date.now()) =>
   !!entry.code && entry.at !== undefined && now - entry.at > CODE_LIFETIME_MS;
+
+/**
+ * Whether the WFE refused to authorize a sign-in because it has ended: it
+ * ran out, is finishing or connected (google.rpc.ErrorInfo reason
+ * SIGN_IN_ENDED).
+ */
+export const signInEnded = (error: unknown) =>
+  error instanceof ApiError &&
+  (error.details || []).some(
+    (d) =>
+      !!d &&
+      typeof d === "object" &&
+      (d as { reason?: unknown }).reason === "SIGN_IN_ENDED",
+  );
+
+/**
+ * Starts a sign-in, under `clientToken` when given, and authorizes it. The
+ * token makes a retry after a refusal find the sign-in it started, but the
+ * WFE returns that one whatever became of it, so once it has ended (its 15
+ * minutes ran out while the form stayed open) Authorize refuses it as
+ * SIGN_IN_ENDED: then one is started under a new token, `renew()`'s, once.
+ * Without a token nothing is retried.
+ */
+export async function startAndAuthorize<T>(
+  clientToken: string | undefined,
+  start: (clientToken?: string) => Promise<string>,
+  authorize: (signInId: string) => Promise<T>,
+  renew: () => string,
+): Promise<{ signInId: string; authorized: T }> {
+  const signInId = await start(clientToken);
+  try {
+    return { signInId, authorized: await authorize(signInId) };
+  } catch (e) {
+    if (!clientToken || !signInEnded(e)) throw e;
+  }
+  const again = await start(renew());
+  return { signInId: again, authorized: await authorize(again) };
+}
 
 /**
  * Where the callback goes once connected, in the workspace the sign-in

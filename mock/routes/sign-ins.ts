@@ -18,7 +18,7 @@ import {
   type MockRoute,
 } from "../http";
 import { escape, page, send } from "../pages";
-import { db, displayName, onReset } from "../state";
+import { config, db, displayName, onReset } from "../state";
 import { isFoundryPro, proRequired } from "./billing";
 import {
   access,
@@ -47,13 +47,14 @@ import { discover, kinds, prepare } from "./data-sources";
 // client token returns what it started, once the request checks out. Only
 // its starter authorizes (again after a decline or a failure, until it
 // connects) and finishes it; it runs out 15 minutes after it started or was
-// last authorized. Finish ends it once: a repeat returns it as it stands. A
+// last authorized (`{"signInsRunOut": true}` runs every one out now, once).
+// Finish ends it once: a repeat returns it as it stands. A
 // code works once, for 90 seconds after the consent page gave it. A
 // connector deleted under its sign-in ends it: Authorize is SIGN_IN_ENDED,
 // and Finish fails it unavailable. Every kind Pipes signs in to does
 // (GitHub, Linear, Slack, Notion, PostHog, Cal.com, Stripe, Google
 // Workspace), with only the settings a sign-in has: a PostHog anywhere but
-// US Cloud is refused, and Google takes no subject. Signed in, GitHub reads where
+// US Cloud is refused, and so is a Google subject. Signed in, GitHub reads where
 // Helix Foundry is installed: a named repository whose name ends in
 // /missing is one it can't see, which connects anyway with a discovery
 // problem. The account it reads with is named by the consent page's
@@ -143,15 +144,28 @@ type StoredSignIn = {
   code?: { value: string; at: number; label: string; used: boolean };
 };
 
+const knobs = config as typeof config & { signInsRunOut?: boolean };
 const signIns = new Map<string, StoredSignIn>();
-onReset(() => signIns.clear());
+onReset(() => {
+  signIns.clear();
+  delete knobs.signInsRunOut;
+});
 
 const ENDED = new Set<StoredSignIn["status"]>([
   "CONNECTOR_SIGN_IN_STATUS_CONNECTED",
   "CONNECTOR_SIGN_IN_STATUS_EXPIRED",
 ]);
+/** Runs every sign-in out now, once asked: their 15 minutes, in a test. */
+function runOut() {
+  if (!knobs.signInsRunOut) return;
+  delete knobs.signInsRunOut;
+  for (const s of signIns.values())
+    s.expiresAt = Math.min(s.expiresAt, Date.now() - 1);
+}
+
 // Past its expiry, a sign-in no callback is finishing reads EXPIRED.
 function current(s: StoredSignIn): StoredSignIn {
+  runOut();
   if (
     Date.now() > s.expiresAt &&
     s.status !== "CONNECTOR_SIGN_IN_STATUS_FINISHING" &&

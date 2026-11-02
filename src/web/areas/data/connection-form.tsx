@@ -157,10 +157,11 @@ export function ConnectionForm({
     [pending, setPending] = useState<"test" | "save" | null>(null),
     [error, setError] = useState<Error | null>(null),
     // A kind that signs in: its credential's form instead.
-    [useKey, setUseKey] = useState(false),
-    // One sign-in per form: a retry after a refusal finds it again.
-    [token, setToken] = useState(() => crypto.randomUUID());
+    [useKey, setUseKey] = useState(false);
+  // One sign-in per form (its client token): a retry after a refusal finds
+  // it again, until the name or a setting changes (renew).
   const start = useSignInStart(),
+    { renew } = start,
     account = connector?.account,
     signInKind = isSignInKind(form.kind) ? form.kind : null,
     // PostHog signs in to US Cloud only: EU Cloud and self-hosted keep a key.
@@ -170,7 +171,7 @@ export function ConnectionForm({
     // No credential field: signing in, or signed in already.
     noKey = signingIn || !!account;
   // Another name is another sign-in, as other settings are (change()).
-  useEffect(() => setToken(crypto.randomUUID()), [name]);
+  useEffect(() => void renew(), [name, renew]);
   const label = connectorLabel(kind),
     database = isDatabase(kind),
     choice = hasTableChoice(kind),
@@ -186,7 +187,7 @@ export function ConnectionForm({
     setDirty(true);
     setDiscovered(null);
     setChosen(new Set());
-    setToken(crypto.randomUUID());
+    renew();
   };
   const update = (key: string, v: string) => change({ [key]: v });
   const run = async (what: "test" | "save", fn: () => Promise<void>) => {
@@ -288,7 +289,7 @@ export function ConnectionForm({
     });
   // Signed in, only the account's member widens what it reads, as the
   // WFE's widensReach decides: a GitHub repository it didn't name or
-  // clearing the list, PostHog's project or region.
+  // clearing the list, PostHog's project.
   const settings = signInConfig(form),
     widened =
       !!account &&
@@ -301,7 +302,7 @@ export function ConnectionForm({
       name: name.trim() || suggestedName(form),
       // The settings alone: the provider's sign-in is the credential.
       config: settings,
-      clientToken: token,
+      clientToken: start.clientToken,
       returnPath,
     });
   const canSubmit =
