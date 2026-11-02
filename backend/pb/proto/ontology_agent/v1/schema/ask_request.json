@@ -52,7 +52,7 @@
     },
     "limits": {
       "description": "Hard caps on the question.",
-      "$ref": "#/$defs/Limits"
+      "$ref": "#/$defs/AskLimits"
     },
     "load": {
       "description": "The load the agent reads: every read is bound to it.",
@@ -106,6 +106,46 @@
     "models"
   ],
   "$defs": {
+    "AskLimits": {
+      "description": "Hard caps on one question: its spend, model calls and wall time, as a turn's, and what each\nof its reads of the graph may spend (`read`).",
+      "type": "object",
+      "properties": {
+        "max_steps": {
+          "description": "Model calls.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_usd": {
+          "description": "Spend, in US dollars.",
+          "type": "number",
+          "format": "double"
+        },
+        "max_wall_secs": {
+          "description": "Wall time, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "read": {
+          "description": "What each read of the graph may spend, its wall time at most `max_wall_secs`. Left out,\nthe `Read` call's defaults (5,000 ms and 20,000 matches), which the question's wall time\nstill cuts short.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AskReadLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_usd",
+        "max_steps",
+        "max_wall_secs"
+      ]
+    },
     "AskModels": {
       "description": "The model a question runs on.",
       "type": "object",
@@ -124,6 +164,27 @@
         "endpoint",
         "ask"
       ]
+    },
+    "AskReadLimits": {
+      "description": "What each read of a question may spend: a tool call's read, and each of the load profile's\nreads (which also end within the profile's own time). A field left out is the `Read` call's\ndefault, and a read's other limits are always the `Read` call's defaults. A read stopped at\none fails, its error naming the field and its value. A `helix_query` read runs inside Helix,\npast these: `helix.timeout_secs` and the question's wall time bound it.",
+      "type": "object",
+      "properties": {
+        "scan_entities": {
+          "description": "Matches a `query` read may read into memory, at any stage, before it is too broad.\nWhat runs inside Helix (a count, a group count or an ungrouped aggregate at the last\nposition of a query with no step through the rules) reads none.",
+          "type": "integer",
+          "format": "uint",
+          "default": 20000,
+          "minimum": 1
+        },
+        "wall_ms": {
+          "description": "Wall time of one read, in milliseconds: its evaluation and its graph requests stop there.\nAt most the question's `max_wall_secs`; each graph request also ends at\n`helix.timeout_secs`.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 5000,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
     },
     "AwsRegion": {
       "description": "An AWS region, such as `us-east-1` or `ap-southeast-2`: its endpoint's host is built from\nit, never typed.",
@@ -288,35 +349,6 @@
       "required": [
         "question",
         "answer"
-      ]
-    },
-    "Limits": {
-      "description": "Hard caps on one turn.",
-      "type": "object",
-      "properties": {
-        "max_steps": {
-          "description": "Model calls.",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        },
-        "max_usd": {
-          "description": "Spend, in US dollars.",
-          "type": "number",
-          "format": "double"
-        },
-        "max_wall_secs": {
-          "description": "Wall time, in seconds.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "max_usd",
-        "max_steps",
-        "max_wall_secs"
       ]
     },
     "LoadId": {

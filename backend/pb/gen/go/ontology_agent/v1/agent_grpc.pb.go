@@ -7,6 +7,7 @@
 // `delete_load_{request,event,result}.json` for a graph build, `clues_{request,event}.json`
 // for People enrichment's Clues, `read_{request,result}.json` for a read,
 // `compare_{request,result}.json` for a comparison of two loads,
+// `audit_{request,result}.json` for an audit of a page of a load's documents,
 // `ask_{request,event,result}.json` for a question, `title_{request,result}.json` for a
 // title, `probe_{request,result}.json` for a probe, `catalog.json` for the models Helix prices,
 // and `schema/VERSION` holds the contract version they describe.
@@ -56,6 +57,8 @@ const (
 	Agent_Clues_FullMethodName      = "/ontology_agent.v1.Agent/Clues"
 	Agent_Read_FullMethodName       = "/ontology_agent.v1.Agent/Read"
 	Agent_Compare_FullMethodName    = "/ontology_agent.v1.Agent/Compare"
+	Agent_Audit_FullMethodName      = "/ontology_agent.v1.Agent/Audit"
+	Agent_Check_FullMethodName      = "/ontology_agent.v1.Agent/Check"
 	Agent_Ask_FullMethodName        = "/ontology_agent.v1.Agent/Ask"
 )
 
@@ -190,6 +193,53 @@ type AgentClient interface {
 	// FAILED_PRECONDITION `load_unknown` or `load_mismatch` (either load), RESOURCE_EXHAUSTED
 	// (it shares Read's limit), and UNAVAILABLE. Cancelling the call stops it.
 	Compare(ctx context.Context, in *CompareRequest, opts ...grpc.CallOption) (*CompareResponse, error)
+	// Audits one page of a load's documents (1 to 1,000 ids) for what their reviews say the
+	// ontology and mappings lack: relationships no link of a document set's routes covers, by
+	// their suggested link's canonical form; names that resolved to no one entity, with what
+	// they resolve to now; and clashes (a name several stored entities share, identifiers that
+	// identify different entities, entities a document names that resolve to one). Each finding
+	// has a fingerprint, the same across versions, loads and pages, and its backing (reviews,
+	// documents, up to 20 examples), which the caller sums over a load's pages; a relationship
+	// whose canonical form names a link the set's routes lack proposes adding it (`route`), and
+	// nothing else proposes anything. It writes nothing and calls no model.
+	//
+	// The result is `done` with the findings, `load_unknown` or `load_mismatch`. A call reads
+	// for at most 60 s: past it, `done` says which kinds it didn't finish (`mined: cut`), with
+	// what it found by then, and the page is audited again. INVALID_ARGUMENT: `request_json` is
+	// not an AuditRequest, an empty `database`, no `doc_ids` and no `rows`, more than 1,000 ids
+	// or one twice, `rows` showing more errors than they count, an
+	// ontology or mappings that don't parse, a Helix URL that isn't one. RESOURCE_EXHAUSTED: an
+	// audit is running (a server runs one at a time, apart from Read's limit). UNAVAILABLE: the
+	// graph failed, or the server is shutting down. Cancelling the call stops it.
+	//
+	// Since 4.4.0 a relationship whose links its set's routes already list proposes drafting the
+	// first one's description (`draft`, brief `description`), and `rows` (the load's ingest
+	// report's row errors and its sources' drift, sent with one call of a run) adds `row_errors`
+	// and `source_drift` findings, each proposing to map its mapping again (brief `mapping`);
+	// without `rows` the result says `rows: unmeasured`. A call may then send no `doc_ids`.
+	// `done` says what a relationship no link covers needs, summed over the pages, before a
+	// person may have a new link drafted for it (`new_link_support`): a thinner one stays a
+	// finding.
+	Audit(ctx context.Context, in *AuditRequest, opts ...grpc.CallOption) (*AuditResponse, error)
+	// Checks a self-healing draft before a person sees it (4.4.0), held to the target its
+	// proposal carries. The draft may only add what its brief asks for: one that removes, loosens
+	// or strays is `disallowed` at no cost, with the question a loosening becomes. Then 1 to 200 of the load's documents extract three
+	// times, each into a memory store of its own over the same sample of rows (at most 50,000,
+	// each source object counted once): a mapping the rows refuse loads nothing and is that
+	// mapping's one row error, and the others load. The arms are the base replaying the
+	// documents' artifacts ($0; `replay_missed` if they lack a call), the draft asking only the
+	// calls it changed, and the base asking every call again (the noise). The result is `done`
+	// with what each arm counted, what the draft did to each link's facts (`shifts`, for the
+	// person approving it), the conflicts of mappings the base refused, which the gate can't judge
+	// (`exempt_conflicts`, for that person too) and the gate (`pass`, or the first guard that failed),
+	// `budget_exhausted` once the paid arms reach `max_usd` (a soft cap: calls in flight finish
+	// and are charged past it), or `failed`, saying what the paid arms spent. It writes no graph.
+	// INVALID_ARGUMENT: `request_json` is not a CheckRequest, a proposal that's a question, no
+	// documents or more than 200, one twice, a budget that isn't dollars, files that don't parse, a
+	// source outside the files root.
+	// The endpoint's API key travels in `x-foundry-model-key`, as Extract's. It counts against
+	// the server's turn limit (RESOURCE_EXHAUSTED past it). Cancelling the call stops it.
+	Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error)
 	// Answers one question over a load, read-only, through `helix` (a read-only proxy). The
 	// stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
 	// `finished`), then exactly one result, last; a question that runs always ends with a result
@@ -198,15 +248,19 @@ type AgentClient interface {
 	//
 	// The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
 	// (the message has the JSON error), or it can't run (the message says why: an empty
-	// question, more than 5 earlier turns, an `as_of` that isn't a date, an ontology that
-	// doesn't compile, a `helix.url` that isn't one), or its models or key don't fit (see
-	// above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
+	// question, more than 5 earlier turns, an `as_of` that isn't a date, a `limits.read.wall_ms`
+	// past `limits.max_wall_secs`, an ontology that doesn't compile, a `helix.url` that isn't
+	// one), or its models or key don't fit (see above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
 	// server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting
 	// down. ABORTED doesn't apply: Ask takes no write lock.
 	//
 	// Cancelling the call, or dropping the connection, stops the question before its next
 	// model call. A retry of the same request replays the model calls the server already
 	// recorded, at no cost, when it runs with a response store.
+	//
+	// Since 4.5.0 `limits.read` sets what each read may spend (`wall_ms`, `scan_entities`; the
+	// Read call's defaults, 5,000 ms and 20,000 matches, when left out), and a read stopped at
+	// one, or at `helix.timeout_secs`, says which in its `tool_result`'s error, with its value.
 	Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error)
 }
 
@@ -373,6 +427,26 @@ func (c *agentClient) Compare(ctx context.Context, in *CompareRequest, opts ...g
 	return out, nil
 }
 
+func (c *agentClient) Audit(ctx context.Context, in *AuditRequest, opts ...grpc.CallOption) (*AuditResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuditResponse)
+	err := c.cc.Invoke(ctx, Agent_Audit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckResponse)
+	err := c.cc.Invoke(ctx, Agent_Check_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentClient) Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Agent_ServiceDesc.Streams[5], Agent_Ask_FullMethodName, cOpts...)
@@ -523,6 +597,53 @@ type AgentServer interface {
 	// FAILED_PRECONDITION `load_unknown` or `load_mismatch` (either load), RESOURCE_EXHAUSTED
 	// (it shares Read's limit), and UNAVAILABLE. Cancelling the call stops it.
 	Compare(context.Context, *CompareRequest) (*CompareResponse, error)
+	// Audits one page of a load's documents (1 to 1,000 ids) for what their reviews say the
+	// ontology and mappings lack: relationships no link of a document set's routes covers, by
+	// their suggested link's canonical form; names that resolved to no one entity, with what
+	// they resolve to now; and clashes (a name several stored entities share, identifiers that
+	// identify different entities, entities a document names that resolve to one). Each finding
+	// has a fingerprint, the same across versions, loads and pages, and its backing (reviews,
+	// documents, up to 20 examples), which the caller sums over a load's pages; a relationship
+	// whose canonical form names a link the set's routes lack proposes adding it (`route`), and
+	// nothing else proposes anything. It writes nothing and calls no model.
+	//
+	// The result is `done` with the findings, `load_unknown` or `load_mismatch`. A call reads
+	// for at most 60 s: past it, `done` says which kinds it didn't finish (`mined: cut`), with
+	// what it found by then, and the page is audited again. INVALID_ARGUMENT: `request_json` is
+	// not an AuditRequest, an empty `database`, no `doc_ids` and no `rows`, more than 1,000 ids
+	// or one twice, `rows` showing more errors than they count, an
+	// ontology or mappings that don't parse, a Helix URL that isn't one. RESOURCE_EXHAUSTED: an
+	// audit is running (a server runs one at a time, apart from Read's limit). UNAVAILABLE: the
+	// graph failed, or the server is shutting down. Cancelling the call stops it.
+	//
+	// Since 4.4.0 a relationship whose links its set's routes already list proposes drafting the
+	// first one's description (`draft`, brief `description`), and `rows` (the load's ingest
+	// report's row errors and its sources' drift, sent with one call of a run) adds `row_errors`
+	// and `source_drift` findings, each proposing to map its mapping again (brief `mapping`);
+	// without `rows` the result says `rows: unmeasured`. A call may then send no `doc_ids`.
+	// `done` says what a relationship no link covers needs, summed over the pages, before a
+	// person may have a new link drafted for it (`new_link_support`): a thinner one stays a
+	// finding.
+	Audit(context.Context, *AuditRequest) (*AuditResponse, error)
+	// Checks a self-healing draft before a person sees it (4.4.0), held to the target its
+	// proposal carries. The draft may only add what its brief asks for: one that removes, loosens
+	// or strays is `disallowed` at no cost, with the question a loosening becomes. Then 1 to 200 of the load's documents extract three
+	// times, each into a memory store of its own over the same sample of rows (at most 50,000,
+	// each source object counted once): a mapping the rows refuse loads nothing and is that
+	// mapping's one row error, and the others load. The arms are the base replaying the
+	// documents' artifacts ($0; `replay_missed` if they lack a call), the draft asking only the
+	// calls it changed, and the base asking every call again (the noise). The result is `done`
+	// with what each arm counted, what the draft did to each link's facts (`shifts`, for the
+	// person approving it), the conflicts of mappings the base refused, which the gate can't judge
+	// (`exempt_conflicts`, for that person too) and the gate (`pass`, or the first guard that failed),
+	// `budget_exhausted` once the paid arms reach `max_usd` (a soft cap: calls in flight finish
+	// and are charged past it), or `failed`, saying what the paid arms spent. It writes no graph.
+	// INVALID_ARGUMENT: `request_json` is not a CheckRequest, a proposal that's a question, no
+	// documents or more than 200, one twice, a budget that isn't dollars, files that don't parse, a
+	// source outside the files root.
+	// The endpoint's API key travels in `x-foundry-model-key`, as Extract's. It counts against
+	// the server's turn limit (RESOURCE_EXHAUSTED past it). Cancelling the call stops it.
+	Check(context.Context, *CheckRequest) (*CheckResponse, error)
 	// Answers one question over a load, read-only, through `helix` (a read-only proxy). The
 	// stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
 	// `finished`), then exactly one result, last; a question that runs always ends with a result
@@ -531,15 +652,19 @@ type AgentServer interface {
 	//
 	// The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
 	// (the message has the JSON error), or it can't run (the message says why: an empty
-	// question, more than 5 earlier turns, an `as_of` that isn't a date, an ontology that
-	// doesn't compile, a `helix.url` that isn't one), or its models or key don't fit (see
-	// above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
+	// question, more than 5 earlier turns, an `as_of` that isn't a date, a `limits.read.wall_ms`
+	// past `limits.max_wall_secs`, an ontology that doesn't compile, a `helix.url` that isn't
+	// one), or its models or key don't fit (see above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
 	// server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting
 	// down. ABORTED doesn't apply: Ask takes no write lock.
 	//
 	// Cancelling the call, or dropping the connection, stops the question before its next
 	// model call. A retry of the same request replays the model calls the server already
 	// recorded, at no cost, when it runs with a response store.
+	//
+	// Since 4.5.0 `limits.read` sets what each read may spend (`wall_ms`, `scan_entities`; the
+	// Read call's defaults, 5,000 ms and 20,000 matches, when left out), and a read stopped at
+	// one, or at `helix.timeout_secs`, says which in its `tool_result`'s error, with its value.
 	Ask(*AskRequest, grpc.ServerStreamingServer[AskEvent]) error
 }
 
@@ -582,6 +707,12 @@ func (UnimplementedAgentServer) Read(context.Context, *ReadRequest) (*ReadRespon
 }
 func (UnimplementedAgentServer) Compare(context.Context, *CompareRequest) (*CompareResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Compare not implemented")
+}
+func (UnimplementedAgentServer) Audit(context.Context, *AuditRequest) (*AuditResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Audit not implemented")
+}
+func (UnimplementedAgentServer) Check(context.Context, *CheckRequest) (*CheckResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Check not implemented")
 }
 func (UnimplementedAgentServer) Ask(*AskRequest, grpc.ServerStreamingServer[AskEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method Ask not implemented")
@@ -769,6 +900,42 @@ func _Agent_Compare_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Agent_Audit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuditRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).Audit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_Audit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).Audit(ctx, req.(*AuditRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_Check_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).Check(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_Check_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).Check(ctx, req.(*CheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Agent_Ask_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(AskRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -810,6 +977,14 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Compare",
 			Handler:    _Agent_Compare_Handler,
+		},
+		{
+			MethodName: "Audit",
+			Handler:    _Agent_Audit_Handler,
+		},
+		{
+			MethodName: "Check",
+			Handler:    _Agent_Check_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
