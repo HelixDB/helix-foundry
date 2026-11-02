@@ -211,7 +211,7 @@
   min-width: 0;
 }
 .ex-view.is-graph {
-  height: 100dvh;
+  height: calc(100dvh - var(--hf-shell-top));
   min-height: 480px;
 }
 /* What's under the bar when it isn't the graph itself: a page's padding. */
@@ -221,7 +221,7 @@
 @media (max-width: 800px) {
   .ex-view.is-graph {
     /* Under the mobile bar. */
-    height: calc(100dvh - 52px);
+    height: calc(100dvh - var(--hf-shell-top) - 52px);
   }
   .ex-frame {
     padding: var(--hf-space-3) var(--hf-space-2) var(--hf-space-2);
@@ -963,14 +963,6 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-xs);
   font-weight: 500;
-}
-.ex-label-group > .ex-other-note {
-  margin: 0;
-  padding: 0 14px 6px;
-  font-size: var(--hf-text-xs);
-}
-.ex-label-group > .ex-other-note + button {
-  margin: 0 10px;
 }
 .ex-label-group ul {
   margin: 0;
@@ -1967,7 +1959,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
-  height: max(480px, calc(100dvh - 140px));
+  height: max(480px, calc(100dvh - var(--hf-shell-top) - 140px));
   margin-bottom: var(--hf-space-3);
 }
 .ex-compare-side {

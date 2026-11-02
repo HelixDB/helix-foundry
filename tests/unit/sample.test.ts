@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileProblem } from "@/web/areas/documents/model";
 import { MAX_GOAL, MAX_TABLES } from "@/web/areas/ontology/model";
-import { SAMPLE } from "@/web/areas/ontology/sample";
+import { SAMPLE, sampleInView } from "@/web/areas/ontology/sample";
 import { readPdfText } from "../../mock/pdf-text";
 
 // The sample company the first ontology's wizard offers is what
@@ -39,6 +39,51 @@ function table(name: string): Row[] {
     return Object.fromEntries(cols.map((c, i) => [c, values[i] ?? null]));
   });
 }
+
+describe("sampleInView", () => {
+  it("is everywhere while the sample is the only ontology", () => {
+    for (const path of ["/", "/data", "/settings/billing"])
+      expect(sampleInView(path, "o1", 1)).toBe(true);
+  });
+
+  it("is never on the page making a new ontology", () => {
+    for (const ontologies of [1, 2])
+      expect(sampleInView("/ontology/new", "o1", ontologies)).toBe(false);
+  });
+
+  it("is on the sample's own pages and its tour beside other ontologies", () => {
+    for (const path of [
+      "/ontology/sample",
+      "/ontology/o1",
+      "/ontology/o1/loads/l1",
+      "/explore/o1",
+      "/explore/o1/records",
+      "/ask/o1",
+    ])
+      expect(sampleInView(path, "o1", 2)).toBe(true);
+  });
+
+  it("is nowhere else beside other ontologies", () => {
+    for (const path of [
+      "/",
+      "/data",
+      "/ontology",
+      "/ontology/new",
+      "/ontology/o2",
+      "/ontology/o12",
+      "/explore",
+      "/explore/o2/records",
+      "/ask",
+      "/ask/o2",
+      "/data/documents/o1",
+    ])
+      expect(sampleInView(path, "o1", 2)).toBe(false);
+  });
+
+  it("reads an id as the app's links write it", () => {
+    expect(sampleInView("/ask/o%201", "o 1", 2)).toBe(true);
+  });
+});
 
 describe("the sample company", () => {
   it("lists exactly the documents served, each one the WFE takes", () => {

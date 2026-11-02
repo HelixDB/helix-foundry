@@ -23,7 +23,7 @@ import { Select, Skeleton } from "../../../kit";
 import { cn } from "./ui";
 
 import { ReadOnly } from "./ExplorerBar";
-import { ScanLabelsControl, type LabelFocus } from "./LabelRail";
+import type { LabelFocus } from "./LabelRail";
 import {
   degreeText,
   edgeToJson,
@@ -93,7 +93,7 @@ export interface InspectorProps {
   /** Opens a node's page in Foundry, for an ontology's entities; unset for other nodes. */
   onOpenPage?: (node: GraphNode) => void;
   /**
-   * Where a node came from, in words ("Load v3 · 18 Oct", "Other data"),
+   * Where a node came from, in words ("Load v3 · 18 Oct", "Not from a load"),
    * and whether that is outside what the explorer reads.
    */
   provenance?: (node: GraphNode) => { text: string; outside: boolean } | null;
@@ -550,7 +550,7 @@ function edgesText(count: number, atLeast: boolean): string {
 
 /**
  * Exact relationship counts for a large node: reading every one of its edges,
- * so only on request and after a warning (like the label scan).
+ * so only on request and after a warning.
  */
 function CountRelationshipsControl({
   counting,
@@ -1380,7 +1380,6 @@ function DatabaseOverview({
     1,
     ...labels.nodes.map((entry) => entry.count ?? 0),
   );
-  const scanning = state.pending.has("scan");
   // The same test as the bar and the sample notice: sampled labels, or labels without a count.
   const atLeast = totalsAreFloors(stats, labels);
 
@@ -1439,24 +1438,6 @@ function DatabaseOverview({
           On the canvas: {plural(visible.nodes.length, "node")} ·{" "}
           {plural(visible.edges.length, "edge")}
         </p>
-        {!loading &&
-          stats &&
-          (atLeast.nodes ||
-            atLeast.edges ||
-            scanning ||
-            explorer.scanBlockedUntil !== null) && (
-            <div className="ex-stack-sm">
-              <p className="ex-dim">
-                Totals add up the labels found so far, by sampling rather than
-                reading the whole database, so they are floors.
-              </p>
-              <ScanLabelsControl
-                scanning={scanning}
-                blockedUntil={explorer.scanBlockedUntil}
-                onScan={() => void explorer.scanLabels()}
-              />
-            </div>
-          )}
       </div>
 
       <Section title="Node labels">

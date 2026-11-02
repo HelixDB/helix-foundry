@@ -36,7 +36,7 @@ import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { describeFailure } from "../explore/explorer/query/failure";
 import { valueText } from "../explore/model";
-import { scopeKey, type Scope } from "../explore/load-scope";
+import type { Scope } from "../explore/load-scope";
 import type { TypeNaming } from "../explore/naming";
 import { ReadFailed, pausedOf, startingOf } from "../explore/reads";
 import { DatabasePaused, DatabaseStarting } from "../explore/starting";
@@ -94,7 +94,7 @@ type GridRow = { $key: string; $row: RecordRow } & Record<string, unknown>;
 // Stands in for the type while the version names none (its read is off).
 const NO_TYPE: TypeNaming = { name: "", props: [], key: [], names: [] };
 // Stands in for the load while it isn't known (the reads are off).
-const NO_SCOPE: Scope = { kind: "load", id: "" };
+const NO_SCOPE: Scope = { id: "" };
 
 /** What a failed read says: the explorer's words for the transport's failure. */
 function failureText(error: unknown) {
@@ -183,8 +183,7 @@ export function RecordsPage() {
     // Keep the rows on screen while the next page, sort or search loads,
     // within one load and type.
     placeholderData: (previous, query) =>
-      query?.queryKey[4] === scopeKey(scope) &&
-      query?.queryKey[7] === type?.name
+      query?.queryKey[4] === scope.id && query?.queryKey[7] === type?.name
         ? previous
         : undefined,
   });
@@ -306,11 +305,7 @@ export function RecordsPage() {
       <>
         <EmptyState
           icon={CircleAlert}
-          title={
-            selection.choice.kind === "load"
-              ? "Couldn’t read the load’s version"
-              : "Couldn’t read the current version"
-          }
+          title="Couldn’t read the load’s version"
           text={versionError.message}
           action={<Button onClick={refetch}>Retry</Button>}
         />
@@ -321,12 +316,8 @@ export function RecordsPage() {
       <>
         <EmptyState
           icon={Shapes}
-          title={
-            ontology.currentVersionId
-              ? "The current version names no types"
-              : "No version is current yet"
-          }
-          text="Records lists the types of the version a load wrote. The graph shows everything the database holds."
+          title="The load’s version names no types"
+          text="Records lists the types of the version a load wrote. The graph shows what else the load holds."
           action={
             !shared && (
               <>
@@ -366,11 +357,7 @@ export function RecordsPage() {
         <EmptyState
           icon={Table2}
           title="Nothing loaded yet"
-          text={
-            selection.choice.kind === "other" && selection.loads.length
-              ? "Everything under these types was written by a load. Pick a load to see its records."
-              : `Load the current version to fill ${ontology.databaseName || "the ontology’s database"} with its records.`
-          }
+          text={`Load the current version to fill ${ontology.databaseName || "the ontology’s database"} with its records.`}
           action={
             !shared && (
               <>

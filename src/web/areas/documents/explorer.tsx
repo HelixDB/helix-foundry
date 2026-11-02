@@ -243,7 +243,6 @@ function SetItem({
     >
       <FolderRow
         level={1}
-        open={open}
         toggle={toggle}
         count={review || undefined}
         name={

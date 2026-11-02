@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { csrfToken, expect, mock, signIn, test } from "./support/mock";
+import { expect, loadContracts, mock, signIn, test } from "./support/mock";
 
 // The Explorer's layout: a slim bar over the view; the graph's labels and
 // Records' types in the section's panel beside the sidebar (the ontology and
@@ -7,68 +7,22 @@ import { csrfToken, expect, mock, signIn, test } from "./support/mock";
 // inspector as a right-hand sidebar the bar hides and shows; and, on a
 // phone, the labels in the navigation drawer and the inspector a sheet.
 
-const O = "/ontology/ont_acme_contracts",
-  X = "/explore/ont_acme_contracts";
-
-/**
- * The Orders ontology on the team's own database: no load, so its graph is
- * Other data (`?load=other`).
- */
-async function addOrders(page: Page): Promise<string> {
-  const res = await page.request.post(
-    "/papi/v1/workspaces/ws_acme/foundry/ontologies",
-    {
-      data: {
-        name: "Orders",
-        tenantId: "ten_acme_orders",
-        clientToken: "e2e-orders",
-      },
-      headers: {
-        origin: new URL(page.url()).origin,
-        "x-helix-csrf": await csrfToken(page),
-      },
-    },
-  );
-  expect(res.status()).toBe(200);
-  return (await res.json()).ontology.id;
-}
-
-/** Makes version 3 current and loads it: Stripe's customers and invoices. */
-async function loadContracts(page: Page) {
-  await mock.configure({ loadStepMs: 100 });
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto(`${O}#loads`);
-  await page
-    .getByRole("main")
-    .getByRole("button", { name: "Load data" })
-    .first()
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-}
+const X = "/explore/ont_acme_contracts";
 
 const graph = (page: Page) =>
-  page.getByRole("application", { name: /^Graph of orders: \d+ nodes/ });
+  page.getByRole("application", { name: /^Graph of contracts: \d+ nodes/ });
 
 test("puts the labels beside the sidebar and the overview down the right", async ({
   page,
 }) => {
   await signIn(page);
-  const orders = await addOrders(page);
-  await page.goto(`/explore/${orders}?load=other`);
+  await loadContracts(page);
+  await page.goto(X);
   await expect(graph(page)).toBeVisible({ timeout: 15_000 });
+
+  // It fits the window.
+  const view = (await page.locator(".ex-view.is-graph").boundingBox())!;
+  expect(view.y + view.height).toBeLessThanOrEqual(900);
 
   // The slim bar: the view, the pickers and the explorer's tools.
   await expect(
@@ -76,7 +30,7 @@ test("puts the labels beside the sidebar and the overview down the right", async
   ).toBeAttached();
   await expect(page.getByRole("radiogroup", { name: "View" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Ontology" })).toHaveText(
-    "Orders",
+    "Customer contracts",
   );
   await expect(
     page.getByRole("combobox", { name: "Jump to a node" }),
@@ -92,8 +46,8 @@ test("puts the labels beside the sidebar and the overview down the right", async
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav.locator(".hf-nav-link")).toHaveCount(4);
   const labels = page.getByRole("complementary", { name: "Labels" });
-  await expect(labels).toContainText("Account");
-  await expect(labels).toContainText("PLACED");
+  await expect(labels).toContainText("Customer");
+  await expect(labels).toContainText("billed_to");
   await expect(
     labels.getByRole("checkbox", { name: "Show Foundry internals" }),
   ).toBeVisible();
@@ -110,7 +64,7 @@ test("puts the labels beside the sidebar and the overview down the right", async
   expect(Math.round(side.x + side.width)).toBe(1440);
   expect(Math.round(side.y + side.height)).toBe(900);
   // A label picked beside the sidebar shows there.
-  await labels.getByRole("button", { name: /^Order node label/ }).click();
+  await labels.getByRole("button", { name: /^Customer node label/ }).click();
   await expect(inspector).toContainText("Node label");
 
   // The bar hides the overview, and that is remembered.
@@ -127,7 +81,16 @@ test("puts the labels beside the sidebar and the overview down the right", async
   await page.keyboard.press("[");
   await expect(labels).toHaveCount(0);
   await page.keyboard.press("[");
-  await expect(labels).toContainText("Account");
+  await expect(labels).toContainText("Customer");
+
+  // Every read went through query-read for this database; nothing wrote.
+  const reads = (await mock.stats()).requests.filter((r) =>
+    r.includes("/v1/databases:"),
+  );
+  expect(reads.length).toBeGreaterThan(0);
+  expect(new Set(reads)).toEqual(
+    new Set(["POST /v1/databases:query-read 200"]),
+  );
 });
 
 test("puts Records' types beside the sidebar, and the load meanwhile", async ({
@@ -183,8 +146,8 @@ test("on a phone, keeps the labels in the drawer and the inspector in a sheet", 
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
-  const orders = await addOrders(page);
-  await page.goto(`/explore/${orders}?load=other`);
+  await loadContracts(page);
+  await page.goto(X);
   await expect(graph(page)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("complementary", { name: "Labels" })).toHaveCount(
     0,
@@ -193,9 +156,9 @@ test("on a phone, keeps the labels in the drawer and the inspector in a sheet", 
   await tabs.getByRole("button", { name: "Labels" }).click();
   const drawer = page.getByRole("dialog", { name: "Navigation" });
   const labels = drawer.getByRole("complementary", { name: "Labels" });
-  await expect(labels).toContainText("Account");
+  await expect(labels).toContainText("Customer");
   // Picking a label closes the drawer and shows it in the inspector.
-  await labels.getByRole("button", { name: /^Order node label/ }).click();
+  await labels.getByRole("button", { name: /^Customer node label/ }).click();
   await expect(drawer).toHaveCount(0);
   await expect(
     page.getByRole("complementary", { name: "Inspector" }),

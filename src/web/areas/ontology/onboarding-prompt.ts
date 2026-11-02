@@ -72,6 +72,16 @@ export type OnboardingPromptInput = {
   | { workspace: null }
 );
 
+/** What Foundry is, for an agent that has never heard of it. */
+export const WHAT_FOUNDRY_IS =
+  "Helix Foundry turns a business’s data, the tables it syncs from apps and databases and the documents it’s given, into an ontology: the kinds of things in the business, how they link and the rules they follow. It loads the ontology into a Helix graph database, where people and AI agents explore it and ask it questions.";
+
+/** The commands that add the Helix MCP at `mcpUrl`, a line per agent. */
+export const addHelixMcp = (mcpUrl: string): readonly string[] => [
+  `- Claude Code: \`claude mcp add --transport http helix ${mcpUrl}\`, then \`/mcp\` to sign in.`,
+  `- Codex: \`codex mcp add helix --url ${mcpUrl} && codex mcp login helix\`.`,
+];
+
 // A local install, for a prompt without a workspace: the repository it's
 // cloned from, and where it answers (local/compose.yaml).
 const LOCAL_SOURCE = "https://github.com/helixdb/helix-foundry.git";
@@ -299,7 +309,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
     "",
     "## What Foundry is",
     "",
-    "Helix Foundry turns a business’s data, the tables it syncs from apps and databases and the documents it’s given, into an ontology: the kinds of things in the business, how they link and the rules they follow. It loads the ontology into a Helix graph database, where people and AI agents explore it and ask it questions.",
+    WHAT_FOUNDRY_IS,
     "",
     known
       ? `Foundry is at ${input.origin}. Every Foundry link takes \`?workspace=<workspace id>\`: this workspace opens at ${link(paths.home())}.`
@@ -319,8 +329,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           "If you don’t have the MCP’s tools (`helix_list_workspaces` and the rest), add it, and have me sign in. If its tools only appear after a restart, I’ll resume this conversation (`claude --continue`, `codex resume --last`).",
           "",
         ]),
-    `- Claude Code: \`claude mcp add --transport http helix ${input.mcpUrl}\`, then \`/mcp\` to sign in.`,
-    `- Codex: \`codex mcp add helix --url ${input.mcpUrl} && codex mcp login helix\`.`,
+    ...addHelixMcp(input.mcpUrl),
     "",
     ...(known
       ? [

@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
 import type { FoundryEnrichment } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import {
   Button,
   ConfirmDialog,
@@ -177,6 +178,10 @@ function OwnerForm({
         noticeVersion: ENRICHMENT_NOTICE_VERSION,
       });
       qc.setQueryData(enrichmentKey(id), next);
+      if (enabled !== !!e.enabled)
+        trackEvent(
+          enabled ? "people_enrichment_enabled" : "people_enrichment_disabled",
+        );
       notify(
         !enabled
           ? "People enrichment is off"

@@ -266,7 +266,7 @@ export function canvasRoom(
 
 /**
  * Label rows for the rail: the counted labels plus any label loaded or
- * probed since (one discovery missed, or written after the counts), whose
+ * probed since (one its version doesn't name, or written after the counts), whose
  * count is unknown unless a label page counted it.
  */
 export function railLabels(
@@ -302,9 +302,9 @@ export function railLabels(
 }
 
 /**
- * Whether the database totals are floors ("at least"), per side: labels were
- * found by sampling rather than a full scan, or the rail lists labels without
- * a count (loaded since, or over the per-request cap). Every place that shows
+ * Whether the load's totals are floors ("at least"), per side: the rail lists
+ * labels without a count (loaded since, or over the per-request cap), or a
+ * counts request left some out. Every place that shows
  * a total (the bar, the overview, the sample notice) uses this, so they agree.
  */
 export function totalsAreFloors(
@@ -1035,9 +1035,8 @@ export interface ExplorerState {
   phase: BootPhase;
   bootError: QueryFailure | null;
   /**
-   * Which step the boot failed at: finding and counting labels (cheap, so a
-   * failure there means the database or its gateway is in trouble) or the
-   * first view (which a smaller sample may fix).
+   * Which step the boot failed at: counting labels (cheap, so a failure there
+   * means the database or its gateway is in trouble) or the first view.
    */
   bootFailedAt: "labels" | "sample" | null;
   overview: {

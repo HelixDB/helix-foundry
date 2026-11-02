@@ -80,10 +80,10 @@
 }
 .dc-doc-side {
   position: sticky;
-  top: var(--hf-space-2);
+  top: calc(var(--hf-shell-top) + var(--hf-space-2));
   display: grid;
   gap: 12px;
-  max-height: calc(100vh - 2 * var(--hf-space-2));
+  max-height: calc(100vh - var(--hf-shell-top) - 2 * var(--hf-space-2));
   overflow: auto;
   padding: 0 14px 14px;
   border: 1px solid var(--hf-border);

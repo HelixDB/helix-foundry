@@ -61,6 +61,25 @@ test("explains a sign-in that could not start", async ({ page }) => {
   expect((await mock.stats()).loginStarts).toBe(0);
 });
 
+test("keeps only the newest pending sign-ins' cookies", async ({ page }) => {
+  // Abandoned sign-ins, each with a long return path, as a page that keeps
+  // starting them would leave. The browser sends its cookies oldest first.
+  const pending = async () =>
+    (await page.context().cookies())
+      .filter((c) => c.name.includes("foundry-login-"))
+      .map((c) => c.name);
+  const started: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const returnTo = `/data?${"x".repeat(1500)}${i}`;
+    await page.goto(
+      `/auth/login?provider=github&return_to=${encodeURIComponent(returnTo)}`,
+    );
+    started.push(...(await pending()).filter((n) => !started.includes(n)));
+  }
+  expect(started).toHaveLength(5);
+  expect((await pending()).sort()).toEqual(started.slice(2).sort());
+});
+
 test("says when this environment refuses the account", async ({ page }) => {
   await mock.configure({ allowedEmails: ["@helix.test"] });
   await page.goto("/login");

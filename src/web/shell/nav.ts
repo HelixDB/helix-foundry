@@ -85,6 +85,9 @@ export const sectionSidebars = bySection<SidebarSection>(
   "sidebar content",
 );
 
+// The banner across the top of the app, one area's.
+export const ShellBanner = areas.find((a) => a.banner)?.banner;
+
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(prefix + "/");
 export function activeSection(pathname: string): SectionId | undefined {

@@ -13,9 +13,7 @@ import {
   buildDegreeRequest,
   buildEdgeCountRequest,
   buildLabelCountsRequest,
-  buildLabelDiscoveryRequest,
   buildLabelPageRequest,
-  buildLabelScanRequest,
   buildNeighborhoodRequest,
   buildNodesByIdRequest,
   buildSampleRequest,
@@ -26,19 +24,14 @@ import {
   parseDegreeProbe,
   parseEdgeCount,
   parseLabelCounts,
-  parseLabelDiscovery,
   parseLabelPage,
-  parseLabelScan,
   parseNeighborhood,
   parseNodes,
   parseSample,
   parseSchemaProbe,
   parseSearch,
 } from "@/web/areas/explore/explorer/lib/queries";
-import {
-  shownLabels,
-  shownStats,
-} from "@/web/areas/explore/explorer/lib/exclusion";
+import { shownLabels } from "@/web/areas/explore/explorer/lib/exclusion";
 import { menuRelationships } from "@/web/areas/explore/explorer/lib/graph-store";
 
 // The explorer's own requests, from its builders, run through the mock's v3
@@ -90,7 +83,13 @@ function database() {
   return g;
 }
 // Every read is the explorer's in the load the fixture wrote.
-const LOAD: Scope = { kind: "load", id: "load_1" };
+const LOAD: Scope = { id: "load_1" };
+
+// Every label the fixture's load holds, as its version and Foundry's name them.
+const labelsIn = (g: MockGraph) => ({
+  nodes: [...new Set([...g.nodes.values()].map((n) => n.label))],
+  edges: [...new Set([...g.edges.values()].map((e) => e.label))],
+});
 
 const run = (g: MockGraph, request: unknown) => {
   const answer = runQuery(g, request);
@@ -99,11 +98,10 @@ const run = (g: MockGraph, request: unknown) => {
 };
 
 describe("the explorer over the mock database", () => {
-  it("boots: discovers labels, counts and probes them, then samples", () => {
+  it("boots: counts and probes its labels, then samples", () => {
     const g = database();
-    const discovery = parseLabelDiscovery(run(g, buildLabelDiscoveryRequest()));
-    expect(discovery.empty).toBe(false);
-    expect(discovery.nodes).toEqual(
+    const labels = labelsIn(g);
+    expect(labels.nodes).toEqual(
       expect.arrayContaining([
         "Customer",
         "Contract",
@@ -113,20 +111,15 @@ describe("the explorer over the mock database", () => {
         FOUNDRY_NODES.Review,
       ]),
     );
-    expect(discovery.edges).toEqual(
+    expect(labels.edges).toEqual(
       expect.arrayContaining(["signed_with", FOUNDRY_EDGES.MENTION_OF]),
     );
-    expect(discovery.nodesExhausted).toBe(true);
 
-    const labels = { nodes: discovery.nodes, edges: discovery.edges };
     const countsBody = run(
       g,
       buildLabelCountsRequest(labels, { scope: LOAD, probeRows: 2 }),
     );
-    const stats = parseLabelCounts(countsBody, labels, LOAD, {
-      nodes: true,
-      edges: true,
-    });
+    const stats = parseLabelCounts(countsBody, labels);
     expect(stats.nodeLabels.find((l) => l.label === "Customer")?.count).toBe(2);
     expect(stats.edgeLabels.find((l) => l.label === "signed_with")?.count).toBe(
       2,
@@ -217,9 +210,6 @@ describe("the explorer over the mock database", () => {
     expect(page.nodes).toHaveLength(2);
     expect(page.total).toBe(2);
 
-    const scan = parseLabelScan(run(g, buildLabelScanRequest()));
-    expect(scan.nodeTotal).toBe(g.nodes.size);
-
     const nodes = parseNodes(
       run(g, buildNodesByIdRequest({ dbIds: customers, shape })),
       shape,
@@ -251,8 +241,7 @@ describe("the explorer over the mock database", () => {
       notice: "",
     };
     const internal = (label: string) => /^(Foundry|FOUNDRY_)/.test(label);
-    const discovery = parseLabelDiscovery(run(g, buildLabelDiscoveryRequest()));
-    const labels = shownLabels(discovery, foundry);
+    const labels = shownLabels(labelsIn(g), foundry);
     expect(labels.nodes.some(internal)).toBe(false);
     expect(labels.edges.some(internal)).toBe(false);
     expect(labels.nodes).toEqual(
@@ -261,8 +250,6 @@ describe("the explorer over the mock database", () => {
     const stats = parseLabelCounts(
       run(g, buildLabelCountsRequest(labels, { scope: LOAD })),
       labels,
-      LOAD,
-      { nodes: true, edges: true },
     );
     const own = [...g.nodes.values()].filter((n) => !internal(n.label));
     expect(stats.nodeTotal).toBe(own.length);
@@ -283,12 +270,6 @@ describe("the explorer over the mock database", () => {
       "signed_with",
       "signed_with",
     ]);
-    // A scan lists everything; its stats lose Foundry's labels and counts.
-    expect(
-      shownStats(parseLabelScan(run(g, buildLabelScanRequest())), foundry)
-        .nodeTotal,
-    ).toBe(own.length);
-
     // A customer's page of neighbors: its mentions and evidence point at it.
     const shape = { keys: null, heavyKeys: [] };
     const globex = own.find(

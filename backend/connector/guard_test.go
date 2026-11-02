@@ -12,6 +12,8 @@ func TestGuard(t *testing.T) {
 	for _, addr := range []string{
 		"127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.100.100.200",
 		"100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "fd00:ec2::254", "fe80::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1",
+		// IPv6 that reaches an inward IPv4 address: NAT64, local-use NAT64, 6to4 and Teredo.
+		"64:ff9b::a00:1", "64:ff9b::169.254.169.254", "64:ff9b:1::808:808", "2002:a00:1::1", "2001:0:4136:e378::1",
 	} {
 		t.Run("refuses "+addr, func(t *testing.T) {
 			if _, err := (Guard{}).Resolve(context.Background(), addr); !errors.Is(err, ErrPrivateAddress) {
@@ -20,7 +22,7 @@ func TestGuard(t *testing.T) {
 		})
 	}
 	t.Run("permits public addresses", func(t *testing.T) {
-		for _, addr := range []string{"8.8.8.8", "34.200.1.1", "2606:4700::1111"} {
+		for _, addr := range []string{"8.8.8.8", "34.200.1.1", "2606:4700::1111", "64:ff9b::808:808", "2002:808:808::1"} {
 			if _, err := (Guard{}).Resolve(context.Background(), addr); err != nil {
 				t.Errorf("Resolve(%s) = %v, want permitted", addr, err)
 			}

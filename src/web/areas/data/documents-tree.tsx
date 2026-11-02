@@ -128,7 +128,6 @@ export function DocumentsFolder({
     >
       <FolderRow
         level={1}
-        open={open}
         toggle={() => toggle("documents")}
         count={count}
         name={
@@ -272,7 +271,6 @@ function SetItem({
     >
       <FolderRow
         level={2}
-        open={open}
         toggle={toggle}
         count={held}
         name={

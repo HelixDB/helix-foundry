@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Eye,
   EyeOff,
@@ -6,7 +6,6 @@ import {
   PanelLeftClose,
   Plus,
   RefreshCw,
-  ScanSearch,
   Search,
   X,
 } from "lucide-react";
@@ -20,7 +19,6 @@ import {
   ACTIVE_ROW,
   compactCount,
   formatCount,
-  OUTLINE_BUTTON,
   SECTION_TITLE,
   SMALL_ICON_BUTTON,
   TEXT_BUTTON,
@@ -40,15 +38,6 @@ export interface LabelRailProps {
   countsFailed: boolean;
   countsRetrying: boolean;
   onRetryCounts: () => void;
-  /**
-   * Labels were found by sampling rather than a full scan, so some may be
-   * missing; offer the explicit scan. Omit onScanLabels to hide it.
-   */
-  countsPartial?: boolean;
-  scanning?: boolean;
-  /** Epoch ms until which a new scan is held back (an earlier one may still be running). */
-  scanBlockedUntil?: number | null;
-  onScanLabels?: () => void;
   loaded: {
     nodes: ReadonlyMap<string, number>;
     edges: ReadonlyMap<string, number>;
@@ -76,11 +65,6 @@ export interface LabelRailProps {
     onShownChange: (shown: boolean) => void;
     isInternal: (target: ElementTarget, label: string) => boolean;
   };
-  /**
-   * In a load: the data no load wrote sits in a group of its own below the
-   * load's labels, shown only when chosen. Omit outside a load.
-   */
-  otherData?: { onShow: () => void };
   /** Collapse button in the header (desktop); omitted in sheets, which have their own close. */
   onCollapse?: () => void;
   /** "close" (an X) for sheets and flyouts; "panel" for the docked rail. */
@@ -97,11 +81,6 @@ export function LabelRail({
   countsFailed,
   countsRetrying,
   onRetryCounts,
-  countsPartial = false,
-  scanning = false,
-  scanBlockedUntil = null,
-  onScanLabels,
-  otherData,
   loaded,
   hiddenLabels,
   hiddenCount,
@@ -246,39 +225,7 @@ export function LabelRail({
             />
           </>
         )}
-        {otherData && !loading && (
-          <section className="ex-label-group" aria-label="Other data">
-            <h3>Other data</h3>
-            <p className="ex-dim ex-other-note">
-              Nodes and edges no load wrote: your own data in this database.
-              Hidden here; a node reached from the load is drawn dashed.
-            </p>
-            <button
-              type="button"
-              onClick={otherData.onShow}
-              className={TEXT_BUTTON}
-            >
-              Show other data
-            </button>
-          </section>
-        )}
       </div>
-
-      {!loading &&
-        onScanLabels &&
-        (countsPartial || scanning || scanBlockedUntil !== null) &&
-        !countsFailed && (
-          <div className="ex-panel-foot">
-            <p className="ex-dim">
-              Labels found by sampling. Some may be missing.
-            </p>
-            <ScanLabelsControl
-              scanning={scanning}
-              blockedUntil={scanBlockedUntil}
-              onScan={onScanLabels}
-            />
-          </div>
-        )}
 
       {(countsFailed || hiddenCount > 0) && (
         <div className="ex-panel-foot">
@@ -310,113 +257,6 @@ export function LabelRail({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/** Re-renders every second while `until` is in the future; returns the seconds left (0 when past). */
-function useSecondsUntil(until: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (until === null) return;
-    const tick = () => setNow(Date.now());
-    const first = window.setTimeout(tick, 0);
-    const timer = window.setInterval(tick, 1000);
-    return () => {
-      window.clearTimeout(first);
-      window.clearInterval(timer);
-    };
-  }, [until]);
-  return until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
-}
-
-/**
- * "Scan for all labels": the only way the explorer reads the whole graph,
- * behind a confirmation that says what it costs. Held back for a minute
- * after a scan that timed out or was cancelled, which may still be running
- * on the database: a second one would double the load.
- */
-export function ScanLabelsControl({
-  scanning,
-  blockedUntil = null,
-  onScan,
-  className,
-}: {
-  scanning: boolean;
-  blockedUntil?: number | null;
-  onScan: () => void;
-  className?: string;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  const wait = useSecondsUntil(blockedUntil);
-  if (scanning) {
-    return (
-      <p role="status" className={cn("ex-inline-status", className)}>
-        <Loader2 aria-hidden="true" size={14} className="hf-spin ex-busy" />
-        Scanning every node and edge…
-      </p>
-    );
-  }
-  if (wait > 0) {
-    return (
-      <div className={cn("ex-stack-sm", className)}>
-        <button type="button" disabled className={TEXT_BUTTON}>
-          <ScanSearch aria-hidden="true" size={14} />
-          Scan for all labels…
-        </button>
-        <p role="status" className="ex-dim">
-          The last scan didn’t finish and may still be running on the database.
-          You can scan again in <span className="ex-num">{wait}</span>{" "}
-          {wait === 1 ? "second" : "seconds"}.
-        </p>
-      </div>
-    );
-  }
-  if (!confirming) {
-    return (
-      <button
-        type="button"
-        onClick={() => setConfirming(true)}
-        className={cn(TEXT_BUTTON, className)}
-      >
-        <ScanSearch aria-hidden="true" size={14} />
-        Scan for all labels…
-      </button>
-    );
-  }
-  return (
-    <div
-      role="group"
-      aria-label="Confirm the label scan"
-      className={cn("ex-confirm", className)}
-    >
-      <p className="ex-confirm-title">Scan the whole database?</p>
-      <p className="ex-dim">
-        This reads every node and edge to list each label with exact counts. On
-        a large database it can take minutes, and it slows other queries while
-        it runs.
-      </p>
-      <div className="ex-row-actions">
-        <button
-          type="button"
-          onClick={() => {
-            setConfirming(false);
-            onScan();
-          }}
-          className={OUTLINE_BUTTON}
-        >
-          Scan anyway
-        </button>
-        {/* Focus lands on the safe choice. */}
-        <button
-          type="button"
-          autoFocus
-          onClick={() => setConfirming(false)}
-          className={TEXT_BUTTON}
-        >
-          Cancel
-        </button>
-      </div>
     </div>
   );
 }

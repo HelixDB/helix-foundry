@@ -17,12 +17,12 @@ test("copies the setup prompt where there is no ontology yet", async ({
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
-  // A new workspace opens on its onboarding wizard, which offers it.
+  // A new workspace opens on its onboarding, whose toggle starts on it.
   await signInToNewWorkspace(page);
-  const setup = page
-    .getByRole("status")
-    .filter({ hasText: "Set up with your agent" });
-  await setup.getByRole("button", { name: "Copy prompt" }).click();
+  const agent = page.getByRole("radio", { name: "Set up with your agent" }),
+    copy = page.getByRole("button", { name: "Copy prompt" });
+  await expect(agent).toBeChecked();
+  await copy.click();
   await expect(page.getByText("Copied the prompt")).toBeVisible();
   await expect.poll(clipboard).toContain("# Set up Helix Foundry with me");
   expect(await clipboard()).toContain("- No ontology yet.");
@@ -32,8 +32,17 @@ test("copies the setup prompt where there is no ontology yet", async ({
   await page.goto("/ontology");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await page.evaluate(() => navigator.clipboard.writeText(""));
-  await setup.getByRole("button", { name: "Copy prompt" }).click();
+  await copy.click();
   await expect.poll(clipboard).toContain("- No ontology yet.");
+
+  // The toggle's other side is the user's own data: no prompt, and one action
+  // that continues into the wizard.
+  await page.getByRole("radio", { name: "Use my own data" }).click();
+  await expect(copy).toHaveCount(0);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Your first ontology" }),
+  ).toBeVisible();
 
   // A workspace with ontologies creates another without it.
   await context.clearCookies();
@@ -42,7 +51,8 @@ test("copies the setup prompt where there is no ontology yet", async ({
   await expect(
     page.getByRole("heading", { level: 1, name: "New ontology" }),
   ).toBeVisible();
-  await expect(setup).toHaveCount(0);
+  await expect(agent).toHaveCount(0);
+  await expect(copy).toHaveCount(0);
 });
 
 test("copies the setup prompt from an unfinished ontology's step", async ({

@@ -258,7 +258,7 @@ function GrantsDialog({
         </>
       }
     >
-      <div className="wk-access-grants">
+      <div className="wk-access-grants" data-replay-block>
         <fieldset className="wk-access-sources">
           <legend>Sources</legend>
           {tree.connections.length > 0 && (
@@ -471,7 +471,7 @@ function NewKeyDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
     >
       {made ? (
-        <div className="wk-pad wk-access-token">
+        <div className="wk-pad wk-access-token" data-replay-block>
           <label className="hf-field">
             <span>Key</span>
             <div className="wk-access-copy">
@@ -614,7 +614,7 @@ function AgentsPanel({ data }: { data: AccessData }) {
             </Button>
           </div>
         ) : live.length ? (
-          <ul className="wk-members" aria-label="Agent keys">
+          <ul className="wk-members" aria-label="Agent keys" data-replay-block>
             {live.map((k) => (
               <Row
                 key={k.id}
@@ -777,7 +777,7 @@ function PeoplePanel({ data }: { data: AccessData }) {
             </Button>
           </div>
         ) : (
-          <ul className="wk-members" aria-label="People">
+          <ul className="wk-members" aria-label="People" data-replay-block>
             {list.map((m, i) => {
               const role = roleOf(m),
                 can = restrictable(m),
@@ -872,6 +872,7 @@ function TeamDialog({
       onClose={onClose}
     >
       <form
+        data-replay-block
         onSubmit={async (e) => {
           e.preventDefault();
           setPending(true);
@@ -993,7 +994,7 @@ function TeamsPanel({ data }: { data: AccessData }) {
         padded={false}
       >
         {teams.length ? (
-          <ul className="wk-members" aria-label="Teams">
+          <ul className="wk-members" aria-label="Teams" data-replay-block>
             {teams.map((t) => {
               const who = (t.memberUserIds || []).map(
                 (u) => person.get(u) || "A former member",
@@ -1116,7 +1117,7 @@ function OntologiesPanel({ data }: { data: AccessData }) {
       padded={false}
     >
       {ontologies.length ? (
-        <ul className="wk-members" aria-label="Ontologies">
+        <ul className="wk-members" aria-label="Ontologies" data-replay-block>
           {ontologies.map((o) => {
             const name = data.names.ontology(o.ontologyId || "");
             return (

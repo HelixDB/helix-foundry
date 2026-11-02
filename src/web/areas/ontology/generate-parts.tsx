@@ -257,7 +257,7 @@ export function ConnectorPicker({
   const sync = async (c: Connector) => {
     setSyncing(c.id);
     try {
-      await syncConnector(id, c.id);
+      await syncConnector(id, c.id, "setup");
       await qc.invalidateQueries({ queryKey: [id, "connectors"] });
     } catch (e) {
       notify((e as Error).message, true);

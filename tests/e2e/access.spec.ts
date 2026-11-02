@@ -213,12 +213,9 @@ test("a restricted member sees only what their sources cover", async ({
   await form.getByRole("button", { name: "Ask", exact: true }).click();
   const answer = as.getByRole("region", { name: "Answer" });
   await expect(answer).toBeVisible({ timeout: 20_000 });
-  // Its budget is its own, and says nothing of the workspace's.
-  const budget = as.getByRole("group", { name: "Questions budget" });
-  await expect(budget).toContainText("of $10.00 this month");
-  await expect(budget).toContainText("Spent on your questions this month");
-  await expect(budget).toContainText("an hour for you");
-  await expect(budget).not.toContainText("workspace");
+  await expect(as.getByRole("group", { name: "Questions budget" })).toHaveCount(
+    0,
+  );
   await expect(
     answer.getByRole("button", {
       name: "Source 7: A break of invoice_under_contract",
@@ -714,6 +711,81 @@ test("access changed elsewhere shows on coming back to the tab", async ({
 
   await as.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
   await expect(as.getByRole("form", { name: "Ask a question" })).toHaveCount(0);
+});
+
+test("offers a grantee nothing of the sample or of getting into production", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await loadContract(page);
+  await shareWithEve(page);
+  await page.close();
+
+  const before = (await mock.stats()).requests.length;
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const as = await context.newPage();
+  // An ontology named as the sample is, which only its generations confirm.
+  await as.route("**/foundry/ontologies?*", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    for (const o of json.ontologies || []) o.name = "Acme Corp customers";
+    await route.fulfill({ response, json });
+  });
+  await signIn(as, "eve@example.com");
+  await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
+  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
+  await expect(
+    as.getByRole("region", { name: "Getting into production" }),
+  ).toHaveCount(0);
+  await expect(as.getByRole("region", { name: "Sample data" })).toHaveCount(0);
+  // The page it can't have sends it home.
+  await as.goto("/ontology/sample");
+  await expect(as).toHaveURL(/\/ask/);
+  const requests = (await mock.stats()).requests.slice(before);
+  expect(requests.filter((r) => r.includes("/generations"))).toEqual([]);
+  expect(requests.filter((r) => r.includes("databases:query-read"))).toEqual(
+    [],
+  );
+  expect(requests.filter((r) => / 403$/.test(r))).toEqual([]);
+});
+
+test("a member reading through grants isn't sent to query the database", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await loadContract(page);
+  await mock.configure({ memberQueryRead: false });
+  const sources = await openSources(page, "people", "Alan Turing");
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("checkbox", { name: /^General/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
+    "Customer contracts",
+  );
+  await page.close();
+
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const as = await context.newPage();
+  await signIn(as, "alan@example.com");
+  await as.goto("/ask/ont_acme_contracts");
+  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
+  await expect(
+    as.getByRole("region", { name: "Getting into production" }),
+  ).toHaveCount(0);
+  // Given it back, he sees the card as any member does.
+  await mock.configure({ memberQueryRead: true });
+  await as.reload();
+  await expect(
+    as.getByRole("region", { name: "Getting into production" }),
+  ).toBeVisible();
 });
 
 test("the threads say why they can't be read, with a retry", async ({

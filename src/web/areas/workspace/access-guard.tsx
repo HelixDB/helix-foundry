@@ -97,7 +97,7 @@ export function useAccessCheck(): {
       onConfirm={() => asking.answer(true)}
       onCancel={() => asking.answer(false)}
     >
-      <ul aria-label="Who stops reading">
+      <ul aria-label="Who stops reading" data-replay-block>
         {asking.lines.map((line) => (
           <li key={line}>{line}</li>
         ))}

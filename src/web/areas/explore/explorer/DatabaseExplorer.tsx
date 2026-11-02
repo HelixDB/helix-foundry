@@ -25,6 +25,7 @@ import {
 import { holds, type Scope } from "../load-scope";
 import { PanelContent, usePanelSlot, useShell } from "../../../shell/context";
 import { useCurrentTheme } from "../../../shell/theme";
+import { trackEvent } from "../../../analytics";
 import { cn } from "./ui";
 import { excludes } from "./lib/exclusion";
 import type { RequestLimiter } from "./lib/request-limiter";
@@ -107,7 +108,7 @@ export interface DatabaseExplorerProps {
     | { kind: "page"; header: (tools: ReactNode) => ReactNode }
     | { kind: "side" };
   target: DatabaseQueryTarget;
-  /** What it reads: one load (its version's labels, a seeded first view) or Other data. */
+  /** The load it reads: its version's labels, a seeded first view. */
   scope: Scope;
   /** The load's version, for its rail and first view. */
   layout?: VersionLayout;
@@ -115,9 +116,7 @@ export interface DatabaseExplorerProps {
   limiter?: RequestLimiter;
   /** Text search reads this many times its hits, filtering them to the scope. */
   textOverFetch?: number;
-  /** In a load: shows Other data (the rail's group below the load's labels). */
-  onShowOtherData?: () => void;
-  /** Where a node came from, for the inspector ("Load v3 · 18 Oct", "Other data"). */
+  /** Where a node came from, for the inspector ("Load v3 · 18 Oct", "Not from a load"). */
   provenance?: (node: GraphNode) => string;
   /** The selected node changed (compare follows it on the other side). */
   onSelectNode?: (node: GraphNode | null) => void;
@@ -221,7 +220,6 @@ function pendingLabel(pending: ReadonlyMap<string, string>): string | null {
     return "Counting every relationship…";
   if (ops.includes("connect")) return "Connecting…";
   if (ops.includes("sample")) return "Loading a sample…";
-  if (ops.includes("scan")) return "Scanning every node and edge for labels…";
   if (ops.includes("overview")) return "Counting labels…";
   return null;
 }
@@ -279,7 +277,6 @@ export function DatabaseExplorer({
   layout,
   limiter,
   textOverFetch,
-  onShowOtherData,
   provenance,
   onSelectNode,
   focus,
@@ -819,27 +816,17 @@ export function DatabaseExplorer({
 
   // ============ Actions ============
 
-  const refresh = useCallback(
-    (options?: { small?: boolean }) => {
-      resetSelection();
-      setMenu(null);
-      setSampleNoticeDismissed(false);
-      rebootExplorer(options);
-    },
-    [rebootExplorer, resetSelection],
-  );
+  const refresh = useCallback(() => {
+    resetSelection();
+    setMenu(null);
+    setSampleNoticeDismissed(false);
+    rebootExplorer();
+  }, [rebootExplorer, resetSelection]);
 
   const clearCanvas = useCallback(() => {
     resetSelection();
     clearExplorer();
   }, [clearExplorer, resetSelection]);
-
-  // The hook reports the scan's outcome itself, so the rail and the overview behave the same.
-  const { scanLabels: scanExplorerLabels } = explorer;
-  const scanLabels = useCallback(
-    () => void scanExplorerLabels(),
-    [scanExplorerLabels],
-  );
 
   const chooseSearchResult = useCallback(
     (node: GraphNode, loaded: boolean) => {
@@ -944,6 +931,7 @@ export function DatabaseExplorer({
     link.href = url;
     link.download = `${fileSlug(databaseName)}-graph.png`;
     link.click();
+    trackEvent("graph_exported");
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [databaseName, notify]);
 
@@ -1259,20 +1247,6 @@ export function DatabaseExplorer({
       countsFailed={state.overview.status === "error"}
       countsRetrying={state.pending.has("overview")}
       onRetryCounts={explorer.retryOverview}
-      countsPartial={floors.nodes || floors.edges}
-      scanning={state.pending.has("scan")}
-      scanBlockedUntil={explorer.scanBlockedUntil}
-      onScanLabels={scope.kind === "other" ? scanLabels : undefined}
-      otherData={
-        scope.kind === "load" && onShowOtherData
-          ? {
-              onShow: () => {
-                if (docked) slot?.onNavigate?.();
-                onShowOtherData();
-              },
-            }
-          : undefined
-      }
       loaded={loadedCounts}
       hiddenLabels={state.hiddenLabels}
       hiddenCount={hiddenCount}
@@ -1361,7 +1335,6 @@ export function DatabaseExplorer({
         databaseName={databaseName}
         loadHref={links?.load}
         internalsHidden={internalsHidden}
-        other={scope.kind === "other" && scope.loads.length > 0}
       />
     );
   } else if (phase === "error" && state.bootError) {
@@ -1370,7 +1343,6 @@ export function DatabaseExplorer({
         failure={state.bootError}
         stage={state.bootFailedAt ?? "sample"}
         onRetry={() => refresh()}
-        onSmaller={() => refresh({ small: true })}
       />
     );
   } else if (phase === "ready" && visible.nodes.length === 0) {
@@ -1514,7 +1486,6 @@ export function DatabaseExplorer({
             failure={failure}
             stage={state.bootFailedAt ?? "sample"}
             onRetry={() => refresh()}
-            onSmaller={() => refresh({ small: true })}
           />
         ) : null}
       </div>

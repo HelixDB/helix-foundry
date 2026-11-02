@@ -20,7 +20,7 @@ import { refKey } from "@/web/areas/explore/rule-breaks";
 let graph: MockGraph;
 // The load the tests' reads are scoped to.
 const LOAD = "load_1";
-const SCOPE: Scope = { kind: "load", id: LOAD };
+const SCOPE: Scope = { id: LOAD };
 // The database's shared reads, over the mock graph.
 const read: QueryExecutor = async (request) => {
   const answer = runQuery(graph, request);

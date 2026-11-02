@@ -29,6 +29,49 @@ function checkoutTiers(page: Page) {
   return tiers;
 }
 
+test("the account menu's usage fits once its numbers replace the dashes", async ({
+  page,
+}) => {
+  // WebKit kept a grid track at the dash's width when only the text changed;
+  // Chromium, which CI runs this in, never did.
+  let answer = () => {};
+  const answered = new Promise<void>((resolve) => (answer = resolve));
+  await page.route("**/papi/v1/workspaces/*/foundry/usage", async (route) => {
+    await answered;
+    await route.fulfill({
+      json: {
+        usage: {
+          totalUsdMicros: "170000",
+          tasks: [
+            {
+              task: "FOUNDRY_USAGE_TASK_LOADS",
+              spentUsdMicros: "130000",
+              capUsdMicros: "100000000",
+            },
+            // No cap: its amount is one text node, as the total's is.
+            {
+              task: "FOUNDRY_USAGE_TASK_QUESTIONS",
+              spentUsdMicros: "40000",
+            },
+          ],
+        },
+      },
+    });
+  });
+  await signIn(page);
+  await page.getByRole("button", { name: "Account" }).click();
+  const menu = page.getByRole("menu"),
+    usage = menu.locator(".wk-usage");
+  await expect(usage.locator(".wk-usage-total")).toContainText("—");
+  answer();
+  await expect(usage.locator(".wk-usage-total")).toContainText("$0.17");
+  await expect(usage.locator(".wk-usage-row")).toHaveText([
+    "Loads$0.13 of $100.00",
+    "Questions$0.04",
+  ]);
+  expect(await menu.evaluate((m) => m.scrollWidth - m.clientWidth)).toBe(0);
+});
+
 test("shows the workspace and opens settings from the account menu", async ({
   page,
 }) => {

@@ -1,4 +1,4 @@
-import { scopeKey, type Scope } from "../explore/load-scope";
+import type { Scope } from "../explore/load-scope";
 import type { Naming, TypeNaming } from "../explore/naming";
 import { readOptions, runRead, type GraphReader } from "../explore/reads";
 import {
@@ -42,7 +42,7 @@ export const recordQueries = {
         "ontology",
         o,
         "read",
-        scopeKey(scope),
+        scope.id,
         "records",
         naming.version,
         types,
@@ -50,20 +50,17 @@ export const recordQueries = {
       ],
       queryFn: async ({ signal }: { signal?: AbortSignal }) => {
         if (reader.kind === "grants")
-          return runPlan(
-            ws,
-            o,
-            scope.kind === "load" ? scope.id : "",
-            countsPlan(types),
-            { signal, createdAt: reader.createdAt },
-          );
+          return runPlan(ws, o, scope.id, countsPlan(types), {
+            signal,
+            createdAt: reader.createdAt,
+          });
         const read = reader.read;
         const batches = typeCountsRequests(scope, types);
         // One request after another: they share the database's limiter.
         const bodies: unknown[] = [];
         for (const b of batches)
           bodies.push(await runRead(read, b.request, signal));
-        return parseTypeCounts(bodies, scope, batches);
+        return parseTypeCounts(bodies, batches);
       },
       ...readOptions,
     };
@@ -87,7 +84,7 @@ export const recordQueries = {
   ) => {
     if (reader.kind === "grants") {
       const typed = typedRecordsRead(t, view, naming, narrowed);
-      const loadId = scope.kind === "load" ? scope.id : "",
+      const loadId = scope.id,
         createdAt = reader.createdAt;
       return {
         queryKey: [
@@ -95,7 +92,7 @@ export const recordQueries = {
           "ontology",
           o,
           "read",
-          scopeKey(scope),
+          scope.id,
           "records",
           naming.version,
           t.name,
@@ -150,7 +147,7 @@ export const recordQueries = {
         "ontology",
         o,
         "read",
-        scopeKey(scope),
+        scope.id,
         "records",
         naming.version,
         t.name,

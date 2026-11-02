@@ -22,7 +22,7 @@ export function TrySample() {
     <Callout
       icon={FlaskConical}
       title="Start with a sample company"
-      text="Acme Corp is a made-up software company: its customers, subscriptions, invoices and support tickets in a PostgreSQL database, and its contracts and call notes as documents. Watch Foundry turn them into an ontology and answer a question about it."
+      text="Watch Foundry answer a question about a made-up company’s data."
       action={
         <Button
           variant="primary"

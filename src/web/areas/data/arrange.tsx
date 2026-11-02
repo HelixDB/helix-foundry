@@ -9,14 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { useSortable } from "@dnd-kit/sortable";
-import {
-  ArrowDown,
-  ArrowUp,
-  ChevronRight,
-  Folder,
-  FolderOpen,
-  GripVertical,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, GripVertical } from "lucide-react";
 import { DropdownMenu, MenuItem } from "../../kit";
 import {
   EMPTY_LAYOUT,
@@ -217,13 +210,12 @@ export function RowMenu<T extends string>({
 /**
  * A folder's row: a root folder's or a set's. A click anywhere on it but
  * its buttons and its name's field opens or closes it (as Enter does on
- * its treeitem); it shows its grip and menu, its `name` (an InlineName),
- * a `count` (how many it holds), and `actions`, which show while the row is
- * hovered or has the focus.
+ * its treeitem); it shows its grip and menu, its chevron, its `name` (an
+ * InlineName), a `count` (how many it holds), and `actions`, which show while
+ * the row is hovered or has the focus.
  */
 export function FolderRow({
   level,
-  open,
   toggle,
   menu,
   name,
@@ -231,14 +223,12 @@ export function FolderRow({
   actions,
 }: {
   level: number;
-  open: boolean;
   toggle: () => void;
   menu?: ReactNode;
   name: ReactNode;
   count?: number;
   actions?: ReactNode;
 }) {
-  const Icon = open ? FolderOpen : Folder;
   return (
     <div
       className="dt-row dt-folder-row"
@@ -249,7 +239,6 @@ export function FolderRow({
     >
       {menu}
       <ChevronRight size={14} className="dt-chevron" aria-hidden />
-      <Icon size={15} className="dt-icon" aria-hidden />
       {name}
       {count !== undefined && <span className="dt-count">{count}</span>}
       {actions && <span className="dt-row-actions">{actions}</span>}

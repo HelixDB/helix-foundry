@@ -30,6 +30,7 @@ import {
   CircleStop,
   X,
 } from "lucide-react";
+import { LOCAL } from "../../../shared/deployment";
 import type { EntityRef } from "../../../shared/foundry-read";
 import type { FoundryQuestion, QuestionBudget } from "../../../shared/wfe";
 import {
@@ -101,6 +102,7 @@ import {
 } from "./load-selection";
 import { loadVersion, withLoad } from "./model";
 import { Callout } from "./parts";
+import { ProductionCard } from "./production";
 import {
   POLL_MS,
   askQuestion,
@@ -302,7 +304,8 @@ export function AskPage() {
 /**
  * The conversation's slim bar: on a narrow screen, where the threads are a
  * page of their own, the way back; the thread's title; and the Ontology and
- * Load pickers.
+ * Load pickers. Getting into production's card hangs under it (a local
+ * install has no Helix MCP, so no card).
  */
 function ChatBar({
   title,
@@ -313,28 +316,33 @@ function ChatBar({
   onBack?: () => void;
   children: ReactNode;
 }) {
+  // Its prompt has an agent read the database: not for who reads through grants.
+  const reads = useReadAccess();
   return (
-    <header className="ak-bar">
-      {onBack && (
-        <Button
-          size="sm"
-          variant="ghost"
-          icon={ChevronLeft}
-          className="ak-back"
-          onClick={onBack}
-        >
-          Threads
-        </Button>
-      )}
-      {title ? (
-        <h1 className="ak-bar-title" title={title}>
-          {title}
-        </h1>
-      ) : (
-        <span className="ak-bar-title" />
-      )}
-      {children}
-    </header>
+    <>
+      <header className="ak-bar">
+        {onBack && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={ChevronLeft}
+            className="ak-back"
+            onClick={onBack}
+          >
+            Threads
+          </Button>
+        )}
+        {title ? (
+          <h1 className="ak-bar-title" title={title}>
+            {title}
+          </h1>
+        ) : (
+          <span className="ak-bar-title" />
+        )}
+        {children}
+      </header>
+      {!LOCAL && reads === "database" && <ProductionCard />}
+    </>
   );
 }
 

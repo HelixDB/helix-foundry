@@ -1,0 +1,144 @@
+/* Getting into production's card on the Analyst (./production.tsx). */
+
+/* The card's room, between the Analyst's bar and its conversation: the
+   page's width to measure, over the conversation for what floats. */
+.pd-room {
+  position: relative;
+  z-index: 3;
+  flex: none;
+  container: pd-room / inline-size;
+}
+/* On a phone, a row the conversation sits under. */
+.pd-card {
+  border-bottom: 1px solid var(--hf-border);
+  background: var(--hf-bg);
+}
+.pd-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--hf-space-1);
+  width: 100%;
+  min-height: 36px;
+  padding: 6px var(--hf-space-3);
+  border: 0;
+  background: none;
+  color: var(--hf-text);
+  font: inherit;
+  font-size: var(--hf-text-base);
+  text-align: left;
+  cursor: pointer;
+}
+.pd-card-head:hover {
+  background: var(--hf-hover);
+}
+.pd-card-head:focus-visible {
+  outline: 2px solid var(--hf-focus);
+  outline-offset: -2px;
+}
+.pd-card-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+}
+.pd-card-count {
+  flex: none;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.pd-card-chevron {
+  flex: none;
+  color: var(--hf-muted);
+  transition: transform 120ms var(--hf-ease);
+}
+.pd-card.is-minimised .pd-card-chevron {
+  transform: rotate(-90deg);
+}
+.pd-steps {
+  display: grid;
+  gap: var(--hf-space-15);
+  margin: 0;
+  padding: var(--hf-space-05) var(--hf-space-3) var(--hf-space-15);
+  list-style: none;
+}
+.pd-step {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+}
+.pd-step-mark {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--hf-border-strong);
+  border-radius: var(--hf-radius-sm);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+}
+.pd-step.is-current .pd-step-mark {
+  border-color: var(--hf-accent);
+  color: var(--hf-accent-text);
+}
+.pd-step.is-done .pd-step-mark {
+  border-color: var(--hf-accent);
+  background: var(--hf-accent);
+  color: var(--hf-on-accent);
+}
+.pd-step-text {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+.pd-step-title {
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  font-weight: 500;
+  line-height: 20px;
+}
+.pd-step.is-done .pd-step-title {
+  color: var(--hf-muted);
+}
+/* Not reachable yet: the whole step recedes. */
+.pd-step.is-upcoming {
+  opacity: 0.45;
+}
+.pd-step-note {
+  margin: 0;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+  line-height: 1.4;
+}
+/* Anywhere wider, a box under the bar's right, open over the conversation as
+   a popover. */
+@container pd-room (min-width: 640px) {
+  .pd-card {
+    position: absolute;
+    top: var(--hf-space-15);
+    right: var(--hf-space-3);
+    width: 260px;
+    border: 1px solid var(--hf-border-strong);
+    background: var(--hf-raised);
+    box-shadow: var(--hf-shadow-2);
+  }
+  .pd-card-head,
+  .pd-steps {
+    padding-right: var(--hf-space-15);
+    padding-left: var(--hf-space-15);
+  }
+}
+/* Room to start open: production.tsx reads this. Narrower, it would hide too
+   much of the conversation until minimised, so it waits to be opened. */
+@container pd-room (min-width: 1100px) {
+  .pd-card {
+    --pd-fits: 1;
+  }
+}
+
+@media (max-width: 800px) {
+  .pd-card-head,
+  .pd-steps {
+    padding-right: var(--hf-space-2);
+    padding-left: var(--hf-space-2);
+  }
+}

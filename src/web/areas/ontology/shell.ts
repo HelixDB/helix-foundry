@@ -9,7 +9,7 @@ import { ontologyQueries } from "./queries";
 // with its section: the workspace's ontologies, the open one's pages under
 // its row (on its documents pages, its documents explorer instead); the
 // Explorer's pages fill theirs. Ask's threads sit in the sidebar itself,
-// under the sections.
+// under the sections. The sample company's banner sits across the top.
 
 const OntologiesPanel = lazy(() =>
   import("./ontologies-panel").then((m) => ({ default: m.OntologiesPanel })),
@@ -21,6 +21,9 @@ const AskThreads = lazy(() =>
 // types); this shows the ontology and load meanwhile.
 const ExplorerContext = lazy(() =>
   import("../explore/panel").then((m) => ({ default: m.ExplorerContext })),
+);
+const SampleBanner = lazy(() =>
+  import("./sample-banner").then((m) => ({ default: m.SampleBanner })),
 );
 
 export const ontologyShell: AreaShell = {
@@ -37,6 +40,7 @@ export const ontologyShell: AreaShell = {
     },
   },
   sidebar: { ask: { label: "Analyst threads", component: AskThreads } },
+  banner: SampleBanner,
   palette: [
     {
       id: "ontologies",

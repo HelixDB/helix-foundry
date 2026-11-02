@@ -25,6 +25,7 @@ import {
   useQuery,
   type QueryClient,
 } from "@tanstack/react-query";
+import { trackEvent } from "../../analytics";
 import { api, ApiError } from "../../api";
 import { useWorkspace } from "../../ui";
 import { POLL_MS } from "../ontology/queries";
@@ -260,10 +261,13 @@ export const deleteDocument = (ws: string, id: string) =>
   api<DocumentResponse>(doc(ws, id), undefined, "DELETE");
 
 /** Moves a document to another set; the ontologies that read it there do. */
-export const moveDocument = (ws: string, id: string, setId: string) =>
-  api<DocumentReadsResponse>(`${doc(ws, id)}:move`, {
+export const moveDocument = async (ws: string, id: string, setId: string) => {
+  const r = await api<DocumentReadsResponse>(`${doc(ws, id)}:move`, {
     setId,
   } satisfies MoveDocumentRequest);
+  trackEvent("document_moved");
+  return r;
+};
 
 export const createDocumentSet = (ws: string, body: CreateDocumentSetRequest) =>
   api<DocumentSetResponse>(setsBase(ws), body);

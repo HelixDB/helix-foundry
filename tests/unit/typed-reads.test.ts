@@ -800,7 +800,7 @@ describe("a type's records, read through grants", () => {
         "ws",
         "o",
         { kind: "grants" },
-        { kind: "load", id: "l" },
+        { id: "l" },
         namingOf(undefined),
         invoice,
         view,

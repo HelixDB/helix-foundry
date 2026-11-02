@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   DatabaseZap,
   History,
@@ -14,13 +14,11 @@ import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { useReadAccess } from "../explore/graph-reader";
 import type { Scope } from "../explore/load-scope";
-import { namingOf } from "../explore/naming";
 import {
   chooseLoad,
   isPickable,
   loadOptionLabel,
   loadVersion,
-  versionLabels,
   withLoad,
   type LoadChoice,
 } from "./model";
@@ -29,8 +27,8 @@ import { ontologyQueries } from "./queries";
 import { ontologyName, useOntology } from "./scope";
 
 // The load a page of an ontology reads (Explorer, Records, an entity's and a
-// document's view): `?load=<id>` or `?load=other` in the URL, absent for the
-// current load (or the newest while none is current), and `&compare=<id>`
+// document's view): `?load=<id>` in the URL, absent for the current load (or
+// the newest while none is current), and `&compare=<id>`
 // for the Explorer's second side. Everything those pages read is scoped to
 // it (../explore/load-scope.ts), and the links between them carry it. An
 // ontology with no load at all reads nothing: the pages show NothingLoaded.
@@ -46,23 +44,18 @@ export type LoadSelection = {
    * `choice` says so at once.
    */
   pending: boolean;
-  /**
-   * What kept the page from reading once retries gave up: the loads list,
-   * or (for Other data) a version it is told apart by. `scope` stays null
-   * while it is set: a load's labels taken for the team's own would count a
-   * load's entities as Other data.
-   */
-  failed: { what: "loads" | "versions"; error: Error } | null;
-  /** Reads again what failed. */
+  /** What kept the loads list from being read once retries gave up. */
+  failed: Error | null;
+  /** Reads the loads list again. */
   retry: () => void;
   choice: LoadChoice;
-  /** What reads cover; null while it can't be known (no load, missing, Other's versions unread). */
+  /** What reads cover; null while it can't be known (no load, missing, the list unread). */
   scope: Scope | null;
-  /** The version that names what the page shows: the load's, or the current one for Other data. */
+  /** The version that names what the page shows: the load's, else the current one. */
   versionId: string;
   /** The Explorer's second side, when `?compare=` names a load. */
   compare: FoundryLoad | null;
-  /** Reads another load ("other" for Other data); the default drops the param. */
+  /** Reads another load; the default drops the param. */
   select: (id: string) => void;
   setCompare: (id: string | null) => void;
   /** A path with the page's `?load=` carried over. */
@@ -88,46 +81,14 @@ export function useLoadSelection(): LoadSelection {
     () => chooseLoad(loads, currentId, param),
     [loads, currentId, param],
   );
-  // Other data is told apart by every load's version's labels.
-  const versionIds = useMemo(
-    () => [
-      ...new Set(loads.flatMap((l) => (l.versionId ? [l.versionId] : []))),
-    ],
-    [loads],
+  const failed = !query.data ? query.error : null;
+  const retry = () => void query.refetch();
+  // Nothing is read before the loads are known.
+  const scope = useMemo<Scope | null>(
+    () =>
+      query.data && choice.kind === "load" ? { id: choice.load.id } : null,
+    [choice, query.data],
   );
-  const versions = useQueries({
-    queries: versionIds.map((v) => ({
-      ...ontologyQueries.version(ws, o, v),
-      enabled: choice.kind === "other",
-    })),
-  });
-  const versionsRead = versions.every((v) => v.isSuccess);
-  const versionsKey = versions.map((v) => v.dataUpdatedAt).join(",");
-  const versionError =
-    choice.kind === "other" ? versions.find((v) => v.error)?.error : undefined;
-  const failed: LoadSelection["failed"] =
-    !query.data && query.error
-      ? { what: "loads", error: query.error }
-      : versionError
-        ? { what: "versions", error: versionError }
-        : null;
-  const retry = () => {
-    if (!query.data) void query.refetch();
-    for (const v of versions) if (v.error) void v.refetch();
-  };
-  const scope = useMemo<Scope | null>(() => {
-    // Nothing is read before the loads are known: Other data is told apart
-    // from every one of them.
-    if (!query.data) return null;
-    if (choice.kind === "load") return { kind: "load", id: choice.load.id };
-    if (choice.kind !== "other" || !versionsRead) return null;
-    return {
-      kind: "other",
-      loads: loads.map((l) => l.id),
-      shared: versionLabels(versions.map((v) => namingOf(v.data?.version))),
-    };
-    // versionsKey stands for the versions' data.
-  }, [choice, loads, query.data, versionsRead, versionsKey]);
   const current = loads.find((l) => l.current);
   const versionId =
     choice.kind === "load"
@@ -179,12 +140,10 @@ export function useLoadSelection(): LoadSelection {
   };
 }
 
-const OTHER = "other";
-
 /**
  * The load picker of a page's header: the current load (the default), every
- * other load that finished writing, ones being written or deleted (shown,
- * not chosen) and Other data.
+ * other load that finished writing, and ones being written or deleted
+ * (shown, not chosen).
  */
 export function LoadPicker({
   selection,
@@ -195,17 +154,11 @@ export function LoadPicker({
 }) {
   const { loads, choice } = selection;
   if (!loads.length || selection.shared) return null;
-  const value =
-    choice.kind === "load"
-      ? choice.load.id
-      : choice.kind === "other"
-        ? OTHER
-        : "";
   return (
     <FilterSelect
       label={label}
       className="ex-load-picker"
-      value={value}
+      value={choice.kind === "load" ? choice.load.id : ""}
       onChange={selection.select}
       options={[
         ...(choice.kind === "missing"
@@ -218,7 +171,6 @@ export function LoadPicker({
             !isPickable(l) &&
             !(choice.kind === "load" && choice.load.id === l.id),
         })),
-        { value: OTHER, label: "Other data" },
       ]}
     />
   );
@@ -245,8 +197,8 @@ export function ComparePicker({ selection }: { selection: LoadSelection }) {
 }
 
 /**
- * What a page says about its load: the loads (or Other data's versions)
- * that couldn't be read, with a retry; a load still being written (the
+ * What a page says about its load: the loads that couldn't be read, with a
+ * retry; a load still being written (the
  * default while none is current); or one that is gone, with the way back.
  */
 export function LoadNotice({ selection }: { selection: LoadSelection }) {
@@ -255,16 +207,8 @@ export function LoadNotice({ selection }: { selection: LoadSelection }) {
     return (
       <EmptyState
         icon={DatabaseZap}
-        title={
-          failed.what === "loads"
-            ? "Couldn’t load the loads"
-            : "Couldn’t read the versions of the loads"
-        }
-        text={
-          failed.what === "loads"
-            ? failed.error.message
-            : `Other data is what no load wrote, told apart by the labels of every load’s version. ${failed.error.message}`
-        }
+        title="Couldn’t load the loads"
+        text={failed.message}
         action={<Button onClick={selection.retry}>Retry</Button>}
       />
     );

@@ -305,7 +305,7 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
     <Page>
       <PageHeader
         breadcrumbs={[...crumbs, { label: name }]}
-        icon={<SourceLogo source={c.kind} size={28} />}
+        icon={<SourceLogo source={c.kind} size={42} />}
         title={name}
         subtitle={[connectorLabel(c.kind), sourceSummary(c)]
           .filter(Boolean)
@@ -328,7 +328,10 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
                 pending={action.pending}
                 disabled={live || gated}
                 onClick={() =>
-                  action.run(() => syncConnector(id, c.id), "Sync queued")
+                  action.run(
+                    () => syncConnector(id, c.id, "connection"),
+                    "Sync queued",
+                  )
                 }
               >
                 {live ? "Syncing…" : "Sync now"}

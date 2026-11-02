@@ -227,7 +227,7 @@ export function ConnectionForm({
       trackEvent("connector_created", { kind: form.kind });
       // The first sync starts with the connection; a refusal is reported but
       // the connection is kept.
-      await syncConnector(id, created.connector.id).catch((e) =>
+      await syncConnector(id, created.connector.id, "created").catch((e) =>
         notify((e as Error).message, true),
       );
       await onDone(created.connector, "Connected. The first sync is queued");

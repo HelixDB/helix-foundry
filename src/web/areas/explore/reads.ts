@@ -7,7 +7,7 @@ import {
   type DynamicQueryRequest,
   type QueryExecutor,
 } from "./database-query";
-import { scopeKey, type Scope } from "./load-scope";
+import type { Scope } from "./load-scope";
 import {
   documentFactsRequest,
   documentRequest,
@@ -51,12 +51,6 @@ export type GraphReader =
   | { kind: "database"; read: QueryExecutor }
   // `createdAt`: the ontology's, so a database still starting says so.
   | { kind: "grants"; createdAt?: string | null };
-
-/** The load a typed read reads: grants cover a load, never Other data. */
-const loadOf = (scope: Scope) => {
-  if (scope.kind !== "load") throw new Error("Source grants read one load.");
-  return scope.id;
-};
 
 export { ReadFailed };
 
@@ -142,7 +136,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "document",
       documentId,
       naming.version,
@@ -188,7 +182,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "document",
       documentId,
       naming.version,
@@ -217,7 +211,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "entity",
       identity,
       naming.version,
@@ -226,7 +220,7 @@ export const readQueries = {
     queryFn: async ({ signal }: { signal?: AbortSignal }) => {
       const page: EntityGraph =
         reader.kind === "grants"
-          ? await runPlan(ws, o, loadOf(scope), entityPlan(identity, naming), {
+          ? await runPlan(ws, o, scope.id, entityPlan(identity, naming), {
               signal,
               createdAt: reader.createdAt,
             })
@@ -268,7 +262,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "entity",
       identity,
       "evidence",
@@ -281,7 +275,7 @@ export const readQueries = {
       signal?: AbortSignal;
     }): Promise<Map<string, Evidence[]>> => {
       if (reader.kind === "grants")
-        return runPlan(ws, o, loadOf(scope), factEvidencePlan(facts!), {
+        return runPlan(ws, o, scope.id, factEvidencePlan(facts!), {
           signal,
           createdAt: reader.createdAt,
         });

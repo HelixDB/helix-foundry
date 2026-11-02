@@ -20,6 +20,7 @@ import type {
   TestConnectorResponse,
   UpdateConnectorRequest,
 } from "../../../shared/wfe";
+import { trackEvent, type SyncFrom } from "../../analytics";
 import { api } from "../../api";
 import { eventSourceWaiting, isEventSource, isLiveSync } from "./model";
 
@@ -174,11 +175,18 @@ export const deleteConnector = (workspaceId: string, connectorId: string) =>
   api<object>(connectorPath(workspaceId, connectorId), undefined, "DELETE");
 
 /** Queues a sync; the WFE refuses a second one while one is live. */
-export const syncConnector = (workspaceId: string, connectorId: string) =>
-  api<ConnectorSyncResponse>(
+export const syncConnector = async (
+  workspaceId: string,
+  connectorId: string,
+  from: SyncFrom,
+) => {
+  const r = await api<ConnectorSyncResponse>(
     `${connectorPath(workspaceId, connectorId)}:sync`,
     {},
   );
+  trackEvent("connector_sync_started", { from });
+  return r;
+};
 
 /**
  * An API source's send tokens: newest first, revoked ones too, at most 50.

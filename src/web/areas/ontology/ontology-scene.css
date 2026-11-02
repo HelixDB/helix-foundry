@@ -67,6 +67,9 @@
 .feed-step.is-active .feed-step-mark {
   border-color: var(--feed-mint);
   border-right-color: transparent;
+  /* A ring: the square marks' spinner is the one round thing here, since a
+     square with a side missing wobbles as it turns. */
+  border-radius: 50%;
   animation: feed-spin 0.9s linear infinite;
 }
 .feed-step.is-done {
@@ -141,6 +144,7 @@
 .feed-item.is-loading .feed-item-mark {
   border: 1.5px solid var(--feed-mint);
   border-right-color: transparent;
+  border-radius: 50%;
   animation: feed-spin 0.9s linear infinite;
 }
 .feed-item.is-ready .feed-item-mark {
