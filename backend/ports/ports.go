@@ -284,7 +284,10 @@ type ProviderAccounts interface {
 	// and fails (ErrAccountNotThisWorkspace). ref.AccountID is set when the
 	// sign-in reauthorized that account, the connector's own
 	// (AccountAuthorization.AccountID): Finish never deletes it, and on a
-	// mismatch returns the error and leaves it alone.
+	// mismatch returns the error and leaves it alone. When Finish refuses an
+	// account the broker gave it, it returns that account (its ID and
+	// UserID) with the error, whether or not its own delete of it
+	// succeeded: Foundry purges it too, unless it is ref.AccountID.
 	Finish(ctx context.Context, ref AccountRef, code, verifier string) (ProviderAccount, error)
 	// Token is the account's current credential, asked for as ref.UserID.
 	Token(ctx context.Context, ref AccountRef) (Credential, error)
