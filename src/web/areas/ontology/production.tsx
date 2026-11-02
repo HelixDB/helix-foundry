@@ -8,7 +8,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "react-router-dom";
 import { Check, ChevronDown, Copy } from "lucide-react";
 import type { FoundryOntology } from "../../../shared/wfe";
 import { Button, ButtonLink, cx, readStorage, writeStorage } from "../../kit";
@@ -22,26 +21,20 @@ import {
   parseProductionState,
   productionKey,
   productionProgress,
-  promptOntology,
-  stripShown,
   type ProductionState,
 } from "./production-model";
 import { productionPrompt } from "./production-prompt";
 import { ontologyQueries } from "./queries";
-import { lastOntology, useOntology } from "./scope";
+import { useOntology } from "./scope";
 import { useSampleOntology } from "./use-sample-ontology";
 
 // Getting into production: creating an ontology, then querying it through the
-// Helix MCP with a prompt for the user's own agent. On the Analyst, a card
-// under the bar (ProductionCard); everywhere else, a strip above the page
-// (ProductionStrip, AreaShell's strip). A local install has no Helix MCP, so
-// neither.
+// Helix MCP with a prompt for the user's own agent: a card under the Analyst's
+// bar. A local install has no Helix MCP, so no card.
 
 const TITLE = "Getting into production";
 
-// The card and the strip share what this browser remembers: the strip stays
-// mounted, showing nothing, while the card copies. Another tab's change comes
-// through `storage`.
+// What this browser remembers. Another tab's change comes through `storage`.
 const listeners = new Set<() => void>();
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
@@ -95,8 +88,6 @@ function useProduction() {
     state,
     update,
     copy,
-    ontologies: ontologies || [],
-    sample,
     progress:
       own === undefined ? undefined : productionProgress(own, state.copied),
   };
@@ -105,9 +96,8 @@ function useProduction() {
 /**
  * The Analyst's card: a box under the bar's right that opens over the
  * conversation, or on a phone a row the conversation sits under
- * (production.css). Whether it
- * starts open is decided once, before it paints, so copying leaves it open
- * until the next visit.
+ * (production.css). Whether it starts open is decided once, before it paints,
+ * so copying leaves it open until the next visit.
  */
 export function ProductionCard() {
   const { role } = useWorkspace(),
@@ -207,55 +197,6 @@ export function ProductionCard() {
           </ol>
         )}
       </section>
-    </div>
-  );
-}
-
-/**
- * The strip above every other page, until both steps are done: from the left,
- * its label, the two stations and the current step's action. On a phone, just
- * the stations and the action.
- */
-export function ProductionStrip() {
-  const { id, role, onboarding } = useWorkspace(),
-    { pathname } = useLocation(),
-    { copy, ontologies, sample, progress } = useProduction();
-  if (!progress || !stripShown(pathname, onboarding, progress)) return null;
-  const ontology =
-    progress.current === "query"
-      ? promptOntology(pathname, ontologies, lastOntology(id), sample?.id)
-      : undefined;
-  return (
-    <div className="hf-strip" role="region" aria-label={TITLE}>
-      <span className="pd-strip-label">{TITLE}</span>
-      <ol className="pd-stations" aria-label={`${progress.done} of 2 done`}>
-        {progress.steps.map((s) => (
-          <li
-            key={s.id}
-            className={cx("pd-station", `is-${s.state}`)}
-            aria-current={s.state === "current" ? "step" : undefined}
-            title={s.title}
-          >
-            <span className="hf-sr-only">
-              {s.title}
-              {s.state === "done" && " (done)"}
-            </span>
-          </li>
-        ))}
-      </ol>
-      <span className="pd-strip-action">
-        {ontology ? (
-          <Button size="sm" icon={Copy} onClick={() => copy(ontology)}>
-            Copy MCP prompt
-          </Button>
-        ) : canManage(role) ? (
-          <ButtonLink size="sm" to={paths.newOntology()}>
-            Create an ontology
-          </ButtonLink>
-        ) : (
-          <span className="pd-strip-note">An owner or admin creates one</span>
-        )}
-      </span>
     </div>
   );
 }

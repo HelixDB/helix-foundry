@@ -16,7 +16,6 @@ import { ChromeBoundary } from "./ErrorBoundary";
 import { PanelSlotContext, ShellContext, type PanelSlot } from "./context";
 import {
   ShellBanner,
-  ShellStrip,
   activeSection,
   primaryNav,
   secondaryNav,
@@ -123,8 +122,7 @@ function PanelAside({
 
 // Workspace chrome: an area's banner across the top when it shows one, the
 // sidebar on every page, with the open section's panel beside it when it has
-// one, an area's strip above the page when it shows one, mobile bar and
-// drawer, and the command palette. While the workspace is onboarding, the
+// one, mobile bar and drawer, and the command palette. While the workspace is onboarding, the
 // sidebar holds only the workspace and the account, and there is no palette.
 export function Shell({
   workspaces,
@@ -265,13 +263,6 @@ export function Shell({
                   </button>
                 )}
               </header>
-              {ShellStrip && (
-                <ChromeBoundary name="Strip">
-                  <Suspense fallback={null}>
-                    <ShellStrip />
-                  </Suspense>
-                </ChromeBoundary>
-              )}
               <main className="hf-main" id="main" tabIndex={-1}>
                 {children}
               </main>

@@ -20,11 +20,7 @@ test("puts the labels beside the sidebar and the overview down the right", async
   await page.goto(X);
   await expect(graph(page)).toBeVisible({ timeout: 15_000 });
 
-  // Getting into production's strip sits above it, and it still fits the
-  // window.
-  await expect(
-    page.getByRole("region", { name: "Getting into production" }),
-  ).toBeVisible();
+  // It fits the window.
   const view = (await page.locator(".ex-view.is-graph").boundingBox())!;
   expect(view.y + view.height).toBeLessThanOrEqual(900);
 

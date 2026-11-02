@@ -1,9 +1,6 @@
-import { OPEN_ONTOLOGY } from "./sample";
-
 // Getting into production: the two steps from a workspace trying Foundry to
-// its own app or agent querying an ontology, and when the Analyst's card and
-// the strip off the Analyst show them (./production.tsx). This browser
-// remembers them per workspace.
+// its own app or agent querying an ontology, which the Analyst's card shows
+// (./production.tsx). This browser remembers them per workspace.
 
 export const PRODUCTION_STEPS = [
   { id: "ontology", title: "Create an ontology" },
@@ -72,7 +69,7 @@ export type ProductionProgress = {
     state: ProductionStepState;
   }[];
   done: number;
-  // The first step not done, which holds the strip's action; null once both are.
+  // The first step not done; null once both are.
   current: ProductionStepId | null;
 };
 
@@ -99,20 +96,6 @@ export function productionProgress(
   };
 }
 
-// The Analyst, which has the card (/ opens it), and the pages that make an
-// ontology.
-const NO_STRIP = /^\/(?:$|ask(?:\/|$)|ontology\/(?:new|sample)\/?$)/;
-
-/**
- * Whether the strip shows on `pathname`: never while the workspace is
- * onboarding or once both steps are done.
- */
-export const stripShown = (
-  pathname: string,
-  onboarding: boolean,
-  progress: ProductionProgress,
-) => !onboarding && progress.current !== null && !NO_STRIP.test(pathname);
-
 /**
  * Whether the card starts minimised: when it was left so, once both steps are
  * done, and where the page is too narrow for it to start open (`fits`). Opened
@@ -123,23 +106,3 @@ export const cardStartsMinimised = (
   bothDone: boolean,
   fits: boolean,
 ) => minimised || bothDone || !fits;
-
-/**
- * The ontology the strip's prompt names: the one `pathname` has open, else
- * the one last opened in this browser (`last`), else the first; the last two
- * never the sample, as the step before it asks for one of the workspace's
- * own. None when the workspace only has the sample.
- */
-export function promptOntology<T extends { id: string }>(
-  pathname: string,
-  ontologies: readonly T[],
-  last: string,
-  sampleId: string | undefined,
-): T | undefined {
-  const open = OPEN_ONTOLOGY.exec(pathname)?.[1];
-  return (
-    ontologies.find((o) => encodeURIComponent(o.id) === open) ??
-    ontologies.find((o) => o.id === last && o.id !== sampleId) ??
-    ontologies.find((o) => o.id !== sampleId)
-  );
-}

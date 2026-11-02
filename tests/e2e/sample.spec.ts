@@ -108,7 +108,7 @@ test("says it is sample data, and its link back to the tour shows every step don
     "Sample data: you’re exploring Acme Corp, a made-up company.",
   );
   await expect(back).toHaveCount(0);
-  // Nor is Getting into production's strip here.
+  // Nor is Getting into production, which is the Analyst's.
   const production = page.getByRole("region", {
     name: "Getting into production",
   });
@@ -156,18 +156,13 @@ test("says it is sample data, and its link back to the tour shows every step don
   await expect(
     explorer(page).getByText("Acme Corp", { exact: true }),
   ).toHaveCount(1);
-  // The sample isn't the workspace's own ontology: creating one comes first,
-  // above the page and, on the Analyst, in the card.
-  await expect(
-    production.getByRole("link", { name: "Create an ontology" }),
-  ).toHaveAttribute("href", "/ontology/new");
-  await expect(
-    production.getByRole("button", { name: "Copy MCP prompt" }),
-  ).toHaveCount(0);
+  // The sample isn't the workspace's own ontology: creating one comes first.
   await page.goto("/ask");
   await expect(page).toHaveURL(/\/ask\/[^/]+$/);
-  await expect(page.locator(".hf-strip")).toHaveCount(0);
   await expect(production).toContainText("0 of 2");
+  await expect(
+    production.getByRole("link", { name: "New ontology" }),
+  ).toHaveAttribute("href", "/ontology/new");
   // The prompt waits for an ontology of the workspace's own.
   await expect(
     production.getByRole("button", { name: "Copy prompt" }),
