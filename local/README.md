@@ -89,7 +89,7 @@ docker compose up -d --wait
 **Restore** onto the images the backup lists: the same release of this repository, with the same `local/.env`. Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
 
 ```sh
-backup=~/foundry-backup-2026-11-02-1400  # the backup's folder
+backup=~/foundry-backup-2026-11-02-1357  # the backup's folder
 docker compose config --images | sort -u | diff - "$backup/images.txt"  # prints nothing
 docker compose create  # makes the volumes, empty, and starts nothing
 for v in mysql storage helix work secrets; do
