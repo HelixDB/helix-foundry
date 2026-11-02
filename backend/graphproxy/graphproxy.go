@@ -287,8 +287,9 @@ type forwarder struct {
 // resend, and its refusal ends the query.
 func (f forwarder) forward(ctx context.Context, w http.ResponseWriter, refuse func(int, string), binding Binding, body []byte, extra http.Header,
 	stillBound func(context.Context) error) {
+	start := f.now()
 	resp, err := f.gateway.Query(ctx, binding.Endpoint, binding.TenantID, body, extra)
-	retryUntil := f.now().Add(f.admissionWait)
+	retryUntil := start.Add(f.admissionWait)
 	for backoff := firstAdmissionBackoff; err == nil; backoff = min(2*backoff, maxAdmissionBackoff) {
 		reason := admissionRefusal(resp)
 		wait := backoff/2 + mathrand.N(backoff/2+1)
@@ -306,10 +307,13 @@ func (f forwarder) forward(ctx context.Context, w http.ResponseWriter, refuse fu
 	}
 	switch {
 	case err != nil && ctx.Err() != nil:
-		// The caller went away or its call ended, which cancelled the query:
-		// the gateway didn't fail, and no one waits for its answer. The agent
-		// drops a read this way once the read passes its wall time.
-		log.From(ctx).Debug("graph proxy: query abandoned before the gateway answered", "ontology", binding.OntologyID, "err", err)
+		// The caller went away or its call ended, which cancelled the query,
+		// and no one waits for its answer: not a gateway failure. The agent
+		// drops a read this way once the read passes its wall time, and a
+		// request once it passes helix.timeout_secs, which is also how a
+		// stalled gateway shows here, so it is logged with the time waited.
+		log.From(ctx).Info("graph proxy: query abandoned before the gateway answered", "ontology", binding.OntologyID,
+			"waited", f.now().Sub(start).Round(time.Millisecond), "err", err)
 		http.Error(w, "the query was cancelled", http.StatusBadGateway)
 		return
 	case err != nil:

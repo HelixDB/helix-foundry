@@ -207,7 +207,7 @@ func TestProxy(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = p.Close() })
 		drop(t, g, p.URL(), p.Token(), `{}`)
-		if line := logged.line(t, "query abandoned"); !strings.Contains(line, "level=DEBUG") || !strings.Contains(line, "context canceled") {
+		if line := logged.line(t, "query abandoned"); !strings.Contains(line, "level=INFO") || !strings.Contains(line, "waited=") || !strings.Contains(line, "context canceled") {
 			t.Fatalf("logged %q", line)
 		}
 		if all := logged.String(); strings.Contains(all, "level=WARN") {

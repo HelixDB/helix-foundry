@@ -65,7 +65,7 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 ## Questions
 
-Each read of the graph a question makes may run 30 s and read 100,000 matches into memory, and each of its Helix requests ends at 30 s; the whole question has 299 s, the most the ontology agent allows. That answers reads over a month of one type's rows (50,000 orders of a 300,000-order load took 6 to 8 s a read), where the hosted caps, the agent's own 5 s and 20,000, stop them. A `helix_query` read, which the agent writes in Helix's own query language, runs inside Helix and only the Helix timeout and the question's time bound it.
+Each read of the graph a question makes may run 30 s and read 100,000 matches into memory, and each of its Helix requests ends at 30 s; the whole question has 299 s, the most the ontology agent allows. That answers reads over a month of one type's rows (50,000 orders of a 300,000-order load took 6 to 8 s a read), where the hosted caps, the agent's own 5 s and 20,000, stop them. Higher caps don't answer everything: a read's time grows with every row of its type, not only the month's, so a larger load reaches them again, and no read counts the entities linked more than once (how many customers ordered twice, say), whatever the caps. A `helix_query` read, which the agent writes in Helix's own query language, runs inside Helix and only the Helix timeout and the question's time bound it.
 
 A read stopped at a cap fails its step, which says which cap and its value, and the agent then reads narrower or answers that it can't:
 
@@ -75,7 +75,7 @@ A read stopped at a cap fails its step, which says which cap and its value, and 
 | `too broad: the query would read … matches into memory, more than limits.read.scan_entities, 100000, allows` | `foundry.ask.read_scan_entities`                                     |
 | `the store did not answer within 30s: each graph request ends at helix.timeout_secs`                         | `foundry.ask.helix_timeout_secs`                                     |
 
-To change one, add its variable to foundry's `environment` in `local/compose.yaml` (`HELIX_FOUNDRY__ASK__READ_WALL_MS`, `HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES`, `HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS`) and run `docker compose up -d` again. A read's wall time past the Helix timeout helps only a read of several requests, so raise both together. More matches take more memory, and the answer to one Helix request is at most 32 MiB. These caps need a `foundry` image and an `ontology-agent` newer than the release's: `foundry` 0.1.1 and `ontology-agent` 0.1.0 read every question with the agent's own caps.
+To change one, add its variable to foundry's `environment` in `local/compose.yaml` (`HELIX_FOUNDRY__ASK__READ_WALL_MS`, `HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES`, `HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS`) and run `docker compose up -d` again. A read's wall time past the Helix timeout helps only a read of several requests, so raise both together. The question's lease, `foundry.ask.lease` (3 minutes), must stay at least twice the Helix timeout, or foundry won't start: past 90 s, raise it too (`HELIX_FOUNDRY__ASK__LEASE`, such as `5m`). More matches take more memory, and the answer to one Helix request is at most 32 MiB. These caps need a `foundry` image and an `ontology-agent` newer than the release's: `foundry` 0.1.1 and `ontology-agent` 0.1.0 read every question with the agent's own caps.
 
 ## Images
 

@@ -249,7 +249,7 @@ func TestReadProxy(t *testing.T) {
 		g := &blockingGateway{started: make(chan struct{}), cancelled: make(chan struct{})}
 		p := serveReadOnly(t, g, 0)
 		drop(t, g, p.URL(), register(t, p, ctx, "tenant-1"), readQueryBody)
-		if line := logged.line(t, "query abandoned"); !strings.Contains(line, "level=DEBUG") || !strings.Contains(line, "ontology=ont-tenant-1") {
+		if line := logged.line(t, "query abandoned"); !strings.Contains(line, "level=INFO") || !strings.Contains(line, "waited=") || !strings.Contains(line, "ontology=ont-tenant-1") {
 			t.Fatalf("logged %q", line)
 		}
 		if all := logged.String(); strings.Contains(all, "level=WARN") {
