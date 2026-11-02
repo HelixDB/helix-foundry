@@ -64,32 +64,6 @@ html {
   }
 }
 
-/* An area's strip (AreaShell's): one line above the page, in its column, that
-   scrolls away with it, so nothing sticky takes it off. While one shows,
-   --hf-main-top is its height, and what fills the window's height from inside
-   the page (the Explorer's graph, a compare, a PDF's pages) takes it off with
-   --hf-shell-top. */
-:root:has(.hf-strip) {
-  --hf-main-top: 40px;
-}
-.hf-strip {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--hf-space-15);
-  height: var(--hf-main-top);
-  padding: 0 var(--hf-space-3);
-  border-bottom: 1px solid var(--hf-border);
-  background: var(--hf-bg);
-  color: var(--hf-text);
-  font-size: var(--hf-text-sm);
-}
-@media (max-width: 800px) {
-  .hf-strip {
-    padding: 0 var(--hf-space-2);
-  }
-}
-
 /* Sidebar */
 .hf-sidebar {
   position: sticky;

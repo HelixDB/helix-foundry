@@ -5,8 +5,6 @@ import {
   parseProductionState,
   productionKey,
   productionProgress,
-  promptOntology,
-  stripShown,
   type ProductionState,
 } from "@/web/areas/ontology/production-model";
 
@@ -108,48 +106,6 @@ describe("productionProgress", () => {
   });
 });
 
-describe("stripShown", () => {
-  const open = productionProgress(true, false);
-
-  it("shows on every other page", () => {
-    for (const path of [
-      "/data",
-      "/data/documents/d1",
-      "/settings/billing",
-      "/ontology",
-      "/ontology/o1",
-      "/ontology/newer",
-      "/ontology/sample/more",
-      "/explore/o1",
-      "/explore/o1/records",
-      "/asking",
-    ])
-      expect(stripShown(path, false, open), path).toBe(true);
-  });
-
-  it("leaves the Analyst and the pages that make an ontology alone", () => {
-    for (const path of [
-      "/",
-      "/ask",
-      "/ask/o1",
-      "/ontology/new",
-      "/ontology/new/",
-      "/ontology/sample",
-    ])
-      expect(stripShown(path, false, open), path).toBe(false);
-  });
-
-  it("doesn't show during onboarding", () => {
-    expect(stripShown("/settings", true, open)).toBe(false);
-  });
-
-  it("goes once both steps are done", () => {
-    expect(stripShown("/data", false, productionProgress(true, true))).toBe(
-      false,
-    );
-  });
-});
-
 describe("cardStartsMinimised", () => {
   it("starts open only where it fits, with a step left, not left minimised", () => {
     expect(cardStartsMinimised(false, false, true)).toBe(false);
@@ -159,32 +115,5 @@ describe("cardStartsMinimised", () => {
     expect(cardStartsMinimised(true, false, true)).toBe(true);
     expect(cardStartsMinimised(false, true, true)).toBe(true);
     expect(cardStartsMinimised(false, false, false)).toBe(true);
-  });
-});
-
-describe("promptOntology", () => {
-  const list = [{ id: "s" }, { id: "a" }, { id: "b/c" }];
-
-  it("names the ontology the page has open, the sample too", () => {
-    expect(promptOntology("/ontology/a/loads", list, "b/c", "s")?.id).toBe("a");
-    expect(promptOntology("/explore/b%2Fc/records", list, "a", "s")?.id).toBe(
-      "b/c",
-    );
-    expect(promptOntology("/ontology/s", list, "a", "s")?.id).toBe("s");
-  });
-
-  it("falls back on the one last opened, unless it's the sample", () => {
-    expect(promptOntology("/data", list, "b/c", "s")?.id).toBe("b/c");
-    expect(promptOntology("/data", list, "s", "s")?.id).toBe("a");
-  });
-
-  it("ignores a last or open ontology the list doesn't have", () => {
-    expect(promptOntology("/ontology/gone", list, "gone", "s")?.id).toBe("a");
-  });
-
-  it("names the first without a sample, and none with only the sample", () => {
-    expect(promptOntology("/data", list, "", undefined)?.id).toBe("s");
-    expect(promptOntology("/data", [{ id: "s" }], "", "s")).toBeUndefined();
-    expect(promptOntology("/data", [], "", undefined)).toBeUndefined();
   });
 });
