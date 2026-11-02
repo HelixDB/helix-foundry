@@ -301,8 +301,13 @@ export function NewOntologyPage() {
   const at = wizard.steps.findIndex((s) => s.id === wizard.current),
     step = wizard.steps[at]!;
   const choosing = onboarding && !own;
-  // The step shown, for where the wizard is left (Databuddy drops ?step=).
-  const shown = !choosing && canManage(role) && step.id;
+  // The step shown, for where the wizard is left (Databuddy drops ?step=),
+  // once `first` is known.
+  const shown =
+    !choosing &&
+    canManage(role) &&
+    (onboarding || !!ontologies.data) &&
+    step.id;
   useEffect(() => {
     if (shown) trackEvent("ontology_step_shown", { step: shown, first });
   }, [shown, first]);
