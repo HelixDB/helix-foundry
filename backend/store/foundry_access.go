@@ -123,15 +123,7 @@ func (s *mysqlDB) DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID 
 
 // ListFoundryCurrentLoadInputs returns what the servable current load of
 // each live ontology of the workspace holds (of ontologyIDs, when it names
-// any), by ontology. A load made before grants could cover one holds what
-// nothing covers (Uncoverable).
-//
-// A load's tables and table files are its version's generation's inputs: a
-// load reads no others, though it may not hold all of them. Its documents,
-// table files and the documents its review decisions came from count by the
-// set each is in now, so moving one out of a granted set takes the load away
-// from whoever held only that set. A prop decision whose documents were never
-// recorded holds what nothing covers.
+// any), by ontology.
 func (s *mysqlDB) ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error) {
 	query := `SELECT o.id, l.id, l.version_id, COALESCE(g.input, CAST('null' AS JSON)), a.load_id IS NOT NULL FROM foundry_ontologies o
 JOIN foundry_loads l ON l.id = o.current_load_id
@@ -144,11 +136,58 @@ WHERE o.workspace_id=? AND o.deleted_at IS NULL AND l.status IN ('ready', 'parti
 		query += ` AND o.id IN (` + idPlaceholders(len(ontologyIDs)) + `)`
 		args = append(args, toAnySlice(ontologyIDs)...)
 	}
+	loads, err := s.foundryLoadInputs(ctx, workspaceID, query, args)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]model.FoundryLoadInputs, len(loads))
+	for _, l := range loads {
+		out[l.OntologyID] = l
+	}
+	return out, nil
+}
+
+// ListFoundryLoadInputs returns what each servable load of loadIDs holds, of
+// any live ontology of the workspace, by load: a load being deleted, or gone,
+// holds nothing to read and isn't returned.
+func (s *mysqlDB) ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error) {
+	out := make(map[string]model.FoundryLoadInputs, len(loadIDs))
+	if len(loadIDs) == 0 {
+		return out, nil
+	}
+	loads, err := s.foundryLoadInputs(ctx, workspaceID, `SELECT o.id, l.id, l.version_id, COALESCE(g.input, CAST('null' AS JSON)), a.load_id IS NOT NULL FROM foundry_loads l
+JOIN foundry_ontologies o ON o.id = l.ontology_id
+LEFT JOIN foundry_load_access a ON a.load_id = l.id
+JOIN foundry_ontology_versions v ON v.id = l.version_id
+LEFT JOIN foundry_ontology_generations g ON g.id = v.generation_id
+WHERE o.workspace_id=? AND o.deleted_at IS NULL AND l.status IN ('ready', 'partial') AND l.id IN (`+idPlaceholders(len(loadIDs))+`)`,
+		append([]any{workspaceID}, toAnySlice(loadIDs)...))
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range loads {
+		out[l.LoadID] = l
+	}
+	return out, nil
+}
+
+// foundryLoadInputs reads what the loads query selects hold (its columns the
+// ontology, the load, its version, its generation's input and whether it has
+// its marker). A load made before grants could cover one holds what nothing
+// covers (Uncoverable).
+//
+// A load's tables and table files are its version's generation's inputs: a
+// load reads no others, though it may not hold all of them. Its documents,
+// table files and the documents its review decisions came from count by the
+// set each is in now, so moving one out of a granted set takes the load away
+// from whoever held only that set. A prop decision whose documents were never
+// recorded holds what nothing covers.
+func (s *mysqlDB) foundryLoadInputs(ctx context.Context, workspaceID, query string, args []any) ([]model.FoundryLoadInputs, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]model.FoundryLoadInputs{}
+	var out []model.FoundryLoadInputs
 	byLoad := map[string]*access.Inputs{}
 	files := map[string][]string{} // table file document id to the loads reading it
 	for rows.Next() {
@@ -174,7 +213,7 @@ WHERE o.workspace_id=? AND o.deleted_at IS NULL AND l.status IN ('ready', 'parti
 				files[d.ID] = append(files[d.ID], loadID)
 			}
 		}
-		out[ontologyID] = model.FoundryLoadInputs{LoadID: loadID, VersionID: versionID}
+		out = append(out, model.FoundryLoadInputs{OntologyID: ontologyID, LoadID: loadID, VersionID: versionID})
 		byLoad[loadID] = in
 	}
 	_ = rows.Close()
@@ -267,9 +306,8 @@ WHERE d.workspace_id=? AND d.id IN (`+idPlaceholders(len(docs))+`)`, append([]an
 	for _, loadID := range ids {
 		byLoad[loadID].Enrichment = true
 	}
-	for ontologyID, li := range out {
-		li.Inputs = *byLoad[li.LoadID]
-		out[ontologyID] = li
+	for i := range out {
+		out[i].Inputs = *byLoad[out[i].LoadID]
 	}
 	return out, nil
 }

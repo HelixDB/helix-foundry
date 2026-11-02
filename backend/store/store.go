@@ -150,6 +150,7 @@ type ReadStore interface {
 	ListFoundryQuestionHistory(ctx context.Context, q *model.FoundryQuestion, limit int) ([]*model.FoundryQuestion, error)
 	ListFoundryQuestionEvents(ctx context.Context, questionID string, afterSeq, limit int) ([]model.FoundryQuestionEvent, error)
 	SumFoundryQuestionSpend(ctx context.Context, workspaceID string, since time.Time) (model.FoundryQuestionSpend, error)
+	SumFoundryGranteeQuestionSpend(ctx context.Context, workspaceID string, grantee access.Principal, since time.Time) (model.FoundryQuestionSpend, error)
 
 	// Foundry People enrichment: consent, each load's step, the ledger and the sweep
 	GetFoundryEnrichmentConsent(ctx context.Context, workspaceID string) (*model.FoundryEnrichmentConsent, error)
@@ -168,6 +169,7 @@ type ReadStore interface {
 	// Foundry source grants and what current loads hold
 	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
+	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
 	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
 	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)

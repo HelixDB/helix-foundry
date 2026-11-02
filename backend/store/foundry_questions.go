@@ -30,7 +30,9 @@ const ownedFoundryQuestion = ` WHERE id=? AND status='running' AND lease_owner=?
 //   - at most limits.PerHour questions created in the last hour;
 //   - what the questions charged to the month settled, plus q's cap, within
 //     limits.CapMicros. Running questions' reservations don't count here: they
-//     settle at most at what they reserved, and the claim checks them.
+//     settle at most at what they reserved, and the claim checks them;
+//   - for a grantee's question, the same again of that grantee's own, within
+//     limits.GranteePerHour and limits.GranteeCapMicros.
 //
 // A refusal is a model.FoundryQuestionRefusal. ErrConflict means the
 // ontology has a question with q's client token; ErrNotFound a workspace
@@ -41,7 +43,7 @@ func (s *mysqlDB) CreateFoundryQuestion(ctx context.Context, q *model.FoundryQue
 		return fmt.Errorf("foundry question is missing an id")
 	case strings.TrimSpace(q.Question) == "" || q.MaxUSDMicros <= 0:
 		return fmt.Errorf("foundry question %s has no question or cap", q.ID)
-	case limits.PerHour < 1 || limits.CapMicros <= 0:
+	case limits.PerHour < 1 || limits.CapMicros <= 0 || q.Grantee != nil && (limits.GranteePerHour < 1 || limits.GranteeCapMicros <= 0):
 		return fmt.Errorf("foundry question limits must be positive")
 	}
 	return s.WithTx(ctx, func(txDB Store) error {
@@ -63,6 +65,25 @@ func (s *mysqlDB) CreateFoundryQuestion(ctx context.Context, q *model.FoundryQue
 		case settled+q.MaxUSDMicros > limits.CapMicros:
 			return model.FoundryQuestionRefusal{Budget: true,
 				Reason: fmt.Sprintf("the workspace has spent this month's $%.2f of questions", float64(limits.CapMicros)/1e6)}
+		}
+		if q.Grantee != nil {
+			var ownHour int
+			var ownSettled int64
+			if err := tx.db.QueryRowContext(ctx, `SELECT
+  COUNT(CASE WHEN q.created_at >= NOW(6) - INTERVAL 1 HOUR THEN 1 END),
+  COALESCE(SUM(CASE WHEN q.charged_at >= ? THEN q.usd_micros END), 0)
+FROM foundry_question_grantees g JOIN foundry_questions q ON q.id = g.question_id
+WHERE g.principal_kind=? AND g.principal_id=? AND q.workspace_id=?`,
+				limits.Since.UTC(), q.Grantee.Kind.String(), q.Grantee.ID, q.WorkspaceID).Scan(&ownHour, &ownSettled); err != nil {
+				return err
+			}
+			switch {
+			case ownHour >= limits.GranteePerHour:
+				return model.FoundryQuestionRefusal{Reason: fmt.Sprintf("you have asked %d questions in the last hour; try again later", ownHour)}
+			case ownSettled+q.MaxUSDMicros > limits.GranteeCapMicros:
+				return model.FoundryQuestionRefusal{Budget: true,
+					Reason: fmt.Sprintf("you have spent this month's $%.2f of questions", float64(limits.GranteeCapMicros)/1e6)}
+			}
 		}
 		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_questions
   (id, workspace_id, ontology_id, load_id, version_id, thread_id, question, focus, status, client_token, max_usd_micros, asked_by_user_id)
@@ -159,6 +180,17 @@ func (s *mysqlDB) SumFoundryQuestionSpend(ctx context.Context, workspaceID strin
 	var out model.FoundryQuestionSpend
 	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(usd_micros), 0), COALESCE(SUM(reserved_micros), 0)
 FROM foundry_questions WHERE workspace_id=? AND charged_at >= ?`, workspaceID, since.UTC()).Scan(&out.SpentMicros, &out.ReservedMicros)
+	return out, err
+}
+
+// SumFoundryGranteeQuestionSpend is SumFoundryQuestionSpend of one grantee's
+// questions alone.
+func (s *mysqlDB) SumFoundryGranteeQuestionSpend(ctx context.Context, workspaceID string, grantee access.Principal, since time.Time) (model.FoundryQuestionSpend, error) {
+	var out model.FoundryQuestionSpend
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(q.usd_micros), 0), COALESCE(SUM(q.reserved_micros), 0)
+FROM foundry_question_grantees g JOIN foundry_questions q ON q.id = g.question_id
+WHERE g.principal_kind=? AND g.principal_id=? AND q.workspace_id=? AND q.charged_at >= ?`,
+		grantee.Kind.String(), grantee.ID, workspaceID, since.UTC()).Scan(&out.SpentMicros, &out.ReservedMicros)
 	return out, err
 }
 

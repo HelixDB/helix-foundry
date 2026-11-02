@@ -92,6 +92,11 @@ type FoundryQuestionLimits struct {
 	PerHour int
 	// Running is how many of its questions may run at once.
 	Running int
+	// GranteePerHour and GranteeCapMicros are the same limits for one grantee
+	// of the workspace's source grants, on top of the workspace's, so no one
+	// of them can spend it all: they bound a question with a Grantee.
+	GranteePerHour   int
+	GranteeCapMicros int64
 }
 
 // FoundryQuestionSpend is what a workspace's questions charged to one month spent,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -42,6 +43,7 @@ type store interface {
 	AppendFoundryQuestionEvents(ctx context.Context, id, workerID string, events []json.RawMessage) error
 	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
+	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
 }
 
@@ -315,6 +317,22 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontolo
 	history, err := r.db.ListFoundryQuestionHistory(ctx, q, ontologyagent.MaxAskHistory)
 	if err != nil {
 		return nil, retry("could not read the thread; Helix will retry", err)
+	}
+	if grants != nil && len(history) > 0 {
+		// A grantee is told only what it said about loads its grants cover now.
+		loadIDs := make([]string, len(history))
+		for i, h := range history {
+			loadIDs[i] = h.LoadID
+		}
+		slices.Sort(loadIDs)
+		loads, err := r.db.ListFoundryLoadInputs(ctx, q.WorkspaceID, slices.Compact(loadIDs))
+		if err != nil {
+			return nil, retry("could not read the thread; Helix will retry", err)
+		}
+		history = slices.DeleteFunc(history, func(h *model.FoundryQuestion) bool {
+			l, held := loads[h.LoadID]
+			return !held || !grants.Covers(l.Inputs)
+		})
 	}
 	for _, h := range history {
 		req.History = append(req.History, ontologyagent.AskTurn{Question: h.Question, Answer: ontologyagent.AnswerText(h.Result)})

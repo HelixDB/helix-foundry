@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -40,7 +41,8 @@ const (
 //  2. The load (the current one when unset) must be ready or partial, and
 //     the thread, when set, one of the ontology's.
 //  3. The workspace's limits must allow it: questions asked in the last
-//     hour, and what the month's questions settled plus this one's cap.
+//     hour, and what the month's questions settled plus this one's cap; and,
+//     for a grantee, the same limits of its own.
 //
 // A local install with no AI provider refuses it (FOUNDRY_AI_NOT_CONFIGURED).
 func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoundryQuestionRequest) (*foundryv1.FoundryQuestionResponse, error) {
@@ -76,7 +78,7 @@ func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	case err == nil && (existing.Question != question || !samePrincipal(asker, existing.Grantee)):
 		return nil, status.Error(codes.InvalidArgument, "client_token was already used for another question")
 	case err == nil:
-		return &foundryv1.FoundryQuestionResponse{Question: foundryQuestionToProto(existing)}, nil
+		return s.foundryQuestionResponse(ctx, o.ID, existing.ID)
 	case !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "look up question: %v", err)
 	}
@@ -149,7 +151,7 @@ func (s *Service) foundryQuestionLimits() foundrymodel.FoundryQuestionLimits {
 	now := time.Now().UTC()
 	return foundrymodel.FoundryQuestionLimits{
 		Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), CapMicros: a.MonthlyMicros(),
-		PerHour: a.PerHour, Running: a.MaxRunning,
+		PerHour: a.PerHour, Running: a.MaxRunning, GranteePerHour: a.GranteePerHour, GranteeCapMicros: a.GranteeMonthlyMicros(),
 	}
 }
 
@@ -179,15 +181,26 @@ func (s *Service) ListFoundryQuestions(ctx context.Context, req *foundryv1.ListF
 		return nil, status.Errorf(codes.Internal, "list questions: %v", err)
 	}
 	limits := s.foundryQuestionLimits()
-	spend, err := s.deps.DB.SumFoundryQuestionSpend(ctx, o.WorkspaceID, limits.Since)
+	budget, hourly := limits.CapMicros, limits.PerHour
+	var spend foundrymodel.FoundryQuestionSpend
+	if asker := questionsOf(ctx); asker != nil {
+		// A grantee's budget is its own; what the workspace spends isn't its to see.
+		budget, hourly = limits.GranteeCapMicros, limits.GranteePerHour
+		spend, err = s.deps.DB.SumFoundryGranteeQuestionSpend(ctx, o.WorkspaceID, *asker, limits.Since)
+		if err == nil {
+			questions, err = s.readableQuestions(ctx, questions)
+		}
+	} else {
+		spend, err = s.deps.DB.SumFoundryQuestionSpend(ctx, o.WorkspaceID, limits.Since)
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "sum questions spend: %v", err)
 	}
 	a := s.deps.Cfg.Foundry.Ask
 	resp := &foundryv1.ListFoundryQuestionsResponse{NextPageToken: next, Budget: &foundryv1.FoundryQuestionBudget{
-		MonthlyUsdMicros: limits.CapMicros, SpentUsdMicros: spend.SpentMicros, ReservedUsdMicros: spend.ReservedMicros,
+		MonthlyUsdMicros: budget, SpentUsdMicros: spend.SpentMicros, ReservedUsdMicros: spend.ReservedMicros,
 		QuestionUsdMicros: a.MaxMicros(), MaxSteps: int32(a.MaxSteps), MaxWallSecs: int32(a.MaxWallSecs),
-		ConcurrentLimit: int32(limits.Running), HourlyLimit: int32(limits.PerHour),
+		ConcurrentLimit: int32(limits.Running), HourlyLimit: int32(hourly),
 	}}
 	for _, q := range questions {
 		listed := *q
@@ -263,7 +276,41 @@ func (s *Service) foundryQuestion(ctx context.Context, ontologyID, id string) (*
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get question: %v", err)
 	}
+	readable, err := s.readableQuestions(ctx, []*foundrymodel.FoundryQuestion{q})
+	switch {
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "read the question's load: %v", err)
+	case len(readable) == 0:
+		return nil, status.Error(codes.NotFound, "question not found")
+	}
 	return q, nil
+}
+
+// readableQuestions keeps, for a grantee, the questions on loads its grants
+// cover now: an answer says what its load held, so it reads only while that
+// load does, whichever load is current. The host's caller keeps them all.
+func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymodel.FoundryQuestion) ([]*foundrymodel.FoundryQuestion, error) {
+	g, ok := access.GranteeFrom(ctx)
+	if !ok || len(questions) == 0 {
+		return questions, nil
+	}
+	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	if err != nil {
+		return nil, err
+	}
+	loadIDs := make([]string, len(questions))
+	for i, q := range questions {
+		loadIDs[i] = q.LoadID
+	}
+	slices.Sort(loadIDs)
+	loads, err := s.deps.DB.ListFoundryLoadInputs(ctx, g.WorkspaceID, slices.Compact(loadIDs))
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(slices.Clone(questions), func(q *foundrymodel.FoundryQuestion) bool {
+		l, held := loads[q.LoadID]
+		return !held || !grants.Covers(l.Inputs)
+	}), nil
 }
 
 // questionsOf is whose questions the call may see and add to: a grantee's

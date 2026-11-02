@@ -16,10 +16,10 @@ type FoundryAccessGrant struct {
 	CreatedAt       time.Time
 }
 
-// FoundryLoadInputs is what an ontology's current load holds, as far as
-// grants go.
+// FoundryLoadInputs is what an ontology's load holds, as far as grants go.
 type FoundryLoadInputs struct {
-	LoadID    string
-	VersionID string
-	Inputs    access.Inputs
+	OntologyID string
+	LoadID     string
+	VersionID  string
+	Inputs     access.Inputs
 }

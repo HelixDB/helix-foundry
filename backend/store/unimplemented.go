@@ -577,6 +577,11 @@ func (u Unimplemented) ListFoundryQuestionEvents(context.Context, string, int, i
 	u.unimplemented("ListFoundryQuestionEvents")
 	return nil, nil
 }
+func (u Unimplemented) SumFoundryGranteeQuestionSpend(context.Context, string, access.Principal, time.Time) (model.FoundryQuestionSpend, error) {
+	u.unimplemented("SumFoundryGranteeQuestionSpend")
+	return model.FoundryQuestionSpend{}, nil
+}
+
 func (u Unimplemented) SumFoundryQuestionSpend(context.Context, string, time.Time) (model.FoundryQuestionSpend, error) {
 	u.unimplemented("SumFoundryQuestionSpend")
 	return model.FoundryQuestionSpend{}, nil
@@ -804,6 +809,11 @@ func (u Unimplemented) FinishFoundryNotification(context.Context, string, string
 
 func (u Unimplemented) ListFoundryAccessGrants(context.Context, string, []access.Principal) ([]model.FoundryAccessGrant, error) {
 	u.unimplemented("ListFoundryAccessGrants")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryLoadInputs(context.Context, string, []string) (map[string]model.FoundryLoadInputs, error) {
+	u.unimplemented("ListFoundryLoadInputs")
 	return nil, nil
 }
 

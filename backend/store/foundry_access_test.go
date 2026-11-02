@@ -151,6 +151,23 @@ func TestFoundryCurrentLoadInputs(t *testing.T) {
 	assert.Equal(t, access.Inputs{Tables: []access.TableRef{{ConnectorID: "stripe", Table: "customers"}, {ConnectorID: "pg", Table: "people"}},
 		Sets: []access.SetRef{{SetID: general}}}, l.Inputs, "its document and its table file are in General")
 
+	byLoad, err := f.db.ListFoundryLoadInputs(ctx, ws, []string{l.LoadID, id26("FJ-NONE")})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]model.FoundryLoadInputs{l.LoadID: l}, byLoad, "the same load read by its id; a load that isn't there is left out")
+	byLoad, err = f.db.ListFoundryLoadInputs(ctx, id26("ACL-ELSEWHERE"), []string{l.LoadID})
+	require.NoError(t, err)
+	assert.Empty(t, byLoad, "another workspace's load")
+	byLoad, err = f.db.ListFoundryLoadInputs(ctx, ws, nil)
+	require.NoError(t, err)
+	assert.Empty(t, byLoad, "no loads named")
+	_, err = testDB.Exec(`UPDATE foundry_loads SET status='deleting' WHERE id=?`, l.LoadID)
+	require.NoError(t, err)
+	byLoad, err = f.db.ListFoundryLoadInputs(ctx, ws, []string{l.LoadID})
+	require.NoError(t, err)
+	assert.Empty(t, byLoad, "a load being deleted holds nothing to read")
+	_, err = testDB.Exec(`UPDATE foundry_loads SET status='ready' WHERE id=?`, l.LoadID)
+	require.NoError(t, err)
+
 	holding, err := f.db.ListFoundryOntologiesHoldingDocument(ctx, ws, doc)
 	require.NoError(t, err)
 	assert.Equal(t, []string{f.ontology.ID}, holding, "as one of its documents")
@@ -252,6 +269,67 @@ func TestFoundryLoadAccessMarkDeleted(t *testing.T) {
 }
 
 // A grantee's questions are its own: listed only to it.
+// A grantee's questions are bounded by its own limits, on top of the
+// workspace's, and another's questions don't count against them.
+func TestFoundryQuestionGranteeLimits(t *testing.T) {
+	ctx := context.Background()
+	f := newQuestionFixture(t, "QGL")
+	agent := access.Principal{Kind: access.PrincipalServiceCredential, ID: id26("SC-QGL")}
+	other := access.Principal{Kind: access.PrincipalUser, ID: id26("U-QGL")}
+	ask := func(n int, grantee *access.Principal, limits model.FoundryQuestionLimits) (*model.FoundryQuestion, error) {
+		token := fmt.Sprintf("ask-%d", n)
+		q := &model.FoundryQuestion{
+			ID: f.id(n), WorkspaceID: f.workspaceID, OntologyID: f.ontologyID, LoadID: id26("FL-QGL"), VersionID: id26("FV-QGL"),
+			ThreadID: f.id(n), Question: "how many?", ClientToken: &token, MaxUSDMicros: questionCap, Grantee: grantee,
+		}
+		return q, f.db.CreateFoundryQuestion(ctx, q, limits)
+	}
+	limits := f.limits()
+	limits.GranteePerHour = 2
+	_, err := ask(1, &agent, limits)
+	require.NoError(t, err)
+	_, err = ask(2, &agent, limits)
+	require.NoError(t, err)
+
+	_, err = ask(3, &agent, limits)
+	var refusal model.FoundryQuestionRefusal
+	require.ErrorAs(t, err, &refusal)
+	assert.False(t, refusal.Budget)
+	assert.Contains(t, refusal.Reason, "you have asked 2 questions")
+	_, err = ask(4, &other, limits)
+	require.NoError(t, err, "another grantee's questions aren't this one's")
+	_, err = ask(5, nil, limits)
+	require.NoError(t, err, "the host's caller has only the workspace's limits")
+
+	// What it settled this month, plus this question's cap, within its budget.
+	_, err = testDB.Exec(`UPDATE foundry_questions SET usd_micros=?, charged_at=NOW(6) WHERE id=?`, 400, f.id(1))
+	require.NoError(t, err)
+	_, err = testDB.Exec(`UPDATE foundry_questions SET status='running', lease_owner='w', lease_until=NOW(6) + INTERVAL 1 HOUR, attempts=1,
+reserved_micros=?, charged_at=NOW(6) WHERE id=?`, 50, f.id(2))
+	require.NoError(t, err)
+	_, err = testDB.Exec(`UPDATE foundry_questions SET usd_micros=?, charged_at=NOW(6) WHERE id=?`, 900, f.id(5))
+	require.NoError(t, err)
+	spend, err := f.db.SumFoundryGranteeQuestionSpend(ctx, f.workspaceID, agent, limits.Since)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryQuestionSpend{SpentMicros: 400, ReservedMicros: 50}, spend, "its own, not the workspace's")
+
+	limits.GranteePerHour = 30
+	limits.GranteeCapMicros = 400 + questionCap - 1
+	_, err = ask(6, &agent, limits)
+	require.ErrorAs(t, err, &refusal)
+	assert.True(t, refusal.Budget)
+	assert.Contains(t, refusal.Reason, "you have spent")
+	limits.GranteeCapMicros = 400 + questionCap
+	_, err = ask(7, &agent, limits)
+	require.NoError(t, err)
+
+	limits.GranteePerHour = 0
+	_, err = ask(8, &agent, limits)
+	require.Error(t, err, "a grantee's question needs its limits")
+	_, err = ask(9, nil, limits)
+	require.NoError(t, err, "the host's caller's doesn't")
+}
+
 func TestFoundryQuestionGrantees(t *testing.T) {
 	ctx := context.Background()
 	f := newQuestionFixture(t, "QGR")

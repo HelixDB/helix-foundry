@@ -30,8 +30,12 @@ import (
 type accessStore struct {
 	*questionStore
 	grants []foundrymodel.FoundryAccessGrant
-	// inputs are each ontology's current load as grants see it.
-	inputs map[string]foundrymodel.FoundryLoadInputs
+	// inputs are each ontology's current load as grants see it, and olderLoads
+	// its other loads, by load.
+	inputs     map[string]foundrymodel.FoundryLoadInputs
+	olderLoads map[string]foundrymodel.FoundryLoadInputs
+	// granteeSpend is what each grantee's questions charged to the month.
+	granteeSpend map[access.Principal]foundrymodel.FoundryQuestionSpend
 	// versionInputs are what a new load of each version would hold.
 	versionInputs map[string]access.Inputs
 	// holding are the ontologies whose current loads hold each document.
@@ -59,6 +63,25 @@ func (s *accessStore) ListFoundryCurrentLoadInputs(_ context.Context, workspaceI
 		}
 	}
 	return out, nil
+}
+
+func (s *accessStore) ListFoundryLoadInputs(_ context.Context, workspaceID string, loadIDs []string) (map[string]foundrymodel.FoundryLoadInputs, error) {
+	out := map[string]foundrymodel.FoundryLoadInputs{}
+	for id, in := range s.olderLoads {
+		if slices.Contains(loadIDs, id) {
+			out[id] = in
+		}
+	}
+	for id, in := range s.inputs {
+		if o, ok := s.ontologies[id]; ok && o.WorkspaceID == workspaceID && slices.Contains(loadIDs, in.LoadID) {
+			out[in.LoadID] = in
+		}
+	}
+	return out, nil
+}
+
+func (s *accessStore) SumFoundryGranteeQuestionSpend(_ context.Context, _ string, grantee access.Principal, _ time.Time) (foundrymodel.FoundryQuestionSpend, error) {
+	return s.granteeSpend[grantee], nil
 }
 
 // SetFoundryAccessGrants refuses a connector or set named "missing", as the
@@ -499,6 +522,67 @@ func TestGranteeAnswers(t *testing.T) {
 		}
 		if got, err := client.CancelFoundryQuestion(ctx, &foundryv1.CancelFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: mine.GetQuestion().GetId()}); err != nil || got.GetQuestion().GetStatus() != "cancelled" {
 			t.Fatalf("%+v, %v", got, err)
+		}
+		// An answer about another load reads while its grants cover that load,
+		// and not otherwise, whatever they cover of the current one.
+		older := *store.questions[len(store.questions)-1]
+		older.ID, older.LoadID = "older-covered", "load-0"
+		uncovered := older
+		uncovered.ID, uncovered.LoadID = "older-uncovered", "load-other"
+		gone := older
+		gone.ID, gone.LoadID = "older-gone", "load-gone"
+		store.questions = append(store.questions, &older, &uncovered, &gone)
+		store.olderLoads = map[string]foundrymodel.FoundryLoadInputs{
+			"load-0":     {LoadID: "load-0", Inputs: store.inputs["ont-1"].Inputs},
+			"load-other": {LoadID: "load-other", Inputs: access.Inputs{Sets: []access.SetRef{{SetID: "set-no-one-holds"}}}},
+		}
+		get := func(id string) error {
+			_, err := client.GetFoundryQuestion(ctx, &foundryv1.GetFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: id})
+			return err
+		}
+		if err := get("older-covered"); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"older-uncovered", "older-gone"} {
+			if err := get(id); status.Code(err) != codes.NotFound {
+				t.Fatalf("%s: %v", id, err)
+			}
+			if _, err := client.ListFoundryQuestionEvents(ctx, &foundryv1.ListFoundryQuestionEventsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: id}); status.Code(err) != codes.NotFound {
+				t.Fatalf("%s's events: %v", id, err)
+			}
+			if _, err := client.CancelFoundryQuestion(ctx, &foundryv1.CancelFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: id}); status.Code(err) != codes.NotFound {
+				t.Fatalf("%s's cancel: %v", id, err)
+			}
+		}
+		// Its own budget, not what the workspace spends.
+		store.granteeSpend = map[access.Principal]foundrymodel.FoundryQuestionSpend{agentKey: {SpentMicros: 7, ReservedMicros: 3}}
+		listed, err := client.ListFoundryQuestions(ctx, &foundryv1.ListFoundryQuestionsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, q := range listed.GetQuestions() {
+			ids = append(ids, q.GetId())
+		}
+		if !slices.Contains(ids, "older-covered") || slices.Contains(ids, "older-uncovered") || slices.Contains(ids, "older-gone") {
+			t.Fatalf("listed %v", ids)
+		}
+		ask := s.deps.Cfg.Foundry.Ask
+		if b := listed.GetBudget(); b.GetSpentUsdMicros() != 7 || b.GetReservedUsdMicros() != 3 ||
+			b.GetMonthlyUsdMicros() != ask.GranteeMonthlyMicros() || b.GetHourlyLimit() != int32(ask.GranteePerHour) {
+			t.Fatalf("budget %+v", b)
+		}
+		hostList, err := client.ListFoundryQuestions(as(person), &foundryv1.ListFoundryQuestionsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+		if err != nil || hostList.GetBudget().GetMonthlyUsdMicros() != ask.MonthlyMicros() || len(hostList.GetQuestions()) != 6 {
+			t.Fatalf("the host's caller keeps every question and the workspace's budget: %+v, %v", hostList.GetBudget(), err)
+		}
+		// Asking again with the token of a question it can no longer read
+		// doesn't read it either.
+		token := "older"
+		uncovered.ClientToken = &token
+		if _, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1",
+			Question: uncovered.Question, ClientToken: token}); status.Code(err) != codes.NotFound {
+			t.Fatal(err)
 		}
 		// Its grants taken away, its questions go with the ontology.
 		store.grants = store.grants[2:]

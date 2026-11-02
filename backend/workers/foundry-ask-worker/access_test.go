@@ -1,6 +1,7 @@
 package foundryaskworker
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -51,6 +52,29 @@ func TestGranteeQuestions(t *testing.T) {
 		}
 		if req.Goal != "" || fmt.Sprint(req.Catalog) != fmt.Sprint(catalog) {
 			t.Fatalf("goal %q, catalog %+v", req.Goal, req.Catalog)
+		}
+	})
+	// It is told only what it said about loads its grants cover now.
+	t.Run("told only of loads it still reads", func(t *testing.T) {
+		h, q := granteeHarness(t)
+		turn := func(text, loadID string) *model.FoundryQuestion {
+			return &model.FoundryQuestion{Question: text, LoadID: loadID, Result: json.RawMessage(answeredResult)}
+		}
+		h.store.history = []*model.FoundryQuestion{turn("current", "load-1"), turn("covered", "load-0"), turn("uncovered", "load-other"), turn("gone", "load-gone")}
+		h.store.olderLoads = map[string]model.FoundryLoadInputs{
+			"load-0":     {LoadID: "load-0", Inputs: access.Inputs{Sets: []access.SetRef{{SetID: "set-1"}}}},
+			"load-other": {LoadID: "load-other", Inputs: access.Inputs{Sets: []access.SetRef{{SetID: "set-no-one-holds"}}}},
+		}
+		if settled := h.run(t, q); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		req, _ := decodeAsk(t, h.agent.calls()[0])
+		var told []string
+		for _, turn := range req.History {
+			told = append(told, turn.Question)
+		}
+		if fmt.Sprint(told) != "[current covered]" {
+			t.Fatalf("told %v", told)
 		}
 	})
 	// Grants taken away before it runs, or another load made current, and it

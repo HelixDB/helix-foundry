@@ -131,6 +131,8 @@ type memStore struct {
 	version    *model.OntologyVersion
 	generation *model.OntologyGeneration
 	history    []*model.FoundryQuestion
+	// olderLoads are loads other than the current ones, by load.
+	olderLoads map[string]model.FoundryLoadInputs
 	// cancelAfter cancels the question once that many appends stored events
 	// (0: never): every write of its attempt then finds no lease.
 	cancelAfter int
@@ -263,6 +265,23 @@ func (s *memStore) ListFoundryCurrentLoadInputs(_ context.Context, _ string, ont
 	out := map[string]model.FoundryLoadInputs{}
 	for _, id := range ontologyIDs {
 		if l, ok := s.currentLoads[id]; ok {
+			out[id] = l
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) ListFoundryLoadInputs(_ context.Context, _ string, loadIDs []string) (map[string]model.FoundryLoadInputs, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]model.FoundryLoadInputs{}
+	for _, l := range s.currentLoads {
+		if slices.Contains(loadIDs, l.LoadID) {
+			out[l.LoadID] = l
+		}
+	}
+	for id, l := range s.olderLoads {
+		if slices.Contains(loadIDs, id) {
 			out[id] = l
 		}
 	}

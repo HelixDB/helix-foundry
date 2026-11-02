@@ -34,6 +34,7 @@ CREATE TABLE foundry_question_grantees (
   principal_kind VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   principal_id   CHAR(26)    NOT NULL,
   KEY foundry_question_grantees_principal_idx (ontology_id, principal_kind, principal_id),
+  KEY foundry_question_grantees_asker_idx (principal_kind, principal_id),
   CONSTRAINT foundry_question_grantees_principal_chk CHECK (principal_kind IN ('user', 'service_credential'))
 );
 

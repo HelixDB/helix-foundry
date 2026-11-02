@@ -41,6 +41,7 @@ func (f questionFixture) limits() model.FoundryQuestionLimits {
 	now := time.Now().UTC()
 	return model.FoundryQuestionLimits{
 		Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), CapMicros: 1_000_000, PerHour: 30, Running: 5,
+		GranteePerHour: 30, GranteeCapMicros: 1_000_000,
 	}
 }
 
