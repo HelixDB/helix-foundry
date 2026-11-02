@@ -25,6 +25,7 @@ import {
 import { holds, type Scope } from "../load-scope";
 import { PanelContent, usePanelSlot, useShell } from "../../../shell/context";
 import { useCurrentTheme } from "../../../shell/theme";
+import { trackEvent } from "../../../analytics";
 import { cn } from "./ui";
 import { excludes } from "./lib/exclusion";
 import type { RequestLimiter } from "./lib/request-limiter";
@@ -944,6 +945,7 @@ export function DatabaseExplorer({
     link.href = url;
     link.download = `${fileSlug(databaseName)}-graph.png`;
     link.click();
+    trackEvent("graph_exported");
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [databaseName, notify]);
 

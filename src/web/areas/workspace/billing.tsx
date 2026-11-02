@@ -158,12 +158,13 @@ function UpgradeDialog({
       onClose={onClose}
     >
       <form
+        data-replay-block
         onSubmit={async (e) => {
           e.preventDefault();
           setPending(true);
           setError("");
           try {
-            void trackBeforeLeaving("upgrade_clicked", { tier, from: "free" });
+            await trackBeforeLeaving("upgrade_clicked", { tier, from: "free" });
             const outcome = await purchase(id, tier, promo);
             // Stays pending while the browser leaves for Stripe.
             if (outcome) onDone(outcome);
@@ -268,7 +269,7 @@ function SwitchDialog({
         setPending(true);
         setError("");
         try {
-          void trackBeforeLeaving("upgrade_clicked", { tier: to, from });
+          await trackBeforeLeaving("upgrade_clicked", { tier: to, from });
           const outcome = await purchase(id, to);
           if (outcome) onDone(outcome);
         } catch (err) {
@@ -404,7 +405,9 @@ export function BillingTab() {
   const openPortal = async () => {
     setBusy("portal");
     try {
-      window.location.assign(await billingPortalUrl(id));
+      const url = await billingPortalUrl(id);
+      await trackBeforeLeaving("billing_portal_opened");
+      window.location.assign(url);
     } catch (e) {
       notify((e as Error).message, true);
       setBusy(null);

@@ -3,7 +3,8 @@ import { dataTree, expect, signIn, test } from "./support/mock";
 
 // Databuddy, the hosted site's product analytics (src/web/telemetry.tsx),
 // loads only in a stamp's own build (next.config.ts): the mock's build, on
-// the landing page, sign-in and the app, loads no tracker and sends nothing.
+// the landing page, sign-in and the app, loads no tracker or replay recorder
+// and sends nothing.
 // tests/e2e/local checks a local build the same way.
 
 /**
@@ -37,6 +38,9 @@ test("loads no tracker in a build that isn't a stamp's", async ({ page }) => {
   await page.goto("/ontology/ont_acme_contracts");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   expect(await page.locator("script[data-databuddy-injected]").count()).toBe(0);
+  expect(
+    await page.locator("script[data-databuddy-replay-injected]").count(),
+  ).toBe(0);
   expect(await page.evaluate(() => "databuddy" in window)).toBe(false);
   expect(sent).toEqual([]);
 });

@@ -101,7 +101,7 @@ export function SignedInAs({ email }: { email?: string }) {
     <p className="hf-gate-account">
       {email && (
         <>
-          Signed in as <strong>{email}</strong>
+          Signed in as <strong data-replay-block>{email}</strong>
           <span aria-hidden> · </span>
         </>
       )}

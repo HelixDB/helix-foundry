@@ -19,6 +19,22 @@ export const DATABUDDY_CLIENT_ID =
 /** Where a generation's draft comes from: the ontology agent, or the sample's ready-made one. */
 export type GenerationSource = "ai" | "sample";
 
+/** A revision of a version's edits: a preview (a dry run), or one that saves them as a version. */
+export type RevisionMode = "preview" | "save";
+
+/**
+ * Where a sync was queued: a connection's page, the Data explorer, the
+ * ontology's source picker, an API source's page, the first sync a new
+ * connection starts with, or the sample's database.
+ */
+export type SyncFrom =
+  | "connection"
+  | "tree"
+  | "setup"
+  | "api_source"
+  | "created"
+  | "sample";
+
 /**
  * Foundry's custom events, in one place so their names stay stable in
  * Databuddy, and named as helix-db.com's are (helix-website-landing's
@@ -54,7 +70,10 @@ export type AnalyticsEvents = {
 
   // The workspace's own data.
   connector_created: { kind: ConnectorKindName };
+  connector_sync_started: { from: SyncFrom };
   document_uploaded: { format: DocumentMediaType };
+  document_moved: undefined;
+  document_set_created: undefined;
 
   // Jobs: reported when they start and, by whichever read of them sees it
   // first, when they end (jobStarted, jobSeen).
@@ -65,10 +84,28 @@ export type AnalyticsEvents = {
   load_ready: { status: "ready" | "partial" };
   question_asked: undefined;
   question_answered: undefined;
+  question_cancelled: undefined;
+  revision_started: { mode: RevisionMode };
+  revision_succeeded: { mode: RevisionMode };
+  revision_failed: { mode: RevisionMode };
 
-  // Settings.
+  // An ontology's versions, loads and reviews.
+  version_made_current: undefined;
+  load_made_current: undefined;
+  review_settled: { kind: "resolve" | "prop" };
+  review_decision_removed: undefined;
+  graph_exported: undefined;
+
+  // Settings and the account.
   ai_provider_saved: { kind: FoundryAiProviderKind | "default" };
   upgrade_clicked: { tier: PaidTier; from: Tier };
+  plan_cancelled: undefined;
+  plan_resumed: undefined;
+  billing_portal_opened: undefined;
+  workspace_member_invited: { role: "member" | "admin" };
+  people_enrichment_enabled: undefined;
+  people_enrichment_disabled: undefined;
+  signed_out: undefined;
 };
 
 export type AnalyticsEventName = keyof AnalyticsEvents;
@@ -184,20 +221,36 @@ export function signedIn(
 
 // ---------------------------------------------------------------- jobs
 
-type Job = "generation" | "load" | "question";
+type Job = "generation" | "revision" | "load" | "question";
 
 type Status = {
   generation: OntologyGenerationStatus;
+  revision: OntologyGenerationStatus;
   load: LoadStatus;
   question: QuestionStatus;
 };
 
 /** A job this browser started, until a read of it sees it end. */
-type Pending = { job: Job; source?: GenerationSource; at: number };
+type Pending = {
+  job: Job;
+  source?: GenerationSource;
+  mode?: RevisionMode;
+  at: number;
+};
 
-// Read back from storage, so `source` is checked, not trusted.
+// Read back from storage, so `source` and `mode` are checked, not trusted.
 const sourceOf = (p: Pending): GenerationSource =>
   p.source === "sample" ? "sample" : "ai";
+const modeOf = (p: Pending): RevisionMode =>
+  p.mode === "preview" ? "preview" : "save";
+
+/** What each job reports when it starts. */
+const STARTS: { [J in Job]: (p: Pending) => void } = {
+  generation: (p) => trackEvent("generation_started", { source: sourceOf(p) }),
+  revision: (p) => trackEvent("revision_started", { mode: modeOf(p) }),
+  load: () => trackEvent("load_started"),
+  question: () => trackEvent("question_asked"),
+};
 
 /**
  * What each job's statuses report once it has ended: an event, or nothing
@@ -211,6 +264,12 @@ const ENDS: {
       trackEvent("generation_succeeded", { source: sourceOf(p) }),
     ONTOLOGY_GENERATION_STATUS_FAILED: (p) =>
       trackEvent("generation_failed", { source: sourceOf(p) }),
+  },
+  revision: {
+    ONTOLOGY_GENERATION_STATUS_SUCCEEDED: (p) =>
+      trackEvent("revision_succeeded", { mode: modeOf(p) }),
+    ONTOLOGY_GENERATION_STATUS_FAILED: (p) =>
+      trackEvent("revision_failed", { mode: modeOf(p) }),
   },
   load: {
     ready: () => trackEvent("load_ready", { status: "ready" }),
@@ -269,21 +328,30 @@ export function jobStarted(
   source: GenerationSource,
 ): void;
 export function jobStarted(
+  job: "revision",
+  id: string | undefined,
+  mode: RevisionMode,
+): void;
+export function jobStarted(
   job: "load" | "question",
   id: string | undefined,
 ): void;
 export function jobStarted(
   job: Job,
   id: string | undefined,
-  source?: GenerationSource,
+  kind?: GenerationSource | RevisionMode,
 ) {
   if (!DATABUDDY_CLIENT_ID || !id) return;
   const pending = readPending();
   if (pending[id]) return;
-  writePending({ ...pending, [id]: { job, source, at: Date.now() } });
-  if (job === "generation")
-    trackEvent("generation_started", { source: source! });
-  else trackEvent(job === "load" ? "load_started" : "question_asked");
+  const started: Pending =
+    job === "generation"
+      ? { job, source: kind as GenerationSource, at: Date.now() }
+      : job === "revision"
+        ? { job, mode: kind as RevisionMode, at: Date.now() }
+        : { job, at: Date.now() };
+  writePending({ ...pending, [id]: started });
+  STARTS[job](started);
 }
 
 /**

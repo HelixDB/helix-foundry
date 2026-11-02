@@ -553,7 +553,10 @@ function ConnectorItem({
               variant="ghost"
               disabled={action.pending || live}
               onClick={() =>
-                void action.run(() => syncConnector(id, c.id), "Sync queued")
+                void action.run(
+                  () => syncConnector(id, c.id, "tree"),
+                  "Sync queued",
+                )
               }
             />
           </span>

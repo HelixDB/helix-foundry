@@ -5,6 +5,7 @@ import type {
   ReviewDecisionResponse,
   SettleReviewRequest,
 } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { api } from "../../api";
 const enc = encodeURIComponent;
 const base = (ws: string, o: string) =>
@@ -33,19 +34,31 @@ export const reviewQueries = {
     },
   }),
 };
-export const settleReview = (
+export const settleReview = async (
   ws: string,
   o: string,
   reviewId: string,
   body: SettleReviewRequest,
-) =>
-  api<ReviewDecisionResponse>(
+) => {
+  const r = await api<ReviewDecisionResponse>(
     `${base(ws, o)}/reviews/${enc(reviewId)}:settle`,
     body,
   );
-export const deleteReviewDecision = (ws: string, o: string, id: string) =>
-  api<DeleteReviewDecisionResponse>(
+  trackEvent("review_settled", {
+    kind: body.decision.prop ? "prop" : "resolve",
+  });
+  return r;
+};
+export const deleteReviewDecision = async (
+  ws: string,
+  o: string,
+  id: string,
+) => {
+  const r = await api<DeleteReviewDecisionResponse>(
     `${base(ws, o)}/review-decisions/${enc(id)}`,
     undefined,
     "DELETE",
   );
+  trackEvent("review_decision_removed");
+  return r;
+};
