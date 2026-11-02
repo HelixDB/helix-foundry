@@ -89,13 +89,15 @@ func TestSyncerSourceSnapshot(t *testing.T) {
 			t.Fatalf("opened %d, closed %d, counted %v", kind.opened, kind.closed, sourceSnapshotCount("one")-before)
 		}
 	})
-	// A table the first attempt wrote shows that attempt's moment; keeping
-	// it beside one the retry reads would mix two.
-	t.Run("reads every table again on a retry", func(t *testing.T) {
+	// A table the first attempt wrote shows that attempt's moment. It is
+	// kept, so a read longer than one attempt still finishes across
+	// attempts, and the read is counted resumed.
+	t.Run("keeps what an earlier attempt wrote on a retry, and counts the read resumed", func(t *testing.T) {
 		kind := twoTables()
 		kind.fail = map[string]error{"b": &connector.RefusedError{Message: "the database is restarting"}}
 		f := newFakeFixture(t, &kind.fakeKind, `{}`)
 		f.syncer.Catalog = connector.NewCatalogOf(kind)
+		before := sourceSnapshotCount("resumed")
 		if _, err := f.syncer.Run(ctx, f.sync); err == nil {
 			t.Fatal("the first attempt succeeded, want it to fail after writing a")
 		}
@@ -107,11 +109,17 @@ func TestSyncerSourceSnapshot(t *testing.T) {
 		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(kind.synced, []string{"a", "b"}) || !slices.Equal(kind.readWith(), []string{`{"snapshot":"s2"}`, `{"snapshot":"s2"}`}) {
-			t.Fatalf("retry read %v with %v, want a and b at s2", kind.synced, kind.readWith())
+		if !slices.Equal(kind.synced, []string{"b"}) || !slices.Equal(kind.readWith(), []string{`{}`}) {
+			t.Fatalf("retry read %v with %v, want only b, unbound", kind.synced, kind.readWith())
 		}
-		if got := f.snapshotRows(t, "a"); !slices.Equal(got, []string{`{"id":2}`}) {
-			t.Fatalf("a = %v, want the retry's rows", got)
+		if kind.opened != 1 || kind.closed != 1 {
+			t.Fatalf("opened %d, closed %d, want the first attempt's snapshot only", kind.opened, kind.closed)
+		}
+		if got := f.snapshotRows(t, "a"); !slices.Equal(got, []string{`{"id":1}`}) {
+			t.Fatalf("a = %v, want the first attempt's rows", got)
+		}
+		if got := sourceSnapshotCount("resumed") - before; got != 1 {
+			t.Fatalf("counted %v resumed, want 1", got)
 		}
 	})
 	t.Run("counts no outcome for a read that failed", func(t *testing.T) {
@@ -148,7 +156,7 @@ func TestSyncerSourceSnapshot(t *testing.T) {
 		kind.fail = map[string]error{"b": &connector.RefusedError{Message: "the database is restarting"}}
 		f := newFakeFixture(t, &kind.fakeKind, `{}`)
 		f.syncer.Catalog = connector.NewCatalogOf(kind)
-		before := sourceSnapshotCount("unavailable")
+		before, resumed := sourceSnapshotCount("unavailable"), sourceSnapshotCount("resumed")
 		if _, err := f.syncer.Run(ctx, f.sync); err == nil {
 			t.Fatal("the first attempt succeeded, want it to fail after writing a")
 		}
@@ -159,8 +167,8 @@ func TestSyncerSourceSnapshot(t *testing.T) {
 		if !slices.Equal(kind.synced, []string{"b"}) || !slices.Equal(kind.readWith(), []string{`{}`}) {
 			t.Fatalf("retry read %v with %v, want only b, unbound", kind.synced, kind.readWith())
 		}
-		if got := sourceSnapshotCount("unavailable") - before; got != 1 {
-			t.Fatalf("counted %v unavailable, want the finished read only", got)
+		if got, again := sourceSnapshotCount("unavailable")-before, sourceSnapshotCount("resumed")-resumed; got != 0 || again != 1 {
+			t.Fatalf("counted %v unavailable and %v resumed, want the finished retry resumed only", got, again)
 		}
 	})
 	t.Run("takes no snapshot to read one table", func(t *testing.T) {
@@ -342,11 +350,13 @@ func TestSyncerPostgresSnapshot(t *testing.T) {
 		}
 		waitPostgresGone(t, role)
 	})
-	// The retry's snapshot is later than the first attempt's: a table that
-	// attempt stored is read again, or it would show the older moment.
-	t.Run("reads every table again on a retry", func(t *testing.T) {
+	// A retry keeps the table the first attempt stored, at that attempt's
+	// moment, and reads the rest at a moment of their own, so a read longer
+	// than one attempt still finishes.
+	t.Run("keeps what an earlier attempt stored on a retry", func(t *testing.T) {
 		f, kind, role, next := postgresFixture(t, "free", "", nil)
 		kind.fail["b"] = &connector.RefusedError{Message: "the database is restarting"}
+		before := sourceSnapshotCount("resumed")
 		if _, err := f.syncer.Run(ctx, f.sync); err == nil {
 			t.Fatal("the first attempt succeeded, want it to fail after storing a")
 		}
@@ -357,13 +367,16 @@ func TestSyncerPostgresSnapshot(t *testing.T) {
 		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(kind.read, []string{"a", "b"}) {
-			t.Fatalf("the retry read %v, want a and b", kind.read)
+		if !slices.Equal(kind.read, []string{"b"}) {
+			t.Fatalf("the retry read %v, want b only", kind.read)
 		}
-		for _, table := range []string{"a", "b"} {
-			if got := f.snapshotRows(t, table); !slices.Equal(got, []string{`{"id":1,"generation":2}`}) {
-				t.Fatalf("%s = %v, want the retry's generation 2", table, got)
+		for table, want := range map[string]string{"a": `{"id":1,"generation":1}`, "b": `{"id":1,"generation":2}`} {
+			if got := f.snapshotRows(t, table); !slices.Equal(got, []string{want}) {
+				t.Fatalf("%s = %v, want %s", table, got, want)
 			}
+		}
+		if got := sourceSnapshotCount("resumed") - before; got != 1 {
+			t.Fatalf("counted %v resumed, want 1", got)
 		}
 		waitPostgresGone(t, role)
 	})
