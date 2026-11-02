@@ -3,9 +3,9 @@
 // at /explore/:ontologyId/records; the URL holds the whole view (./model.ts
 // readView), the open record included. Read through source grants
 // (../explore/graph-reader.ts), it is the Explorer: there is no graph, a
-// type's rows come from typed reads by offset (cut into pages here, or a page
-// each of what grants hold only part of), with as many of its columns as one
-// read returns.
+// type's rows come from typed reads by offset, cut into pages here, with as many
+// of its columns as one read returns. What grants hold only part of is one read
+// with no pages: the first rows its reader can read.
 import "../explore/explore.css";
 import "./records.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -42,9 +42,10 @@ import { ReadFailed, pausedOf, startingOf } from "../explore/reads";
 import { DatabasePaused, DatabaseStarting } from "../explore/starting";
 import { useGraphReader, useReadsPart } from "../explore/graph-reader";
 import { PartNote } from "../explore/part-note";
+import { graphReadQueries } from "../explore/graph-read";
 import {
-  TYPED_LIMITS,
   typedColumns,
+  typedNarrows,
   typedRecordsPage,
   type TypedRecords,
 } from "../explore/typed-reads";
@@ -143,6 +144,21 @@ export function RecordsPage() {
     types.find((t) => t.name === view.type) ||
     types.find((t) => (counts.data?.get(t.name) || 0) > 0) ||
     types[0];
+  // What of the load its reader holds only part of says whether a type's read
+  // is narrowed; not knowing, it reads as one, which is never refused.
+  const partial = useQuery({
+    ...graphReadQueries.view(
+      ws,
+      o,
+      ontology.currentLoad?.id || "",
+      ontology.createdAt,
+    ),
+    enabled: part && !!ontology.currentLoad?.id,
+  });
+  const narrowed =
+    part &&
+    !!type &&
+    (!partial.data || typedNarrows(type, partial.data.partial));
   const pageQuery = recordQueries.page(
     ws,
     o,
@@ -151,12 +167,13 @@ export function RecordsPage() {
     naming,
     type || NO_TYPE,
     view,
-    part,
+    narrowed,
   );
   const page = useQuery({
     ...pageQuery,
     enabled:
       pageQuery.enabled &&
+      !(part && partial.isPending) &&
       access !== "none" &&
       ready &&
       !!tenant &&
@@ -282,6 +299,8 @@ export function RecordsPage() {
       </>,
     );
   // Records lists the version's types: without the version it has none.
+  if (pausedOf(versionError))
+    return frame(<DatabasePaused failure={pausedOf(versionError)!} />);
   if (versionError)
     return frame(
       <>
@@ -387,10 +406,10 @@ export function RecordsPage() {
   const filter = applied ? filterOf(type, applied.field, applied.value) : null;
   // A typed read's rows are cut into pages here.
   const typed = shared ? (page.data as TypedRecords | undefined) : undefined;
-  const data = typed ? typedRecordsPage(typed, view.page, part) : page.data;
+  const data = typed ? typedRecordsPage(typed, view.page) : page.data;
   const searching = !!view.search.trim() || !!applied;
-  // Rows only partly held have no total, and no place among them: each page
-  // shows those of a read's rows its reader holds.
+  // A read narrowed to what its reader holds has no total and no pages: it is
+  // the first rows they can read.
   const partlyHeld = !!typed && typed.total === null;
   const total = partlyHeld
     ? null
@@ -398,12 +417,11 @@ export function RecordsPage() {
       ? (data?.matched?.count ?? null)
       : count(type);
   const span = pageSpan(
-    view.page,
+    partlyHeld ? 0 : view.page,
     data?.rows.length || 0,
     total,
     !!data?.matched?.capped,
     !!data?.more,
-    part ? TYPED_LIMITS.partialRows : undefined,
   );
   // A value the field can't hold reads nothing: it says so in the table's
   // place, or under the box while the last rows stay up. So does a filter or
@@ -482,7 +500,7 @@ export function RecordsPage() {
           count={
             partlyHeld
               ? data?.rows.length
-                ? `${formatNumber(data.rows.length)} on this page`
+                ? `The first ${data.rows.length > 1 ? `${formatNumber(data.rows.length)} records` : "record"} you can read`
                 : undefined
               : span.text || undefined
           }
@@ -594,27 +612,20 @@ export function RecordsPage() {
           // wide as every column.
           refused ? (
             <EmptyState size="sm" icon={CircleAlert} title={refused} />
-          ) : data?.more ? (
-            // A read whose rows all come from sources they don't hold: the
-            // next may hold some.
+          ) : partlyHeld ? (
+            // Only the first are read, so more may follow: a search may reach them.
             <EmptyState
               size="sm"
               icon={Table2}
-              title="None of the records on this page are in the sources shared with you."
-              action={
-                <>
-                  {view.page > 0 && (
-                    <Button onClick={() => update({ page: view.page - 1 })}>
-                      Previous
-                    </Button>
-                  )}
-                  <Button
-                    disabled={!span.next}
-                    onClick={() => update({ page: view.page + 1 })}
-                  >
-                    Next
-                  </Button>
-                </>
+              title={
+                searching
+                  ? "None of the matches read are in the sources shared with you."
+                  : "None of the records read are in the sources shared with you."
+              }
+              text={
+                searching
+                  ? undefined
+                  : "Only the first are read. A search or a filter may reach others."
               }
             />
           ) : view.page > 0 ? (

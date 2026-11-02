@@ -70,8 +70,9 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 // query access (./workspaces.ts queryReads) on the routes the WFE gates on
 // it (reading a load's graph, questions, review decisions), which the WFE
 // sends on as a grantee. A grantee gets PERMISSION_DENIED from every route
-// the rules don't admit, NOT_FOUND for an ontology its grants hold nothing of,
-// and handlers answer only what it holds (MockRequest.grantee): its
+// the rules don't admit, NOT_FOUND for an ontology its grants hold nothing of
+// (a member who is only missing query access gets the WFE's own 403, since it
+// may see the ontology), and handlers answer only what it holds (MockRequest.grantee): its
 // ontologies, their current loads and versions (as ../graph/view.ts projects
 // them, of a load it holds only some of), its own questions, and the
 // documents those loads hold in sets it holds (their text, never their
@@ -491,7 +492,14 @@ export function guarded(route: MockRoute): MockRoute {
     handle: (req) => {
       const m = granteeMember(req, key);
       if (!m) return route.handle(req);
-      if (!rule) return fail("PERMISSION_DENIED", NOT_GRANTED);
+      // The WFE's own refusal: this member isn't restricted, and sees the
+      // ontology. It sends the call on only with grants that cover it.
+      const denied = state.restricted.has(
+        restrictedKey(m.workspaceId, m.userId),
+      )
+        ? null
+        : fail("PERMISSION_DENIED", "permission denied");
+      if (!rule) return denied || fail("PERMISSION_DENIED", NOT_GRANTED);
       const targets = userTargets(m.workspaceId, m.userId);
       const grantee: MockGrantee = {
         principal: principalKey({ kind: "KIND_USER", id: m.userId }),
@@ -520,7 +528,8 @@ export function guarded(route: MockRoute): MockRoute {
       };
       if (rule === "ontology") {
         grantee.load = grantee.covered.get(req.params.ontologyId || "");
-        if (!grantee.load) return fail("NOT_FOUND", "ontology not found");
+        if (!grantee.load)
+          return denied || fail("NOT_FOUND", "ontology not found");
       }
       return route.handle({ ...req, grantee });
     },

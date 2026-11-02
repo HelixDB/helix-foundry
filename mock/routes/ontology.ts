@@ -708,7 +708,8 @@ const listed = (v: StoredVersion): OntologyVersion => ({
 // For a caller who can't query the ontology's database (the
 // `ontologyDatabaseHidden` knob), a revised version's draft items go without
 // their cards, which Revise measured on its load, as the backend answers; a
-// grantee's (`granted`) go without any draft's cards.
+// grantee's (`granted`) go without any draft's cards, and its definition
+// without what drafting found and cost.
 const full = (v: StoredVersion, granted = false): OntologyVersion => {
   const definition = structuredClone(v.definition) as AgentBundleDefinition &
     Record<string, unknown>;
@@ -718,6 +719,13 @@ const full = (v: StoredVersion, granted = false): OntologyVersion => {
     (!!knobs.ontologyDatabaseHidden && !!definition.parent_version_id);
   const withheld = hidden && items.some((i) => i.card != null);
   if (hidden) for (const i of items) delete i.card;
+  if (granted) {
+    for (const i of items) delete (i as Record<string, unknown>).rationale;
+    delete definition.summary;
+    delete definition.usage;
+    delete definition.rules;
+    delete definition.parent_version_id;
+  }
   return {
     ...listed(v),
     definition,
@@ -911,14 +919,14 @@ export const ontologyRoutes: MockRoute[] = [
     handle: (req) => {
       const scope = ontologyOf(req);
       if (!isScope(scope)) return scope;
-      // A grantee reads only its load's version, without the cards its
-      // draft's generation measured.
+      // A grantee reads only its load's version, without what drafting it
+      // found and cost.
       const v = ontologyVersion(scope.o.id, req.params.id!);
       if (!v || (req.grantee && v.id !== req.grantee.load?.versionId))
         return fail("NOT_FOUND", "ontology version not found");
       const version = full(v, !!req.grantee);
       // Of a load it holds only some of: the version as its sources fill it,
-      // without the draft, its questions or the sets it reads.
+      // and nothing else of the definition.
       if (req.grantee?.load?.partial) {
         const def = version.definition as Record<string, unknown>;
         const view = viewOf(
@@ -926,10 +934,12 @@ export const ontologyRoutes: MockRoute[] = [
           String(def.ontology_toml || ""),
           String(def.mappings_toml || ""),
         );
-        def.ontology_toml = view.ontologyToml;
-        def.mappings_toml = view.mappingsToml;
-        delete def.draft;
-        delete def.questions;
+        version.definition = {
+          format: def.format,
+          status: def.status,
+          ontology_toml: view.ontologyToml,
+          mappings_toml: view.mappingsToml,
+        };
         version.generationId = "";
         version.documentSetIds = [];
       }

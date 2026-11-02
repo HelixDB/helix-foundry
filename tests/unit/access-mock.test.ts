@@ -491,6 +491,11 @@ describe("mock source grants", () => {
       connectorId: "conn_acme_stripe",
       table: "customers",
     };
+    const invoicesTable: wfe.FoundryAccessTarget = {
+      kind: "KIND_TABLE",
+      connectorId: "conn_acme_stripe",
+      table: "invoices",
+    };
     /** Reads as Eve, each outcome held to read_result.json. */
     const read = async (load: string, reads: unknown[]) => {
       const r = await eve("POST", `${O}/loads/${load}:read`, {
@@ -523,10 +528,15 @@ describe("mock source grants", () => {
         "invoice_under_contract",
       ])
         expect(v.definition.ontology_toml).not.toContain(gone);
-      expect(v.definition.mappings_toml).toContain("mappings.customers");
-      expect(v.definition.mappings_toml).not.toContain("mappings.invoices");
-      expect(v.definition.draft).toBeUndefined();
-      expect(v.definition.questions).toBeUndefined();
+      // Only what names the files, and nothing else of the definition.
+      expect(v.definition.mappings_toml).not.toContain("mappings.");
+      expect(v.definition.mappings_toml).not.toContain("extractions.");
+      expect(Object.keys(v.definition).sort()).toEqual([
+        "format",
+        "mappings_toml",
+        "ontology_toml",
+        "status",
+      ]);
       expect(v.generationId).toBe("");
       expect(v.documentSetIds).toEqual([]);
       const list = (await eve("GET", `${F}/ontologies`)).body.ontologies;
@@ -536,6 +546,15 @@ describe("mock source grants", () => {
       const whole = (await eve("GET", `${O}/versions/ver_seed_3`)).body.version;
       expect(whole.definition.ontology_toml).toContain("[types.Invoice]");
       expect(whole.generationId).toBe("gen_seed_4");
+      // Without what drafting it found and cost.
+      for (const gone of ["summary", "usage", "rules", "parent_version_id"])
+        expect(whole.definition[gone]).toBeUndefined();
+      for (const item of Object.values<Record<string, unknown>>(
+        whole.definition.draft?.draft?.items || {},
+      )) {
+        expect(item.rationale).toBeUndefined();
+        expect(item.card).toBeUndefined();
+      }
       expect(
         (await eve("GET", `${F}/ontologies`)).body.ontologies[0].partialAccess,
       ).toBeUndefined();
@@ -545,7 +564,7 @@ describe("mock source grants", () => {
       Object.assign(config, { invoiceOnlyCustomers: 90 });
       const { load } = await loaded();
       await grant(user("usr_eve"), [customersTable]);
-      const [view, page1, page2, count, byId, byIdSort, gone, hidden] =
+      const [view, first, paged, count, byId, byIdSort, gone, hidden] =
         await read(load, [
           { view: {} },
           rows("Customer", [{ at: 0 }, { at: 0, prop: "currency" }], {
@@ -571,13 +590,22 @@ describe("mock source grants", () => {
       expect(view.ok.partial).toEqual(
         expect.arrayContaining(["Customer", "Customer.customer_id"]),
       );
-      // The first 90 of Customer are the invoices table's alone.
-      expect(page1.ok.result.rows).toHaveLength(10);
-      expect(page1.ok.result.total).toBe(10);
-      expect(page1.ok.result.more).toBe(true);
-      expect(page1.ok.result.rows[0].cells[0].name).not.toMatch(/^cus_0/);
-      expect(page2.ok.result.rows).toHaveLength(54);
-      expect(page2.ok.result.more).toBe(false);
+      // The first 90 of Customer are the invoices table's alone, and the read
+      // reads past them: its limit says nothing of what it left out.
+      expect(first.ok.result.rows).toHaveLength(64);
+      expect(first.ok.result.total).toBe(64);
+      expect(first.ok.result.more).toBeUndefined();
+      expect(first.ok.stats).toMatchObject({ matched: 0, patterns: 0 });
+      expect(first.ok.result.rows[0].cells[0].id).not.toMatch(/^cus_0/);
+      // Its name is its id: its stored name may be another source's.
+      expect(first.ok.result.rows[0].cells[0].name).toBe(
+        first.ok.result.rows[0].cells[0].id,
+      );
+      // Where a page ended would say how much it can't see.
+      expect(paged.error).toMatchObject({
+        code: "not_visible",
+        pointer: "/return/rows/offset",
+      });
       expect(count.error).toMatchObject({
         code: "not_visible",
         pointer: "/start/type",
@@ -619,11 +647,113 @@ describe("mock source grants", () => {
         },
       ]);
       expect(row.ok.result.rows[0].cells[1]).toEqual(expect.any(String));
-      // Its currency is only partly held: the row is checked, and more follow.
-      expect(row.ok.result.more).toBe(true);
       expect(
         evidence.ok.items.every((i: { kind: string }) => i.kind === "row"),
       ).toBe(true);
+    });
+
+    it("reads a column it settles at most 100 rows at a time", async () => {
+      Object.assign(config, { invoiceOnlyCustomers: 150 });
+      const { load } = await loaded();
+      await grant(user("usr_eve"), [invoicesTable]);
+      const [settling, plain] = await read(load, [
+        rows("Customer", [{ at: 0 }, { at: 0, prop: "customer_id" }], {
+          limit: 200,
+        }),
+        rows("Customer", [{ at: 0 }], { limit: 200 }),
+      ]);
+      expect(settling.ok.result.rows).toHaveLength(100);
+      expect(settling.ok.result.total).toBe(100);
+      expect(plain.ok.result.rows.length).toBeGreaterThan(100);
+      expect(plain.ok.result.total).toBe(plain.ok.result.rows.length);
+    });
+
+    it("shows a keyed entity by a row it holds, never by a document alone", async () => {
+      Object.assign(config, { invoiceOnlyCustomers: 5 });
+      const { load } = await loaded();
+      // Invoices and documents: a customer only the customers table states
+      // stays out, whatever a document says of it.
+      await grant(user("usr_eve"), [invoicesTable, general]);
+      const [shown, globex] = await read(load, [
+        rows("Customer", [{ at: 0 }], { limit: 200 }),
+        { entity: { type: "Customer", id: "cus_GLOBEX01" } },
+      ]);
+      const ids = shown.ok.result.rows.map(
+        (r: { cells: { id: string }[] }) => r.cells[0]!.id,
+      );
+      expect(ids).toContain("cus_00001");
+      expect(ids).not.toContain("cus_GLOBEX01");
+      expect(globex.error.code).toBe("unknown_entity");
+      // The customers table states it.
+      await grant(user("usr_eve"), [customersTable]);
+      const [held] = await read(load, [
+        { entity: { type: "Customer", id: "cus_GLOBEX01" } },
+      ]);
+      expect(held.ok).toBeDefined();
+    });
+
+    it("gives a grantee its own budget, and refusals that say nothing of the workspace", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: false, now: Date.now() });
+      await loaded();
+      await grant(user("usr_eve"), [customersTable]);
+      const ask = (who: typeof eve, clientToken: string) =>
+        who("POST", `${O}/questions`, { question: "Who?", clientToken });
+      const budget = async () =>
+        (await eve("GET", `${O}/questions`)).body.budget;
+      expect(await budget()).toMatchObject({
+        monthlyUsdMicros: "10000000",
+        spentUsdMicros: "0",
+        hourlyLimit: 10,
+      });
+      // Someone else's spend isn't in it.
+      Object.assign(config, { askSpentUsdMicros: 1_000_000 });
+      expect((await budget()).spentUsdMicros).toBe("0");
+      Object.assign(config, { askSpentUsdMicros: 0 });
+      // Its own hour.
+      for (const i of Array.from({ length: 10 }, (_, n) => n))
+        expect((await ask(eve, `own${i}`)).status).toBe(200);
+      const own = await ask(eve, "own10");
+      expect(own.status).toBe(429);
+      expect(own.body.message).toBe(
+        "you have asked 10 questions in the last hour; try again later",
+      );
+      // Its own month, its live questions at their caps.
+      later(3_700_000);
+      Object.assign(config, { askGranteeSpentUsdMicros: 9_800_000 });
+      expect(Number((await budget()).spentUsdMicros)).toBeGreaterThan(
+        9_800_000,
+      );
+      const spent = await ask(eve, "own11");
+      expect(spent.status).toBe(400);
+      expect(spent.body.message).toBe(
+        "you have spent this month's $10.00 of questions",
+      );
+      Object.assign(config, { askGranteeSpentUsdMicros: 0 });
+      // The workspace's month, in words that don't say what it spent.
+      Object.assign(config, { askSpentUsdMicros: 30_000_000 });
+      const month = await ask(eve, "own12");
+      expect(month.status).toBe(400);
+      expect(month.body.message).toBe(
+        "this workspace's questions are used up for the month",
+      );
+      expect((await ask(call as typeof eve, "ada1")).body.message).toContain(
+        "the workspace has spent this month's",
+      );
+      Object.assign(config, { askSpentUsdMicros: 0 });
+      // The workspace's hour, likewise.
+      later(3_700_000);
+      for (const i of Array.from({ length: 30 }, (_, n) => n))
+        expect((await ask(call as typeof eve, `ada-hour${i}`)).status).toBe(
+          200,
+        );
+      const hour = await ask(eve, "own13");
+      expect(hour.status).toBe(429);
+      expect(hour.body.message).toBe(
+        "too many questions have been asked here in the last hour; try again later",
+      );
+      expect(
+        (await ask(call as typeof eve, "ada-past")).body.message,
+      ).toContain("the workspace has asked 30 questions");
     });
 
     it("answers a question from what it holds, and keeps what it read", async () => {
@@ -855,8 +985,20 @@ describe("mock source grants", () => {
       partialOntologyIds: [],
     });
     // Asking and reading need grants; review decisions and query-read are refused.
-    expect((await alan("GET", `${O}/questions`)).status).toBe(404);
-    expect((await alan("GET", `${O}/review-decisions`)).status).toBe(403);
+    // The WFE's own refusal, not an ontology it can't see: it lists this one.
+    const refused = await alan("GET", `${O}/questions`);
+    expect(refused.status).toBe(403);
+    expect(refused.body.message).toBe("permission denied");
+    expect(
+      (
+        await alan("POST", `${O}/loads/${load}:read`, {
+          readsJson: JSON.stringify([{ view: {} }]),
+        })
+      ).status,
+    ).toBe(403);
+    const decisions = await alan("GET", `${O}/review-decisions`);
+    expect(decisions.status).toBe(403);
+    expect(decisions.body.message).toBe("permission denied");
     expect(
       (
         await alan("POST", "/v1/databases:query-read", {

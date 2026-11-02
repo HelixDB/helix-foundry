@@ -9,8 +9,10 @@ import type { OntologyQuery } from "../../src/shared/wfe";
 // reader holds (./rules.ts); none, and it is left out of the projected
 // ontology, so nothing can name it. A rule or constraint is kept only when
 // everything its body reads is `full`. A query can't test, order, group or
-// count what is partial (`admit`), and must return every position that needs
-// checking.
+// count what is partial (`admit`), must return every position that needs
+// checking, and can't be paged: where a page ends would say how much it can't
+// see. Such a query (`narrows`) reads further than it asked (`widen`), so its
+// limit says nothing of the rows left out.
 
 export type Reach = "full" | "partial";
 
@@ -24,8 +26,14 @@ export type Visibility = {
 };
 
 export const ENRICHMENT_SOURCE = "foundry_enrichment";
-/** The most rows of one read that are checked, each taking reads of its own. */
-export const MAX_CHECKED_ROWS = 100;
+/** The most rows of one narrowed read that are checked. */
+export const MAX_CHECKED_ROWS = 1000;
+/** The same, when a step's link is partial: each fact takes a read of its own. */
+export const MAX_CHECKED_FACTS = 100;
+/** The most rows a narrowed read returns when a column's values take reads. */
+export const MAX_SETTLED_ROWS = 100;
+/** The most ids a narrowed read starts from. */
+export const MAX_NARROWED_IDS = 100;
 
 export type View = {
   // Every writer held: every read is as anyone's, and the files are the version's.
@@ -36,8 +44,8 @@ export type View = {
   // By `${type}\u001f${prop}`.
   props: ReadonlyMap<string, Reach>;
   links: ReadonlyMap<string, Reach>;
-  // Keyed types whose stored name may come from a names prop that isn't full.
-  unsafeNames: ReadonlySet<string>;
+  // Types with a key: an entity's id is its key, which only a row says.
+  keyed: ReadonlySet<string>;
   // Types, `Type.prop`s and links it sees only some of, in that order.
   partial: string[];
   holdsSource: (source: string) => boolean;
@@ -213,7 +221,15 @@ export function viewOf(
   const declared = new Set(
     typeTables.flatMap(([, t]) => Object.keys(isTable(t.props) ? t.props : {})),
   );
-  const relationsKept = new Set(relationTables.map(([n]) => n));
+  const relationsKept = new Set(
+    relationTables
+      .filter(([, t]) =>
+        [t.from, t.to].every(
+          (end) => typeof end !== "string" || types.has(end),
+        ),
+      )
+      .map(([n]) => n),
+  );
   for (const [name, t] of linkTables)
     for (const target of texts(t.implies))
       if (links.get(name) !== "full") relationsKept.delete(target);
@@ -268,14 +284,8 @@ export function viewOf(
       }
   }
 
-  const unsafeNames = new Set(
-    typeTables
-      .filter(
-        ([type, t]) =>
-          texts(t.key).length > 0 &&
-          texts(t.names).some((p) => props.get(key(type, p)) !== "full"),
-      )
-      .map(([type]) => type),
+  const keyed = new Set(
+    typeTables.filter(([, t]) => texts(t.key).length > 0).map(([type]) => type),
   );
   const whole =
     !visibility.withheld.length &&
@@ -304,7 +314,7 @@ export function viewOf(
       types,
       props,
       links,
-      unsafeNames,
+      keyed,
       partial,
       holdsDocument,
       holdsSource,
@@ -362,26 +372,13 @@ export function viewOf(
   for (const name of Object.keys(outConstraints))
     if (!constraintsKept.has(name)) delete outConstraints[name];
 
-  // The mappings of the sources it holds.
-  const outMappings = structuredClone(mappings);
-  const held = (v: unknown) =>
-    isTable(v) ? (v as Record<string, Table>) : ({} as Record<string, Table>);
-  const heldMappings = held(outMappings.mappings);
-  const source = (name: string): string | undefined => {
-    const m = held(mappings.mappings)[name];
-    return !m
-      ? undefined
-      : typeof m.source === "string"
-        ? m.source
-        : source(String(m.parent));
-  };
-  for (const name of Object.keys(heldMappings))
-    if (!visibility.sources.includes(source(name) || ""))
-      delete heldMappings[name];
-  const heldRoutes = held(outMappings.extractions);
-  for (const [name, r] of Object.entries(heldRoutes))
-    if (!routeWriters(r, visibility).held) delete heldRoutes[name];
-  if (!visibility.enrichment) delete outMappings.enrichments;
+  // Which mappings and routes it holds would say which sources do: only what
+  // names the files is left.
+  const outMappings = Object.fromEntries(
+    Object.entries(mappings).filter(
+      ([k]) => k === "version" || k === "ontology",
+    ),
+  );
 
   return {
     whole,
@@ -390,7 +387,7 @@ export function viewOf(
     types,
     props,
     links,
-    unsafeNames,
+    keyed,
     partial,
     holdsDocument,
     holdsSource,
@@ -408,18 +405,61 @@ const mustReturn = (what: string, positions: string) => ({
   pointer: "/return/rows/columns",
 });
 
+const positionsOf = (q: OntologyQuery) => [
+  q.start.type,
+  ...(q.steps || []).map((s) => s.to),
+];
+
+/**
+ * Whether `q` reads something partly held: its answer is narrowed to what the
+ * reader holds, and says nothing of what it left out (`View::narrows`).
+ */
+export function narrows(view: View, q: OntologyQuery) {
+  if (view.whole) return false;
+  const steps = q.steps || [],
+    positions = positionsOf(q);
+  const columnPartial =
+    "rows" in q.return &&
+    q.return.rows.columns.some(
+      (c) =>
+        !!c.prop &&
+        c.prop !== "name" &&
+        view.props.get(key(positions[c.at]!, c.prop)) === "partial",
+    );
+  return (
+    columnPartial ||
+    positions.some((t) => view.types.get(t) === "partial") ||
+    steps.some((s) => view.links.get(s.via) === "partial")
+  );
+}
+
+/** How many rows a narrowed read reads before it filters them (`View::widen`). */
+export const widened = (view: View, q: OntologyQuery) =>
+  (q.steps || []).some((s) => view.links.get(s.via) === "partial")
+    ? MAX_CHECKED_FACTS
+    : MAX_CHECKED_ROWS;
+
+/** Whether a column of a narrowed read takes its values from evidence. */
+export const settles = (view: View, type: string, prop?: string | null) =>
+  !!prop && prop !== "name" && view.props.get(key(type, prop)) === "partial";
+
+/** What an entity's stored name can't be shown as: its key is a row's to say. */
+export const nameUnsafe = (view: View, type: string) =>
+  view.keyed.has(type) && view.types.get(type) !== "full";
+
 /**
  * Why `q`, which the projected ontology admits, asks too much of what the
  * reader sees only some of; undefined when it doesn't (`View::admit`).
  */
 export function admit(view: View, q: OntologyQuery) {
   if (view.whole) return undefined;
-  const steps = q.steps || [];
-  const positions = [q.start.type, ...steps.map((s) => s.to)];
+  const steps = q.steps || [],
+    positions = positionsOf(q),
+    narrowed = narrows(view, q);
   const fullProp = (type: string | undefined, prop: string) =>
     !!type &&
     (prop === "name"
-      ? view.types.get(type) === "full" && !view.unsafeNames.has(type)
+      ? view.types.get(type) === "full"
       : view.props.get(key(type, prop)) === "full");
   const conditions: [string, string, { prop: string }[]][] = [
     ["/start", q.start.type, q.start.where || []],
@@ -433,6 +473,12 @@ export function admit(view: View, q: OntologyQuery) {
     for (const [i, c] of where.entries())
       if (!fullProp(type, c.prop))
         return refused(`${at}/where/${i}/prop`, `\`${type}.${c.prop}\``);
+  if (narrowed && (q.start.ids?.length || 0) > MAX_NARROWED_IDS)
+    return {
+      code: "not_visible" as const,
+      message: `/start/ids: at most ${MAX_NARROWED_IDS} ids, of what is only partly in the sources you can read`,
+      pointer: "/start/ids",
+    };
   const wholePath = () => {
     for (const [i, type] of positions.entries())
       if (view.types.get(type) !== "full")
@@ -444,7 +490,12 @@ export function admit(view: View, q: OntologyQuery) {
   };
   const ret = q.return;
   if ("rows" in ret) {
-    const { columns, order_by } = ret.rows;
+    const { columns, order_by, offset = 0 } = ret.rows;
+    if (narrowed && offset > 0)
+      return refused(
+        "/return/rows/offset",
+        `\`${positions.find((t) => view.types.get(t) === "partial") || positions[0]}\`, which can't be paged,`,
+      );
     if (order_by && !fullProp(positions[order_by.at], order_by.prop))
       return refused("/return/rows/order_by/prop", `\`${order_by.prop}\``);
     const named = (at: number) => columns.some((c) => c.at === at);
@@ -477,17 +528,15 @@ export function admit(view: View, q: OntologyQuery) {
 
 /**
  * What a property of an entity is for the reader: the stored value when a row
- * it holds sets it and no other does, else what the quotes it holds agree on,
- * else nothing (`View::settled`).
+ * it holds sets it, whatever other rows do, else what the quotes it holds agree
+ * on, else nothing (`View::settled`).
  */
 export function settled(
   view: View,
   rows: readonly string[],
   quotes: readonly { documentId: string; value: unknown }[],
 ): { from: "stored" } | { from: "quoted"; value: unknown } | { from: "none" } {
-  const heldRow = rows.some(view.holdsSource),
-    otherRow = rows.some((s) => !view.holdsSource(s));
-  if (heldRow) return otherRow ? { from: "none" } : { from: "stored" };
+  if (rows.some(view.holdsSource)) return { from: "stored" };
   const said = quotes
     .filter((q) => view.holdsDocument(q.documentId))
     .map((q) => q.value);

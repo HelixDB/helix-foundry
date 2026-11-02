@@ -213,9 +213,12 @@ test("a restricted member sees only what their sources cover", async ({
   await form.getByRole("button", { name: "Ask", exact: true }).click();
   const answer = as.getByRole("region", { name: "Answer" });
   await expect(answer).toBeVisible({ timeout: 20_000 });
-  await expect(as.getByRole("group", { name: "Questions budget" })).toHaveCount(
-    0,
-  );
+  // Its budget is its own, and says nothing of the workspace's.
+  const budget = as.getByRole("group", { name: "Questions budget" });
+  await expect(budget).toContainText("of $10.00 this month");
+  await expect(budget).toContainText("Spent on your questions this month");
+  await expect(budget).toContainText("an hour for you");
+  await expect(budget).not.toContainText("workspace");
   await expect(
     answer.getByRole("button", {
       name: "Source 7: A break of invoice_under_contract",
@@ -431,7 +434,7 @@ test("a member who can't query names only what their sources fill", async ({
   await expect(
     as.getByRole("list", { name: "Types" }).getByRole("button"),
   ).toHaveText(["Customer—"]);
-  await expect(as.getByText("10 on this page")).toBeVisible();
+  await expect(as.getByText("The first 64 records you can read")).toBeVisible();
   const requests = (await mock.stats()).requests.slice(before);
   expect(requests.filter((r) => r.includes("databases:query-read"))).toEqual(
     [],
@@ -518,20 +521,23 @@ test("someone whose sources hold part of an ontology reads that part", async ({
     "Of what the sources shared with you hold",
     { timeout: 20_000 },
   );
+  // A thread says so too.
+  await expect(as).toHaveURL(/thread=/);
+  await expect(note).toBeVisible();
 
-  // Records: only Customer, uncounted, each page the rows of a read she holds.
+  // Records: only Customer, uncounted: the first rows she can read, no pages.
   await as.goto("/explore/ont_acme_contracts/records");
   await expect(note).toBeVisible();
   const types = as.getByRole("list", { name: "Types" });
   await expect(types.getByRole("button")).toHaveText(["Customer—"]);
   const customers = as.getByRole("grid", { name: "Customer records" });
-  await expect(as.getByText("10 on this page")).toBeVisible();
+  await expect(as.getByText("The first 64 records you can read")).toBeVisible();
   await expect(customers).not.toContainText("cus_0");
-  await as.getByRole("button", { name: "Next" }).click();
-  await expect(as.getByText("54 on this page")).toBeVisible();
-  await expect(as.getByRole("button", { name: "Next" })).toBeDisabled();
-  await as.getByRole("button", { name: "Previous" }).click();
-  await expect(as.getByText("10 on this page")).toBeVisible();
+  await expect(as.getByRole("button", { name: "Next" })).toHaveCount(0);
+  // A page of an old link is the same read.
+  await as.goto("/explore/ont_acme_contracts/records?type=Customer&page=3");
+  await expect(as.getByText("The first 64 records you can read")).toBeVisible();
+  await expect(as.getByRole("button", { name: "Previous" })).toHaveCount(0);
 
   // A sort of what is partly held: said, the rows as they were.
   await as.goto(
@@ -542,7 +548,7 @@ test("someone whose sources hold part of an ontology reads that part", async ({
       "You can’t sort by Customer id: only part of it is in the sources shared with you.",
     ),
   ).toBeVisible();
-  await expect(as.getByText("10 on this page")).toBeVisible();
+  await expect(as.getByText("The first 64 records you can read")).toBeVisible();
   // A filter of it: said, in the table's place.
   await as.goto(
     "/explore/ont_acme_contracts/records?type=Customer&field=customer_id&value=cus_1",
@@ -624,6 +630,142 @@ test("someone whose sources hold all of a type pages past the first read", async
   ).toHaveCount(15);
 });
 
+test("someone who holds a type whole pages it, beside one they hold part of", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await loadContract(page);
+  // Stripe without the documents: invoices are whole; a customer's currency,
+  // which documents may state too, isn't.
+  const sources = await openSources(page, "people", "Eve Adler");
+  await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
+    "Part of it",
+  );
+  await page.close();
+
+  const as = await asEve(browser);
+  await as.goto("/explore/ont_acme_contracts/records?type=Invoice");
+  await expect(
+    as.getByText("You can read part of this ontology"),
+  ).toBeVisible();
+  await expect(as.getByText("1–50 of 65")).toBeVisible();
+  await as.getByRole("button", { name: "Next" }).click();
+  await expect(as.getByText("51–65 of 65")).toBeVisible();
+  await expect(
+    as.getByRole("grid", { name: "Invoice records" }).getByRole("row"),
+  ).toHaveCount(16);
+  await as.goto("/explore/ont_acme_contracts/records?type=Customer");
+  await expect(as.getByText("The first 64 records you can read")).toBeVisible();
+  await expect(as.getByRole("button", { name: "Next" })).toHaveCount(0);
+});
+
+test("a busy or paused database reads as what it is, through grants", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await loadContract(page);
+  await shareWithEve(page);
+  await page.close();
+
+  const as = await asEve(browser);
+  // Every slot taken: it waits its turn, and the page never says so.
+  await mock.configure({ readsBusy: 3 });
+  await as.goto("/explore/ont_acme_contracts/records?type=Invoice");
+  await expect(as.getByText("1–50 of 65")).toBeVisible();
+  await expect(as.getByText("already runs")).toHaveCount(0);
+  // Queries paused: billing's words, with nothing to retry.
+  await mock.configure({
+    readsPaused:
+      "queries are paused: the workspace has no active plan; choose a plan to resume",
+  });
+  await as.goto("/explore/ont_acme_contracts/records?type=Customer");
+  await expect(
+    as.getByText("Queries are paused: this workspace has no active Helix plan"),
+  ).toBeVisible();
+  await expect(as.getByRole("button", { name: "Retry" })).toHaveCount(0);
+});
+
+test("access changed elsewhere shows on coming back to the tab", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await loadContract(page);
+  await shareWithEve(page);
+  const as = await asEve(browser);
+  await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
+  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
+
+  const sources = await openSources(page, "people", "Eve Adler");
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).uncheck();
+  await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(
+    sources.getByRole("list", { name: "Can’t read yet" }),
+  ).toContainText("Stripe › customers");
+
+  await as.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+  await expect(as.getByRole("form", { name: "Ask a question" })).toHaveCount(0);
+});
+
+test("the threads say why they can't be read, with a retry", async ({
+  page,
+}) => {
+  await signIn(page);
+  let refuse = true;
+  await page.route(
+    "**/papi/v1/workspaces/*/foundry/ontologies/ont_acme_contracts",
+    (route) =>
+      refuse && route.request().method() === "GET"
+        ? route.fulfill({
+            status: 500,
+            json: { code: 13, message: "the ontology couldn't be read" },
+          })
+        : route.fallback(),
+  );
+  await page.goto("/ask/ont_acme_contracts");
+  const threads = page.getByRole("navigation", { name: "Threads" });
+  await expect(threads.getByRole("alert")).toContainText(
+    "Couldn’t read the threads: the ontology couldn't be read",
+    { timeout: 15_000 },
+  );
+  refuse = false;
+  await threads.getByRole("button", { name: "Retry" }).click();
+  await expect(threads.getByRole("alert")).toHaveCount(0);
+});
+
+test("flags a restricted member who holds raw access again", async ({
+  page,
+}) => {
+  await signIn(page);
+  await mock.configure({ memberQueryRead: false });
+  await page.goto("/settings/access?tab=people");
+  await page.getByRole("switch", { name: "Restrict Alan Turing" }).check();
+  await expect(page.getByText("Alan Turing now sees only")).toBeVisible();
+  const row = page.getByRole("listitem", { name: "Alan Turing" });
+  await expect(row).not.toContainText("Raw access");
+  // Given query access since, in the Helix dashboard.
+  await mock.configure({ memberQueryRead: true });
+  await page.reload();
+  await expect(row).toContainText("Raw access");
+  await expect(row).toContainText("queries its databases outside Foundry");
+  // Nobody else is flagged, and the switch still takes it off.
+  await expect(
+    page.getByRole("listitem", { name: "Eve Adler" }),
+  ).not.toContainText("Raw access");
+  await expect(
+    page.getByRole("switch", { name: "Restrict Alan Turing" }),
+  ).toBeEnabled();
+});
+
 test("nothing changes for anyone with no grants", async ({ page, browser }) => {
   await mock.configure({ loadStepMs: 200, invoiceOnlyCustomers: 90 });
   await signIn(page);
@@ -693,6 +835,52 @@ test("asks before a change that would cut a grantee off", async ({ page }) => {
   ).toHaveText("Eve Adler: Customer contracts");
   await warning.getByRole("button", { name: "Cancel" }).click();
   await expect(page).toHaveURL(new RegExp(`${O}$`));
+});
+
+test("asks before making an older load current cuts a grantee off", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  // Version 2's load, which reads the Shop database, then version 3's.
+  for (const n of [2, 3]) {
+    await page.goto(`${O}/versions/ver_seed_${n}`);
+    await page.getByRole("button", { name: "Make current" }).click();
+    await page
+      .getByRole("dialog", { name: `Make version ${n} current?` })
+      .getByRole("button", { name: "Make current" })
+      .click();
+    await expect(page.getByText(`Version ${n} is now current.`)).toBeVisible();
+    await page.goto(O);
+    await page.getByRole("button", { name: "Load data" }).first().click();
+    await page
+      .getByRole("dialog", { name: new RegExp(`^Load version ${n}`) })
+      .getByRole("button", { name: "Load" })
+      .click();
+    await expect(page).toHaveURL(/\/loads\/load_/);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Loaded" }).first(),
+    ).toBeVisible({ timeout: 20_000 });
+  }
+  await shareWithEve(page);
+
+  await page.goto(`${O}#loads`);
+  const setCurrent = async () => {
+    await page.getByRole("button", { name: "More actions for v2" }).click();
+    await page.getByRole("menuitem", { name: "Set current" }).click();
+  };
+  await setCurrent();
+  const warning = page.getByRole("dialog", {
+    name: "Some people will stop reading",
+  });
+  await expect(
+    warning.getByRole("list", { name: "Who stops reading" }),
+  ).toHaveText("Eve Adler: Customer contracts");
+  await warning.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByText("v2 is the current load")).toHaveCount(0);
+  await setCurrent();
+  await warning.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("v2 is the current load")).toBeVisible();
 });
 
 test("says who would keep part of what a change takes", async ({ page }) => {

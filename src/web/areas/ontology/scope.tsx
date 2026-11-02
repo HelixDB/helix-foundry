@@ -27,6 +27,7 @@ import { readStorage, writeStorage } from "../../kit/util";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { ontologyDatabase } from "../explore/reads";
+import { myAccessQuery } from "../workspace/access-api";
 import { readAccess } from "../workspace/access-model";
 import { TenantReadsProvider } from "../explore/tenant-reads";
 import { ontologySetup, type OntologySetup } from "./model";
@@ -173,8 +174,11 @@ export function OntologyScope({ explores = false }: { explores?: boolean }) {
     const jobs = jobsSeen(loads.data.loads),
       before = seen.current;
     seen.current = { ontologyId, jobs };
-    if (before?.ontologyId === ontologyId && jobEnded(before.jobs, jobs))
+    if (before?.ontologyId === ontologyId && jobEnded(before.jobs, jobs)) {
       void qc.invalidateQueries({ queryKey: [ws, "ontology", ontologyId] });
+      // What a load holds decides who reads it through grants.
+      void qc.invalidateQueries({ queryKey: myAccessQuery(ws).queryKey });
+    }
   }, [loads.data, ontologyId]);
   // The Ontologies panel's list isn't polled: each fresh read of this
   // ontology (its last load, name and database) replaces its row there, so

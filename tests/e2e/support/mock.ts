@@ -65,6 +65,8 @@ export const mock = {
     // How many customers only Stripe's invoices table states, in a load
     // written from now on: Customer then has two sources.
     invoiceOnlyCustomers?: number;
+    readsBusy?: number;
+    readsPaused?: string;
     // A load's reads with rules: parts that fail in entity reads, by pred
     // ("derived:x", or "violations") and code (budget, hub or invalid).
     readErrors?: Record<string, "budget" | "hub" | "invalid">;

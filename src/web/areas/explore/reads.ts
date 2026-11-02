@@ -1,8 +1,8 @@
 import type { EntityRef } from "../../../shared/foundry-read";
 import type { FoundryOntology } from "../../../shared/wfe";
 import {
+  ReadFailed,
   queriesPaused,
-  type DatabaseQueryFailure,
   type DatabaseQueryTarget,
   type DynamicQueryRequest,
   type QueryExecutor,
@@ -49,7 +49,8 @@ import {
  */
 export type GraphReader =
   | { kind: "database"; read: QueryExecutor }
-  | { kind: "grants" };
+  // `createdAt`: the ontology's, so a database still starting says so.
+  | { kind: "grants"; createdAt?: string | null };
 
 /** The load a typed read reads: grants cover a load, never Other data. */
 const loadOf = (scope: Scope) => {
@@ -57,11 +58,7 @@ const loadOf = (scope: Scope) => {
   return scope.id;
 };
 
-export class ReadFailed extends Error {
-  constructor(readonly failure: DatabaseQueryFailure) {
-    super(failure.message);
-  }
-}
+export { ReadFailed };
 
 /** The database an ontology reads: its tenant, starting from its creation. */
 export const ontologyDatabase = (
@@ -229,13 +226,10 @@ export const readQueries = {
     queryFn: async ({ signal }: { signal?: AbortSignal }) => {
       const page: EntityGraph =
         reader.kind === "grants"
-          ? await runPlan(
-              ws,
-              o,
-              loadOf(scope),
-              entityPlan(identity, naming),
+          ? await runPlan(ws, o, loadOf(scope), entityPlan(identity, naming), {
               signal,
-            )
+              createdAt: reader.createdAt,
+            })
           : parseEntity(
               await runRead(
                 reader.read,
@@ -287,7 +281,10 @@ export const readQueries = {
       signal?: AbortSignal;
     }): Promise<Map<string, Evidence[]>> => {
       if (reader.kind === "grants")
-        return runPlan(ws, o, loadOf(scope), factEvidencePlan(facts!), signal);
+        return runPlan(ws, o, loadOf(scope), factEvidencePlan(facts!), {
+          signal,
+          createdAt: reader.createdAt,
+        });
       const req = factEvidenceRequest(scope, facts!);
       return req
         ? parseFactEvidence(await runRead(reader.read, req, signal))
@@ -328,7 +325,11 @@ export const readQueries = {
       enabled: !!loadId && !!(request || plan),
       queryFn: async ({ signal }: { signal?: AbortSignal }) =>
         plan
-          ? runPlan(ws, o, loadId, plan, signal)
+          ? runPlan(ws, o, loadId, plan, {
+              signal,
+              createdAt:
+                reader.kind === "grants" ? reader.createdAt : undefined,
+            })
           : reader.kind === "database"
             ? parseEntityNames(
                 await runRead(reader.read, request!, signal),

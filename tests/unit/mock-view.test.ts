@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../../mock/graph/rules";
-import { admit, settled, viewOf, type Visibility } from "../../mock/graph/view";
+import {
+  MAX_CHECKED_FACTS,
+  MAX_CHECKED_ROWS,
+  admit,
+  nameUnsafe,
+  narrows,
+  settled,
+  settles,
+  viewOf,
+  widened,
+  type Visibility,
+} from "../../mock/graph/view";
 import { parseAgentOntology } from "@/web/areas/ontology/model";
 
 // The mock's view of a version, as the ontology agent's `mapping::view` works
@@ -144,7 +155,10 @@ describe("a reader's view", () => {
     expect(view.links.get("billed_to")).toBe("full");
     expect(view.links.get("referred_by")).toBe("partial");
     expect(view.links.get("raised")).toBeUndefined();
-    expect(view.unsafeNames.has("Customer")).toBe(true);
+    // A keyed type it doesn't hold whole reads by id; another keeps its name.
+    expect(nameUnsafe(view, "Customer")).toBe(true);
+    expect(nameUnsafe(view, "Invoice")).toBe(false);
+    expect(nameUnsafe(view, "Contract")).toBe(false);
     expect(view.partial).toEqual(
       expect.arrayContaining(["Customer", "Customer.plan", "referred_by"]),
     );
@@ -181,10 +195,12 @@ describe("a reader's view", () => {
     expect(view.ontologyToml).not.toContain("required");
     expect(view.ontologyToml).not.toContain("cardinality");
     expect(() => compile(view.ontologyToml)).not.toThrow();
-    expect(view.mappingsToml).toContain("mappings.customers");
-    expect(view.mappingsToml).toContain("mappings.lines");
-    expect(view.mappingsToml).not.toContain("mappings.crm");
-    expect(view.mappingsToml).toContain("extractions.contracts");
+    // Only what names the files: which mappings it holds would say which
+    // sources it does.
+    expect(view.mappingsToml).toContain('version = "m1"');
+    expect(view.mappingsToml).toContain('ontology = "v1"');
+    expect(view.mappingsToml).not.toContain("mappings.");
+    expect(view.mappingsToml).not.toContain("extractions.");
   });
 
   it("is the version itself for a reader who holds it all", () => {
@@ -236,6 +252,68 @@ describe("a reader's view", () => {
     expect(withheld.props.get(key("Invoice", "amount"))).toBeUndefined();
     expect(withheld.ontologyToml).not.toContain("rules.big");
     expect(withheld.ontologyToml).not.toContain("constraints.not_big");
+  });
+
+  it("keeps a relation only while it holds every member link whole", () => {
+    const ontology = `version = "v"
+[types.A]
+description = "An A."
+props = { id = "string" }
+key = ["id"]
+[types.B]
+description = "A B."
+props = { id = "string" }
+key = ["id"]
+[links.whole]
+from = "A"
+to = "A"
+description = "Whole."
+implies = ["kept", "both", "hidden_end"]
+[links.part]
+from = "A"
+to = "A"
+description = "Part."
+implies = ["both"]
+[relations.kept]
+description = "Over a link it holds whole."
+[relations.both]
+description = "Over one it holds whole and one it doesn't."
+[relations.hidden_end]
+description = "Naming a type it can't see."
+from = "A"
+to = "B"
+`;
+    const mappings = `version = "v"
+ontology = "v"
+[mappings.a]
+source = "stripe"
+links = [{ link = "whole", from = "a", to = "a" }, { link = "part", from = "a", to = "a" }]
+[mappings.a.bind.a]
+type = "A"
+key = { id = "id" }
+missing = "create"
+[mappings.c]
+source = "crm"
+links = [{ link = "part", from = "a", to = "a" }]
+[mappings.c.bind.a]
+type = "A"
+key = { id = "id" }
+missing = "create"
+[mappings.b]
+source = "crm"
+[mappings.b.bind.b]
+type = "B"
+key = { id = "id" }
+missing = "create"
+`;
+    const seen = viewOf(held, ontology, mappings).ontologyToml;
+    expect(seen).toContain("relations.kept");
+    expect(seen).not.toContain("relations.both");
+    expect(seen).not.toContain("relations.hidden_end");
+    // What named them no longer does.
+    expect(parseAgentOntology(seen).ok).toBe(true);
+    expect(seen).not.toContain('"both"');
+    expect(seen).not.toContain('"hidden_end"');
   });
 
   it("counts People enrichment's profiles as a source", () => {
@@ -351,6 +429,13 @@ describe("what a query can ask", () => {
         return: rows([{ at: 0 }], "name"),
       }),
     ).toBe("/return/rows/order_by/prop");
+    // Its name is its type's: only a type held whole.
+    expect(
+      pointer({
+        start: { type: "Invoice" },
+        return: rows([{ at: 0 }], "name"),
+      }),
+    ).toBeUndefined();
     expect(
       pointer({
         start: { type: "Customer" },
@@ -436,13 +521,72 @@ describe("what a query can ask", () => {
     ).toBeUndefined();
   });
 
+  it("narrows what touches anything partly held, and doesn't page it", () => {
+    const start = (type: string, offset?: number) => ({
+      start: { type },
+      return: { rows: { columns: [{ at: 0 }], ...(offset ? { offset } : {}) } },
+    });
+    expect(narrows(view, start("Customer"))).toBe(true);
+    expect(narrows(view, start("Invoice"))).toBe(false);
+    // A whole type with a column it holds only some of.
+    const held2 = viewOf(
+      { ...held, sources: ["stripe", "helpdesk"] },
+      ONTOLOGY,
+      MAPPINGS,
+    );
+    expect(held2.types.get("Invoice")).toBe("full");
+    const column = (prop: string) => ({
+      start: { type: "Invoice" },
+      steps: [{ via: "billed_to", dir: "out" as const, to: "Customer" }],
+      return: { rows: { columns: [{ at: 0 }, { at: 1, prop }] } },
+    });
+    expect(narrows(view, column("plan"))).toBe(true);
+    expect(settles(view, "Customer", "plan")).toBe(true);
+    expect(settles(view, "Customer", "name")).toBe(false);
+    expect(settles(view, "Invoice", "amount")).toBe(false);
+    // A count of what is whole, or a reader with it all, isn't narrowed.
+    expect(
+      narrows(view, { start: { type: "Invoice" }, return: { count: {} } }),
+    ).toBe(false);
+    // Where a page ended would say how much it can't see.
+    expect(admit(view, start("Customer", 100))).toMatchObject({
+      code: "not_visible",
+      pointer: "/return/rows/offset",
+    });
+    expect(admit(view, start("Invoice", 100))).toBeUndefined();
+    // Reading on past what it asked, less far when each fact takes a read.
+    expect(widened(view, start("Customer"))).toBe(MAX_CHECKED_ROWS);
+    expect(
+      widened(view, {
+        start: { type: "Customer" },
+        steps: [{ via: "referred_by", dir: "out", to: "Customer" }],
+        return: { rows: { columns: [{ at: 0 }, { at: 1 }] } },
+      }),
+    ).toBe(MAX_CHECKED_FACTS);
+    // At most so many ids of what is only partly held.
+    const ids = (n: number, type = "Customer") => ({
+      start: { type, ids: Array.from({ length: n }, (_, i) => `id_${i}`) },
+      return: { rows: { columns: [{ at: 0 }] } },
+    });
+    expect(admit(view, ids(100))).toBeUndefined();
+    expect(admit(view, ids(101))).toMatchObject({
+      code: "not_visible",
+      pointer: "/start/ids",
+    });
+    expect(admit(view, ids(101, "Invoice"))).toBeUndefined();
+  });
+
   it("settles a value from what it holds", () => {
     const quote = (documentId: string, value: string) => ({
       documentId,
       value,
     });
     expect(settled(view, ["stripe"], [])).toEqual({ from: "stored" });
-    expect(settled(view, ["stripe", "crm"], [])).toEqual({ from: "none" });
+    // A row it holds says it, whatever other rows do.
+    expect(settled(view, ["stripe", "crm"], [])).toEqual({ from: "stored" });
+    expect(settled(view, ["crm", "stripe"], [quote("held", "pro")])).toEqual({
+      from: "stored",
+    });
     expect(settled(view, ["crm"], [quote("held", "pro")])).toEqual({
       from: "quoted",
       value: "pro",

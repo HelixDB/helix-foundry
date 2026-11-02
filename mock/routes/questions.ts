@@ -53,7 +53,10 @@ import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 // question's status and last seq), and ends with the engine's result, its
 // spend settled. Ask is refused past 30 questions an hour per workspace
 // (RESOURCE_EXHAUSTED), and once what the month spent plus a question's cap
-// passes the budget (FAILED_PRECONDITION), with the WFE's messages.
+// passes the budget (FAILED_PRECONDITION), with the WFE's messages. A grantee
+// also has limits of its own (`GRANTEE_LIMITS`, its live questions counting at
+// their caps), which the list's budget gives instead of the workspace's, and
+// its refusals don't tell it what the workspace asked or spent.
 //
 // The mock's agent answers from what the load wrote, in the engine's
 // shapes exactly (contract/ontology_agent/ask_event.json and
@@ -95,9 +98,12 @@ type Knobs = {
   askMarkup?: boolean;
   askVisuals?: boolean;
   askSpentUsdMicros?: number;
+  askGranteeSpentUsdMicros?: number;
 };
 const knobs = config as typeof config & Knobs;
 
+// foundry.ask's grantee_monthly_usd and grantee_per_hour.
+const GRANTEE_LIMITS = { monthlyUsdMicros: 10_000_000, hourly: 10 };
 // foundry.ask: the workspace's month (dev's $30, or prod's $15 with
 // MOCK_STAMP=prod) and a question's caps, the same on both.
 export const ASK_LIMITS = {
@@ -166,6 +172,7 @@ onReset(() => {
   delete knobs.askMarkup;
   delete knobs.askVisuals;
   delete knobs.askSpentUsdMicros;
+  delete knobs.askGranteeSpentUsdMicros;
 });
 
 const live = (q: StoredQuestion) =>
@@ -174,31 +181,84 @@ const month = () => new Date().toISOString().slice(0, 7);
 const ofWorkspace = (workspaceId: string) =>
   state.questions.filter((q) => q.workspaceId === workspaceId);
 
-/** The month's spend and the claims held back, in millionths of a dollar. */
-export function spend(workspaceId: string) {
-  const mine = ofWorkspace(workspaceId).filter((q) =>
-    q.createdAt.startsWith(month()),
+/**
+ * The month's spend and the claims held back, in millionths of a dollar: the
+ * workspace's, or one grantee's.
+ */
+export function spend(workspaceId: string, grantee?: string) {
+  const mine = ofWorkspace(workspaceId).filter(
+    (q) =>
+      q.createdAt.startsWith(month()) && (!grantee || q.grantee === grantee),
   );
   return {
     spent:
-      (knobs.askSpentUsdMicros || 0) +
+      (grantee
+        ? knobs.askGranteeSpentUsdMicros || 0
+        : knobs.askSpentUsdMicros || 0) +
       mine.reduce((n, q) => n + q.usdMicros, 0),
     reserved: mine.reduce((n, q) => n + q.reservedMicros, 0),
   };
 }
 
-function budget(workspaceId: string): QuestionBudget {
-  const { spent, reserved } = spend(workspaceId);
+/** What the list says of the budget: a grantee's own, or the workspace's. */
+function budget(workspaceId: string, grantee?: string): QuestionBudget {
+  const { spent, reserved } = spend(workspaceId, grantee);
   return {
-    monthlyUsdMicros: String(ASK_LIMITS.monthlyUsdMicros),
+    monthlyUsdMicros: String(
+      grantee ? GRANTEE_LIMITS.monthlyUsdMicros : ASK_LIMITS.monthlyUsdMicros,
+    ),
     spentUsdMicros: String(spent),
     reservedUsdMicros: String(reserved),
     questionUsdMicros: String(ASK_LIMITS.questionUsdMicros),
     maxSteps: ASK_LIMITS.maxSteps,
     maxWallSecs: ASK_LIMITS.maxWallSecs,
     concurrentLimit: ASK_LIMITS.concurrent,
-    hourlyLimit: ASK_LIMITS.hourly,
+    hourlyLimit: grantee ? GRANTEE_LIMITS.hourly : ASK_LIMITS.hourly,
   };
+}
+
+/** Why the workspace and, for a grantee, its own limits refuse a new question. */
+function askRefusal(workspaceId: string, grantee?: string) {
+  const hourAgo = Date.now() - 3_600_000,
+    asked = ofWorkspace(workspaceId).filter(
+      (q) => Date.parse(q.createdAt) >= hourAgo,
+    ),
+    fits = (spent: number, cap: number) =>
+      spent + ASK_LIMITS.questionUsdMicros <= cap;
+  if (asked.length >= ASK_LIMITS.hourly)
+    return fail(
+      "RESOURCE_EXHAUSTED",
+      grantee
+        ? "too many questions have been asked here in the last hour; try again later"
+        : `the workspace has asked ${asked.length} questions in the last hour; try again later`,
+    );
+  if (!fits(spend(workspaceId).spent, ASK_LIMITS.monthlyUsdMicros))
+    return fail(
+      "FAILED_PRECONDITION",
+      grantee
+        ? "this workspace's questions are used up for the month"
+        : SPENT_MONTH,
+    );
+  if (!grantee) return undefined;
+  const ownHour = asked.filter((q) => q.grantee === grantee).length;
+  if (ownHour >= GRANTEE_LIMITS.hourly)
+    return fail(
+      "RESOURCE_EXHAUSTED",
+      `you have asked ${ownHour} questions in the last hour; try again later`,
+    );
+  // Its live questions count at their caps.
+  const liveCaps =
+    ofWorkspace(workspaceId).filter((q) => q.grantee === grantee && live(q))
+      .length * ASK_LIMITS.questionUsdMicros;
+  return fits(
+    spend(workspaceId, grantee).spent + liveCaps,
+    GRANTEE_LIMITS.monthlyUsdMicros,
+  )
+    ? undefined
+    : fail(
+        "FAILED_PRECONDITION",
+        `you have spent this month's $${(GRANTEE_LIMITS.monthlyUsdMicros / 1e6).toFixed(2)} of questions`,
+      );
 }
 
 // ---------------------------------------------------------------- the agent
@@ -935,8 +995,8 @@ function partAnswer(
       evidence_id: "e1",
     },
   ];
-  const type = [...view.types.keys()].sort()[0];
-  if (outcome === "failed" || !type)
+  const types = [...view.types.keys()].sort();
+  if (outcome === "failed" || !types.length)
     return {
       events: [...profiled, { event: "finished" }],
       status: "failed",
@@ -949,18 +1009,25 @@ function partAnswer(
       error: "the model could not be reached; ask again",
       usdMicros: 4_200,
     };
-  const query: OntologyQuery = {
-    start: { type },
-    return: { rows: { columns: [{ at: 0 }], limit: 100 } },
+  // The first type it can see anything of: what it can say.
+  const model = evaluate(g, compile(view.ontologyToml));
+  const readOf = (type: string) => {
+    const query: OntologyQuery = {
+      start: { type },
+      return: { rows: { columns: [{ at: 0 }], limit: 100 } },
+    };
+    const read = readAnswer(model, { query }, { view });
+    return {
+      type,
+      query,
+      rows:
+        "ok" in read
+          ? (read.ok.result as { rows: { cells: unknown[] }[] }).rows
+          : [],
+    };
   };
-  const read = readAnswer(
-    evaluate(g, compile(view.ontologyToml)),
-    { query },
-    { view },
-  );
-  const result =
-    "ok" in read ? (read.ok.result as { rows: { cells: unknown[] }[] }) : null;
-  const rows = result?.rows || [];
+  const reads = types.map(readOf),
+    { type, query, rows } = reads.find((r) => r.rows.length) || reads[0]!;
   const reason =
     "The sources shared with the person asking hold nothing about this.";
   const gap = "Sources shared with them that state it.";
@@ -1290,20 +1357,8 @@ export const questionRoutes: MockRoute[] = [
         )
       )
         return fail("NOT_FOUND", "thread not found");
-      const hourAgo = Date.now() - 3_600_000;
-      const lastHour = ofWorkspace(s.m.workspaceId).filter(
-        (q) => Date.parse(q.createdAt) >= hourAgo,
-      ).length;
-      if (lastHour >= ASK_LIMITS.hourly)
-        return fail(
-          "RESOURCE_EXHAUSTED",
-          `the workspace has asked ${lastHour} questions in the last hour; try again later`,
-        );
-      if (
-        spend(s.m.workspaceId).spent + ASK_LIMITS.questionUsdMicros >
-        ASK_LIMITS.monthlyUsdMicros
-      )
-        return fail("FAILED_PRECONDITION", SPENT_MONTH);
+      const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
+      if (refusal) return refusal;
       const qid = id("q");
       // Of a load it holds only some of, the agent is told what it holds.
       const def = (ontologyVersion(s.o.id, load.versionId)?.definition ||
@@ -1367,7 +1422,7 @@ export const questionRoutes: MockRoute[] = [
       return ok({
         questions: all.slice(from, from + PAGE).map((q) => toQuestion(q, true)),
         nextPageToken: from + PAGE < all.length ? String(from + PAGE) : "",
-        budget: budget(s.m.workspaceId),
+        budget: budget(s.m.workspaceId, req.grantee?.principal),
       } satisfies ListQuestionsResponse);
     },
   },

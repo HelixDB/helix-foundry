@@ -252,7 +252,12 @@ export function AskPage() {
         load={load}
         budget={list.data?.budget}
         picker={picker}
-        notice={<LoadNotice selection={selection} />}
+        notice={
+          <>
+            <PartNote />
+            <LoadNotice selection={selection} />
+          </>
+        }
         onBack={() => setThread("")}
       />
     );

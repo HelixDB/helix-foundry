@@ -1,10 +1,9 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { outcomeOf, parseViewResult } from "../../../shared/foundry-read";
 import { useWorkspace } from "../../ui";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
-import { readGraph } from "./graph-read";
+import { graphReadQueries } from "./graph-read";
 import { useReadsPart } from "./graph-reader";
 import { namingOf, type Naming } from "./naming";
 
@@ -35,13 +34,7 @@ export function useNaming(versionId: string): {
   const loadId = ontology.currentLoad?.id || "",
     viewed = part && !grantee && !!loadId;
   const view = useQuery({
-    queryKey: [ws, "ontology", o, "read", loadId, "view", current],
-    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
-      const [outcome] = await readGraph(ws, o, loadId, [{ view: {} }], signal);
-      const r = outcomeOf(outcome, parseViewResult);
-      if (!r.ok) throw new Error(r.error.message);
-      return r.value;
-    },
+    ...graphReadQueries.view(ws, o, loadId, ontology.createdAt),
     enabled: viewed && !!current,
   });
   const data = version.data?.version,

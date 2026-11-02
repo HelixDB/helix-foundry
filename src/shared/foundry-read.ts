@@ -276,10 +276,9 @@ export type QueryResult =
   | {
       kind: "rows";
       rows: { cells: unknown[]; edges: QueryEdge[] }[];
+      // For a query narrowed to what a reader holds, the rows shown: the
+      // answer says nothing of the rest.
       total: number;
-      // For a reader who sees only some of the rows: whether a next page
-      // holds more, which `total` (those it sees here) can't say.
-      more?: boolean;
     }
   | { kind: "count"; count: number };
 
@@ -687,7 +686,6 @@ export function parseQueryResult(ok: unknown): QueryResult | undefined {
         : [],
     ),
     total,
-    ...(typeof r.more === "boolean" ? { more: r.more } : {}),
   };
 }
 

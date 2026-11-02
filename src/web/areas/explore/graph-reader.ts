@@ -44,12 +44,13 @@ export function useGraphReader(later = false): {
   reader: GraphReader;
 } {
   const access = useReadAccess(),
+    { ontology } = useOntology(),
     reads = useTenantReads();
   return {
     access,
     reader:
       access === "database"
         ? { kind: "database", read: later ? reads.readLater : reads.read }
-        : { kind: "grants" },
+        : { kind: "grants", createdAt: ontology.createdAt },
   };
 }

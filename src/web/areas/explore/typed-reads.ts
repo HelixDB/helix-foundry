@@ -24,7 +24,13 @@ import {
   type RecordsPage,
   type RecordsView,
 } from "../records/model";
-import { identityOf, readFailureText, readGraph, refOf } from "./graph-read";
+import {
+  identityOf,
+  readFailureText,
+  readGraph,
+  refOf,
+  type ReadOptions,
+} from "./graph-read";
 import {
   LIMITS,
   entityId,
@@ -51,18 +57,16 @@ import { RULE_BREAK_LIMITS, refKey } from "./rule-breaks";
 // Foundry's own records (an entity's mentions and reviews, a document's
 // marks) and facts' own props. Records pages with a read's `offset`. Someone
 // who reads only part of the load (grants that hold only some of its sources)
-// gets rows narrowed to those they hold, no totals of them, and a refusal
-// (`not_visible`) of a filter or a sort on what is partly held. Every answer is
-// parsed without trust.
+// gets rows narrowed to those they hold where a read touches what is partly
+// held: one read and no pages (where a page ended would say how much they can't
+// see), `total` only the rows shown, and a refusal (`not_visible`) of a filter
+// or a sort on what is partly held. Every answer is parsed without trust.
 
 export const TYPED_LIMITS = Object.freeze({
   // Columns of one row read, the entity's own among them (read_request.json Rows).
   columns: 20,
   // Rows one read returns, cut into Records' pages here.
   rows: 200,
-  // Rows one read of what is only partly held returns: each is checked with
-  // reads of its own, and a page of Records is one such read.
-  partialRows: 100,
   // Link sides of a type read for one entity (each up to factsPerSide facts).
   links: 30,
   // Props whose quotes are read for one entity.
@@ -92,7 +96,7 @@ export async function runPlan<T>(
   o: string,
   loadId: string,
   plan: ReadPlan<T>,
-  signal?: AbortSignal,
+  options: ReadOptions = {},
 ): Promise<T> {
   const outcomes: Outcome<unknown>[] = [];
   for (let i = 0; i < plan.reads.length; i += MAX_READS)
@@ -102,7 +106,7 @@ export async function runPlan<T>(
         o,
         loadId,
         plan.reads.slice(i, i + MAX_READS),
-        signal,
+        options,
       )),
     );
   return plan.parse(outcomes);
@@ -360,7 +364,9 @@ export function entityPlan(
         cutFacts = true;
         return [];
       }
-      if (r.total > r.rows.length || r.more) cutFacts = true;
+      // A narrowed read's total is the rows shown, so a full side may be cut.
+      if (r.total > r.rows.length || r.rows.length >= LIMITS.factsPerSide)
+        cutFacts = true;
       const naming_ = namingProps(naming.types.get(s.other));
       return r.rows.flatMap((row): Fact[] => {
         const edge = row.edges.find((e) => e.step === 0 && "fact" in e);
@@ -575,11 +581,12 @@ export const typedColumns = (t: TypeNaming) =>
 export type TypedRecords = Omit<RecordsPage, "more"> & {
   // Rows of the read passed over before these.
   offset: number;
-  // How many there are in all; null for rows only partly held, which `more`
-  // speaks for.
+  // How many there are in all; null for a read narrowed to what its reader
+  // holds, which says nothing of the rest: it is all there is to show.
   total: number | null;
   more: boolean;
-  refusedBy?: "sort" | "filter" | "search";
+  // "paging": a later window refused because the read turned out narrowed.
+  refusedBy?: "sort" | "filter" | "search" | "paging";
 };
 
 /** A records read, or why there is none. */
@@ -619,17 +626,30 @@ function searchStart(
 }
 
 /**
+ * Whether a read of a type's records is narrowed to what its reader holds: the
+ * type, or a column it returns, is one the load's view lists as partly held.
+ *
+ * @example
+ * typedNarrows({ name: "Customer", props: [{ name: "email", type: "string" }], key: [], names: [] }, ["Customer.email"]); // true
+ * typedNarrows({ name: "Invoice", props: [{ name: "email", type: "string" }], key: [], names: [] }, ["Customer.email"]); // false
+ */
+export const typedNarrows = (t: TypeNaming, partial: readonly string[]) =>
+  partial.includes(t.name) ||
+  typedColumns(t).some(
+    (c) => c !== "name" && partial.includes(`${t.name}.${c}`),
+  );
+
+/**
  * Which read's rows a page of Records comes from: pages are cut from reads of
- * TYPED_LIMITS.rows; for someone who reads only part of the ontology, each page
- * is a read of TYPED_LIMITS.partialRows, showing those of its rows they hold.
+ * TYPED_LIMITS.rows; a narrowed read is the one read there is.
  *
  * @example
  * typedOffset(5, false); // 200
- * typedOffset(5, true); // 500
+ * typedOffset(5, true); // 0
  */
-export const typedOffset = (page: number, part: boolean) =>
-  part
-    ? page * TYPED_LIMITS.partialRows
+export const typedOffset = (page: number, narrowed: boolean) =>
+  narrowed
+    ? 0
     : Math.floor((page * RECORDS_LIMITS.page) / TYPED_LIMITS.rows) *
       TYPED_LIMITS.rows;
 
@@ -639,13 +659,14 @@ export const typedOffset = (page: number, part: boolean) =>
  * there are in all. A filter compares the prop's value as typed (no folding of
  * names). What a reader holds only part of refuses a filter, search or sort on
  * it, which `parse` says rather than throws: the page goes on without a sort,
- * and says so of the others.
+ * and says so of the others. `narrowed` (typedNarrows): one read of the first
+ * rows the reader holds, with no total.
  */
 export function typedRecordsRead(
   t: TypeNaming,
   view: RecordsView,
   naming: Naming,
-  part = false,
+  narrowed = false,
 ): TypedRecordsRead {
   const search = searchStart(t, view.search);
   if (search === "none") return { kind: "none" };
@@ -667,13 +688,15 @@ export function typedRecordsRead(
       : view.sort.column
     : undefined;
   const searching = !!view.search.trim() || !!filter;
-  const offset = typedOffset(view.page, part);
+  const offset = typedOffset(view.page, narrowed);
   const refusal = (pointer = ""): TypedRecords => {
-    const by = pointer.includes("/order_by")
-      ? "sort"
-      : filter && pointer === `/start/where/${where.length - 1}/prop`
-        ? "filter"
-        : "search";
+    const by = pointer.includes("/offset")
+      ? "paging"
+      : pointer.includes("/order_by")
+        ? "sort"
+        : filter && pointer === `/start/where/${where.length - 1}/prop`
+          ? "filter"
+          : "search";
     return {
       rows: [],
       matched: null,
@@ -716,7 +739,7 @@ export function typedRecordsRead(
                       },
                     }
                   : {}),
-                limit: part ? TYPED_LIMITS.partialRows : TYPED_LIMITS.rows,
+                limit: TYPED_LIMITS.rows,
                 ...(offset ? { offset } : {}),
               },
             },
@@ -746,18 +769,15 @@ export function typedRecordsRead(
             },
           ];
         });
-        // The engine says `more` of rows only partly held, whose `total` is
-        // those it shows.
-        const told = result.more !== undefined;
         return {
           rows,
           offset,
-          total: told ? null : result.total,
-          more: told
-            ? !!result.more
-            : offset + result.rows.length < result.total,
+          total: narrowed ? null : result.total,
+          more: !narrowed && offset + result.rows.length < result.total,
           matched:
-            searching && !told ? { count: result.total, capped: false } : null,
+            searching && !narrowed
+              ? { count: result.total, capped: false }
+              : null,
         };
       },
     },
@@ -766,8 +786,8 @@ export function typedRecordsRead(
 
 /**
  * One page of the records a typed read returned: RECORDS_LIMITS.page rows from
- * `page`, and whether another follows, in those rows or a later read's; or, for
- * someone who reads only part of the ontology, the read's rows they hold.
+ * `page`, and whether another follows, in those rows or a later read's; or, of a
+ * narrowed read (no total), all its rows.
  *
  * @example
  * typedRecordsPage({ rows: [], matched: null, offset: 0, total: 0, more: false }, 0).more; // false
@@ -775,9 +795,8 @@ export function typedRecordsRead(
 export function typedRecordsPage(
   read: TypedRecords,
   page: number,
-  part = false,
 ): RecordsPage {
-  if (part) return read;
+  if (read.total === null) return read;
   const from = page * RECORDS_LIMITS.page - read.offset;
   return {
     ...read,

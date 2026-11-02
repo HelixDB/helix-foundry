@@ -53,6 +53,7 @@ import {
   principalKey,
   readings,
   readsText,
+  holdsRawAccess,
   restrictable,
   setOwners,
   sourceState,
@@ -792,14 +793,23 @@ function PeoplePanel({ data }: { data: AccessData }) {
                       <Tag tone={role === "member" ? "neutral" : "accent"}>
                         {roleLabel[role]}
                       </Tag>
+                      {isRestricted && holdsRawAccess(m) && (
+                        <Tag tone="warning">Raw access</Tag>
+                      )}
                     </>
                   }
                   lines={
-                    isRestricted
-                      ? readsLine(data, principal(m))
-                      : can.ok
-                        ? "Sees everything"
-                        : can.why
+                    isRestricted ? (
+                      <>
+                        {readsLine(data, principal(m))}
+                        {holdsRawAccess(m) &&
+                          ". Also writes a project or queries its databases outside Foundry, which this doesn’t limit: take that away in the Helix dashboard."}
+                      </>
+                    ) : can.ok ? (
+                      "Sees everything"
+                    ) : (
+                      can.why
+                    )
                   }
                   actions={
                     role === "member" && (

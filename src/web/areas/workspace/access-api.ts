@@ -39,7 +39,10 @@ export const accessQuery = (ws: string) => ({
 export const myAccessQuery = (ws: string) => ({
   queryKey: [ws, "foundry-access", "me"],
   queryFn: () => api<GetMyFoundryAccessResponse>(`${access(ws)}/me`),
-  staleTime: Infinity,
+  // Grants change elsewhere: a read of a minute ago is fresh enough, and coming
+  // back to the tab or a job's end (../ontology/scope.tsx) reads it again.
+  staleTime: 60_000,
+  refetchOnWindowFocus: "always" as const,
 });
 
 /** The workspace's agents' keys, revoked ones too (with revokedAt). */

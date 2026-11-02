@@ -13,7 +13,16 @@ import {
 } from "../../src/shared/foundry-read";
 import { contractErrors } from "../agent-contract";
 import type { LoadGraph, MockNode } from "./store";
-import { MAX_CHECKED_ROWS, admit, settled, type View } from "./view";
+import {
+  MAX_SETTLED_ROWS,
+  admit,
+  nameUnsafe,
+  narrows,
+  settled,
+  settles,
+  widened,
+  type View,
+} from "./view";
 
 // The mock's stand-in for the ontology agent's rules on the read path:
 // a load's version's rules, link declarations and
@@ -658,28 +667,28 @@ const aboutOf = (m: Model, id: number) =>
   );
 
 /**
- * Whether an entity is one the reader may see: its type is full, or the load
- * holds a row the reader holds stating it, or a document it holds naming it.
+ * Whether an entity is one the reader may see: its type is full, or a row the
+ * reader holds states it, or a document it holds names it. A keyed entity some
+ * other row states isn't shown by a document: its id is its key, which is that
+ * row's to say.
  */
 function entityVisible(m: Model, view: View, n: MockNode) {
   const reach = view.types.get(n.label);
   if (reach === "full") return true;
   if (!reach) return false;
-  return (
-    aboutOf(m, n.id).some(
-      (x) =>
-        typeof x.props.source === "string" &&
-        view.holdsSource(String(x.props.source)),
-    ) ||
-    [...m.g.nodes()].some(
-      (x) =>
-        x.label === N.Mention &&
-        view.holdsDocument(String(x.props.doc_id)) &&
-        (m.g.graph.outgoing.get(x.id) || []).some((k) => {
-          const edge = m.g.graph.edges.get(k)!;
-          return edge.label === E.MENTION_OF && edge.to === n.id;
-        }),
-    )
+  const sources = aboutOf(m, n.id).flatMap((x) =>
+    typeof x.props.source === "string" ? [String(x.props.source)] : [],
+  );
+  if (sources.some(view.holdsSource)) return true;
+  if (view.keyed.has(n.label) && sources.length) return false;
+  return [...m.g.nodes()].some(
+    (x) =>
+      x.label === N.Mention &&
+      view.holdsDocument(String(x.props.doc_id)) &&
+      (m.g.graph.outgoing.get(x.id) || []).some((k) => {
+        const edge = m.g.graph.edges.get(k)!;
+        return edge.label === E.MENTION_OF && edge.to === n.id;
+      }),
   );
 }
 
@@ -1228,9 +1237,11 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
           }
         : { count: { distinct_at: ret.count.distinct_at ?? null } },
   };
+  // What a narrowed read matched would say how much it can't see.
+  const narrowed = !!view && narrows(view, q);
   const stats = {
-    matched: start.length,
-    patterns: steps.length,
+    matched: narrowed ? 0 : start.length,
+    patterns: narrowed ? 0 : steps.length,
     terminal: "rust",
   };
   if ("count" in ret) {
@@ -1278,42 +1289,39 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
     }
     return entityOrder(a).localeCompare(entityOrder(b));
   });
-  // For a reader who sees only some of them: the rows of this page it may see,
-  // at most MAX_CHECKED_ROWS checked, with what is hidden not counted.
+  // For a reader who sees only some of them: of every row within reach, those
+  // it may see, up to what it asked, with what is hidden not counted.
   const partly = (at: number, prop?: string | null) =>
-    !!view &&
-    !!prop &&
-    prop !== "name" &&
-    view.props.get(`${types[at]}\u001f${prop}`) === "partial";
-  const checks =
-    !!view &&
-    (columns.some(
-      (c) => view.types.get(types[c.at]!) === "partial" || partly(c.at, c.prop),
-    ) ||
-      steps.some((s) => view.links.get(s.via) === "partial"));
-  const read = rows.slice(
-    offset,
-    offset + (checks ? Math.min(limit, MAX_CHECKED_ROWS) : limit),
-  );
-  const page = !checks
-    ? read
-    : read.filter(
-        (p) =>
-          named.every((at) =>
-            entityVisible(m, view!, m.g.node(p.nodes[at]!)!),
-          ) &&
-          steps.every((s, i) => {
-            if (!named.includes(i) || !named.includes(i + 1)) return true;
-            const f = p.facts[i]!;
-            return (
-              !f.stated ||
-              !f.pred.startsWith("link:") ||
-              factVisible(m, view!, s.via, f.args[0]!, f.args[1]!)
-            );
-          }),
-      );
+    narrowed && settles(view!, types[at]!, prop);
+  const page = !narrowed
+    ? rows.slice(offset, offset + limit)
+    : rows
+        .slice(0, widened(view!, q))
+        .filter(
+          (p) =>
+            named.every(
+              (at) =>
+                view!.types.get(types[at]!) !== "partial" ||
+                entityVisible(m, view!, m.g.node(p.nodes[at]!)!),
+            ) &&
+            steps.every((s, i) => {
+              if (!named.includes(i) || !named.includes(i + 1)) return true;
+              const f = p.facts[i]!;
+              return (
+                !f.stated ||
+                !f.pred.startsWith("link:") ||
+                factVisible(m, view!, s.via, f.args[0]!, f.args[1]!)
+              );
+            }),
+        )
+        .slice(
+          0,
+          columns.some((c) => partly(c.at, c.prop))
+            ? Math.min(limit, MAX_SETTLED_ROWS)
+            : limit,
+        );
   const nameOf = (n: MockNode) =>
-    view?.unsafeNames.has(n.label)
+    view && nameUnsafe(view, n.label)
       ? refOf(n).id
       : String(n.props.name ?? refOf(n).id);
   return {
@@ -1351,8 +1359,7 @@ function typedQuery(m: Model, q: Query, view?: View): Answer {
             ];
           }),
         })),
-        total: checks ? page.length : rows.length,
-        ...(checks ? { more: offset + read.length < rows.length } : {}),
+        total: narrowed ? page.length : rows.length,
       },
       stats,
     },

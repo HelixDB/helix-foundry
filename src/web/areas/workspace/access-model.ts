@@ -424,17 +424,25 @@ export function lossLines(
 const reaches = (s?: ResourceScope) => !!s?.mode && s.mode !== "none";
 
 /**
+ * Whether a member writes a project or queries its databases, so reads them
+ * outside Foundry, whatever grants say.
+ */
+export function holdsRawAccess(m: WorkspaceMember) {
+  const a = m.projectAccess;
+  return reaches(a?.write) || reaches(a?.queryRead) || reaches(a?.queryWrite);
+}
+
+/**
  * Whether a member can be restricted to what grants give, else why not:
- * owners and admins see everything, and a member who writes a project or
- * queries its databases reads them outside Foundry.
+ * owners and admins see everything, and a member who holds raw access reads
+ * the databases outside Foundry.
  */
 export function restrictable(
   m: WorkspaceMember,
 ): { ok: true } | { ok: false; why: string } {
   if (m.role === "WORKSPACE_ROLE_OWNER" || m.role === "WORKSPACE_ROLE_ADMIN")
     return { ok: false, why: "Owners and admins see everything." };
-  const a = m.projectAccess;
-  return reaches(a?.write) || reaches(a?.queryRead) || reaches(a?.queryWrite)
+  return holdsRawAccess(m)
     ? {
         ok: false,
         why: "Writes a project or queries its databases outside Foundry. Take that away in the Helix dashboard first.",

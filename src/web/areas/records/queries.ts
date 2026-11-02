@@ -55,7 +55,7 @@ export const recordQueries = {
             o,
             scope.kind === "load" ? scope.id : "",
             countsPlan(types),
-            signal,
+            { signal, createdAt: reader.createdAt },
           );
         const read = reader.read;
         const batches = typeCountsRequests(scope, types);
@@ -71,8 +71,10 @@ export const recordQueries = {
   // One page of a type's records, as the view asks: none for a search
   // nothing of the type can match, and off for a filter that isn't one.
   // Through grants, the typed read that page's rows come from, which the page
-  // cuts into pages (typedRecordsPage): the key has its offset, not the page.
-  // A sort it refuses is read again without, saying so.
+  // cuts into pages (typedRecordsPage): the key has its offset, not the page;
+  // a narrowed read (`narrowed`, typedNarrows) is the one read there is. A sort
+  // it refuses is read again without, saying so; a later window refused for
+  // being narrowed reads the first rows.
   page: (
     ws: string,
     o: string,
@@ -81,11 +83,12 @@ export const recordQueries = {
     naming: Naming,
     t: TypeNaming,
     view: RecordsView,
-    part = false,
+    narrowed = false,
   ) => {
     if (reader.kind === "grants") {
-      const typed = typedRecordsRead(t, view, naming, part);
-      const loadId = scope.kind === "load" ? scope.id : "";
+      const typed = typedRecordsRead(t, view, naming, narrowed);
+      const loadId = scope.kind === "load" ? scope.id : "",
+        createdAt = reader.createdAt;
       return {
         queryKey: [
           ws,
@@ -100,7 +103,8 @@ export const recordQueries = {
           activeFilter(view),
           view.sort,
           "grants",
-          typedOffset(view.page, part),
+          typedOffset(view.page, narrowed),
+          narrowed,
         ],
         enabled: typed.kind !== "refused",
         queryFn: async ({
@@ -117,18 +121,21 @@ export const recordQueries = {
           };
           if (typed.kind === "refused") throw new Error(typed.message);
           if (typed.kind === "none") return none;
-          const read = await runPlan(ws, o, loadId, typed.plan, signal);
-          if (read.refusedBy !== "sort") return read;
-          const unsorted = typedRecordsRead(
+          const options = { signal, createdAt };
+          const read = await runPlan(ws, o, loadId, typed.plan, options);
+          if (read.refusedBy !== "sort" && read.refusedBy !== "paging")
+            return read;
+          const paging = read.refusedBy === "paging";
+          const again = typedRecordsRead(
             t,
-            { ...view, sort: null },
+            paging ? view : { ...view, sort: null },
             naming,
-            part,
+            paging || narrowed,
           );
-          return unsorted.kind === "read"
+          return again.kind === "read"
             ? {
-                ...(await runPlan(ws, o, loadId, unsorted.plan, signal)),
-                notice: read.refused,
+                ...(await runPlan(ws, o, loadId, again.plan, options)),
+                ...(paging ? {} : { notice: read.refused }),
               }
             : none;
         },

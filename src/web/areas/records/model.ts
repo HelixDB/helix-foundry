@@ -620,9 +620,8 @@ export function pageSpan(
   total: number | null,
   capped: boolean,
   more = false,
-  // Rows a page starts past the last's, when it isn't RECORDS_LIMITS.page.
-  size: number = RECORDS_LIMITS.page,
 ) {
+  const size = RECORDS_LIMITS.page;
   const first = shown ? page * size + 1 : 0,
     last = page * size + shown;
   const of =

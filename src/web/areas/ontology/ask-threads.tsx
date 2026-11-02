@@ -44,14 +44,16 @@ function Threads({
   ontologyId: string;
   onNavigate?: () => void;
 }) {
-  // A grantee doesn't see the workspace's spend. Someone who can't read
-  // the ontology (readAccess) has no threads of it to list.
+  // Someone who can't read the ontology (readAccess) has no threads of it to
+  // list. Through grants, the budget is the asker's own.
   const me = useWorkspace(),
-    { id: ws, grantee } = me,
+    { id: ws } = me,
     [params] = useSearchParams(),
     now = useNow(60_000);
-  const ontology = useQuery(ontologyQueries.ontology(ws, o)).data?.ontology;
-  const unread = !!ontology && readAccess(me, ontology) === "none";
+  const read = useQuery(ontologyQueries.ontology(ws, o)),
+    ontology = read.data?.ontology;
+  const unread = !!ontology && readAccess(me, ontology) === "none",
+    own = !!ontology && readAccess(me, ontology) === "grants";
   const list = useQuery({
     ...questionQueries.list(ws, o),
     enabled: !!ontology && !unread,
@@ -85,6 +87,17 @@ function Threads({
       <nav className="ak-threads" aria-label="Threads">
         {unread ? (
           <p className="ak-threads-note">Not shared with you.</p>
+        ) : !ontology && read.isError ? (
+          <p className="ak-threads-note" role="alert">
+            Couldn’t read the threads: {read.error.message}{" "}
+            <button
+              type="button"
+              className="ak-retry"
+              onClick={() => void read.refetch()}
+            >
+              Retry
+            </button>
+          </p>
         ) : list.isPending ? (
           <div className="ak-threads-note" aria-busy="true">
             <SkeletonText lines={3} />
@@ -144,7 +157,7 @@ function Threads({
           ))
         )}
       </nav>
-      {budget && !grantee && (
+      {budget && (
         <details className="ak-budget" aria-label="Questions budget">
           <summary>
             <Gauge size={14} aria-hidden />
@@ -154,14 +167,17 @@ function Threads({
             </span>
           </summary>
           <p>
-            Spent on questions by the workspace this month
+            {own
+              ? "Spent on your questions this month"
+              : "Spent on questions by the workspace this month"}
             {Number(budget.reservedUsdMicros || 0) > 0 &&
               `, and ${formatUsd(budget.reservedUsdMicros)} held for questions running`}
             . A question spends at most{" "}
             {formatUsd(budget.questionUsdMicros || 0)}, {budget.maxSteps ?? 20}{" "}
             steps and {Math.round((budget.maxWallSecs ?? 240) / 60)} minutes;{" "}
             {budget.concurrentLimit ?? 2} run at a time and{" "}
-            {budget.hourlyLimit ?? 30} an hour per workspace.
+            {budget.hourlyLimit ?? 30} an hour{" "}
+            {own ? "for you" : "per workspace"}.
           </p>
         </details>
       )}

@@ -159,6 +159,10 @@ type Knobs = {
   documentAdjudicated?: boolean;
   deleteOutcome?: "succeed" | "fail";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
+  // The next n reads find every read slot taken.
+  readsBusy?: number;
+  // Reads are refused as a database whose queries are paused, in these words.
+  readsPaused?: string;
   // ./ontologies.ts: the caller can't read the ontology's database.
   ontologyDatabaseHidden?: boolean;
   // How many customers only Stripe's invoices table states: a load written
@@ -305,6 +309,8 @@ onReset(() => {
   delete knobs.documentAdjudicated;
   delete knobs.deleteOutcome;
   delete knobs.readErrors;
+  delete knobs.readsBusy;
+  delete knobs.readsPaused;
   delete knobs.invoiceOnlyCustomers;
 });
 
@@ -1752,6 +1758,18 @@ export const loadRoutes: MockRoute[] = [
       if (!l) return fail("NOT_FOUND", "load not found");
       if (l.status === "deleting" || l.status === "delete_failed")
         return fail("FAILED_PRECONDITION", "the load is being deleted");
+      if (knobs.readsBusy) {
+        knobs.readsBusy -= 1;
+        return fail(
+          "RESOURCE_EXHAUSTED",
+          "the workspace already runs 4 graph reads; try again when one ends",
+        );
+      }
+      if (knobs.readsPaused)
+        return fail("FAILED_PRECONDITION", knobs.readsPaused);
+      // A database still starting reaches the WFE only as a failed read.
+      if (startingRefuses(l.tenantId))
+        return fail("UNAVAILABLE", "the graph reader failed; try again");
       // Of a load it holds only some of, a grantee reads what its sources
       // fill (../graph/view.ts).
       const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||

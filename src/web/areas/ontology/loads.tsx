@@ -625,6 +625,7 @@ export function LoadsSection() {
     [error, setError] = useState("");
   const currentLoad = rows.find((l) => l.current);
   const manage = canManage(role);
+  const access = useAccessCheck();
   const act = async (
     l: FoundryLoad,
     run: () => Promise<unknown>,
@@ -659,6 +660,7 @@ export function LoadsSection() {
         description={`Each one writes your tables, as a schema version maps them, then your documents, into ${ontology.databaseName || "the ontology’s database"}, beside the others. Reads go to the current one. Foundry keeps the last ${RETAINED}: the current one and the newest others; older ones are deleted from the database in the background.`}
       >
         {loads.data && <RefreshFailed query={loads} />}
+        {access.dialog}
         {failed ? (
           <EmptyState
             icon={DatabaseZap}
@@ -850,11 +852,21 @@ export function LoadsSection() {
                                 icon={CircleCheck}
                                 disabled={busy === l.id}
                                 onSelect={() =>
-                                  void act(
-                                    l,
-                                    () => setCurrentLoad(id, o, l.id),
-                                    `${loadVersion(l)} is the current load`,
-                                  )
+                                  void access
+                                    .check({
+                                      loadVersion: {
+                                        ontologyId: o,
+                                        versionId: l.versionId || "",
+                                      },
+                                    })
+                                    .then((go) => {
+                                      if (!go) return;
+                                      void act(
+                                        l,
+                                        () => setCurrentLoad(id, o, l.id),
+                                        `${loadVersion(l)} is the current load`,
+                                      );
+                                    })
                                 }
                               >
                                 Set current
