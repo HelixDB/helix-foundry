@@ -287,13 +287,18 @@ export function addSignedInConnector(
 
 /**
  * Signs a connector in again with `account`: a new generation, the break
- * cleared, and a sync at once. Whether the provider account changed.
+ * cleared, and a sync at once. Whether the provider account changed: both
+ * labels known, and different but for case.
  */
 export function signConnectorInAgain(
   c: StoredConnector,
   account: Omit<StoredAccount, "generation">,
 ): boolean {
-  const changed = c.account?.label !== account.label;
+  const was = c.account?.label || "";
+  const changed =
+    !!was &&
+    !!account.label &&
+    was.toLowerCase() !== account.label.toLowerCase();
   c.account = { ...account, generation: (c.account?.generation || 0) + 1 };
   c.updatedAt = now();
   if (!syncsOf(c.id).some(live)) queueSync(c, false);
@@ -847,15 +852,20 @@ export const dataRoutes: MockRoute[] = [
             after: string[] = (part.repos || []).map((r: string) =>
               r.trim().toLowerCase(),
             ),
+            // widensReach: none named where some were, or one not named
+            // before; from every repository, any list narrows it.
             widened =
               c.kind === "github" &&
-              (after.length
-                ? after.some((r) => !before.some((b) => b.toLowerCase() === r))
-                : before.length > 0);
+              (!after.length
+                ? before.length > 0
+                : before.length > 0 &&
+                  after.some(
+                    (r) => !before.some((b) => b.toLowerCase() === r),
+                  ));
           if (widened && req.principal.user.id !== c.account.userId)
             return refusedFor(
               "ACCOUNT_OWNER_ONLY",
-              `only ${connectedBy(c, c.account)}, whose ${kindName(c.kind)} access it reads with, can add repositories or read every one`,
+              `Only ${connectedBy(c, c.account)} can add repositories, or read every one: ${c.name} reads with their ${kindName(c.kind)} access. You can narrow them`,
             );
           const tested = testSource(c.workspaceId, config, true);
           if ("status" in tested) return tested;

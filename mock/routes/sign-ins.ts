@@ -41,18 +41,21 @@ import { discover, kinds, prepare } from "./data-sources";
 // The backend's rules: owners and admins start a sign-in for a kind the
 // stamp offers it for (`{"signIn": false}` and a local API offer none),
 // with the connector's settings and no credential, or for a signed-in
-// connector again (one live per connector: another member's is
-// SIGN_IN_IN_PROGRESS); at most 5 live per user and workspace and 20 starts
-// an hour (RESOURCE_EXHAUSTED); a client token returns what it started.
-// Only its starter authorizes (again after a decline or a failure, until it
+// connector again, keeping its name and settings (one live per connector:
+// another member's is SIGN_IN_IN_PROGRESS); at most 5 live per user and
+// workspace, and 20 starts a user an hour in any (RESOURCE_EXHAUSTED); a
+// client token returns what it started, once the request checks out. Only
+// its starter authorizes (again after a decline or a failure, until it
 // connects) and finishes it; it runs out 15 minutes after it started or was
 // last authorized. Finish ends it once: a repeat returns it as it stands. A
-// code works once, for 90 seconds after the consent page gave it. Signed in,
+// code works once, for 90 seconds after the consent page gave it. A
+// connector deleted under its sign-in ends it: Authorize is SIGN_IN_ENDED,
+// and Finish fails it unavailable. Signed in,
 // GitHub reads where Helix Foundry is installed: a named repository whose
 // name ends in /missing is one it can't see, which connects anyway with a
 // discovery problem. The account it reads with is named by the consent
-// page's account field, so signing in again under another one changes the
-// connector's identity.
+// page's account field, so signing in again under another one (case aside)
+// changes the connector's identity.
 
 const EXPIRES_MS = 15 * 60_000,
   CODE_MS = 90_000,
@@ -88,12 +91,7 @@ type StoredSignIn = {
 };
 
 const signIns = new Map<string, StoredSignIn>();
-// Each user's starts, by workspace, for the hourly cap.
-const starts: { workspaceId: string; userId: string; at: number }[] = [];
-onReset(() => {
-  signIns.clear();
-  starts.length = 0;
-});
+onReset(() => signIns.clear());
 
 const ENDED = new Set<StoredSignIn["status"]>([
   "CONNECTOR_SIGN_IN_STATUS_CONNECTED",
@@ -159,7 +157,7 @@ const isSignIn = (x: StoredSignIn | MockReply): x is StoredSignIn =>
 const notYours = () =>
   refusedFor(
     "SIGN_IN_NOT_YOURS",
-    "this sign-in was started by someone else; ask your agent for a new link",
+    "This link was made for someone else: ask your agent for a new one",
   );
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/sign-ins" as const;
@@ -189,38 +187,24 @@ export const signInRoutes: MockRoute[] = [
       const k = kinds.find((x) => x.name === kind)!;
       if (k.requiresPro && !isFoundryPro(ws))
         return proRequired(ws, `${k.displayName} connectors need Foundry Pro`);
-      const token = String(body.clientToken || "");
-      const replayed =
-        token &&
-        [...signIns.values()].find(
-          (s) =>
-            s.workspaceId === ws &&
-            s.createdBy === user &&
-            s.clientToken === token,
-        );
-      if (replayed) return reply(replayed, user);
-      // Signing a connector in again: its settings, one live sign-in.
+      // What it is for is checked first, then a client token seen before
+      // returns what it started.
       let settings: ConnectorConfig, name: string;
       const connectorId = String(body.connectorId || "");
       if (connectorId) {
+        // Signing a connector in again: its own name and settings.
+        if (body.name || (body.config && Object.keys(body.config).length))
+          return fail(
+            "INVALID_ARGUMENT",
+            "signing a connector in again keeps its name and settings; change them on its page",
+          );
         const c = load(req, connectorId);
         if (!isConnector(c)) return c;
         if (c.kind !== kind || !c.account)
           return fail(
             "FAILED_PRECONDITION",
-            "only a connector of this kind that signs in can be signed in again",
+            `${c.name} doesn't sign in with ${k.displayName}`,
           );
-        const open = [...signIns.values()].find(
-          (s) => s.connectorId === c.id && s.again && live(s),
-        );
-        if (open && open.createdBy === user) return reply(open, user);
-        if (open) {
-          const who = db.users.get(open.createdBy);
-          return refusedFor(
-            "SIGN_IN_IN_PROGRESS",
-            `${who ? displayName(who) : "another member"} is signing ${c.name} in again; wait for them to finish`,
-          );
-        }
         settings = c.source.settings;
         name = c.name;
       } else {
@@ -240,25 +224,43 @@ export const signInRoutes: MockRoute[] = [
         if (name.length > 120)
           return fail("INVALID_ARGUMENT", "name must be 1 to 120 characters");
       }
-      const mine = [...signIns.values()].filter(
-        (s) => s.workspaceId === ws && s.createdBy === user,
-      );
-      if (mine.filter(live).length >= MAX_LIVE)
-        return fail(
-          "RESOURCE_EXHAUSTED",
-          `you have ${MAX_LIVE} sign-ins under way here; finish one or let it run out first`,
+      const token = String(body.clientToken || "");
+      const replayed =
+        token &&
+        [...signIns.values()].find(
+          (s) =>
+            s.workspaceId === ws &&
+            s.createdBy === user &&
+            s.clientToken === token,
         );
-      const hour = Date.now() - 3_600_000;
+      if (replayed) return reply(replayed, user);
+      // One live sign-in a connector: its starter's is returned.
+      const open =
+        connectorId &&
+        [...signIns.values()].find(
+          (s) => s.connectorId === connectorId && s.again && live(s),
+        );
+      if (open && open.createdBy === user) return reply(open, user);
+      if (open) {
+        const who = db.users.get(open.createdBy);
+        return refusedFor(
+          "SIGN_IN_IN_PROGRESS",
+          `${who ? displayName(who) : "another member"} is signing this connector in already; try again once they finish`,
+        );
+      }
+      // Live ones in this workspace; starts in the last hour in any.
+      const hour = Date.now() - 3_600_000,
+        theirs = [...signIns.values()].filter((s) => s.createdBy === user);
       if (
-        starts.filter(
-          (x) => x.workspaceId === ws && x.userId === user && x.at > hour,
-        ).length >= MAX_STARTS_AN_HOUR
+        theirs.filter((s) => s.workspaceId === ws && live(s)).length >=
+          MAX_LIVE ||
+        theirs.filter((s) => Date.parse(s.createdAt) > hour).length >=
+          MAX_STARTS_AN_HOUR
       )
         return fail(
           "RESOURCE_EXHAUSTED",
-          `at most ${MAX_STARTS_AN_HOUR} sign-ins an hour; try again later`,
+          `too many sign-ins: at most ${MAX_LIVE} at once in a workspace, and ${MAX_STARTS_AN_HOUR} an hour`,
         );
-      starts.push({ workspaceId: ws, userId: user, at: Date.now() });
       const s: StoredSignIn = {
         id: id("csi"),
         workspaceId: ws,
@@ -313,6 +315,11 @@ export const signInRoutes: MockRoute[] = [
           "INVALID_ARGUMENT",
           "return_to is not one of foundry.connectors.sign_in_return_to",
         );
+      if (s.again && !storedConnector(s.connectorId))
+        return refusedFor(
+          "SIGN_IN_ENDED",
+          "the connector this sign-in was for was deleted",
+        );
       s.status = "CONNECTOR_SIGN_IN_STATUS_AUTHORIZING";
       s.failure = "CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED";
       s.expiresAt = Date.now() + EXPIRES_MS;
@@ -350,6 +357,10 @@ export const signInRoutes: MockRoute[] = [
         }
         return failed("CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR");
       }
+      // The connector signed in again is read before the code is spent.
+      const again = s.again ? storedConnector(s.connectorId) : undefined;
+      if (s.again && !again?.account)
+        return failed("CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE");
       const given = s.code;
       if (
         !given ||
@@ -371,11 +382,8 @@ export const signInRoutes: MockRoute[] = [
         label: given.label,
         connectedAt: now(),
       };
-      if (s.again) {
-        const c = storedConnector(s.connectorId);
-        if (!c?.account) return failed("CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED");
-        s.identityChanged = signConnectorInAgain(c, account);
-      } else
+      if (again) s.identityChanged = signConnectorInAgain(again, account);
+      else
         s.connectorId = addSignedInConnector(s.workspaceId, s.name, prepared, {
           ...account,
           generation: 1,

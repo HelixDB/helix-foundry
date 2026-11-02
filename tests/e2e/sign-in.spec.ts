@@ -416,6 +416,29 @@ test("says what a new connection can't see, and lets only its member widen it", 
   ).toBeEnabled();
 });
 
+test("lets another admin narrow a connector that reads every repository", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  // Ada leaves its repositories blank: every one it can see.
+  const id = await connectGitHub(page);
+  await mock.configure({ alanRole: "WORKSPACE_ROLE_ADMIN" });
+  const alan = await as(browser, "alan@example.com");
+  await alan.goto(`/data/connections/${id}`);
+  await alan.getByRole("button", { name: "Connection actions" }).click();
+  await alan.getByRole("menuitem", { name: "Edit connection" }).click();
+  const edit = dialog(alan);
+  await edit.getByLabel("Repositories").fill("acme/api");
+  await expect(edit.getByRole("alert")).toHaveCount(0);
+  const save = alan.waitForResponse(
+    (r) => r.request().method() === "PATCH" && r.url().includes(id),
+  );
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  expect((await save).status()).toBe(200);
+  await expect(alan.locator(".hf-kv")).toContainText("acme/api");
+});
+
 test("offers no sign-in where the stamp doesn't", async ({ page }) => {
   await mock.configure({ signIn: false });
   await signIn(page);

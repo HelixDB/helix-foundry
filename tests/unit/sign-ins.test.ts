@@ -17,6 +17,8 @@ import {
   readConnect,
   signInFailure,
   startAgainPath,
+  widenRefusal,
+  widensReach,
   writeConnect,
   type ConnectEntry,
 } from "@/web/areas/data/sign-ins";
@@ -375,5 +377,36 @@ describe("an account", () => {
         account: { state: "CONNECTOR_ACCOUNT_STATE_CONNECTED" },
       }),
     ).toEqual({ status: "succeeded", label: "Synced" });
+  });
+});
+
+describe("widening a signed-in GitHub connector", () => {
+  it("is what the WFE's widensReach says: Ada left it blank, so Grace may restrict it to acme/api", () => {
+    expect(widensReach([], ["acme/api"])).toBe(false);
+    expect(widensReach([], [])).toBe(false);
+    // Back to every repository, or one not named before, widens it.
+    expect(widensReach(["acme/api"], [])).toBe(true);
+    expect(widensReach(["acme/api"], ["acme/api", "acme/web"])).toBe(true);
+    // Fewer, or the same in another case, doesn't.
+    expect(widensReach(["acme/api", "acme/web"], ["ACME/API"])).toBe(false);
+  });
+
+  it("names who may, never as a former member", () => {
+    expect(
+      widenRefusal({
+        kind: "github",
+        account: { connectedBy: "Ada Lovelace" },
+      }),
+    ).toBe(
+      "Only Ada Lovelace, whose GitHub access it reads with, can add repositories or read every one. You can remove some.",
+    );
+    expect(
+      widenRefusal({
+        kind: "github",
+        account: { connectedBy: "a former member" },
+      }),
+    ).toBe(
+      "Only the member who connected it, whose GitHub access it reads with, can add repositories or read every one. You can remove some.",
+    );
   });
 });

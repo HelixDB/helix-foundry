@@ -34,7 +34,12 @@ import {
   type CredentialKind,
 } from "./model";
 import { useSignInStart } from "./sign-in";
-import { accountLine, providerName } from "./sign-ins";
+import {
+  accountLine,
+  providerName,
+  widenRefusal,
+  widensReach,
+} from "./sign-ins";
 
 // One kind's credential form, in helix-foundry's connection-form style:
 // fill in the credential, test it, choose what to sync, then connect. The
@@ -269,20 +274,15 @@ export function ConnectionForm({
       );
       await onDone(created.connector, "Connected. The first sync is queued");
     });
-  // Signed in, only the account's member widens what it reads: adds a
-  // repository, or clears the list (every repository it can see).
+  // Signed in, only the account's member widens what it reads (widensReach:
+  // a repository it didn't name, or clearing the list), as the WFE decides.
   const storedRepos =
       (stored && "github" in stored && stored.github.repos) || [],
     widened =
       !!account &&
       form.kind === "github" &&
       account.userId !== user.id &&
-      (githubRepos(form.repos).length
-        ? githubRepos(form.repos).some(
-            (r) =>
-              !storedRepos.some((s) => s.toLowerCase() === r.toLowerCase()),
-          )
-        : storedRepos.length > 0);
+      widensReach(storedRepos, githubRepos(form.repos));
   const connectWithProvider = () =>
     void start.go({
       kind: form.kind,
@@ -509,9 +509,7 @@ export function ConnectionForm({
               </small>
               {widened && (
                 <small id="dc-widen" className="error-text" role="alert">
-                  Only {account!.connectedBy || "the member who connected it"},
-                  whose GitHub access it reads with, can add repositories or
-                  read every one. You can remove some.
+                  {widenRefusal(connector!)}
                 </small>
               )}
             </label>
