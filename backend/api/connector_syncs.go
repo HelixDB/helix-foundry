@@ -14,6 +14,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/connector"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -26,7 +27,9 @@ const (
 // most one live sync; a second request is AlreadyExists. An event source
 // syncs when pieces arrive, so one asked of it resumes a paused source or
 // reads it in full; it is refused while the source holds no batch, and like
-// every sync of an event source it has origin events.
+// every sync of an event source it has origin events. A signed-in connector
+// whose account needs signing in again is refused (ACCOUNT_NEEDS_SIGN_IN):
+// signing it in again syncs it.
 func (s *Service) SyncConnector(ctx context.Context, req *foundryv1.SyncConnectorRequest) (*foundryv1.ConnectorSyncResponse, error) {
 	catalog, _, err := s.connectors(req.GetWorkspaceId())
 	if err != nil {
@@ -42,6 +45,9 @@ func (s *Service) SyncConnector(ctx context.Context, req *foundryv1.SyncConnecto
 	}
 	if err := s.requireKind(ctx, c.WorkspaceID, kind); err != nil {
 		return nil, err
+	}
+	if c.Account != nil && c.Account.Broken != nil {
+		return nil, accountError(c, kind, &ports.AccountBroken{Reason: *c.Account.Broken})
 	}
 	mode := foundrymodel.ConnectorSyncChanges
 	if req.GetFull() {
