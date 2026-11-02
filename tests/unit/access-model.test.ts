@@ -11,7 +11,10 @@ import {
   missing,
   missingText,
   principalKey,
+  holdsAny,
   readAccess,
+  readsPart,
+  readsText,
   readings,
   restrictable,
   setOwners,
@@ -290,7 +293,105 @@ describe("coverage", () => {
   });
 });
 
+describe("partial access", () => {
+  const principal = { kind: "KIND_USER" as const, id: "usr_eve" };
+  const both: wfe.FoundryLoadAccessInputs = {
+    tables: [{ connectorId: "conn_stripe", table: "customers" }],
+    documentSets: [{ documentSetId: "set_1" }],
+  };
+  it("tells what grants hold anything of", () => {
+    const set = { kind: "set" as const, setId: "set_1" };
+    expect(holdsAny([set], both)).toBe(true);
+    expect(
+      holdsAny([{ kind: "connector", connectorId: "conn_stripe" }], both),
+    ).toBe(true);
+    expect(holdsAny([{ kind: "set", setId: "other" }], both)).toBe(false);
+    expect(holdsAny([], both)).toBe(false);
+    expect(holdsAny([{ kind: "enrichment" }], { enrichment: true })).toBe(true);
+    expect(holdsAny([{ kind: "enrichment" }], {})).toBe(false);
+    // What nothing covers shares nothing.
+    expect(holdsAny([set], { ...both, uncoverable: true })).toBe(false);
+  });
+  it("says what each ontology gives: all, part or nothing", () => {
+    const access: wfe.ListFoundryAccessResponse = {
+      ontologies: [
+        {
+          ontologyId: "none",
+          inputs: { documentSets: [{ documentSetId: "x" }] },
+        },
+        { ontologyId: "part", inputs: both },
+        {
+          ontologyId: "all",
+          inputs: { documentSets: [{ documentSetId: "set_1" }] },
+        },
+        {
+          ontologyId: "told",
+          inputs: { ...both, uncoverable: true },
+          partialReaders: [principal],
+        },
+      ],
+    };
+    const grants = [{ kind: "set" as const, setId: "set_1" }];
+    expect(
+      readings(access, grants, principal).map((r) => [r.ontologyId, r.reach]),
+    ).toEqual([
+      ["all", "all"],
+      ["part", "part"],
+      ["told", "part"],
+      ["none", "none"],
+    ]);
+    // Without the WFE's word for it, what nothing covers is nothing.
+    expect(
+      readings(access, grants).find((r) => r.ontologyId === "told")?.reach,
+    ).toBe("none");
+    expect(readsText(readings(access, grants, principal), (o) => o)).toBe(
+      "Reads all, part of part, part of told",
+    );
+    expect(readsText([], (o) => o)).toBe("Reads nothing yet");
+  });
+  it("reads part only through grants that hold part", () => {
+    const o = { id: "o", projectId: "p" };
+    expect(
+      readsPart({ grantee: true, granted: ["o"], partial: ["o"] }, o),
+    ).toBe(true);
+    expect(readsPart({ grantee: true, granted: ["o"], partial: [] }, o)).toBe(
+      false,
+    );
+    // Whoever queries the database reads it all, whatever grants say.
+    expect(
+      readsPart(
+        {
+          grantee: false,
+          granted: ["o"],
+          partial: ["o"],
+          queryRead: { mode: "all" },
+        },
+        o,
+      ),
+    ).toBe(false);
+    expect(
+      readsPart(
+        { grantee: false, granted: ["o"], partial: ["o"], queryRead: {} },
+        o,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("losses", () => {
+  it("says who keeps part of what they lose", () => {
+    expect(
+      lossLines(
+        [
+          { principal: eve, ontologyId: "o_1", keepsPart: true },
+          { principal: eve, ontologyId: "o_2" },
+        ],
+        () => "Eve Adler",
+        (id) => id,
+      ),
+    ).toEqual(["Eve Adler: o_1 (keeps the part their sources hold), o_2"]);
+  });
+
   it("says who stops reading what, one line per principal", () => {
     const team: wfe.FoundryPrincipal = { kind: "KIND_TEAM", id: "team_1" };
     expect(

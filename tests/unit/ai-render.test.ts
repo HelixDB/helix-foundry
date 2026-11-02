@@ -74,6 +74,7 @@ async function render(
             onboarding: false,
             grantee: false,
             granted: [],
+            partial: [],
             notify: () => {},
           },
         },

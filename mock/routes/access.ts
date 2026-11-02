@@ -22,12 +22,14 @@ import type {
   SetFoundryMemberRestrictedResponse,
 } from "../../src/shared/wfe";
 import { parseAgentEnrichments } from "../../src/web/areas/ontology/model";
+import type { Visibility } from "../graph/view";
 import {
   fail,
   id,
   now,
   ok,
   type MockGrantee,
+  type MockGranteeLoad,
   type MockReply,
   type MockRequest,
   type MockRoute,
@@ -41,8 +43,9 @@ import {
   loadDocumentIds,
   setConnector,
 } from "./documents";
-import { servableLoad } from "./loads";
+import { loadPropDecisions, servableLoad } from "./loads";
 import { ontologyById, workspaceOntologies } from "./ontologies";
+import { sourceId } from "./ontology-agent";
 import { ontologyVersion, versionInputs, versionScope } from "./ontology";
 import { manages, queryReads, rawAccess } from "./workspaces";
 
@@ -57,8 +60,9 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 // files are in now, and People enrichment when it applied profiles; one
 // whose version has no generation holds what nothing covers (uncoverable).
 // The mock's review decisions come from the load's own documents, so they
-// add no set. A grantee reads an ontology's current load only while its
-// grants (its own and its teams') cover all of it.
+// add no set. A grantee reads the part of an ontology's current load its
+// grants (its own and its teams') hold, all of it while they cover all of it,
+// and nothing of a load whose inputs can't be told.
 //
 // Who is a grantee (`guarded`, the backend's authorize, run on every
 // Foundry route): a member restricted in the request's workspace, on every
@@ -66,11 +70,13 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 // query access (./workspaces.ts queryReads) on the routes the WFE gates on
 // it (reading a load's graph, questions, review decisions), which the WFE
 // sends on as a grantee. A grantee gets PERMISSION_DENIED from every route
-// the rules don't admit, NOT_FOUND for an ontology its grants don't cover,
-// and handlers answer only what it covers (MockRequest.grantee): its
-// ontologies, their current loads and versions, its own questions, and the
-// documents those loads hold (their text, never their bytes). The mock's
-// agents' keys authenticate nothing, so no call comes as one.
+// the rules don't admit, NOT_FOUND for an ontology its grants hold nothing of,
+// and handlers answer only what it holds (MockRequest.grantee): its
+// ontologies, their current loads and versions (as ../graph/view.ts projects
+// them, of a load it holds only some of), its own questions, and the
+// documents those loads hold in sets it holds (their text, never their
+// bytes). The mock's agents' keys authenticate nothing, so no call comes as
+// one.
 //
 // Acme starts with Eve restricted, holding the General set, and one agent's
 // key holding nothing. A key's token is shown once, when it is made, and
@@ -171,21 +177,39 @@ function coversSet(
   );
 }
 
+/** Whether targets cover a table (Grants.CoversTable). */
+const coversTable = (
+  targets: readonly FoundryAccessTarget[],
+  x: { connectorId: string; table: string },
+) =>
+  targets.some(
+    (t) =>
+      (t.kind === "KIND_CONNECTOR" && t.connectorId === x.connectorId) ||
+      (t.kind === "KIND_TABLE" &&
+        t.connectorId === x.connectorId &&
+        t.table === x.table),
+  );
+
 /** Whether targets cover all a load holds (Grants.Covers). */
 function covers(targets: readonly FoundryAccessTarget[], inputs: Inputs) {
   return (
     !inputs.uncoverable &&
     (!inputs.enrichment || targets.some((t) => t.kind === "KIND_ENRICHMENT")) &&
-    inputs.tables.every((x) =>
-      targets.some(
-        (t) =>
-          (t.kind === "KIND_CONNECTOR" && t.connectorId === x.connectorId) ||
-          (t.kind === "KIND_TABLE" &&
-            t.connectorId === x.connectorId &&
-            t.table === x.table),
-      ),
-    ) &&
+    inputs.tables.every((x) => coversTable(targets, x)) &&
     inputs.sets.every((s) => coversSet(targets, s))
+  );
+}
+
+/**
+ * Whether targets hold anything of what a load holds (Grants.Reaches): a load
+ * whose inputs can't be told isn't read at all.
+ */
+function reaches(targets: readonly FoundryAccessTarget[], inputs: Inputs) {
+  return (
+    !inputs.uncoverable &&
+    ((inputs.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT")) ||
+      inputs.tables.some((x) => coversTable(targets, x)) ||
+      inputs.sets.some((s) => coversSet(targets, s)))
   );
 }
 
@@ -315,17 +339,59 @@ function userTargets(workspaceId: string, userId: string) {
     .map((g) => g.target);
 }
 
-/** The current loads targets cover, by ontology (granteeLoads). */
-function coveredLoads(
+/** The current loads targets hold anything of, by ontology (granteeLoads). */
+function heldLoads(
   workspaceId: string,
   targets: readonly FoundryAccessTarget[],
 ) {
-  const out = new Map<string, { loadId: string; versionId: string }>();
+  const out = new Map<string, MockGranteeLoad>();
   if (!targets.length) return out;
   for (const [ontologyId, l] of currentInputs(workspaceId))
-    if (covers(targets, l.inputs))
-      out.set(ontologyId, { loadId: l.loadId, versionId: l.versionId });
+    if (reaches(targets, l.inputs))
+      out.set(ontologyId, {
+        loadId: l.loadId,
+        versionId: l.versionId,
+        partial: !covers(targets, l.inputs),
+      });
   return out;
+}
+
+/**
+ * What targets hold of an ontology's current load, as the agent is told it
+ * (Grants.Part and ontologyagent.VisibilityOf): its tables and table files,
+ * the documents it holds by the set each is in now, and the properties decided
+ * while it doesn't hold them all.
+ */
+function visibilityOf(
+  ontologyId: string,
+  targets: readonly FoundryAccessTarget[],
+): Visibility {
+  const load = servableLoad(ontologyId);
+  const drafted = load && versionInputs(ontologyId, load.versionId);
+  const documents = load ? loadDocumentIds(load.loadId) : [];
+  const held = documents.filter((d) => coversSet(targets, documentSet(d))),
+    files = (drafted?.documents || []).filter((d) =>
+      coversSet(targets, documentSet(d)),
+    );
+  const all = held.length === documents.length;
+  return {
+    sources: [
+      ...(drafted?.tables || [])
+        .filter((t) =>
+          coversTable(targets, {
+            connectorId: t.connectorId || "",
+            table: t.table || "",
+          }),
+        )
+        .map((t) => sourceId(t.connectorId || "", t.table || "")),
+      ...files,
+    ],
+    documents: all ? "all" : { only: held },
+    sets: [...new Set([...held, ...files].map((d) => documentSet(d).setId))],
+    enrichment:
+      !!load?.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT"),
+    withheld: all ? [] : load ? loadPropDecisions(load.loadId) : [],
+  };
 }
 
 /**
@@ -429,15 +495,28 @@ export function guarded(route: MockRoute): MockRoute {
       const targets = userTargets(m.workspaceId, m.userId);
       const grantee: MockGrantee = {
         principal: principalKey({ kind: "KIND_USER", id: m.userId }),
-        covered: coveredLoads(m.workspaceId, targets),
+        covered: heldLoads(m.workspaceId, targets),
         coversSet: (setId) =>
           coversSet(targets, { setId, connectorId: setConnector(setId) }),
         holds: (documentId, ontologyId) =>
+          coversSet(targets, documentSet(documentId)) &&
           [...grantee.covered].some(
             ([o, l]) =>
               (!ontologyId || o === ontologyId) &&
               holds(o, l.loadId, l.versionId, documentId),
           ),
+        visibility: (ontologyId) => visibilityOf(ontologyId, targets),
+        seen: (ontologyId) => {
+          const l = currentInputs(m.workspaceId).get(ontologyId)!.inputs;
+          return {
+            tables: l.tables.filter((t) => coversTable(targets, t)),
+            sets: l.sets.filter((s) => coversSet(targets, s)),
+            enrichment:
+              l.enrichment && targets.some((t) => t.kind === "KIND_ENRICHMENT"),
+            uncoverable: false,
+          };
+        },
+        stillSees: (seen) => covers(targets, seen),
       };
       if (rule === "ontology") {
         grantee.load = grantee.covered.get(req.params.ontologyId || "");
@@ -598,6 +677,12 @@ export const accessRoutes: MockRoute[] = [
           readers: [...held.values()]
             .filter((p) => covers(p.targets, l.inputs))
             .map(({ kind, id }): FoundryPrincipal => ({ kind, id })),
+          partialReaders: [...held.values()]
+            .filter(
+              (p) =>
+                !covers(p.targets, l.inputs) && reaches(p.targets, l.inputs),
+            )
+            .map(({ kind, id }): FoundryPrincipal => ({ kind, id })),
         }));
       return ok({
         grants: grants.map(grantOut),
@@ -757,7 +842,11 @@ export const accessRoutes: MockRoute[] = [
               covers(h.now, was.inputs) &&
               !covers(h.then, after.get(ontologyId)!),
           )
-          .map((h) => ({ principal: h.p, ontologyId }));
+          .map((h) => ({
+            principal: h.p,
+            ontologyId,
+            keepsPart: reaches(h.then, after.get(ontologyId)!),
+          }));
       });
       return ok({ losses } satisfies PreviewFoundryAccessChangeResponse);
     },
@@ -768,11 +857,16 @@ export const accessRoutes: MockRoute[] = [
     handle: (req) => {
       const m = membership(req.params.workspaceId!, req.principal.user.id);
       if (isReply(m)) return m;
-      const targets = userTargets(m.workspaceId, m.userId);
+      const targets = userTargets(m.workspaceId, m.userId),
+        loads = heldLoads(m.workspaceId, targets);
       return ok({
         grantee: !!req.grantee,
         hasGrants: targets.length > 0,
-        ontologyIds: [...coveredLoads(m.workspaceId, targets).keys()].sort(),
+        ontologyIds: [...loads.keys()].sort(),
+        partialOntologyIds: [...loads]
+          .filter(([, l]) => l.partial)
+          .map(([o]) => o)
+          .sort(),
       } satisfies GetMyFoundryAccessResponse);
     },
   },

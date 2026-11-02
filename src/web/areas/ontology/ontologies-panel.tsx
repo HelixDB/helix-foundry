@@ -44,7 +44,7 @@ const DOCUMENTS_PAGE = /^\/ontology\/([^/]+)\/documents(?:\/([^/]+))?\/?$/;
 const LONG_LIST = 8;
 
 export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
-  const { id: ws, role, grantee } = useWorkspace(),
+  const { id: ws, role, grantee, partial } = useWorkspace(),
     { pathname } = useLocation(),
     manage = canManage(role);
   const match = ONTOLOGY_PAGE.exec(pathname),
@@ -148,7 +148,7 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                   )}
                   <small>
                     {grantee
-                      ? `Shared with you${o.currentLoad ? ` · ${loadVersion(o.currentLoad)}` : ""}`
+                      ? `${partial.includes(o.id) ? "Part shared with you" : "Shared with you"}${o.currentLoad ? ` · ${loadVersion(o.currentLoad)}` : ""}`
                       : o.databaseName || o.tenantId || "Not visible to you"}
                   </small>
                 </Link>

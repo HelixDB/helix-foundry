@@ -287,6 +287,29 @@ export function missing(
 export const covered = (m: Missing) =>
   !m.tables.length && !m.sets.length && !m.enrichment && !m.uncoverable;
 
+/**
+ * Whether `grants` hold anything of `inputs` (the backend's Grants.Reaches), so
+ * whoever holds them reads that part of the load. Nothing of a load that holds
+ * what nothing covers: loading it again makes it shareable.
+ *
+ *     holdsAny([{ kind: "set", setId: "s" }], {
+ *       tables: [{ connectorId: "c", table: "t" }],
+ *       documentSets: [{ documentSetId: "s" }],
+ *     }) // true
+ */
+export function holdsAny(
+  grants: readonly Grant[],
+  inputs: FoundryLoadAccessInputs,
+): boolean {
+  if (inputs.uncoverable) return false;
+  const m = missing(grants, inputs);
+  return (
+    m.tables.length < (inputs.tables || []).length ||
+    m.sets.length < (inputs.documentSets || []).length ||
+    (!!inputs.enrichment && !m.enrichment)
+  );
+}
+
 /** Names of what a page lists: connections, their tables' sets, ontologies. */
 export type Names = {
   connection: (id: string) => string;
@@ -309,34 +332,73 @@ export function missingText(m: Missing, names: Names): string[] {
   ];
 }
 
-/** What a principal reads through its grants, and what each other ontology lacks. */
+/**
+ * What a principal reads of an ontology through its grants: all of it, the
+ * part they hold, or nothing; and what they leave out.
+ */
 export type Reading = {
   ontologyId: string;
+  reach: "all" | "part" | "none";
   missing: Missing;
 };
 /**
  * Each ontology with a current load, as `grants` see it: those they cover
- * first, then the rest with what they lack, each group in the list's order.
+ * first, then those they hold part of, then the rest, each group in the list's
+ * order. The WFE's word for `principal` settles what the inputs can't say (a
+ * decision whose documents weren't recorded leaves the rest readable).
  */
 export function readings(
   access: ListFoundryAccessResponse,
   grants: readonly Grant[],
+  principal?: Principal,
 ): Reading[] {
-  const all = (access.ontologies || []).map((o) => ({
-    ontologyId: o.ontologyId || "",
-    missing: missing(grants, o.inputs || {}),
-  }));
-  return [
-    ...all.filter((r) => covered(r.missing)),
-    ...all.filter((r) => !covered(r.missing)),
-  ];
+  const all = (access.ontologies || []).map((o): Reading => {
+    const lacks = missing(grants, o.inputs || {});
+    const told =
+      !!principal &&
+      !!o.partialReaders?.some(
+        (p) => principalKey(p) === principalKey(principal),
+      );
+    return {
+      ontologyId: o.ontologyId || "",
+      reach: covered(lacks)
+        ? "all"
+        : told || holdsAny(grants, o.inputs || {})
+          ? "part"
+          : "none",
+      missing: lacks,
+    };
+  });
+  return (["all", "part", "none"] as const).flatMap((reach) =>
+    all.filter((r) => r.reach === reach),
+  );
+}
+
+/**
+ * The line of what a principal reads: all of some ontologies, part of others.
+ *
+ *     readsText([{ ontologyId: "a", reach: "all", missing }, { ontologyId: "b", reach: "part", missing }], (o) => o) // "Reads a, part of b"
+ */
+export function readsText(
+  reading: readonly Reading[],
+  name: (ontologyId: string) => string,
+): string {
+  const all = reading.filter((r) => r.reach === "all"),
+    part = reading.filter((r) => r.reach === "part");
+  return all.length || part.length
+    ? `Reads ${[
+        ...all.map((r) => name(r.ontologyId)),
+        ...part.map((r) => `part of ${name(r.ontologyId)}`),
+      ].join(", ")}`
+    : "Reads nothing yet";
 }
 
 // ---------------------------------------------------------------- losses
 
 /**
  * Who stops reading which ontology after a change, one line per principal:
- * "Eve Adler: Customer contracts, Renewals", in the order the WFE lists them.
+ * "Eve Adler: Customer contracts, Renewals (keeps the part their sources
+ * hold)", in the order the WFE lists them.
  */
 export function lossLines(
   losses: readonly FoundryAccessLoss[],
@@ -348,7 +410,7 @@ export function lossLines(
     const p = l.principal || {},
       k = principalKey(p),
       entry = by.get(k) || { p, ontologies: [] };
-    const name = ontologyName(l.ontologyId || "");
+    const name = `${ontologyName(l.ontologyId || "")}${l.keepsPart ? " (keeps the part their sources hold)" : ""}`;
     if (!entry.ontologies.includes(name)) entry.ontologies.push(name);
     by.set(k, entry);
   }
@@ -425,14 +487,14 @@ export function granteeRedirect(pathname: string): string | undefined {
  * How the user reads an ontology's loads: "database", through its database
  * with their session (the host's callers, and anyone whose query access
  * isn't known); "grants", through the WFE's typed reads of the current
- * load their source grants cover (a grantee, or a member who can't query
+ * load their source grants hold (a grantee, or a member who can't query
  * the ontology's project, on an ontology `granted` names); or "none".
  */
 export type ReadAccess = "database" | "grants" | "none";
 
 /**
  * The user's ReadAccess to an ontology: `granted` are the ontologies whose
- * current loads their grants cover (.../foundry/access/me), `queryRead`
+ * current loads their grants hold any of (.../foundry/access/me), `queryRead`
  * the projects whose databases they query (whoami's projectAccess),
  * undefined when that isn't known.
  *
@@ -459,3 +521,17 @@ export function readAccess(
     ? "database"
     : shared;
 }
+
+/**
+ * Whether the user reads only part of an ontology: they read it through source
+ * grants that hold only some of its current load (`partial`,
+ * .../foundry/access/me). What a read asks of what is partly held may be
+ * refused (`not_visible`), and rows come without totals.
+ *
+ *     readsPart({ grantee: true, granted: ["o"], partial: ["o"] }, { id: "o" }) // true
+ *     readsPart({ grantee: false, granted: ["o"], partial: ["o"], queryRead: { mode: "all" } }, { id: "o" }) // false
+ */
+export const readsPart = (
+  me: Parameters<typeof readAccess>[0] & { partial: readonly string[] },
+  o: { id: string; projectId?: string },
+) => readAccess(me, o) === "grants" && me.partial.includes(o.id);

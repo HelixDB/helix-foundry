@@ -29,10 +29,12 @@ export type WorkspaceValue = ShellWorkspace & {
   // restricted, GET .../foundry/access/me): the shell offers Analyst and
   // the ontologies those grants cover, read only, and nothing else.
   grantee: boolean;
-  // The ontologies whose current loads the user's source grants cover:
+  // The ontologies whose current loads the user's source grants hold any of:
   // what a grantee, or a member who can't query an ontology's database,
   // reads (../areas/workspace/access-model.ts readAccess).
   granted: readonly string[];
+  // Those of them the grants hold only some of (readsPart).
+  partial: readonly string[];
   notify: (text: string, error?: boolean) => void;
 };
 
@@ -45,6 +47,7 @@ export const WorkspaceContext = createContext<WorkspaceValue>({
   onboarding: false,
   grantee: false,
   granted: [],
+  partial: [],
   notify: () => {},
 });
 export const useWorkspace = () => useContext(WorkspaceContext);

@@ -1,6 +1,10 @@
 import { useWorkspace } from "../../ui";
 import { useOntology } from "../ontology/scope";
-import { readAccess, type ReadAccess } from "../workspace/access-model";
+import {
+  readAccess,
+  readsPart,
+  type ReadAccess,
+} from "../workspace/access-model";
 import type { GraphReader } from "./reads";
 import { useTenantReads } from "./tenant-reads";
 
@@ -18,6 +22,16 @@ export function useReadAccess(): ReadAccess {
   const me = useWorkspace(),
     { ontology } = useOntology();
   return readAccess(me, ontology);
+}
+
+/**
+ * Whether the user reads only part of the page's ontology, through grants that
+ * hold only some of its current load.
+ */
+export function useReadsPart(): boolean {
+  const me = useWorkspace(),
+    { ontology } = useOntology();
+  return readsPart(me, ontology);
 }
 
 /**

@@ -7,6 +7,7 @@ import type { HttpMethod } from "@/shared/route-template";
 import { compileTemplate, matchTemplate } from "@/shared/route-template";
 import type * as wfe from "@/shared/wfe";
 import type { MockReply } from "../../mock/http";
+import { contractErrors } from "../../mock/agent-contract";
 import { routes } from "../../mock/routes";
 import { handleDocumentUpload } from "../../mock/routes/documents";
 import { config, db, resetState } from "../../mock/state";
@@ -217,6 +218,7 @@ describe("mock source grants", () => {
       grantee: true,
       hasGrants: true,
       ontologyIds: [],
+      partialOntologyIds: [],
     });
     // The WFE's own routes answer as for any member, but query-read: Eve
     // holds no query access.
@@ -251,8 +253,10 @@ describe("mock source grants", () => {
         uncoverable: false,
       },
       readers: [],
+      // Eve's General is part of what it holds.
+      partialReaders: [user("usr_eve")],
     });
-    // One table isn't both.
+    // One table isn't both: she holds part of it.
     await grant(user("usr_eve"), [
       general,
       {
@@ -261,7 +265,10 @@ describe("mock source grants", () => {
         table: "customers",
       },
     ]);
-    expect((await eve("GET", `${A}/me`)).body.ontologyIds).toEqual([]);
+    expect((await eve("GET", `${A}/me`)).body).toMatchObject({
+      ontologyIds: ["ont_acme_contracts"],
+      partialOntologyIds: ["ont_acme_contracts"],
+    });
     await grant(user("usr_eve"), [
       general,
       {
@@ -275,9 +282,10 @@ describe("mock source grants", () => {
         table: "invoices",
       },
     ]);
-    expect((await eve("GET", `${A}/me`)).body.ontologyIds).toEqual([
-      "ont_acme_contracts",
-    ]);
+    expect((await eve("GET", `${A}/me`)).body).toMatchObject({
+      ontologyIds: ["ont_acme_contracts"],
+      partialOntologyIds: [],
+    });
     // The connector covers every table; the grant kept keeps its id.
     const before = (await call("GET", A)).body
       .grants as wfe.FoundryAccessGrant[];
@@ -286,7 +294,10 @@ describe("mock source grants", () => {
       set.body.grants.map((g: wfe.FoundryAccessGrant) => g.target!.kind),
     ).toEqual(["KIND_DOCUMENT_SET", "KIND_CONNECTOR"]);
     expect(set.body.grants[0].id).toBe(before[0]!.id);
-    expect((await contractsAccess())!.readers).toEqual([user("usr_eve")]);
+    expect(await contractsAccess()).toMatchObject({
+      readers: [user("usr_eve")],
+      partialReaders: [],
+    });
 
     // What Eve sees: the ontology without its database or versions, its
     // one load without jobs, its version without cards.
@@ -349,6 +360,16 @@ describe("mock source grants", () => {
     expect((await eve("GET", `${F}/documents/${doc}:content`)).status).toBe(
       404,
     );
+    // Stripe alone still holds part of it, without the document.
+    expect((await eve("GET", `${F}/ontologies`)).body.ontologies).toEqual([
+      expect.objectContaining({
+        id: "ont_acme_contracts",
+        partialAccess: true,
+      }),
+    ]);
+    expect((await eve("GET", `${O}/documents`)).body.documents).toEqual([]);
+    expect((await eve("GET", `${O}/documents/${doc}`)).status).toBe(404);
+    await grant(user("usr_eve"), []);
     expect((await eve("GET", `${F}/ontologies`)).body.ontologies).toEqual([]);
   });
 
@@ -443,7 +464,10 @@ describe("mock source grants", () => {
       name: "Revenue",
       memberUserIds: [],
     });
-    expect((await eve("GET", `${A}/me`)).body.ontologyIds).toEqual([]);
+    // Her own General is still part of it.
+    expect((await eve("GET", `${A}/me`)).body.partialOntologyIds).toEqual([
+      "ont_acme_contracts",
+    ]);
     expect((await call("DELETE", `${A}/teams/${team.id}`)).status).toBe(200);
     expect(
       ((await call("GET", A)).body.grants as wfe.FoundryAccessGrant[]).map(
@@ -461,12 +485,206 @@ describe("mock source grants", () => {
     ).toBe(404);
   });
 
+  describe("a grantee who holds part of a load", () => {
+    const customersTable: wfe.FoundryAccessTarget = {
+      kind: "KIND_TABLE",
+      connectorId: "conn_acme_stripe",
+      table: "customers",
+    };
+    /** Reads as Eve, each outcome held to read_result.json. */
+    const read = async (load: string, reads: unknown[]) => {
+      const r = await eve("POST", `${O}/loads/${load}:read`, {
+        readsJson: JSON.stringify(reads),
+      });
+      expect(r.status).toBe(200);
+      const body = JSON.parse(r.body.resultJson);
+      expect(contractErrors("read_result", body)).toEqual([]);
+      return body.results as any[];
+    };
+    const rows = (
+      type: string,
+      columns: unknown[],
+      more: Record<string, unknown> = {},
+    ) => ({
+      query: { start: { type }, return: { rows: { columns, ...more } } },
+    });
+
+    it("sees the version as its sources fill it", async () => {
+      await loaded();
+      await grant(user("usr_eve"), [customersTable]);
+      const v = (await eve("GET", `${O}/versions/ver_seed_3`)).body.version;
+      expect(v.definition.ontology_toml).toContain("[types.Customer]");
+      for (const gone of [
+        "types.Invoice",
+        "types.Contract",
+        "billed_to",
+        "signed_with",
+        "under_contract",
+        "invoice_under_contract",
+      ])
+        expect(v.definition.ontology_toml).not.toContain(gone);
+      expect(v.definition.mappings_toml).toContain("mappings.customers");
+      expect(v.definition.mappings_toml).not.toContain("mappings.invoices");
+      expect(v.definition.draft).toBeUndefined();
+      expect(v.definition.questions).toBeUndefined();
+      expect(v.generationId).toBe("");
+      expect(v.documentSetIds).toEqual([]);
+      const list = (await eve("GET", `${F}/ontologies`)).body.ontologies;
+      expect(list[0].partialAccess).toBe(true);
+      // Holding it all, the version is the version, cards aside.
+      await grant(user("usr_eve"), [general, stripe]);
+      const whole = (await eve("GET", `${O}/versions/ver_seed_3`)).body.version;
+      expect(whole.definition.ontology_toml).toContain("[types.Invoice]");
+      expect(whole.generationId).toBe("gen_seed_4");
+      expect(
+        (await eve("GET", `${F}/ontologies`)).body.ontologies[0].partialAccess,
+      ).toBeUndefined();
+    });
+
+    it("reads only what it holds, and can't filter or count the rest", async () => {
+      Object.assign(config, { invoiceOnlyCustomers: 90 });
+      const { load } = await loaded();
+      await grant(user("usr_eve"), [customersTable]);
+      const [view, page1, page2, count, byId, byIdSort, gone, hidden] =
+        await read(load, [
+          { view: {} },
+          rows("Customer", [{ at: 0 }, { at: 0, prop: "currency" }], {
+            limit: 100,
+          }),
+          rows("Customer", [{ at: 0 }], { limit: 100, offset: 100 }),
+          { query: { start: { type: "Customer" }, return: { count: {} } } },
+          {
+            query: {
+              start: {
+                type: "Customer",
+                where: [{ prop: "customer_id", op: "=", value: "x" }],
+              },
+              return: { rows: { columns: [{ at: 0 }] } },
+            },
+          },
+          rows("Customer", [{ at: 0 }], {
+            order_by: { at: 0, prop: "customer_id" },
+          }),
+          { entity: { type: "Customer", id: "cus_00001" } },
+          rows("Invoice", [{ at: 0 }]),
+        ]);
+      expect(view.ok.partial).toEqual(
+        expect.arrayContaining(["Customer", "Customer.customer_id"]),
+      );
+      // The first 90 of Customer are the invoices table's alone.
+      expect(page1.ok.result.rows).toHaveLength(10);
+      expect(page1.ok.result.total).toBe(10);
+      expect(page1.ok.result.more).toBe(true);
+      expect(page1.ok.result.rows[0].cells[0].name).not.toMatch(/^cus_0/);
+      expect(page2.ok.result.rows).toHaveLength(54);
+      expect(page2.ok.result.more).toBe(false);
+      expect(count.error).toMatchObject({
+        code: "not_visible",
+        pointer: "/start/type",
+      });
+      expect(byId.error).toMatchObject({
+        code: "not_visible",
+        pointer: "/start/where/0/prop",
+      });
+      expect(byIdSort.error).toMatchObject({
+        code: "not_visible",
+        pointer: "/return/rows/order_by/prop",
+      });
+      expect(gone.error.code).toBe("unknown_entity");
+      expect(hidden.error.code).toBe("invalid");
+    });
+
+    it("settles a value from what it holds", async () => {
+      const { load } = await loaded();
+      // General alone: Customer isn't created by what it holds; Contract is.
+      await grant(user("usr_eve"), [general]);
+      const [contracts, customers] = await read(load, [
+        rows("Contract", [{ at: 0 }, { at: 0, prop: "term_months" }]),
+        rows("Customer", [{ at: 0 }]),
+      ]);
+      expect(contracts.ok.result.rows.length).toBeGreaterThan(0);
+      expect(customers.error.code).toBe("invalid");
+      // The customers table alone: its row's currency stands, what documents
+      // say of it aside, and the row's rows only.
+      await grant(user("usr_eve"), [customersTable]);
+      const [row, evidence] = await read(load, [
+        rows("Customer", [{ at: 0 }, { at: 0, prop: "currency" }], {
+          limit: 1,
+        }),
+        {
+          evidence: {
+            entity: { type: "Customer", id: "cus_GLOBEX01" },
+            prop: "currency",
+          },
+        },
+      ]);
+      expect(row.ok.result.rows[0].cells[1]).toEqual(expect.any(String));
+      // Its currency is only partly held: the row is checked, and more follow.
+      expect(row.ok.result.more).toBe(true);
+      expect(
+        evidence.ok.items.every((i: { kind: string }) => i.kind === "row"),
+      ).toBe(true);
+    });
+
+    it("answers a question from what it holds, and keeps what it read", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: false, now: Date.now() });
+      Object.assign(config, { askStepMs: 10 });
+      const { load } = await loaded();
+      await grant(user("usr_eve"), [customersTable]);
+      const q = (
+        await eve("POST", `${O}/questions`, {
+          question: "Who are they?",
+          clientToken: "part",
+        })
+      ).body.question;
+      expect(q.loadId).toBe(load);
+      later(60_000);
+      const asked = (await eve("GET", `${O}/questions/${q.id}`)).body.question;
+      expect(asked.status).toBe("answered");
+      const result = JSON.parse(asked.resultJson);
+      expect(contractErrors("ask_result", result)).toEqual([]);
+      expect(JSON.stringify(result)).not.toContain("Invoice");
+      const events = (await eve("GET", `${O}/questions/${q.id}/events`)).body
+        .events;
+      const tools = events
+        .map((e: { eventJson: string }) => JSON.parse(e.eventJson))
+        .filter((e: { event: string }) => e.event === "tool_call")
+        .map((e: { tool: string }) => e.tool);
+      expect(tools).not.toContain("helix_query");
+      expect(tools).toContain("query");
+      // Its answer goes with what it read.
+      await grant(user("usr_eve"), [general]);
+      expect((await eve("GET", `${O}/questions/${q.id}`)).status).toBe(404);
+      await grant(user("usr_eve"), [customersTable]);
+      expect((await eve("GET", `${O}/questions/${q.id}`)).status).toBe(200);
+    });
+
+    it("pages a whole type by offset, with its total", async () => {
+      Object.assign(config, { invoiceOnlyCustomers: 150 });
+      const { load } = await loaded();
+      await grant(user("usr_eve"), [general, stripe]);
+      const [first, last, tooDeep] = await read(load, [
+        rows("Customer", [{ at: 0 }], { limit: 200 }),
+        rows("Customer", [{ at: 0 }], { limit: 200, offset: 200 }),
+        rows("Customer", [{ at: 0 }], { offset: 10_001 }),
+      ]);
+      expect(first.ok.result.rows).toHaveLength(200);
+      expect(first.ok.result.total).toBe(214);
+      expect(first.ok.result.more).toBeUndefined();
+      expect(last.ok.result.rows).toHaveLength(14);
+      expect(tooDeep.error).toMatchObject({
+        code: "invalid",
+        pointer: "/return/rows/offset",
+      });
+    });
+  });
+
   it("previews who a change cuts off", async () => {
     const { doc } = await loaded();
     const preview = (change: unknown) =>
       call("POST", `${A}:preview`, { change });
-    // Eve's General alone reads nothing: nobody loses anything. With no
-    // grant at all, there is nothing to tell.
+    // Eve's General alone reads only part of it: nobody loses all of it. With
+    // no grant at all, there is nothing to tell.
     expect(
       (await preview({ deleteConnector: "conn_acme_stripe" })).body,
     ).toEqual({ losses: [] });
@@ -478,10 +696,12 @@ describe("mock source grants", () => {
     const loss = {
       principal: user("usr_eve"),
       ontologyId: "ont_acme_contracts",
+      keepsPart: false,
     };
+    // Without Stripe, her General is still part of it.
     expect(
       (await preview({ deleteConnector: "conn_acme_stripe" })).body.losses,
-    ).toEqual([loss]);
+    ).toEqual([{ ...loss, keepsPart: true }]);
     expect(
       (await preview({ deleteConnector: "conn_acme_shop" })).body.losses,
     ).toEqual([]);
@@ -506,7 +726,7 @@ describe("mock source grants", () => {
         })
       ).body.losses,
     ).toEqual([]);
-    // Moving the contract to a set she doesn't hold.
+    // Moving the contract to a set she doesn't hold: Stripe stays hers.
     const set = (await call("POST", `${F}/document-sets`, { name: "Board" }))
       .body.set;
     expect(
@@ -515,7 +735,7 @@ describe("mock source grants", () => {
           moveDocument: { documentId: doc, documentSetId: set.id },
         })
       ).body.losses,
-    ).toEqual([loss]);
+    ).toEqual([{ ...loss, keepsPart: true }]);
     expect(
       refusal(
         await preview({
@@ -632,6 +852,7 @@ describe("mock source grants", () => {
       grantee: false,
       hasGrants: false,
       ontologyIds: [],
+      partialOntologyIds: [],
     });
     // Asking and reading need grants; review decisions and query-read are refused.
     expect((await alan("GET", `${O}/questions`)).status).toBe(404);
@@ -649,6 +870,7 @@ describe("mock source grants", () => {
       grantee: false,
       hasGrants: true,
       ontologyIds: ["ont_acme_contracts"],
+      partialOntologyIds: [],
     });
     expect(
       (

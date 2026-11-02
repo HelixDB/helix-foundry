@@ -26,10 +26,21 @@ import {
 import { ENRICHMENT_SOURCE } from "../../src/web/areas/ontology/enrichment-fields";
 import { contractErrors } from "../agent-contract";
 import { LoadGraph, type MockNode } from "../graph/store";
-import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
+import { compile, evaluate, answer as readAnswer } from "../graph/rules";
+import { viewOf, type View } from "../graph/view";
+import {
+  fail,
+  id,
+  now,
+  ok,
+  type MockReply,
+  type MockRoute,
+  type MockSeen,
+} from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
 import { tenantGraph } from "./databases";
 import { currentLoadId, ontologyLoad } from "./loads";
+import { ontologyVersion } from "./ontology";
 import { aiModel, aiProvider, aiRefusal } from "./ai";
 import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 
@@ -126,6 +137,9 @@ type StoredQuestion = {
   // The principal a grantee asked as (./access.ts); unset for anyone else.
   // A grantee sees only its own questions, as the backend's samePrincipal.
   grantee?: string;
+  // What that grantee held of the load, when it wasn't all of it: its answer
+  // reads while its grants still hold that.
+  seen?: MockSeen;
   createdAt: string;
   status: QuestionStatus;
   attempts: number;
@@ -888,6 +902,167 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
   };
 }
 
+/**
+ * What the agent does for an asker who holds only some of the load's sources:
+ * it reads what the load holds of those, and lists the first type it may read
+ * through the same typed read a page makes. It has no `helix_query`, history
+ * or changes, and is told nothing else.
+ */
+function partAnswer(
+  o: StoredOntology,
+  loadId: string,
+  view: View,
+  outcome: Outcome,
+): Script {
+  const g = new LoadGraph(tenantGraph(o.tenantId), loadId);
+  const started: AskEvent = {
+    event: "started",
+    model: aiModel(o.workspaceId, "ask") || MODEL,
+    provider: aiProvider(o.workspaceId),
+  };
+  const profiled: AskEvent[] = [
+    started,
+    {
+      event: "tool_call",
+      call_id: "load_profile",
+      tool: "load_profile",
+      input: {},
+    },
+    {
+      event: "tool_result",
+      call_id: "load_profile",
+      summary: `load_profile: ${view.types.size} of ${view.types.size} reads`,
+      evidence_id: "e1",
+    },
+  ];
+  const type = [...view.types.keys()].sort()[0];
+  if (outcome === "failed" || !type)
+    return {
+      events: [...profiled, { event: "finished" }],
+      status: "failed",
+      result: {
+        status: "failed",
+        reason: "model_failed",
+        queries: [],
+        usage: usage({ input: 4_100, output: 0, usd: 0.0042 }),
+      },
+      error: "the model could not be reached; ask again",
+      usdMicros: 4_200,
+    };
+  const query: OntologyQuery = {
+    start: { type },
+    return: { rows: { columns: [{ at: 0 }], limit: 100 } },
+  };
+  const read = readAnswer(
+    evaluate(g, compile(view.ontologyToml)),
+    { query },
+    { view },
+  );
+  const result =
+    "ok" in read ? (read.ok.result as { rows: { cells: unknown[] }[] }) : null;
+  const rows = result?.rows || [];
+  const reason =
+    "The sources shared with the person asking hold nothing about this.";
+  const gap = "Sources shared with them that state it.";
+  if (!rows.length || outcome === "cannot_answer")
+    return {
+      events: [
+        ...profiled,
+        {
+          event: "tool_call",
+          call_id: "toolu_01",
+          tool: "cannot_answer",
+          input: { reason, gap },
+        },
+        {
+          event: "tool_result",
+          call_id: "toolu_01",
+          summary: "cannot_answer: ended the question",
+        },
+        { event: "finished" },
+      ],
+      status: "cannot_answer",
+      result: {
+        status: "cannot_answer",
+        reason,
+        gap,
+        queries: [],
+        usage: usage({ input: 3_100, output: 120, usd: 0.0112 }),
+      },
+      error: "",
+      usdMicros: 11_200,
+    };
+  const output: QueryOutput = {
+    kind: "rows",
+    rows: rows.map((r) => ({ cells: r.cells, edges: [] })),
+    total: rows.length,
+  };
+  const blocks = [
+    {
+      para: `Of what the sources shared with you hold, these are the first ${type} records [c1].`,
+    },
+  ];
+  const citations: AskCitation[] = [
+    {
+      marker: "c1",
+      evidence_id: "e2",
+      target: { result: { evidence_id: "e2" } },
+    },
+  ];
+  return {
+    events: [
+      ...profiled,
+      { event: "tool_call", call_id: "toolu_01", tool: "query", input: query },
+      {
+        event: "tool_result",
+        call_id: "toolu_01",
+        summary: `query: ${rows.length} rows`,
+        evidence_id: "e2",
+      },
+      {
+        event: "tool_call",
+        call_id: "toolu_02",
+        tool: "answer",
+        input: { blocks, citations },
+      },
+      {
+        event: "tool_result",
+        call_id: "toolu_02",
+        summary: "answer: ended the question",
+      },
+      { event: "finished" },
+    ],
+    status: "answered",
+    result: {
+      status: "answered",
+      answer: { blocks },
+      citations,
+      queries: [
+        {
+          evidence_id: "e2",
+          // As the engine records it, every field written out.
+          query: {
+            start: { type, where: [], ids: null, text: null },
+            steps: [],
+            filters: [],
+            return: {
+              rows: {
+                columns: [{ at: 0, prop: null }],
+                order_by: null,
+                limit: 100,
+              },
+            },
+          },
+          output,
+        },
+      ],
+      usage: usage({ input: 5_200, output: 240, usd: 0.0212 }),
+    },
+    error: "",
+    usdMicros: 21_200,
+  };
+}
+
 // ---------------------------------------------------------------- the worker
 
 const SPENT_MONTH = `the workspace has spent this month's $${(ASK_LIMITS.monthlyUsdMicros / 1e6).toFixed(2)} of questions`;
@@ -999,9 +1174,14 @@ function scope(req: Parameters<MockRoute["handle"]>[0]) {
   return s;
 }
 
-/** Whether a question is one the caller may see: any, but a grantee's own only. */
+/**
+ * Whether a question is one the caller may see: any, but a grantee's own only,
+ * and only while its grants hold what it read (readableQuestions).
+ */
 const visible = (req: Parameters<MockRoute["handle"]>[0], q: StoredQuestion) =>
-  !req.grantee || q.grantee === req.grantee.principal;
+  !req.grantee ||
+  (q.grantee === req.grantee.principal &&
+    (!q.seen || req.grantee.stillSees(q.seen)));
 
 function question(
   req: Parameters<MockRoute["handle"]>[0],
@@ -1125,6 +1305,16 @@ export const questionRoutes: MockRoute[] = [
       )
         return fail("FAILED_PRECONDITION", SPENT_MONTH);
       const qid = id("q");
+      // Of a load it holds only some of, the agent is told what it holds.
+      const def = (ontologyVersion(s.o.id, load.versionId)?.definition ||
+        {}) as { ontology_toml?: unknown; mappings_toml?: unknown };
+      const view = req.grantee?.load?.partial
+        ? viewOf(
+            req.grantee.visibility(s.o.id),
+            String(def.ontology_toml || ""),
+            String(def.mappings_toml || ""),
+          )
+        : undefined;
       const q: StoredQuestion = {
         id: qid,
         workspaceId: s.m.workspaceId,
@@ -1137,13 +1327,16 @@ export const questionRoutes: MockRoute[] = [
         clientToken,
         askedByUserId: req.principal.user.id,
         ...(req.grantee ? { grantee: req.grantee.principal } : {}),
+        ...(view && req.grantee ? { seen: req.grantee.seen(s.o.id) } : {}),
         createdAt: now(),
         status: "queued",
         attempts: 0,
         claimedAt: 0,
         heldAt: 0,
         stepMs: knobs.askStepMs ?? STEP_MS,
-        script: answer(s.o, load.id, knobs.askOutcome || "answered"),
+        script: view
+          ? partAnswer(s.o, load.id, view, knobs.askOutcome || "answered")
+          : answer(s.o, load.id, knobs.askOutcome || "answered"),
         events: [],
         resultJson: "",
         error: "",

@@ -148,13 +148,17 @@ const toOntology = (o: StoredOntology): FoundryOntology => ({
 
 /**
  * An ontology as a grantee sees it (./access.ts): its name and the load its
- * grants cover, without its database, versions, jobs or counts.
+ * grants hold, without its database, versions, jobs or counts.
  */
-const granteeOntology = (o: StoredOntology): FoundryOntology => ({
+const granteeOntology = (
+  o: StoredOntology,
+  partial: boolean | undefined,
+): FoundryOntology => ({
   id: o.id,
   name: o.name,
   createdAt: o.createdAt,
   currentLoad: ontologyLoads(o.id).currentLoad,
+  ...(partial ? { partialAccess: true } : {}),
 });
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies" as const;
@@ -172,7 +176,7 @@ export const ontologiesRoutes: MockRoute[] = [
         return ok({
           ontologies: workspaceOntologies(m.workspaceId)
             .filter((o) => grantee.covered.has(o.id))
-            .map(granteeOntology),
+            .map((o) => granteeOntology(o, grantee.covered.get(o.id)?.partial)),
           nextPageToken: "",
         } satisfies ListOntologiesResponse);
       const all = workspaceOntologies(m.workspaceId);
@@ -236,7 +240,9 @@ export const ontologiesRoutes: MockRoute[] = [
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
       return ok({
-        ontology: req.grantee ? granteeOntology(s.o) : toOntology(s.o),
+        ontology: req.grantee
+          ? granteeOntology(s.o, req.grantee.load?.partial)
+          : toOntology(s.o),
       } satisfies OntologyResponse);
     },
   },

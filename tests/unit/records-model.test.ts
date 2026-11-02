@@ -785,6 +785,20 @@ describe("page spans", () => {
     expect(pageSpan(0, 50, 1000, true, true).text).toBe("1–50 of 1,000+");
     expect(pageSpan(0, 50, null, false, true).text).toBe("1–50");
     expect(pageSpan(0, 0, 0, false).text).toBe("");
+    // Pages of another size: as far as the deepest row a page starts at.
+    expect(pageSpan(1, 100, 250, false, true, 100)).toMatchObject({
+      text: "101–200 of 250",
+      next: true,
+      deep: false,
+    });
+    expect(pageSpan(99, 100, null, false, true, 100)).toMatchObject({
+      next: true,
+      deep: false,
+    });
+    expect(pageSpan(100, 100, null, false, true, 100)).toMatchObject({
+      next: false,
+      deep: true,
+    });
     // A page past the last still says how many there are.
     expect(pageSpan(2, 0, 12, false)).toMatchObject({
       text: "0 of 12",

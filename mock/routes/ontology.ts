@@ -25,6 +25,7 @@ import contractsBundle from "../fixtures/agent-bundle-contracts.json";
 import foundryDefinition from "../fixtures/foundry-definition.json";
 // The Sales graph: public.people, and version 2 enriching its people.
 import { PEOPLE, salesGraphBundle } from "../fixtures/sales-graph";
+import { viewOf } from "../graph/view";
 import { fail, id, now, ok, type MockRoute } from "../http";
 import { pruneDecisions } from "../review-decisions";
 import { config, onReset } from "../state";
@@ -915,9 +916,24 @@ export const ontologyRoutes: MockRoute[] = [
       const v = ontologyVersion(scope.o.id, req.params.id!);
       if (!v || (req.grantee && v.id !== req.grantee.load?.versionId))
         return fail("NOT_FOUND", "ontology version not found");
-      return ok({
-        version: full(v, !!req.grantee),
-      } satisfies OntologyVersionResponse);
+      const version = full(v, !!req.grantee);
+      // Of a load it holds only some of: the version as its sources fill it,
+      // without the draft, its questions or the sets it reads.
+      if (req.grantee?.load?.partial) {
+        const def = version.definition as Record<string, unknown>;
+        const view = viewOf(
+          req.grantee.visibility(scope.o.id),
+          String(def.ontology_toml || ""),
+          String(def.mappings_toml || ""),
+        );
+        def.ontology_toml = view.ontologyToml;
+        def.mappings_toml = view.mappingsToml;
+        delete def.draft;
+        delete def.questions;
+        version.generationId = "";
+        version.documentSetIds = [];
+      }
+      return ok({ version } satisfies OntologyVersionResponse);
     },
   },
   {

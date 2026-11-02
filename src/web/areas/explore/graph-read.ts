@@ -104,6 +104,7 @@ export function rulesOf(v?: OntologyVersion | null): AgentOntology | null {
  * @example
  * readFailureText({ code: "budget", message: "m", limit: 64 }); // "Too deep to compute live"
  * readFailureText({ code: "too_broad", message: "m", limit: 20000, count: 31200 }); // "Covers too many entities to compute live: 31,200, past 20,000"
+ * readFailureText({ code: "not_visible", message: "m" }); // "Only part of this is in the sources shared with you, so it can’t be counted, filtered or sorted"
  */
 export function readFailureText(f: ReadFailure): string {
   switch (f.code) {
@@ -115,6 +116,8 @@ export function readFailureText(f: ReadFailure): string {
       return `Covers too many entities to compute live: ${f.count.toLocaleString("en-US")}, past ${f.limit.toLocaleString("en-US")}`;
     case "unknown_entity":
       return "This load doesn’t hold it";
+    case "not_visible":
+      return "Only part of this is in the sources shared with you, so it can’t be counted, filtered or sorted";
     case "invalid":
       return `The rules can’t answer this${f.pointer ? ` (at ${f.pointer})` : ""}`;
   }

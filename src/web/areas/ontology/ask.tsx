@@ -54,6 +54,7 @@ import { formatUsd } from "../documents/model";
 import { parseEntityId } from "../explore/model";
 import { readQueries } from "../explore/reads";
 import { useGraphReader, useReadAccess } from "../explore/graph-reader";
+import { PartNote } from "../explore/part-note";
 import { useNaming } from "../explore/use-naming";
 import {
   AiRefusal,
@@ -280,6 +281,7 @@ export function AskPage() {
           <h1 className="ak-hello">
             What do you want to know about {ontologyName(ontology)}?
           </h1>
+          <PartNote />
           <Composer
             load={load}
             focus={focus}

@@ -3,8 +3,9 @@
 // at /explore/:ontologyId/records; the URL holds the whole view (./model.ts
 // readView), the open record included. Read through source grants
 // (../explore/graph-reader.ts), it is the Explorer: there is no graph, a
-// type shows the first 200 matches of typed reads (paged here), with as
-// many of its columns as one read returns.
+// type's rows come from typed reads by offset (cut into pages here, or a page
+// each of what grants hold only part of), with as many of its columns as one
+// read returns.
 import "../explore/explore.css";
 import "./records.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -39,8 +40,14 @@ import { scopeKey, type Scope } from "../explore/load-scope";
 import type { TypeNaming } from "../explore/naming";
 import { ReadFailed, pausedOf, startingOf } from "../explore/reads";
 import { DatabasePaused, DatabaseStarting } from "../explore/starting";
-import { useGraphReader } from "../explore/graph-reader";
-import { typedColumns, typedRecordsPage } from "../explore/typed-reads";
+import { useGraphReader, useReadsPart } from "../explore/graph-reader";
+import { PartNote } from "../explore/part-note";
+import {
+  TYPED_LIMITS,
+  typedColumns,
+  typedRecordsPage,
+  type TypedRecords,
+} from "../explore/typed-reads";
 import { ExplorerTop } from "../explore/top-bar";
 import { useNaming } from "../explore/use-naming";
 import { typeHue } from "../ontology/colors";
@@ -116,7 +123,8 @@ export function RecordsPage() {
     refetch,
   } = useNaming(selection.versionId);
   const { access, reader } = useGraphReader(),
-    shared = access === "grants";
+    shared = access === "grants",
+    part = useReadsPart();
   // Through grants the WFE reads the load; else the user's own database.
   const tenant = shared ? o : ontology.tenantId || "";
   const types = useMemo(() => recordTypes(naming), [naming]);
@@ -143,6 +151,7 @@ export function RecordsPage() {
     naming,
     type || NO_TYPE,
     view,
+    part,
   );
   const page = useQuery({
     ...pageQuery,
@@ -362,7 +371,10 @@ export function RecordsPage() {
     );
 
   // The types' colours: every type with records, alphabetically, as the graph's.
-  const hues = types.filter((t) => (count(t) || 0) > 0).map((t) => t.name);
+  // (A type only partly held can't be counted: it may have some.)
+  const hues = types
+    .filter((t) => (count(t) || 0) > 0 || (part && count(t) === null))
+    .map((t) => t.name);
   // Through grants, as many columns as one typed read returns.
   const readable = shared ? new Set(typedColumns(type)) : null;
   const fits = (c: Column) =>
@@ -374,20 +386,29 @@ export function RecordsPage() {
   const applied = activeFilter(view);
   const filter = applied ? filterOf(type, applied.field, applied.value) : null;
   // A typed read's rows are cut into pages here.
-  const data =
-    shared && page.data ? typedRecordsPage(page.data, view.page) : page.data;
+  const typed = shared ? (page.data as TypedRecords | undefined) : undefined;
+  const data = typed ? typedRecordsPage(typed, view.page, part) : page.data;
   const searching = !!view.search.trim() || !!applied;
-  const total = searching ? (data?.matched?.count ?? null) : count(type);
+  // Rows only partly held have no total, and no place among them: each page
+  // shows those of a read's rows its reader holds.
+  const partlyHeld = !!typed && typed.total === null;
+  const total = partlyHeld
+    ? null
+    : searching
+      ? (data?.matched?.count ?? null)
+      : count(type);
   const span = pageSpan(
     view.page,
     data?.rows.length || 0,
     total,
     !!data?.matched?.capped,
     !!data?.more,
+    part ? TYPED_LIMITS.partialRows : undefined,
   );
   // A value the field can't hold reads nothing: it says so in the table's
-  // place, or under the box while the last rows stay up.
-  const refused = filter && !filter.ok ? filter.error : "";
+  // place, or under the box while the last rows stay up. So does a filter or
+  // a search of what the reader's sources hold only part of.
+  const refused = filter && !filter.ok ? filter.error : data?.refused || "";
   const pagePaused = pausedOf(page.error);
   const rows: GridRow[] = (data?.rows || []).map((r) => ({
     ...r.props,
@@ -436,6 +457,7 @@ export function RecordsPage() {
   return frame(
     <>
       <LoadNotice selection={selection} />
+      <PartNote />
       <div className="rx">
         {slot ? (
           <PanelContent label="Types">
@@ -457,7 +479,13 @@ export function RecordsPage() {
             onChange: (search) => setDraft((d) => ({ ...d, search })),
             placeholder: `Search ${type.name} records`,
           }}
-          count={span.text || undefined}
+          count={
+            partlyHeld
+              ? data?.rows.length
+                ? `${formatNumber(data.rows.length)} on this page`
+                : undefined
+              : span.text || undefined
+          }
           actions={
             <details className="rx-columns">
               <summary className="hf-btn hf-btn--secondary hf-btn--sm">
@@ -544,11 +572,9 @@ export function RecordsPage() {
             {refused}
           </p>
         )}
-        {data?.first && !refused && (
+        {data?.notice && !refused && (
           <p className="rx-hint" role="status">
-            Showing the first {formatNumber(data.first.read)} of{" "}
-            {formatNumber(data.first.total)}: search or filter to find the
-            others.
+            {data.notice}
           </p>
         )}
         {startingOf(page.error ?? page.failureReason) ? (
@@ -568,6 +594,29 @@ export function RecordsPage() {
           // wide as every column.
           refused ? (
             <EmptyState size="sm" icon={CircleAlert} title={refused} />
+          ) : data?.more ? (
+            // A read whose rows all come from sources they don't hold: the
+            // next may hold some.
+            <EmptyState
+              size="sm"
+              icon={Table2}
+              title="None of the records on this page are in the sources shared with you."
+              action={
+                <>
+                  {view.page > 0 && (
+                    <Button onClick={() => update({ page: view.page - 1 })}>
+                      Previous
+                    </Button>
+                  )}
+                  <Button
+                    disabled={!span.next}
+                    onClick={() => update({ page: view.page + 1 })}
+                  >
+                    Next
+                  </Button>
+                </>
+              }
+            />
           ) : view.page > 0 ? (
             <EmptyState
               size="sm"
@@ -582,8 +631,7 @@ export function RecordsPage() {
                 <Button
                   onClick={() =>
                     update({
-                      // Back to the last page with rows, when it's known
-                      // (through grants, of the rows read).
+                      // Back to the last page with rows, when it's known.
                       page:
                         total === null
                           ? view.page - 1
@@ -591,10 +639,7 @@ export function RecordsPage() {
                               view.page - 1,
                               Math.max(
                                 0,
-                                Math.ceil(
-                                  (data?.first?.read ?? total) /
-                                    RECORDS_LIMITS.page,
-                                ) - 1,
+                                Math.ceil(total / RECORDS_LIMITS.page) - 1,
                               ),
                             ),
                     })

@@ -1408,7 +1408,9 @@ export const documentRoutes: MockRoute[] = [
           !(
             held?.has(d.id) ||
             (d.status === "uploaded" && scope.includes(d.setId))
-          )
+          ) ||
+          // Of a load it holds only some of, only what it holds.
+          (req.grantee?.load?.partial && !req.grantee.coversSet(d.setId))
         )
           return [];
         const x = currentExtraction(s.o.id, d.id);

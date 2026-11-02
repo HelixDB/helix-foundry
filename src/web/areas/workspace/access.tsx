@@ -4,9 +4,10 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Bot, Copy, KeyRound, Plus, Users } from "lucide-react";
+import { Bot, Copy, KeyRound, Plus, Shapes, Users } from "lucide-react";
 import type {
   CreateServiceCredentialResponse,
+  FoundryPrincipal,
   FoundryTeam,
   ServiceCredential,
   WorkspaceMember,
@@ -45,12 +46,13 @@ import {
   updateTeam,
 } from "./access-api";
 import {
-  covered,
   grantKey,
   grantsOf,
   heldGrants,
   missingText,
+  principalKey,
   readings,
+  readsText,
   restrictable,
   setOwners,
   sourceState,
@@ -67,18 +69,19 @@ import { canManage } from "./plan";
 // Settings › Access (hosted, owners and admins): what agents, people and
 // teams may read through source grants. A grant gives a connection (its
 // tables now and later, and the sets its syncs write), one table, a
-// document set, or People enrichment; whoever it is for reads an
-// ontology's current load, and asks it questions, only while that load
-// reads nothing else. Agents' keys reach Foundry only that way; a member
-// restricted here sees only those ontologies, in Analyst, Ontologies and Records;
-// a team's members hold its grants. Grants only add: everyone else sees
-// what they saw before.
+// document set, or People enrichment; whoever it is for reads the part of an
+// ontology's current load those sources hold, and asks it questions, all of it
+// once the load reads nothing else. Agents' keys reach Foundry only that way;
+// a member restricted here sees only those ontologies, in Analyst, Ontologies
+// and Records; a team's members hold its grants. Grants only add: everyone else
+// sees what they saw before. Ontologies says who each is shared with.
 
-type Tab = "agents" | "people" | "teams";
+type Tab = "agents" | "people" | "teams" | "ontologies";
 const TABS: { id: Tab; label: string }[] = [
   { id: "agents", label: "Agents" },
   { id: "people", label: "People" },
   { id: "teams", label: "Teams" },
+  { id: "ontologies", label: "Ontologies" },
 ];
 
 /** What every part of the page reads, with the names it shows. */
@@ -135,15 +138,16 @@ function useAccessData() {
 }
 type AccessData = ReturnType<typeof useAccessData>;
 
-/** "Reads Customer contracts, Renewals", or that it reads nothing yet. */
+/** "Reads Customer contracts, part of Renewals", or that it reads nothing yet. */
 function readsLine(data: AccessData, principal: Principal) {
-  const reading = readings(
-    data.access.data || {},
-    heldGrants(data.access.data || {}, principal),
-  ).filter((r) => covered(r.missing));
-  return reading.length
-    ? `Reads ${reading.map((r) => data.names.ontology(r.ontologyId)).join(", ")}`
-    : "Reads nothing yet";
+  return readsText(
+    readings(
+      data.access.data || {},
+      heldGrants(data.access.data || {}, principal),
+      principal,
+    ),
+    data.names.ontology,
+  );
 }
 
 /** One source of the editor: its box, and what it is. */
@@ -217,9 +221,9 @@ function GrantsDialog({
           t.memberUserIds?.includes(principal.id),
         )
       : [];
-  const all = readings(access, heldGrants(access, principal)),
-    reads = all.filter((r) => covered(r.missing)),
-    lacks = all.filter((r) => !covered(r.missing));
+  const all = readings(access, heldGrants(access, principal), principal),
+    reads = all.filter((r) => r.reach !== "none"),
+    lacks = all.filter((r) => r.reach === "none");
   const save = async () => {
     setPending(true);
     setError("");
@@ -236,7 +240,7 @@ function GrantsDialog({
   return (
     <Dialog
       title={`Sources for ${name}`}
-      description="An ontology is shared once everything its current load reads is chosen here."
+      description="What these sources hold of an ontology’s current load is shared; all of it, once everything it reads is chosen here."
       size="lg"
       onClose={onClose}
       footer={
@@ -351,14 +355,27 @@ function GrantsDialog({
         <section className="wk-access-reads" aria-labelledby="access-reads">
           <h4 id="access-reads">Can read</h4>
           {reads.length ? (
-            <ul aria-labelledby="access-reads">
+            <ul aria-labelledby="access-reads" className="wk-access-lacks">
               {reads.map((r) => (
-                <li key={r.ontologyId}>{data.names.ontology(r.ontologyId)}</li>
+                <li key={r.ontologyId}>
+                  {r.reach === "all" ? (
+                    data.names.ontology(r.ontologyId)
+                  ) : (
+                    <>
+                      <strong>{data.names.ontology(r.ontologyId)}</strong>
+                      <small>
+                        Part of it: not{" "}
+                        {missingText(r.missing, data.names).join(", ")}
+                      </small>
+                    </>
+                  )}
+                </li>
               ))}
             </ul>
           ) : (
             <p className="wk-note">
-              Nothing yet: no ontology’s current load reads only what is saved.
+              Nothing yet: no ontology’s current load reads any of what is
+              saved.
             </p>
           )}
           {lacks.length > 0 && (
@@ -371,7 +388,7 @@ function GrantsDialog({
                     <small>
                       {r.missing.uncoverable
                         ? "Load again to share"
-                        : `Also reads ${missingText(r.missing, data.names).join(", ")}`}
+                        : `Reads ${missingText(r.missing, data.names).join(", ")}`}
                     </small>
                   </li>
                 ))}
@@ -1050,6 +1067,81 @@ function TeamsPanel({ data }: { data: AccessData }) {
   );
 }
 
+// ---------------------------------------------------------------- ontologies
+
+/** Each loaded ontology, and who its current load is shared with: all of it, or part. */
+function OntologiesPanel({ data }: { data: AccessData }) {
+  const { id } = useWorkspace(),
+    keys = useQuery(keysQuery(id));
+  const named = new Map<string, string>([
+    ...data.people.map(
+      (m) =>
+        [
+          principalKey({ kind: "KIND_USER", id: m.user?.id }),
+          nameOf(m),
+        ] as const,
+    ),
+    ...(keys.data || []).map(
+      (k) =>
+        [
+          principalKey({ kind: "KIND_SERVICE_CREDENTIAL", id: k.id }),
+          k.name || k.id,
+        ] as const,
+    ),
+    ...(data.access.data?.teams || []).map(
+      (t) =>
+        [
+          principalKey({ kind: "KIND_TEAM", id: t.id }),
+          t.name || "A team",
+        ] as const,
+    ),
+  ]);
+  const who = (ps: readonly FoundryPrincipal[] = []) =>
+    ps.map((p) => named.get(principalKey(p)) || "Someone").join(", ");
+  const ontologies = data.access.data?.ontologies || [];
+  return (
+    <Panel
+      title="Ontologies"
+      subtitle="Who each ontology’s current load is shared with, through their own sources. A team’s members read what it is given."
+      padded={false}
+    >
+      {ontologies.length ? (
+        <ul className="wk-members" aria-label="Ontologies">
+          {ontologies.map((o) => {
+            const name = data.names.ontology(o.ontologyId || "");
+            return (
+              <li key={o.ontologyId} className="wk-member" aria-label={name}>
+                <span className="hf-avatar" aria-hidden>
+                  <Shapes size={15} />
+                </span>
+                <div className="wk-member-text">
+                  <strong>{name}</strong>
+                  {o.readers?.length ? (
+                    <small>Shared with {who(o.readers)}</small>
+                  ) : null}
+                  {o.partialReaders?.length ? (
+                    <small>Part of it: {who(o.partialReaders)}</small>
+                  ) : null}
+                  {!o.readers?.length && !o.partialReaders?.length && (
+                    <small>Not shared with anyone</small>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <EmptyState
+          size="sm"
+          icon={Shapes}
+          title="No ontology is loaded yet"
+          text="An ontology shows here once it has a current load."
+        />
+      )}
+    </Panel>
+  );
+}
+
 export function AccessTab() {
   const { role } = useWorkspace();
   return canManage(role) ? (
@@ -1087,6 +1179,8 @@ function AccessTabs() {
           <AgentsPanel data={data} />
         ) : tab === "people" ? (
           <PeoplePanel data={data} />
+        ) : tab === "ontologies" ? (
+          <OntologiesPanel data={data} />
         ) : (
           <TeamsPanel data={data} />
         )}

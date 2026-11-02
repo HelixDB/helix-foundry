@@ -74,6 +74,7 @@ import {
   useLoadSelection,
 } from "../ontology/load-selection";
 import { useGraphReader } from "./graph-reader";
+import { PartNote } from "./part-note";
 import { pausedOf, readQueries, startingOf } from "./reads";
 import { DatabasePaused, DatabaseStarting } from "./starting";
 import { TYPED_LIMITS } from "./typed-reads";
@@ -651,6 +652,7 @@ function Entity({
           />
         }
       />
+      <PartNote />
       <LoadNotice selection={selection} />
       <TabPanel id="overview" value={tab} idPrefix="tab">
         <Panel

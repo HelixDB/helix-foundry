@@ -211,6 +211,7 @@ function WorkspaceApp({
         onboarding,
         grantee,
         granted: access.data?.ontologyIds || [],
+        partial: access.data?.partialOntologyIds || [],
         notify,
       }}
     >

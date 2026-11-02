@@ -18,6 +18,7 @@ import {
   RECORD_COLUMN,
   activeFilter,
   columnsOf,
+  fieldName,
   filterOf,
   type RecordRow,
   type RecordsPage,
@@ -48,14 +49,20 @@ import { RULE_BREAK_LIMITS, refKey } from "./rule-breaks";
 // ../records/model.ts), so a page shows either alike. A plan's reads go
 // 20 to a request (runPlan). What typed reads can't give is left out:
 // Foundry's own records (an entity's mentions and reviews, a document's
-// marks), facts' own props, and anything past a read's first 200 rows.
-// Every answer is parsed without trust.
+// marks) and facts' own props. Records pages with a read's `offset`. Someone
+// who reads only part of the load (grants that hold only some of its sources)
+// gets rows narrowed to those they hold, no totals of them, and a refusal
+// (`not_visible`) of a filter or a sort on what is partly held. Every answer is
+// parsed without trust.
 
 export const TYPED_LIMITS = Object.freeze({
   // Columns of one row read, the entity's own among them (read_request.json Rows).
   columns: 20,
-  // Rows one read returns.
+  // Rows one read returns, cut into Records' pages here.
   rows: 200,
+  // Rows one read of what is only partly held returns: each is checked with
+  // reads of its own, and a page of Records is one such read.
+  partialRows: 100,
   // Link sides of a type read for one entity (each up to factsPerSide facts).
   links: 30,
   // Props whose quotes are read for one entity.
@@ -353,7 +360,7 @@ export function entityPlan(
         cutFacts = true;
         return [];
       }
-      if (r.total > r.rows.length) cutFacts = true;
+      if (r.total > r.rows.length || r.more) cutFacts = true;
       const naming_ = namingProps(naming.types.get(s.other));
       return r.rows.flatMap((row): Fact[] => {
         const edge = row.edges.find((e) => e.step === 0 && "fact" in e);
@@ -560,9 +567,24 @@ export const typedColumns = (t: TypeNaming) =>
     .map((c) => c.key)
     .slice(0, TYPED_LIMITS.columns - 1);
 
+/**
+ * The rows of one typed read of a type's records, and what it says of the rest.
+ * A read refused as not_visible reads none: `refusedBy` says what asked too
+ * much, and `refused` says so in words.
+ */
+export type TypedRecords = Omit<RecordsPage, "more"> & {
+  // Rows of the read passed over before these.
+  offset: number;
+  // How many there are in all; null for rows only partly held, which `more`
+  // speaks for.
+  total: number | null;
+  more: boolean;
+  refusedBy?: "sort" | "filter" | "search";
+};
+
 /** A records read, or why there is none. */
 export type TypedRecordsRead =
-  | { kind: "read"; plan: ReadPlan<Omit<RecordsPage, "more">> }
+  | { kind: "read"; plan: ReadPlan<TypedRecords> }
   | { kind: "none" }
   | { kind: "refused"; message: string };
 
@@ -597,16 +619,33 @@ function searchStart(
 }
 
 /**
- * The read of a type's records for a view: its first TYPED_LIMITS.rows
- * matches with the type's columns, in the view's order, and how many there
- * are in all. Typed reads have no cursor, so pages are cut from those rows
- * (typedRecordsPage) and the rest are reached by a search or a filter. A
- * filter compares the prop's value as typed (no folding of names).
+ * Which read's rows a page of Records comes from: pages are cut from reads of
+ * TYPED_LIMITS.rows; for someone who reads only part of the ontology, each page
+ * is a read of TYPED_LIMITS.partialRows, showing those of its rows they hold.
+ *
+ * @example
+ * typedOffset(5, false); // 200
+ * typedOffset(5, true); // 500
+ */
+export const typedOffset = (page: number, part: boolean) =>
+  part
+    ? page * TYPED_LIMITS.partialRows
+    : Math.floor((page * RECORDS_LIMITS.page) / TYPED_LIMITS.rows) *
+      TYPED_LIMITS.rows;
+
+/**
+ * The read of a type's records for a view: the rows of the page's read
+ * (typedOffset) with the type's columns, in the view's order, and how many
+ * there are in all. A filter compares the prop's value as typed (no folding of
+ * names). What a reader holds only part of refuses a filter, search or sort on
+ * it, which `parse` says rather than throws: the page goes on without a sort,
+ * and says so of the others.
  */
 export function typedRecordsRead(
   t: TypeNaming,
   view: RecordsView,
   naming: Naming,
+  part = false,
 ): TypedRecordsRead {
   const search = searchStart(t, view.search);
   if (search === "none") return { kind: "none" };
@@ -622,12 +661,35 @@ export function typedRecordsRead(
     );
   }
   const columns = typedColumns(t);
-  const by = view.sort
+  const by_ = view.sort
     ? view.sort.column === RECORD_COLUMN
       ? t.names[0] || t.key[0] || "name"
       : view.sort.column
     : undefined;
   const searching = !!view.search.trim() || !!filter;
+  const offset = typedOffset(view.page, part);
+  const refusal = (pointer = ""): TypedRecords => {
+    const by = pointer.includes("/order_by")
+      ? "sort"
+      : filter && pointer === `/start/where/${where.length - 1}/prop`
+        ? "filter"
+        : "search";
+    return {
+      rows: [],
+      matched: null,
+      offset,
+      total: null,
+      more: false,
+      refusedBy: by,
+      refused: `You can’t ${
+        by === "sort"
+          ? `sort by ${fieldName(by_ || "")}`
+          : by === "filter"
+            ? `filter by ${fieldName(filter?.field || "")}`
+            : `search ${t.name} records`
+      }: only part of it is in the sources shared with you.`,
+    };
+  };
   return {
     kind: "read",
     plan: {
@@ -645,16 +707,17 @@ export function typedRecordsRead(
                   { at: 0 },
                   ...columns.map((prop) => ({ at: 0, prop })),
                 ],
-                ...(by
+                ...(by_
                   ? {
                       order_by: {
                         at: 0,
-                        prop: by,
+                        prop: by_,
                         desc: view.sort?.dir === "desc",
                       },
                     }
                   : {}),
-                limit: TYPED_LIMITS.rows,
+                limit: part ? TYPED_LIMITS.partialRows : TYPED_LIMITS.rows,
+                ...(offset ? { offset } : {}),
               },
             },
           },
@@ -662,6 +725,8 @@ export function typedRecordsRead(
       ],
       parse: ([outcome]) => {
         const r = outcomeOf(outcome, parseQueryResult);
+        if (!r.ok && r.error.code === "not_visible")
+          return refusal(r.error.pointer);
         if (!r.ok) throw new Error(readFailureText(r.error));
         const result = r.value as Extract<QueryResult, { kind: "rows" }>;
         if (result.kind !== "rows")
@@ -681,12 +746,18 @@ export function typedRecordsRead(
             },
           ];
         });
+        // The engine says `more` of rows only partly held, whose `total` is
+        // those it shows.
+        const told = result.more !== undefined;
         return {
           rows,
-          matched: searching ? { count: result.total, capped: false } : null,
-          ...(result.total > rows.length
-            ? { first: { read: rows.length, total: result.total } }
-            : {}),
+          offset,
+          total: told ? null : result.total,
+          more: told
+            ? !!result.more
+            : offset + result.rows.length < result.total,
+          matched:
+            searching && !told ? { count: result.total, capped: false } : null,
         };
       },
     },
@@ -694,20 +765,24 @@ export function typedRecordsRead(
 }
 
 /**
- * One page of the records a typed read returned: RECORDS_LIMITS.page rows
- * from `page`, and whether another of them follows.
+ * One page of the records a typed read returned: RECORDS_LIMITS.page rows from
+ * `page`, and whether another follows, in those rows or a later read's; or, for
+ * someone who reads only part of the ontology, the read's rows they hold.
  *
  * @example
- * typedRecordsPage({ rows: [], matched: null }, 0).more; // false
+ * typedRecordsPage({ rows: [], matched: null, offset: 0, total: 0, more: false }, 0).more; // false
  */
 export function typedRecordsPage(
-  read: Omit<RecordsPage, "more">,
+  read: TypedRecords,
   page: number,
+  part = false,
 ): RecordsPage {
-  const from = page * RECORDS_LIMITS.page;
+  if (part) return read;
+  const from = page * RECORDS_LIMITS.page - read.offset;
   return {
     ...read,
-    rows: read.rows.slice(from, from + RECORDS_LIMITS.page),
-    more: read.rows.length > from + RECORDS_LIMITS.page,
+    // A read of another page's (shown while this one loads) holds none of it.
+    rows: from < 0 ? [] : read.rows.slice(from, from + RECORDS_LIMITS.page),
+    more: read.rows.length > from + RECORDS_LIMITS.page || read.more,
   };
 }

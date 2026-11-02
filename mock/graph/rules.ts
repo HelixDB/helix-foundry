@@ -13,6 +13,7 @@ import {
 } from "../../src/shared/foundry-read";
 import { contractErrors } from "../agent-contract";
 import type { LoadGraph, MockNode } from "./store";
+import { MAX_CHECKED_ROWS, admit, settled, type View } from "./view";
 
 // The mock's stand-in for the ontology agent's rules on the read path:
 // a load's version's rules, link declarations and
@@ -620,7 +621,7 @@ function explain(m: Model, root: Fact | undefined) {
 type Failure =
   | { code: "budget" | "hub"; message: string; limit: number }
   | { code: "unknown_entity"; message: string }
-  | { code: "invalid"; message: string; pointer?: string };
+  | { code: "not_visible" | "invalid"; message: string; pointer?: string };
 type Answer = { ok: Record<string, unknown> } | { error: Failure };
 const invalid = (message: string): Answer => ({
   error: { code: "invalid", message },
@@ -645,17 +646,117 @@ const told = (code: "budget" | "hub" | "invalid"): Failure =>
 const constraintOf = (m: Model, name: string) =>
   m.program.constraints.find((c) => c.name === name);
 
+/** The evidence nodes about an entity. */
+const aboutOf = (m: Model, id: number) =>
+  [...m.g.nodes()].filter(
+    (x) =>
+      x.label === N.Evidence &&
+      (m.g.graph.outgoing.get(x.id) || []).some((k) => {
+        const edge = m.g.graph.edges.get(k)!;
+        return edge.label === E.ABOUT && edge.to === id;
+      }),
+  );
+
+/**
+ * Whether an entity is one the reader may see: its type is full, or the load
+ * holds a row the reader holds stating it, or a document it holds naming it.
+ */
+function entityVisible(m: Model, view: View, n: MockNode) {
+  const reach = view.types.get(n.label);
+  if (reach === "full") return true;
+  if (!reach) return false;
+  return (
+    aboutOf(m, n.id).some(
+      (x) =>
+        typeof x.props.source === "string" &&
+        view.holdsSource(String(x.props.source)),
+    ) ||
+    [...m.g.nodes()].some(
+      (x) =>
+        x.label === N.Mention &&
+        view.holdsDocument(String(x.props.doc_id)) &&
+        (m.g.graph.outgoing.get(x.id) || []).some((k) => {
+          const edge = m.g.graph.edges.get(k)!;
+          return edge.label === E.MENTION_OF && edge.to === n.id;
+        }),
+    )
+  );
+}
+
+/** Whether a fact is one the reader may see: a row or quote it holds states it. */
+function factVisible(m: Model, view: View, link: string, s: number, o: number) {
+  const reach = view.links.get(link);
+  if (reach === "full") return true;
+  if (!reach) return false;
+  const edge = (m.g.graph.outgoing.get(s) || [])
+    .map((id) => m.g.graph.edges.get(id)!)
+    .find((x) => x.label === link && x.to === o);
+  return (
+    !!edge &&
+    [...m.g.nodes()].some(
+      (x) =>
+        x.label === N.Evidence &&
+        x.props.fact_key === edge.props.fact_key &&
+        (typeof x.props.source === "string"
+          ? view.holdsSource(String(x.props.source))
+          : view.holdsDocument(String(x.props.doc_id))),
+    )
+  );
+}
+
+/** A property of an entity as the reader sees it. */
+function settle(m: Model, view: View, n: MockNode, prop: string): unknown {
+  const about = aboutOf(m, n.id);
+  const s = settled(
+    view,
+    about
+      .filter(
+        (x) =>
+          typeof x.props.source === "string" &&
+          Array.isArray(x.props.props) &&
+          x.props.props.includes(prop),
+      )
+      .map((x) => String(x.props.source)),
+    about
+      .filter((x) => typeof x.props.quote === "string" && x.props.prop === prop)
+      .map((x) => ({
+        documentId: String(x.props.doc_id),
+        value: x.props.value,
+      })),
+  );
+  return s.from === "stored"
+    ? (n.props[prop] ?? null)
+    : s.from === "quoted"
+      ? s.value
+      : null;
+}
+
 /**
  * One read's answer over the model, in the engine's shapes. `errors` makes
  * a part of entity reads fail with that code (the mock's knob for a pred too
- * deep to compute): a pred string, or `violations`.
+ * deep to compute): a pred string, or `violations`. `view` is what a reader
+ * who holds only some of the load's sources may see (./view.ts): the model
+ * is then of its projected ontology.
  */
 export function answer(
   m: Model,
   read: Read,
-  opts: { errors?: Record<string, "budget" | "hub" | "invalid"> } = {},
+  opts: {
+    errors?: Record<string, "budget" | "hub" | "invalid">;
+    view?: View;
+  } = {},
 ): Answer {
   const errors = opts.errors || {};
+  const view = opts.view?.whole ? undefined : opts.view;
+  if ("view" in read)
+    return {
+      ok: {
+        kind: "view",
+        ontology_toml: view?.ontologyToml ?? "",
+        mappings_toml: view?.mappingsToml ?? "",
+        partial: view?.partial ?? [],
+      },
+    };
   // Every entity a read names must be one the load holds.
   const named: unknown[] =
     "entity" in read
@@ -675,7 +776,9 @@ export function answer(
     const ref = r as EntityRef;
     if (!m.program.types.has(ref.type))
       return invalid(`\`${ref.type}\` is not a type`);
-    if (!nodeOf(m, ref))
+    const held = nodeOf(m, ref);
+    // One the reader may not see is one the load doesn't hold, for it.
+    if (!held || (view && !entityVisible(m, view, held)))
       return {
         error: {
           code: "unknown_entity",
@@ -756,7 +859,16 @@ export function answer(
             (f) =>
               f.pred === pred &&
               f.args.length === want.length &&
-              want.every((w, i) => w === null || w === f.args[i]),
+              want.every((w, i) => w === null || w === f.args[i]) &&
+              (!view ||
+                !pred.startsWith("link:") ||
+                factVisible(
+                  m,
+                  view,
+                  pred.slice("link:".length),
+                  f.args[0]!,
+                  f.args[1]!,
+                )),
           )
           .sort(byPredThenArgs(m))
           .map((f) => ({
@@ -769,6 +881,17 @@ export function answer(
     };
   }
   if ("explain" in read) {
+    if (
+      view &&
+      read.explain.pred.startsWith("link:") &&
+      view.links.get(read.explain.pred.slice("link:".length)) !== "full"
+    )
+      return {
+        error: {
+          code: "not_visible",
+          message: `\`${read.explain.pred}\` is only partly in the sources you can read`,
+        },
+      };
     const ids = read.explain.args.map((a) => nodeOf(m, a)!.id);
     return {
       ok: explain(m, m.facts.get(factKey(read.explain.pred, ids))),
@@ -786,7 +909,8 @@ export function answer(
         (r) =>
           (!constraint || r.constraint === constraint) &&
           (!n || r.args.includes(n.id)) &&
-          (!after || r.key > after),
+          (!after || r.key > after) &&
+          (!view || !!constraintOf(m, r.constraint)),
       )
       .slice(0, limit);
     return {
@@ -863,7 +987,9 @@ export function answer(
       return {
         ok: {
           kind: "evidence",
-          items: [...rows, ...quotes].slice(0, limit),
+          items: [...rows, ...quotes]
+            .filter((i) => !view || heldEvidence(view, i))
+            .slice(0, limit),
         },
       };
     }
@@ -880,11 +1006,25 @@ export function answer(
       .map(quote);
     const rows = of.filter((x) => typeof x.props.source === "string").map(row);
     return {
-      ok: { kind: "evidence", items: [...quotes, ...rows].slice(0, limit) },
+      ok: {
+        kind: "evidence",
+        items: [...quotes, ...rows]
+          .filter((i) => !view || heldEvidence(view, i))
+          .slice(0, limit),
+      },
     };
   }
-  return typedQuery(m, read.query);
+  return typedQuery(m, read.query, view);
 }
+
+/** Whether the reader holds what a piece of evidence comes from. */
+const heldEvidence = (
+  view: View,
+  i: { kind: string; source?: string; doc_id?: string },
+) =>
+  i.kind === "row"
+    ? view.holdsSource(String(i.source))
+    : view.holdsDocument(String(i.doc_id));
 
 type Query = Extract<Read, { query: unknown }>["query"];
 type Where = NonNullable<Query["start"]["where"]>;
@@ -934,7 +1074,7 @@ const words = (s: string) =>
  * and counts; a prop the type doesn't have, or a limit out of range, is
  * `invalid` with a pointer to it.
  */
-function typedQuery(m: Model, q: Query): Answer {
+function typedQuery(m: Model, q: Query, view?: View): Answer {
   const steps = q.steps || [],
     filters = q.filters || [];
   const bad = (pointer: string, message: string): Answer => ({
@@ -983,14 +1123,20 @@ function typedQuery(m: Model, q: Query): Answer {
     return invalid("the mock answers rows and counts only");
   const last = steps.length;
   if ("rows" in ret) {
-    const { columns, order_by = null, limit = 50 } = ret.rows;
+    const { columns, order_by = null, limit = 50, offset = 0 } = ret.rows;
     if (limit < 1 || limit > 200)
       return bad("/return/rows/limit", "rows come 1 to 200 at a time");
+    if (offset > 10_000)
+      return bad("/return/rows/offset", "offset must be at most 10000");
     for (const [k, c] of columns.entries())
       if (c.at > last || (c.prop != null && !known(c.at, c.prop)))
         return bad(`/return/rows/columns/${k}`, "no such column");
     if (order_by && (order_by.at > last || !known(order_by.at, order_by.prop)))
       return bad("/return/rows/order_by", "no such order");
+  }
+  if (view) {
+    const refused = admit(view, q);
+    if (refused) return { error: refused };
   }
   // Position 0.
   let start = [...m.g.nodes()].filter(
@@ -1077,6 +1223,7 @@ function typedQuery(m: Model, q: Query): Answer {
                 ? { desc: false, ...ret.rows.order_by }
                 : null,
               limit: ret.rows.limit ?? 50,
+              ...(ret.rows.offset ? { offset: ret.rows.offset } : {}),
             },
           }
         : { count: { distinct_at: ret.count.distinct_at ?? null } },
@@ -1100,7 +1247,7 @@ function typedQuery(m: Model, q: Query): Answer {
       },
     };
   }
-  const { columns, order_by = null, limit = 50 } = ret.rows;
+  const { columns, order_by = null, limit = 50, offset = 0 } = ret.rows;
   const named = [...new Set(columns.map((c) => c.at))];
   const value = (n: MockNode, prop: string) =>
     prop === "name" ? (n.props.name ?? null) : (n.props[prop] ?? null);
@@ -1131,18 +1278,60 @@ function typedQuery(m: Model, q: Query): Answer {
     }
     return entityOrder(a).localeCompare(entityOrder(b));
   });
+  // For a reader who sees only some of them: the rows of this page it may see,
+  // at most MAX_CHECKED_ROWS checked, with what is hidden not counted.
+  const partly = (at: number, prop?: string | null) =>
+    !!view &&
+    !!prop &&
+    prop !== "name" &&
+    view.props.get(`${types[at]}\u001f${prop}`) === "partial";
+  const checks =
+    !!view &&
+    (columns.some(
+      (c) => view.types.get(types[c.at]!) === "partial" || partly(c.at, c.prop),
+    ) ||
+      steps.some((s) => view.links.get(s.via) === "partial"));
+  const read = rows.slice(
+    offset,
+    offset + (checks ? Math.min(limit, MAX_CHECKED_ROWS) : limit),
+  );
+  const page = !checks
+    ? read
+    : read.filter(
+        (p) =>
+          named.every((at) =>
+            entityVisible(m, view!, m.g.node(p.nodes[at]!)!),
+          ) &&
+          steps.every((s, i) => {
+            if (!named.includes(i) || !named.includes(i + 1)) return true;
+            const f = p.facts[i]!;
+            return (
+              !f.stated ||
+              !f.pred.startsWith("link:") ||
+              factVisible(m, view!, s.via, f.args[0]!, f.args[1]!)
+            );
+          }),
+      );
+  const nameOf = (n: MockNode) =>
+    view?.unsafeNames.has(n.label)
+      ? refOf(n).id
+      : String(n.props.name ?? refOf(n).id);
   return {
     ok: {
       kind: "query",
       query_echo: echo,
       result: {
         kind: "rows",
-        rows: rows.slice(0, limit).map((p) => ({
+        rows: page.map((p) => ({
           cells: columns.map((c) => {
             const n = m.g.node(p.nodes[c.at]!)!;
             return c.prop == null
-              ? { ...refOf(n), name: String(n.props.name ?? refOf(n).id) }
-              : value(n, c.prop);
+              ? { ...refOf(n), name: nameOf(n) }
+              : c.prop === "name"
+                ? nameOf(n)
+                : partly(c.at, c.prop)
+                  ? settle(m, view!, n, c.prop)
+                  : value(n, c.prop);
           }),
           // Each step whose two positions the columns both name.
           edges: steps.flatMap((_, i) => {
@@ -1162,7 +1351,8 @@ function typedQuery(m: Model, q: Query): Answer {
             ];
           }),
         })),
-        total: rows.length,
+        total: checks ? page.length : rows.length,
+        ...(checks ? { more: offset + read.length < rows.length } : {}),
       },
       stats,
     },

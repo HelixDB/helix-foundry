@@ -556,10 +556,11 @@ export type RecordsPage = {
   more: boolean;
   // A search's or filter's matches: `capped` when there are more than countCap.
   matched: { count: number; capped: boolean } | null;
-  // Read through source grants (../explore/typed-reads.ts), only the first
-  // matches are read, with no way past them: how many, of how many in all,
-  // when there are more.
-  first?: { read: number; total: number };
+  // Through source grants that hold only part of it: the view's filter or
+  // search can't be run, and why; or its sort wasn't, and these rows are in
+  // the entities' order.
+  refused?: string;
+  notice?: string;
 };
 
 /** Reads pageRead's answer. */
@@ -619,9 +620,11 @@ export function pageSpan(
   total: number | null,
   capped: boolean,
   more = false,
+  // Rows a page starts past the last's, when it isn't RECORDS_LIMITS.page.
+  size: number = RECORDS_LIMITS.page,
 ) {
-  const first = shown ? page * RECORDS_LIMITS.page + 1 : 0,
-    last = page * RECORDS_LIMITS.page + shown;
+  const first = shown ? page * size + 1 : 0,
+    last = page * size + shown;
   const of =
     total === null
       ? ""
@@ -633,9 +636,9 @@ export function pageSpan(
     // An empty page past the last still says how many there are.
     text: shown ? `${n(first)}–${n(last)}${of}` : total ? `0${of}` : "",
     prev: page > 0,
-    next: more && page < MAX_PAGE,
+    next: more && (page + 1) * size <= RECORDS_LIMITS.maxOffset,
     // More rows than paging reaches: a search or a filter gets to the rest.
-    deep: more && page >= MAX_PAGE,
+    deep: more && (page + 1) * size > RECORDS_LIMITS.maxOffset,
   };
 }
 

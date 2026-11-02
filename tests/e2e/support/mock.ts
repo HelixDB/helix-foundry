@@ -62,6 +62,9 @@ export const mock = {
     // The database with that slug refuses its next n requests with the
     // gateway's 503 rate_limit_unavailable, as a new database does.
     startingQueries?: Record<string, number>;
+    // How many customers only Stripe's invoices table states, in a load
+    // written from now on: Customer then has two sources.
+    invoiceOnlyCustomers?: number;
     // A load's reads with rules: parts that fail in entity reads, by pred
     // ("derived:x", or "violations") and code (budget, hub or invalid).
     readErrors?: Record<string, "budget" | "hub" | "invalid">;

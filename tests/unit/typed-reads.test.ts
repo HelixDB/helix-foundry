@@ -21,6 +21,7 @@ import {
   runPlan,
   typedColumns,
   typedFactKey,
+  typedOffset,
   typedRecordsPage,
   typedRecordsRead,
   type ReadPlan,
@@ -508,7 +509,7 @@ describe("Records through grants", () => {
       entity: { identity: { type: "Invoice", key: "in_0" } },
     });
     expect(page.matched).toBeNull();
-    expect(page.first).toBeUndefined();
+    expect(page.more).toBe(false);
     // The record column sorts by the first names prop, or the key.
     expect(
       run(
@@ -592,32 +593,131 @@ describe("Records through grants", () => {
     });
   });
 
-  it("says how many it couldn't reach, and cuts its rows into pages", () => {
-    const rows = Array.from({ length: 200 }, (_, i) => ({
+  const answered = (rows: unknown[], total: number, more?: boolean) => [
+    {
+      ok: true as const,
+      value: {
+        kind: "query",
+        result: {
+          kind: "rows",
+          rows,
+          total,
+          ...(more === undefined ? {} : { more }),
+        },
+      },
+    },
+  ];
+  const invoiceRows = (n: number, from = 0) =>
+    Array.from({ length: n }, (_, i) => ({
       cells: [
-        { type: "Invoice", id: `in_${i}`, name: `in_${i}` },
-        `in_${i}`,
+        { type: "Invoice", id: `in_${from + i}`, name: `in_${from + i}` },
+        `in_${from + i}`,
         i,
         null,
       ],
       edges: [],
     }));
-    const page = read().parse([
-      {
-        ok: true,
-        value: {
-          kind: "query",
-          result: { kind: "rows", rows, total: 640 },
-        },
-      },
-    ]);
-    expect(page.first).toEqual({ read: 200, total: 640 });
+  const rowsOfRead = (r: Read) =>
+    (r as { query: { return: { rows: { limit: number; offset?: number } } } })
+      .query.return.rows;
+
+  it("cuts a read's 200 rows into pages, and reads on past them", () => {
+    const page = read().parse(answered(invoiceRows(200), 640));
+    expect(page).toMatchObject({ offset: 0, total: 640, more: true });
     // An absent value is left out of the row's props.
     expect(page.rows[0]!.props).toEqual({ id: "in_0", amount_due: 0 });
     const second = typedRecordsPage(page, 1);
     expect(second.rows.map((r) => r.name)[0]).toBe("in_50");
     expect(second.more).toBe(true);
-    expect(typedRecordsPage(page, 3).more).toBe(false);
+    // The read's last page: the next read's rows follow.
+    expect(typedRecordsPage(page, 3).more).toBe(true);
+    // Page 4 is the next read's first.
+    expect(typedOffset(4, false)).toBe(200);
+    expect(typedOffset(3, false)).toBe(0);
+    const next = read(invoice, view({ page: 4 }));
+    expect(rowsOfRead(next.reads[0]!)).toMatchObject({
+      limit: 200,
+      offset: 200,
+    });
+    const after = next.parse(answered(invoiceRows(14, 200), 214));
+    expect(after).toMatchObject({ offset: 200, total: 214, more: false });
+    const last = typedRecordsPage(after, 4);
+    expect(last.rows.map((r) => r.name)[0]).toBe("in_200");
+    expect(last.more).toBe(false);
+    // The first read has no offset to send.
+    expect(rowsOfRead(read().reads[0]!).offset).toBeUndefined();
+    // A read of another page's, while this one's loads, shows none of it.
+    expect(typedRecordsPage(after, 1).rows).toEqual([]);
+  });
+
+  it("reads only part of a load a read's rows at a time", () => {
+    const plan = (v = view()) => {
+      const r = typedRecordsRead(invoice, v, naming, true);
+      if (r.kind !== "read") throw new Error(r.kind);
+      return r.plan;
+    };
+    expect(rowsOfRead(plan().reads[0]!)).toEqual(
+      expect.objectContaining({ limit: TYPED_LIMITS.partialRows }),
+    );
+    expect(rowsOfRead(plan(view({ page: 2 })).reads[0]!).offset).toBe(200);
+    // Rows narrowed to what it holds: no total, and `more` says what follows.
+    const narrowed = plan().parse(answered(invoiceRows(10), 10, true));
+    expect(narrowed).toMatchObject({ total: null, more: true, matched: null });
+    const page = typedRecordsPage(narrowed, 0, true);
+    expect(page.rows).toHaveLength(10);
+    expect(page.more).toBe(true);
+    // A type it holds whole has its total, as anyone's.
+    const whole = plan().parse(answered(invoiceRows(100), 150));
+    expect(whole).toMatchObject({ total: 150, more: true });
+    expect(
+      plan(view({ page: 1 })).parse(answered(invoiceRows(50, 100), 150)),
+    ).toMatchObject({ total: 150, more: false });
+    // A search of what it holds whole counts its matches; of what it holds
+    // part of, it can't.
+    expect(
+      plan(view({ search: "in_1" })).parse(answered(invoiceRows(1), 1)).matched,
+    ).toEqual({ count: 1, capped: false });
+    expect(
+      plan(view({ search: "in_1" })).parse(answered(invoiceRows(1), 1, false))
+        .matched,
+    ).toBeNull();
+  });
+
+  it("says what it can't filter, search or sort by", () => {
+    const refused = (pointer: string) => [
+      {
+        ok: false as const,
+        error: { code: "not_visible" as const, message: "m", pointer },
+      },
+    ];
+    const sorted = read(
+      invoice,
+      view({ sort: { column: "amount_due", dir: "asc" } }),
+    ).parse(refused("/return/rows/order_by/prop"));
+    expect(sorted).toMatchObject({ refusedBy: "sort", rows: [], more: false });
+    expect(sorted.refused).toContain("sort by");
+    expect(sorted.refused).toContain("sources shared with you");
+    const filtered = read(
+      invoice,
+      view({ filter: { field: "status", value: "paid" } }),
+    ).parse(refused("/start/where/0/prop"));
+    expect(filtered.refusedBy).toBe("filter");
+    expect(filtered.refused).toContain("filter by");
+    const searched = read(invoice, view({ search: "in_1" })).parse(
+      refused("/start/where/0/prop"),
+    );
+    expect(searched.refusedBy).toBe("search");
+    expect(searched.refused).toContain("search Invoice records");
+    // With both, the filter is the last of its tests.
+    const both = read(
+      invoice,
+      view({ search: "in_1", filter: { field: "status", value: "paid" } }),
+    );
+    expect(both.parse(refused("/start/where/1/prop")).refusedBy).toBe("filter");
+    expect(both.parse(refused("/start/where/0/prop")).refusedBy).toBe("search");
+  });
+
+  it("keeps a read's other failures as failures", () => {
     expect(() =>
       read().parse([
         {

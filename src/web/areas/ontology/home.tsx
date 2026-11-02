@@ -18,6 +18,7 @@ import {
 import type { OntologyVersion } from "../../../shared/wfe";
 import { paths } from "../../paths";
 import { RefreshFailed, useWorkspace } from "../../ui";
+import { PartNote } from "../explore/part-note";
 import { liveRead } from "../documents/model";
 import { projectsQuery } from "./databases-api";
 import { formatLabel, versionFormat } from "./format";
@@ -115,6 +116,7 @@ function SharedOntologyHome() {
           </ButtonLink>
         }
       />
+      <PartNote />
       {graph && v ? (
         <GraphView
           graph={graph}

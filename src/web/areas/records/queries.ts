@@ -1,7 +1,13 @@
 import { scopeKey, type Scope } from "../explore/load-scope";
 import type { Naming, TypeNaming } from "../explore/naming";
 import { readOptions, runRead, type GraphReader } from "../explore/reads";
-import { countsPlan, runPlan, typedRecordsRead } from "../explore/typed-reads";
+import {
+  countsPlan,
+  runPlan,
+  typedOffset,
+  typedRecordsRead,
+  type TypedRecords,
+} from "../explore/typed-reads";
 import {
   activeFilter,
   pageRead,
@@ -64,8 +70,9 @@ export const recordQueries = {
   },
   // One page of a type's records, as the view asks: none for a search
   // nothing of the type can match, and off for a filter that isn't one.
-  // Through grants, every row a typed read reaches (its first 200), which
-  // the page cuts into pages (typedRecordsPage): the key has no page.
+  // Through grants, the typed read that page's rows come from, which the page
+  // cuts into pages (typedRecordsPage): the key has its offset, not the page.
+  // A sort it refuses is read again without, saying so.
   page: (
     ws: string,
     o: string,
@@ -74,9 +81,11 @@ export const recordQueries = {
     naming: Naming,
     t: TypeNaming,
     view: RecordsView,
+    part = false,
   ) => {
     if (reader.kind === "grants") {
-      const typed = typedRecordsRead(t, view, naming);
+      const typed = typedRecordsRead(t, view, naming, part);
+      const loadId = scope.kind === "load" ? scope.id : "";
       return {
         queryKey: [
           ws,
@@ -91,30 +100,37 @@ export const recordQueries = {
           activeFilter(view),
           view.sort,
           "grants",
+          typedOffset(view.page, part),
         ],
         enabled: typed.kind !== "refused",
         queryFn: async ({
           signal,
         }: {
           signal?: AbortSignal;
-        }): Promise<RecordsPage> => {
-          if (typed.kind === "refused") throw new Error(typed.message);
-          if (typed.kind === "none")
-            return {
-              rows: [],
-              more: false,
-              matched: { count: 0, capped: false },
-            };
-          return {
-            ...(await runPlan(
-              ws,
-              o,
-              scope.kind === "load" ? scope.id : "",
-              typed.plan,
-              signal,
-            )),
+        }): Promise<TypedRecords> => {
+          const none: TypedRecords = {
+            rows: [],
             more: false,
+            offset: 0,
+            total: 0,
+            matched: { count: 0, capped: false },
           };
+          if (typed.kind === "refused") throw new Error(typed.message);
+          if (typed.kind === "none") return none;
+          const read = await runPlan(ws, o, loadId, typed.plan, signal);
+          if (read.refusedBy !== "sort") return read;
+          const unsorted = typedRecordsRead(
+            t,
+            { ...view, sort: null },
+            naming,
+            part,
+          );
+          return unsorted.kind === "read"
+            ? {
+                ...(await runPlan(ws, o, loadId, unsorted.plan, signal)),
+                notice: read.refused,
+              }
+            : none;
         },
         ...readOptions,
       };

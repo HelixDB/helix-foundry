@@ -49,6 +49,7 @@ import {
   sweepViolations,
 } from "../graph/rules";
 import { scopeFor } from "../graph/scope";
+import { viewOf, type View } from "../graph/view";
 import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
 import { aiModel } from "./ai";
@@ -160,6 +161,10 @@ type Knobs = {
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // ./ontologies.ts: the caller can't read the ontology's database.
   ontologyDatabaseHidden?: boolean;
+  // How many customers only Stripe's invoices table states: a load written
+  // with it set bills them, and its version's invoices mapping creates them
+  // (`missing = "create"`), so Customer has two sources.
+  invoiceOnlyCustomers?: number;
 };
 const knobs = config as typeof config & Knobs;
 /**
@@ -300,6 +305,7 @@ onReset(() => {
   delete knobs.documentAdjudicated;
   delete knobs.deleteOutcome;
   delete knobs.readErrors;
+  delete knobs.invoiceOnlyCustomers;
 });
 
 const live = (j: StoredJob) => j.status === "queued" || j.status === "running";
@@ -353,6 +359,12 @@ export function servableLoad(ontologyId: string) {
     ? { loadId: l.id, versionId: l.versionId, enrichment: !!l.enrichment }
     : undefined;
 }
+
+/** The properties a load's decisions settled, by type. */
+export const loadPropDecisions = (loadId: string) =>
+  (loadById(loadId)?.decisions || []).flatMap((d) =>
+    d.kind === "prop" ? [{ type: d.type, prop: d.prop }] : [],
+  );
 
 /** The ontology's live job, of any kind. */
 export const liveJob = (ontologyId: string) => {
@@ -442,9 +454,26 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
   };
 }
 
+/**
+ * The customers only the invoices table states, as the `invoiceOnlyCustomers`
+ * knob asks, each with an invoice billing it. Their ids sort before the
+ * customers table's, so they come first in a read of Customer.
+ */
+const invoiceOnlyRows = (n: number) =>
+  Array.from({ length: n }, (_, i) => {
+    const no = String(i + 1).padStart(4, "0");
+    return { customer: `cus_0${no}`, invoice: `in_0${no}` };
+  });
+
 function ingest(j: StoredJob) {
   const def = (ontologyVersion(j.ontologyId, j.versionId)?.definition ||
     {}) as Definition;
+  const extra = invoiceOnlyRows(knobs.invoiceOnlyCustomers || 0);
+  if (extra.length)
+    def.mappings_toml = String(def.mappings_toml || "").replace(
+      /(\[mappings\.invoices\.bind\.customer\][^[]*missing = )"report"/,
+      '$1"create"',
+    );
   const mappings = String(def.mappings_toml || "");
   const { names, identifiers } = ontologyOfVersion(def);
   const stripe = workspaceConnectors(j.workspaceId).find(
@@ -489,17 +518,28 @@ function ingest(j: StoredJob) {
       })),
     );
   if (bills)
-    chunk(
-      bills,
-      "invoices",
-      invoices.map(([key, customer, amount, status]) => ({
+    chunk(bills, "invoices", [
+      ...extra.map(({ customer }) => ({
+        type: "Customer",
+        key: customer,
+        name: customer,
+        props: { customer_id: customer },
+      })),
+      ...invoices.map(([key, customer, amount, status]) => ({
         type: "Invoice",
         key,
         name: key,
         props: { invoice_id: key, amount_due: amount, status },
         links: [{ link: "billed_to", toType: "Customer", toKey: customer }],
       })),
-    );
+      ...extra.map(({ customer, invoice }) => ({
+        type: "Invoice",
+        key: invoice,
+        name: invoice,
+        props: { invoice_id: invoice, amount_due: 1000, status: "open" },
+        links: [{ link: "billed_to", toType: "Customer", toKey: customer }],
+      })),
+    ]);
   // public.people, through the mapping that reads it: each binding's
   // entities, the ends of its links first.
   const m = peopleMapping(mappings),
@@ -1154,12 +1194,13 @@ function chain(ontologyId: string, at: number) {
 /** The model of a load's version's rules over what the load holds. */
 function rulesOf(
   l: Pick<StoredLoad, "ontologyId" | "versionId" | "tenantId" | "id">,
+  view?: View,
 ) {
   const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
     {}) as Definition;
   return evaluate(
     tenantGraph(l.tenantId).view(l.id),
-    compile(String(def.ontology_toml || "")),
+    compile(view ? view.ontologyToml : String(def.ontology_toml || "")),
   );
 }
 
@@ -1711,12 +1752,23 @@ export const loadRoutes: MockRoute[] = [
       if (!l) return fail("NOT_FOUND", "load not found");
       if (l.status === "deleting" || l.status === "delete_failed")
         return fail("FAILED_PRECONDITION", "the load is being deleted");
-      const model = rulesOf(l);
+      // Of a load it holds only some of, a grantee reads what its sources
+      // fill (../graph/view.ts).
+      const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
+        {}) as Definition;
+      const view = req.grantee?.load?.partial
+        ? viewOf(
+            req.grantee.visibility(s.o.id),
+            String(def.ontology_toml || ""),
+            String(def.mappings_toml || ""),
+          )
+        : undefined;
+      const model = rulesOf(l, view);
       return ok({
         resultJson: JSON.stringify({
           as_of: now().slice(0, 10),
           results: reads.map((r) =>
-            answer(model, r, { errors: knobs.readErrors }),
+            answer(model, r, { errors: knobs.readErrors, view }),
           ),
           stats: { instances: model.facts.size, wall_ms: 1 },
         }),

@@ -50,6 +50,7 @@ export type Read =
     }
   | { evidence: { fact: FactRef; limit?: number } }
   | { evidence: { entity: EntityRef; prop?: string | null; limit?: number } }
+  | { view: Record<string, never> }
   | { query: OntologyQuery };
 
 // ---------------------------------------------------------------- Preds
@@ -123,19 +124,20 @@ export const predString = (p: Pred) => `${p.kind}:${p.name}`;
  * Why a read has no answer (Failure), by its code: `budget` (too deep to
  * compute live) and `hub` (an adjacency list past `per_list`) with the
  * limit, `too_broad` (a query past `scan_entities`) with the limit and the
- * count, `unknown_entity`, and `invalid` with a JSON pointer into a query.
+ * count, `unknown_entity`, `not_visible` (it would test, order, group or count
+ * what the reader's sources hold only some of) and `invalid`, each of those
+ * two with a JSON pointer into a query.
  */
 export type ReadFailure =
   | { code: "budget" | "hub"; message: string; limit: number }
   | { code: "too_broad"; message: string; limit: number; count: number }
   | { code: "unknown_entity"; message: string }
-  | { code: "invalid"; message: string; pointer?: string };
+  | { code: "not_visible" | "invalid"; message: string; pointer?: string };
 export type ReadErrorCode = ReadFailure["code"];
 /** Why one pred (or the live violations) of an entity read has no answer. */
-export type PartFailure = Extract<
-  ReadFailure,
-  { code: "budget" | "hub" | "invalid" }
->;
+export type PartFailure =
+  | Extract<ReadFailure, { code: "budget" | "hub" }>
+  | { code: "invalid"; message: string; pointer?: string };
 
 /** How a fact rules give is held: only derived, or stated and derived as well. */
 export type Basis = "derived" | "both";
@@ -275,8 +277,21 @@ export type QueryResult =
       kind: "rows";
       rows: { cells: unknown[]; edges: QueryEdge[] }[];
       total: number;
+      // For a reader who sees only some of the rows: whether a next page
+      // holds more, which `total` (those it sees here) can't say.
+      more?: boolean;
     }
   | { kind: "count"; count: number };
+
+/**
+ * A view read's answer: the version's two files as the reader sees them, and
+ * what it sees only some of (`Type`, `Type.prop` and `link`).
+ */
+export type ViewResult = {
+  ontologyToml: string;
+  mappingsToml: string;
+  partial: string[];
+};
 
 /** One read's outcome, raw: its `ok` is parsed by the read's own parser. */
 export type Outcome<T> =
@@ -353,9 +368,10 @@ export function parseFailure(v: unknown): ReadFailure {
         : { code: "too_broad", message, limit, count: n };
     case "unknown_entity":
       return { code: "unknown_entity", message };
+    case "not_visible":
     case "invalid": {
       const pointer = str(v.pointer);
-      return { code: "invalid", message, ...(pointer ? { pointer } : {}) };
+      return { code: v.code, message, ...(pointer ? { pointer } : {}) };
     }
     default:
       return MALFORMED;
@@ -452,7 +468,7 @@ export function parseEntityResult(ok: unknown): EntityResult | undefined {
         (failure.code === "budget" ||
           failure.code === "hub" ||
           failure.code === "invalid")
-        ? [{ part, failure }]
+        ? [{ part, failure: failure as PartFailure }]
         : [];
     }),
   };
@@ -671,5 +687,21 @@ export function parseQueryResult(ok: unknown): QueryResult | undefined {
         : [],
     ),
     total,
+    ...(typeof r.more === "boolean" ? { more: r.more } : {}),
   };
+}
+
+/**
+ * A view read's answer, or undefined when it isn't one.
+ *
+ * @example
+ * parseViewResult({ kind: "view", ontology_toml: "o", mappings_toml: "m", partial: ["Customer"] }); // { ontologyToml: "o", mappingsToml: "m", partial: ["Customer"] }
+ */
+export function parseViewResult(ok: unknown): ViewResult | undefined {
+  if (!isKind(ok, "view")) return undefined;
+  const ontologyToml = str(ok.ontology_toml),
+    mappingsToml = str(ok.mappings_toml);
+  return ontologyToml === undefined || mappingsToml === undefined
+    ? undefined
+    : { ontologyToml, mappingsToml, partial: strings(ok.partial) };
 }

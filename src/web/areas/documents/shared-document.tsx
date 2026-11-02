@@ -13,6 +13,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
+import { PartNote } from "../explore/part-note";
 import { ontologyName, useOntology } from "../ontology/scope";
 import { DocumentView, PdfReadCallout } from "./document-view";
 import { documentQueries } from "./documents-api";
@@ -84,6 +85,7 @@ export function SharedDocumentPage({ documentId }: { documentId: string }) {
         }
       />
       <div className="on-stack">
+        <PartNote />
         <PdfReadCallout document={d} />
         <Panel
           title="Text"

@@ -1186,6 +1186,9 @@ export type FoundryOntology = {
   // Whether a changed table it reads loads its current version again by
   // itself (a load of origin refresh), at most once per the plan's interval.
   autoRefresh?: boolean;
+  // A caller who reads through source grants holds only some of what its
+  // current load holds, and reads that part.
+  partialAccess?: boolean;
   // With autoRefresh: when the refresh it owes may start, since a table its
   // current load reads changed or a connector's document it read was
   // replaced or removed; unset when it owes none.
@@ -1992,6 +1995,8 @@ export type OntologyQuery = {
           columns: { at: number; prop?: string | null }[];
           order_by?: { at: number; prop: string; desc?: boolean } | null;
           limit?: number;
+          // Rows, in order, to pass over first; at most 10,000.
+          offset?: number;
         };
       }
     // The last position when `distinct_at` is null or left out.
@@ -2800,8 +2805,9 @@ export type AgentProviderKind =
 // WFE's agents' keys). Owners and admins grant a principal (a member, a team
 // or an agent's key) sources: a connector (its tables now and later, and the
 // document sets it owns), one table, a document set, or People enrichment. A
-// grantee reads an ontology's current load only while every source that load
-// holds is granted to it, and changes nothing: a restricted member (on every
+// grantee reads the part of an ontology's current load its sources hold (all
+// of it while every source that load holds is granted to it), and changes
+// nothing: a restricted member (on every
 // Foundry call while their role is member), a member without database query
 // access on Ask's and the graph's reads, or an agent's key with grants.
 // Grants only add: a workspace that grants nothing behaves as before.
@@ -2880,6 +2886,8 @@ export type FoundryOntologyAccess = {
   loadId?: string;
   inputs?: FoundryLoadAccessInputs;
   readers?: FoundryPrincipal[];
+  // Those whose own grants hold only some of it, who read that part.
+  partialReaders?: FoundryPrincipal[];
 };
 
 /** v1FoundryTeam: members hold the team's grants. Names are unique, 1 to 120 characters. */
@@ -2930,6 +2938,8 @@ export type PreviewFoundryAccessChangeRequest = { change: FoundryAccessChange };
 export type FoundryAccessLoss = {
   principal?: FoundryPrincipal;
   ontologyId?: string;
+  // It would still read the part its grants hold.
+  keepsPart?: boolean;
 };
 /** v1PreviewFoundryAccessChangeResponse */
 export type PreviewFoundryAccessChangeResponse = {
@@ -2939,12 +2949,14 @@ export type PreviewFoundryAccessChangeResponse = {
 /**
  * v1GetMyFoundryAccessResponse: GET .../foundry/access/me, any member.
  * `grantee`: this caller reads only through grants (a restricted member);
- * `ontologyIds`: the live ontologies whose current loads its grants cover.
+ * `ontologyIds`: the live ontologies whose current loads its grants hold any
+ * of, `partialOntologyIds` those of them it holds only some of.
  */
 export type GetMyFoundryAccessResponse = {
   grantee?: boolean;
   hasGrants?: boolean;
   ontologyIds?: string[];
+  partialOntologyIds?: string[];
 };
 
 /**

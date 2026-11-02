@@ -13,8 +13,8 @@ import { canManage } from "./plan";
 // Before a change that can take away what someone reads through source
 // grants (loading or making current a version, deleting a connection,
 // moving a document), owners and admins are told who stops reading which
-// ontology, and choose to go on. Hosted, and only once the workspace grants
-// anything: a workspace without grants loses nothing.
+// ontology, or keeps only part of it, and choose to go on. Hosted, and only
+// once the workspace grants anything: a workspace without grants loses nothing.
 
 /**
  * `check(change)` resolves true to go on: nothing would be lost, or there
@@ -92,7 +92,7 @@ export function useAccessCheck(): {
   const dialog = asking && (
     <ConfirmDialog
       title="Some people will stop reading"
-      description="Their sources won’t cover everything these ontologies read after this, so these agents, people and teams lose them:"
+      description="Their sources won’t cover everything these ontologies read after this, so these agents, people and teams lose them, or keep only the part their sources hold:"
       confirmLabel="Continue"
       onConfirm={() => asking.answer(true)}
       onCancel={() => asking.answer(false)}

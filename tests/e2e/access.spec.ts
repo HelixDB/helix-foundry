@@ -7,12 +7,16 @@ import { expect, explorer, mock, signIn, test } from "./support/mock";
 // then sees only Analyst, the ontologies their sources cover and their
 // Records, entities and documents, read through typed reads, and calls
 // nothing the WFE refuses and never the database; a member who can't query
-// databases reads the same way, and only what their sources cover; taking
-// a source away takes the ontology away; and a change that would cut
+// databases reads the same way, and only what their sources cover; someone
+// whose sources hold part of an ontology reads that part, told so; taking
+// every source away takes the ontology away; and a change that would cut
 // someone off asks first. Eve is a member of Acme restricted to the General
 // set; Alan, a member who queries databases, can't be restricted.
 
 const O = "/ontology/ont_acme_contracts";
+/** A customer's id in an entity page's address. */
+const customer = (key: string) =>
+  Buffer.from(`Customer\0k:${key}`).toString("base64url");
 const CONTRACT = readFileSync(
   new URL("../../mock/fixtures/contract.md", import.meta.url),
 );
@@ -172,8 +176,9 @@ test("a restricted member sees only what their sources cover", async ({
     "Sees everything",
   );
   await eve.check();
+  // Her General is part of what the load holds.
   await expect(page.getByRole("listitem", { name: "Eve Adler" })).toContainText(
-    "Reads nothing yet",
+    "Reads part of Customer contracts",
   );
   await shareWithEve(page);
   await page.goto("/settings/access?tab=people");
@@ -394,7 +399,47 @@ test("a member who can't query reads only what their sources cover", async ({
   );
 });
 
-test("taking a source away takes the ontology away", async ({
+test("a member who can't query names only what their sources fill", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200, invoiceOnlyCustomers: 90 });
+  await signIn(page);
+  await loadContract(page);
+  await mock.configure({ memberQueryRead: false });
+  const sources = await openSources(page, "people", "Alan Turing");
+  await sources
+    .getByRole("checkbox", { name: "customers", exact: true })
+    .check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
+    "Part of it",
+  );
+  await page.close();
+
+  const before = (await mock.stats()).requests.length;
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const as = await context.newPage();
+  await signIn(as, "alan@example.com");
+  await as.goto("/explore/ont_acme_contracts/records");
+  // His version is whole; what he reads of it is the load's view.
+  await expect(
+    as.getByText("You can read part of this ontology"),
+  ).toBeVisible();
+  await expect(
+    as.getByRole("list", { name: "Types" }).getByRole("button"),
+  ).toHaveText(["Customer—"]);
+  await expect(as.getByText("10 on this page")).toBeVisible();
+  const requests = (await mock.stats()).requests.slice(before);
+  expect(requests.filter((r) => r.includes("databases:query-read"))).toEqual(
+    [],
+  );
+  expect(requests.filter((r) => / 40[34]$/.test(r))).toEqual([]);
+});
+
+test("taking every source away takes the ontology away", async ({
   page,
   browser,
 }) => {
@@ -404,6 +449,7 @@ test("taking a source away takes the ontology away", async ({
   await shareWithEve(page);
   const sources = await openSources(page, "people", "Eve Adler");
   await sources.getByRole("checkbox", { name: /^Stripe/ }).uncheck();
+  await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
   await sources.getByRole("button", { name: "Save" }).click();
   await expect(
     sources.getByRole("list", { name: "Can’t read yet" }),
@@ -422,6 +468,187 @@ test("taking a source away takes the ontology away", async ({
   await expect(
     as.getByRole("heading", { name: "This ontology doesn’t exist" }),
   ).toBeVisible();
+});
+
+test("someone whose sources hold part of an ontology reads that part", async ({
+  page,
+  browser,
+}) => {
+  // The invoices table also creates 90 customers, which come first in a read
+  // of Customer; Eve is given only the customers table.
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    invoiceOnlyCustomers: 90,
+  });
+  await signIn(page);
+  await loadContract(page);
+  const sources = await openSources(page, "people", "Eve Adler");
+  await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
+  await sources
+    .getByRole("checkbox", { name: "customers", exact: true })
+    .check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  const reads = sources.getByRole("list", { name: "Can read" });
+  await expect(reads).toContainText("Customer contracts");
+  await expect(reads).toContainText("Part of it: not Stripe › invoices");
+  await sources.getByRole("button", { name: "Close" }).first().click();
+  await expect(page.getByRole("listitem", { name: "Eve Adler" })).toContainText(
+    "Reads part of Customer contracts",
+  );
+  // Who an ontology is shared with: she reads part of it.
+  await page.getByRole("tab", { name: "Ontologies" }).click();
+  await expect(
+    page.getByRole("listitem", { name: "Customer contracts" }),
+  ).toContainText("Part of it: Eve Adler");
+  await page.close();
+
+  const before = (await mock.stats()).requests.length;
+  const as = await asEve(browser);
+  const note = as.getByText("You can read part of this ontology");
+
+  // Ask says so, and answers from what she holds.
+  await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
+  await expect(note).toBeVisible();
+  const form = as.getByRole("form", { name: "Ask a question" });
+  await form.getByRole("textbox", { name: /^Question/ }).fill("Who are they?");
+  await form.getByRole("button", { name: "Ask", exact: true }).click();
+  const answer = as.getByRole("region", { name: "Answer" });
+  await expect(answer).toContainText(
+    "Of what the sources shared with you hold",
+    { timeout: 20_000 },
+  );
+
+  // Records: only Customer, uncounted, each page the rows of a read she holds.
+  await as.goto("/explore/ont_acme_contracts/records");
+  await expect(note).toBeVisible();
+  const types = as.getByRole("list", { name: "Types" });
+  await expect(types.getByRole("button")).toHaveText(["Customer—"]);
+  const customers = as.getByRole("grid", { name: "Customer records" });
+  await expect(as.getByText("10 on this page")).toBeVisible();
+  await expect(customers).not.toContainText("cus_0");
+  await as.getByRole("button", { name: "Next" }).click();
+  await expect(as.getByText("54 on this page")).toBeVisible();
+  await expect(as.getByRole("button", { name: "Next" })).toBeDisabled();
+  await as.getByRole("button", { name: "Previous" }).click();
+  await expect(as.getByText("10 on this page")).toBeVisible();
+
+  // A sort of what is partly held: said, the rows as they were.
+  await as.goto(
+    "/explore/ont_acme_contracts/records?type=Customer&sort=customer_id",
+  );
+  await expect(
+    as.getByText(
+      "You can’t sort by Customer id: only part of it is in the sources shared with you.",
+    ),
+  ).toBeVisible();
+  await expect(as.getByText("10 on this page")).toBeVisible();
+  // A filter of it: said, in the table's place.
+  await as.goto(
+    "/explore/ont_acme_contracts/records?type=Customer&field=customer_id&value=cus_1",
+  );
+  await expect(
+    as.getByText(
+      "You can’t filter by Customer id: only part of it is in the sources shared with you.",
+    ),
+  ).toBeVisible();
+  await expect(customers).toHaveCount(0);
+  // What it holds whole filters as anyone's.
+  await as.goto(
+    "/explore/ont_acme_contracts/records?type=Customer&field=email&value=ap%40globex.example",
+  );
+  await expect(customers.getByRole("row").nth(1)).toContainText(
+    "Globex Corporation",
+  );
+  await expect(as.getByText("You can’t filter by")).toHaveCount(0);
+
+  // An entity's page: what she holds, none of what she doesn't.
+  await as.goto(
+    `/explore/ont_acme_contracts/entities/${customer("cus_GLOBEX01")}`,
+  );
+  await expect(
+    as.getByRole("heading", { level: 1, name: "Globex Corporation" }),
+  ).toBeVisible();
+  await expect(note).toBeVisible();
+  await expect(as.getByRole("main")).toContainText("ap@globex.example");
+  await as.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(as.getByRole("region", { name: /^billed_to/ })).toHaveCount(0);
+  // One only the invoices table states isn't in the load, for her.
+  await as.goto(
+    `/explore/ont_acme_contracts/entities/${customer("cus_00001")}`,
+  );
+  await expect(as.getByText("This entity isn’t in this load")).toBeVisible();
+
+  // The overview's schema is what her sources fill.
+  await as.goto(O);
+  await expect(note).toBeVisible();
+  await expect(as.getByRole("main")).not.toContainText("Invoice");
+  const panel = as.getByRole("complementary", { name: "Ontologies" });
+  await expect(panel).toContainText("Part shared with you");
+
+  // She never read the database, or asked what the WFE refuses her.
+  const requests = (await mock.stats()).requests.slice(before);
+  expect(requests.filter((r) => r.includes("databases:query-read"))).toEqual(
+    [],
+  );
+  expect(requests.filter((r) => / 403$/.test(r))).toEqual([]);
+});
+
+test("someone whose sources hold all of a type pages past the first read", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200, invoiceOnlyCustomers: 150 });
+  await signIn(page);
+  await loadContract(page);
+  await shareWithEve(page);
+  await page.close();
+
+  const as = await asEve(browser);
+  await as.goto("/explore/ont_acme_contracts/records");
+  await expect(as.getByText("You can read part of this ontology")).toHaveCount(
+    0,
+  );
+  await as
+    .getByRole("list", { name: "Types" })
+    .getByRole("button", { name: /^Customer/ })
+    .click();
+  await expect(as.getByText("1–50 of 214")).toBeVisible();
+  for (const span of ["51–100", "101–150", "151–200", "201–214"]) {
+    await as.getByRole("button", { name: "Next" }).click();
+    await expect(as.getByText(`${span} of 214`)).toBeVisible();
+  }
+  await expect(as.getByRole("button", { name: "Next" })).toBeDisabled();
+  await expect(
+    as.getByRole("grid", { name: "Customer records" }).getByRole("row"),
+  ).toHaveCount(15);
+});
+
+test("nothing changes for anyone with no grants", async ({ page, browser }) => {
+  await mock.configure({ loadStepMs: 200, invoiceOnlyCustomers: 90 });
+  await signIn(page);
+  await loadContract(page);
+  await page.close();
+
+  const before = (await mock.stats()).requests.length;
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const as = await context.newPage();
+  await signIn(as, "alan@example.com");
+  await as.goto("/explore/ont_acme_contracts/records");
+  await as
+    .getByRole("list", { name: "Types" })
+    .getByRole("button", { name: /^Customer/ })
+    .click();
+  // He reads the database, whole: its totals, and no word of sources.
+  await expect(as.getByText("1–50 of 154")).toBeVisible();
+  await expect(as.getByText("You can read part of this ontology")).toHaveCount(
+    0,
+  );
+  const requests = (await mock.stats()).requests.slice(before);
+  expect(requests.some((r) => r.includes("databases:query-read"))).toBe(true);
+  expect(requests.some((r) => /:read /.test(r))).toBe(false);
 });
 
 test("asks before a change that would cut a grantee off", async ({ page }) => {
@@ -466,4 +693,28 @@ test("asks before a change that would cut a grantee off", async ({ page }) => {
   ).toHaveText("Eve Adler: Customer contracts");
   await warning.getByRole("button", { name: "Cancel" }).click();
   await expect(page).toHaveURL(new RegExp(`${O}$`));
+});
+
+test("says who would keep part of what a change takes", async ({ page }) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await loadContract(page);
+  await shareWithEve(page);
+  // Without Stripe, Eve's General is still part of Customer contracts.
+  await page.goto("/data/connections/conn_acme_stripe");
+  await page.getByRole("button", { name: "Connection actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete connection" }).click();
+  await page
+    .getByRole("dialog", { name: /^Delete/ })
+    .getByRole("button", { name: "Delete connection" })
+    .click();
+  const warning = page.getByRole("dialog", {
+    name: "Some people will stop reading",
+  });
+  await expect(
+    warning.getByRole("list", { name: "Who stops reading" }),
+  ).toHaveText(
+    "Eve Adler: Customer contracts (keeps the part their sources hold)",
+  );
+  await warning.getByRole("button", { name: "Cancel" }).click();
 });

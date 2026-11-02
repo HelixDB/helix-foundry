@@ -333,6 +333,7 @@ const settingsPage = (
             onboarding: false,
             grantee: false,
             granted: [],
+            partial: [],
             notify: () => {},
           },
         },
