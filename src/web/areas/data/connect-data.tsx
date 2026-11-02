@@ -1,4 +1,11 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Braces, Check, X } from "lucide-react";
@@ -12,7 +19,7 @@ import { ConnectionForm } from "./connection-form";
 import { connectorKindsQuery, connectorsQuery } from "./data-api";
 import { EventSourceForm } from "./event-source-form";
 import { canManage, isEventSource, isKnownKind } from "./model";
-import { AgentSignIn } from "./sign-in";
+import { AgentSignIn, SignInReturn } from "./sign-in";
 
 // "Add data": helix-foundry's connector picker and per-kind form in its
 // modal, offering the kinds the WFE's catalog holds. Kinds the workspace's
@@ -27,8 +34,9 @@ import { AgentSignIn } from "./sign-in";
 //
 // GitHub and Linear may connect by signing in at the provider (the kind's
 // `signIn`), a round trip that leaves the page: the callback comes back to
-// `returnPath` with `connected=<id>` (a caller that stays where it is gets
-// its own page by default), else to the new connection's page. An agent's
+// `returnPath` with `connected=<id>` (else the page's SignInReturn; a
+// caller that stays where it is gets its own page by default), else to the
+// new connection's page. An agent's
 // link names its sign-in (`signIn`, the link's sign_in): that kind's form
 // opens bound to it (./sign-in.tsx AgentSignIn).
 
@@ -212,9 +220,11 @@ export function ConnectData({
     theme = useCurrentTheme();
   // Bound to the link's sign-in until left for the kind's own form.
   const [bound, setBound] = useState(signIn || null);
-  const back =
-    returnPath ??
-    (onConnected ? location.pathname + location.search : undefined);
+  const page = useContext(SignInReturn),
+    back =
+      returnPath ??
+      page?.path ??
+      (onConnected ? location.pathname + location.search : undefined);
   const kinds = useQuery(connectorKindsQuery(id)),
     connectors = useQuery(connectorsQuery(id));
   const [kind, setKind] = useState<ConnectorKindName | null>(

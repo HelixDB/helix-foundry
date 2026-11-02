@@ -426,6 +426,10 @@ test("lets another admin narrow a connector that reads every repository", async 
   await mock.configure({ alanRole: "WORKSPACE_ROLE_ADMIN" });
   const alan = await as(browser, "alan@example.com");
   await alan.goto(`/data/connections/${id}`);
+  // Settings change once its first sync has ended.
+  await expect(
+    alan.locator(".hf-page-header").getByText("Synced", { exact: true }),
+  ).toBeVisible(SYNCED);
   await alan.getByRole("button", { name: "Connection actions" }).click();
   await alan.getByRole("menuitem", { name: "Edit connection" }).click();
   const edit = dialog(alan);
@@ -437,6 +441,77 @@ test("lets another admin narrow a connector that reads every repository", async 
   await edit.getByRole("button", { name: "Save changes" }).click();
   expect((await save).status()).toBe(200);
   await expect(alan.locator(".hf-kv")).toContainText("acme/api");
+});
+
+test("comes back to Generate with a long goal and its picks", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/ontology/ont_acme_contracts/generate");
+  // Too long for a link once encoded: it travels with the sign-in instead.
+  const goal = "顧客ごとの契約と請求と更新を一つにまとめる".repeat(12);
+  await page.getByLabel("Goal").fill(goal);
+  const connectors = page.getByRole("list", { name: "Connectors" });
+  await connectors.getByRole("checkbox", { name: /Shop database/ }).uncheck();
+  await page.getByRole("button", { name: "Add data" }).first().click();
+  await dialog(page)
+    .getByRole("button", { name: "GitHub", exact: true })
+    .click();
+  await dialog(page)
+    .getByRole("button", { name: "Connect with GitHub" })
+    .click();
+  await consent(page, "Authorize");
+  await expect(page).toHaveURL(
+    /\/ontology\/ont_acme_contracts\/generate\?connected=conn_\w+$/,
+  );
+  await expect(page.getByLabel("Goal")).toHaveValue(goal);
+  await expect(
+    connectors.getByRole("checkbox", { name: /Shop database/ }),
+  ).not.toBeChecked();
+  await expect(
+    connectors.getByRole("checkbox", { name: /Stripe/ }),
+  ).toBeChecked();
+  // The new connection is chosen once its first sync ends.
+  await expect(
+    connectors.getByRole("checkbox", { name: /GitHub/ }),
+  ).toBeChecked(SYNCED);
+});
+
+test("comes back to an ontology's setup with what it chose", async ({
+  page,
+}) => {
+  await signIn(page);
+  const { ontology } = await post(
+    page,
+    "/v1/workspaces/ws_acme/foundry/ontologies",
+    { name: "Billing", tenantId: "ten_acme_sandbox", clientToken: "billing-1" },
+  );
+  await page.goto(`/ontology/${ontology.id}?step=sources`);
+  const connectors = page.getByRole("list", { name: "Connectors" });
+  await connectors.getByRole("checkbox", { name: /Shop database/ }).uncheck();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("Goal").fill("Billing health");
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Add data" }).first().click();
+  await dialog(page)
+    .getByRole("button", { name: "GitHub", exact: true })
+    .click();
+  await dialog(page)
+    .getByRole("button", { name: "Connect with GitHub" })
+    .click();
+  await consent(page, "Authorize");
+  // Its sources step, as it was, with the new connection among them.
+  await expect(page).toHaveURL(
+    new RegExp(`/ontology/${ontology.id}\\?step=sources&connected=conn_\\w+$`),
+  );
+  await expect(
+    connectors.getByRole("checkbox", { name: /Shop database/ }),
+  ).not.toBeChecked();
+  await expect(
+    connectors.getByRole("checkbox", { name: /GitHub/ }),
+  ).toBeChecked(SYNCED);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Goal")).toHaveValue("Billing health");
 });
 
 test("offers no sign-in where the stamp doesn't", async ({ page }) => {

@@ -27,8 +27,10 @@ import {
   signInFailure,
   startAgainPath,
   tabStorage,
+  withConnected,
   writeConnect,
   type ConnectEntry,
+  type ReturnPicks,
 } from "./sign-ins";
 
 // /connect/callback: where the provider (through WorkOS Pipes) returns after
@@ -169,9 +171,13 @@ export function ConnectCallbackPage() {
           ? `Signed in again. ${s.name || provider} syncs now`
           : `Connected ${s.name || provider}. Its first sync is queued`,
       );
-      const arrival: SignedInArrival = {
+      // The page's own picks go back to it, the new connector among them.
+      const arrival: SignedInArrival & { picks?: ReturnPicks } = {
         ...(s.discoveryProblem ? { discoveryProblem: s.discoveryProblem } : {}),
         ...(s.identityChanged ? { identityChanged: true } : {}),
+        ...(entry.picks
+          ? { picks: withConnected(entry.picks, s.connectorId) }
+          : {}),
       };
       navigate(connectedPath(entry, s.connectorId, paths.connection), {
         replace: true,
@@ -238,6 +244,7 @@ export function ConnectCallbackPage() {
                         workspaceId: entry!.workspaceId,
                         signInId: entry!.signInId,
                         returnPath: entry!.returnPath,
+                        picks: entry!.picks,
                         connectorId: entry!.connectorId,
                       })
                     }

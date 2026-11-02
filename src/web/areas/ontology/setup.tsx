@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
@@ -27,6 +27,8 @@ import { sentence } from "../../api";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { connectorsQuery } from "../data/data-api";
+import { SignInReturn } from "../data/sign-in";
+import { readPicks } from "../data/sign-ins";
 import {
   documentQueries,
   documentSetQueries,
@@ -83,7 +85,10 @@ import { useSampleOntology } from "./use-sample-ontology";
 // was chosen before: this tab's wizard choices when it created this
 // ontology but its generation didn't start, else the newest generation's
 // (its page's Try again: its API sources apart from its connectors, by
-// kind, once the connectors are read), and then open on Generate. A live
+// kind, once the connectors are read), and then open on Generate.
+// Connecting by signing in leaves the page: its callback comes back to the
+// sources step with what was chosen (SignInReturn's picks, as router
+// state), the connector it made among them. A live
 // generation shows in its step (the generations query polls while it
 // runs), a failed one says why with Try again. Members see the same steps
 // without what they can't do. The sample company's connector and set are left
@@ -156,7 +161,11 @@ export function SetupFlow({
     { id: o, ontology } = useOntology(),
     qc = useQueryClient(),
     [params, setParams] = useSearchParams(),
-    keepSample = useSampleOntology()?.id === o;
+    keepSample = useSampleOntology()?.id === o,
+    // What was chosen before a sign-in's round trip, when it is back.
+    back = readPicks(
+      (useLocation().state as { picks?: unknown } | null)?.picks,
+    );
   // Minimised in this browser, per ontology.
   const [minimisedText, setMinimisedText] = useStoredState(
       `foundry.ontology.setup.minimised.v1:${id}:${o}`,
@@ -192,17 +201,29 @@ export function SetupFlow({
   });
   const before = saved || asked;
   const [chosen, setChosen] = useState<Set<string> | null>(() =>
-      before?.connectorIds ? new Set(before.connectorIds) : null,
+      back
+        ? back.connectorIds && new Set(back.connectorIds)
+        : before?.connectorIds
+          ? new Set(before.connectorIds)
+          : null,
     ),
-    [goal, setGoal] = useState(before?.goal || "");
+    [goal, setGoal] = useState(back?.goal ?? before?.goal ?? "");
   // The API sources and sets chosen: the wizard's, else, once the
   // connectors and sets are read, the newest generation's, its API sources'
   // own sets among its sources; null until then.
   const [chosenEvents, setChosenEvents] = useState<EventChoices | null>(() =>
-      saved ? new Map(saved.eventSources) : null,
+      back?.eventSources
+        ? new Map(back.eventSources)
+        : saved
+          ? new Map(saved.eventSources)
+          : null,
     ),
     [chosenSets, setChosenSets] = useState<Set<string> | null>(() =>
-      saved ? new Set(saved.setIds) : null,
+      back?.setIds
+        ? new Set(back.setIds)
+        : saved
+          ? new Set(saved.setIds)
+          : null,
     );
   useEffect(() => {
     if (chosenEvents !== null || !connectors.data || !sets.data) return;
@@ -412,203 +433,217 @@ export function SetupFlow({
       STEP_COPY[drafting ? wizard.steps[at]!.id : ONTOLOGY_STEPS[reached]!]
         .title;
   return (
-    <Panel
-      className={cx("on-setup", minimised && "is-minimised")}
-      padded={!minimised}
-      title={
-        <button
-          type="button"
-          className="on-setup-toggle"
-          aria-expanded={!minimised}
-          aria-controls={minimised ? undefined : stepsId}
-          title={minimised ? "Show the steps" : "Minimise"}
-          onClick={() => setMinimisedText(minimised ? "" : "1")}
-        >
-          <ChevronDown size={16} className="on-setup-chevron" aria-hidden />
-          Set it up
-        </button>
-      }
-      subtitle={`${done} of 7 required steps done${minimised ? ` · Next: ${next}` : ""}`}
-      actions={
-        <AgentSetup
-          ontology={{ ...ontology, setup }}
-          keepSample={keepSample}
-          compact
-        />
-      }
+    <SignInReturn.Provider
+      value={{
+        path: `${paths.ontology(o)}?step=sources`,
+        picks: {
+          goal,
+          connectorIds: chosen && [...chosen],
+          eventSources: chosenEvents && [...chosenEvents],
+          setIds: chosenSets && [...chosenSets],
+        },
+      }}
     >
-      {!minimised && (
-        <ol id={stepsId} className="on-wizard" aria-label="Setup steps">
-          <FlowStep
-            number={1}
-            title={STEP_COPY.name.title}
-            text={STEP_COPY.name.text}
-            state="done"
-            summary={ontologyName(ontology)}
+      <Panel
+        className={cx("on-setup", minimised && "is-minimised")}
+        padded={!minimised}
+        title={
+          <button
+            type="button"
+            className="on-setup-toggle"
+            aria-expanded={!minimised}
+            aria-controls={minimised ? undefined : stepsId}
+            title={minimised ? "Show the steps" : "Minimise"}
+            onClick={() => setMinimisedText(minimised ? "" : "1")}
+          >
+            <ChevronDown size={16} className="on-setup-chevron" aria-hidden />
+            Set it up
+          </button>
+        }
+        subtitle={`${done} of 7 required steps done${minimised ? ` · Next: ${next}` : ""}`}
+        actions={
+          <AgentSetup
+            ontology={{ ...ontology, setup }}
+            keepSample={keepSample}
+            compact
           />
-          <FlowStep
-            number={2}
-            title={STEP_COPY.database.title}
-            text={STEP_COPY.database.text}
-            state="done"
-            summary={database}
-          />
-          {wizard.steps.map((s, i) => {
-            const copy = STEP_COPY[s.id],
-              state = drafting
-                ? i === at
-                  ? "current"
-                  : i < at
-                    ? "done"
-                    : "upcoming"
-                : s.id === "draft" && setup.step === "draft"
-                  ? "running"
-                  : "done";
-            return (
-              <FlowStep
-                key={s.id}
-                number={i + 3}
-                title={copy.title}
-                text={copy.text}
-                optional={s.optional}
-                state={state}
-                summary={drafting ? stepSummary(s.state) : said[s.id]}
-                onEdit={drafting && manage ? () => go(s.id) : undefined}
-              >
-                {state === "running" ? (
-                  <LiveGeneration />
-                ) : (
-                  state === "current" && (
-                    <>
-                      {s.id === "draft" &&
-                        setup.step === "draft" &&
-                        setup.state === "failed" && (
-                          <Callout
-                            icon={TriangleAlert}
-                            tone="danger"
-                            title="The draft failed"
-                            text={
-                              setup.generation.error ? (
-                                // The WFE's copy may say where an owner fixes it.
-                                <SettingsLinked
-                                  text={sentence(setup.generation.error)}
-                                />
-                              ) : (
-                                "Foundry’s agent couldn’t draft it."
-                              )
-                            }
-                            action={
-                              <ButtonLink
-                                size="sm"
-                                to={paths.generation(o, setup.generation.id)}
-                              >
-                                Details
-                              </ButtonLink>
-                            }
-                          />
-                        )}
-                      {body(s.id)}
-                      {manage && (
-                        <div className="on-generate-foot">
-                          {s.state.kind === "blocked" && (
-                            <p className="on-muted" role="status">
-                              {s.state.reason}
-                            </p>
-                          )}
-                          {s.state.kind === "ready" && s.state.note && (
-                            <p className="on-muted" role="status">
-                              {s.state.note}
-                            </p>
-                          )}
-                          {s.id === "draft" && (
-                            <AiRefusal
-                              action="Generating an ontology"
-                              error={error}
-                              ready={aiReady}
-                            >
-                              {!!error && (
-                                <p className="hf-form-error" role="alert">
+        }
+      >
+        {!minimised && (
+          <ol id={stepsId} className="on-wizard" aria-label="Setup steps">
+            <FlowStep
+              number={1}
+              title={STEP_COPY.name.title}
+              text={STEP_COPY.name.text}
+              state="done"
+              summary={ontologyName(ontology)}
+            />
+            <FlowStep
+              number={2}
+              title={STEP_COPY.database.title}
+              text={STEP_COPY.database.text}
+              state="done"
+              summary={database}
+            />
+            {wizard.steps.map((s, i) => {
+              const copy = STEP_COPY[s.id],
+                state = drafting
+                  ? i === at
+                    ? "current"
+                    : i < at
+                      ? "done"
+                      : "upcoming"
+                  : s.id === "draft" && setup.step === "draft"
+                    ? "running"
+                    : "done";
+              return (
+                <FlowStep
+                  key={s.id}
+                  number={i + 3}
+                  title={copy.title}
+                  text={copy.text}
+                  optional={s.optional}
+                  state={state}
+                  summary={drafting ? stepSummary(s.state) : said[s.id]}
+                  onEdit={drafting && manage ? () => go(s.id) : undefined}
+                >
+                  {state === "running" ? (
+                    <LiveGeneration />
+                  ) : (
+                    state === "current" && (
+                      <>
+                        {s.id === "draft" &&
+                          setup.step === "draft" &&
+                          setup.state === "failed" && (
+                            <Callout
+                              icon={TriangleAlert}
+                              tone="danger"
+                              title="The draft failed"
+                              text={
+                                setup.generation.error ? (
+                                  // The WFE's copy may say where an owner fixes it.
                                   <SettingsLinked
-                                    text={sentence((error as Error).message)}
+                                    text={sentence(setup.generation.error)}
                                   />
-                                </p>
-                              )}
-                            </AiRefusal>
+                                ) : (
+                                  "Foundry’s agent couldn’t draft it."
+                                )
+                              }
+                              action={
+                                <ButtonLink
+                                  size="sm"
+                                  to={paths.generation(o, setup.generation.id)}
+                                >
+                                  Details
+                                </ButtonLink>
+                              }
+                            />
                           )}
-                          <div className="hf-form-actions">
-                            {wizard.back && (
-                              <Button onClick={() => go(wizard.back!)}>
-                                Back
-                              </Button>
+                        {body(s.id)}
+                        {manage && (
+                          <div className="on-generate-foot">
+                            {s.state.kind === "blocked" && (
+                              <p className="on-muted" role="status">
+                                {s.state.reason}
+                              </p>
                             )}
-                            {wizard.next ? (
-                              <Button
-                                variant="primary"
-                                iconRight={ArrowRight}
-                                disabled={
-                                  s.state.kind === "blocked" ||
-                                  s.state.kind === "loading"
-                                }
-                                onClick={() => go(wizard.next!)}
-                              >
-                                {s.state.kind === "skipped"
-                                  ? "Skip"
-                                  : "Continue"}
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="primary"
-                                icon={failed ? RotateCcw : Sparkles}
-                                pending={pending}
-                                disabled={!wizard.request || aiReady === false}
-                                onClick={() => void generate()}
-                              >
-                                {failed ? "Try again" : "Generate"}
-                              </Button>
+                            {s.state.kind === "ready" && s.state.note && (
+                              <p className="on-muted" role="status">
+                                {s.state.note}
+                              </p>
                             )}
+                            {s.id === "draft" && (
+                              <AiRefusal
+                                action="Generating an ontology"
+                                error={error}
+                                ready={aiReady}
+                              >
+                                {!!error && (
+                                  <p className="hf-form-error" role="alert">
+                                    <SettingsLinked
+                                      text={sentence((error as Error).message)}
+                                    />
+                                  </p>
+                                )}
+                              </AiRefusal>
+                            )}
+                            <div className="hf-form-actions">
+                              {wizard.back && (
+                                <Button onClick={() => go(wizard.back!)}>
+                                  Back
+                                </Button>
+                              )}
+                              {wizard.next ? (
+                                <Button
+                                  variant="primary"
+                                  iconRight={ArrowRight}
+                                  disabled={
+                                    s.state.kind === "blocked" ||
+                                    s.state.kind === "loading"
+                                  }
+                                  onClick={() => go(wizard.next!)}
+                                >
+                                  {s.state.kind === "skipped"
+                                    ? "Skip"
+                                    : "Continue"}
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="primary"
+                                  icon={failed ? RotateCcw : Sparkles}
+                                  pending={pending}
+                                  disabled={
+                                    !wizard.request || aiReady === false
+                                  }
+                                  onClick={() => void generate()}
+                                >
+                                  {failed ? "Try again" : "Generate"}
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </>
-                  )
-                )}
-              </FlowStep>
-            );
-          })}
-          {ONTOLOGY_STEPS.map((step, i) => {
-            if (step === "draft") return null;
-            const copy = STEP_COPY[step],
-              state =
-                i < reached
-                  ? "done"
-                  : i > reached
-                    ? "upcoming"
-                    : setup.state === "running"
-                      ? "running"
-                      : "current";
-            return (
-              <FlowStep
-                key={step}
-                number={i + DRAFT_STEPS.length + 2}
-                title={copy.title}
-                text={copy.text}
-                state={state}
-                summary={
-                  step === "current"
-                    ? v
-                      ? `Version ${v.version}`
-                      : "…"
-                    : loadedAt
-                      ? `Loaded ${formatRelative(loadedAt)}`
-                      : "Loaded"
-                }
-              >
-                {open}
-              </FlowStep>
-            );
-          })}
-        </ol>
-      )}
-    </Panel>
+                        )}
+                      </>
+                    )
+                  )}
+                </FlowStep>
+              );
+            })}
+            {ONTOLOGY_STEPS.map((step, i) => {
+              if (step === "draft") return null;
+              const copy = STEP_COPY[step],
+                state =
+                  i < reached
+                    ? "done"
+                    : i > reached
+                      ? "upcoming"
+                      : setup.state === "running"
+                        ? "running"
+                        : "current";
+              return (
+                <FlowStep
+                  key={step}
+                  number={i + DRAFT_STEPS.length + 2}
+                  title={copy.title}
+                  text={copy.text}
+                  state={state}
+                  summary={
+                    step === "current"
+                      ? v
+                        ? `Version ${v.version}`
+                        : "…"
+                      : loadedAt
+                        ? `Loaded ${formatRelative(loadedAt)}`
+                        : "Loaded"
+                  }
+                >
+                  {open}
+                </FlowStep>
+              );
+            })}
+          </ol>
+        )}
+      </Panel>
+    </SignInReturn.Provider>
   );
 }

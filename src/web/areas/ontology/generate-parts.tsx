@@ -102,7 +102,8 @@ import { isSampleConnector, isSampleSet } from "./sample";
 // ontology, which can still be drafted again.
 //
 // Neither page sends the user to Data. Add data opens the Data area's
-// picker over the page; the new connection's first sync shows in its row
+// picker over the page (connecting by signing in comes back to the page's
+// SignInReturn); the new connection's first sync shows in its row
 // (the connectors query polls while a sync is live) and it counts as chosen
 // once synced. New API source makes one over the page, with its send panel;
 // its row moves on as pieces arrive (it polls while it waits for them, as
@@ -249,14 +250,10 @@ export function ConnectorPicker({
   chosen,
   setChosen,
   keepSample = false,
-  returnPath,
 }: {
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
   keepSample?: boolean;
-  // Where connecting by signing in comes back to, with `connected`: the
-  // page, its choices kept (the wizard's step, Generate's prefill).
-  returnPath?: string;
 }) {
   const { id, notify } = useWorkspace(),
     qc = useQueryClient();
@@ -506,7 +503,6 @@ export function ConnectorPicker({
       )}
       {connecting && (
         <ConnectData
-          returnPath={returnPath}
           onClose={() => setConnecting(false)}
           // An API source made here shows in EventSourcePicker, unchosen.
           onConnected={(c) =>
@@ -533,10 +529,7 @@ export function SourcesPicker({
   setChosenSets,
   failed,
   keepSample = false,
-  returnPath,
 }: {
-  // As ConnectorPicker's.
-  returnPath?: string;
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
   chosenEvents: EventChoices | null;
@@ -552,7 +545,6 @@ export function SourcesPicker({
         chosen={chosen}
         setChosen={setChosen}
         keepSample={keepSample}
-        returnPath={returnPath}
       />
       <EventSourcePicker chosen={chosenEvents} setChosen={setChosenEvents} />
       <SetPicker

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { KeyRound, PlugZap, TriangleAlert } from "lucide-react";
@@ -25,6 +25,7 @@ import {
   providerName,
   tabStorage,
   writeConnect,
+  type ReturnPicks,
 } from "./sign-ins";
 
 // Connecting GitHub or Linear by signing in at the provider, in the
@@ -47,9 +48,24 @@ export type SignInRequest = {
   connectorId?: string;
   // Makes a retry of the start return the sign-in it started.
   clientToken?: string;
-  // Where the callback returns once connected (ConnectEntry.returnPath).
+  // Where the callback returns once connected (ConnectEntry.returnPath),
+  // and the page's own picks to hand back to it; by default the page's
+  // (SignInReturn).
   returnPath?: string;
+  picks?: ReturnPicks;
 };
+
+/**
+ * Where a sign-in started on a page comes back to once connected, and the
+ * page's own picks, kept in this tab's entry (not the URL, which a long
+ * goal would outgrow) and handed back as router state: for the pages that
+ * choose the connector it made (`connected`), the wizard, Generate and an
+ * ontology's setup. A page provides it around everything that may connect.
+ */
+export const SignInReturn = createContext<{
+  path: string;
+  picks?: ReturnPicks;
+} | null>(null);
 
 /**
  * Sends the browser to the provider to authorize: starts a sign-in unless
@@ -59,7 +75,8 @@ export type SignInRequest = {
  * back/forward cache).
  */
 export function useSignInStart() {
-  const { id } = useWorkspace();
+  const { id } = useWorkspace(),
+    page = useContext(SignInReturn);
   const [pending, setPending] = useState(false),
     [error, setError] = useState<Error | null>(null);
   useEffect(() => {
@@ -94,11 +111,14 @@ export function useSignInStart() {
         throw new Error(
           `Foundry was given an address for ${providerName(r.kind)} it won’t open. Try again.`,
         );
+      const returnPath = r.returnPath ?? page?.path,
+        picks = r.picks ?? page?.picks;
       writeConnect(tabStorage(), {
         workspaceId,
         signInId,
         kind: r.kind,
-        ...(r.returnPath ? { returnPath: r.returnPath } : {}),
+        ...(returnPath ? { returnPath } : {}),
+        ...(picks ? { picks } : {}),
         ...(r.connectorId ? { connectorId: r.connectorId } : {}),
       });
       // Under a fixed path: the button runs on pages whose paths name ids.
