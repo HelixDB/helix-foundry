@@ -9,7 +9,7 @@ open http://localhost:3000   # that name: the site answers no other host
 
 It opens in your first workspace, **My workspace**, made as the install first starts.
 
-**Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data.
+**Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data. Back it up with the data: [Back up and restore](#back-up-and-restore).
 
 **No analytics.** A local build loads no tracker and sends no usage data anywhere; only the hosted site, foundry.helix-db.com, records product analytics.
 
@@ -31,7 +31,7 @@ It opens in your first workspace, **My workspace**, made as the install first st
 | `ollama`         | Ollama, and `ollama-pull`, which downloads its model: with the `ollama` profile only.           |
 | `init-secrets`   | Writes the install's secrets into the `secrets` volume once, then exits, before the rest start. |
 
-Data lives in the Compose volumes `mysql`, `storage`, `helix` and `work`, its secrets in `secrets` (and Ollama's models in `ollama`). `docker compose down` keeps them; `docker compose down -v` deletes everything, the connector key with it.
+Data lives in the Compose volumes `mysql`, `storage`, `helix` and `work`, its secrets in `secrets` (and Ollama's models in `ollama`). `docker compose down` keeps them; `docker compose down -v` deletes everything, the connector key with it. [Back up and restore](#back-up-and-restore) copies them.
 
 ## AI
 
@@ -71,9 +71,9 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 **What a backup is.** The volumes `mysql`, `storage`, `helix`, `work` and `secrets`, all five copied together with the stack stopped, and the images that wrote them. The store, the files and the graph refer to each other: volumes copied at different times, or while Foundry runs, may not match. `acme-db` keeps nothing, and Ollama's models (`ollama`) download again.
 
-**Secrets.** `secrets` holds the site's token, the store's secret, MySQL's password and the connector key. Without it the restored data doesn't open: MySQL keeps the password it was first started with, and the connector key seals every database password and API key in the store. With the rest it opens all of them, so keep `secrets.tar.gz` encrypted, or apart from the other archives, and your `local/.env`, if you made one, with it.
+**Secrets.** `secrets` holds the site's token, the store's secret, MySQL's password and the connector key. Without it the restored data doesn't open: MySQL keeps the password it was first started with, and the connector key seals every database password and API key in the store. Whoever has it and the rest can read every one of them, so keep `secrets.tar.gz` encrypted, or apart from the other archives, and your `local/.env`, if you made one, with it.
 
-**Back up**, from the repository's root:
+**Back up**, from the repository's root. `docker compose down` stops everything first, giving a load or question in flight up to two minutes to finish or be handed back, and the archives go into a folder only you can read:
 
 ```sh
 backup=~/foundry-backup-$(date +%F-%H%M)
@@ -102,9 +102,9 @@ docker compose up -d --wait
 
 - `docker compose logs init-secrets` says `kept` for each of the four secrets, and `wrote` none.
 - The site opens on your workspaces, with their connections, documents and ontologies. Sync a connection: it syncs only if the restored connector key opens its credential.
-- A document opens, and the Explorer shows each ontology's load.
+- A document opens, and the Explorer shows what each ontology loaded.
 
-**Upgrades.** Back up before you upgrade (a new release, or another `FOUNDRY_*IMAGE`): its first start migrates the store, and migrations only go forward, so the release before can't open it after. Restore a backup only onto the images it lists, then upgrade again if you need to.
+**Upgrades.** Back up before you upgrade (a new release, or another `FOUNDRY_*IMAGE`): its first start migrates the store, and migrations only go forward, so the release before must not run on it again. Restore a backup only onto the images it lists, then upgrade again if you need to.
 
 ## Connecting databases
 
