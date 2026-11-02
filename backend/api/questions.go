@@ -124,6 +124,17 @@ func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 		q.AskedByUserID = &userID
 	}
 	q.Grantee = asker
+	// Of a load it holds only some of, what it holds now is what its answer can
+	// say: the question reads only while its grants hold that.
+	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
+		g, _ := access.GranteeFrom(ctx)
+		part, err := s.granteePart(ctx, g, load.ID)
+		if err != nil {
+			return nil, err
+		}
+		seen := part.Inputs()
+		q.Seen = &seen
+	}
 	var refusal foundrymodel.FoundryQuestionRefusal
 	switch err := s.deps.DB.CreateFoundryQuestion(ctx, q, s.foundryQuestionLimits()); {
 	case errors.As(err, &refusal) && refusal.Budget:

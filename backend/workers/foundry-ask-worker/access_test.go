@@ -122,8 +122,26 @@ func TestGranteeQuestions(t *testing.T) {
 			t.Fatalf("visibility %+v, want %+v", req.Visibility, want)
 		}
 		seen := access.Inputs{Tables: []access.TableRef{{ConnectorID: "conn-1", Table: "customers"}}, Sets: []access.SetRef{{SetID: "set-1"}}}
-		if fmt.Sprint(h.store.seen[q.ID]) != fmt.Sprint(seen) {
+		if got := h.store.seen[q.ID]; got == nil || fmt.Sprint(*got) != fmt.Sprint(seen) {
 			t.Fatalf("seen %+v", h.store.seen)
+		}
+	})
+	// A later attempt keeps what an earlier attempt's events showed, and a run
+	// over the whole load reads as one.
+	t.Run("what earlier attempts read stays with the question", func(t *testing.T) {
+		h, q := partHarness(t)
+		earlier := access.Inputs{Sets: []access.SetRef{{SetID: "set-other"}}}
+		q.Seen, q.Attempts = &earlier, 2
+		h.run(t, q)
+		got := h.store.seen[q.ID]
+		if got == nil || !slices.Contains(got.Sets, access.SetRef{SetID: "set-other"}) || !slices.Contains(got.Sets, access.SetRef{SetID: "set-1"}) {
+			t.Fatalf("seen %+v", got)
+		}
+		h, q = granteeHarness(t)
+		q.Seen = &earlier
+		h.run(t, q)
+		if got, ok := h.store.seen[q.ID]; !ok || got != nil {
+			t.Fatalf("a whole run read as %+v", got)
 		}
 	})
 	// Holding less of it by the time it's answered, its answer isn't kept.

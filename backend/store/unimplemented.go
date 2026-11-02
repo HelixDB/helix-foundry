@@ -397,7 +397,7 @@ func (u Unimplemented) GetOntologyVersionMappings(context.Context, string, strin
 	u.unimplemented("GetOntologyVersionMappings")
 	return "", nil
 }
-func (u Unimplemented) ListFoundryOntologyDocuments(context.Context, string, string, []string, model.FoundryDocumentFilter, string, int) ([]*model.FoundryDocument, string, error) {
+func (u Unimplemented) ListFoundryOntologyDocuments(context.Context, string, string, []string, *[]string, model.FoundryDocumentFilter, string, int) ([]*model.FoundryDocument, string, error) {
 	u.unimplemented("ListFoundryOntologyDocuments")
 	return nil, "", nil
 }
@@ -817,7 +817,7 @@ func (u Unimplemented) FoundryLoadHoldings(context.Context, string, string) (acc
 	return access.Holdings{}, nil
 }
 
-func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, access.Inputs) error {
+func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, *access.Inputs) error {
 	u.unimplemented("SetFoundryQuestionSeen")
 	return nil
 }

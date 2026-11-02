@@ -45,7 +45,7 @@ type store interface {
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
-	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen access.Inputs) error
+	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
 }
 
@@ -347,12 +347,23 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 	if req.Catalog, err = r.catalog(ctx, q.WorkspaceID, tables, files, scope, held); err != nil {
 		return nil, err
 	}
-	if held.part != nil {
+	switch {
+	case held.part != nil:
 		// What it reads of the load is what its answer can say; the answer reads
-		// only while its grants hold that.
+		// only while its grants hold that, with what an earlier attempt's events
+		// show.
 		visibility := ontologyagent.VisibilityOf(*held.part)
 		req.Visibility = &visibility
-		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, held.part.Inputs()); err != nil {
+		seen := held.part.Inputs()
+		if q.Attempts > 1 && q.Seen != nil {
+			seen = seen.Union(*q.Seen)
+		}
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen); err != nil {
+			return nil, retry("could not record your access; Helix will retry", err)
+		}
+	case q.Seen != nil:
+		// It holds all of the load now: the answer reads only while it does.
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, nil); err != nil {
 			return nil, retry("could not record your access; Helix will retry", err)
 		}
 	}

@@ -201,21 +201,53 @@ func (s *Service) granteeLoads(ctx context.Context, g access.Grantee, ontologyID
 	return held, nil
 }
 
-// granteeVisibility is what a grantee's call sends the agent of a load it holds
-// only some of, as JSON, and the version's mappings it needs them with.
-func (s *Service) granteeVisibility(ctx context.Context, g access.Grantee, loadID string) (string, error) {
+// granteePart is what g holds of a load it holds only some of.
+func (s *Service) granteePart(ctx context.Context, g access.Grantee, loadID string) (access.Part, error) {
 	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
 	if err != nil {
-		return "", err
+		return access.Part{}, err
 	}
 	holdings, err := s.deps.DB.FoundryLoadHoldings(ctx, g.WorkspaceID, loadID)
 	if errors.Is(err, foundrystore.ErrNotFound) {
-		return "", status.Error(codes.NotFound, "load not found")
+		return access.Part{}, status.Error(codes.NotFound, "load not found")
 	}
 	if err != nil {
-		return "", status.Errorf(codes.Internal, "read the load's holdings: %v", err)
+		return access.Part{}, status.Errorf(codes.Internal, "read the load's holdings: %v", err)
 	}
-	raw, err := json.Marshal(ontologyagent.VisibilityOf(grants.Part(holdings)))
+	return grants.Part(holdings), nil
+}
+
+// granteeSets are the workspace's document sets g's grants cover.
+func (s *Service) granteeSets(ctx context.Context, g access.Grantee) ([]string, error) {
+	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	if err != nil {
+		return nil, err
+	}
+	sets, err := s.deps.DB.ListFoundryDocumentSets(ctx, g.WorkspaceID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list sets: %v", err)
+	}
+	held := []string{}
+	for _, set := range sets {
+		ref := access.SetRef{SetID: set.ID}
+		if set.Owner != nil {
+			ref.ConnectorID = set.Owner.ConnectorID
+		}
+		if grants.CoversSet(ref) {
+			held = append(held, set.ID)
+		}
+	}
+	return held, nil
+}
+
+// granteeVisibility is what a grantee's call sends the agent of a load it holds
+// only some of, as JSON.
+func (s *Service) granteeVisibility(ctx context.Context, g access.Grantee, loadID string) (string, error) {
+	part, err := s.granteePart(ctx, g, loadID)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(ontologyagent.VisibilityOf(part))
 	if err != nil {
 		return "", status.Errorf(codes.Internal, "encode visibility: %v", err)
 	}
@@ -297,6 +329,11 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 			targets = append(targets, target)
 		}
 	}
+	if len(targets) > 0 {
+		if err := s.checkGrantee(ctx, req.GetWorkspaceId(), principal); err != nil {
+			return nil, err
+		}
+	}
 	switch err := s.deps.DB.SetFoundryAccessGrants(ctx, req.GetWorkspaceId(), principal, targets, byUser(ctx)); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "a connector or document set to grant is not in the workspace")
@@ -312,6 +349,35 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 		resp.Grants = append(resp.Grants, grantToProto(gr))
 	}
 	return resp, nil
+}
+
+// checkGrantee refuses grants for a user who isn't a member of the workspace or
+// a team it doesn't have, who would hold them on joining, or as a team by that
+// name. A service credential is the host's to tell: one of another workspace
+// holds nothing, its calls being refused there.
+func (s *Service) checkGrantee(ctx context.Context, workspaceID string, principal access.Principal) error {
+	switch principal.Kind {
+	case access.PrincipalUser:
+		if s.deps.People == nil {
+			return nil
+		}
+		m, err := s.deps.People.Member(ctx, workspaceID, principal.ID)
+		if err != nil {
+			return status.Errorf(codes.Internal, "read the member: %v", err)
+		}
+		if m.Role == ports.RoleNone {
+			return status.Error(codes.NotFound, "the workspace has no such member")
+		}
+	case access.PrincipalTeam:
+		teams, err := s.deps.DB.ListFoundryTeams(ctx, workspaceID)
+		if err != nil {
+			return status.Errorf(codes.Internal, "read teams: %v", err)
+		}
+		if !slices.ContainsFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == principal.ID }) {
+			return status.Error(codes.NotFound, "the workspace has no such team")
+		}
+	}
+	return nil
 }
 
 // GetMyFoundryAccess says what the caller reads through grants: as a

@@ -168,13 +168,15 @@ func (g Grants) Missing(in Inputs) Inputs {
 	return out
 }
 
-// Covers reports whether the grants cover everything in holds.
+// Covers reports whether the grants cover everything in holds, and in holds
+// something: a load holding nothing is no one's to read.
 //
 //	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
 //	g.Covers(access.Inputs{Tables: []access.TableRef{{ConnectorID: "stripe", Table: "customers"}}}) // true
 func (g Grants) Covers(in Inputs) bool {
 	m := g.Missing(in)
-	return len(m.Tables)+len(m.Sets) == 0 && !m.Enrichment && !m.Uncoverable && !m.Unknown
+	holds := len(in.Tables)+len(in.Sets) > 0 || in.Enrichment
+	return holds && len(m.Tables)+len(m.Sets) == 0 && !m.Enrichment && !m.Uncoverable && !m.Unknown
 }
 
 // Reaches reports whether the grants hold anything of in, so a grantee may
@@ -219,7 +221,7 @@ type Holdings struct {
 type PropRef struct{ Type, Prop string }
 
 // Part is what a grantee holds of a load it doesn't hold all of. AllDocuments
-// says it holds every one of the load's documents, whatever Documents lists.
+// says the load holds documents and it holds every one of them.
 type Part struct {
 	Tables       []TableRef
 	Files        []string
@@ -236,7 +238,7 @@ type Part struct {
 //	g := access.NewGrants([]access.Target{access.DocumentSetTarget("contracts")})
 //	g.Part(access.Holdings{Documents: []access.DocumentRef{{ID: "d1", Set: access.SetRef{SetID: "contracts"}}, {ID: "d2", Set: access.SetRef{SetID: "hr"}}}}).Documents // [d1]
 func (g Grants) Part(h Holdings) Part {
-	out := Part{Enrichment: h.Enrichment && g.enrichment, AllDocuments: true}
+	out := Part{Enrichment: h.Enrichment && g.enrichment, AllDocuments: len(h.Documents) > 0}
 	addSet := func(s SetRef) {
 		if !slices.Contains(out.Sets, s) {
 			out.Sets = append(out.Sets, s)
@@ -289,4 +291,25 @@ func (p Part) Holds(before Part) bool {
 // Inputs is what p reads, for telling later whether grants still hold it.
 func (p Part) Inputs() Inputs {
 	return Inputs{Tables: p.Tables, Sets: p.Sets, Enrichment: p.Enrichment}
+}
+
+// Union is what in and other hold between them.
+func (in Inputs) Union(other Inputs) Inputs {
+	out := in
+	out.Tables = slices.Clone(in.Tables)
+	out.Sets = slices.Clone(in.Sets)
+	for _, t := range other.Tables {
+		if !slices.Contains(out.Tables, t) {
+			out.Tables = append(out.Tables, t)
+		}
+	}
+	for _, s := range other.Sets {
+		if !slices.Contains(out.Sets, s) {
+			out.Sets = append(out.Sets, s)
+		}
+	}
+	out.Enrichment = in.Enrichment || other.Enrichment
+	out.Uncoverable = in.Uncoverable || other.Uncoverable
+	out.Unknown = in.Unknown || other.Unknown
+	return out
 }

@@ -91,9 +91,20 @@ func (s *mysqlDB) SetFoundryAccessGrants(ctx context.Context, workspaceID string
 				return ErrNotFound
 			}
 		}
-		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND principal_kind=? AND principal_id=?`,
-			workspaceID, principal.Kind.String(), principal.ID); err != nil {
+		held, err := tx.ListFoundryAccessGrants(ctx, workspaceID, []access.Principal{principal})
+		if err != nil {
 			return err
+		}
+		var dropped []string
+		for _, g := range held {
+			if !slices.Contains(targets, g.Target) {
+				dropped = append(dropped, g.ID)
+			}
+		}
+		if len(dropped) > 0 {
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE id IN (`+idPlaceholders(len(dropped))+`)`, toAnySlice(dropped)...); err != nil {
+				return err
+			}
 		}
 		if len(targets) == 0 {
 			return nil
@@ -105,7 +116,7 @@ func (s *mysqlDB) SetFoundryAccessGrants(ctx context.Context, workspaceID string
 			args = append(args, id.New(), workspaceID, principal.Kind.String(), principal.ID, t.Kind().String(), t.ConnectorID(), t.Table(),
 				t.DocumentSetID(), byUserID)
 		}
-		_, err := tx.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_access_grants
+		_, err = tx.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_access_grants
  (id, workspace_id, principal_kind, principal_id, target_kind, connector_id, table_name, document_set_id, created_by_user_id)
 VALUES `+strings.Join(rows, ", "), args...)
 		return err

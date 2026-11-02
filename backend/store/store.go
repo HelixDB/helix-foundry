@@ -129,7 +129,7 @@ type ReadStore interface {
 	// Foundry loads and graph jobs, per ontology
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
 	GetOntologyVersionMappings(ctx context.Context, ontologyID, versionID string) (string, error)
-	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, filter model.FoundryDocumentFilter,
+	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string, filter model.FoundryDocumentFilter,
 		pageToken string, limit int) ([]*model.FoundryDocument, string, error)
 	FoundryLoadHoldsDocument(ctx context.Context, loadID, documentID string) (bool, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
@@ -171,7 +171,7 @@ type ReadStore interface {
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
 	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
-	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen access.Inputs) error
+	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
 	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
 	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
 	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)

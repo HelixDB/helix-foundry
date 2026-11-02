@@ -105,7 +105,7 @@
       "description": "One read's answer, by its kind.",
       "oneOf": [
         {
-          "description": "The version as the reader sees it; empty for a reader that holds all of it, which reads\nthe version itself.",
+          "description": "The version as the reader sees it; empty for a request that names no `visibility`.",
           "type": "object",
           "properties": {
             "kind": {
@@ -113,7 +113,7 @@
               "const": "view"
             },
             "mappings_toml": {
-              "description": "`mappings.toml` of the sources it holds.",
+              "description": "`mappings.toml`, when it holds everything they read; else its versions alone.",
               "type": "string"
             },
             "ontology_toml": {
@@ -328,13 +328,6 @@
               "type": "string",
               "const": "rows"
             },
-            "more": {
-              "description": "For a reader who sees only some of the rows: whether a next page holds more, which\n`total` can't say.",
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
             "rows": {
               "description": "The rows, in order.",
               "type": "array",
@@ -343,7 +336,7 @@
               }
             },
             "total": {
-              "description": "How many distinct rows there are in all; for a reader who sees only some of them,\nhow many of these it sees.",
+              "description": "How many distinct rows there are in all; for a reader who sees only some of them,\nhow many it was shown.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0

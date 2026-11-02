@@ -35,6 +35,8 @@ type accessStore struct {
 	// its other loads, by load.
 	inputs     map[string]foundrymodel.FoundryLoadInputs
 	olderLoads map[string]foundrymodel.FoundryLoadInputs
+	// heldSets is what the last list of an ontology's documents was kept to.
+	heldSets *[]string
 	// holdings are what each load holds, document by document.
 	holdings map[string]access.Holdings
 	// granteeSpend is what each grantee's questions charged to the month.
@@ -81,6 +83,16 @@ func (s *accessStore) ListFoundryLoadInputs(_ context.Context, workspaceID strin
 		}
 	}
 	return out, nil
+}
+
+func (s *accessStore) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string,
+	filter foundrymodel.FoundryDocumentFilter, pageToken string, limit int) ([]*foundrymodel.FoundryDocument, string, error) {
+	s.heldSets = heldSets
+	docs, next, err := s.questionStore.ListFoundryOntologyDocuments(ctx, workspaceID, currentLoadID, scope, heldSets, filter, pageToken, limit)
+	if err != nil || heldSets == nil {
+		return docs, next, err
+	}
+	return slices.DeleteFunc(slices.Clone(docs), func(d *foundrymodel.FoundryDocument) bool { return !slices.Contains(*heldSets, d.SetID) }), next, nil
 }
 
 func (s *accessStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (access.Holdings, error) {
@@ -617,7 +629,7 @@ func TestGranteePartial(t *testing.T) {
 	generation := "gen-4"
 	store.versions = append(store.versions, &foundrymodel.OntologyVersion{ID: "ver-4", WorkspaceID: "ws-1", OntologyID: "ont-4",
 		Format: foundrymodel.OntologyFormatAgentBundle, GenerationID: &generation,
-		Definition: json.RawMessage(`{"format":"agent_bundle","ontology_toml":"whole","mappings_toml":"every mapping","draft":{"draft":{"items":{"secret":{}}}},"questions":[{"id":"Q1"}]}`)})
+		Definition: json.RawMessage(`{"format":"agent_bundle","ontology_toml":"whole","mappings_toml":"every mapping","draft":{"draft":{"items":{"secret":{}}}},"questions":[{"id":"Q1"}],"summary":"what it found","usage":{"usd":1}}`)})
 	general, hr := access.SetRef{SetID: "set-general"}, access.SetRef{SetID: "set-hr"}
 	store.inputs["ont-4"] = foundrymodel.FoundryLoadInputs{LoadID: "load-4", VersionID: "ver-4",
 		Inputs: access.Inputs{Tables: []access.TableRef{stripeCustomers, pgPeople}, Sets: []access.SetRef{general, hr}}}
@@ -627,6 +639,7 @@ func TestGranteePartial(t *testing.T) {
 		Documents: []access.DocumentRef{{ID: "doc-general", Set: general}, {ID: "doc-hr", Set: hr}},
 		Decisions: []access.PropDecision{{Type: "Customer", Prop: "plan", Sets: []access.SetRef{hr}, Recorded: true}},
 	}}
+	store.sets = append(store.sets, &foundrymodel.FoundryDocumentSet{ID: "set-general", WorkspaceID: "ws-1"}, &foundrymodel.FoundryDocumentSet{ID: "set-hr", WorkspaceID: "ws-1"})
 	store.documents = append(store.documents,
 		&foundrymodel.FoundryDocument{ID: "doc-general", WorkspaceID: "ws-1", SetID: "set-general", Name: "general.md", MediaType: foundrymodel.FoundryMediaMarkdown,
 			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/general"},
@@ -662,7 +675,8 @@ func TestGranteePartial(t *testing.T) {
 		}
 		fields := got.GetVersion().GetDefinition().GetFields()
 		if fields["ontology_toml"].GetStringValue() != "projected" || fields["mappings_toml"].GetStringValue() != "held mappings" ||
-			fields["draft"] != nil || fields["questions"] != nil || got.GetVersion().GetGenerationId() != "" || len(got.GetVersion().GetDocumentSetIds()) != 0 {
+			fields["draft"] != nil || fields["questions"] != nil || fields["summary"] != nil || fields["usage"] != nil || fields["format"].GetStringValue() != "agent_bundle" ||
+			got.GetVersion().GetGenerationId() != "" || len(got.GetVersion().GetDocumentSetIds()) != 0 {
 			t.Fatalf("%+v", got.GetVersion())
 		}
 		read := reader.requests[len(reader.requests)-1]
@@ -710,6 +724,29 @@ func TestGranteePartial(t *testing.T) {
 		}
 		if _, err := client.GetFoundryOntologyDocument(ctx, &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
 			t.Fatal(err)
+		}
+		if got := store.heldSets; got == nil || !slices.Contains(*got, "set-general") || slices.Contains(*got, "set-hr") {
+			t.Fatalf("listed by sets %v", got)
+		}
+		if _, err := client.GetFoundryDocumentContent(ctx, &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: "ws-1", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
+			t.Fatalf("the text of a document it doesn't hold: %v", err)
+		}
+	})
+	t.Run("a question it asks reads from the start", func(t *testing.T) {
+		asked, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Question: "How many?", ClientToken: "part-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored := store.questions[len(store.questions)-1]
+		if stored.Seen == nil || !slices.Contains(stored.Seen.Sets, general) || slices.Contains(stored.Seen.Sets, hr) {
+			t.Fatalf("seen %+v", stored.Seen)
+		}
+		if _, err := client.GetFoundryQuestion(ctx, &foundryv1.GetFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: asked.GetQuestion().GetId()}); err != nil {
+			t.Fatal(err)
+		}
+		again, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Question: "How many?", ClientToken: "part-1"})
+		if err != nil || again.GetQuestion().GetId() != asked.GetQuestion().GetId() {
+			t.Fatalf("%+v, %v", again, err)
 		}
 	})
 	t.Run("an answer reads while its grants hold what it read", func(t *testing.T) {
@@ -836,6 +873,21 @@ func TestListAndSetFoundryAccess(t *testing.T) {
 	}
 
 	team := &foundryv1.FoundryPrincipal{Kind: foundryv1.FoundryPrincipal_KIND_TEAM, Id: "team-1"}
+	// Grants go only to a team the workspace has, or a member of it, who would
+	// otherwise hold them on joining.
+	one := []*foundryv1.FoundryAccessTarget{{Kind: foundryv1.FoundryAccessTarget_KIND_CONNECTOR, ConnectorId: "conn-1"}}
+	if _, err := s.SetFoundryAccessGrants(ctx, &foundryv1.SetFoundryAccessGrantsRequest{WorkspaceId: "ws-1", Principal: team, Targets: one}); status.Code(err) != codes.NotFound {
+		t.Fatalf("no such team: %v", err)
+	}
+	store.teams = append(store.teams, foundrymodel.FoundryTeam{ID: "team-1", WorkspaceID: "ws-1", Name: "One"})
+	s.deps.People = accessPeople{}
+	gone := &foundryv1.FoundryPrincipal{Kind: foundryv1.FoundryPrincipal_KIND_USER, Id: "gone"}
+	if _, err := s.SetFoundryAccessGrants(ctx, &foundryv1.SetFoundryAccessGrantsRequest{WorkspaceId: "ws-1", Principal: gone, Targets: one}); status.Code(err) != codes.NotFound {
+		t.Fatalf("no such member: %v", err)
+	}
+	if _, err := s.SetFoundryAccessGrants(ctx, &foundryv1.SetFoundryAccessGrantsRequest{WorkspaceId: "ws-1", Principal: gone}); err != nil {
+		t.Fatalf("clearing what someone gone holds: %v", err)
+	}
 	set, err := s.SetFoundryAccessGrants(ctx, &foundryv1.SetFoundryAccessGrantsRequest{WorkspaceId: "ws-1", Principal: team, Targets: []*foundryv1.FoundryAccessTarget{
 		{Kind: foundryv1.FoundryAccessTarget_KIND_CONNECTOR, ConnectorId: "conn-1"},
 		{Kind: foundryv1.FoundryAccessTarget_KIND_TABLE, ConnectorId: "conn-pg", Table: "people"},

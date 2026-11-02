@@ -334,7 +334,7 @@ func TestFoundryQuestionGranteeLimits(t *testing.T) {
 	require.NoError(t, err, "the host's caller has only the workspace's limits")
 
 	// What it settled this month, plus this question's cap, within its budget.
-	_, err = testDB.Exec(`UPDATE foundry_questions SET usd_micros=?, charged_at=NOW(6) WHERE id=?`, 400, f.id(1))
+	_, err = testDB.Exec(`UPDATE foundry_questions SET status='answered', result='{"status":"answered"}', finished_at=NOW(6), usd_micros=?, charged_at=NOW(6) WHERE id=?`, 400, f.id(1))
 	require.NoError(t, err)
 	_, err = testDB.Exec(`UPDATE foundry_questions SET status='running', lease_owner='w', lease_until=NOW(6) + INTERVAL 1 HOUR, attempts=1,
 reserved_micros=?, charged_at=NOW(6) WHERE id=?`, 50, f.id(2))
@@ -346,20 +346,35 @@ reserved_micros=?, charged_at=NOW(6) WHERE id=?`, 50, f.id(2))
 	assert.Equal(t, model.FoundryQuestionSpend{SpentMicros: 400, ReservedMicros: 50}, spend, "its own, not the workspace's")
 
 	limits.GranteePerHour = 30
-	limits.GranteeCapMicros = 400 + questionCap - 1
+	// Its running question counts at its cap, as what it may yet spend.
+	limits.GranteeCapMicros = 400 + 2*questionCap - 1
 	_, err = ask(6, &agent, limits)
 	require.ErrorAs(t, err, &refusal)
 	assert.True(t, refusal.Budget)
 	assert.Contains(t, refusal.Reason, "you have spent")
-	limits.GranteeCapMicros = 400 + questionCap
+	limits.GranteeCapMicros = 400 + 2*questionCap
 	_, err = ask(7, &agent, limits)
 	require.NoError(t, err)
 
+	// What the workspace has asked and spent isn't told to a grantee.
+	full := f.limits()
+	full.PerHour = 1
+	_, err = ask(10, &other, full)
+	require.ErrorAs(t, err, &refusal)
+	assert.NotContains(t, refusal.Reason, "the workspace has asked")
+	_, err = ask(11, nil, full)
+	require.ErrorAs(t, err, &refusal)
+	assert.Contains(t, refusal.Reason, "the workspace has asked")
+
 	seen := access.Inputs{Sets: []access.SetRef{{SetID: "set-1"}}}
-	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), seen))
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), &seen))
 	stored, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
 	require.NoError(t, err)
 	assert.Equal(t, &seen, stored.Seen)
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), nil))
+	stored, err = f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
+	require.NoError(t, err)
+	assert.Nil(t, stored.Seen, "the whole load, after all")
 	notSeen, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(2))
 	require.NoError(t, err)
 	assert.Nil(t, notSeen.Seen)

@@ -52,7 +52,7 @@ func TestGrantsCover(t *testing.T) {
 		covers bool
 		miss   access.Inputs
 	}{
-		"nothing held, nothing granted": {covers: true},
+		"nothing held, nothing granted": {covers: false},
 		"nothing granted":               {in: access.Inputs{Tables: []access.TableRef{stripe}}, miss: access.Inputs{Tables: []access.TableRef{stripe}}},
 		"a connector covers its tables, now and later": {
 			grants: []access.Target{access.ConnectorTarget("stripe")}, in: access.Inputs{Tables: []access.TableRef{stripe, invoices}}, covers: true},
@@ -202,5 +202,30 @@ func TestPartHolds(t *testing.T) {
 	wasAll := access.Part{AllDocuments: true}
 	if (access.Part{Documents: []string{"d"}}).Holds(wasAll) {
 		t.Error("some documents don't hold what every document did")
+	}
+}
+
+func TestCoversNothing(t *testing.T) {
+	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
+	if g.Covers(access.Inputs{}) {
+		t.Error("a load holding nothing is no one's to read")
+	}
+	if g.Reaches(access.Inputs{}) {
+		t.Error("nor is it reached")
+	}
+	noDocuments := g.Part(access.Holdings{Tables: []access.TableRef{{ConnectorID: "stripe", Table: "customers"}}})
+	if noDocuments.AllDocuments {
+		t.Error("no documents aren't every document, which would hold every route")
+	}
+}
+
+func TestInputsUnion(t *testing.T) {
+	a, b := access.TableRef{ConnectorID: "a", Table: "t"}, access.TableRef{ConnectorID: "b", Table: "t"}
+	x, y := access.SetRef{SetID: "x"}, access.SetRef{SetID: "y"}
+	got := access.Inputs{Tables: []access.TableRef{a}, Sets: []access.SetRef{x}, Enrichment: true}.Union(
+		access.Inputs{Tables: []access.TableRef{a, b}, Sets: []access.SetRef{y, x}, Uncoverable: true, Unknown: true})
+	want := access.Inputs{Tables: []access.TableRef{a, b}, Sets: []access.SetRef{x, y}, Enrichment: true, Uncoverable: true, Unknown: true}
+	if fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+		t.Fatalf("%+v", got)
 	}
 }

@@ -467,6 +467,14 @@ func (s *Service) GetFoundryDocumentContent(ctx context.Context, req *foundryv1.
 		if err := s.heldBy(ctx, doc, func(ontologyID string) bool { _, ok := loads[ontologyID]; return ok }); err != nil {
 			return nil, err
 		}
+		// Of a load it holds only some of, only what its grants cover.
+		byID := map[string]*foundrymodel.FoundryDocument{doc.ID: doc}
+		if err := s.granteeDocuments(ctx, g, byID); err != nil {
+			return nil, err
+		}
+		if byID[doc.ID] == nil {
+			return nil, status.Error(codes.NotFound, "document not found")
+		}
 	}
 	var text []byte
 	switch {
@@ -586,28 +594,26 @@ func (s *Service) ListFoundryOntologyDocuments(ctx context.Context, req *foundry
 		currentLoad = *o.CurrentLoadID
 	}
 	// A grantee lists the documents of the load its grants cover, and no
-	// others of the scope.
+	// others of the scope; of a load it holds only some of, only those of the
+	// sets it holds.
+	var heldSets *[]string
 	if granted, ok := granteeLoad(ctx); ok {
 		currentLoad, reader.scope = granted.LoadID, []string{}
+		if granted.Partial {
+			g, _ := access.GranteeFrom(ctx)
+			held, err := s.granteeSets(ctx, g)
+			if err != nil {
+				return nil, err
+			}
+			heldSets = &held
+		}
 	}
-	docs, next, err := s.deps.DB.ListFoundryOntologyDocuments(ctx, o.WorkspaceID, currentLoad, reader.scope, filter, req.GetPageToken(), foundryPageSize)
+	docs, next, err := s.deps.DB.ListFoundryOntologyDocuments(ctx, o.WorkspaceID, currentLoad, reader.scope, heldSets, filter, req.GetPageToken(), foundryPageSize)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "list documents: %v", err)
-	}
-	// Of a load it holds only some of, a grantee lists only what it holds.
-	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
-		g, _ := access.GranteeFrom(ctx)
-		byID := make(map[string]*foundrymodel.FoundryDocument, len(docs))
-		for _, d := range docs {
-			byID[d.ID] = d
-		}
-		if err := s.granteeDocuments(ctx, g, byID); err != nil {
-			return nil, err
-		}
-		docs = slices.DeleteFunc(slices.Clone(docs), func(d *foundrymodel.FoundryDocument) bool { return byID[d.ID] == nil })
 	}
 	extractions := map[string]*foundrymodel.FoundryDocumentExtraction{}
 	if currentLoad != "" {

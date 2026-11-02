@@ -61,8 +61,13 @@ func (s *mysqlDB) CreateFoundryQuestion(ctx context.Context, q *model.FoundryQue
 			return err
 		}
 		switch {
+		// What the workspace asks and spends isn't a grantee's to see.
+		case lastHour >= limits.PerHour && q.Grantee != nil:
+			return model.FoundryQuestionRefusal{Reason: "too many questions have been asked here in the last hour; try again later"}
 		case lastHour >= limits.PerHour:
 			return model.FoundryQuestionRefusal{Reason: fmt.Sprintf("the workspace has asked %d questions in the last hour; try again later", lastHour)}
+		case settled+q.MaxUSDMicros > limits.CapMicros && q.Grantee != nil:
+			return model.FoundryQuestionRefusal{Budget: true, Reason: "this workspace's questions are used up for the month"}
 		case settled+q.MaxUSDMicros > limits.CapMicros:
 			return model.FoundryQuestionRefusal{Budget: true,
 				Reason: fmt.Sprintf("the workspace has spent this month's $%.2f of questions", float64(limits.CapMicros)/1e6)}
@@ -70,9 +75,11 @@ func (s *mysqlDB) CreateFoundryQuestion(ctx context.Context, q *model.FoundryQue
 		if q.Grantee != nil {
 			var ownHour int
 			var ownSettled int64
+			// Its live questions count at their caps: its budget is checked only here.
 			if err := tx.db.QueryRowContext(ctx, `SELECT
   COUNT(CASE WHEN q.created_at >= NOW(6) - INTERVAL 1 HOUR THEN 1 END),
-  COALESCE(SUM(CASE WHEN q.charged_at >= ? THEN q.usd_micros END), 0)
+  COALESCE(SUM(CASE WHEN q.status IN ('queued', 'running') THEN q.max_usd_micros
+                    WHEN q.charged_at >= ? THEN q.usd_micros END), 0)
 FROM foundry_question_grantees g JOIN foundry_questions q ON q.id = g.question_id
 WHERE g.principal_kind=? AND g.principal_id=? AND q.workspace_id=?`,
 				limits.Since.UTC(), q.Grantee.Kind.String(), q.Grantee.ID, q.WorkspaceID).Scan(&ownHour, &ownSettled); err != nil {
@@ -97,21 +104,37 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
 		if err != nil || q.Grantee == nil {
 			return err
 		}
-		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_question_grantees (question_id, ontology_id, principal_kind, principal_id)
-VALUES (?, ?, ?, ?)`, q.ID, q.OntologyID, q.Grantee.Kind.String(), q.Grantee.ID)
+		seen, err := seenJSON(q.Seen)
+		if err != nil {
+			return err
+		}
+		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_question_grantees (question_id, ontology_id, principal_kind, principal_id, seen)
+VALUES (?, ?, ?, ?, ?)`, q.ID, q.OntologyID, q.Grantee.Kind.String(), q.Grantee.ID, seen)
 		return err
 	})
 }
 
 // SetFoundryQuestionSeen records what the grantee that asked a question held of
-// its load when it ran, when that wasn't all of it.
-func (s *mysqlDB) SetFoundryQuestionSeen(ctx context.Context, questionID string, seen access.Inputs) error {
-	raw, err := json.Marshal(seen)
+// its load when it ran, when that wasn't all of it; nil when it was.
+func (s *mysqlDB) SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error {
+	raw, err := seenJSON(seen)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE foundry_question_grantees SET seen=? WHERE question_id=?`, string(raw), questionID)
+	_, err = s.db.ExecContext(ctx, `UPDATE foundry_question_grantees SET seen=? WHERE question_id=?`, raw, questionID)
 	return err
+}
+
+// seenJSON is what a question saw, as the column stores it.
+func seenJSON(seen *access.Inputs) (any, error) {
+	if seen == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(seen)
+	if err != nil {
+		return nil, err
+	}
+	return string(raw), nil
 }
 
 // askedBy is the condition that a question was asked by grantee: always
