@@ -132,22 +132,47 @@ describe("sign-in", () => {
 });
 
 describe("the signed-in user", () => {
-  it("is identified by the backend's id, and forgotten after signing out", async () => {
+  it("is identified by the backend's id with their email and name, and forgotten after signing out", async () => {
     const a = await load();
     vi.stubGlobal("navigator", { sendBeacon: () => true });
+    a.identifyUser("user_1", { email: "ada@example.com", name: "Ada" });
+    // Details it lacks stay off the profile.
+    a.identifyUser("user_1", { email: "", name: undefined });
     a.identifyUser("user_1");
-    a.identifyUser("");
-    expect(sdk.identify.mock.calls).toEqual([["user_1"]]);
+    a.identifyUser("", { email: "ada@example.com" });
+    expect(sdk.identify.mock.calls).toEqual([
+      ["user_1", { email: "ada@example.com", name: "Ada" }],
+      ["user_1", {}],
+      ["user_1", {}],
+    ]);
     await a.signedOut();
     expect(sdk.clearProfile).toHaveBeenCalledOnce();
+  });
+
+  it("tags every event with the workspace open, and drops it at sign-out", async () => {
+    const a = await load();
+    vi.stubGlobal("navigator", { sendBeacon: () => true });
+    a.workspaceOpened("ws_1", "Acme");
+    a.workspaceOpened("ws_2", "Globex");
+    expect(sdk.setGlobalProperties.mock.calls).toEqual([
+      [{ workspace_id: "ws_1", workspace_name: "Acme" }],
+      [{ workspace_id: "ws_2", workspace_name: "Globex" }],
+    ]);
+    await a.signedOut();
+    expect(sdk.setGlobalProperties).toHaveBeenLastCalledWith({
+      workspace_id: undefined,
+      workspace_name: undefined,
+    });
   });
 
   it("is neither identified nor forgotten without a client id", async () => {
     const a = await load("");
     a.identifyUser("user_1");
+    a.workspaceOpened("ws_1", "Acme");
     await a.signedOut();
     expect(sdk.identify).not.toHaveBeenCalled();
     expect(sdk.clearProfile).not.toHaveBeenCalled();
+    expect(sdk.setGlobalProperties).not.toHaveBeenCalled();
   });
 });
 
@@ -206,14 +231,24 @@ describe("trackBeforeLeaving", () => {
     });
   });
 
-  it("beacons as the signed-in user once one is identified", async () => {
+  it("beacons as the signed-in user, in the workspace open", async () => {
     const a = await load();
     const beacons = beacon();
     sdk.profile = "user_1";
-    await a.trackBeforeLeaving("billing_portal_opened");
+    a.workspaceOpened("ws_1", "Acme");
+    await a.trackBeforeLeaving("upgrade_clicked", {
+      tier: "pro",
+      from: "free",
+    });
     sdk.profile = null;
     expect(JSON.parse(await beacons[0].body.text())).toMatchObject({
-      name: "billing_portal_opened",
+      name: "upgrade_clicked",
+      properties: {
+        workspace_id: "ws_1",
+        workspace_name: "Acme",
+        tier: "pro",
+        from: "free",
+      },
       profileId: "user_1",
     });
   });

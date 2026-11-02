@@ -4,6 +4,7 @@ import {
   getTracker,
   identify,
   isTrackerAvailable,
+  setGlobalProperties,
   track,
   trackError,
 } from "@databuddy/sdk";
@@ -59,8 +60,9 @@ export type Refusal = "rate_limit" | "refused" | "error";
  * Databuddy, and named as helix-db.com's are (helix-website-landing's
  * src/lib/analytics.ts) where they mean the same. Goals and funnels match
  * event names only, so every step of the funnel is an event of its own.
- * Properties are a fixed vocabulary: never a person's, workspace's or
- * resource's name or id, an email, a question, a goal or a file name.
+ * Properties are a fixed vocabulary: never a person's or resource's name or
+ * id, an email, a question, a goal or a file name. Every event also carries
+ * the workspace open (workspaceOpened).
  */
 export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
@@ -208,7 +210,9 @@ export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
     event = {
       eventId: crypto.randomUUID(),
       name,
-      properties: properties[0],
+      // The tracker merges its global properties (the workspace) into its
+      // own events' properties; a beacon has to.
+      properties: { ...workspace, ...properties[0] },
       anonymousId,
       sessionId: ids?.sessionId,
       // As the tracker's own events: the signed-in user (identifyUser).
@@ -266,20 +270,42 @@ export function signedIn(
 }
 
 /**
- * The signed-in user, by the backend's user id (never an email or a name):
- * every event and replay from here on, in any session of this browser, is
- * theirs. Safe on every page load; the tracker sends it once a session.
+ * The signed-in user, by the backend's user id, with their email and name on
+ * the profile (Databuddy's own fields, so replays and profiles can be found
+ * by email): every event and replay from here on, in any session of this
+ * browser, is theirs. Safe on every page load; with details, the tracker
+ * sends it on each.
  */
-export function identifyUser(id: string) {
+export function identifyUser(
+  id: string,
+  { email, name }: { email?: string; name?: string } = {},
+) {
   if (!DATABUDDY_CLIENT_ID || !id) return;
-  identify(id);
+  identify(id, { ...(email && { email }), ...(name && { name }) });
 }
 
-/** Sign-out, before the page leaves: reports it as the user, then forgets them. */
+/** The workspace open, as every event and page view carries it. */
+let workspace: { workspace_id: string; workspace_name: string } | undefined;
+
+/**
+ * The workspace open (and again on a switch): every event and page view
+ * from here on carries its id and name (the tracker's global properties),
+ * so each is the workspace's, and per-account retention counts workspaces
+ * (`workspace_id`).
+ */
+export function workspaceOpened(id: string, name: string) {
+  if (!DATABUDDY_CLIENT_ID) return;
+  workspace = { workspace_id: id, workspace_name: name };
+  setGlobalProperties(workspace);
+}
+
+/** Sign-out, before the page leaves: reports it as the user, then forgets them and their workspace. */
 export async function signedOut(): Promise<void> {
   if (!DATABUDDY_CLIENT_ID) return;
   await trackBeforeLeaving("signed_out");
   clearProfile();
+  workspace = undefined;
+  setGlobalProperties({ workspace_id: undefined, workspace_name: undefined });
 }
 
 /**
