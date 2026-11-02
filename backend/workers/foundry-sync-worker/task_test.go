@@ -432,6 +432,22 @@ func TestFoundrySyncSchedule(t *testing.T) {
 			t.Fatalf("schedule = %+v", got.Schedule)
 		}
 	})
+	// The finish writes the schedule only while the connector still reads
+	// with the account generation the sync read with.
+	t.Run("carries the account generation the sync read with", func(t *testing.T) {
+		for _, r := range []runner{
+			func(context.Context, *model.ConnectorSync) (syncer.Result, error) {
+				return syncer.Result{Plan: planNamed(t, "pro"), AccountGeneration: seconds(2)}, nil
+			},
+			func(context.Context, *model.ConnectorSync) (syncer.Result, error) {
+				return syncer.Result{Plan: planNamed(t, "pro"), AccountGeneration: seconds(2)}, &syncer.Failure{Message: "gone", Permanent: true}
+			},
+		} {
+			if got := syncOnce(t, r); got.Schedule == nil || got.Schedule.Generation == nil || *got.Schedule.Generation != 2 {
+				t.Fatalf("schedule = %+v", got.Schedule)
+			}
+		}
+	})
 	// The finish writes this schedule only while the connector still has the interval it came from.
 	t.Run("keeps an owner's longer interval", func(t *testing.T) {
 		got := syncOnce(t, result(planNamed(t, "pro"), seconds(3*3600)))

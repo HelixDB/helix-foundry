@@ -191,7 +191,7 @@ func (u Unimplemented) QueueDueConnectorSyncs(context.Context, int, time.Duratio
 	u.unimplemented("QueueDueConnectorSyncs")
 	return 0, nil
 }
-func (u Unimplemented) UpdateConnectorCursor(context.Context, string, json.RawMessage, string, string) error {
+func (u Unimplemented) UpdateConnectorCursor(context.Context, string, int, json.RawMessage, string, string) error {
 	u.unimplemented("UpdateConnectorCursor")
 	return nil
 }

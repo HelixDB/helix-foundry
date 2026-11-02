@@ -176,8 +176,8 @@ func TestConnectorSchedules(t *testing.T) {
 		require.NoError(t, db.EnqueueConnectorSync(ctx, &model.ConnectorSync{ID: id26("SC-cur1"), ConnectorID: c.ID, WorkspaceID: workspaceID}))
 		claimed, err := db.ClaimConnectorSync(ctx, "w1", time.Minute)
 		require.NoError(t, err)
-		assert.ErrorIs(t, db.UpdateConnectorCursor(ctx, c.ID, json.RawMessage(`{"event":"evt_1"}`), claimed.ID, "w2"), store.ErrNotFound)
-		require.NoError(t, db.UpdateConnectorCursor(ctx, c.ID, json.RawMessage(`{"event":"evt_1"}`), claimed.ID, "w1"))
+		assert.ErrorIs(t, db.UpdateConnectorCursor(ctx, c.ID, 0, json.RawMessage(`{"event":"evt_1"}`), claimed.ID, "w2"), store.ErrNotFound)
+		require.NoError(t, db.UpdateConnectorCursor(ctx, c.ID, 0, json.RawMessage(`{"event":"evt_1"}`), claimed.ID, "w1"))
 		stored, err := db.GetConnector(ctx, workspaceID, c.ID)
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"event":"evt_1"}`, string(stored.ChangeCursor))
@@ -205,7 +205,7 @@ func cdcConnector(t *testing.T, db store.Store, workspaceID, tag, kind, cursor s
 	claimed, err := db.ClaimConnectorSync(ctx, "w1", time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, c.ID, claimed.ConnectorID)
-	require.NoError(t, db.UpdateConnectorCursor(ctx, c.ID, json.RawMessage(cursor), claimed.ID, "w1"))
+	require.NoError(t, db.UpdateConnectorCursor(ctx, c.ID, 0, json.RawMessage(cursor), claimed.ID, "w1"))
 	require.NoError(t, db.FinishConnectorSync(ctx, claimed.ID, "w1", outcome))
 	return c
 }

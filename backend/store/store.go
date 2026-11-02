@@ -219,7 +219,7 @@ type Store interface {
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
 	QueueDueConnectorSyncs(ctx context.Context, limit int, eventsAfter time.Duration) (int, error)
-	UpdateConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage, syncID, workerID string) error
+	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
 	ListStrandedConnectorCursors(ctx context.Context, kinds []string, limit int) ([]*model.Connector, error)
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
 	DeleteReplacedSnapshot(ctx context.Context, id string) error

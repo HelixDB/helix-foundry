@@ -49,7 +49,7 @@ type store interface {
 	UpsertConnectorTable(ctx context.Context, t *model.ConnectorTable, batch *model.ConnectorChangeBatch, workerID string) error
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
-	UpdateConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage, syncID, workerID string) error
+	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
 	ListConnectorChangeBatches(ctx context.Context, workspaceID, syncID string) ([]*model.ConnectorChangeBatch, error)
 	ListFoundryDocumentSets(ctx context.Context, workspaceID string) ([]*model.FoundryDocumentSet, error)
@@ -135,6 +135,9 @@ type Result struct {
 	Changed []string
 	// SyncEverySeconds is the connector's own interval: nil the plan's, 0 manual only.
 	SyncEverySeconds *int
+	// AccountGeneration is the account generation the sync read the
+	// connector at (0 for a key); nil when it stopped before reading it.
+	AccountGeneration *int
 	// MinEvery is the kind's own floor on the interval under these settings; 0 when it has none.
 	MinEvery time.Duration
 	// Pushed is set for a Pushed kind once the sync stored its cursor; nil
@@ -206,7 +209,7 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	if err != nil {
 		return res, retryable(fmt.Errorf("load connector: %w", err))
 	}
-	res.SyncEverySeconds = c.SyncEverySeconds
+	res.SyncEverySeconds, res.AccountGeneration = c.SyncEverySeconds, AccountGeneration(c)
 	kind, err := s.Catalog.Kind(c.Kind)
 	if err != nil {
 		return res, &Failure{Message: "this connector kind is no longer supported", Permanent: true, Err: err}
@@ -365,7 +368,7 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 			}
 		}
 	}
-	if err := s.DB.UpdateConnectorCursor(ctx, c.ID, cursor, sync.ID, leaseOwner(sync)); err != nil {
+	if err := s.DB.UpdateConnectorCursor(ctx, c.ID, *res.AccountGeneration, cursor, sync.ID, leaseOwner(sync)); err != nil {
 		return r.result(res), published(err, "store the change cursor")
 	}
 	res = r.result(res)
@@ -384,6 +387,16 @@ func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.C
 		res.Pushed = &PushedResult{Backlog: backlog, Rows: res.Rows}
 	}
 	return res, nil
+}
+
+// AccountGeneration is the connector's account generation: 0 for one with
+// a key, which never moves.
+func AccountGeneration(c *model.Connector) *int {
+	generation := 0
+	if c.Account != nil {
+		generation = c.Account.Generation
+	}
+	return &generation
 }
 
 // credentials opens connectors' credentials with the syncer's keyring and

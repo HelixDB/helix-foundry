@@ -501,6 +501,77 @@ func TestConnectorSignIns(t *testing.T) {
 		assert.Equal(t, []string{"github/acct-1@" + ada}, purges(t))
 	})
 
+	// A sync that read with the old account, still running when the
+	// connector is signed in again, can't undo what signing in did: its
+	// cursor is dropped, the pause stays as signing in left it, and the
+	// connector syncs at once, in full when the identity changed.
+	t.Run("keeps a sign-in again from a sync of the old account", func(t *testing.T) {
+		ctx := context.Background()
+		for _, tc := range []struct {
+			name    string
+			broken  bool
+			outcome model.ConnectorSyncOutcome
+		}{
+			{"that succeeds", false, model.ConnectorSyncOutcome{Status: model.ConnectorSyncSucceeded}},
+			{"that fails for good, having read the account broken", true, model.ConnectorSyncOutcome{Status: model.ConnectorSyncFailed,
+				Error: "GitHub needs signing in again"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				db := newTestStore(t)
+				createWorkspace(t, ws)
+				connectorID := id26("SI-RACE")
+				signedInConnector(t, db, ws, connectorID, "acct-1", ada)
+				_, err := testDB.Exec(`UPDATE connectors SET change_cursor='{"since":"old"}' WHERE id=?`, connectorID)
+				require.NoError(t, err)
+				require.NoError(t, db.EnqueueConnectorSync(ctx, &model.ConnectorSync{ID: id26("SI-S1"), ConnectorID: connectorID, WorkspaceID: ws}))
+				s1, err := db.ClaimConnectorSync(ctx, "worker-1", time.Minute)
+				require.NoError(t, err)
+				if tc.broken {
+					require.NoError(t, db.BreakConnectorAccounts(ctx, ws, ada, "member_left"))
+				}
+
+				si := newSignIn("SI-AGAIN-RACE", grace)
+				si.ConnectorID = &connectorID
+				finishing(t, db, si)
+				require.NoError(t, db.ConnectConnectorSignIn(ctx, model.ConnectorSignInConnect{WorkspaceID: ws, SignInID: si.ID,
+					ConnectorID: connectorID, Account: model.ConnectorAccount{ID: "acct-2", UserID: grace, Label: "grace-h"}, IdentityChanged: true}))
+				// The scheduler finds it due while S1 runs, and unschedules it.
+				_, err = db.QueueDueConnectorSyncs(ctx, 10, time.Minute)
+				require.NoError(t, err)
+
+				require.NoError(t, db.UpdateConnectorCursor(ctx, connectorID, 1, json.RawMessage(`{"since":"s1"}`), s1.ID, "worker-1"))
+				generation, later := 1, time.Now().Add(24*time.Hour)
+				outcome := tc.outcome
+				outcome.Schedule = &model.ConnectorScheduleOutcome{NextSyncAt: &later, Paused: outcome.Error, Generation: &generation}
+				require.NoError(t, db.FinishConnectorSync(ctx, s1.ID, "worker-1", outcome))
+
+				c, err := db.GetConnector(ctx, ws, connectorID)
+				require.NoError(t, err)
+				assert.Nil(t, c.ChangeCursor, "the old account's cursor is dropped: the new identity reads in full")
+				assert.Nil(t, c.SchedulePaused)
+				require.NotNil(t, c.NextSyncAt, "it syncs at once with the new account")
+				assert.WithinDuration(t, time.Now(), *c.NextSyncAt, time.Minute)
+				assert.Nil(t, c.Account.Broken)
+			})
+		}
+
+		// A sync of the current generation schedules as it always has.
+		db := newTestStore(t)
+		connectorID := id26("SI-CURRENT")
+		signedInConnector(t, db, ws, connectorID, "acct-1", ada)
+		require.NoError(t, db.EnqueueConnectorSync(ctx, &model.ConnectorSync{ID: id26("SI-S2"), ConnectorID: connectorID, WorkspaceID: ws}))
+		s2, err := db.ClaimConnectorSync(ctx, "worker-1", time.Minute)
+		require.NoError(t, err)
+		require.NoError(t, db.UpdateConnectorCursor(ctx, connectorID, 1, json.RawMessage(`{"since":"s2"}`), s2.ID, "worker-1"))
+		generation, later := 1, time.Now().Add(24*time.Hour)
+		require.NoError(t, db.FinishConnectorSync(ctx, s2.ID, "worker-1", model.ConnectorSyncOutcome{Status: model.ConnectorSyncSucceeded,
+			Schedule: &model.ConnectorScheduleOutcome{NextSyncAt: &later, Generation: &generation}}))
+		c, err := db.GetConnector(ctx, ws, connectorID)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"since":"s2"}`, string(c.ChangeCursor))
+		assert.WithinDuration(t, later, *c.NextSyncAt, time.Second)
+	})
+
 	t.Run("refuses a connection the workspace or connector went from", func(t *testing.T) {
 		ctx := context.Background()
 		db := newTestStore(t)

@@ -329,14 +329,19 @@ VALUES (?, ?, ?, 'queued', 1, ?, 'changes')`, id.New(), c.id, c.workspaceID, str
 }
 
 // UpdateConnectorCursor stores where the connector's next change read starts,
-// only while workerID still holds syncID's lease.
-func (s *mysqlDB) UpdateConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage, syncID, workerID string) error {
+// only while workerID still holds syncID's lease. A sync that read with an
+// account generation (0 for a key) the connector has since moved past, by
+// being signed in again, stores nothing: its cursor is the old account's,
+// and signing in again left the cursor the new one needs (none, read in
+// full, when the identity changed).
+func (s *mysqlDB) UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error {
 	return s.withConnectorSyncLease(ctx, syncID, workerID, func(tx *sql.Tx) error {
 		var value any
 		if cursor != nil {
 			value = string(cursor)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE connectors SET change_cursor=CAST(? AS JSON) WHERE id=?`, value, connectorID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE connectors SET change_cursor=CAST(? AS JSON) WHERE id=? AND account_generation=?`,
+			value, connectorID, generation); err != nil {
 			return fmt.Errorf("update connector %s cursor: %w", connectorID, err)
 		}
 		return nil

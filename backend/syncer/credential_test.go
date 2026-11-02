@@ -19,9 +19,15 @@ type rejectingKind struct {
 	*fakeKind
 	rejects  map[string]bool
 	onReject func()
+	// onDiscover runs at each discovery, as the connector is signed in
+	// again during a sync.
+	onDiscover func()
 }
 
 func (k *rejectingKind) Discover(ctx context.Context, src connector.Source) (connector.Discovery, error) {
+	if k.onDiscover != nil {
+		k.onDiscover()
+	}
 	if k.rejects[src.Secret] {
 		if k.onReject != nil {
 			k.onReject()
@@ -79,6 +85,21 @@ func TestSignedInSyncs(t *testing.T) {
 		}
 		if !slices.Contains(secrets, "token-acct-1-1") || !slices.Contains(secrets, "token-acct-1-2") {
 			t.Fatalf("secrets = %v, want each sync's own token", secrets)
+		}
+	})
+
+	// The sync reports the account generation it read with, and a cursor
+	// it stores after the connector was signed in again is dropped.
+	t.Run("reads at one account generation", func(t *testing.T) {
+		broker := &portstest.Accounts{}
+		kind := &rejectingKind{fakeKind: signedInKind()}
+		f := signedInFixture(t, kind, broker)
+		kind.onDiscover = func() {
+			f.store.connectors["conn-1"].Account = &model.ConnectorAccount{ID: "acct-2", UserID: "user-2", Generation: 4}
+		}
+		res, err := f.syncer.Run(ctx, f.sync)
+		if err != nil || res.AccountGeneration == nil || *res.AccountGeneration != 3 || len(f.store.discarded) != 1 {
+			t.Fatalf("Run = %+v, %v; discarded %v", res, err, f.store.discarded)
 		}
 	})
 

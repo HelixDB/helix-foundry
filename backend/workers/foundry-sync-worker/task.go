@@ -323,6 +323,7 @@ func (t *Task) process(ctx context.Context, sync *model.ConnectorSync) {
 		}
 		if c != nil {
 			result.SyncEverySeconds = c.SyncEverySeconds
+			result.AccountGeneration = syncer.AccountGeneration(c)
 			if c.ChangeCursor == nil && slices.Contains(t.releaseKinds, c.Kind) {
 				releaseCtx, cancel := context.WithTimeout(ctx, releaseTimeout)
 				if releaseErr := t.releaser.Release(releaseCtx, c); releaseErr != nil {
@@ -448,7 +449,8 @@ func (t *Task) outcome(ctx context.Context, sync *model.ConnectorSync, result sy
 		outcome := model.ConnectorSyncOutcome{Status: model.ConnectorSyncSucceeded, RowsSynced: &rows, Mode: result.Mode}
 		switch pushed := result.Pushed; {
 		case pushed == nil:
-			outcome.Schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds}
+			outcome.Schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds,
+				Generation: result.AccountGeneration}
 		case pushed.Backlog == connector.BacklogNone:
 			outcome.Schedule = &model.ConnectorScheduleOutcome{Pushed: model.PushedKeep{}}
 		case pushed.Backlog == connector.BacklogMore:
@@ -474,16 +476,18 @@ func (t *Task) outcome(ctx context.Context, sync *model.ConnectorSync, result sy
 	case failure.PlanRequired:
 		// Buying the plan again is the fix, and nothing tells the schedule; it checks back daily.
 		day := t.now().Add(24 * time.Hour)
-		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: &day, Paused: message, Every: result.SyncEverySeconds}
+		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: &day, Paused: message, Every: result.SyncEverySeconds,
+			Generation: result.AccountGeneration}
 	case failure.Permanent:
 		// The same refusal comes back every time until the owner changes something.
-		schedule = &model.ConnectorScheduleOutcome{Paused: message, Every: result.SyncEverySeconds}
+		schedule = &model.ConnectorScheduleOutcome{Paused: message, Every: result.SyncEverySeconds, Generation: result.AccountGeneration}
 	case sync.Origin == model.ConnectorSyncEvents:
 		message = fmt.Sprintf("%s (gave up after %d attempts)", failure.Message, sync.Attempts)
 		schedule = &model.ConnectorScheduleOutcome{Pushed: model.PushedNotBefore{At: t.now().Add(t.spacing.For(max(result.StoredRows, rows)))}}
 	default:
 		message = fmt.Sprintf("%s (gave up after %d attempts)", failure.Message, sync.Attempts)
-		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds}
+		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds,
+			Generation: result.AccountGeneration}
 	}
 	return model.ConnectorSyncOutcome{Status: model.ConnectorSyncFailed, Error: message, RowsSynced: &rows, Mode: result.Mode, Schedule: schedule}
 }
