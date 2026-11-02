@@ -110,11 +110,11 @@ function useProduction() {
 }
 
 /**
- * The Analyst's card, under the bar. It floats beside the conversation's
- * column where it fits, and else is a row the conversation sits under
- * (production.css), so it never covers the column or the composer. Never
- * dismissed, so the prompt stays reachable; whether it starts open is decided
- * once, before it paints, so copying leaves it open until the next visit.
+ * The Analyst's card: a box under the bar's right that opens over the
+ * conversation, or on a phone a row the conversation sits under
+ * (production.css). Never dismissed, so the prompt stays reachable; whether it
+ * starts open is decided once, before it paints, so copying leaves it open
+ * until the next visit.
  */
 export function ProductionCard() {
   const { role } = useWorkspace(),
@@ -130,7 +130,9 @@ export function ProductionCard() {
         !cardStartsMinimised(
           state.minimised,
           progress?.current === null,
-          getComputedStyle(card.current).position === "absolute",
+          getComputedStyle(card.current)
+            .getPropertyValue("--pd-fits")
+            .trim() === "1",
         ),
       );
   }, [known]);
@@ -185,6 +187,7 @@ export function ProductionCard() {
                       <Button
                         size="sm"
                         icon={Copy}
+                        disabled={s.state === "upcoming"}
                         onClick={() => copy(ontology)}
                       >
                         Copy prompt

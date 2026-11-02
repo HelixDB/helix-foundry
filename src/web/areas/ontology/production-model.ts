@@ -79,14 +79,17 @@ export type ProductionProgress = {
   current: ProductionStepId | null;
 };
 
-/** Where the steps are: each is done on its own, whatever the other's state. */
+/**
+ * Where the steps are, in order: the query waits for an ontology, so a prompt
+ * copied with none yet doesn't count.
+ */
 export function productionProgress(
   ownOntology: boolean,
   copied: boolean,
 ): ProductionProgress {
   const done: Record<ProductionStepId, boolean> = {
     ontology: ownOntology,
-    query: copied,
+    query: ownOntology && copied,
   };
   const current = PRODUCTION_STEPS.find((s) => !done[s.id])?.id ?? null;
   return {
@@ -120,8 +123,8 @@ export const stripShown = (
 
 /**
  * Whether the card starts minimised: when it was left so, once both steps are
- * done, and where it doesn't fit beside the conversation (`fits`). Opened in
- * those last two cases, it is for that visit.
+ * done, and where the page is too narrow for it to start open (`fits`). Opened
+ * in those last two cases, it is for that visit.
  */
 export const cardStartsMinimised = (
   minimised: boolean,

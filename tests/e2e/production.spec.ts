@@ -104,30 +104,48 @@ test("the Analyst's card copies the prompt, minimises, and floats beside the con
   await expect(copy).toBeVisible();
 });
 
-test("where the card can't fit beside the column, it starts minimised and pushes the conversation down", async ({
+test("the card is a box in the top right on a laptop, and a row on a phone", async ({
   page,
 }) => {
   await signIn(page);
   await loadContracts(page);
-  const composer = page.getByRole("form", { name: "Ask a question" });
-  const clear = async () => {
-    await expect(composer).toBeVisible();
-    const box = (await production(page).boundingBox())!,
-      column = (await composer.boundingBox())!;
-    expect(box.y + box.height).toBeLessThanOrEqual(column.y);
-  };
-  for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    await page.goto(`${A}?new=1`);
-    await expect(toggle(page)).toHaveAttribute("aria-expanded", "false");
-    await clear();
-    await toggle(page).click();
-    await expect(
-      production(page).getByRole("button", { name: "Copy prompt" }),
-    ).toBeVisible();
-    await clear();
-    await toggle(page).click();
-  }
+  const composer = page.getByRole("form", { name: "Ask a question" }),
+    copy = production(page).getByRole("button", { name: "Copy prompt" });
+
+  // On a laptop it starts open, in the corner, clear of a new thread's composer.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${A}?new=1`);
+  await expect(toggle(page)).toHaveAttribute("aria-expanded", "true");
+  await expect(composer).toBeVisible();
+  const box = (await production(page).boundingBox())!;
+  expect(box.x + box.width).toBeGreaterThan(1400);
+  expect(box.width).toBeLessThan(300);
+  expect(box.y + box.height).toBeLessThanOrEqual(
+    (await composer.boundingBox())!.y,
+  );
+
+  // Too narrow to start open, it waits in the corner, and opens over the page.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.goto(`${A}?new=1`);
+  await expect(toggle(page)).toHaveAttribute("aria-expanded", "false");
+  const closed = (await composer.boundingBox())!;
+  expect((await production(page).boundingBox())!.width).toBeLessThan(300);
+  await toggle(page).click();
+  await expect(copy).toBeVisible();
+  expect((await composer.boundingBox())!.y).toBe(closed.y);
+  await toggle(page).click();
+
+  // On a phone, a row the conversation sits under, open or not.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${A}?new=1`);
+  await expect(toggle(page)).toHaveAttribute("aria-expanded", "false");
+  await toggle(page).click();
+  await expect(copy).toBeVisible();
+  const row = (await production(page).boundingBox())!;
+  expect(row.y + row.height).toBeLessThanOrEqual(
+    (await composer.boundingBox())!.y,
+  );
+  await toggle(page).click();
 });
 
 test("the strip off the Analyst shows the current step's action, until both are done", async ({
@@ -196,10 +214,9 @@ test("the strip dismisses for good, and the card stays", async ({ page }) => {
 
   await page.goto(A);
   await expect(toggle(page)).toContainText("1 of 2");
-  await toggle(page).click();
   await expect(
     production(page).getByRole("button", { name: "Copy prompt" }),
-  ).toBeVisible();
+  ).toBeEnabled();
 });
 
 test("on a phone, the strip is the stations and the action", async ({
