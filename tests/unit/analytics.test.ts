@@ -132,12 +132,19 @@ describe("sign-in", () => {
 });
 
 describe("the signed-in user", () => {
-  it("is identified by the backend's id, and forgotten after signing out", async () => {
+  it("is identified by the backend's id with their email and name, and forgotten after signing out", async () => {
     const a = await load();
     vi.stubGlobal("navigator", { sendBeacon: () => true });
+    a.identifyUser("user_1", { email: "ada@example.com", name: "Ada" });
+    // Details it lacks stay off the profile.
+    a.identifyUser("user_1", { email: "", name: undefined });
     a.identifyUser("user_1");
-    a.identifyUser("");
-    expect(sdk.identify.mock.calls).toEqual([["user_1"]]);
+    a.identifyUser("", { email: "ada@example.com" });
+    expect(sdk.identify.mock.calls).toEqual([
+      ["user_1", { email: "ada@example.com", name: "Ada" }],
+      ["user_1", {}],
+      ["user_1", {}],
+    ]);
     await a.signedOut();
     expect(sdk.clearProfile).toHaveBeenCalledOnce();
   });
