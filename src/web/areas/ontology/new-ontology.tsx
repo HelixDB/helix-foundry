@@ -95,7 +95,10 @@ import {
 // from its sources, goes on a new database, and its first draft is made
 // current and loaded as soon as it is stored, with an email to say so
 // (GenerateOntologyRequest's loadWhenReady). A connector link sent here (?add=<kind>) opens its
-// form over the wizard once, and the new connection stays here. An API
+// form over the wizard once, and the new connection stays here; with an
+// agent's sign-in (&sign_in=<id>) the form is bound to it. A sign-in's
+// callback comes back to the sources step with the connector it made
+// (?step=sources&connected=<id>), chosen as one connected here is. An API
 // source's token link (?event_source=<id>&token=new, forwarded from its
 // Data page by main.tsx) opens its send panel over the wizard once, at
 // whatever step it is on: a link from an agent opens a new tab, whose
@@ -123,6 +126,9 @@ type Saved = {
   ontologyId?: string;
 };
 const savedKey = (ws: string) => "foundry.new-ontology.v1:" + ws;
+// Where a sign-in started here returns: the sources step, its choices kept
+// in this tab.
+const SOURCES_STEP = paths.newOntology() + "?step=sources";
 /** This tab's new-ontology choices in `ws`, if it kept any. */
 export function readNewOntology(ws: string): Saved | null {
   try {
@@ -189,16 +195,26 @@ export function NewOntologyPage() {
   // Onboarding asks how to start until the user picks their own data, or a
   // link (a step, a connector's form, an API source's token) says so.
   const [own, setOwn] = useState(() =>
-      ["step", "add", "event_source"].some((k) => params.has(k)),
+      ["step", "add", "event_source", "sign_in", "connected"].some((k) =>
+        params.has(k),
+      ),
     ),
     [start, setStart] = useState(LOCAL ? "own" : "agent"),
     [adding, setAdding] = useState(() => params.get("add")),
+    // The sign-in an agent's link names, for its form.
+    [signIn] = useState(() => params.get("sign_in")),
     // The API source a token link opens the send panel of.
     [sending, setSending] = useState(() =>
       params.get("token") === "new" ? params.get("event_source") : null,
     );
   useEffect(() => {
-    const read = ["add", "event_source", "token"].filter((k) => params.has(k));
+    const read = [
+      "add",
+      "event_source",
+      "token",
+      "sign_in",
+      "connected",
+    ].filter((k) => params.has(k));
     if (!read.length) return;
     setParams(
       (p) => {
@@ -239,9 +255,15 @@ export function NewOntologyPage() {
   });
   const [name, setName] = useState(saved.name),
     [database, setDatabase] = useState(saved.database),
-    [chosen, setChosen] = useState<Set<string> | null>(
-      saved.connectorIds && new Set(saved.connectorIds),
-    ),
+    // A connector a sign-in just made joins those chosen, as one connected
+    // here does (every synced one, when none was chosen, includes it).
+    [chosen, setChosen] = useState<Set<string> | null>(() => {
+      const connected = params.get("connected");
+      return (
+        saved.connectorIds &&
+        new Set([...saved.connectorIds, ...(connected ? [connected] : [])])
+      );
+    }),
     [chosenEvents, setChosenEvents] = useState<EventChoices | null>(
       () => new Map(saved.eventSources),
     ),
@@ -499,6 +521,7 @@ export function NewOntologyPage() {
       case "sources":
         return (
           <SourcesPicker
+            returnPath={SOURCES_STEP}
             chosen={chosen}
             setChosen={setChosen}
             chosenEvents={chosenEvents}
@@ -589,6 +612,8 @@ export function NewOntologyPage() {
         {adding !== null && (
           <ConnectData
             initialKind={adding}
+            signIn={signIn}
+            returnPath={SOURCES_STEP}
             onConnected={() => {}}
             onClose={() => setAdding(null)}
           />
@@ -609,6 +634,8 @@ export function NewOntologyPage() {
       {adding !== null && (
         <ConnectData
           initialKind={adding}
+          signIn={signIn}
+          returnPath={SOURCES_STEP}
           onConnected={() => {}}
           onClose={() => setAdding(null)}
         />

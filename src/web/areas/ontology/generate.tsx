@@ -57,7 +57,10 @@ import { useSampleOntology } from "./use-sample-ontology";
 // those the current version's generation read, through mappings (its
 // tables) or by extraction (its sets), once the connectors, the sets, the
 // version and its generation have loaded. A generation that can't be read
-// starts with none.
+// starts with none. Connecting by signing in leaves the page: its callback
+// comes back here with what was chosen in the link (`goal`, `connectors`,
+// `event_sources`, `sets`) and the connector it made (`connected`), which
+// joins those chosen.
 
 export function GeneratePage() {
   const { id, role } = useWorkspace(),
@@ -125,10 +128,17 @@ export function GeneratePage() {
   const [goal, setGoal] = useState(() => params.get("goal") || "");
   // The WFE counts characters (code points), not UTF-16 units.
   const goalChars = [...goal.trim()].length;
-  // Chosen connectors; by default every synced one (or the ones asked for).
+  // Chosen connectors; by default every synced one (or the ones asked for,
+  // and one a sign-in just made).
   const [chosen, setChosen] = useState<Set<string> | null>(() => {
-    const wanted = params.get("connectors");
-    return wanted === null ? null : new Set(wanted.split(",").filter(Boolean));
+    const wanted = params.get("connectors"),
+      connected = params.get("connected");
+    return wanted === null
+      ? null
+      : new Set([
+          ...wanted.split(",").filter(Boolean),
+          ...(connected ? [connected] : []),
+        ]);
   });
   const [error, setError] = useState<unknown>(null),
     [pending, setPending] = useState(false);
@@ -217,6 +227,17 @@ export function GeneratePage() {
           description={STEP_COPY.sources.text}
         >
           <SourcesPicker
+            returnPath={paths.generate(o, {
+              goal: goal.trim() || undefined,
+              connectorIds: chosen ? [...chosen] : undefined,
+              eventSources: chosenEvents
+                ? [...chosenEvents].map(([connectorId, mode]) => ({
+                    connectorId,
+                    mode,
+                  }))
+                : undefined,
+              documentSetIds: chosenSets ? [...chosenSets] : undefined,
+            })}
             chosen={chosen}
             setChosen={setChosen}
             chosenEvents={chosenEvents}

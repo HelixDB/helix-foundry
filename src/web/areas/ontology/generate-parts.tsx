@@ -49,6 +49,7 @@ import {
   EVENT_SET_DEFAULTS,
   KINDS,
   canManage,
+  connectorBadge,
   eventSourceLine,
   eventsConfig,
   eventsTable,
@@ -60,8 +61,8 @@ import {
   setFolders,
   setHolding,
   setSpend,
-  syncBadge,
 } from "../data/model";
+import { needsSignIn } from "../data/sign-ins";
 import { useDataUpload } from "../data/upload";
 import {
   documentQueries,
@@ -248,10 +249,14 @@ export function ConnectorPicker({
   chosen,
   setChosen,
   keepSample = false,
+  returnPath,
 }: {
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
   keepSample?: boolean;
+  // Where connecting by signing in comes back to, with `connected`: the
+  // page, its choices kept (the wizard's step, Generate's prefill).
+  returnPath?: string;
 }) {
   const { id, notify } = useWorkspace(),
     qc = useQueryClient();
@@ -295,7 +300,7 @@ export function ConnectorPicker({
     const ok = synced(c),
       live = isLiveSync(c.lastSync),
       rows = Number(c.lastSync?.rowsSynced || 0),
-      badge = syncBadge(c.lastSync),
+      badge = connectorBadge(c),
       isOpen = open.has(c.id),
       at = lastSynced(c),
       label = connectorLabel(c.kind || "");
@@ -324,12 +329,18 @@ export function ConnectorPicker({
                       ? c.lastSync.error || "its sync failed"
                       : "not synced yet"}
               </small>
+              {needsSignIn(c) && (
+                <small className="on-frozen">
+                  Needs signing in again: its data is frozen as of its last sync
+                  {at ? `, ${formatRelative(at)}` : ""}.
+                </small>
+              )}
             </span>
           </label>
           {!ok && (
             <StatusBadge status={badge.status} label={badge.label} size="sm" />
           )}
-          {!ok && !live && (
+          {!ok && !live && !needsSignIn(c) && (
             <Button
               size="sm"
               icon={RotateCcw}
@@ -495,6 +506,7 @@ export function ConnectorPicker({
       )}
       {connecting && (
         <ConnectData
+          returnPath={returnPath}
           onClose={() => setConnecting(false)}
           // An API source made here shows in EventSourcePicker, unchosen.
           onConnected={(c) =>
@@ -521,7 +533,10 @@ export function SourcesPicker({
   setChosenSets,
   failed,
   keepSample = false,
+  returnPath,
 }: {
+  // As ConnectorPicker's.
+  returnPath?: string;
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
   chosenEvents: EventChoices | null;
@@ -537,6 +552,7 @@ export function SourcesPicker({
         chosen={chosen}
         setChosen={setChosen}
         keepSample={keepSample}
+        returnPath={returnPath}
       />
       <EventSourcePicker chosen={chosenEvents} setChosen={setChosenEvents} />
       <SetPicker

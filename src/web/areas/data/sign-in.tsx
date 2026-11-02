@@ -1,0 +1,349 @@
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { KeyRound, PlugZap, TriangleAlert } from "lucide-react";
+import type {
+  Connector,
+  ConnectorConfig,
+  ConnectorKindName,
+  ConnectorSignIn,
+} from "../../../shared/wfe";
+import { trackBeforeLeavingAt } from "../../analytics";
+import { sentence } from "../../api";
+import { Button, ButtonAnchor, KeyValue, formatDate, plural } from "../../kit";
+import { paths } from "../../paths";
+import { Loading, useWorkspace } from "../../ui";
+import { Callout } from "../ontology/parts";
+import { authorizeSignIn, signInQuery, startSignIn } from "./data-api";
+import { canManage } from "./model";
+import {
+  accountLine,
+  brokenWhy,
+  callbackUrl,
+  isProviderUrl,
+  needsSignIn,
+  providerName,
+  tabStorage,
+  writeConnect,
+} from "./sign-ins";
+
+// Connecting GitHub or Linear by signing in at the provider, in the
+// browser: the button's work (useSignInStart), the form an agent's link
+// opens (AgentSignIn), and a signed-in connector's notices on its page.
+// The callback that finishes it is ./connect-callback.tsx.
+
+/** What one click asks for: a new connector, or one signed in again. */
+export type SignInRequest = {
+  kind: string;
+  // The workspace it is started in; the one open by default.
+  workspaceId?: string;
+  // A sign-in already started (an agent's link, or Try again): only
+  // authorized here.
+  signInId?: string;
+  // A new connector's name and settings, without a credential.
+  name?: string;
+  config?: ConnectorConfig;
+  // Sign this connector in again.
+  connectorId?: string;
+  // Makes a retry of the start return the sign-in it started.
+  clientToken?: string;
+  // Where the callback returns once connected (ConnectEntry.returnPath).
+  returnPath?: string;
+};
+
+/**
+ * Sends the browser to the provider to authorize: starts a sign-in unless
+ * one is given, authorizes it with the site's callback, keeps it in this
+ * tab for the callback, then leaves, for an address it may open only. The
+ * button stays pending until the page has gone (or comes back from the
+ * back/forward cache).
+ */
+export function useSignInStart() {
+  const { id } = useWorkspace();
+  const [pending, setPending] = useState(false),
+    [error, setError] = useState<Error | null>(null);
+  useEffect(() => {
+    const back = (e: PageTransitionEvent) => {
+      if (e.persisted) setPending(false);
+    };
+    window.addEventListener("pageshow", back);
+    return () => window.removeEventListener("pageshow", back);
+  }, []);
+  const go = async (r: SignInRequest) => {
+    const workspaceId = r.workspaceId || id;
+    setPending(true);
+    setError(null);
+    try {
+      const signInId =
+        r.signInId ||
+        (
+          await startSignIn(workspaceId, {
+            kind: r.kind,
+            ...(r.name ? { name: r.name } : {}),
+            ...(r.config ? { config: r.config } : {}),
+            ...(r.connectorId ? { connectorId: r.connectorId } : {}),
+            ...(r.clientToken ? { clientToken: r.clientToken } : {}),
+          })
+        ).signIn.id;
+      const { url } = await authorizeSignIn(
+        workspaceId,
+        signInId,
+        callbackUrl(),
+      );
+      if (!isProviderUrl(url, location.href))
+        throw new Error(
+          `Foundry was given an address for ${providerName(r.kind)} it won’t open. Try again.`,
+        );
+      writeConnect(tabStorage(), {
+        workspaceId,
+        signInId,
+        kind: r.kind,
+        ...(r.returnPath ? { returnPath: r.returnPath } : {}),
+        ...(r.connectorId ? { connectorId: r.connectorId } : {}),
+      });
+      // Under a fixed path: the button runs on pages whose paths name ids.
+      await trackBeforeLeavingAt("/data", "connector_sign_in_started", {
+        kind: r.kind as ConnectorKindName,
+      });
+      location.assign(url);
+    } catch (e) {
+      setError(e as Error);
+      setPending(false);
+    }
+  };
+  return { pending, error, go };
+}
+
+/** The settings a sign-in was started with, as its form shows them. */
+function signInSettings(s: ConnectorSignIn) {
+  const g = s.config && "github" in s.config ? s.config.github : undefined;
+  return [
+    { label: "Name", value: s.name || providerName(s.kind || "") },
+    ...(g
+      ? [
+          {
+            label: "Repositories",
+            value: g.repos?.length
+              ? g.repos.join(", ")
+              : "Every repository Helix Foundry is installed on that you can see",
+          },
+          {
+            label: "Review history",
+            value: plural(g.reviewDays || 90, "day"),
+          },
+        ]
+      : []),
+  ];
+}
+
+/**
+ * The form an agent's link opens (/data?add=<kind>&sign_in=<id>): the
+ * sign-in its agent started, bound to it, with its workspace, name and
+ * settings and one button, which never runs on its own. A link made for
+ * someone else says so before any click; one that ended says what to do.
+ * `onUnbind` leaves it for the kind's own form.
+ */
+export function AgentSignIn({
+  signInId,
+  returnPath,
+  onUnbind,
+}: {
+  signInId: string;
+  returnPath?: string;
+  onUnbind: () => void;
+}) {
+  const { id, name: workspace } = useWorkspace();
+  const signIn = useQuery(signInQuery(id, signInId)),
+    start = useSignInStart();
+  if (signIn.isPending) return <Loading />;
+  if (!signIn.data)
+    return (
+      <div className="connect-data">
+        <p role="alert" className="error-box">
+          Couldn’t read the sign-in your agent started: {signIn.error?.message}
+        </p>
+        <button type="button" className="text-button" onClick={onUnbind}>
+          Connect here instead
+        </button>
+      </div>
+    );
+  const s = signIn.data.signIn,
+    provider = providerName(s.kind || ""),
+    status = s.status;
+  const ended =
+    status === "CONNECTOR_SIGN_IN_STATUS_EXPIRED" ||
+    status === "CONNECTOR_SIGN_IN_STATUS_CONNECTED" ||
+    status === "CONNECTOR_SIGN_IN_STATUS_FINISHING";
+  return (
+    <div className="connect-data">
+      <p className="setup-intro">
+        Your agent asked to connect {provider} to {workspace}.
+      </p>
+      <KeyValue items={signInSettings(s)} />
+      {!s.mine ? (
+        <p role="alert" className="error-box">
+          This link was made for someone else: ask your agent for a new one.
+        </p>
+      ) : status === "CONNECTOR_SIGN_IN_STATUS_CONNECTED" ? (
+        <p role="status" className="muted small">
+          This sign-in already connected {provider}.{" "}
+          {s.connectorId && (
+            <Link to={paths.connection(s.connectorId)}>Open it</Link>
+          )}
+        </p>
+      ) : status === "CONNECTOR_SIGN_IN_STATUS_FINISHING" ? (
+        <p role="status" className="muted small">
+          This sign-in is finishing in another tab.
+        </p>
+      ) : status === "CONNECTOR_SIGN_IN_STATUS_EXPIRED" ? (
+        <p role="alert" className="error-box">
+          This sign-in ran out: ask your agent for a new link, or{" "}
+          <button type="button" className="text-button" onClick={onUnbind}>
+            connect {provider} here
+          </button>
+          .
+        </p>
+      ) : null}
+      {s.mine && !ended && (
+        <button
+          className="button primary"
+          type="button"
+          disabled={start.pending}
+          onClick={() =>
+            void start.go({ kind: s.kind || "", signInId: s.id, returnPath })
+          }
+        >
+          {start.pending ? `Opening ${provider}…` : `Connect with ${provider}`}
+        </button>
+      )}
+      {start.error && (
+        <p role="alert" className="error-box">
+          {start.error.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Sign in again, for a connector that signs in: as the person clicking,
+ * who becomes the member it reads as. Back on the connector's page.
+ */
+export function SignInAgainButton({
+  connector: c,
+  variant = "primary",
+  size = "sm",
+}: {
+  connector: Connector;
+  variant?: "primary" | "secondary";
+  size?: "sm" | "md";
+}) {
+  const start = useSignInStart(),
+    { notify } = useWorkspace();
+  useEffect(() => {
+    if (start.error) notify(start.error.message, true);
+  }, [start.error]);
+  return (
+    <Button
+      size={size}
+      variant={variant}
+      icon={KeyRound}
+      pending={start.pending}
+      onClick={() => void start.go({ kind: c.kind, connectorId: c.id })}
+    >
+      Sign in again
+    </Button>
+  );
+}
+
+/** What a connector page's arrival from the callback carries. */
+export type SignedInArrival = {
+  // Signing in again changed the provider account it reads with.
+  identityChanged?: boolean;
+  // The connector was made but can't read all it names.
+  discoveryProblem?: string;
+};
+
+/**
+ * A signed-in connector's notices on its page: that it needs signing in
+ * again (why, since when, and Sign in again for owners and admins), what
+ * the sign-in that just made it couldn't read, with GitHub's install link,
+ * and whose access it reads with now when that changed.
+ */
+export function AccountNotices({
+  connector: c,
+  arrival,
+  installUrl,
+}: {
+  connector: Connector;
+  arrival: SignedInArrival;
+  installUrl?: string;
+}) {
+  const { role } = useWorkspace(),
+    navigate = useNavigate(),
+    manage = canManage(role);
+  const dismiss = (key: keyof SignedInArrival) =>
+    navigate(".", { replace: true, state: { ...arrival, [key]: undefined } });
+  if (!c.account) return null;
+  const at = c.account.brokenAt,
+    provider = providerName(c.kind);
+  return (
+    <>
+      {needsSignIn(c) && (
+        <Callout
+          icon={TriangleAlert}
+          tone="danger"
+          title={`${c.name || provider} needs signing in again`}
+          text={`${brokenWhy(c)} It stopped syncing${at ? ` on ${formatDate(at)}` : ""}: its tables keep what its last sync read, and loads and questions still read them. ${manage ? `Sign it in again with your ${provider} account to sync again.` : "Ask an owner or admin to sign it in again."}`}
+          action={manage && <SignInAgainButton connector={c} />}
+        />
+      )}
+      {arrival.discoveryProblem && (
+        <Callout
+          icon={PlugZap}
+          tone="muted"
+          title={`Connected, but ${provider} can’t read everything it names`}
+          text={sentence(arrival.discoveryProblem)}
+          action={
+            <span className="on-card-actions">
+              {installUrl && (
+                <ButtonAnchor
+                  size="sm"
+                  href={installUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Install Helix Foundry
+                </ButtonAnchor>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => dismiss("discoveryProblem")}
+              >
+                Dismiss
+              </Button>
+            </span>
+          }
+        />
+      )}
+      {arrival.identityChanged && (
+        <Callout
+          icon={KeyRound}
+          tone="muted"
+          title={`Now reads with ${c.account.label || "another account"}’s access`}
+          text={`It was signed in again as another ${provider} account, so its next sync reads what that account can see. ${accountLine(c)}.`}
+          action={
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => dismiss("identityChanged")}
+            >
+              Dismiss
+            </Button>
+          }
+        />
+      )}
+    </>
+  );
+}

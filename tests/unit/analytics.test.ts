@@ -253,6 +253,23 @@ describe("trackBeforeLeaving", () => {
     });
   });
 
+  it("names a fixed path in place of a page's that names ids", async () => {
+    const a = await load();
+    vi.stubGlobal("location", {
+      origin: "https://foundry.helix-db.com",
+      pathname: "/data/connections/conn_1",
+    });
+    const beacons = beacon();
+    await a.trackBeforeLeavingAt("/data", "connector_sign_in_started", {
+      kind: "github",
+    });
+    expect(JSON.parse(await beacons[0].body.text())).toMatchObject({
+      name: "connector_sign_in_started",
+      properties: { kind: "github" },
+      path: "https://foundry.helix-db.com/data",
+    });
+  });
+
   it("goes through the tracker when the beacon is refused", async () => {
     const a = await load();
     beacon(false);

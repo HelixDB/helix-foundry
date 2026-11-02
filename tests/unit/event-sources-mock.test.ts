@@ -683,6 +683,8 @@ describe("an API source in the Data routes", () => {
         displayName: "API source",
         requiresPro: false,
         available: true,
+        // Only GitHub and Linear connect by signing in.
+        signIn: false,
       });
     const made = ok(
       await call("POST", `${base(GLOBEX)}/connectors`, {

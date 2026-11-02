@@ -35,11 +35,16 @@ import { ApiError } from "./api";
 import { Button, SkeletonText } from "./kit";
 import { paths } from "./paths";
 import { Shell } from "./shell/Shell";
-import { NotFound, RouteErrorBoundary } from "./shell/ErrorBoundary";
+import {
+  ChromeBoundary,
+  NotFound,
+  RouteErrorBoundary,
+} from "./shell/ErrorBoundary";
 import { applyTheme, readTheme } from "./shell/theme";
 import { SignInPage, SignedInAs } from "./sign-in";
 import { WorkspacePicker } from "./areas/workspace/picker";
 import { ontologyQueries } from "./areas/ontology/queries";
+import { captureCallback, tabStorage } from "./areas/data/sign-ins";
 import {
   Loading,
   WorkspaceContext,
@@ -61,7 +66,15 @@ import {
 // workspace has no ontology, only the onboarding's. A local build
 // (src/shared/deployment.ts) is always signed in and has no sign-in page.
 
-if (typeof window !== "undefined") applyTheme(readTheme());
+// A provider's return from connecting a source by signing in brings a
+// single-use code in the URL: it moves into this tab's sign-in, and the URL
+// becomes the bare callback, before any call (./areas/data/sign-ins.ts).
+if (typeof window !== "undefined") {
+  applyTheme(readTheme());
+  captureCallback(window.location, tabStorage(), (path) =>
+    window.history.replaceState(window.history.state, "", path),
+  );
+}
 
 // Each area's index.tsx exports its route components; main.tsx owns the table.
 function area<M>(load: () => Promise<M>, name: keyof M) {
@@ -80,20 +93,31 @@ const DataRoutes = area(data, "DataRoutes"),
   OntologyRoutes = area(ontology, "OntologyRoutes"),
   ExploreRoutes = area(ontology, "ExploreRoutes"),
   AskRoutes = area(ontology, "AskRoutes");
+// Where a provider returns from connecting a source by signing in, and the
+// shell's notice of connectors that need signing in again: the Data area's.
+const ConnectCallback = area(data, "ConnectCallback"),
+  AccountBreaks = lazy(() =>
+    import("./areas/data/account-breaks").then((m) => ({
+      default: m.AccountBreaks,
+    })),
+  );
 
 // The onboarding's wizard, in place of a page it doesn't offer. The Helix
-// MCP's connector links (/data?add=<kind>) open their form on it, and its
-// API source token links (/data/connections/<id>?token=new) the source's
-// send panel (?event_source=<id>&token=new); a link's workspace is kept.
+// MCP's connector links (/data?add=<kind>, with the sign-in an agent
+// started: &sign_in=<id>) open their form on it, and its API source token
+// links (/data/connections/<id>?token=new) the source's send panel
+// (?event_source=<id>&token=new); a link's workspace is kept.
 function ToOnboarding() {
   const { pathname, search } = useLocation(),
     params = new URLSearchParams(search),
     add = pathname === "/data" && params.get("add"),
+    signIn = add && params.get("sign_in"),
     source =
       params.get("token") === "new" &&
       matchPath("/data/connections/:connectorId", pathname)?.params.connectorId;
   const q = new URLSearchParams();
   if (add) q.set("add", add);
+  if (signIn) q.set("sign_in", signIn);
   if (source) {
     q.set("event_source", source);
     q.set("token", "new");
@@ -108,9 +132,9 @@ function ToOnboarding() {
 // goes with it. While the workspace has no ontology (`onboarding`), it
 // offers only the new-ontology wizard, which connects data and uploads
 // documents in place, the pages of the ontology it creates (they open
-// before the list has it), and Settings, for the plan a database connection
-// needs. One table either way, so a page open as the first ontology arrives
-// stays mounted.
+// before the list has it), Settings, for the plan a database connection
+// needs, and the callback of a sign-in started from the wizard. One table
+// either way, so a page open as the first ontology arrives stays mounted.
 function WorkspaceRoutes({ onboarding }: { onboarding: boolean }) {
   const { search } = useLocation();
   const offered = (page: ReactNode) => (onboarding ? <ToOnboarding /> : page);
@@ -128,6 +152,7 @@ function WorkspaceRoutes({ onboarding }: { onboarding: boolean }) {
       <Route path="/explore/*" element={offered(<ExploreRoutes />)} />
       <Route path="/ask/*" element={offered(<AskRoutes />)} />
       <Route path="/settings/*" element={<SettingsRoutes />} />
+      <Route path="/connect/callback" element={<ConnectCallback />} />
       <Route path="*" element={offered(<NotFound />)} />
     </Routes>
   );
@@ -203,6 +228,14 @@ function WorkspaceApp({
         user={user}
         onSwitch={onSwitch}
       >
+        {/* A local build has no accounts to break. */}
+        {!LOCAL && (
+          <ChromeBoundary name="Connector notices" fallback={null}>
+            <Suspense fallback={null}>
+              <AccountBreaks key={current.id} />
+            </Suspense>
+          </ChromeBoundary>
+        )}
         <RouteErrorBoundary resetKey={location.pathname}>
           <Suspense fallback={<RouteFallback />}>
             {/* Keyed by workspace: switching starts every page afresh. */}
@@ -265,13 +298,14 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
     const params = new URLSearchParams(location.search);
     params.delete("workspace");
     const search = params.toString();
+    // What the page arrived with (a connector's sign-in notes) stays.
     navigate(
       {
         pathname: location.pathname,
         search: search ? `?${search}` : "",
         hash: location.hash,
       },
-      { replace: true },
+      { replace: true, state: location.state },
     );
   }, [linked, list.data, me, location, navigate]);
   if (list.isPending)

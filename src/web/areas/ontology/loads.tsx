@@ -16,6 +16,7 @@ import {
   UserSearch,
 } from "lucide-react";
 import type {
+  Connector,
   FoundryLoad,
   GraphJob,
   OntologyVersion,
@@ -37,6 +38,7 @@ import {
   Panel,
   SkeletonText,
   StatusBadge,
+  connectorLabel,
   formatDate,
   formatNumber,
   formatRelative,
@@ -49,6 +51,9 @@ import {
   documentQueries,
   documentSetQueries,
 } from "../documents/documents-api";
+import { connectorsQuery } from "../data/data-api";
+import { lastSyncedAt } from "../data/model";
+import { needsSignIn } from "../data/sign-ins";
 import { andList, formatBytes, formatUsd, liveRead } from "../documents/model";
 import { loadCountsQuery } from "../explore/load-counts";
 import { rulesOf } from "../explore/graph-read";
@@ -153,6 +158,20 @@ function tablesText(tables: { sourceId: string; info?: SourceInfo }[]) {
 }
 
 /**
+ * What a load reads of connectors whose account needs signing in again:
+ * their tables as their last syncs left them.
+ */
+function frozenText(frozen: Connector[]) {
+  if (!frozen.length) return "";
+  if (frozen.length === 1) {
+    const c = frozen[0]!,
+      at = lastSyncedAt(c);
+    return `${c.name || connectorLabel(c.kind)} needs signing in again: its data is frozen as of its last sync${at ? `, ${formatRelative(at)}` : ""}.`;
+  }
+  return `${andList(frozen.map((c) => c.name || connectorLabel(c.kind)))} need signing in again: their data is frozen as of their last syncs.`;
+}
+
+/**
  * Load in a page header or callout: for owners and admins, on the current
  * version when it is an agent draft whose status is done. Opens the dialog,
  * at once when `opened`.
@@ -180,8 +199,17 @@ export function LoadButton({
     documents = useQuery(documentQueries.workspace(id)),
     read = useQuery(documentQueries.list(id, o)),
     sets = useQuery(documentSetQueries.list(id)),
-    settings = useQuery(enrichmentQuery(id));
+    settings = useQuery(enrichmentQuery(id)),
+    connectors = useQuery(connectorsQuery(id));
   const { bundle, tables, ids, files } = useLoadPlan(version);
+  // The connectors whose tables it reads that are frozen.
+  const frozen = (connectors.data?.connectors || []).filter(
+    (c) =>
+      needsSignIn(c) &&
+      tables.some(
+        (t) => t.info?.source === "connector" && t.info.connectorId === c.id,
+      ),
+  );
   const [open, setOpen] = useState(opened),
     [pending, setPending] = useState(false),
     [error, setError] = useState(""),
@@ -303,6 +331,7 @@ export function LoadButton({
                 {tables.length
                   ? tablesText(tables)
                   : "None: this version maps no tables."}
+                {frozen.length > 0 && ` ${frozenText(frozen)}`}
               </span>
             </li>
             <li>

@@ -380,6 +380,65 @@ GRANT SELECT ON app.* TO 'foundry'@'%';`}</pre>
   ),
 };
 
+/**
+ * How connecting by signing in goes, for a kind that offers it (GitHub,
+ * Linear), above its Connect button: what Helix Foundry asks to read, and
+ * for GitHub, where it reads and the install a private repository needs.
+ * Its credential stays the alternative, below the button.
+ */
+export function SignInGuide({
+  kind,
+  installUrl,
+}: {
+  kind: "github" | "linear";
+  installUrl?: string;
+}) {
+  return (
+    <div className="span2 muted small connection-guide">
+      {kind === "github" ? (
+        <ol>
+          <li>
+            Choose the repositories to read below, or leave them blank, then
+            click <strong>Connect with GitHub</strong> and authorize Helix
+            Foundry. It reads metadata, issues and pull requests, never code,
+            and can change nothing.
+          </li>
+          <li>
+            It reads only where Helix Foundry is installed. For an
+            organization’s repositories, an owner of the organization installs
+            it{" "}
+            {installUrl ? (
+              <External href={installUrl}>on GitHub</External>
+            ) : (
+              "on GitHub"
+            )}
+            , choosing the repositories; then <strong>Sync now</strong> reads
+            them.
+          </li>
+          <li>
+            GitHub keeps the sign-in, not Foundry: it reads as you, and stops if
+            you leave this workspace, until an owner or admin signs it in again.
+            A personal access token works instead.
+          </li>
+        </ol>
+      ) : (
+        <ol>
+          <li>
+            Click <strong>Connect with Linear</strong> and authorize Helix
+            Foundry to read your Linear workspace. It reads every team you can
+            see, and can change nothing.
+          </li>
+          <li>
+            Linear keeps the sign-in, not Foundry: it reads as you, and stops if
+            you leave this workspace, until an owner or admin signs it in again.
+            A personal API key works instead.
+          </li>
+        </ol>
+      )}
+    </div>
+  );
+}
+
 export function ConnectionGuide({ form }: { form: ConnectionForm }) {
   return (
     <div className="span2 muted small connection-guide">

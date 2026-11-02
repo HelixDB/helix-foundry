@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { LOCAL } from "../../../shared/deployment";
 import type {
   Connector,
   ConnectorDiscovery,
@@ -8,7 +9,7 @@ import { trackEvent } from "../../analytics";
 import { Select, Tag, connectorLabel } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { ProGate, isProRequired } from "../workspace/pro-gate";
-import { ConnectionGuide } from "./connection-guides";
+import { ConnectionGuide, SignInGuide } from "./connection-guides";
 import { FileTableDetails, S3Fields, fileSummary } from "./connection-s3";
 import {
   createConnector,
@@ -20,6 +21,7 @@ import {
   emptyForm,
   formFromConfig,
   formatBytes,
+  githubRepos,
   hasCredential,
   hasTableChoice,
   isDatabase,
@@ -31,6 +33,8 @@ import {
   type ConnectionForm as Form,
   type CredentialKind,
 } from "./model";
+import { useSignInStart } from "./sign-in";
+import { accountLine, providerName } from "./sign-ins";
 
 // One kind's credential form, in helix-foundry's connection-form style:
 // fill in the credential, test it, choose what to sync, then connect. The
@@ -52,6 +56,15 @@ import {
 // write-only like every credential, so an edit that leaves it blank keeps
 // the stored one. A Notion test lists each shared database as a table of
 // its own, with its columns and first rows.
+//
+// A kind that connects by signing in at its provider (`signIn`: GitHub and
+// Linear, hosted) offers Connect with GitHub in place of its credential,
+// with its settings (GitHub's repositories and review history) above it,
+// sent without a credential; "Use a personal access token instead" opens
+// the credential's form. One click starts the sign-in and leaves for the
+// provider, which returns to /connect/callback. A connector that signs in
+// has no credential to edit, and only the member whose access it reads
+// with may add repositories or read every one.
 
 // Kinds whose credential is one API key: its field's label and placeholder.
 const keyFields: Record<
@@ -85,6 +98,9 @@ export function ConnectionForm({
   kind,
   connector,
   setup,
+  signIn = false,
+  installUrl,
+  returnPath,
   onDone,
 }: {
   kind: CredentialKind;
@@ -92,9 +108,16 @@ export function ConnectionForm({
   connector?: Connector;
   // The kind's S3 role setup, where role access is configured.
   setup?: S3ConnectorSetup | null;
+  // The kind connects by signing in at its provider, and GitHub's app's
+  // install page.
+  signIn?: boolean;
+  installUrl?: string;
+  // Where the sign-in's callback returns once connected; none: the new
+  // connector's page.
+  returnPath?: string;
   onDone: (connector: Connector, message: string) => void | Promise<void>;
 }) {
-  const { id, notify } = useWorkspace();
+  const { id, notify, user } = useWorkspace();
   const editing = !!connector,
     stored = connector?.config,
     storedTables =
@@ -121,7 +144,18 @@ export function ConnectionForm({
     [chosen, setChosen] = useState<Set<string>>(new Set()),
     // What is in flight: a test or a save.
     [pending, setPending] = useState<"test" | "save" | null>(null),
-    [error, setError] = useState<Error | null>(null);
+    [error, setError] = useState<Error | null>(null),
+    // A kind that signs in: its credential's form instead.
+    [useKey, setUseKey] = useState(false),
+    // One sign-in per form: a retry after a refusal finds it again.
+    [token, setToken] = useState(() => crypto.randomUUID());
+  const start = useSignInStart(),
+    account = connector?.account,
+    provider =
+      form.kind === "github" || form.kind === "linear" ? form.kind : null,
+    signingIn = !editing && !LOCAL && signIn && !useKey && !!provider;
+  // Another name is another sign-in, as other settings are (change()).
+  useEffect(() => setToken(crypto.randomUUID()), [name]);
   const label = connectorLabel(kind),
     database = isDatabase(kind),
     choice = hasTableChoice(kind),
@@ -137,6 +171,7 @@ export function ConnectionForm({
     setDirty(true);
     setDiscovered(null);
     setChosen(new Set());
+    setToken(crypto.randomUUID());
   };
   const update = (key: string, v: string) => change({ [key]: v });
   const run = async (what: "test" | "save", fn: () => Promise<void>) => {
@@ -234,9 +269,41 @@ export function ConnectionForm({
       );
       await onDone(created.connector, "Connected. The first sync is queued");
     });
+  // Signed in, only the account's member widens what it reads: adds a
+  // repository, or clears the list (every repository it can see).
+  const storedRepos =
+      (stored && "github" in stored && stored.github.repos) || [],
+    widened =
+      !!account &&
+      form.kind === "github" &&
+      account.userId !== user.id &&
+      (githubRepos(form.repos).length
+        ? githubRepos(form.repos).some(
+            (r) =>
+              !storedRepos.some((s) => s.toLowerCase() === r.toLowerCase()),
+          )
+        : storedRepos.length > 0);
+  const connectWithProvider = () =>
+    void start.go({
+      kind: form.kind,
+      name: name.trim() || suggestedName(form),
+      // The settings alone: the provider's sign-in is the credential.
+      config:
+        form.kind === "github"
+          ? {
+              github: {
+                repos: githubRepos(form.repos),
+                reviewDays: Number(form.reviewDays) || 0,
+              },
+            }
+          : { linear: {} },
+      clientToken: token,
+      returnPath,
+    });
   const canSubmit =
     selection !== "none" &&
     !overLimit &&
+    !widened &&
     (editing
       ? name.trim() !== "" &&
         (name.trim() !== connector!.name || dirty || !!discovered)
@@ -254,7 +321,17 @@ export function ConnectionForm({
         }}
       >
         {/* The steps end "paste it below": they come before the fields. */}
-        {!editing && <ConnectionGuide form={form} />}
+        {signingIn && provider ? (
+          <SignInGuide kind={provider} installUrl={installUrl} />
+        ) : (
+          !editing && <ConnectionGuide form={form} />
+        )}
+        {account && (
+          <p className="span2 muted small">
+            {accountLine(connector!)}. Sign it in again from its page to change
+            the account.
+          </p>
+        )}
         {editing && (
           <label className="span2">
             Connection name
@@ -268,7 +345,7 @@ export function ConnectionForm({
         )}
         {(form.kind === "stripe" ||
           form.kind === "workos" ||
-          form.kind === "linear" ||
+          (form.kind === "linear" && !signingIn && !account) ||
           form.kind === "calcom" ||
           form.kind === "granola") && (
           <label className="span2">
@@ -398,22 +475,24 @@ export function ConnectionForm({
         )}
         {form.kind === "github" && (
           <>
-            <label className="span2">
-              Personal access token
-              <input
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                required={credentialRequired}
-                placeholder={
-                  secretHint
-                    ? `Leave blank to keep ${secretHint}`
-                    : "github_pat_…"
-                }
-                value={form.token}
-                onChange={(e) => update("token", e.target.value)}
-              />
-            </label>
+            {!signingIn && !account && (
+              <label className="span2">
+                Personal access token
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required={credentialRequired}
+                  placeholder={
+                    secretHint
+                      ? `Leave blank to keep ${secretHint}`
+                      : "github_pat_…"
+                  }
+                  value={form.token}
+                  onChange={(e) => update("token", e.target.value)}
+                />
+              </label>
+            )}
             <label className="span2">
               Repositories (optional)
               <textarea
@@ -421,11 +500,20 @@ export function ConnectionForm({
                 placeholder={"acme/api\nacme/web"}
                 value={form.repos}
                 onChange={(e) => update("repos", e.target.value)}
+                aria-describedby={widened ? "dc-widen" : undefined}
               />
               <small className="muted">
-                One owner/name per line. Leave blank to sync every repository
-                the token can read, up to 100.
+                {signingIn || account
+                  ? "One owner/name per line. Leave blank to sync every repository Helix Foundry is installed on that the account can see, up to 100."
+                  : "One owner/name per line. Leave blank to sync every repository the token can read, up to 100."}
               </small>
+              {widened && (
+                <small id="dc-widen" className="error-text" role="alert">
+                  Only {account!.connectedBy || "the member who connected it"},
+                  whose GitHub access it reads with, can add repositories or
+                  read every one. You can remove some.
+                </small>
+              )}
             </label>
             <label>
               Review history (days)
@@ -603,7 +691,41 @@ export function ConnectionForm({
               : "enter the password and test the connection."}
           </p>
         )}
-        {(!editing || hasCredential(form)) && !untestable && (
+        {signingIn && (
+          <div className="span2 dc-sign-in">
+            <button
+              className="button primary"
+              type="button"
+              disabled={start.pending}
+              onClick={connectWithProvider}
+            >
+              {start.pending
+                ? `Opening ${providerName(form.kind)}…`
+                : `Connect with ${providerName(form.kind)}`}
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setUseKey(true)}
+            >
+              {form.kind === "github"
+                ? "Use a personal access token instead"
+                : "Use a personal API key instead"}
+            </button>
+          </div>
+        )}
+        {!editing && !LOCAL && signIn && useKey && (
+          <div className="span2">
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setUseKey(false)}
+            >
+              Connect with {providerName(form.kind)} instead
+            </button>
+          </div>
+        )}
+        {!signingIn && (!editing || hasCredential(form)) && !untestable && (
           <div className="span2">
             <button
               className={discovered ? "button" : "button primary"}
@@ -780,6 +902,11 @@ export function ConnectionForm({
           </button>
         )}
       </form>
+      {start.error && (
+        <p role="alert" className="error-box">
+          {start.error.message}
+        </p>
+      )}
       {/* The plan can change under an open form: the WFE's Pro refusal
           becomes the gate, with its way to upgrade. */}
       {error &&
