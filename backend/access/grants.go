@@ -102,11 +102,14 @@ type SetRef struct{ SetID, ConnectorID string }
 // holds can't be told at all (Unknown: a load made before grants could cover
 // one, or with no generation to read its inputs from).
 type Inputs struct {
-	Tables      []TableRef
-	Sets        []SetRef
-	Enrichment  bool
-	Uncoverable bool
-	Unknown     bool
+	Tables []TableRef
+	Sets   []SetRef
+	// DecisionSets are the sets of the documents its prop decisions came from,
+	// which must be covered for the load to be, but are nothing of it to read.
+	DecisionSets []SetRef
+	Enrichment   bool
+	Uncoverable  bool
+	Unknown      bool
 }
 
 // Grants are the targets a grantee holds, through itself and its teams.
@@ -162,6 +165,11 @@ func (g Grants) Missing(in Inputs) Inputs {
 			out.Sets = append(out.Sets, s)
 		}
 	}
+	for _, s := range in.DecisionSets {
+		if !g.CoversSet(s) {
+			out.DecisionSets = append(out.DecisionSets, s)
+		}
+	}
 	out.Enrichment = in.Enrichment && !g.enrichment
 	out.Uncoverable = in.Uncoverable
 	out.Unknown = in.Unknown
@@ -176,7 +184,7 @@ func (g Grants) Missing(in Inputs) Inputs {
 func (g Grants) Covers(in Inputs) bool {
 	m := g.Missing(in)
 	holds := len(in.Tables)+len(in.Sets) > 0 || in.Enrichment
-	return holds && len(m.Tables)+len(m.Sets) == 0 && !m.Enrichment && !m.Uncoverable && !m.Unknown
+	return holds && len(m.Tables)+len(m.Sets)+len(m.DecisionSets) == 0 && !m.Enrichment && !m.Uncoverable && !m.Unknown
 }
 
 // Reaches reports whether the grants hold anything of in, so a grantee may
@@ -306,6 +314,12 @@ func (in Inputs) Union(other Inputs) Inputs {
 	for _, s := range other.Sets {
 		if !slices.Contains(out.Sets, s) {
 			out.Sets = append(out.Sets, s)
+		}
+	}
+	out.DecisionSets = slices.Clone(in.DecisionSets)
+	for _, s := range other.DecisionSets {
+		if !slices.Contains(out.DecisionSets, s) {
+			out.DecisionSets = append(out.DecisionSets, s)
 		}
 	}
 	out.Enrichment = in.Enrichment || other.Enrichment

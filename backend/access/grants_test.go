@@ -229,3 +229,25 @@ func TestInputsUnion(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// A set only a decision came from must be covered, but isn't what a load holds to read.
+func TestDecisionSets(t *testing.T) {
+	stripe := access.TableRef{ConnectorID: "stripe", Table: "customers"}
+	hr, general := access.SetRef{SetID: "hr"}, access.SetRef{SetID: "general"}
+	in := access.Inputs{Tables: []access.TableRef{stripe}, DecisionSets: []access.SetRef{hr}}
+	onlyHR := access.NewGrants([]access.Target{access.DocumentSetTarget("hr")})
+	if onlyHR.Reaches(in) {
+		t.Error("holding only what a decision came from reaches nothing of the load")
+	}
+	both := access.NewGrants([]access.Target{access.DocumentSetTarget("hr"), access.ConnectorTarget("stripe")})
+	if !both.Covers(in) {
+		t.Error("holding it and the rest covers it")
+	}
+	if access.NewGrants([]access.Target{access.ConnectorTarget("stripe")}).Covers(in) {
+		t.Error("the table alone doesn't cover what a decision came from")
+	}
+	got := in.Union(access.Inputs{DecisionSets: []access.SetRef{general, hr}})
+	if len(got.DecisionSets) != 2 {
+		t.Fatalf("%+v", got)
+	}
+}

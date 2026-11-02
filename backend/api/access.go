@@ -606,5 +606,10 @@ func inputsToProto(in access.Inputs) *foundryv1.FoundryLoadAccessInputs {
 	for _, set := range in.Sets {
 		out.DocumentSets = append(out.DocumentSets, &foundryv1.FoundryLoadAccessInputs_DocumentSet{DocumentSetId: set.SetID, ConnectorId: set.ConnectorID})
 	}
+	for _, set := range in.DecisionSets {
+		if !slices.Contains(in.Sets, set) {
+			out.DocumentSets = append(out.DocumentSets, &foundryv1.FoundryLoadAccessInputs_DocumentSet{DocumentSetId: set.SetID, ConnectorId: set.ConnectorID})
+		}
+	}
 	return out
 }

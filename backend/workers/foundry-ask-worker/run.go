@@ -226,6 +226,12 @@ type heldLoad struct {
 	grants *access.Grants
 	// part is what it holds, when it isn't all of the load.
 	part *access.Part
+	// visibility is what the agent is told it holds, all of it or that part: a
+	// grantee reads nothing raw or historic, which holds what the load no
+	// longer does.
+	visibility ontologyagent.Visibility
+	// inputs are what the load holds.
+	inputs access.Inputs
 }
 
 // within reports whether h, read after an answer, still holds all that the
@@ -267,18 +273,21 @@ func (r *runner) granted(ctx context.Context, q *model.FoundryQuestion) (heldLoa
 		return heldLoad{}, retry("could not read your access; Helix will retry", err)
 	}
 	load, ok := loads[q.OntologyID]
-	switch {
-	case !ok || load.LoadID != q.LoadID || !grants.Reaches(load.Inputs):
+	if !ok || load.LoadID != q.LoadID || !grants.Reaches(load.Inputs) {
 		return heldLoad{}, errNoLongerGranted
-	case grants.Covers(load.Inputs):
-		return heldLoad{grants: &grants}, nil
 	}
 	holdings, err := r.db.FoundryLoadHoldings(ctx, q.WorkspaceID, q.LoadID)
 	if err != nil {
 		return heldLoad{}, retry("could not read your access; Helix will retry", err)
 	}
 	part := grants.Part(holdings)
-	return heldLoad{grants: &grants, part: &part}, nil
+	out := heldLoad{grants: &grants, visibility: ontologyagent.VisibilityOf(part), inputs: load.Inputs}
+	if grants.Covers(load.Inputs) {
+		out.visibility.Documents = ontologyagent.VisibleDocuments{All: true}
+		return out, nil
+	}
+	out.part = &part
+	return out, nil
 }
 
 // request builds the question's AskRequest, all but its Helix target. A
@@ -347,16 +356,21 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 	if req.Catalog, err = r.catalog(ctx, q.WorkspaceID, tables, files, scope, held); err != nil {
 		return nil, err
 	}
+	if grants != nil {
+		req.Visibility = &held.visibility
+	}
 	switch {
 	case held.part != nil:
 		// What it reads of the load is what its answer can say; the answer reads
 		// only while its grants hold that, with what an earlier attempt's events
-		// show.
-		visibility := ontologyagent.VisibilityOf(*held.part)
-		req.Visibility = &visibility
+		// show, all of the load if it ran whole.
 		seen := held.part.Inputs()
-		if q.Attempts > 1 && q.Seen != nil {
-			seen = seen.Union(*q.Seen)
+		if q.Attempts > 1 {
+			earlier := held.inputs
+			if q.Seen != nil {
+				earlier = *q.Seen
+			}
+			seen = seen.Union(earlier)
 		}
 		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen); err != nil {
 			return nil, retry("could not record your access; Helix will retry", err)

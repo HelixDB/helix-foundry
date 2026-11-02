@@ -273,11 +273,13 @@ LEFT JOIN foundry_review_decision_documents dd ON dd.decision_id = ld.id
 LEFT JOIN foundry_documents d ON d.id = dd.document_id
 LEFT JOIN foundry_document_sets s ON s.id = d.set_id
 WHERE ld.load_id IN (`+in+`) AND ld.kind='prop' GROUP BY 1, 2, 3, 4`, toAnySlice(loads), func(loadID string, set access.SetRef, recorded bool) {
-		if !recorded {
-			byLoad[loadID].Uncoverable = true
-			return
+		l := byLoad[loadID]
+		switch {
+		case !recorded:
+			l.Uncoverable = true
+		case !slices.Contains(l.DecisionSets, set):
+			l.DecisionSets = append(l.DecisionSets, set)
 		}
-		addSet(loadID, set, true)
 	}); err != nil {
 		return nil, err
 	}
@@ -405,8 +407,8 @@ WHERE r.ontology_id=? AND r.kind='prop' GROUP BY 1, 2, 3`, ontologyID)
 		switch {
 		case !recorded:
 			in.Uncoverable = true
-		case !slices.Contains(in.Sets, set):
-			in.Sets = append(in.Sets, set)
+		case !slices.Contains(in.DecisionSets, set):
+			in.DecisionSets = append(in.DecisionSets, set)
 		}
 	}
 	return in, rows.Err()

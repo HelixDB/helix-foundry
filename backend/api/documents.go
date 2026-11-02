@@ -627,9 +627,19 @@ func (s *Service) ListFoundryOntologyDocuments(ctx context.Context, req *foundry
 	}
 	resp := &foundryv1.ListFoundryDocumentsResponse{NextPageToken: next}
 	for _, d := range docs {
-		resp.Documents = append(resp.Documents, foundryDocumentProto(d, extractions[d.ID]))
+		resp.Documents = append(resp.Documents, ontologyDocumentProto(ctx, d, extractions[d.ID]))
 	}
 	return resp, nil
+}
+
+// ontologyDocumentProto is a document as the caller may see it: which other
+// document it duplicates may be one a grantee doesn't hold.
+func ontologyDocumentProto(ctx context.Context, d *foundrymodel.FoundryDocument, e *foundrymodel.FoundryDocumentExtraction) *foundryv1.FoundryDocument {
+	out := foundryDocumentProto(d, e)
+	if _, grantee := access.GranteeFrom(ctx); grantee && out.GetExtraction() != nil {
+		out.Extraction.DuplicateOf = nil
+	}
+	return out
 }
 
 // GetFoundryOntologyDocument returns any document of the workspace (NotFound
@@ -669,7 +679,7 @@ func (s *Service) GetFoundryOntologyDocument(ctx context.Context, req *foundryv1
 	if err != nil {
 		return nil, err
 	}
-	return &foundryv1.FoundryDocumentResponse{Document: foundryDocumentProto(doc, extraction)}, nil
+	return &foundryv1.FoundryDocumentResponse{Document: ontologyDocumentProto(ctx, doc, extraction)}, nil
 }
 
 // heldBy is NotFound unless a live ontology whose current load holds doc is

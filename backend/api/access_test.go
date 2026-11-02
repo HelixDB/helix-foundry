@@ -731,6 +731,17 @@ func TestGranteePartial(t *testing.T) {
 		if _, err := client.GetFoundryDocumentContent(ctx, &foundryv1.GetFoundryDocumentContentRequest{WorkspaceId: "ws-1", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
 			t.Fatalf("the text of a document it doesn't hold: %v", err)
 		}
+		// Which other document one duplicates may be one it doesn't hold.
+		other := "doc-hr"
+		proto := ontologyDocumentProto(access.WithCaller(context.Background(), access.Grantee{WorkspaceID: "ws-1", Principal: agentKey}),
+			&foundrymodel.FoundryDocument{ID: "doc-general"}, &foundrymodel.FoundryDocumentExtraction{DuplicateOf: &other})
+		if proto.GetExtraction().DuplicateOf != nil {
+			t.Fatalf("%+v", proto.GetExtraction())
+		}
+		host := ontologyDocumentProto(context.Background(), &foundrymodel.FoundryDocument{ID: "doc-general"}, &foundrymodel.FoundryDocumentExtraction{DuplicateOf: &other})
+		if host.GetExtraction().GetDuplicateOf() != other {
+			t.Fatalf("the host's caller: %+v", host.GetExtraction())
+		}
 	})
 	t.Run("a question it asks reads from the start", func(t *testing.T) {
 		asked, err := client.AskFoundryQuestion(ctx, &foundryv1.AskFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Question: "How many?", ClientToken: "part-1"})

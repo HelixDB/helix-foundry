@@ -28,6 +28,10 @@ func granteeHarness(t *testing.T) (*harness, *model.FoundryQuestion) {
 		Tables: []access.TableRef{{ConnectorID: "conn-1", Table: "customers"}, {ConnectorID: "conn-gone", Table: "deals"}},
 		Sets:   []access.SetRef{{SetID: "set-1"}},
 	}}}
+	h.store.holdings = map[string]access.Holdings{"load-1": {
+		Tables:    []access.TableRef{{ConnectorID: "conn-1", Table: "customers"}, {ConnectorID: "conn-gone", Table: "deals"}},
+		Documents: []access.DocumentRef{{ID: "doc-1", Set: access.SetRef{SetID: "set-1"}}},
+	}}
 	q := question(1)
 	q.Grantee = &key
 	return h, q
@@ -73,6 +77,21 @@ func TestGranteeQuestions(t *testing.T) {
 		}
 		if req.Goal != "" || fmt.Sprint(req.Catalog) != fmt.Sprint(catalog) {
 			t.Fatalf("goal %q, catalog %+v", req.Goal, req.Catalog)
+		}
+		// It reads through what it holds, all of it, so nothing raw or historic.
+		if req.Visibility == nil || !req.Visibility.Documents.All || len(req.Visibility.Sources) != 2 {
+			t.Fatalf("visibility %+v", req.Visibility)
+		}
+	})
+	// A question nobody asked through grants is asked as it was.
+	t.Run("the host's question names no visibility", func(t *testing.T) {
+		h := newHarness(t)
+		if settled := h.run(t, question(1)); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		req, _ := decodeAsk(t, h.agent.calls()[0])
+		if req.Visibility != nil {
+			t.Fatalf("visibility %+v", req.Visibility)
 		}
 	})
 	// It is told only what it said about loads its grants cover now.
@@ -142,6 +161,14 @@ func TestGranteeQuestions(t *testing.T) {
 		h.run(t, q)
 		if got, ok := h.store.seen[q.ID]; !ok || got != nil {
 			t.Fatalf("a whole run read as %+v", got)
+		}
+		// An earlier attempt that ran whole read all of the load.
+		h, q = partHarness(t)
+		q.Attempts = 2
+		h.run(t, q)
+		got = h.store.seen[q.ID]
+		if got == nil || !slices.Contains(got.Sets, access.SetRef{SetID: "set-other"}) {
+			t.Fatalf("seen %+v", got)
 		}
 	})
 	// Holding less of it by the time it's answered, its answer isn't kept.
