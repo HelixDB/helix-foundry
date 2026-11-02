@@ -190,6 +190,9 @@ func (s *signInStore) FailConnectorSignIn(ctx context.Context, _, id string, end
 	if si.AccountID != nil {
 		s.purge(*si.AccountID)
 	}
+	if end.Refused != nil {
+		s.purge(end.Refused.ID)
+	}
 	si.Status, si.AccountID = end.Status, nil
 	if end.Failure != "" {
 		failure := end.Failure
@@ -626,15 +629,35 @@ func TestConnectorSignIns(t *testing.T) {
 		}
 	})
 
-	t.Run("fails an account that isn't the workspace's", func(t *testing.T) {
+	// The broker refuses an account that isn't the workspace's, and deletes
+	// it; it is purged too, in case that delete failed, but never the
+	// account a connector signed in again reads with.
+	t.Run("fails an account that isn't the workspace's, and purges it", func(t *testing.T) {
 		f := newSignInFixture(t)
 		ctx := as("user-1")
 		si := f.start(t, ctx, linearSignIn())
 		f.authorize(t, ctx, si.GetId())
-		f.broker.Foreign = true
+		f.broker.Foreign, f.broker.KeepRefused = true, true
 		if got := f.finish(t, ctx, si.GetId(), f.broker.Code(0), ""); got.GetFailure() !=
 			foundryv1.ConnectorSignInFailure_CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE {
 			t.Fatalf("finished = %v", got)
+		}
+		if !slices.Equal(f.store.purged, []string{"acct-2"}) || !f.broker.Has("acct-2") {
+			t.Fatalf("purged %v: the refused account the broker kept is purged", f.store.purged)
+		}
+
+		f = newSignInFixture(t)
+		first := f.connect(t, "user-1", linearSignIn())
+		account := f.store.rows[first.GetConnectorId()].Account.ID
+		again := f.start(t, ctx, &foundryv1.StartConnectorSignInRequest{Kind: "linear", ConnectorId: first.GetConnectorId()})
+		f.authorize(t, ctx, again.GetId())
+		f.broker.Foreign = true
+		if got := f.finish(t, ctx, again.GetId(), f.broker.Code(1), ""); got.GetFailure() !=
+			foundryv1.ConnectorSignInFailure_CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE {
+			t.Fatalf("finished = %v", got)
+		}
+		if len(f.store.purged) != 0 || !f.broker.Has(account) {
+			t.Fatalf("purged %v: the connector's own account stays", f.store.purged)
 		}
 	})
 

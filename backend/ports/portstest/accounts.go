@@ -27,8 +27,11 @@ type Accounts struct {
 	Unavailable bool
 	// Foreign has Finish find each account it saves another workspace's: it
 	// deletes it, unless it is ref.AccountID, and fails with
-	// ports.ErrAccountNotThisWorkspace.
+	// ports.ErrAccountNotThisWorkspace, returning the account it refused.
 	Foreign bool
+	// KeepRefused makes Finish's own delete of an account it refuses fail:
+	// the broker keeps it.
+	KeepRefused bool
 	// OnFinish runs inside each Finish, after the code is spent and before it
 	// returns, as a slow broker would let other calls in.
 	OnFinish func()
@@ -130,10 +133,10 @@ func (a *Accounts) finish(ref ports.AccountRef, codeValue, verifier string) (por
 		a.accounts[id] = &account{ref: ports.AccountRef{WorkspaceID: ref.WorkspaceID, UserID: maker, Kind: c.auth.Kind, AccountID: id}}
 	}
 	if a.Foreign || maker != ref.UserID {
-		if id != ref.AccountID {
+		if id != ref.AccountID && !a.KeepRefused {
 			delete(a.accounts, id)
 		}
-		return ports.ProviderAccount{}, ports.ErrAccountNotThisWorkspace
+		return ports.ProviderAccount{ID: id, UserID: maker}, ports.ErrAccountNotThisWorkspace
 	}
 	a.accounts[id].token++
 	return ports.ProviderAccount{ID: id, UserID: maker}, nil

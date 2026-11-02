@@ -123,6 +123,10 @@ type ConnectorSignInStart struct {
 type ConnectorSignInEnd struct {
 	Status  ConnectorSignInStatus
 	Failure ConnectorSignInFailure
+	// Refused is an account the broker gave the finish and refused (ID and
+	// UserID), which the end purges too, in case the broker's own delete
+	// of it failed.
+	Refused *ConnectorAccount
 }
 
 // ConnectorSignInConnect ends a finishing sign-in connected: it creates New,

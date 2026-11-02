@@ -184,9 +184,10 @@ WHERE id=? AND workspace_id=? AND status='finishing'`, accountID, id, workspaceI
 }
 
 // FailConnectorSignIn ends a finishing sign-in declined or failed. The
-// broker's account it holds is purged, unless a live connector reads with it
-// (signing in again gave the connector its own account back), and
-// forgotten, in the same transaction. ErrNotFound means it isn't finishing.
+// broker's account it holds, and one the broker refused (end.Refused), are
+// purged, unless a live connector reads with them (signing in again gave
+// the connector its own account back), in the same transaction; the one it
+// holds is forgotten. ErrNotFound means it isn't finishing.
 func (s *mysqlDB) FailConnectorSignIn(ctx context.Context, workspaceID, id string, end model.ConnectorSignInEnd) error {
 	switch {
 	case end.Status == model.ConnectorSignInDeclined && end.Failure == "":
@@ -208,6 +209,15 @@ WHERE id=? AND workspace_id=? AND status='finishing' FOR UPDATE`, id, workspaceI
 		}
 		if accountID.Valid {
 			if err := tx.purgeUnusedAccount(ctx, workspaceID, kind, accountID.String, userID); err != nil {
+				return err
+			}
+		}
+		if r := end.Refused; r != nil && r.ID != "" {
+			refusedUser := r.UserID
+			if refusedUser == "" {
+				refusedUser = userID
+			}
+			if err := tx.purgeUnusedAccount(ctx, workspaceID, kind, r.ID, refusedUser); err != nil {
 				return err
 			}
 		}

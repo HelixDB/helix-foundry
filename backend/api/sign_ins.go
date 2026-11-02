@@ -309,13 +309,13 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 	ws := si.WorkspaceID
 	if code == "" {
 		if callbackError == "access_denied" {
-			return s.endSignIn(ctx, si, foundrymodel.ConnectorSignInDeclined, "", nil)
+			return s.endSignIn(ctx, si, foundrymodel.ConnectorSignInEnd{Status: foundrymodel.ConnectorSignInDeclined}, nil)
 		}
-		return s.endSignIn(ctx, si, foundrymodel.ConnectorSignInFailed, foundrymodel.SignInProviderError,
-			fmt.Errorf("the callback brought no code (error %q)", callbackError))
+		return s.endSignIn(ctx, si, foundrymodel.ConnectorSignInEnd{Status: foundrymodel.ConnectorSignInFailed,
+			Failure: foundrymodel.SignInProviderError}, fmt.Errorf("the callback brought no code (error %q)", callbackError))
 	}
 	fail := func(failure foundrymodel.ConnectorSignInFailure, err error) error {
-		return s.endSignIn(ctx, si, foundrymodel.ConnectorSignInFailed, failure, err)
+		return s.endSignIn(ctx, si, foundrymodel.ConnectorSignInEnd{Status: foundrymodel.ConnectorSignInFailed, Failure: failure}, err)
 	}
 	kind, err := catalog.Kind(si.Kind)
 	if err != nil {
@@ -341,15 +341,22 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 		settings, ref.AccountID = current.Config, reauthorizes(current, si.CreatedByUserID)
 	}
 	account, err := s.deps.Accounts.Finish(ctx, ref, code, string(verifier))
-	switch {
-	case errors.Is(err, ports.ErrAccountCodeRejected):
-		return fail(foundrymodel.SignInCodeExpired, err)
-	case errors.Is(err, ports.ErrAccountNotThisWorkspace):
-		return fail(foundrymodel.SignInNotThisWorkspace, err)
-	case errors.Is(err, ports.ErrAccountsUnavailable):
-		return fail(foundrymodel.SignInUnavailable, err)
-	case err != nil:
-		return fail(foundrymodel.SignInProviderError, err)
+	if err != nil {
+		end := foundrymodel.ConnectorSignInEnd{Status: foundrymodel.ConnectorSignInFailed, Failure: foundrymodel.SignInProviderError}
+		switch {
+		case errors.Is(err, ports.ErrAccountCodeRejected):
+			end.Failure = foundrymodel.SignInCodeExpired
+		case errors.Is(err, ports.ErrAccountNotThisWorkspace):
+			end.Failure = foundrymodel.SignInNotThisWorkspace
+		case errors.Is(err, ports.ErrAccountsUnavailable):
+			end.Failure = foundrymodel.SignInUnavailable
+		}
+		// An account the broker refused is purged too, in case its own
+		// delete failed; never the one the sign-in reauthorized.
+		if account.ID != "" && account.ID != ref.AccountID {
+			end.Refused = &foundrymodel.ConnectorAccount{ID: account.ID, UserID: account.UserID}
+		}
+		return s.endSignIn(ctx, si, end, err)
 	}
 	if err := s.recordAccount(ctx, si, current, account); err != nil {
 		return err
@@ -430,18 +437,17 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 
 // endSignIn ends a claimed sign-in declined or failed, err (logged only)
 // saying why.
-func (s *Service) endSignIn(ctx context.Context, si *foundrymodel.ConnectorSignIn, end foundrymodel.ConnectorSignInStatus,
-	failure foundrymodel.ConnectorSignInFailure, err error) error {
-	outcome := string(end)
-	if failure != "" {
-		outcome = string(failure)
+func (s *Service) endSignIn(ctx context.Context, si *foundrymodel.ConnectorSignIn, end foundrymodel.ConnectorSignInEnd, err error) error {
+	outcome := string(end.Status)
+	if end.Failure != "" {
+		outcome = string(end.Failure)
 	}
 	connectorSignIns.WithLabelValues(si.Kind, outcome).Inc()
 	log.From(ctx).Warn("connector sign-in ended", "workspace", si.WorkspaceID, "user", si.CreatedByUserID, "kind", si.Kind,
 		"sign_in", si.ID, "outcome", outcome, "err", err)
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
-	if err := s.deps.DB.FailConnectorSignIn(recordCtx, si.WorkspaceID, si.ID, foundrymodel.ConnectorSignInEnd{Status: end, Failure: failure}); err != nil {
+	if err := s.deps.DB.FailConnectorSignIn(recordCtx, si.WorkspaceID, si.ID, end); err != nil {
 		return status.Errorf(codes.Internal, "end sign-in: %v", err)
 	}
 	return nil

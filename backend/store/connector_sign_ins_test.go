@@ -466,6 +466,26 @@ func TestConnectorSignIns(t *testing.T) {
 			"a failure names why")
 	})
 
+	// An account the broker refused (and may have failed to delete) is
+	// purged with the end, unless a live connector reads with it.
+	t.Run("purges an account the broker refused", func(t *testing.T) {
+		ctx := context.Background()
+		db := newTestStore(t)
+		createWorkspace(t, ws)
+		si := newSignIn("SI-REFUSED", ada)
+		finishing(t, db, si)
+		require.NoError(t, db.FailConnectorSignIn(ctx, ws, si.ID, model.ConnectorSignInEnd{Status: model.ConnectorSignInFailed,
+			Failure: model.SignInNotThisWorkspace, Refused: &model.ConnectorAccount{ID: "acct-theirs", UserID: grace}}))
+		assert.Equal(t, []string{"github/acct-theirs@" + grace}, purges(t))
+
+		signedInConnector(t, db, ws, id26("SI-OWNS"), "acct-live", ada)
+		other := newSignIn("SI-REFUSED2", ada)
+		finishing(t, db, other)
+		require.NoError(t, db.FailConnectorSignIn(ctx, ws, other.ID, model.ConnectorSignInEnd{Status: model.ConnectorSignInFailed,
+			Failure: model.SignInNotThisWorkspace, Refused: &model.ConnectorAccount{ID: "acct-live"}}))
+		assert.Equal(t, []string{"github/acct-theirs@" + grace}, purges(t), "a live connector's account stays")
+	})
+
 	// Signing in again may give the connector its own account back: a
 	// failure then keeps it.
 	t.Run("keeps a live connector's account when a sign-in again fails", func(t *testing.T) {
