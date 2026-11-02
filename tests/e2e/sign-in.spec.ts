@@ -360,7 +360,10 @@ test("hides the banner for the session with Later", async ({ page }) => {
   );
   await banner.getByRole("button", { name: "Later" }).click();
   await expect(banner).toHaveCount(0);
+  // Still broken after a reload, but hidden for the session.
+  const read = page.waitForResponse(/connectors\?needsSignIn=true/);
   await page.reload();
+  expect((await (await read).json()).connectors).toHaveLength(1);
   await expect(
     page.getByRole("heading", { level: 1, name: "Connectors" }),
   ).toBeVisible();
