@@ -67,6 +67,43 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 `docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
 
+## Back up and restore
+
+**What a backup is.** The volumes `mysql`, `storage`, `helix`, `work` and `secrets`, all five copied together with the stack stopped, and the images that wrote them. The store, the files and the graph refer to each other: volumes copied at different times, or while Foundry runs, may not match. `acme-db` keeps nothing, and Ollama's models (`ollama`) download again.
+
+**Secrets.** `secrets` holds the site's token, the store's secret, MySQL's password and the connector key. Without it the restored data doesn't open: MySQL keeps the password it was first started with, and the connector key seals every database password and API key in the store. With the rest it opens all of them, so keep `secrets.tar.gz` encrypted, or apart from the other archives, and your `local/.env`, if you made one, with it.
+
+**Back up**, from the repository's root:
+
+```sh
+mkdir -m 700 ~/foundry-backup
+docker compose config --images > ~/foundry-backup/images.txt
+docker compose down
+for v in mysql storage helix work secrets; do
+  docker run --rm -v helix-foundry_$v:/volume:ro alpine:3.22 tar -czf - -C /volume . > ~/foundry-backup/$v.tar.gz
+done
+docker compose up -d --wait
+```
+
+**Restore** onto the images the backup lists: the same release of this repository, with the same `local/.env`. Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
+
+```sh
+docker compose config --images | diff - ~/foundry-backup/images.txt  # prints nothing
+docker compose create  # makes the volumes, empty, and starts nothing
+for v in mysql storage helix work secrets; do
+  docker run --rm -i -v helix-foundry_$v:/volume alpine:3.22 tar -xzf - -C /volume < ~/foundry-backup/$v.tar.gz
+done
+docker compose up -d --wait
+```
+
+**Check it**, after a restore and in a rehearsal on another machine now and then:
+
+- `docker compose logs init-secrets` says `kept` for each of the four secrets, and `wrote` none.
+- The site opens on your workspaces, with their connections, documents and ontologies. Sync a connection: it syncs only if the restored connector key opens its credential.
+- A document opens, and the Explorer shows each ontology's load.
+
+**Upgrades.** Back up before you upgrade (a new release, or another `FOUNDRY_*IMAGE`): its first start migrates the store, and migrations only go forward, so the release before can't open it after. Restore a backup only onto the images it lists, then upgrade again if you need to.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.
