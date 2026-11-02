@@ -104,6 +104,13 @@ export const mock = {
     aiProbeOutcome?: "timeout";
     // The kinds the WFE offers, as a deployment's foundry.ai.kinds.
     aiKinds?: string[];
+    // false: no kind connects by signing in (pipes.enabled off).
+    signIn?: boolean;
+    // Breaks these connectors' accounts, as a member leaving does.
+    accountBroken?: Record<
+      string,
+      "member_left" | "access_revoked" | "expired" | "account_missing"
+    >;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
