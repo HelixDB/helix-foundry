@@ -48,6 +48,8 @@
   --hf-sidebar-collapsed: 60px;
   /* The height of what sits above the shell: shell.css's .hf-banner sets it. */
   --hf-shell-top: 0px;
+  /* The height of what sits above the page, in its column: .hf-strip sets it. */
+  --hf-main-top: 0px;
 
   /* Neutral surfaces, black ink and the landing page's mint (#85ed75 in
      dark; a deeper green here, for contrast on white). */

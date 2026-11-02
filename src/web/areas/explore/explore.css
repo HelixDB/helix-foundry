@@ -211,7 +211,7 @@
   min-width: 0;
 }
 .ex-view.is-graph {
-  height: calc(100dvh - var(--hf-shell-top));
+  height: calc(100dvh - var(--hf-shell-top) - var(--hf-main-top));
   min-height: 480px;
 }
 /* What's under the bar when it isn't the graph itself: a page's padding. */
@@ -221,7 +221,7 @@
 @media (max-width: 800px) {
   .ex-view.is-graph {
     /* Under the mobile bar. */
-    height: calc(100dvh - var(--hf-shell-top) - 52px);
+    height: calc(100dvh - var(--hf-shell-top) - var(--hf-main-top) - 52px);
   }
   .ex-frame {
     padding: var(--hf-space-3) var(--hf-space-2) var(--hf-space-2);
@@ -1959,7 +1959,10 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
-  height: max(480px, calc(100dvh - var(--hf-shell-top) - 140px));
+  height: max(
+    480px,
+    calc(100dvh - var(--hf-shell-top) - var(--hf-main-top) - 140px)
+  );
   margin-bottom: var(--hf-space-3);
 }
 .ex-compare-side {

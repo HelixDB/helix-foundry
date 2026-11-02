@@ -92,7 +92,10 @@
   align-content: start;
   gap: 16px;
   width: 100%;
-  height: max(480px, calc(100vh - var(--hf-shell-top) - 260px));
+  height: max(
+    480px,
+    calc(100vh - var(--hf-shell-top) - var(--hf-main-top) - 260px)
+  );
   overflow: auto;
   padding: 16px;
   border: 1px solid var(--hf-border);

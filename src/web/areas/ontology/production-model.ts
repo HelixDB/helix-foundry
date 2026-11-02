@@ -1,0 +1,150 @@
+import { OPEN_ONTOLOGY } from "./sample";
+
+// Getting into production: the two steps from a workspace trying Foundry to
+// its own app or agent querying an ontology, and when the Analyst's card and
+// the strip off the Analyst show them (./production.tsx). This browser
+// remembers them per workspace.
+
+export const PRODUCTION_STEPS = [
+  { id: "ontology", title: "Create an ontology" },
+  { id: "query", title: "Query it through the Helix MCP" },
+] as const;
+
+export type ProductionStepId = (typeof PRODUCTION_STEPS)[number]["id"];
+
+/** What this browser remembers of a workspace's steps. */
+export type ProductionState = {
+  // The prompt was copied: the query step is done.
+  copied: boolean;
+  // The strip was dismissed. The card never is, so the prompt stays reachable.
+  dismissed: boolean;
+  // The card was minimised.
+  minimised: boolean;
+};
+
+export const productionKey = (workspace: string) =>
+  `foundry.production.v1:${workspace}`;
+
+/**
+ * What localStorage holds, as state: anything but `true` in a field, or
+ * anything but JSON, reads as not set.
+ *
+ * @example
+ * parseProductionState('{"copied":true}').copied; // true
+ * parseProductionState("not json").copied; // false
+ */
+export function parseProductionState(raw: string): ProductionState {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    // Nothing kept.
+  }
+  const kept = (value ?? {}) as Partial<Record<keyof ProductionState, unknown>>;
+  return {
+    copied: kept.copied === true,
+    dismissed: kept.dismissed === true,
+    minimised: kept.minimised === true,
+  };
+}
+
+/**
+ * Whether the workspace has an ontology other than the sample, `sample` being
+ * useSampleOntology's: undefined until that can be told, while the list or
+ * the sample is being read.
+ *
+ * @example
+ * hasOwnOntology([{ id: "o1" }], { id: "o1" }); // false
+ * hasOwnOntology([{ id: "o1" }], null); // true
+ * hasOwnOntology([{ id: "o1" }], undefined); // undefined
+ */
+export const hasOwnOntology = (
+  ontologies: readonly { id: string }[] | undefined,
+  sample: { id: string } | null | undefined,
+): boolean | undefined =>
+  ontologies && sample !== undefined
+    ? ontologies.some((o) => o.id !== sample?.id)
+    : undefined;
+
+export type ProductionStepState = "done" | "current" | "upcoming";
+
+export type ProductionProgress = {
+  steps: readonly {
+    id: ProductionStepId;
+    title: string;
+    state: ProductionStepState;
+  }[];
+  done: number;
+  // The first step not done, which holds the strip's action; null once both are.
+  current: ProductionStepId | null;
+};
+
+/** Where the steps are: each is done on its own, whatever the other's state. */
+export function productionProgress(
+  ownOntology: boolean,
+  copied: boolean,
+): ProductionProgress {
+  const done: Record<ProductionStepId, boolean> = {
+    ontology: ownOntology,
+    query: copied,
+  };
+  const current = PRODUCTION_STEPS.find((s) => !done[s.id])?.id ?? null;
+  return {
+    steps: PRODUCTION_STEPS.map((s) => ({
+      ...s,
+      state: done[s.id] ? "done" : s.id === current ? "current" : "upcoming",
+    })),
+    done: PRODUCTION_STEPS.filter((s) => done[s.id]).length,
+    current,
+  };
+}
+
+// The Analyst, which has the card (/ opens it), and the pages that make an
+// ontology.
+const NO_STRIP = /^\/(?:$|ask(?:\/|$)|ontology\/(?:new|sample)\/?$)/;
+
+/**
+ * Whether the strip shows on `pathname`: never while the workspace is
+ * onboarding, once dismissed or once both steps are done.
+ */
+export const stripShown = (
+  pathname: string,
+  onboarding: boolean,
+  state: ProductionState,
+  progress: ProductionProgress,
+) =>
+  !onboarding &&
+  !state.dismissed &&
+  progress.current !== null &&
+  !NO_STRIP.test(pathname);
+
+/**
+ * Whether the card starts minimised: when it was left so, once both steps are
+ * done, and where it doesn't fit beside the conversation (`fits`). Opened in
+ * those last two cases, it is for that visit.
+ */
+export const cardStartsMinimised = (
+  minimised: boolean,
+  bothDone: boolean,
+  fits: boolean,
+) => minimised || bothDone || !fits;
+
+/**
+ * The ontology the strip's prompt names: the one `pathname` has open, else
+ * the one last opened in this browser (`last`), else the first; the last two
+ * never the sample, as the step before it asks for one of the workspace's
+ * own. None when the workspace only has the sample.
+ */
+export function promptOntology<T extends { id: string }>(
+  pathname: string,
+  ontologies: readonly T[],
+  last: string,
+  sampleId: string | undefined,
+): T | undefined {
+  const open = OPEN_ONTOLOGY.exec(pathname)?.[1];
+  return (
+    ontologies.find((o) => encodeURIComponent(o.id) === open) ??
+    ontologies.find((o) => o.id === last && o.id !== sampleId) ??
+    ontologies.find((o) => o.id !== sampleId)
+  );
+}
