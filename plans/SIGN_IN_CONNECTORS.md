@@ -783,15 +783,13 @@ The dev stamp uses WorkOS staging; production uses WorkOS production.
 
 ## Implementation
 
-Five pull requests, a setup track, verification on dev, then production. Each is safe to merge alone: with no port, `pipes.enabled` off, or no `signIn`, nothing changes for anyone.
+Three pull requests, one per repository, then a setup track, verification on dev, and production. Each is safe to merge alone: with no port, `pipes.enabled` off, or no `signIn`, nothing changes for anyone. The work was built as the five parts below (PR 1 to 5), then gathered by repository.
 
-| PR                   | Repository                    | Branch (from `dev`)          | Needs                         | Safe because                                                 |
-| -------------------- | ----------------------------- | ---------------------------- | ----------------------------- | ------------------------------------------------------------ |
-| 1. Backend module    | helix-foundry                 | `sign-in-connectors-backend` | none                          | Without a port, `sign_in` is false and every path is today's |
-| 2. Hosted            | helix-hyperscale              | `foundry-sign-in-connectors` | 1 merged, for the module bump | `pipes.enabled` stays off until setup is done                |
-| 3. Site              | helix-foundry                 | `sign-in-connectors-site`    | 1, for the contract           | Every new screen is gated on `signIn`                        |
-| 4. MCP               | helix-hyperscale              | `foundry-sign-in-mcp`        | 2                             | The tools register only where sign-in is offered             |
-| 5. Prompts and skill | helix-foundry, HelixDB/skills | `sign-in-connectors-prompts` | 4 deployed to dev             | —                                                            |
+| Pull request       | Repository       | Branch (from `dev`/`main`)   | Holds                     | Needs                            | Safe because                                                                                                           |
+| ------------------ | ---------------- | ---------------------------- | ------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| helix-foundry #220 | helix-foundry    | `sign-in-connectors-backend` | parts 1, 3 and 5's prompt | none                             | Without a port, `sign_in` is false; every new screen is gated on `signIn`; the prompt falls back to the connector form |
+| Hosted             | helix-hyperscale | `foundry-sign-in-connectors` | parts 2 and 4             | #220 merged, for the module bump | `pipes.enabled` stays off until setup is done, and the MCP's tools register only where sign-in is offered              |
+| Skills             | HelixDB/skills   | `foundry-sign-in-connectors` | part 5's skills           | the hosted PR deployed to dev    | —                                                                                                                      |
 
 **About the POC branch:**
 
