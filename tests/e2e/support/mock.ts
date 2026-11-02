@@ -242,6 +242,32 @@ export async function createFirstOntology(page: Page): Promise<string> {
   return createdOntology(page);
 }
 
+/** Makes Customer contracts' version 3 current and loads it: Stripe's customers and invoices. */
+export async function loadContracts(page: Page) {
+  await mock.configure({ loadStepMs: 100 });
+  await page.goto("/ontology/ont_acme_contracts/versions/ver_seed_3");
+  await page.getByRole("button", { name: "Make current" }).click();
+  await page
+    .getByRole("dialog", { name: "Make version 3 current?" })
+    .getByRole("button", { name: "Make current" })
+    .click();
+  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
+  await page.goto("/ontology/ont_acme_contracts#loads");
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "Load data" })
+    .first()
+    .click();
+  await page
+    .getByRole("dialog", { name: "Load version 3 into contracts?" })
+    .getByRole("button", { name: "Load" })
+    .click();
+  await expect(page).toHaveURL(/\/loads\/load_/);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
+  ).toBeVisible({ timeout: 20_000 });
+}
+
 /** A CSRF token for the signed-in page's session. */
 export async function csrfToken(page: Page): Promise<string> {
   const res = await page.request.get("/papi/csrf");
