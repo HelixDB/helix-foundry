@@ -1,5 +1,9 @@
 import { LOCAL } from "../../../shared/deployment";
-import type { ConnectorConfig } from "../../../shared/wfe";
+import type {
+  Connector,
+  ConnectorConfig,
+  FoundryDocumentSet,
+} from "../../../shared/wfe";
 import { ontologyPaths } from "./paths";
 
 // Acme Corp's documents: three contracts as PDFs, call notes, a support
@@ -89,6 +93,42 @@ export const sampleInView = (
   (ontologies === 1 ||
     pathname === ontologyPaths.sampleTour() ||
     OPEN_ONTOLOGY.exec(pathname)?.[1] === encodeURIComponent(sampleId));
+
+/**
+ * Whether a connector is the sample's database, by what it connects to: it can
+ * be renamed, and someone's own database may be called Acme Corp. A build with
+ * no sample database (`database.host` empty) has none. With the set
+ * (isSampleSet), it is left out of what an ontology of the user's own can draft
+ * from; only the sample's own ontology (useSampleOntology) draws on them.
+ *
+ * @example
+ * // With NEXT_PUBLIC_SAMPLE_DB_HOST=db.example:
+ * const postgres = { host: "db.example", port: 5432, database: "acme", user: "acme_reader" };
+ * isSampleConnector({ id: "c1", kind: "postgres", name: "Renamed", config: { postgres } }); // true
+ * isSampleConnector({ id: "c2", kind: "postgres", name: "Acme Corp", config: { postgres: { ...postgres, host: "mine.example" } } }); // false
+ */
+export function isSampleConnector(c: Connector) {
+  const { host, login } = SAMPLE.database,
+    db = c.config && "postgres" in c.config ? c.config.postgres : undefined;
+  return (
+    !!host &&
+    db?.host === host &&
+    db.database === login.database &&
+    db.user === login.user
+  );
+}
+
+/**
+ * Whether a document set is the one the sample's documents are uploaded into:
+ * one people made (a connector's never is), by its name.
+ *
+ * @example
+ * isSampleSet({ id: "s1", name: "Acme Corp sample" }); // true
+ * isSampleSet({ id: "s2", name: "General" }); // false
+ * isSampleSet({ id: "s3", name: "Acme Corp sample", connector: { connectorId: "c1" } }); // false
+ */
+export const isSampleSet = (s: FoundryDocumentSet) =>
+  !s.connector && s.name === SAMPLE.set.name;
 
 /**
  * The sample's database as a PostgreSQL connector's config. A local

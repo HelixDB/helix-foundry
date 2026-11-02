@@ -50,7 +50,7 @@ import {
   questionQueries,
   setCurrentVersion,
 } from "./queries";
-import { SAMPLE, sampleDatabaseConfig } from "./sample";
+import { SAMPLE, isSampleSet, sampleDatabaseConfig } from "./sample";
 import { InOntology } from "./scope";
 import { OntologySchema } from "./suggested-ontology";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -98,8 +98,7 @@ export async function addSampleFiles(
     staleTime: 0,
   });
   const set =
-    sets.find((s) => !s.connector && s.name === SAMPLE.set.name) ??
-    (await createDocumentSet(ws, SAMPLE.set)).set;
+    sets.find(isSampleSet) ?? (await createDocumentSet(ws, SAMPLE.set)).set;
   let done = 0;
   const ends = await Promise.all(
     names.map(async (name) => {
