@@ -336,3 +336,13 @@ func (e *AccountBroken) Error() string { return "the account needs signing in ag
 // ErrAccountsUnavailable is every other failure to reach the accounts:
 // switched off, unreachable, rate limited. It is retried, never a break.
 var ErrAccountsUnavailable = errors.New("provider accounts are unavailable")
+
+// ErrAccountCodeRejected is Finish's error when the broker refuses the
+// callback's code: it lapsed, was used already, or its verifier doesn't
+// match. Authorizing again gives the user a new one.
+var ErrAccountCodeRejected = errors.New("the sign-in's code was refused")
+
+// ErrAccountNotThisWorkspace is Finish's error when the account the code
+// made isn't the workspace's, or wasn't made by the user finishing; Finish
+// has deleted it.
+var ErrAccountNotThisWorkspace = errors.New("the account isn't this workspace's")

@@ -40,6 +40,25 @@ type memoryStore struct {
 	replaced []string
 	// failPrune fails the next prune, as an attempt that dies after writing its tables does.
 	failPrune bool
+	// breaks are the accounts broken, as connector@generation:reason;
+	// checked counts the tokens vended.
+	breaks  []string
+	checked int
+}
+
+func (m *memoryStore) BreakConnectorAccount(_ context.Context, _, connectorID string, generation int, reason string) (bool, error) {
+	c := m.connectors[connectorID]
+	if c == nil || c.Account == nil || c.Account.Generation != generation || c.Account.Broken != nil {
+		return false, nil
+	}
+	c.Account.Broken = &reason
+	m.breaks = append(m.breaks, fmt.Sprintf("%s@%d:%s", connectorID, generation, reason))
+	return true, nil
+}
+
+func (m *memoryStore) MarkConnectorAccountChecked(context.Context, string, string) error {
+	m.checked++
+	return nil
 }
 
 func (m *memoryStore) WorkspaceDeleting(_ context.Context, id string) (bool, error) {
