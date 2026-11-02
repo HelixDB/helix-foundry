@@ -348,6 +348,11 @@ describe("onboardingPrompt's connectors that sign in", () => {
     [
       ...out.matchAll(new RegExp(`\`${tool}\` with \`(\\{[^\`]+\\})\``, "g")),
     ].map((m) => JSON.parse(m[1]!));
+  // Every workspace payload in the prompt, the per-kind examples among them.
+  const examples = (out: string) =>
+    [...out.matchAll(/`(\{"workspace_id": [^`]+\})`/g)].map((m) =>
+      JSON.parse(m[1]!),
+    );
 
   // The prompt can't know whether the stamp offers signing in, or to whom:
   // the agent reads it per kind, and every other kind keeps its form.
@@ -356,7 +361,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
       "Read the kinds with `helix_foundry_list_connector_kinds`, and decide how to connect each one from its own `sign_in`, every time",
     );
     expect(text).toContain(
-      "If its `sign_in` is true (GitHub or Linear), I sign in at the provider, and no key passes through you:",
+      "If its `sign_in` is true, I sign in at its provider, and no key passes through you:",
     );
     expect(text).toContain(
       'Every other kind connects through its form, where I enter its credentials:\n\n1. Call `helix_foundry_connector_link` with `{"workspace_id": "ws1", "kind": "<kind>"}`',
@@ -373,13 +378,13 @@ describe("onboardingPrompt's connectors that sign in", () => {
       client_token: "<a new UUID>",
     });
     expect(text).toContain(
-      'adding `"name": "<name>"` for a name other than the kind’s and, for GitHub, `"repos": ["<owner>/<repository>"]` for only those repositories',
+      'adding `"name": "<name>"` for a name other than the kind’s.',
     );
     expect(text).toContain(
       "2. Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
     );
     expect(text).toContain(
-      "I click Connect with GitHub (or Linear), then Authorize at the provider. Only I can, until its `expires_at`.",
+      "I click its Connect button, then authorize Helix Foundry at the provider. Only I can, until its `expires_at`.",
     );
     expect(payloads(text, "helix_foundry_get_sign_in")).toEqual([
       { workspace_id: "ws1", sign_in_id: "<its sign_in_id>", wait: true },
@@ -426,11 +431,56 @@ describe("onboardingPrompt's connectors that sign in", () => {
       connector_id: "<its id>",
       client_token: "<a new UUID>",
     });
-    expect(again).not.toHaveProperty("name");
-    expect(again).not.toHaveProperty("repos");
-    expect(text).toContain("never with `name` or `repos`: it keeps its own.");
+    for (const setting of ["name", "repos", "region", "project_id"])
+      expect(again).not.toHaveProperty(setting);
+    expect(text).toContain(
+      "and nothing else: it keeps its name and settings, and the tool refuses `name`, `repos`, `region` and `project_id` with `connector_id`.",
+    );
     expect(text).toContain(
       "- `account_needs_sign_in`: from `sync_connector`, the connector’s account needs signing in again",
+    );
+  });
+
+  // Which kinds sign in depends on the stamp and the user: the prompt names
+  // none as the ones that do, only the settings two kinds take.
+  it("names no fixed list of kinds that sign in", () => {
+    expect(text).not.toMatch(/GitHub (or|and) Linear/);
+    expect(text).not.toContain("Linear");
+    expect(text).not.toContain("Connect with GitHub");
+    expect(text).toContain(
+      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds, whose settings you ask me for first:",
+    );
+  });
+
+  it("gives GitHub's repositories and PostHog Cloud's region and project", () => {
+    expect(examples(text)).toContainEqual({
+      workspace_id: "ws1",
+      kind: "github",
+      repos: ["<owner>/<repository>"],
+      client_token: "<a new UUID>",
+    });
+    expect(examples(text)).toContainEqual({
+      workspace_id: "ws1",
+      kind: "posthog",
+      region: "<us or eu>",
+      project_id: "<project id>",
+      client_token: "<a new UUID>",
+    });
+    // Each kind's settings are its own: PostHog's carry no repos, and only
+    // PostHog's carry a region or project.
+    const settings = examples(text).filter(
+      (p) => "repos" in p || "region" in p || "project_id" in p,
+    );
+    expect(settings.map((p) => p.kind)).toEqual(["github", "posthog"]);
+    expect(text).toContain(
+      "`region` is `us` (the default) or `eu`, and without `project_id` it reads my account’s one project. A self-hosted PostHog connects through its form, with its key.",
+    );
+    expect(text).not.toContain('"region": "custom"');
+  });
+
+  it("says what Google Workspace and Notion read once signed in, one line each", () => {
+    expect(text).toContain(
+      "\n\nWhere Google Workspace signs in, it reads as me, and its directory only if I’m a Google admin. Where Notion signs in, it reads only the pages I choose on Notion’s screen.\n\n",
     );
   });
 
