@@ -443,6 +443,85 @@ test("lets another admin narrow a connector that reads every repository", async 
   await expect(alan.locator(".hf-kv")).toContainText("acme/api");
 });
 
+test("signs a connector in again from an agent's link, saying whose access it replaces", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  const id = await connectGitHub(page);
+  await expect(
+    page.locator(".hf-page-header").getByText("Synced", { exact: true }),
+  ).toBeVisible(SYNCED);
+  // Alan, an admin, signs Ada's connector in again, as his agent asks.
+  await mock.configure({ alanRole: "WORKSPACE_ROLE_ADMIN" });
+  const alan = await as(browser, "alan@example.com");
+  const s = await agentSignIn(alan, "ws_acme", {
+    kind: "github",
+    connectorId: id,
+  });
+  await alan.goto(`/data?add=github&sign_in=${s.id}&workspace=ws_acme`);
+  const form = dialog(alan);
+  await expect(form).toContainText(
+    "Your agent asked to sign GitHub in again, in Acme.",
+  );
+  await expect(form).toContainText(
+    "Signing in again makes GitHub read with your GitHub access from now on, in place of Ada Lovelace’s (ada).",
+  );
+  await form.getByRole("button", { name: "Sign in again with GitHub" }).click();
+  await consent(alan, "Authorize");
+  // Back on the connector it signed in again, said as such.
+  await expect(alan).toHaveURL(new RegExp(`/data/connections/${id}$`));
+  await expect(
+    alan.getByText("Signed in again. GitHub syncs now"),
+  ).toBeVisible();
+  await expect(alan.locator(".hf-kv")).toContainText(
+    "Reads with Alan Turing’s GitHub access (alan)",
+  );
+});
+
+test("says what happened the last time an agent's sign-in was tried", async ({
+  page,
+}) => {
+  await signIn(page);
+  const s = await agentSignIn(page, "ws_acme", { kind: "linear" });
+  const link = `/data?add=linear&sign_in=${s.id}&workspace=ws_acme`;
+  await page.goto(link);
+  await dialog(page)
+    .getByRole("button", { name: "Connect with Linear" })
+    .click();
+  await consent(page, "Cancel");
+  await expect(page.getByText("Linear wasn’t authorized")).toBeVisible();
+  // The link again: what happened, then the same button.
+  await page.goto(link);
+  await expect(dialog(page).getByRole("status")).toContainText(
+    "Last time: Linear wasn’t authorized. Helix Foundry was declined at Linear, so nothing was connected.",
+  );
+  await expect(
+    dialog(page).getByRole("button", { name: "Connect with Linear" }),
+  ).toBeVisible();
+});
+
+test("opens an agent's sign-in under its own kind, whatever the link's add= says", async ({
+  page,
+}) => {
+  await signIn(page);
+  const s = await agentSignIn(page, "ws_acme", { kind: "github" });
+  await page.goto(`/data?add=linear&sign_in=${s.id}&workspace=ws_acme`);
+  await expect(dialog(page)).toHaveAttribute("aria-label", "GitHub");
+  await expect(dialog(page)).toContainText(
+    "Your agent asked to connect GitHub to Acme.",
+  );
+  // Another kind's form is the kind's own, not the sign-in's.
+  await dialog(page).getByRole("button", { name: "← All sources" }).click();
+  await dialog(page)
+    .getByRole("button", { name: "Linear", exact: true })
+    .click();
+  await expect(dialog(page)).not.toContainText("Your agent asked");
+  await expect(
+    dialog(page).getByRole("button", { name: "Connect with Linear" }),
+  ).toBeVisible();
+});
+
 test("comes back to Generate with a long goal and its picks", async ({
   page,
 }) => {

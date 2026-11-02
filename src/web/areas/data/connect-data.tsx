@@ -16,7 +16,7 @@ import { useCurrentTheme, type Theme } from "../../shell/theme";
 import { Loading, useWorkspace } from "../../ui";
 import { ProGate } from "../workspace/pro-gate";
 import { ConnectionForm } from "./connection-form";
-import { connectorKindsQuery, connectorsQuery } from "./data-api";
+import { connectorKindsQuery, connectorsQuery, signInQuery } from "./data-api";
 import { EventSourceForm } from "./event-source-form";
 import { canManage, isEventSource, isKnownKind } from "./model";
 import { AgentSignIn, SignInReturn } from "./sign-in";
@@ -37,8 +37,9 @@ import { AgentSignIn, SignInReturn } from "./sign-in";
 // `returnPath` with `connected=<id>` (else the page's SignInReturn; a
 // caller that stays where it is gets its own page by default), else to the
 // new connection's page. An agent's
-// link names its sign-in (`signIn`, the link's sign_in): that kind's form
-// opens bound to it (./sign-in.tsx AgentSignIn).
+// link names its sign-in (`signIn`, the link's sign_in): its own kind's
+// form opens bound to it (./sign-in.tsx AgentSignIn), whatever kind the
+// link's add= named.
 
 const appChoices: [ConnectorKindName, string, string][] = [
   ["stripe", "Stripe", "Customers and payments"],
@@ -230,6 +231,17 @@ export function ConnectData({
   const [kind, setKind] = useState<ConnectorKindName | null>(
     initialKind && isKnownKind(initialKind) ? initialKind : null,
   );
+  // A link's sign-in opens its own kind's form, whatever kind the link
+  // named, and shows under no other.
+  const boundRead = useQuery({
+      ...signInQuery(id, bound || ""),
+      enabled: !!bound,
+    }),
+    boundKind = boundRead.data?.signIn.kind;
+  useEffect(() => {
+    if (bound && boundKind && isKnownKind(boundKind) && boundKind !== kind)
+      setKind(boundKind);
+  }, [bound, boundKind]);
   const offered = new Map(
     (kinds.data?.kinds || [])
       .filter((k) => isKnownKind(k.kind))
@@ -334,7 +346,12 @@ export function ConnectData({
             >
               ← All sources
             </button>
-            {bound ? (
+            {bound &&
+            !boundRead.error &&
+            (!boundKind || (isKnownKind(boundKind) && boundKind !== kind)) ? (
+              // Its kind isn't known yet, or the form moves to it.
+              <Loading />
+            ) : bound ? (
               <AgentSignIn
                 signInId={bound}
                 returnPath={back}
