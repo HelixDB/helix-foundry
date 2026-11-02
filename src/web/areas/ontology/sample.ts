@@ -1,5 +1,6 @@
 import { LOCAL } from "../../../shared/deployment";
 import type { ConnectorConfig } from "../../../shared/wfe";
+import { ontologyPaths } from "./paths";
 
 // Acme Corp's documents: three contracts as PDFs, call notes, a support
 // escalation, an incident report and the price list.
@@ -62,6 +63,29 @@ export const SAMPLE = {
   },
   documents: DOCUMENTS,
 } as const;
+
+// The ontology a page of the app has open: its own pages, the Explorer's and
+// Ask's.
+const OPEN_ONTOLOGY = /^\/(?:ontology|explore|ask)\/([^/]+)/;
+
+/**
+ * Whether what `pathname` shows is the sample's, `sampleId` being its
+ * ontology and `ontologies` how many the workspace has: anything while it is
+ * the only one, else its own pages and the sample's page.
+ *
+ * @example
+ * sampleInView("/data", "o1", 1); // true
+ * sampleInView("/data", "o1", 2); // false
+ * sampleInView("/explore/o1/records", "o1", 2); // true
+ */
+export const sampleInView = (
+  pathname: string,
+  sampleId: string,
+  ontologies: number,
+) =>
+  ontologies === 1 ||
+  pathname === ontologyPaths.sampleTour() ||
+  OPEN_ONTOLOGY.exec(pathname)?.[1] === encodeURIComponent(sampleId);
 
 /**
  * The sample's database as a PostgreSQL connector's config. A local

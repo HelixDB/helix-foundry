@@ -1,7 +1,8 @@
-/* App shell: sidebar, mobile bar, command palette, activity tray, toast. */
+/* App shell: banner, sidebar, mobile bar, command palette, activity tray,
+   toast. */
 .hf-shell {
   display: flex;
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--hf-shell-top));
   background: var(--hf-bg);
 }
 .hf-skip {
@@ -19,13 +20,57 @@
   transform: none;
 }
 
+/* An area's banner (AreaShell's): above the sidebar and the page, in view as
+   they scroll. While one shows, --hf-shell-top is its height, and whatever is
+   placed against the viewport's top or height (the sidebar, the panel, the
+   mobile bar, full-height pages, sticky columns, what scrolls into view) takes
+   it off. On a phone its line wraps to two. */
+:root:has(.hf-banner) {
+  --hf-shell-top: 36px;
+}
+html {
+  scroll-padding-top: var(--hf-shell-top);
+}
+.hf-banner {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: grid;
+  place-content: center;
+  min-height: var(--hf-shell-top);
+  padding: 0 var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-accent-border);
+  background: var(--hf-accent-soft);
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 18px;
+  text-align: center;
+}
+.hf-banner a,
+.hf-banner a:hover {
+  margin-left: var(--hf-space-1);
+  color: var(--hf-accent-text);
+  font-weight: 500;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+@media (max-width: 800px) {
+  :root:has(.hf-banner) {
+    --hf-shell-top: 48px;
+  }
+  .hf-banner {
+    padding: 0 var(--hf-space-15);
+    font-size: var(--hf-text-sm);
+  }
+}
+
 /* Sidebar */
 .hf-sidebar {
   position: sticky;
-  top: 0;
+  top: var(--hf-shell-top);
   flex: none;
   width: var(--hf-sidebar-width);
-  height: 100dvh;
+  height: calc(100dvh - var(--hf-shell-top));
   border-right: 1px solid var(--hf-border);
   background: var(--hf-sidebar);
   transition: width 180ms var(--hf-ease);
@@ -625,13 +670,13 @@
 /* Section panel: beside the sidebar, scrolling on its own. */
 .hf-section-panel {
   position: sticky;
-  top: 0;
+  top: var(--hf-shell-top);
   z-index: 19;
   display: flex;
   flex: none;
   flex-direction: column;
   width: 280px;
-  height: 100dvh;
+  height: calc(100dvh - var(--hf-shell-top));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1068,7 +1113,7 @@ main.hf-main:focus {
   }
   .hf-mobile-bar {
     position: sticky;
-    top: 0;
+    top: var(--hf-shell-top);
     z-index: 30;
     display: flex;
     align-items: center;

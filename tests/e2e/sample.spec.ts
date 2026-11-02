@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import {
   expect,
   explorer,
@@ -12,11 +13,11 @@ import {
 // documents, shows the goal and the ontology made from its ready-made draft
 // on a new Helix database, loads it, asks its first question and answers
 // it, then offers its other questions and the user's own data. A reload
-// carries on with what it made, and nothing is made or asked twice.
+// carries on with what it made, and nothing is made or asked twice. Once the
+// sample exists a banner says so, and links back to that page.
 
-test("walks a new workspace through the sample company, from its database to Ask", async ({
-  page,
-}) => {
+/** A new workspace, on the plan the mock sells databases with, on the sample's page. */
+async function openSample(page: Page) {
   await mock.configure({
     ontologyStepMs: 300,
     loadStepMs: 200,
@@ -45,6 +46,12 @@ test("walks a new workspace through the sample company, from its database to Ask
       name: "Acme Corp, a sample company",
     }),
   ).toBeVisible();
+}
+
+test("walks a new workspace through the sample company, from its database to Ask", async ({
+  page,
+}) => {
+  await openSample(page);
   const steps = page.getByRole("list", { name: "Steps" });
   await expect(steps).toContainText("6 tables, 1,121 rows", {
     timeout: 30_000,
@@ -81,5 +88,78 @@ test("walks a new workspace through the sample company, from its database to Ask
   await expect(explorer(page).getByText("Acme Corp sample")).toBeVisible();
   await expect(
     explorer(page).getByText("Acme Corp", { exact: true }),
+  ).toHaveCount(1);
+});
+
+test("says it is sample data, and its link back to the tour shows every step done and makes nothing", async ({
+  page,
+}) => {
+  test.slow();
+  await openSample(page);
+  const banner = page.getByRole("region", { name: "Sample data" }),
+    back = banner.getByRole("link", { name: "Back to getting started" }),
+    steps = page.getByRole("list", { name: "Steps" }),
+    others = steps.getByRole("group", { name: "Suggested questions" });
+  // Nothing to say until the sample exists.
+  await expect(banner).toHaveCount(0);
+  await expect(others).toBeVisible({ timeout: 60_000 });
+  // On the tour itself it has nowhere to go back to.
+  await expect(banner).toHaveText(
+    "Sample data: you’re exploring Acme Corp, a made-up company.",
+  );
+  await expect(back).toHaveCount(0);
+
+  // From here on, nothing is written: reads over POST aside, no call at all.
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      request.method() !== "GET" &&
+      path.startsWith("/papi/") &&
+      !/:(query-)?read$/.test(path)
+    )
+      writes.push(`${request.method()} ${path}`);
+  });
+  const asked = steps.getByRole("article", { name: /^Question: / });
+  const everyStepDone = async () => {
+    await expect(others).toBeVisible({ timeout: 30_000 });
+    await expect(steps.getByText("(done)")).toHaveCount(5);
+    await expect(steps.locator('[aria-current="step"]')).toContainText(
+      "Now connect your own data",
+    );
+    await expect(steps).toContainText("6 tables, 1,121 rows");
+    await expect(steps).toContainText("Foundry models Acme Corp as 9 types");
+    await expect(asked).toHaveCount(1);
+  };
+
+  // The load's page, where the tour's link leaves the reader, has the way back.
+  await steps.getByRole("link", { name: "See the load" }).click();
+  await expect(page).toHaveURL(/\/ontology\/[^/]+\/loads\/[^/]+$/);
+  await back.click();
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await everyStepDone();
+  await expect(back).toHaveCount(0);
+
+  // Opened afresh, with nothing in the cache.
+  await page.reload();
+  await everyStepDone();
+
+  // The only ontology: the banner is on every page, and there is one of
+  // everything.
+  await page.goto("/data");
+  await expect(explorer(page).getByText("Acme Corp sample")).toBeVisible();
+  await expect(
+    explorer(page).getByText("Acme Corp", { exact: true }),
+  ).toHaveCount(1);
+  await back.click();
+  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await everyStepDone();
+  expect(writes).toEqual([]);
+
+  await page.goto("/ontology");
+  await expect(
+    page
+      .getByRole("complementary", { name: "Ontologies" })
+      .getByRole("link", { name: /Acme Corp customers/ }),
   ).toHaveCount(1);
 });
