@@ -359,8 +359,10 @@ export type ConnectorKind = {
   // github only, where it connects by signing in (the same oneof).
   github?: GitHubConnectorSetup | null;
   // True when the caller can connect the kind by signing in at its
-  // provider (StartConnectorSignIn) instead of entering a key: GitHub and
-  // Linear, hosted, for a member of the workspace's WorkOS organization.
+  // provider (StartConnectorSignIn) instead of entering a key: hosted, the
+  // kinds Pipes signs in to that the stamp lists (GitHub, Linear, Slack,
+  // Notion, PostHog, Cal.com, Stripe, Google Workspace), for a member of the
+  // workspace's WorkOS organization.
   signIn?: boolean;
 };
 /** helixwfev1ListConnectorKindsResponse */
@@ -777,7 +779,7 @@ export type ListFoundryEventBatchesResponse = {
   capacity?: EventSourceCapacity | null;
 };
 
-// Connecting GitHub or Linear by signing in at the provider (hosted: through
+// Connecting a source by signing in at its provider (hosted: through
 // WorkOS Pipes) instead of entering a key: routes under
 // /v1/workspaces/{workspaceId}/foundry/sign-ins. A user, or their agent,
 // starts a sign-in with the connector's settings; that user authorizes it in

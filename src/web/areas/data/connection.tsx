@@ -143,7 +143,10 @@ function details(c: Connector, installUrl?: string): KeyValueItem[] {
     });
   if (config && "google" in config)
     items.push(
-      { label: "Acts as", value: config.google.subject, mono: true },
+      // Signed in, it reads as the person who signed in (Access).
+      ...(c.account
+        ? []
+        : [{ label: "Acts as", value: config.google.subject, mono: true }]),
       {
         label: "Event history",
         value: plural(config.google.eventDays || 90, "day"),

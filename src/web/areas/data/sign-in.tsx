@@ -35,7 +35,7 @@ import {
   type ReturnPicks,
 } from "./sign-ins";
 
-// Connecting GitHub or Linear by signing in at the provider, in the
+// Connecting a source by signing in at its provider, in the
 // browser: the button's work (useSignInStart), the form an agent's link
 // opens (AgentSignIn), and a signed-in connector's notices on its page.
 // The callback that finishes it is ./connect-callback.tsx.
@@ -141,26 +141,51 @@ export function useSignInStart() {
   return { pending, error, go };
 }
 
-/** The settings a sign-in was started with, as its form shows them. */
+/**
+ * The settings a sign-in was started with, as its form shows them: the
+ * name, then the kind's own (GitHub's repositories and review history,
+ * Slack's history, PostHog's project and events, Google's events).
+ */
 function signInSettings(s: ConnectorSignIn) {
-  const g = s.config && "github" in s.config ? s.config.github : undefined;
-  return [
-    { label: "Name", value: s.name || providerName(s.kind || "") },
-    ...(g
-      ? [
-          {
-            label: "Repositories",
-            value: g.repos?.length
-              ? g.repos.join(", ")
-              : "Every repository Helix Foundry is installed on that you can see",
-          },
-          {
-            label: "Review history",
-            value: plural(g.reviewDays || 90, "day"),
-          },
-        ]
-      : []),
-  ];
+  const c = s.config,
+    items = [{ label: "Name", value: s.name || providerName(s.kind || "") }];
+  if (!c) return items;
+  if ("github" in c)
+    items.push(
+      {
+        label: "Repositories",
+        value: c.github.repos?.length
+          ? c.github.repos.join(", ")
+          : "Every repository Helix Foundry is installed on that you can see",
+      },
+      {
+        label: "Review history",
+        value: plural(c.github.reviewDays || 90, "day"),
+      },
+    );
+  if ("slack" in c)
+    items.push({
+      label: "Message history",
+      value: plural(c.slack.historyDays || 90, "day"),
+    });
+  if ("posthog" in c)
+    items.push(
+      { label: "Region", value: "US Cloud" },
+      {
+        label: "Project",
+        value: c.posthog.projectId || "The one the account sees",
+      },
+      {
+        label: "Event history",
+        value: plural(c.posthog.eventDays || 30, "day"),
+      },
+    );
+  if ("google" in c)
+    items.push({
+      label: "Event history",
+      value: plural(c.google.eventDays || 90, "day"),
+    });
+  return items;
 }
 
 /**

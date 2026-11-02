@@ -27,6 +27,7 @@ import {
 } from "../http";
 import {
   LOCAL_TOKEN,
+  PROD_STAMP,
   config,
   db,
   displayName,
@@ -71,10 +72,12 @@ import {
 // its text field, and takes `eventSyncMs`; it merges every batch waiting,
 // then, with a text field, keeps its newest pieces as documents.
 //
-// GitHub and Linear also connect by signing in at the provider
-// (./sign-ins.ts), except in a local build or with `{"signIn": false}`: such
-// a connector has an account in place of a key, and only the account's
-// member may widen what it reads. `{"accountBroken": {"<connectorId>":
+// The kinds Pipes signs in to (GitHub, Linear, Slack, Notion, PostHog,
+// Cal.com, Stripe, Google Workspace) also connect by signing in at the
+// provider (./sign-ins.ts), except in a local build or with `{"signIn":
+// false}`: such a connector has an account in place of a key, and only the
+// account's member may widen what it reads (widensReach). A signed-in
+// PostHog is US Cloud's: Pipes' PostHog has no region. `{"accountBroken": {"<connectorId>":
 // "member_left"}}` (or access_revoked, expired, account_missing) breaks its
 // account as the WFE does when the member leaves: it needs signing in
 // again, its live syncs fail, and Sync now is refused until then.
@@ -120,7 +123,47 @@ export type StoredConnector = {
 };
 
 /** The kinds that connect by signing in, where the stamp offers it. */
-const SIGN_IN_KINDS: readonly ConnectorKindName[] = ["github", "linear"];
+// Every one Pipes signs in to; prod's stamp (pnpm docs:media) lists GitHub
+// and Linear only, as its pipes.kinds starts.
+const SIGN_IN_KINDS: readonly ConnectorKindName[] = PROD_STAMP
+  ? ["github", "linear"]
+  : [
+      "github",
+      "linear",
+      "slack",
+      "notion",
+      "posthog",
+      "calcom",
+      "stripe",
+      "google",
+    ];
+
+/**
+ * Whether settings `now` let a signed-in connector read more than `was`
+ * (both prepared), as the WFE's widensReach decides: GitHub's repositories
+ * (none named where some were, or one not named before, case aside; from
+ * every repository any list narrows it), PostHog's project changed (its
+ * region is US Cloud, fixed). No other kind's settings reach further.
+ */
+export function widensReach(
+  was: ConnectorConfig,
+  now: ConnectorConfig,
+): boolean {
+  if ("github" in now) {
+    const before = ("github" in was && was.github.repos) || [],
+      after = now.github.repos || [];
+    if (!after.length) return before.length > 0;
+    if (!before.length) return false;
+    return after.some(
+      (r) => !before.some((b) => b.toLowerCase() === r.toLowerCase()),
+    );
+  }
+  if ("posthog" in now) {
+    const before = "posthog" in was ? was.posthog : {};
+    return (before.projectId || "") !== (now.posthog.projectId || "");
+  }
+  return false;
+}
 /**
  * Whether `kind` connects by signing in here: hosted, with the switch on
  * (a local API has no broker).
@@ -838,34 +881,29 @@ export const dataRoutes: MockRoute[] = [
           // Signed in: no key to change, the broker's token re-tests it,
           // and only the account's member widens what it reads.
           const part = config[c.kind] || (config[c.kind] = {});
-          if (part.token || part.apiKey)
+          if (
+            part.token ||
+            part.apiKey ||
+            part.botToken ||
+            part.serviceAccountKey
+          )
             return fail(
               "FAILED_PRECONDITION",
               `this connector signs in with ${kindName(c.kind)}: sign it in again instead`,
             );
           if (c.account.broken)
             return refusedFor("ACCOUNT_NEEDS_SIGN_IN", brokenMessage(c));
-          const before: string[] =
-              "github" in c.source.settings
-                ? c.source.settings.github.repos || []
-                : [],
-            after: string[] = (part.repos || []).map((r: string) =>
-              r.trim().toLowerCase(),
-            ),
-            // widensReach: none named where some were, or one not named
-            // before; from every repository, any list narrows it.
-            widened =
-              c.kind === "github" &&
-              (!after.length
-                ? before.length > 0
-                : before.length > 0 &&
-                  after.some(
-                    (r) => !before.some((b) => b.toLowerCase() === r),
-                  ));
-          if (widened && req.principal.user.id !== c.account.userId)
+          const prepared = prepare(config, c.workspaceId, true);
+          if ("code" in prepared) return sourceFailure(prepared);
+          if (
+            widensReach(c.source.settings, prepared.settings) &&
+            req.principal.user.id !== c.account.userId
+          )
             return refusedFor(
               "ACCOUNT_OWNER_ONLY",
-              `Only ${connectedBy(c, c.account)} can add repositories, or read every one: ${c.name} reads with their ${kindName(c.kind)} access. You can narrow them`,
+              c.kind === "posthog"
+                ? `Only ${connectedBy(c, c.account)} can change its project: ${c.name} reads with their ${kindName(c.kind)} access`
+                : `Only ${connectedBy(c, c.account)} can add repositories, or read every one: ${c.name} reads with their ${kindName(c.kind)} access. You can narrow them`,
             );
           const tested = testSource(c.workspaceId, config, true);
           if ("status" in tested) return tested;

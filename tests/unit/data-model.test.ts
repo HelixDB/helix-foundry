@@ -47,6 +47,7 @@ import {
   setSpend,
   sourceSummary,
   suggestedName,
+  signInConfig,
   syncBadge,
   tableSelection,
   textFieldChoices,
@@ -2266,5 +2267,62 @@ describe("S3", () => {
       ["1.10", "3.00"],
       [null, null],
     ]);
+  });
+});
+
+describe("signInConfig", () => {
+  it("sends each kind's settings without its credential", () => {
+    expect(
+      signInConfig({
+        kind: "github",
+        token: "ghp_ignored",
+        repos: "acme/api\nhttps://github.com/acme/web",
+        reviewDays: "30",
+      }),
+    ).toEqual({ github: { repos: ["acme/api", "acme/web"], reviewDays: 30 } });
+    expect(
+      signInConfig({ kind: "slack", botToken: "xoxb-1", historyDays: "45" }),
+    ).toEqual({ slack: { historyDays: 45 } });
+    expect(
+      signInConfig({
+        kind: "posthog",
+        apiKey: "phx_1",
+        region: "us",
+        host: "",
+        projectId: " 12345 ",
+        eventDays: "60",
+      }),
+    ).toEqual({ posthog: { region: "us", projectId: "12345", eventDays: 60 } });
+    // Signed in, Google reads as the person: no key, and no one to act as.
+    expect(
+      signInConfig({
+        kind: "google",
+        serviceAccountKey: "{}",
+        subject: "admin@example.com",
+        eventDays: "30",
+      }),
+    ).toEqual({ google: { eventDays: 30 } });
+    for (const kind of ["linear", "calcom", "stripe"] as const)
+      expect(signInConfig({ kind, apiKey: "secret" })).toEqual({ [kind]: {} });
+    expect(signInConfig({ kind: "notion", token: "ntn_1" })).toEqual({
+      notion: {},
+    });
+  });
+
+  it("has none for PostHog beyond US Cloud, or a kind that can't sign in", () => {
+    for (const region of ["eu", "custom"] as const)
+      expect(
+        signInConfig({
+          kind: "posthog",
+          apiKey: "",
+          region,
+          host: region === "custom" ? "https://posthog.example.com" : "",
+          projectId: "",
+          eventDays: "30",
+        }),
+        region,
+      ).toBeUndefined();
+    expect(signInConfig(emptyForm("granola"))).toBeUndefined();
+    expect(signInConfig(emptyForm("postgres"))).toBeUndefined();
   });
 });

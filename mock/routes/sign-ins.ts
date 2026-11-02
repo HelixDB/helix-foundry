@@ -32,7 +32,7 @@ import {
 } from "./data";
 import { discover, kinds, prepare } from "./data-sources";
 
-// Connecting GitHub or Linear by signing in at the provider, as the WFE's
+// Connecting a source by signing in at its provider, as the WFE's
 // sign-in RPCs do (backend api/sign_ins.go), with WorkOS Pipes and the
 // provider played by /mock/connect: a consent page with Authorize and
 // Cancel, which sends the browser back to the site's /connect/callback with
@@ -50,12 +50,65 @@ import { discover, kinds, prepare } from "./data-sources";
 // last authorized. Finish ends it once: a repeat returns it as it stands. A
 // code works once, for 90 seconds after the consent page gave it. A
 // connector deleted under its sign-in ends it: Authorize is SIGN_IN_ENDED,
-// and Finish fails it unavailable. Signed in,
-// GitHub reads where Helix Foundry is installed: a named repository whose
-// name ends in /missing is one it can't see, which connects anyway with a
-// discovery problem. The account it reads with is named by the consent
-// page's account field, so signing in again under another one (case aside)
-// changes the connector's identity.
+// and Finish fails it unavailable. Every kind Pipes signs in to does
+// (GitHub, Linear, Slack, Notion, PostHog, Cal.com, Stripe, Google
+// Workspace), with only the settings a sign-in has: a PostHog anywhere but
+// US Cloud is refused, and Google takes no subject. Signed in, GitHub reads where
+// Helix Foundry is installed: a named repository whose name ends in
+// /missing is one it can't see, which connects anyway with a discovery
+// problem. The account it reads with is named by the consent page's
+// account field (by default its kind's identity: a GitHub login, a Slack
+// team and bot, a Google email...), so signing in again under another one
+// (case aside) changes the connector's identity; a Slack account naming
+// xoxp vends a user token, which fails the sign-in settings_invalid.
+
+// Each kind that signs in: its provider, what the consent page asks to
+// read, and who its identity call says signed in (the account's label), from
+// the user and their workspace.
+type Who = { handle: string; email: string; name: string; team: string };
+const PROVIDERS = {
+  github: {
+    name: "GitHub",
+    reads: "read your repositories’ metadata, issues and pull requests",
+    identity: (w: Who) => w.handle,
+  },
+  linear: {
+    name: "Linear",
+    reads: "read your Linear workspace",
+    identity: (w: Who) => `${w.name} (${w.team})`,
+  },
+  slack: {
+    name: "Slack",
+    reads: "read the channels its bot is in, and your workspace's people",
+    identity: (w: Who) => `${w.team} · @Helix Foundry`,
+  },
+  notion: {
+    name: "Notion",
+    reads: "read the pages you choose",
+    identity: (w: Who) => w.team,
+  },
+  posthog: {
+    name: "PostHog",
+    reads: "read your project's events and persons",
+    identity: (w: Who) => `${w.email} (${w.team})`,
+  },
+  calcom: {
+    name: "Cal.com",
+    reads: "read your bookings, event types and schedules",
+    identity: (w: Who) => w.handle,
+  },
+  stripe: {
+    name: "Stripe",
+    reads: "read your Stripe account, with read-only access",
+    identity: (w: Who) => w.team,
+  },
+  google: {
+    name: "Google",
+    reads: "read your Drive and Calendar",
+    identity: (w: Who) => w.email,
+  },
+};
+type SignInKind = keyof typeof PROVIDERS;
 
 const EXPIRES_MS = 15 * 60_000,
   CODE_MS = 90_000,
@@ -65,7 +118,7 @@ const EXPIRES_MS = 15 * 60_000,
 type StoredSignIn = {
   id: string;
   workspaceId: string;
-  kind: "github" | "linear";
+  kind: SignInKind;
   name: string;
   // The connector's settings, checked as Prepare checks them; no credential.
   settings: ConnectorConfig;
@@ -140,9 +193,14 @@ const returnTo = () =>
 function defaultAccount(s: StoredSignIn) {
   const user = db.users.get(s.createdBy);
   if (!user) return "";
-  if (s.kind === "github") return user.email.split("@")[0]!;
-  const ws = db.workspaces.get(s.workspaceId);
-  return `${displayName(user)} (${ws?.displayName || "Linear"})`;
+  const handle = user.email.split("@")[0]!,
+    team = db.workspaces.get(s.workspaceId)?.displayName || "Acme";
+  return PROVIDERS[s.kind].identity({
+    handle,
+    email: user.email,
+    name: displayName(user),
+    team,
+  });
 }
 
 function signInOf(req: MockRequest): StoredSignIn | MockReply {
@@ -212,7 +270,12 @@ export const signInRoutes: MockRoute[] = [
         if (Object.keys(config).some((key) => key !== kind))
           return fail("INVALID_ARGUMENT", `config must be ${kind}'s`);
         const part = config[kind] || {};
-        if (part.token || part.apiKey)
+        if (
+          part.token ||
+          part.apiKey ||
+          part.botToken ||
+          part.serviceAccountKey
+        )
           return fail(
             "INVALID_ARGUMENT",
             "a sign-in's settings carry no credential",
@@ -264,7 +327,7 @@ export const signInRoutes: MockRoute[] = [
       const s: StoredSignIn = {
         id: id("csi"),
         workspaceId: ws,
-        kind: kind as StoredSignIn["kind"],
+        kind: kind as SignInKind,
         name,
         settings,
         connectorId,
@@ -370,6 +433,10 @@ export const signInRoutes: MockRoute[] = [
       )
         return failed("CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED");
       given.used = true;
+      // A Slack account named for a user token vends one (xoxp-), which
+      // reads as its person: refused as a pasted one is.
+      if (s.kind === "slack" && /xoxp/i.test(given.label))
+        return failed("CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID");
       // Pipes saved the account; the token reads as the settings ask.
       const prepared = prepare(s.settings, s.workspaceId, true);
       if ("code" in prepared)
@@ -393,12 +460,6 @@ export const signInRoutes: MockRoute[] = [
     },
   },
 ];
-
-const PROVIDER = { github: "GitHub", linear: "Linear" };
-const READS = {
-  github: "read your repositories’ metadata, issues and pull requests",
-  linear: "read your Linear workspace",
-};
 
 /**
  * The provider's consent page that Authorize's URL opens (/mock/connect):
@@ -426,14 +487,14 @@ export function handleConnectPage(
     send(res, 404, page("Mock sign-in", "<h1>This sign-in has expired</h1>"));
     return true;
   }
-  const provider = PROVIDER[s.kind];
+  const provider = PROVIDERS[s.kind].name;
   if (req.method === "GET") {
     send(
       res,
       200,
       page(
         `Authorize Helix Foundry · ${provider}`,
-        `<h1>Authorize Helix Foundry</h1><p>Mock ${provider} sign-in. Helix Foundry (dev) asks to ${READS[s.kind]}, for ${escape(s.name)}.</p>
+        `<h1>Authorize Helix Foundry</h1><p>Mock ${provider} sign-in. Helix Foundry (dev) asks to ${PROVIDERS[s.kind].reads}, for ${escape(s.name)}.</p>
 <form method="post" action="/mock/connect"><input type="hidden" name="sign_in" value="${escape(s.id)}">
 <label>${provider} account <input name="account" value="${escape(defaultAccount(s))}"></label>
 <button type="submit" name="action" value="authorize">Authorize</button>

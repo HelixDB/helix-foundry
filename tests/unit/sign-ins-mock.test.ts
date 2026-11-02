@@ -121,13 +121,19 @@ beforeEach(() => resetState());
 afterEach(() => vi.useRealTimers());
 
 describe("connector kinds", () => {
-  it("offers GitHub and Linear by signing in, with GitHub's install link", () => {
+  it("offers every kind Pipes signs in to, with GitHub's install link", () => {
     const kinds = ok<{ kinds: ConnectorKind[] }>(
       call("GET", `${base}/connector-kinds`),
     ).kinds;
     expect(kinds.filter((k) => k.signIn).map((k) => k.kind)).toEqual([
+      "stripe",
+      "posthog",
       "github",
       "linear",
+      "calcom",
+      "slack",
+      "notion",
+      "google",
     ]);
     expect(kinds.find((k) => k.kind === "github")?.github?.installUrl).toMatch(
       /^https:\/\/github\.com\/apps\//,
@@ -547,5 +553,135 @@ describe("a signed-in connector", () => {
       refusal(start({ kind: "github", connectorId: "conn_acme_stripe" }))
         .status,
     ).toBe(400);
+  });
+});
+
+describe("every kind that signs in", () => {
+  /** Starts, authorizes as `account` (its kind's own by default) and finishes. */
+  async function connect(body: object, account = "") {
+    const s = started(body);
+    ok(authorize(s.id));
+    const code = (await consent(s.id, account)).searchParams.get(
+      "connect_code",
+    );
+    return ok<{ signIn: ConnectorSignIn }>(finish(s.id, { connectCode: code }))
+      .signIn;
+  }
+
+  it("connects each, reading with its provider's identity", async () => {
+    const labels: Record<string, string> = {};
+    for (const [kind, config] of [
+      ["slack", { slack: { historyDays: 30 } }],
+      ["notion", { notion: {} }],
+      ["posthog", { posthog: { region: "us", eventDays: 30 } }],
+      ["calcom", { calcom: {} }],
+      ["stripe", { stripe: {} }],
+      ["google", { google: { eventDays: 30 } }],
+    ] as const) {
+      const s = await connect({ kind, config });
+      expect(s.status, kind).toBe("CONNECTOR_SIGN_IN_STATUS_CONNECTED");
+      const c = connector(s.connectorId!);
+      expect(c.secretHint, kind).toBe("");
+      labels[kind] = c.account!.label!;
+    }
+    expect(labels).toEqual({
+      slack: "Acme · @Helix Foundry",
+      notion: "Acme",
+      posthog: "ada@example.com (Acme)",
+      calcom: "ada",
+      stripe: "Acme",
+      google: "ada@example.com",
+    });
+  });
+
+  it("keeps only the settings a sign-in has", async () => {
+    const google = await connect({
+      kind: "google",
+      config: { google: { eventDays: 45 } },
+    });
+    expect(connector(google.connectorId!).config).toEqual({
+      google: { serviceAccountKey: "", subject: "", eventDays: 45 },
+    });
+    // PostHog signs in to US Cloud only: EU Cloud and self-hosted keep keys.
+    for (const posthog of [
+      { region: "eu" },
+      { region: "custom", host: "https://posthog.example.com" },
+    ])
+      expect(
+        refusal(start({ kind: "posthog", config: { posthog } })),
+      ).toMatchObject({
+        status: 400,
+        message:
+          "PostHog signs in to US Cloud only; EU Cloud and self-hosted PostHog connect with a personal API key",
+      });
+    // A credential of any kind's is refused.
+    for (const config of [
+      { slack: { botToken: "xoxb-1" } },
+      { google: { serviceAccountKey: "{}" } },
+      { notion: { token: "ntn_1" } },
+    ])
+      expect(
+        refusal(start({ kind: Object.keys(config)[0], config })).status,
+      ).toBe(400);
+  });
+
+  it("refuses a Slack user token the broker vends", async () => {
+    const s = await connect({ kind: "slack" }, "Ada (xoxp user token)");
+    expect(s).toMatchObject({
+      status: "CONNECTOR_SIGN_IN_STATUS_FAILED",
+      failure: "CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID",
+    });
+  });
+
+  it("lets only the account's member change a PostHog project", async () => {
+    const s = await connect({
+      kind: "posthog",
+      config: { posthog: { region: "us", projectId: "12345", eventDays: 30 } },
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 5000);
+    Object.assign(config, { alanRole: "WORKSPACE_ROLE_ADMIN" });
+    const patch = (posthog: object, userId = "usr_alan") =>
+      call(
+        "PATCH",
+        `${base}/connectors/${s.connectorId}`,
+        { config: { posthog: { apiKey: "", ...posthog } } },
+        userId,
+      );
+    expect(
+      refusal(patch({ region: "us", projectId: "67890", eventDays: 30 })),
+    ).toMatchObject({
+      reason: "ACCOUNT_OWNER_ONLY",
+      message:
+        "Only Ada Lovelace can change its project: PostHog reads with their PostHog access",
+    });
+    // Its region stays US Cloud, for anyone.
+    expect(
+      refusal(
+        patch({ region: "eu", projectId: "12345", eventDays: 30 }, "usr_ada"),
+      ).status,
+    ).toBe(400);
+    // Its event history is anyone's to change; the project is Ada's.
+    ok(patch({ region: "us", projectId: "12345", eventDays: 60 }));
+    vi.setSystemTime(Date.now() + 5000);
+    ok(patch({ region: "us", projectId: "67890", eventDays: 60 }, "usr_ada"));
+  });
+
+  it("refuses a key on any signed-in connector's edit", async () => {
+    const s = await connect({ kind: "slack", config: { slack: {} } });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 5000);
+    expect(
+      refusal(
+        call("PATCH", `${base}/connectors/${s.connectorId}`, {
+          config: { slack: { botToken: "xoxb-123", historyDays: 30 } },
+        }),
+      ).message,
+    ).toBe("this connector signs in with Slack: sign it in again instead");
+    ok(
+      call("PATCH", `${base}/connectors/${s.connectorId}`, {
+        config: { slack: { historyDays: 30 } },
+      }),
+    );
   });
 });

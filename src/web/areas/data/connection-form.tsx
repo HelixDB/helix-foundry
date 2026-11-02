@@ -21,12 +21,12 @@ import {
   emptyForm,
   formFromConfig,
   formatBytes,
-  githubRepos,
   hasCredential,
   hasTableChoice,
   isDatabase,
   keySummary,
   relatedTables,
+  signInConfig,
   suggestedName,
   tableSelection,
   toConfig,
@@ -36,6 +36,8 @@ import {
 import { useSignInStart } from "./sign-in";
 import {
   accountLine,
+  isSignInKind,
+  keyInstead,
   providerName,
   widenRefusal,
   widensReach,
@@ -62,14 +64,18 @@ import {
 // the stored one. A Notion test lists each shared database as a table of
 // its own, with its columns and first rows.
 //
-// A kind that connects by signing in at its provider (`signIn`: GitHub and
-// Linear, hosted) offers Connect with GitHub in place of its credential,
-// with its settings (GitHub's repositories and review history) above it,
-// sent without a credential; "Use a personal access token instead" opens
-// the credential's form. One click starts the sign-in and leaves for the
-// provider, which returns to /connect/callback. A connector that signs in
-// has no credential to edit, and only the member whose access it reads
-// with may add repositories or read every one.
+// A kind that connects by signing in at its provider (`signIn`, hosted:
+// GitHub, Linear, Slack, Notion, PostHog US Cloud, Cal.com, Stripe and Google
+// Workspace) offers Connect with <provider> in place of its credential,
+// with the settings the sign-in can't stand for above it (signInConfig:
+// GitHub's repositories and review history, Slack's history, PostHog's
+// project and event history, Google's event history), sent
+// without a credential; the kind's own link ("Use a bot token instead",
+// keyInstead) opens the credential's form, which PostHog's EU Cloud and
+// self-hosted keep (Pipes' PostHog signs in to US Cloud only). One click starts the sign-in and leaves for the provider, which
+// returns to /connect/callback. A connector that signs in has no
+// credential to edit, and only the member whose access it reads with may
+// widen it (widensReach: GitHub's repositories, PostHog's project).
 
 // Kinds whose credential is one API key: its field's label and placeholder.
 const keyFields: Record<
@@ -156,9 +162,13 @@ export function ConnectionForm({
     [token, setToken] = useState(() => crypto.randomUUID());
   const start = useSignInStart(),
     account = connector?.account,
-    provider =
-      form.kind === "github" || form.kind === "linear" ? form.kind : null,
-    signingIn = !editing && !LOCAL && signIn && !useKey && !!provider;
+    signInKind = isSignInKind(form.kind) ? form.kind : null,
+    // PostHog signs in to US Cloud only: EU Cloud and self-hosted keep a key.
+    keyOnly = form.kind === "posthog" && form.region !== "us",
+    signingIn =
+      !editing && !LOCAL && signIn && !useKey && !!signInKind && !keyOnly,
+    // No credential field: signing in, or signed in already.
+    noKey = signingIn || !!account;
   // Another name is another sign-in, as other settings are (change()).
   useEffect(() => setToken(crypto.randomUUID()), [name]);
   const label = connectorLabel(kind),
@@ -251,7 +261,9 @@ export function ConnectionForm({
   const submit = () =>
     run("save", async () => {
       if (selection === "none") return;
-      const config = toConfig(form, selection);
+      // A signed-in connector's settings go without a credential.
+      const config =
+        (account && signInConfig(form)) || toConfig(form, selection);
       if (connector) {
         const renamed = name.trim() !== connector.name,
           reconfigured = dirty || !!discovered;
@@ -274,29 +286,21 @@ export function ConnectionForm({
       );
       await onDone(created.connector, "Connected. The first sync is queued");
     });
-  // Signed in, only the account's member widens what it reads (widensReach:
-  // a repository it didn't name, or clearing the list), as the WFE decides.
-  const storedRepos =
-      (stored && "github" in stored && stored.github.repos) || [],
+  // Signed in, only the account's member widens what it reads, as the
+  // WFE's widensReach decides: a GitHub repository it didn't name or
+  // clearing the list, PostHog's project or region.
+  const settings = signInConfig(form),
     widened =
       !!account &&
-      form.kind === "github" &&
+      !!settings &&
       account.userId !== user.id &&
-      widensReach(storedRepos, githubRepos(form.repos));
+      widensReach(stored, settings);
   const connectWithProvider = () =>
     void start.go({
       kind: form.kind,
       name: name.trim() || suggestedName(form),
       // The settings alone: the provider's sign-in is the credential.
-      config:
-        form.kind === "github"
-          ? {
-              github: {
-                repos: githubRepos(form.repos),
-                reviewDays: Number(form.reviewDays) || 0,
-              },
-            }
-          : { linear: {} },
+      config: settings,
       clientToken: token,
       returnPath,
     });
@@ -321,8 +325,8 @@ export function ConnectionForm({
         }}
       >
         {/* The steps end "paste it below": they come before the fields. */}
-        {signingIn && provider ? (
-          <SignInGuide kind={provider} installUrl={installUrl} />
+        {signingIn && signInKind ? (
+          <SignInGuide kind={signInKind} installUrl={installUrl} />
         ) : (
           !editing && <ConnectionGuide form={form} />
         )}
@@ -345,26 +349,27 @@ export function ConnectionForm({
         )}
         {(form.kind === "stripe" ||
           form.kind === "workos" ||
-          (form.kind === "linear" && !signingIn && !account) ||
+          form.kind === "linear" ||
           form.kind === "calcom" ||
-          form.kind === "granola") && (
-          <label className="span2">
-            {keyFields[form.kind][0]}
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              required={credentialRequired}
-              placeholder={
-                secretHint
-                  ? `Leave blank to keep ${secretHint}`
-                  : keyFields[form.kind][1]
-              }
-              value={form.apiKey}
-              onChange={(e) => update("apiKey", e.target.value)}
-            />
-          </label>
-        )}
+          form.kind === "granola") &&
+          !noKey && (
+            <label className="span2">
+              {keyFields[form.kind][0]}
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                required={credentialRequired}
+                placeholder={
+                  secretHint
+                    ? `Leave blank to keep ${secretHint}`
+                    : keyFields[form.kind][1]
+                }
+                value={form.apiKey}
+                onChange={(e) => update("apiKey", e.target.value)}
+              />
+            </label>
+          )}
         {form.kind === "granola" && (
           <div className="span2 selection-row">
             <label className="checkbox">
@@ -390,20 +395,22 @@ export function ConnectionForm({
         )}
         {form.kind === "slack" && (
           <>
-            <label className="span2">
-              Bot token
-              <input
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                required={credentialRequired}
-                placeholder={
-                  secretHint ? `Leave blank to keep ${secretHint}` : "xoxb-…"
-                }
-                value={form.botToken}
-                onChange={(e) => update("botToken", e.target.value)}
-              />
-            </label>
+            {!noKey && (
+              <label className="span2">
+                Bot token
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required={credentialRequired}
+                  placeholder={
+                    secretHint ? `Leave blank to keep ${secretHint}` : "xoxb-…"
+                  }
+                  value={form.botToken}
+                  onChange={(e) => update("botToken", e.target.value)}
+                />
+              </label>
+            )}
             <label>
               Days of history
               <input
@@ -416,7 +423,7 @@ export function ConnectionForm({
             </label>
           </>
         )}
-        {form.kind === "notion" && (
+        {form.kind === "notion" && !noKey && (
           <label className="span2">
             Integration secret
             <input
@@ -434,33 +441,41 @@ export function ConnectionForm({
         )}
         {form.kind === "google" && (
           <>
-            <label className="span2">
-              Service account JSON key
-              <textarea
-                autoComplete="off"
-                spellCheck={false}
-                required={credentialRequired}
-                placeholder={
-                  secretHint
-                    ? `Leave blank to keep ${secretHint}`
-                    : '{"type": "service_account", …}'
-                }
-                value={form.serviceAccountKey}
-                onChange={(e) => update("serviceAccountKey", e.target.value)}
-              />
-            </label>
-            <label className="span2">
-              Acts as
-              <input
-                type="email"
-                required
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="admin@example.com"
-                value={form.subject}
-                onChange={(e) => update("subject", e.target.value)}
-              />
-            </label>
+            {/* Signed in, it reads as the person who signed in: no service
+                account, and no one to act as. */}
+            {!noKey && (
+              <>
+                <label className="span2">
+                  Service account JSON key
+                  <textarea
+                    autoComplete="off"
+                    spellCheck={false}
+                    required={credentialRequired}
+                    placeholder={
+                      secretHint
+                        ? `Leave blank to keep ${secretHint}`
+                        : '{"type": "service_account", …}'
+                    }
+                    value={form.serviceAccountKey}
+                    onChange={(e) =>
+                      update("serviceAccountKey", e.target.value)
+                    }
+                  />
+                </label>
+                <label className="span2">
+                  Acts as
+                  <input
+                    type="email"
+                    required
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="admin@example.com"
+                    value={form.subject}
+                    onChange={(e) => update("subject", e.target.value)}
+                  />
+                </label>
+              </>
+            )}
             <label>
               Days of past events
               <input
@@ -475,7 +490,7 @@ export function ConnectionForm({
         )}
         {form.kind === "github" && (
           <>
-            {!signingIn && !account && (
+            {!noKey && (
               <label className="span2">
                 Personal access token
                 <input
@@ -503,15 +518,10 @@ export function ConnectionForm({
                 aria-describedby={widened ? "dc-widen" : undefined}
               />
               <small className="muted">
-                {signingIn || account
+                {noKey
                   ? "One owner/name per line. Leave blank to sync every repository Helix Foundry is installed on that the account can see, up to 100."
                   : "One owner/name per line. Leave blank to sync every repository the token can read, up to 100."}
               </small>
-              {widened && (
-                <small id="dc-widen" className="error-text" role="alert">
-                  {widenRefusal(connector!)}
-                </small>
-              )}
             </label>
             <label>
               Review history (days)
@@ -527,33 +537,44 @@ export function ConnectionForm({
         )}
         {form.kind === "posthog" && (
           <>
-            <label className="span2">
-              Personal API key
-              <input
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                required={credentialRequired}
-                placeholder={
-                  secretHint ? `Leave blank to keep ${secretHint}` : "phx_…"
-                }
-                value={form.apiKey}
-                onChange={(e) => update("apiKey", e.target.value)}
-              />
-            </label>
-            <label>
-              Region
-              <Select
-                label="Region"
-                value={form.region}
-                onChange={(v) => update("region", v)}
-                options={[
-                  { value: "us", label: "US Cloud" },
-                  { value: "eu", label: "EU Cloud" },
-                  { value: "custom", label: "Self-hosted" },
-                ]}
-              />
-            </label>
+            {!noKey && (
+              <label className="span2">
+                Personal API key
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required={credentialRequired}
+                  placeholder={
+                    secretHint ? `Leave blank to keep ${secretHint}` : "phx_…"
+                  }
+                  value={form.apiKey}
+                  onChange={(e) => update("apiKey", e.target.value)}
+                />
+              </label>
+            )}
+            {/* Signed in, it is US Cloud's: Pipes' PostHog has no region. */}
+            {!account && (
+              <label>
+                Region
+                <Select
+                  label="Region"
+                  value={form.region}
+                  onChange={(v) => update("region", v)}
+                  options={[
+                    { value: "us", label: "US Cloud" },
+                    { value: "eu", label: "EU Cloud" },
+                    { value: "custom", label: "Self-hosted" },
+                  ]}
+                />
+              </label>
+            )}
+            {!editing && !LOCAL && signIn && keyOnly && (
+              <p className="span2 muted small">
+                EU Cloud and self-hosted PostHog connect with a personal API
+                key: signing in reaches US Cloud only.
+              </p>
+            )}
             <label>
               Project ID (optional)
               <input
@@ -561,6 +582,7 @@ export function ConnectionForm({
                 placeholder="Found in project settings"
                 value={form.projectId}
                 onChange={(e) => update("projectId", e.target.value)}
+                aria-describedby={widened ? "dc-widen" : undefined}
               />
             </label>
             {form.region === "custom" && (
@@ -706,9 +728,7 @@ export function ConnectionForm({
               className="text-button"
               onClick={() => setUseKey(true)}
             >
-              {form.kind === "github"
-                ? "Use a personal access token instead"
-                : "Use a personal API key instead"}
+              {keyInstead(signInKind!)}
             </button>
           </div>
         )}
@@ -717,11 +737,20 @@ export function ConnectionForm({
             <button
               type="button"
               className="text-button"
-              onClick={() => setUseKey(false)}
+              onClick={() => {
+                setUseKey(false);
+                // PostHog signs in to US Cloud only.
+                if (keyOnly) change({ region: "us" } as Partial<Form>);
+              }}
             >
               Connect with {providerName(form.kind)} instead
             </button>
           </div>
+        )}
+        {widened && (
+          <p id="dc-widen" className="span2 small error-text" role="alert">
+            {widenRefusal(connector!)}
+          </p>
         )}
         {!signingIn && (!editing || hasCredential(form)) && !untestable && (
           <div className="span2">
