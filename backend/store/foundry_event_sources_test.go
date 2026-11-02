@@ -1431,7 +1431,7 @@ func TestEventSourceSyncReads(t *testing.T) {
 				if !assert.NoError(t, db.UpsertConnectorTable(ctx, table, nil, "w1")) {
 					return
 				}
-				if !assert.NoError(t, db.UpdateConnectorCursor(ctx, c.ID, json.RawMessage(fmt.Sprintf(`{"seq":%d}`, seq)), claimed.ID, "w1")) {
+				if !assert.NoError(t, db.UpdateConnectorCursor(ctx, c.ID, 0, json.RawMessage(fmt.Sprintf(`{"seq":%d}`, seq)), claimed.ID, "w1")) {
 					return
 				}
 			}

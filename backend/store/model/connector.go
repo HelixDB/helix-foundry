@@ -159,6 +159,11 @@ type ConnectorScheduleOutcome struct {
 	// Every is the connector's sync_every_seconds the outcome was worked out
 	// from; a schedule the owner changed during the sync stays as they set it.
 	Every *int
+	// Generation is the account generation the sync read with (0 for a
+	// connector with a key); nil when it never read the connector. A
+	// connector signed in again since is no longer this outcome's: its pause
+	// stays as it is, and it syncs now, with its new account.
+	Generation *int
 	// Pushed, for a pushed kind's connector (an event source), is its next
 	// sync in place of NextSyncAt and Every, which must then be nil: it has
 	// no interval, and a send may have scheduled a sync while this one ran.
