@@ -1,7 +1,7 @@
 // Package ports names what Foundry needs from the host that runs it: who is
 // calling, the databases ontologies load into, the plans workspaces hold,
-// the people in a workspace, the rate-limit boosts a graph job may take, and
-// the email it sends people.
+// the people in a workspace, the rate-limit boosts a graph job may take, the
+// email it sends people, and the provider accounts connectors sign in with.
 //
 // A host implements each port. A hosted deployment backs them with its own
 // identity, billing and database gateway; a standalone install backs them
@@ -11,14 +11,18 @@
 // The ports Foundry's store already defines are not repeated here:
 // store.Workspaces (the host's workspaces, read and locked inside the
 // store's statements) and the store methods a host calls inside its own
-// transactions (CancelWorkspaceFoundryWork, DeleteWorkspaceConnectors).
+// transactions (CancelWorkspaceFoundryWork, DeleteWorkspaceConnectors,
+// BreakConnectorAccounts when a member leaves, ListConnectorAccounts before
+// a workspace's connectors are deleted).
 // Object storage is an aws.Config the host supplies; metrics register on
 // Prometheus's default registerer.
 package ports
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/plan"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -297,3 +301,71 @@ type Mail interface {
 	// delivered the email.
 	Send(ctx context.Context, to Recipient, e Email) error
 }
+
+// ProviderAccounts keeps the accounts users connect by signing in at a
+// provider, owned by their workspace (hosted: WorkOS Pipes). Optional: where
+// it is nil no kind connects by signing in, as in a local build.
+type ProviderAccounts interface {
+	// Kinds are the connector kinds userID can connect to the workspace by
+	// signing in: none when they can't (hosted: no WorkOS organization, no
+	// WorkOS membership of it, or Pipes switched off).
+	Kinds(ctx context.Context, workspaceID, userID string) ([]string, error)
+	// Authorize is the provider's page for the user to authorize a.
+	Authorize(ctx context.Context, a AccountAuthorization) (string, error)
+	// Finish saves the account the user authorized, having checked it is
+	// the workspace's and was made by ref.UserID; otherwise it deletes it.
+	// ref.AccountID is empty.
+	Finish(ctx context.Context, ref AccountRef, code, verifier string) (ProviderAccount, error)
+	// Token is the account's current credential, asked for as ref.UserID.
+	Token(ctx context.Context, ref AccountRef) (Credential, error)
+	// Delete removes the account; one already gone is no error.
+	Delete(ctx context.Context, ref AccountRef) error
+}
+
+// AccountAuthorization is what a user authorizes: a new account of Kind for
+// the workspace, or, with AccountID, that account signed in again.
+type AccountAuthorization struct {
+	WorkspaceID, UserID, Kind string
+	// Label names the account in the broker's own records.
+	Label string
+	// ReturnTo is the site's callback, Challenge the S256 PKCE challenge of
+	// the verifier Finish is given.
+	ReturnTo, Challenge string
+	AccountID           string
+}
+
+// AccountRef names a workspace's account of a kind, used as UserID.
+type AccountRef struct {
+	WorkspaceID, UserID, Kind, AccountID string
+}
+
+// ProviderAccount is a saved account and the user it acts as: the one the
+// broker says made it.
+type ProviderAccount struct {
+	ID, UserID string
+}
+
+// Credential is an account's token, held in memory for one use.
+type Credential struct {
+	Value     string
+	ExpiresAt *time.Time
+}
+
+// The reasons an account needs signing in again.
+const (
+	AccountMemberLeft     = "member_left"
+	AccountAccessRevoked  = "access_revoked"
+	AccountExpired        = "expired"
+	AccountAccountMissing = "account_missing"
+)
+
+// AccountBroken is Token's error when the account needs signing in again.
+type AccountBroken struct {
+	Reason string // one of the Account* reasons
+}
+
+func (e *AccountBroken) Error() string { return "the account needs signing in again: " + e.Reason }
+
+// ErrAccountsUnavailable is every other failure to reach the accounts:
+// switched off, unreachable, rate limited. It is retried, never a break.
+var ErrAccountsUnavailable = errors.New("provider accounts are unavailable")

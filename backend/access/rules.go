@@ -95,7 +95,7 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_GetFoundryDataLayout_FullMethodName:                  Deny,
 	foundryv1.FoundryService_PutFoundryDataLayout_FullMethodName:                  Deny,
 
-	// Connectors, their syncs and event sources.
+	// Connectors, their syncs and sign-ins, and event sources.
 	foundryv1.FoundryService_ListConnectorKinds_FullMethodName:                    Deny,
 	foundryv1.FoundryService_ListConnectors_FullMethodName:                        Deny,
 	foundryv1.FoundryService_GetConnector_FullMethodName:                          Deny,
@@ -106,6 +106,10 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_SyncConnector_FullMethodName:                         Deny,
 	foundryv1.FoundryService_GetConnectorSync_FullMethodName:                      Deny,
 	foundryv1.FoundryService_ListConnectorSyncs_FullMethodName:                    Deny,
+	foundryv1.FoundryService_StartConnectorSignIn_FullMethodName:                  Deny,
+	foundryv1.FoundryService_GetConnectorSignIn_FullMethodName:                    Deny,
+	foundryv1.FoundryService_AuthorizeConnectorSignIn_FullMethodName:              Deny,
+	foundryv1.FoundryService_FinishConnectorSignIn_FullMethodName:                 Deny,
 	foundryv1.FoundryService_CreateFoundryEventSourceToken_FullMethodName:         Deny,
 	foundryv1.FoundryService_RevokeFoundryEventSourceToken_FullMethodName:         Deny,
 	foundryv1.FoundryService_ListFoundryEventSourceTokens_FullMethodName:          Deny,

@@ -1002,6 +1002,15 @@ type ConnectorsConfig struct {
 	// backend and sync worker chain through it. Empty turns IAM role access
 	// off, leaving access keys.
 	S3RoleARN string `koanf:"s3_role_arn"`
+	// SignInReturnTo are the site callbacks a connector sign-in may return
+	// to, such as https://foundry.helix-db.com/connect/callback; each must
+	// also be a redirect URI the broker (WorkOS) lists. Empty refuses every
+	// sign-in.
+	SignInReturnTo []string `koanf:"sign_in_return_to"`
+	// GitHubAppInstallURL installs the GitHub App that signed-in GitHub
+	// connectors read through, on an account or organization, for its private
+	// repositories.
+	GitHubAppInstallURL string `koanf:"github_app_install_url"`
 }
 
 var iamRoleARN = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/[\w+=,.@/-]+$`)

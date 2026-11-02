@@ -68,6 +68,14 @@ func (u Unimplemented) DeleteConnector(context.Context, string, string) error {
 	u.unimplemented("DeleteConnector")
 	return nil
 }
+func (u Unimplemented) ListConnectorAccounts(context.Context, string) ([]model.ConnectorAccountRef, error) {
+	u.unimplemented("ListConnectorAccounts")
+	return nil, nil
+}
+func (u Unimplemented) BreakConnectorAccounts(context.Context, string, string, string) error {
+	u.unimplemented("BreakConnectorAccounts")
+	return nil
+}
 func (u Unimplemented) DeleteWorkspaceConnectors(context.Context, string) error {
 	u.unimplemented("DeleteWorkspaceConnectors")
 	return nil

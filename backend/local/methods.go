@@ -61,6 +61,11 @@ var methods = map[string]check{
 	foundry("ListConnectorSyncs"): checkWorkspace,
 	foundry("GetConnectorSync"):   checkWorkspace,
 
+	foundry("StartConnectorSignIn"):     checkWorkspace,
+	foundry("GetConnectorSignIn"):       checkWorkspace,
+	foundry("AuthorizeConnectorSignIn"): checkWorkspace,
+	foundry("FinishConnectorSignIn"):    checkWorkspace,
+
 	foundry("ListFoundryOntologies"):                 checkWorkspace,
 	foundry("CreateFoundryOntology"):                 checkTenant,
 	foundry("GetFoundryOntology"):                    checkWorkspace,
