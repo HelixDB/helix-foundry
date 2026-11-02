@@ -222,7 +222,7 @@ Regenerate with `buf generate && buf generate --template buf.internal.gen.yaml`,
 
 ### Store
 
-**Migration** `<version>_foundry_connector_sign_ins.sql`. Its version must be later than Foundry's newest (`20261109000000`) and hosted's (`20261030000000`); check both again at merge. It does three things:
+**Migration** `<version>_foundry_connector_sign_ins.sql`. Its version must be later than Foundry's newest (`20261112000000`) and hosted's (`20261030000000`); check both again at merge. It does three things:
 
 - **adds to `connectors`:**
   - `account_id VARCHAR(64) NULL`;

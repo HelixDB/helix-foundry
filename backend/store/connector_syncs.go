@@ -146,6 +146,10 @@ WHERE id=? AND status='running' AND lease_owner=?`, id, workerID)
 // A pushed schedule writes no interval and is not guarded by one: an event
 // source has none. It sets the pause, and the next sync as its PushedNext
 // says, so a sync a send scheduled during this one moves only by PushedAt.
+//
+// A connector whose account needs signing in again keeps its schedule as the
+// break left it, none: a sync that ends after the break, even one that
+// succeeded, never schedules it again.
 func (s *mysqlDB) FinishConnectorSync(ctx context.Context, id, workerID string, outcome model.ConnectorSyncOutcome) error {
 	if outcome.RetryAt != nil {
 		return execOrNotFound(ctx, s.db, `UPDATE connector_syncs
@@ -164,7 +168,7 @@ WHERE id=? AND status='running' AND lease_owner=?`, outcome.RetryAt.UTC(), outco
 		// the next one by it; the outcome, worked out from the old one, gives way.
 		schedule = `UPDATE connectors c JOIN connector_syncs s ON s.connector_id = c.id
 SET c.next_sync_at = ?, c.schedule_paused = NULLIF(?, '')
-WHERE s.id=? AND c.deleted_at IS NULL AND c.sync_every_seconds <=> ?`
+WHERE s.id=? AND c.deleted_at IS NULL AND c.sync_every_seconds <=> ? AND c.account_broken IS NULL`
 		scheduleArgs = []any{utcPtr(next.NextSyncAt), next.Paused, id, next.Every}
 	default:
 		if next.NextSyncAt != nil || next.Every != nil {
