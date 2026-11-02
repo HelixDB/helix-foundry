@@ -19,7 +19,10 @@ beforeEach(() => {
         method: init.method || "GET",
         body: init.body ? JSON.parse(String(init.body)) : undefined,
       });
-      return Response.json({ ok: true });
+      // A sync is answered with the sync it queued, as the WFE does.
+      return Response.json(
+        url.endsWith(":sync") ? { sync: { id: "sync_1" } } : { ok: true },
+      );
     }),
   );
 });
