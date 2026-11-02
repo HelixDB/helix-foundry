@@ -14,15 +14,22 @@ import { Button, ButtonAnchor, KeyValue, formatDate, plural } from "../../kit";
 import { paths } from "../../paths";
 import { Loading, useWorkspace } from "../../ui";
 import { Callout } from "../ontology/parts";
-import { authorizeSignIn, signInQuery, startSignIn } from "./data-api";
+import {
+  authorizeSignIn,
+  connectorQuery,
+  signInQuery,
+  startSignIn,
+} from "./data-api";
 import { canManage } from "./model";
 import {
   accountLine,
   brokenWhy,
   callbackUrl,
   isProviderUrl,
+  memberName,
   needsSignIn,
   providerName,
+  signInFailure,
   tabStorage,
   writeConnect,
   type ReturnPicks,
@@ -159,8 +166,12 @@ function signInSettings(s: ConnectorSignIn) {
 /**
  * The form an agent's link opens (/data?add=<kind>&sign_in=<id>): the
  * sign-in its agent started, bound to it, with its workspace, name and
- * settings and one button, which never runs on its own. A link made for
- * someone else says so before any click; one that ended says what to do.
+ * settings and one button, which never runs on its own. One that names a
+ * connector signs it in again: it says so, and that the connector then
+ * reads with the clicker's own access, in place of whose it reads with now
+ * when that is someone else's (the WFE makes them a new account). A link
+ * made for someone else says so before any click; one that was declined or
+ * failed says what happened then; one that ended says what to do.
  * `onUnbind` leaves it for the kind's own form.
  */
 export function AgentSignIn({
@@ -172,9 +183,20 @@ export function AgentSignIn({
   returnPath?: string;
   onUnbind: () => void;
 }) {
-  const { id, name: workspace } = useWorkspace();
+  const { id, name: workspace, user } = useWorkspace();
   const signIn = useQuery(signInQuery(id, signInId)),
     start = useSignInStart();
+  // The connector it signs in again, while it may: who it reads as now.
+  const named = signIn.data?.signIn,
+    againId =
+      named?.connectorId &&
+      named.status !== "CONNECTOR_SIGN_IN_STATUS_CONNECTED"
+        ? named.connectorId
+        : "",
+    connector = useQuery({
+      ...connectorQuery(id, againId),
+      enabled: !!againId,
+    }).data?.connector;
   if (signIn.isPending) return <Loading />;
   if (!signIn.data)
     return (
@@ -194,11 +216,36 @@ export function AgentSignIn({
     status === "CONNECTOR_SIGN_IN_STATUS_EXPIRED" ||
     status === "CONNECTOR_SIGN_IN_STATUS_CONNECTED" ||
     status === "CONNECTOR_SIGN_IN_STATUS_FINISHING";
+  // What happened the last time it was sent to the provider.
+  const last =
+    status === "CONNECTOR_SIGN_IN_STATUS_DECLINED" ||
+    status === "CONNECTOR_SIGN_IN_STATUS_FAILED"
+      ? signInFailure(s)
+      : null;
+  const account = connector?.account,
+    theirs = account && account.userId !== user.id,
+    name = s.name || connector?.name || provider;
   return (
     <div className="connect-data">
-      <p className="setup-intro">
-        Your agent asked to connect {provider} to {workspace}.
-      </p>
+      {againId ? (
+        <>
+          <p className="setup-intro">
+            Your agent asked to sign {name} in again, in {workspace}.
+          </p>
+          <p className="muted small">
+            Signing in again makes {name} read with your {provider} access from
+            now on
+            {theirs
+              ? `, in place of ${memberName(account.connectedBy) || "a former member"}’s${account.label ? ` (${account.label})` : ""}`
+              : ""}
+            .
+          </p>
+        </>
+      ) : (
+        <p className="setup-intro">
+          Your agent asked to connect {provider} to {workspace}.
+        </p>
+      )}
       <KeyValue items={signInSettings(s)} />
       {!s.mine ? (
         <p role="alert" className="error-box">
@@ -223,17 +270,42 @@ export function AgentSignIn({
           </button>
           .
         </p>
+      ) : last ? (
+        <p role="status" className="error-box">
+          <strong>Last time: {last.title}.</strong>{" "}
+          {last.retry === "start" ? (
+            <>
+              Its settings can’t be used: ask your agent for a new link, or{" "}
+              <button type="button" className="text-button" onClick={onUnbind}>
+                connect {provider} here
+              </button>
+              .
+            </>
+          ) : (
+            last.text
+          )}
+        </p>
       ) : null}
-      {s.mine && !ended && (
+      {s.mine && !ended && last?.retry !== "start" && (
         <button
           className="button primary"
           type="button"
           disabled={start.pending}
           onClick={() =>
-            void start.go({ kind: s.kind || "", signInId: s.id, returnPath })
+            void start.go({
+              kind: s.kind || "",
+              signInId: s.id,
+              returnPath,
+              // Signing a connector in again: its page, never a new one's.
+              ...(againId ? { connectorId: againId } : {}),
+            })
           }
         >
-          {start.pending ? `Opening ${provider}…` : `Connect with ${provider}`}
+          {start.pending
+            ? `Opening ${provider}…`
+            : againId
+              ? `Sign in again with ${provider}`
+              : `Connect with ${provider}`}
         </button>
       )}
       {start.error && (
