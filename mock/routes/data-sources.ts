@@ -2493,9 +2493,13 @@ export function prepare(
       return { kind, settings: { notion: {} }, secret: token, workspaceId };
     }
     case "google": {
-      // Signed in, it reads as the person who signed in: no service account
-      // and no subject.
+      // Signed in, it reads as the person who signed in: no service account,
+      // and a subject is refused (a blank one is none).
       if (signIn) {
+        if (String(raw.subject || "").trim())
+          return invalid(
+            "a signed-in Google Workspace connector reads as the user who signed in, and acts as no other",
+          );
         const eventDays = raw.eventDays || 90;
         if (eventDays < 1 || eventDays > 365)
           return invalid("keep 1 to 365 days of past events");

@@ -625,6 +625,40 @@ describe("every kind that signs in", () => {
       ).toBe(400);
   });
 
+  it("refuses a user for a signed-in Google Workspace to act as", async () => {
+    const actsAs =
+      "a signed-in Google Workspace connector reads as the user who signed in, and acts as no other";
+    const invalid = (reply: MockReply) => {
+      expect(reply.status, JSON.stringify(reply.body)).toBe(400);
+      expect(refusal(reply).message).toBe(actsAs);
+      // INVALID_ARGUMENT, as the backend's Prepare refusals map.
+      expect((reply.body as { code: number }).code).toBe(3);
+    };
+    invalid(
+      start({
+        kind: "google",
+        config: { google: { subject: "grace@acme.com", eventDays: 30 } },
+      }),
+    );
+    // A blank one is none: the backend trims it.
+    const s = await connect({
+      kind: "google",
+      config: { google: { subject: " ", eventDays: 30 } },
+    });
+    expect(s.status).toBe("CONNECTOR_SIGN_IN_STATUS_CONNECTED");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 5000);
+    const patch = (google: object) =>
+      call("PATCH", `${base}/connectors/${s.connectorId}`, {
+        config: { google },
+      });
+    invalid(patch({ subject: "Grace@Acme.com", eventDays: 30 }));
+    expect(connector(s.connectorId!).config).toEqual({
+      google: { serviceAccountKey: "", subject: "", eventDays: 30 },
+    });
+    ok(patch({ eventDays: 60 }));
+  });
+
   it("refuses a Slack user token the broker vends", async () => {
     const s = await connect({ kind: "slack" }, "Ada (xoxp user token)");
     expect(s).toMatchObject({
