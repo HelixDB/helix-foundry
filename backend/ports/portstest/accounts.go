@@ -26,17 +26,16 @@ type Accounts struct {
 	// Unavailable fails every call with ports.ErrAccountsUnavailable.
 	Unavailable bool
 	// Foreign has Finish find each account it saves another workspace's: it
-	// deletes it and fails with ports.ErrAccountNotThisWorkspace.
+	// deletes it, unless it is ref.AccountID, and fails with
+	// ports.ErrAccountNotThisWorkspace.
 	Foreign bool
-	// Maker, when set, is who Finish says made an account, in place of the
-	// user finishing.
-	Maker string
 	// OnFinish runs inside each Finish, after the code is spent and before it
 	// returns, as a slow broker would let other calls in.
 	OnFinish func()
 
 	mu             sync.Mutex
 	authorizations []ports.AccountAuthorization
+	finishes       []ports.AccountRef
 	codes          map[string]*code
 	accounts       map[string]*account
 	calls          map[string]int
@@ -106,35 +105,36 @@ func (a *Accounts) Finish(_ context.Context, ref ports.AccountRef, codeValue, ve
 	return saved, err
 }
 
+// finish spends the code as the broker does. Reauthorizing an account
+// keeps it, and the member who made it: one reauthorized by anyone else
+// isn't theirs to finish. An account that doesn't check out is deleted,
+// unless it is ref.AccountID.
 func (a *Accounts) finish(ref ports.AccountRef, codeValue, verifier string) (ports.ProviderAccount, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.finishes = append(a.finishes, ref)
 	c, ok := a.codes[codeValue]
 	sum := sha256.Sum256([]byte(verifier))
 	if !ok || c.used || base64.RawURLEncoding.EncodeToString(sum[:]) != c.challenge || c.auth.WorkspaceID != ref.WorkspaceID {
 		return ports.ProviderAccount{}, ports.ErrAccountCodeRejected
 	}
 	c.used = true
-	if a.Foreign {
-		return ports.ProviderAccount{}, ports.ErrAccountNotThisWorkspace
-	}
 	maker := ref.UserID
-	if a.Maker != "" {
-		maker = a.Maker
-	}
 	id := c.auth.AccountID
-	if existing, ok := a.accounts[id]; !ok || id == "" {
+	if existing, ok := a.accounts[id]; ok && id != "" {
+		existing.broken, maker = "", existing.ref.UserID
+	} else {
 		a.next++
 		id = fmt.Sprintf("acct-%d", a.next)
-	} else {
-		existing.broken = ""
+		a.accounts[id] = &account{ref: ports.AccountRef{WorkspaceID: ref.WorkspaceID, UserID: maker, Kind: c.auth.Kind, AccountID: id}}
 	}
-	if _, ok := a.accounts[id]; !ok {
-		a.accounts[id] = &account{}
+	if a.Foreign || maker != ref.UserID {
+		if id != ref.AccountID {
+			delete(a.accounts, id)
+		}
+		return ports.ProviderAccount{}, ports.ErrAccountNotThisWorkspace
 	}
-	acct := a.accounts[id]
-	acct.ref = ports.AccountRef{WorkspaceID: ref.WorkspaceID, UserID: maker, Kind: c.auth.Kind, AccountID: id}
-	acct.token++
+	a.accounts[id].token++
 	return ports.ProviderAccount{ID: id, UserID: maker}, nil
 }
 
@@ -185,6 +185,13 @@ func (a *Accounts) codeNumber(n int) int {
 		}
 	}
 	return 0
+}
+
+// Finishes are the refs each Finish was given, in order.
+func (a *Accounts) Finishes() []ports.AccountRef {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.finishes)
 }
 
 // Authorizations are what each Authorize was asked, in order.
