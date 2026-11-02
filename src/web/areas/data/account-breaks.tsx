@@ -1,5 +1,5 @@
 import "./data.css";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { KeyRound, TriangleAlert } from "lucide-react";
 import { Button, ButtonLink, Dialog } from "../../kit";
@@ -24,6 +24,9 @@ import { breakKey, brokenNotice, needsSignIn } from "./sign-ins";
 const SEEN = "foundry.account-broken.seen.v1",
   LATER = "foundry.account-broken.later.v1",
   KEEP = 100;
+// The read waits this long after the app opens, so the page's own first
+// reads go out before it: it is a notice, not what the page shows.
+const AFTER_MS = 1000;
 
 function readKeys(storage: () => Storage, key: string): string[] {
   try {
@@ -47,7 +50,12 @@ export function AccountBreaks() {
   const { id, role } = useWorkspace(),
     manage = canManage(role),
     start = useSignInStart();
-  const query = useQuery(needsSignInQuery(id));
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setArmed(true), AFTER_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const query = useQuery({ ...needsSignInQuery(id), enabled: armed });
   const [seen, setSeen] = useState(() => readKeys(local, SEEN)),
     [later, setLater] = useState(() => readKeys(session, LATER));
   const broken = (query.data?.connectors || []).filter(needsSignIn);
