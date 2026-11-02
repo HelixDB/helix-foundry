@@ -11,8 +11,18 @@ The proof of concept on branch `poc/workos-pipes` (`backend/cmd/pipes-poc`, and 
 
 **Scope.**
 
-- In: GitHub, through a read-only GitHub App, and Linear, through an OAuth app. Accounts are owned by the organization, and Pipes is used for OAuth only.
-- Out: other kinds; accounts owned by one user; moving existing key connectors over; the local build; email (see "When an account breaks").
+- In: every kind Pipes can sign in to.
+  - GitHub, through a read-only GitHub App.
+  - Linear, Slack, Notion, PostHog, Cal.com, Stripe and Google Workspace, through OAuth apps.
+  - Accounts are owned by the organization, and Pipes is used for OAuth only.
+  - Each kind is offered only once hosted lists it in `pipes.kinds` and its Pipes integration exists ("One-time setup"). The code for all of them ships together and stays dormant until then. Stripe (a Stripe Connect platform) and Google (app verification) need a decision before they are switched on.
+- Out:
+  - kinds Pipes has no OAuth for: Granola, WorkOS, PostgreSQL, MySQL and S3, whose IAM role already stores no key;
+  - API sources;
+  - accounts owned by one user;
+  - moving existing key connectors over;
+  - the local build;
+  - email (see "When an account breaks").
 - Keys stay in Foundry.
 
 **Before production:** Pipes' price.
@@ -406,6 +416,21 @@ The token is never logged.
 - **GitHub, signed in, with no repositories named.** It reads the repositories of the app's installations the user can reach (`/user/installations`, then each installation's repositories). It doesn't read `/user/repos`, which includes public repositories the user only contributes to. With no installation, discovery says to install the app.
 - **GitHub, a named repository the app can't see.** The message names the install link, and says installing the app and then **Sync now** resumes it. An organization uninstalling or suspending the app reads the same way: it isn't a break, because signing in again wouldn't help.
 
+#### Every kind that signs in
+
+Each kind keeps its connector code and tables. A vended token replaces the key: `Source.SignIn` skips the key-format check and sends the token as the kind already sends its key. The kind's settings stay in its form, without the credential field. Every row's token shape, expiry and identity call is "verify on dev".
+
+| Kind      | Pipes slug                                     | Signed in, it reads                                                                                                                                                                                                        | Identity (`connector.Identifier`)                | Widens reach (`ACCOUNT_OWNER_ONLY`)   |
+| --------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------- |
+| `github`  | `github`                                       | the app's installations the user can reach                                                                                                                                                                                 | `/user`'s login                                  | adding repositories, or clearing them |
+| `linear`  | `linear`                                       | the workspace the user authorized                                                                                                                                                                                          | `viewer`'s name and organization                 | nothing                               |
+| `slack`   | `slack` (the bot provider, never `slack-user`) | the channels the bot is in, as today. A vended user token (`xoxp-`) is refused `settings_invalid`, as a pasted one is                                                                                                      | `auth.test`'s team and bot user                  | nothing: `history_days` only          |
+| `notion`  | `notion`                                       | the pages the user shared at Notion's consent screen. A new sign-in chooses them again                                                                                                                                     | `/v1/users/me`'s bot owner: the workspace's name | nothing: no settings                  |
+| `posthog` | `posthog`                                      | PostHog Cloud, in the region its integration's app is registered in (verify on dev). Region `custom` (self-hosted) keeps keys: refused `settings_invalid`                                                                  | `/api/users/@me`'s email and organization        | changing `project_id` or `region`     |
+| `calcom`  | `cal-dot-com`                                  | the user's Cal.com account, through `/v2`                                                                                                                                                                                  | `/v2/me`'s username                              | nothing: no settings                  |
+| `stripe`  | `stripe`                                       | the connected account, with a `read_only` grant. `mode` comes from the vended key's prefix, as from a pasted one                                                                                                           | `/v1/account`'s display name                     | nothing                               |
+| `google`  | `google`                                       | as the signed-in user: their Drive and Calendar, and the directory only for an admin (otherwise that table is unavailable, a discovery problem, not a failure). It skips the service-account exchange and has no `subject` | Drive's `about.user.emailAddress`                | nothing: `event_days` only            |
+
 ## Hosted Helix (`helix-hyperscale/backend`)
 
 **Pipes client: `internal/workos/pipes.go`**, beside the custom HTTP calls in `internal/workos/client.go`. It ports the POC's `pipes.go`. Its calls:
@@ -462,7 +487,7 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
 
 - `pipes.enabled`, which gates `Kinds` only, so connectors that already have accounts keep syncing;
 - `pipes.api_key`;
-- `pipes.kinds` (`github: github`, `linear: linear`);
+- `pipes.kinds`: Foundry kind to Pipes slug (`github: github`, `linear: linear`, `slack: slack`, `notion: notion`, `posthog: posthog`, `calcom: cal-dot-com`, `stripe: stripe`, `google: google`). Each stamp lists only the kinds whose integration exists; dev and prod start with `github` and `linear`;
 - Foundry's `foundry.connectors.sign_in_return_to` and `foundry.connectors.github_app_install_url`, per stamp.
 
 **Wiring:**
@@ -477,7 +502,7 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
 
 | Tool                          | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | RPCs                                                       |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `helix_foundry_start_sign_in` | `{workspace_id, kind, name?, repos?, connector_id?, client_token?}` → `{sign_in_id, url, expires_at, next}`. `url` is `foundryURL + /data?add=<kind>&sign_in=<id>&workspace=<ws>`. `next`: open it in the user's browser (macOS `open`, Linux `xdg-open`), or give it to them, then call `helix_foundry_get_sign_in` with `wait`. With `connector_id` (signing a connector in again) it sends no name or settings, and refuses `name` and `repos`; `repos` is refused for Linear.                                                                                                                                                                                                               | `ListConnectorKinds`, `StartConnectorSignIn`               |
+| `helix_foundry_start_sign_in` | `{workspace_id, kind, name?, repos?, region?, project_id?, connector_id?, client_token?}` → `{sign_in_id, url, expires_at, next}`. `repos` is GitHub's, and `region` and `project_id` are PostHog's; every other setting takes the kind's default, which the user changes on the connector's page. `url` is `foundryURL + /data?add=<kind>&sign_in=<id>&workspace=<ws>`. `next`: open it in the user's browser (macOS `open`, Linux `xdg-open`), or give it to them, then call `helix_foundry_get_sign_in` with `wait`. With `connector_id` (signing a connector in again) it sends no name or settings, and refuses `name` and `repos`; `repos` is refused for Linear.                         | `ListConnectorKinds`, `StartConnectorSignIn`               |
 | `helix_foundry_get_sign_in`   | `{workspace_id, sign_in_id, wait}`. Waits up to 25 s (`waitWhile`, `foundry.go:1115`) while the sign-in is pending, authorizing or finishing. Returns `sign_in` (with `discovery_problem` and `identity_changed`), GitHub's `install_url` on every answer, and `next`. Connected: the connector, its `url` and `last_sync`; `next` says to follow the sync, and names the install link when there is a discovery problem. Declined or failed: `next` says to ask whether to try again; the same link works until it expires, except after `settings_invalid`, which needs a new sign-in. Expired: no `url`; `next` says to start again (with `connector_id` when signing a connector in again). | `GetConnectorSignIn`, `GetConnector`, `ListConnectorKinds` |
 
 **Registration and access:**
@@ -664,7 +689,14 @@ The dev stamp uses WorkOS staging; production uses WorkOS production.
    `githubapp.go`'s manifest is the template.
 
 2. **Linear OAuth app**, in Helix's Linear workspace: public, scope `read`, callback the integration's `redirect_uri`.
-3. **Pipes integrations** `github` and `linear`:
+   - **Each other kind**, when it is switched on, needs an OAuth app at its provider, owned by Helix, with its callback set to the integration's `redirect_uri`, and the read scopes its connector documents:
+     - **Slack:** a distributable app with the bot scopes the connector's guide lists.
+     - **Notion:** a public integration with read content.
+     - **PostHog:** an OAuth app with read scopes.
+     - **Cal.com:** an OAuth client, which Cal.com approves.
+     - **Stripe:** a Connect platform with `read_only`.
+     - **Google:** a verified OAuth client with `drive.readonly`, `calendar.readonly` and `admin.directory.user.readonly`. Drive's scope is restricted and needs Google's security assessment.
+3. **Pipes integrations**, one per kind switched on (`github`, `linear`, then the others' slugs):
    - organization-owned;
    - custom credentials, set in the dashboard or with `PUT /data-integrations/{slug}/organization`.
 
