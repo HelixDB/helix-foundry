@@ -224,6 +224,14 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	res.Plan = plan
 	credentials := s.credentials()
 	src, err := credentials.Source(ctx, c)
+	var rejected *connector.AuthError
+	if c.Account != nil && errors.As(err, &rejected) {
+		// A token no provider takes, such as an empty one: ask once more,
+		// and a second is a break, as a provider's second rejection is.
+		if src, err = credentials.Source(ctx, c); errors.As(err, &rejected) {
+			err = &ports.AccountBroken{Reason: ports.AccountAccessRevoked}
+		}
+	}
 	if c.Account != nil && err != nil {
 		return res, s.accountFailure(ctx, c, kind, err)
 	}
@@ -251,11 +259,13 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	}
 	base := res
 	res, err = s.read(ctx, sync, c, kind, plan, &src, base, false)
-	var rejected *connector.AuthError
 	if c.Account == nil || !errors.As(err, &rejected) {
 		return res, err
 	}
 	credential, terr := credentials.Token(ctx, c)
+	if errors.As(terr, &rejected) {
+		terr = &ports.AccountBroken{Reason: ports.AccountAccessRevoked}
+	}
 	if terr != nil {
 		return res, s.accountFailure(ctx, c, kind, terr)
 	}

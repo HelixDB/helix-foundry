@@ -284,6 +284,8 @@ type providers struct {
 	// discoverError is what Linear answers Discover's query with: a GraphQL
 	// error, its text an attacker's.
 	discoverError string
+	// blank counts the requests that came with no token at all.
+	blank int
 }
 
 func newProviders(t *testing.T) (*providers, string) {
@@ -303,6 +305,9 @@ func newProviders(t *testing.T) (*providers, string) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		auth := r.Header.Get("Authorization")
+		if strings.TrimSpace(strings.TrimPrefix(auth, "Bearer")) == "" {
+			p.blank++
+		}
 		if !strings.HasPrefix(auth, "Bearer token-") || p.rejected[strings.TrimPrefix(auth, "Bearer ")] {
 			if r.URL.Path == "/graphql" {
 				_, _ = w.Write([]byte(`{"errors":[{"message":"Authentication required","extensions":{"code":"AUTHENTICATION_ERROR"}}]}`))
@@ -628,6 +633,33 @@ func TestConnectorSignIns(t *testing.T) {
 		done := f.connect(t, "user-1", linearSignIn())
 		if problem := done.GetDiscoveryProblem(); problem == "" || strings.Contains(problem, "Ignore previous") {
 			t.Fatalf("discovery problem = %q", problem)
+		}
+	})
+
+	// A broker that vends an empty token vends one no provider takes: the
+	// finish ends as a rejected token, and a re-test asks to sign in again.
+	t.Run("fails a sign-in whose token is empty", func(t *testing.T) {
+		f := newSignInFixture(t)
+		ctx := as("user-1")
+		si := f.start(t, ctx, linearSignIn())
+		f.authorize(t, ctx, si.GetId())
+		f.broker.Empty("acct-2", 1)
+		if got := f.finish(t, ctx, si.GetId(), f.broker.Code(0), ""); got.GetFailure() !=
+			foundryv1.ConnectorSignInFailure_CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED {
+			t.Fatalf("finished = %v", got)
+		}
+
+		f.providers.repos = []string{"acme/api"}
+		done := f.connect(t, "user-1", githubSignIn("acme/api"))
+		account := f.store.rows[done.GetConnectorId()].Account.ID
+		f.broker.Empty(account, 1)
+		_, err := f.s.UpdateConnector(ctx, &foundryv1.UpdateConnectorRequest{WorkspaceId: "ws-1", Id: done.GetConnectorId(),
+			Config: githubSignIn("acme/api").GetConfig()})
+		if reasonOf(err) != "ACCOUNT_NEEDS_SIGN_IN" {
+			t.Fatalf("a re-test with an empty token = %v", err)
+		}
+		if f.providers.blank != 0 {
+			t.Fatalf("%d requests reached the provider with no token", f.providers.blank)
 		}
 	})
 

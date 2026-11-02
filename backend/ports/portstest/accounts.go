@@ -42,6 +42,7 @@ type Accounts struct {
 
 	mu             sync.Mutex
 	failures       map[string]error
+	empties        map[string]int
 	authorizations []ports.AccountAuthorization
 	finishes       []ports.AccountRef
 	codes          map[string]*code
@@ -165,6 +166,9 @@ func (a *Accounts) Token(_ context.Context, ref ports.AccountRef) (ports.Credent
 	switch {
 	case a.failures[ref.AccountID] != nil:
 		return ports.Credential{}, a.failures[ref.AccountID]
+	case a.empties[ref.AccountID] > 0:
+		a.empties[ref.AccountID]--
+		return ports.Credential{Value: " "}, nil
 	case !ok:
 		return ports.Credential{}, &ports.AccountBroken{Reason: ports.AccountAccountMissing}
 	case acct.broken != "":
@@ -256,6 +260,17 @@ func (a *Accounts) Rotate(accountID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.accounts[accountID].token++
+}
+
+// Empty makes the account's next n tokens empty, as a broker that vends
+// nothing usable does.
+func (a *Accounts) Empty(accountID string, n int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.empties == nil {
+		a.empties = map[string]int{}
+	}
+	a.empties[accountID] = n
 }
 
 // Fail makes Token fail with err for the account, as a broker that can't

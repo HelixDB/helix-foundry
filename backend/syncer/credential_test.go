@@ -182,6 +182,36 @@ func TestSignedInSyncs(t *testing.T) {
 		}
 	})
 
+	// An empty token is one no provider takes: the sync asks once more, and
+	// a second empty one breaks the account as a second rejection does.
+	t.Run("asks once more for a token after an empty one", func(t *testing.T) {
+		broker := &portstest.Accounts{}
+		kind := signedInKind()
+		f := signedInFixture(t, kind, broker)
+		broker.Empty("acct-1", 1)
+		if _, err := f.syncer.Run(ctx, f.sync); err != nil || len(kind.sources) == 0 || strings.TrimSpace(kind.sources[0].Secret) == "" {
+			t.Fatalf("Run = %v, sources %+v: want the second token used", err, kind.sources)
+		}
+		broker.Empty("acct-1", 2)
+		_, err := f.syncer.Run(ctx, f.sync)
+		if fl := failure(t, err); !fl.Permanent || !slices.Equal(f.store.breaks, []string{"conn-1@3:access_revoked"}) {
+			t.Fatalf("failure = %+v, breaks = %v", fl, f.store.breaks)
+		}
+	})
+
+	// A fresh token, asked for after a rejection, that is empty is a second
+	// rejection.
+	t.Run("breaks the account when the fresh token is empty", func(t *testing.T) {
+		broker := &portstest.Accounts{}
+		kind := &rejectingKind{fakeKind: signedInKind(), rejects: map[string]bool{"token-acct-1-1": true}}
+		kind.onReject = func() { broker.Empty("acct-1", 1) }
+		f := signedInFixture(t, kind, broker)
+		_, err := f.syncer.Run(ctx, f.sync)
+		if fl := failure(t, err); !fl.Permanent || !slices.Equal(f.store.breaks, []string{"conn-1@3:access_revoked"}) {
+			t.Fatalf("failure = %+v, breaks = %v", fl, f.store.breaks)
+		}
+	})
+
 	// A key connector's rejected key is a refusal, retried, as before.
 	t.Run("retries a key connector's rejected key", func(t *testing.T) {
 		f := newFakeFixture(t, nil, `{}`)

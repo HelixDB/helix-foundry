@@ -265,7 +265,7 @@ func (k *googleKind) Discover(ctx context.Context, src Source) (Discovery, error
 	}
 	d := saasDiscovery(googleObjects, func(name string) bool { return readable[googleAPIOf[name].name] }, googleForeignKeys)
 	switch {
-	case len(d.Tables) == 0 && c.vended != "":
+	case len(d.Tables) == 0 && c.signIn:
 		return Discovery{}, refused(nil, "this sign-in cannot read Drive, Calendar or the Directory; sign it in again, allowing them")
 	case len(d.Tables) == 0:
 		return Discovery{}, refused(nil, "the service account cannot read Drive, Calendar or the Directory as %s; "+
@@ -372,7 +372,8 @@ type googleClient struct {
 	k        *googleKind
 	settings GoogleSettings
 	tokens   map[string]*googleToken // by scope
-	// vended is a signed-in source's token; empty for a service account.
+	// signIn is a signed-in source's client, and vended its token.
+	signIn bool
 	vended string
 	pace   *rate.Limiter
 	// exports is the kind's HTTP client with googleExportTimeout.
@@ -400,7 +401,7 @@ func (k *googleKind) client(src Source) (*googleClient, error) {
 	exports.Timeout = googleExportTimeout
 	c := &googleClient{k: k, settings: s, tokens: map[string]*googleToken{}, pace: rate.NewLimiter(rate.Every(googleInterval), 1), exports: &exports}
 	if src.SignIn {
-		c.vended = strings.TrimSpace(src.Secret)
+		c.signIn, c.vended = true, strings.TrimSpace(src.Secret)
 		return c, nil
 	}
 	key, ok := parseGoogleKey(src.Secret)
@@ -423,7 +424,11 @@ func (k *googleKind) client(src Source) (*googleClient, error) {
 // retries. A scope the admin didn't delegate is unreadable; a user Google
 // doesn't know, or a key it doesn't, is refused.
 func (c *googleClient) token(ctx context.Context, api googleAPI, rejected string) (string, error) {
-	if c.vended != "" {
+	if c.signIn {
+		// No API takes an empty token: the broker's is rejected.
+		if c.vended == "" {
+			return "", rejectedCredential("Google", nil, "Google rejected the access this connector signed in with; sign it in again")
+		}
 		return c.vended, nil
 	}
 	t := c.tokens[api.scope]
@@ -524,7 +529,7 @@ func (c *googleClient) get(ctx context.Context, hc *http.Client, api googleAPI, 
 			status == http.StatusForbidden && slices.ContainsFunc(reasons, func(r string) bool { return slices.Contains(googleLimits, r) })
 		switch {
 		// A vended token is the only one: the broker renews it, not this read.
-		case status == http.StatusUnauthorized && rejected == "" && attempt < maxRetries && c.vended == "":
+		case status == http.StatusUnauthorized && rejected == "" && attempt < maxRetries && !c.signIn:
 			rejected = token
 			continue
 		case (limited || status >= 500) && attempt < maxRetries:
@@ -548,7 +553,7 @@ func (c *googleClient) get(ctx context.Context, hc *http.Client, api googleAPI, 
 // who is the user the client reads as: the settings' subject, or the user
 // who signed in.
 func (c *googleClient) who() string {
-	if c.vended != "" {
+	if c.signIn {
 		return "the signed-in user"
 	}
 	return c.settings.Subject
@@ -556,7 +561,7 @@ func (c *googleClient) who() string {
 
 // credential is what the client reads with, as its messages name it.
 func (c *googleClient) credential() string {
-	if c.vended != "" {
+	if c.signIn {
 		return "this sign-in"
 	}
 	return "this service account"
@@ -565,7 +570,7 @@ func (c *googleClient) credential() string {
 // project is the Google Cloud project whose APIs the client reads through:
 // the service account's, or the signed-in app's, which is Helix's.
 func (c *googleClient) project() string {
-	if c.vended != "" {
+	if c.signIn {
 		return "Helix Foundry's Google Cloud project"
 	}
 	return "the service account's Google Cloud project"
@@ -581,12 +586,12 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 	path, _, _ := strings.Cut(target, "?")
 	reasons, message := googleError(body)
 	switch {
-	case status == http.StatusUnauthorized && c.vended != "":
+	case status == http.StatusUnauthorized && c.signIn:
 		return rejectedCredential("Google", nil, "Google rejected the access this connector signed in with; sign it in again")
 	// Only a Workspace admin reads the Directory; a signed-in user who isn't
 	// one, or whose account is no Workspace's, finds it refused. An API not
 	// enabled is said as such below.
-	case api == googleDirectory && c.vended != "" && (status == http.StatusBadRequest || status == http.StatusForbidden ||
+	case api == googleDirectory && c.signIn && (status == http.StatusBadRequest || status == http.StatusForbidden ||
 		status == http.StatusNotFound) && !slices.ContainsFunc(reasons, func(r string) bool {
 		return slices.Contains(googleLimits, r) || r == "accessNotConfigured" || r == "SERVICE_DISABLED"
 	}):

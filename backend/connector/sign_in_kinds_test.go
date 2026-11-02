@@ -171,6 +171,24 @@ func TestSignedInPostHogProjects(t *testing.T) {
 	}
 }
 
+// A signed-in Google source with an empty token is rejected as any token
+// no provider takes, never read as a service account with none.
+func TestSignedInGoogleEmptyToken(t *testing.T) {
+	url := routeServer(t, map[string]func(*http.Request) (int, string){})
+	google := kindOf(t, NewCatalog(Endpoints{Google: url, GoogleToken: url + "/token"}, Guard{}, S3Options{}, EventsOptions{}), "google")
+	for _, secret := range []string{"", "  "} {
+		src := Source{Secret: secret, Settings: json.RawMessage(`{"event_days":30}`), SignIn: true}
+		_, err := google.Discover(context.Background(), src)
+		var authErr *AuthError
+		if !errors.As(err, &authErr) {
+			t.Fatalf("Discover(%q) = %v, want an AuthError", secret, err)
+		}
+		if _, err := google.(Identifier).Identity(context.Background(), src); !errors.As(err, &authErr) {
+			t.Fatalf("Identity(%q) = %v, want an AuthError", secret, err)
+		}
+	}
+}
+
 // Signed in, Google reads as the user who signed in: the vended token is the
 // bearer of every API, no service account's token is exchanged, and a user
 // who isn't a Workspace admin finds only the Directory unavailable.

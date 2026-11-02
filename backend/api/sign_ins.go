@@ -392,6 +392,8 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 		return fail(foundrymodel.SignInUnavailable, err)
 	case err != nil:
 		return fail(foundrymodel.SignInProviderError, err)
+	case strings.TrimSpace(credential.Value) == "":
+		return fail(foundrymodel.SignInTokenRejected, errors.New("the broker vended an empty token"))
 	}
 	src := connector.Source{Settings: settings, Secret: credential.Value, WorkspaceID: ws, SignIn: true}
 	if src.Settings, err = kind.Prepare(src); err != nil {
@@ -830,13 +832,18 @@ func (s *Service) credentials() syncer.Credentials {
 }
 
 // accountError is a signed-in connector's credential failing, as a caller
-// sees it: an account that needs signing in again
-// (ACCOUNT_NEEDS_SIGN_IN, in the reason's words), or a broker that can't be
-// reached.
+// sees it: an account that needs signing in again, broken or vending a
+// token no provider takes (ACCOUNT_NEEDS_SIGN_IN), or a broker that can't
+// be reached.
 func accountError(c *foundrymodel.Connector, kind connector.Kind, err error) error {
 	var broken *ports.AccountBroken
-	if errors.As(err, &broken) {
+	var rejected *connector.AuthError
+	switch {
+	case errors.As(err, &broken):
 		return foundryPrecondition(c.WorkspaceID, "ACCOUNT_NEEDS_SIGN_IN", syncer.AccountBrokenMessage(kind.DisplayName(), broken.Reason))
+	case errors.As(err, &rejected):
+		return foundryPrecondition(c.WorkspaceID, "ACCOUNT_NEEDS_SIGN_IN",
+			fmt.Sprintf("%s rejected the access this connector signed in with: sign it in again", kind.DisplayName()))
 	}
 	return accountsUnavailable(err)
 }

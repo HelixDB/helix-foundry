@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -74,7 +75,9 @@ func (c Credentials) Source(ctx context.Context, conn *model.Connector) (connect
 // member it acts as. Foundry's record of a break decides first: a broken
 // account is a *ports.AccountBroken with its reason, and the broker isn't
 // asked. Without a broker the error is ports.ErrAccountsUnavailable, which,
-// like the broker's own, is retried and never breaks the account.
+// like the broker's own, is retried and never breaks the account. An empty
+// token is one no provider takes: a *connector.AuthError, as though the
+// provider had rejected it, so no kind ever reads with one.
 func (c Credentials) Token(ctx context.Context, conn *model.Connector) (ports.Credential, error) {
 	a := conn.Account
 	switch {
@@ -98,6 +101,9 @@ func (c Credentials) Token(ctx context.Context, conn *model.Connector) (ports.Cr
 	case err != nil:
 		accountTokens.WithLabelValues("failed", "").Inc()
 		return ports.Credential{}, err
+	case strings.TrimSpace(credential.Value) == "":
+		accountTokens.WithLabelValues("empty", "").Inc()
+		return ports.Credential{}, &connector.AuthError{Provider: conn.Kind}
 	}
 	accountTokens.WithLabelValues("vended", "").Inc()
 	if c.Checked != nil {
