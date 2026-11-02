@@ -14,7 +14,8 @@ import {
 // on a new Helix database, loads it, asks its first question and answers
 // it, then offers its other questions and the user's own data. A reload
 // carries on with what it made, and nothing is made or asked twice. Once the
-// sample exists a banner says so, and links back to that page.
+// sample exists a banner says so, and links back to that page: to its last
+// step, the user's own data, once its question has ended.
 
 /** A new workspace, on the plan the mock sells databases with, on the sample's page. */
 async function openSample(page: Page) {
@@ -97,7 +98,7 @@ test("says it is sample data, and its link back to the tour shows every step don
   test.slow();
   await openSample(page);
   const banner = page.getByRole("region", { name: "Sample data" }),
-    back = banner.getByRole("link", { name: "Back to getting started" }),
+    back = banner.getByRole("link", { name: "Get started with your own data" }),
     steps = page.getByRole("list", { name: "Steps" }),
     others = steps.getByRole("group", { name: "Suggested questions" });
   // Nothing to say until the sample exists.
@@ -141,9 +142,12 @@ test("says it is sample data, and its link back to the tour shows every step don
   await steps.getByRole("link", { name: "See the load" }).click();
   await expect(page).toHaveURL(/\/ontology\/[^/]+\/loads\/[^/]+$/);
   await back.click();
-  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await expect(page).toHaveURL(/\/ontology\/sample#own-data$/);
   await everyStepDone();
   await expect(back).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Connect your own data" }),
+  ).toBeInViewport();
 
   // Opened afresh, with nothing in the cache.
   await page.reload();
@@ -175,7 +179,7 @@ test("says it is sample data, and its link back to the tour shows every step don
   await expect(banner).toHaveCount(0);
   await page.goto("/data");
   await back.click();
-  await expect(page).toHaveURL(/\/ontology\/sample$/);
+  await expect(page).toHaveURL(/\/ontology\/sample#own-data$/);
   await everyStepDone();
   expect(writes).toEqual([]);
 
@@ -185,4 +189,34 @@ test("says it is sample data, and its link back to the tour shows every step don
       .getByRole("complementary", { name: "Ontologies" })
       .getByRole("link", { name: /Acme Corp customers/ }),
   ).toHaveCount(1);
+});
+
+test("links back to the tour until its question has ended, then to the user's own data", async ({
+  page,
+}) => {
+  test.slow();
+  await openSample(page);
+  await mock.configure({ askStepMs: 1500 });
+  await expect(
+    page
+      .getByRole("list", { name: "Steps" })
+      .getByRole("article", { name: /^Question: / }),
+  ).toBeVisible({ timeout: 60_000 });
+  await page.goto("/data");
+  const banner = page.getByRole("region", { name: "Sample data" });
+  await expect(
+    banner.getByRole("link", { name: "Back to getting started" }),
+  ).toHaveAttribute("href", "/ontology/sample");
+
+  const own = banner.getByRole("link", {
+    name: "Get started with your own data",
+  });
+  await expect(own).toHaveAttribute("href", "/ontology/sample#own-data", {
+    timeout: 60_000,
+  });
+  await own.click();
+  const connect = page.getByRole("link", { name: "Connect your own data" });
+  await expect(connect).toBeInViewport({ timeout: 30_000 });
+  await page.reload();
+  await expect(connect).toBeInViewport({ timeout: 30_000 });
 });

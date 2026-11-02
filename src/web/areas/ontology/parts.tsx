@@ -186,6 +186,7 @@ export function Callout({
  * `children`; upcoming, it says what it asks.
  */
 export function FlowStep({
+  id,
   number,
   title,
   text,
@@ -196,6 +197,7 @@ export function FlowStep({
   kept,
   children,
 }: {
+  id?: string;
   number: number;
   title: string;
   text: string;
@@ -210,6 +212,7 @@ export function FlowStep({
     open = state === "current" || state === "running" || (done && !!kept);
   return (
     <li
+      id={id}
       className={cx("on-wizard-step", `is-${state}`)}
       aria-current={
         state === "current" || state === "running" ? "step" : undefined
