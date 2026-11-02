@@ -341,6 +341,162 @@ describe("onboardingPrompt without a workspace", () => {
   });
 });
 
+describe("onboardingPrompt's connectors that sign in", () => {
+  const text = onboardingPrompt(input());
+  // The JSON payloads the prompt hands a tool, parsed.
+  const payloads = (out: string, tool: string) =>
+    [
+      ...out.matchAll(new RegExp(`\`${tool}\` with \`(\\{[^\`]+\\})\``, "g")),
+    ].map((m) => JSON.parse(m[1]!));
+
+  // The prompt can't know whether the stamp offers signing in, or to whom:
+  // the agent reads it per kind, and every other kind keeps its form.
+  it("decides per kind from list_connector_kinds' sign_in", () => {
+    expect(text).toContain(
+      "Read the kinds with `helix_foundry_list_connector_kinds`, and decide how to connect each one from its own `sign_in`, every time",
+    );
+    expect(text).toContain(
+      "If its `sign_in` is true (GitHub or Linear), I sign in at the provider, and no key passes through you:",
+    );
+    expect(text).toContain(
+      'Every other kind connects through its form, where I enter its credentials:\n\n1. Call `helix_foundry_connector_link` with `{"workspace_id": "ws1", "kind": "<kind>"}`',
+    );
+    expect(text).toContain(
+      "If you don’t have that tool, or it says signing in isn’t available to me, connect the kind through its form, below.",
+    );
+  });
+
+  it("starts a sign-in, opens its link and waits for it", () => {
+    expect(payloads(text, "helix_foundry_start_sign_in")).toContainEqual({
+      workspace_id: "ws1",
+      kind: "<kind>",
+      client_token: "<a new UUID>",
+    });
+    expect(text).toContain(
+      'adding `"name": "<name>"` for a name other than the kind’s and, for GitHub, `"repos": ["<owner>/<repository>"]` for only those repositories',
+    );
+    expect(text).toContain(
+      "2. Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
+    );
+    expect(text).toContain(
+      "I click Connect with GitHub (or Linear), then Authorize at the provider. Only I can, until its `expires_at`.",
+    );
+    expect(payloads(text, "helix_foundry_get_sign_in")).toEqual([
+      { workspace_id: "ws1", sign_in_id: "<its sign_in_id>", wait: true },
+    ]);
+    expect(text).toContain("again until its `sign_in.done` is true");
+    expect(text).toContain(
+      '`helix_foundry_get_sign_in`, `helix_foundry_get_sync`, `helix_foundry_get_generation` and `helix_foundry_get_load` take `"wait": true`',
+    );
+  });
+
+  it("follows each outcome: the first sync, another try, GitHub's install link", () => {
+    expect(text).toContain(
+      "- `connected`: its `connector` is the new connector. Follow its first sync, below.",
+    );
+    expect(text).toContain(
+      "- `declined`, `failed` or `expired`: tell me, and ask whether to try again. Until `expires_at` the same `url` works",
+    );
+    expect(text).toContain(
+      "Once it has expired, or failed with `settings_invalid`, start a new sign-in.",
+    );
+    expect(text).toContain(
+      "For GitHub, give me its `install_url` too, which installs the Helix Foundry GitHub App",
+    );
+    // Both ways in end at the same first sync.
+    expect(text).toContain(
+      "Then follow its first sync. It starts within a minute or so",
+    );
+    expect(text.split("If a sync fails, tell me its `error`")).toHaveLength(2);
+  });
+
+  // Signing a connector in again keeps its name and settings: the MCP
+  // refuses name and repos with connector_id.
+  it("offers to sign a broken connector in again, with its connector_id alone", () => {
+    expect(text).toContain(
+      "`helix_foundry_list_connectors` shows its `account.state` as `needs_sign_in`, with why in `account.broken`, and `sync_connector` fails with `account_needs_sign_in`.",
+    );
+    expect(text).toContain("offer to sign it in again");
+    const again = payloads(text, "helix_foundry_start_sign_in").find(
+      (p) => p.connector_id,
+    );
+    expect(again).toEqual({
+      workspace_id: "ws1",
+      kind: "<its kind>",
+      connector_id: "<its id>",
+      client_token: "<a new UUID>",
+    });
+    expect(again).not.toHaveProperty("name");
+    expect(again).not.toHaveProperty("repos");
+    expect(text).toContain("never with `name` or `repos`: it keeps its own.");
+    expect(text).toContain(
+      "- `account_needs_sign_in`: from `sync_connector`, the connector’s account needs signing in again",
+    );
+  });
+
+  it("keeps the credentials rule, and holds no credential", () => {
+    expect(text).toContain(
+      "- Never ask me for credentials, keys or passwords in the chat. A connector’s credentials go only into Foundry, in my browser, through its link.\n",
+    );
+    for (const secret of ["ghp_", "github_pat_", "lin_api_", "hx_ev_"])
+      expect(text).not.toContain(secret);
+  });
+
+  // The rule holds wherever the setup is, since the connect step may be
+  // past: an ontology waiting for its load still has a connector to fix.
+  it("keeps signing in again among the rules once the data step is past", () => {
+    const later = onboardingPrompt(
+      input({ ontology: ontology({ step: "load", state: "todo" }) }),
+    );
+    expect(later).not.toContain("#### Connect a source");
+    expect(payloads(later, "helix_foundry_start_sign_in")).toEqual([
+      {
+        workspace_id: "ws1",
+        kind: "<its kind>",
+        connector_id: "<its id>",
+        client_token: "<a new UUID>",
+      },
+    ]);
+  });
+
+  it("reads the same on the landing page, without a workspace", () => {
+    const landing = onboardingPrompt({
+      origin: "https://foundry.example.com",
+      mcpUrl: "https://mcp.example.com/mcp",
+      workspace: null,
+    });
+    const starts = payloads(landing, "helix_foundry_start_sign_in");
+    expect(starts).toHaveLength(2);
+    expect(starts).toContainEqual({
+      workspace_id: "<workspace id>",
+      kind: "<kind>",
+      client_token: "<a new UUID>",
+    });
+    expect(starts).toContainEqual({
+      workspace_id: "<workspace id>",
+      kind: "<its kind>",
+      connector_id: "<its id>",
+      client_token: "<a new UUID>",
+    });
+    expect(payloads(landing, "helix_foundry_get_sign_in")).toEqual([
+      {
+        workspace_id: "<workspace id>",
+        sign_in_id: "<its sign_in_id>",
+        wait: true,
+      },
+    ]);
+    expect(landing).toContain(
+      "- `helix_foundry_list_connector_kinds`: the kinds it can connect, which need Foundry Pro, and which I connect by signing in (`sign_in`).",
+    );
+    expect(landing).toContain(
+      "- `helix_foundry_list_connectors`: its connectors and API sources, with their synced tables, and any whose `account` needs signing in again.",
+    );
+    expect(landing).toContain(
+      "target `connector:<workspace id>/<connector id>`",
+    );
+  });
+});
+
 describe("onboardingPrompt with a workspace", () => {
   it("leaves out sign-up and running it on my computer", () => {
     const text = onboardingPrompt(input());
