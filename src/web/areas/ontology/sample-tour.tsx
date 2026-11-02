@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   useQuery,
   useQueryClient,
@@ -474,6 +474,30 @@ export function SampleTour() {
   useEffect(() => {
     if (answered) trackEvent("sample_answered");
   }, [answered]);
+  // The banner's link opens this page on its last step. What sits above that
+  // grows as its reads end (the schema, the answer), so the page stays on it
+  // for a while, until the reader moves.
+  const toOwnData = useLocation().hash === "#own-data";
+  useEffect(() => {
+    const step = document.getElementById("own-data");
+    if (!toOwnData || !answered || !step) return;
+    const stay = () => step.scrollIntoView({ block: "end" });
+    stay();
+    const growing = new ResizeObserver(stay);
+    growing.observe(step.parentElement!);
+    const moved = new AbortController();
+    const stop = () => {
+      growing.disconnect();
+      moved.abort();
+    };
+    for (const input of ["wheel", "touchstart", "keydown"])
+      window.addEventListener(input, stop, { signal: moved.signal });
+    const timer = setTimeout(stop, 5000);
+    return () => {
+      clearTimeout(timer);
+      stop();
+    };
+  }, [toOwnData, answered]);
   // What the load made of each document: read, or failed and why.
   const extractions = (
     useQuery({ ...documentQueries.list(id, o), enabled: loaded }).data
@@ -719,6 +743,7 @@ export function SampleTour() {
           </span>
         </FlowStep>
         <FlowStep
+          id="own-data"
           number={6}
           title="Now connect your own data"
           text="Your databases, apps and documents, made into an ontology the same way."
