@@ -2,6 +2,7 @@ package foundrysyncworker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -74,6 +75,14 @@ func (r *accountRows) BreakConnectorAccount(_ context.Context, _, connectorID st
 
 func (r *accountRows) MarkConnectorAccountChecked(_ context.Context, _, connectorID string) error {
 	r.checkedAt[connectorID] = now
+	return nil
+}
+
+func (r *accountRows) DeferConnectorAccountCheck(_ context.Context, _, connectorID string, checkedAt time.Time) error {
+	r.log = append(r.log, "defer "+connectorID)
+	if checkedAt.After(r.checkedAt[connectorID]) {
+		r.checkedAt[connectorID] = checkedAt
+	}
 	return nil
 }
 
@@ -153,14 +162,52 @@ func TestKeepAccounts(t *testing.T) {
 			t.Fatalf("breaks = %v", rows.breaks)
 		}
 
-		broker.Unavailable = true
-		rows.checkedAt["c-stale"] = now.Add(-8 * 24 * time.Hour)
-		rows.connectors = append(rows.connectors, signedIn("c-stale-2", "acct-1", now.Add(-9*24*time.Hour), rows))
+	})
+
+	// An account the broker can't reach, or fails on, is checked again an
+	// hour later, and the accounts after it are checked meanwhile.
+	t.Run("checks past an account that fails, and again an hour later", func(t *testing.T) {
+		broker := &portstest.Accounts{}
+		task, rows := newAccountTask(broker)
+		for _, id := range []string{"acct-down", "acct-odd", "acct-ok"} {
+			broker.Add(ports.AccountRef{WorkspaceID: "ws-1", UserID: "user-1", Kind: "github", AccountID: id})
+		}
+		broker.Fail("acct-down", fmt.Errorf("pipes: %w", ports.ErrAccountsUnavailable))
+		broker.Fail("acct-odd", errors.New("pipes: an answer it doesn't know"))
+		week := now.Add(-8 * 24 * time.Hour)
+		rows.connectors = []*model.Connector{
+			signedIn("c-down", "acct-down", week, rows), signedIn("c-odd", "acct-odd", week, rows), signedIn("c-ok", "acct-ok", week, rows),
+		}
+		task.keepAccounts(ctx)
+		if !rows.checkedAt["c-ok"].Equal(now) || !slices.Equal(rows.log, []string{"defer c-down", "defer c-odd"}) {
+			t.Fatalf("c-ok checked at %v, log %v", rows.checkedAt["c-ok"], rows.log)
+		}
 		tokens := broker.Calls("Token")
 		task.keepAccounts(ctx)
-		if broker.Calls("Token") != tokens+1 || len(rows.breaks) != 1 {
-			t.Fatalf("tokens %d → %d, breaks %v: an unreachable broker ends the pass and breaks nothing",
-				tokens, broker.Calls("Token"), rows.breaks)
+		if broker.Calls("Token") != tokens {
+			t.Fatalf("tokens %d → %d: a failed check waits an hour", tokens, broker.Calls("Token"))
+		}
+		task.now = func() time.Time { return now.Add(accountCheckRetry + time.Minute) }
+		task.keepAccounts(ctx)
+		if broker.Calls("Token") != tokens+2 {
+			t.Fatalf("tokens %d → %d: the failed checks come again an hour later", tokens, broker.Calls("Token"))
+		}
+	})
+
+	// A broker that answers unavailable time after time is likely down: the
+	// tick stops asking, and breaks nothing.
+	t.Run("stops checking while the broker is down", func(t *testing.T) {
+		broker := &portstest.Accounts{}
+		task, rows := newAccountTask(broker)
+		for i := range 5 {
+			id := fmt.Sprintf("acct-%d", i)
+			broker.Add(ports.AccountRef{WorkspaceID: "ws-1", UserID: "user-1", Kind: "github", AccountID: id})
+			rows.connectors = append(rows.connectors, signedIn("c-"+id, id, now.Add(-8*24*time.Hour), rows))
+		}
+		broker.Unavailable = true
+		task.keepAccounts(ctx)
+		if broker.Calls("Token") != maxUnavailableChecks || len(rows.breaks) != 0 {
+			t.Fatalf("tokens = %d, breaks %v", broker.Calls("Token"), rows.breaks)
 		}
 	})
 }

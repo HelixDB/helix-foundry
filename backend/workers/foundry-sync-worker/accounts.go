@@ -21,14 +21,20 @@ type accountQueue interface {
 	ListConnectorAccountChecks(ctx context.Context, before time.Time, limit int) ([]*model.Connector, error)
 	BreakConnectorAccount(ctx context.Context, workspaceID, connectorID string, generation int, reason string) (bool, error)
 	MarkConnectorAccountChecked(ctx context.Context, workspaceID, connectorID string) error
+	DeferConnectorAccountCheck(ctx context.Context, workspaceID, connectorID string, checkedAt time.Time) error
 }
 
 const (
 	// signInRetention is how long a sign-in's row outlives its end.
 	signInRetention = 24 * time.Hour
 	// accountCheckEvery is how long an account goes without a token vended
-	// before the check asks for one.
+	// before the check asks for one; accountCheckRetry how long after a check
+	// that got none the next comes.
 	accountCheckEvery = 7 * 24 * time.Hour
+	accountCheckRetry = time.Hour
+	// maxUnavailableChecks is how many checks in a row the broker may answer
+	// unavailable before the tick stops asking: it is likely down.
+	maxUnavailableChecks = 3
 	// purgeBackoffMax caps the wait between a purge's attempts, which
 	// doubles from a minute.
 	purgeBackoffMax = 6 * time.Hour
@@ -49,8 +55,10 @@ const (
 //     Foundry, such as a membership removed in WorkOS or access revoked at
 //     the provider, which is recorded broken as a sync records it.
 //
-// A broker that can't be reached ends steps 2 and 3 until the next tick;
-// what they leave stays due.
+// A broker that can't be reached ends step 2 until the next tick, and step 3
+// after maxUnavailableChecks answers in a row; what they leave stays due. A
+// check that gets no token is tried again an hour later, so one account
+// that keeps failing never holds back the rest.
 func (t *Task) keepAccounts(ctx context.Context) {
 	if t.broker == nil {
 		return
@@ -116,31 +124,43 @@ func (t *Task) checkAccounts(ctx context.Context) {
 		return
 	}
 	credentials := syncer.Credentials{Accounts: t.broker, Checked: t.accounts}
+	unavailable := 0
 	for _, c := range due {
 		_, err := credentials.Token(ctx, c)
 		var broken *ports.AccountBroken
 		switch {
 		case err == nil:
 			accountChecks.WithLabelValues("vended").Inc()
+			unavailable = 0
+			continue
 		case errors.As(err, &broken):
+			unavailable = 0
 			broke, berr := t.accounts.BreakConnectorAccount(ctx, c.WorkspaceID, c.ID, c.Account.Generation, broken.Reason)
-			if berr != nil {
-				log.From(ctx).Warn("record a broken connector account failed", "connector", c.ID, "err", berr)
+			if berr == nil {
+				accountChecks.WithLabelValues("broken").Inc()
+				if broke {
+					syncer.CountAccountBreak(broken.Reason)
+					log.From(ctx).Warn("the weekly check found a connector's account broken", "workspace", c.WorkspaceID, "connector", c.ID,
+						"kind", c.Kind, "user", c.Account.UserID, "account", c.Account.ID, "reason", broken.Reason, "generation", c.Account.Generation)
+				}
 				continue
 			}
-			accountChecks.WithLabelValues("broken").Inc()
-			if broke {
-				syncer.CountAccountBreak(broken.Reason)
-				log.From(ctx).Warn("the weekly check found a connector's account broken", "workspace", c.WorkspaceID, "connector", c.ID,
-					"kind", c.Kind, "user", c.Account.UserID, "account", c.Account.ID, "reason", broken.Reason, "generation", c.Account.Generation)
-			}
+			log.From(ctx).Warn("record a broken connector account failed", "connector", c.ID, "err", berr)
 		case errors.Is(err, ports.ErrAccountsUnavailable):
 			accountChecks.WithLabelValues("unavailable").Inc()
-			log.From(ctx).Warn("check connector accounts: the broker is unavailable", "err", err)
-			return
+			unavailable++
+			log.From(ctx).Warn("check a connector account: the broker is unavailable", "connector", c.ID, "err", err)
 		default:
 			accountChecks.WithLabelValues("failed").Inc()
+			unavailable = 0
 			log.From(ctx).Warn("check a connector account failed", "connector", c.ID, "err", err)
+		}
+		if derr := t.accounts.DeferConnectorAccountCheck(ctx, c.WorkspaceID, c.ID, t.now().Add(accountCheckRetry-accountCheckEvery)); derr != nil {
+			log.From(ctx).Warn("defer a connector account check failed", "connector", c.ID, "err", derr)
+		}
+		if unavailable == maxUnavailableChecks {
+			log.From(ctx).Warn("check connector accounts: the broker is unavailable; stopping until the next tick")
+			return
 		}
 	}
 }

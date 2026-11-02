@@ -213,6 +213,7 @@ type Store interface {
 	BreakConnectorAccounts(ctx context.Context, workspaceID, userID, reason string) error
 	BreakConnectorAccount(ctx context.Context, workspaceID, connectorID string, generation int, reason string) (bool, error)
 	MarkConnectorAccountChecked(ctx context.Context, workspaceID, connectorID string) error
+	DeferConnectorAccountCheck(ctx context.Context, workspaceID, connectorID string, checkedAt time.Time) error
 	DeleteConnectorAccountPurge(ctx context.Context, id string) error
 	RetryConnectorAccountPurge(ctx context.Context, id, lastError string, after time.Duration) error
 	// Connector sign-ins (connector_sign_ins.go): started, authorized, then

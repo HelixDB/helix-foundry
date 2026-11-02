@@ -10,8 +10,9 @@
 -- access_revoked, expired or account_missing, checked in code), NULL while
 -- connected: nothing syncs it until someone signs it in again.
 -- account_checked_at is when the broker last vended a token for it, which a
--- weekly check keeps from going stale; account_connected_at when it was
--- last signed in.
+-- weekly check keeps from going stale (a check that gets none moves it on,
+-- so the next comes an hour later); account_connected_at when it was last
+-- signed in.
 ALTER TABLE connectors
   ADD COLUMN account_id           VARCHAR(64)  NULL,
   ADD COLUMN account_user_id      CHAR(26)     NULL,

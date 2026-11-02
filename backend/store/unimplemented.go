@@ -88,6 +88,10 @@ func (u Unimplemented) MarkConnectorAccountChecked(context.Context, string, stri
 	u.unimplemented("MarkConnectorAccountChecked")
 	return nil
 }
+func (u Unimplemented) DeferConnectorAccountCheck(context.Context, string, string, time.Time) error {
+	u.unimplemented("DeferConnectorAccountCheck")
+	return nil
+}
 func (u Unimplemented) ListConnectorAccountPurges(context.Context, int) ([]*model.ConnectorAccountPurge, error) {
 	u.unimplemented("ListConnectorAccountPurges")
 	return nil, nil
