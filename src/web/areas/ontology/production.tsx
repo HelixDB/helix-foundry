@@ -9,16 +9,9 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
-import { Check, ChevronDown, Copy, X } from "lucide-react";
+import { Check, ChevronDown, Copy } from "lucide-react";
 import type { FoundryOntology } from "../../../shared/wfe";
-import {
-  Button,
-  ButtonLink,
-  IconButton,
-  cx,
-  readStorage,
-  writeStorage,
-} from "../../kit";
+import { Button, ButtonLink, cx, readStorage, writeStorage } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { MCP_URL } from "./agent-setup";
 import { canManage } from "./parts";
@@ -112,7 +105,7 @@ function useProduction() {
 /**
  * The Analyst's card: a box under the bar's right that opens over the
  * conversation, or on a phone a row the conversation sits under
- * (production.css). Never dismissed, so the prompt stays reachable; whether it
+ * (production.css). Whether it
  * starts open is decided once, before it paints, so copying leaves it open
  * until the next visit.
  */
@@ -219,16 +212,15 @@ export function ProductionCard() {
 }
 
 /**
- * The strip above every other page: its label, the two stations and the
- * current step's action, until both steps are done or it is dismissed. On a
- * phone, just the stations and the action.
+ * The strip above every other page, until both steps are done: from the left,
+ * its label, the two stations and the current step's action. On a phone, just
+ * the stations and the action.
  */
 export function ProductionStrip() {
   const { id, role, onboarding } = useWorkspace(),
     { pathname } = useLocation(),
-    { state, update, copy, ontologies, sample, progress } = useProduction();
-  if (!progress || !stripShown(pathname, onboarding, state, progress))
-    return null;
+    { copy, ontologies, sample, progress } = useProduction();
+  if (!progress || !stripShown(pathname, onboarding, progress)) return null;
   const ontology =
     progress.current === "query"
       ? promptOntology(pathname, ontologies, lastOntology(id), sample?.id)
@@ -264,13 +256,6 @@ export function ProductionStrip() {
           <span className="pd-strip-note">An owner or admin creates one</span>
         )}
       </span>
-      <IconButton
-        size="sm"
-        icon={X}
-        label={`Dismiss ${TITLE}`}
-        className="pd-strip-dismiss"
-        onClick={() => update({ dismissed: true })}
-      />
     </div>
   );
 }

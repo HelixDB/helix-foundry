@@ -16,8 +16,6 @@ export type ProductionStepId = (typeof PRODUCTION_STEPS)[number]["id"];
 export type ProductionState = {
   // The prompt was copied: the query step is done.
   copied: boolean;
-  // The strip was dismissed. The card never is, so the prompt stays reachable.
-  dismissed: boolean;
   // The card was minimised.
   minimised: boolean;
 };
@@ -43,7 +41,6 @@ export function parseProductionState(raw: string): ProductionState {
   const kept = (value ?? {}) as Partial<Record<keyof ProductionState, unknown>>;
   return {
     copied: kept.copied === true,
-    dismissed: kept.dismissed === true,
     minimised: kept.minimised === true,
   };
 }
@@ -108,18 +105,13 @@ const NO_STRIP = /^\/(?:$|ask(?:\/|$)|ontology\/(?:new|sample)\/?$)/;
 
 /**
  * Whether the strip shows on `pathname`: never while the workspace is
- * onboarding, once dismissed or once both steps are done.
+ * onboarding or once both steps are done.
  */
 export const stripShown = (
   pathname: string,
   onboarding: boolean,
-  state: ProductionState,
   progress: ProductionProgress,
-) =>
-  !onboarding &&
-  !state.dismissed &&
-  progress.current !== null &&
-  !NO_STRIP.test(pathname);
+) => !onboarding && progress.current !== null && !NO_STRIP.test(pathname);
 
 /**
  * Whether the card starts minimised: when it was left so, once both steps are
