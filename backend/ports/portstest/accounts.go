@@ -32,6 +32,10 @@ type Accounts struct {
 	// KeepRefused makes Finish's own delete of an account it refuses fail:
 	// the broker keeps it.
 	KeepRefused bool
+	// Disabled is the integration switched off, as Pipes answers it:
+	// reauthorizing any account reads as account_missing, and authorizing a
+	// new one is unavailable.
+	Disabled bool
 	// OnFinish runs inside each Finish, after the code is spent and before it
 	// returns, as a slow broker would let other calls in.
 	OnFinish func()
@@ -93,8 +97,11 @@ func (a *Accounts) Authorize(_ context.Context, auth ports.AccountAuthorization)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, ok := a.accounts[auth.AccountID]; auth.AccountID != "" && !ok {
+	if _, ok := a.accounts[auth.AccountID]; auth.AccountID != "" && (!ok || a.Disabled) {
 		return "", &ports.AccountBroken{Reason: ports.AccountAccountMissing}
+	}
+	if a.Disabled {
+		return "", fmt.Errorf("portstest: the integration is off: %w", ports.ErrAccountsUnavailable)
 	}
 	a.next++
 	c := fmt.Sprintf("code-%d", a.next)
