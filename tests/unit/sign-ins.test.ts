@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Connector, ConnectorAccount } from "@/shared/wfe";
+import { ApiError } from "@/web/api";
 import { paths } from "@/web/paths";
 import { connectorBadge } from "@/web/areas/data/model";
 import {
@@ -17,8 +18,10 @@ import {
   needsSignIn,
   readConnect,
   readPicks,
+  signInEnded,
   signInFailure,
   startAgainPath,
+  startAndAuthorize,
   isSignInKind,
   keyInstead,
   providerName,
@@ -179,6 +182,119 @@ describe("where the provider returns", () => {
     expect(
       isProviderUrl("http://evil.example/x", "http://localhost:3100/data"),
     ).toBe(false);
+  });
+});
+
+describe("starting a form's sign-in", () => {
+  const refused = (reason: string) =>
+    new ApiError("refused", 400, 9, [
+      { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason },
+    ]);
+
+  /**
+   * The WFE's start and Authorize: a client token seen before returns the
+   * sign-in it started, whatever its state, and an ended one isn't
+   * authorized.
+   */
+  function wfe(ended: string[] = []) {
+    const byToken = new Map<string, string>(),
+      calls: string[] = [];
+    let n = 0;
+    return {
+      calls,
+      ended,
+      start: async (token?: string) => {
+        calls.push(`start ${token ?? "-"}`);
+        const id = (token && byToken.get(token)) || `csi_${++n}`;
+        if (token) byToken.set(token, id);
+        return id;
+      },
+      authorize: async (id: string) => {
+        calls.push(`authorize ${id}`);
+        if (ended.includes(id)) throw refused("SIGN_IN_ENDED");
+        return { url: `https://provider.example/${id}` };
+      },
+    };
+  }
+  const renewing = () => {
+    let n = 0;
+    return () => `token-${++n}`;
+  };
+
+  it("tells an ended sign-in's refusal from others", () => {
+    expect(signInEnded(refused("SIGN_IN_ENDED"))).toBe(true);
+    expect(signInEnded(refused("SIGN_IN_IN_PROGRESS"))).toBe(false);
+    expect(signInEnded(new ApiError("gone", 400))).toBe(false);
+    expect(signInEnded(new Error("SIGN_IN_ENDED"))).toBe(false);
+  });
+
+  it("finds the sign-in its client token started, while it lasts", async () => {
+    const w = wfe(),
+      renew = renewing();
+    await startAndAuthorize("form", w.start, w.authorize, renew);
+    const again = await startAndAuthorize("form", w.start, w.authorize, renew);
+    expect(again).toEqual({
+      signInId: "csi_1",
+      authorized: { url: "https://provider.example/csi_1" },
+    });
+    expect(w.calls).toEqual([
+      "start form",
+      "authorize csi_1",
+      "start form",
+      "authorize csi_1",
+    ]);
+  });
+
+  it("starts one under a new token, once, after its sign-in ended", async () => {
+    const w = wfe(),
+      renew = renewing();
+    await startAndAuthorize("form", w.start, w.authorize, renew);
+    // Its 15 minutes ran out while the form stayed open.
+    w.ended.push("csi_1");
+    expect(
+      await startAndAuthorize("form", w.start, w.authorize, renew),
+    ).toEqual({
+      signInId: "csi_2",
+      authorized: { url: "https://provider.example/csi_2" },
+    });
+    expect(w.calls.slice(2)).toEqual([
+      "start form",
+      "authorize csi_1",
+      "start token-1",
+      "authorize csi_2",
+    ]);
+    // Only once: a second ended sign-in is the refusal.
+    w.ended.push("csi_2", "csi_3");
+    await expect(
+      startAndAuthorize("token-1", w.start, w.authorize, renew),
+    ).rejects.toSatisfy(signInEnded);
+    expect(w.calls.slice(6)).toEqual([
+      "start token-1",
+      "authorize csi_2",
+      "start token-2",
+      "authorize csi_3",
+    ]);
+  });
+
+  it("retries nothing else, nor a start without a token", async () => {
+    const w = wfe(["csi_1"]),
+      renew = renewing();
+    await expect(
+      startAndAuthorize(undefined, w.start, w.authorize, renew),
+    ).rejects.toSatisfy(signInEnded);
+    expect(w.calls).toEqual(["start -", "authorize csi_1"]);
+    const busy = refused("SIGN_IN_IN_PROGRESS");
+    await expect(
+      startAndAuthorize(
+        "form",
+        w.start,
+        async () => {
+          throw busy;
+        },
+        renew,
+      ),
+    ).rejects.toBe(busy);
+    expect(w.calls).toEqual(["start -", "authorize csi_1", "start form"]);
   });
 });
 

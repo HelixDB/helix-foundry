@@ -148,6 +148,77 @@ test("says why a sign-in was declined, and tries the same one again", async ({
   );
 });
 
+/** The client tokens of the sign-ins this page starts, in order. */
+function startTokens(page: Page) {
+  const tokens: string[] = [];
+  page.on("request", (r) => {
+    if (
+      r.method() === "POST" &&
+      new URL(r.url()).pathname.endsWith("/foundry/sign-ins")
+    )
+      tokens.push((r.postDataJSON() as { clientToken: string }).clientToken);
+  });
+  return tokens;
+}
+
+test("starts the form's sign-in again once it ran out", async ({ page }) => {
+  await signIn(page);
+  const tokens = startTokens(page);
+  await openForm(page, "GitHub");
+  // Its first Authorize never answers: the form stays, its sign-in started.
+  await page.route(/\/sign-ins\/csi_\w+:authorize$/, (route) => route.abort(), {
+    times: 1,
+  });
+  const connect = dialog(page).getByRole("button", {
+    name: "Connect with GitHub",
+  });
+  await connect.click();
+  await expect(dialog(page).locator(".error-box")).toBeVisible();
+  // It runs out while the form stays open. The next click's token finds
+  // it, ended, so the form starts another under a new token.
+  await mock.configure({ signInsRunOut: true });
+  await connect.click();
+  await consent(page, "Authorize");
+  await expect(page).toHaveURL(/\/data\/connections\/conn_\w+$/);
+  expect(tokens).toHaveLength(3);
+  expect(tokens[1]).toBe(tokens[0]);
+  expect(tokens[2]).not.toBe(tokens[0]);
+});
+
+test("starts another sign-in when the page comes back from the provider", async ({
+  page,
+}) => {
+  await signIn(page);
+  const tokens = startTokens(page);
+  await openForm(page, "GitHub");
+  // The provider's page answers 204, so this page stays, pending: then it
+  // is shown again as the back/forward cache restores it after Back.
+  await page.route(
+    /\/mock\/connect\?sign_in=/,
+    (route) => route.fulfill({ status: 204 }),
+    { times: 1 },
+  );
+  await dialog(page)
+    .getByRole("button", { name: "Connect with GitHub" })
+    .click();
+  await expect(
+    dialog(page).getByRole("button", { name: "Opening GitHub…" }),
+  ).toBeDisabled();
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    ),
+  );
+  // What it started may have ended meanwhile: the next click starts anew.
+  await dialog(page)
+    .getByRole("button", { name: "Connect with GitHub" })
+    .click();
+  await consent(page, "Authorize");
+  await expect(page).toHaveURL(/\/data\/connections\/conn_\w+$/);
+  expect(tokens).toHaveLength(2);
+  expect(tokens[1]).not.toBe(tokens[0]);
+});
+
 test("keeps the token as the alternative", async ({ page }) => {
   await signIn(page);
   await openForm(page, "GitHub");

@@ -188,6 +188,21 @@ describe("starting a sign-in", () => {
     expect(b.id).toBe(a.id);
   });
 
+  it("returns it run out too, which Authorize refuses", () => {
+    const a = started({ kind: "linear", clientToken: "t1" });
+    // signInsRunOut runs every sign-in out at once, as 15 minutes would.
+    Object.assign(config, { signInsRunOut: true });
+    expect(started({ kind: "linear", clientToken: "t1" })).toMatchObject({
+      id: a.id,
+      status: "CONNECTOR_SIGN_IN_STATUS_EXPIRED",
+    });
+    expect(refusal(authorize(a.id)).reason).toBe("SIGN_IN_ENDED");
+    // Once: one started after it lasts.
+    const b = started({ kind: "linear", clientToken: "t2" });
+    expect(b.status).toBe("CONNECTOR_SIGN_IN_STATUS_PENDING");
+    ok(authorize(b.id));
+  });
+
   it("allows five live sign-ins a user", () => {
     for (let i = 0; i < 5; i++) started({ kind: "linear" });
     expect(refusal(start({ kind: "linear" }))).toEqual({

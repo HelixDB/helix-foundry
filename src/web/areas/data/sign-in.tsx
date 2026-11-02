@@ -1,4 +1,10 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { KeyRound, PlugZap, TriangleAlert } from "lucide-react";
@@ -30,6 +36,7 @@ import {
   needsSignIn,
   providerName,
   signInFailure,
+  startAndAuthorize,
   tabStorage,
   writeConnect,
   type ReturnPicks,
@@ -53,7 +60,8 @@ export type SignInRequest = {
   config?: ConnectorConfig;
   // Sign this connector in again.
   connectorId?: string;
-  // Makes a retry of the start return the sign-in it started.
+  // Makes a retry of the start return the sign-in it started: the hook's
+  // `clientToken`, for a new connector's form.
   clientToken?: string;
   // Where the callback returns once connected (ConnectEntry.returnPath),
   // and the page's own picks to hand back to it; by default the page's
@@ -80,40 +88,57 @@ export const SignInReturn = createContext<{
  * tab for the callback, then leaves, for an address it may open only. The
  * button stays pending until the page has gone (or comes back from the
  * back/forward cache).
+ *
+ * A new connector's form starts its sign-ins under `clientToken`, one per
+ * form, so a retry after a refusal finds the sign-in it started; `renew()`
+ * makes another once what it starts changes. The page coming back from the
+ * back/forward cache makes another too, since the sign-in it started may
+ * have ended meanwhile (connected, or run out), and so does a start whose
+ * sign-in had ended (startAndAuthorize).
  */
 export function useSignInStart() {
   const { id } = useWorkspace(),
     page = useContext(SignInReturn);
   const [pending, setPending] = useState(false),
-    [error, setError] = useState<Error | null>(null);
+    [error, setError] = useState<Error | null>(null),
+    [clientToken, setClientToken] = useState(() => crypto.randomUUID()),
+    renew = useCallback(() => {
+      const token = crypto.randomUUID();
+      setClientToken(token);
+      return token;
+    }, []);
   useEffect(() => {
     const back = (e: PageTransitionEvent) => {
-      if (e.persisted) setPending(false);
+      if (!e.persisted) return;
+      setPending(false);
+      renew();
     };
     window.addEventListener("pageshow", back);
     return () => window.removeEventListener("pageshow", back);
-  }, []);
+  }, [renew]);
   const go = async (r: SignInRequest) => {
     const workspaceId = r.workspaceId || id;
     setPending(true);
     setError(null);
     try {
-      const signInId =
-        r.signInId ||
-        (
-          await startSignIn(workspaceId, {
-            kind: r.kind,
-            ...(r.name ? { name: r.name } : {}),
-            ...(r.config ? { config: r.config } : {}),
-            ...(r.connectorId ? { connectorId: r.connectorId } : {}),
-            ...(r.clientToken ? { clientToken: r.clientToken } : {}),
-          })
-        ).signIn.id;
-      const { url } = await authorizeSignIn(
-        workspaceId,
+      const start = async (token?: string) =>
+          (
+            await startSignIn(workspaceId, {
+              kind: r.kind,
+              ...(r.name ? { name: r.name } : {}),
+              ...(r.config ? { config: r.config } : {}),
+              ...(r.connectorId ? { connectorId: r.connectorId } : {}),
+              ...(token ? { clientToken: token } : {}),
+            })
+          ).signIn.id,
+        authorize = (signInId: string) =>
+          authorizeSignIn(workspaceId, signInId, callbackUrl());
+      const {
         signInId,
-        callbackUrl(),
-      );
+        authorized: { url },
+      } = r.signInId
+        ? { signInId: r.signInId, authorized: await authorize(r.signInId) }
+        : await startAndAuthorize(r.clientToken, start, authorize, renew);
       if (!isProviderUrl(url, location.href))
         throw new Error(
           `Foundry was given an address for ${providerName(r.kind)} it won’t open. Try again.`,
@@ -142,7 +167,7 @@ export function useSignInStart() {
       setPending(false);
     }
   };
-  return { pending, error, go };
+  return { pending, error, go, clientToken, renew };
 }
 
 /**

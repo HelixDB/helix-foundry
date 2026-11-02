@@ -34,11 +34,10 @@ import { handleWorkos } from "./workos";
 // enrichmentOutcome, documentsPerStream, eventSyncMs, eventCaps,
 // eventSetAllowanceSpent, aiProbeMs, aiProbeOutcome, aiDefault,
 // aiDefaultKind, aiDefaultNamed, aiDetect, ollamaBundled, aiKinds,
-// freshInstall, signIn, accountBroken }.
+// freshInstall, signIn, signInsRunOut, accountBroken }.
 //
-// /mock/connect is a provider's consent page for connecting GitHub or
-// Linear by signing in (./routes/sign-ins.ts), as /mock/checkout is Stripe
-// Checkout.
+// /mock/connect is a provider's consent page for connecting a source by
+// signing in (./routes/sign-ins.ts), as /mock/checkout is Stripe Checkout.
 //
 // POST /__mock/event-sources/{connectorId}/pieces sends pieces to an API
 // source, as an agent does through the Helix MCP: { clientToken?, pieces:

@@ -106,6 +106,8 @@ export const mock = {
     aiKinds?: string[];
     // false: no kind connects by signing in (pipes.enabled off).
     signIn?: boolean;
+    // Every sign-in runs out now, once, as its 15 minutes would.
+    signInsRunOut?: boolean;
     // Breaks these connectors' accounts, as a member leaving does.
     accountBroken?: Record<
       string,
