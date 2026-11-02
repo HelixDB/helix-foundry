@@ -171,7 +171,9 @@ func New(d Deps) (*Task, error) {
 	snapshots := snapshot.NewS3(client, d.Cfg.Foundry.Sync.DataBucket)
 	documents := document.New(client, d.Cfg.Foundry.Sync.DataBucket)
 	ev := d.Cfg.Foundry.Events
-	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{AllowPrivate: d.Cfg.Foundry.Connectors.AllowPrivateHosts},
+	endpoints := connector.DefaultEndpoints()
+	endpoints.GitHubAppInstall = d.Cfg.Foundry.Connectors.GitHubAppInstallURL
+	catalog := connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: d.Cfg.Foundry.Connectors.AllowPrivateHosts},
 		connector.NewS3Options(d.Cfg, d.AWS), connector.EventsOptions{Batches: d.DB, Objects: snapshots,
 			Budget:    events.ReadBudget{Batches: ev.MaxBatchesPerSync, Pieces: ev.MaxPiecesPerSync, Bytes: ev.MaxBytesPerSync},
 			Extracted: ev.MaxExtracted})

@@ -70,6 +70,8 @@ type runtimeDeps struct {
 	Databases  ports.Databases
 	Graph      ports.GraphReader
 	People     ports.People
+	// Accounts is nil where no connector signs in.
+	Accounts ports.ProviderAccounts
 	// LocalAI is nil hosted.
 	LocalAI *detect.Detector
 }
@@ -92,7 +94,9 @@ func New(d Deps) (*Service, error) {
 	var connectorCatalog *connector.Catalog
 	if connectorKeys != nil {
 		// The API only tests and discovers: its events kind reads no batches.
-		connectorCatalog = connector.NewCatalog(connector.DefaultEndpoints(),
+		endpoints := connector.DefaultEndpoints()
+		endpoints.GitHubAppInstall = cfg.Foundry.Connectors.GitHubAppInstallURL
+		connectorCatalog = connector.NewCatalog(endpoints,
 			connector.Guard{AllowPrivate: cfg.Foundry.Connectors.AllowPrivateHosts}, connector.NewS3Options(cfg, d.AWS), connector.EventsOptions{})
 	}
 	catalog, err := foundryplan.NewCatalog(cfg.Billing.Plans, connector.KindNames())
@@ -101,7 +105,8 @@ func New(d Deps) (*Service, error) {
 	}
 	s := &Service{deps: &runtimeDeps{
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
-		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, LocalAI: d.LocalAI,
+		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
+		LocalAI: d.LocalAI,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents

@@ -290,6 +290,32 @@ func (r *routeRecorder) StopFoundryLoadEnrichment(_ context.Context, req *foundr
 	return &foundryv1.FoundryLoadResponse{}, nil
 }
 
+func (r *routeRecorder) ListConnectors(_ context.Context, req *foundryv1.ListConnectorsRequest) (*foundryv1.ListConnectorsResponse, error) {
+	r.workspaceHit("ListConnectors", req.GetWorkspaceId(), fmt.Sprint(req.GetNeedsSignIn()))
+	return &foundryv1.ListConnectorsResponse{}, nil
+}
+
+func (r *routeRecorder) StartConnectorSignIn(_ context.Context, req *foundryv1.StartConnectorSignInRequest) (*foundryv1.ConnectorSignInResponse, error) {
+	r.workspaceHit("StartConnectorSignIn", req.GetWorkspaceId(), req.GetKind()+"/"+req.GetConfig().GetGithub().GetRepos()[0]+"/"+req.GetClientToken())
+	return &foundryv1.ConnectorSignInResponse{}, nil
+}
+
+func (r *routeRecorder) GetConnectorSignIn(_ context.Context, req *foundryv1.GetConnectorSignInRequest) (*foundryv1.ConnectorSignInResponse, error) {
+	r.workspaceHit("GetConnectorSignIn", req.GetWorkspaceId(), req.GetId())
+	return &foundryv1.ConnectorSignInResponse{}, nil
+}
+
+func (r *routeRecorder) AuthorizeConnectorSignIn(_ context.Context, req *foundryv1.AuthorizeConnectorSignInRequest) (
+	*foundryv1.AuthorizeConnectorSignInResponse, error) {
+	r.workspaceHit("AuthorizeConnectorSignIn", req.GetWorkspaceId(), req.GetId()+" "+req.GetReturnTo())
+	return &foundryv1.AuthorizeConnectorSignInResponse{}, nil
+}
+
+func (r *routeRecorder) FinishConnectorSignIn(_ context.Context, req *foundryv1.FinishConnectorSignInRequest) (*foundryv1.ConnectorSignInResponse, error) {
+	r.workspaceHit("FinishConnectorSignIn", req.GetWorkspaceId(), req.GetId()+" "+req.GetConnectCode()+"/"+req.GetError())
+	return &foundryv1.ConnectorSignInResponse{}, nil
+}
+
 func (r *routeRecorder) CreateFoundryEventSourceToken(_ context.Context, req *foundryv1.CreateFoundryEventSourceTokenRequest) (*foundryv1.CreateFoundryEventSourceTokenResponse, error) {
 	r.workspaceHit("CreateFoundryEventSourceToken", req.GetWorkspaceId(), req.GetConnectorId())
 	return &foundryv1.CreateFoundryEventSourceTokenResponse{}, nil
@@ -384,6 +410,14 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodPatch, w + "/document-sets/s-1", `{"description":""}`, "UpdateFoundryDocumentSet ws-1 - s-1 name=false description=true"},
 		{http.MethodDelete, w + "/document-sets/s-1", "", "DeleteFoundryDocumentSet ws-1 - s-1"},
 		{http.MethodGet, w + "/data-layout", "", "GetFoundryDataLayout ws-1 - "},
+		{http.MethodGet, w + "/connectors?needsSignIn=true", "", "ListConnectors ws-1 - true"},
+		{http.MethodPost, w + "/sign-ins", `{"kind":"github","config":{"github":{"repos":["acme/api"]}},"clientToken":"c"}`,
+			"StartConnectorSignIn ws-1 - github/acme/api/c"},
+		{http.MethodGet, w + "/sign-ins/si-1", "", "GetConnectorSignIn ws-1 - si-1"},
+		{http.MethodPost, w + "/sign-ins/si-1:authorize", `{"returnTo":"https://foundry.test/connect/callback"}`,
+			"AuthorizeConnectorSignIn ws-1 - si-1 https://foundry.test/connect/callback"},
+		{http.MethodPost, w + "/sign-ins/si-1:finish", `{"connectCode":"code-1"}`, "FinishConnectorSignIn ws-1 - si-1 code-1/"},
+		{http.MethodPost, w + "/sign-ins/si-1:finish", `{"error":"access_denied"}`, "FinishConnectorSignIn ws-1 - si-1 /access_denied"},
 		{http.MethodPost, w + "/connectors/c-1/tokens", `{}`, "CreateFoundryEventSourceToken ws-1 - c-1"},
 		{http.MethodGet, w + "/connectors/c-1/tokens", "", "ListFoundryEventSourceTokens ws-1 - c-1"},
 		{http.MethodPost, w + "/connectors/c-1/tokens/t-1:revoke", `{}`, "RevokeFoundryEventSourceToken ws-1 - c-1/t-1"},
