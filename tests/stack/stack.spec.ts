@@ -29,13 +29,13 @@ let ontologyPath = "",
   generationPath = "";
 
 // The first workspace opens on its onboarding, Get started, which is all it
-// offers until it has an ontology. Use my own data opens the first
-// ontology's sources step, which connects the database and uploads the
-// document; the ontology is named from them and goes on a new database.
-// Each test opens it afresh.
+// offers until it has an ontology. Use my own data, alone on a local build,
+// continues to the first ontology's sources step, which connects the database
+// and uploads the document; the ontology is named from them and goes on a new
+// database. Each test opens it afresh.
 async function toSources(page: Page) {
   await page.goto("/ontology/new");
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
 }
 
 // The install made the owner's first workspace as it first started, so the

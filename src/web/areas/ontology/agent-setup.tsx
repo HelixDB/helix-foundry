@@ -1,6 +1,6 @@
 import "./ontology.css";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Copy } from "lucide-react";
+import { Copy } from "lucide-react";
 import { LOCAL } from "../../../shared/deployment";
 import { Button, connectorLabel } from "../../kit";
 import { useWorkspace } from "../../ui";
@@ -14,7 +14,7 @@ import { setLabel } from "../documents/model";
 import { promptDocuments, promptEventSource } from "./goal-prompt";
 import { isEventSourceSet } from "./model";
 import { onboardingPrompt, type OnboardingOntology } from "./onboarding-prompt";
-import { Callout, canManage } from "./parts";
+import { canManage } from "./parts";
 
 // Set per stamp in next.config.ts.
 const MCP_URL =
@@ -22,7 +22,7 @@ const MCP_URL =
 // Empty on a stamp without the HTTP endpoint (prod, local mode): no HTTP.
 const EVENTS_URL = process.env.NEXT_PUBLIC_HELIX_EVENTS_URL || "";
 const WHAT =
-  "Copy a prompt for Claude Code, Codex or another agent with the Helix MCP. It takes the setup on from here, and asks you before each change.";
+  "Copy a prompt into Claude Code, Codex or another agent, and it does the setup with you.";
 
 /**
  * "Set up with your agent", for owners and admins: copies the onboarding
@@ -32,8 +32,9 @@ const WHAT =
  * sources, document sets (never an API source's own, which the WFE takes
  * only as the source's extraction pick) and the kinds not connected (never
  * API sources, which the prompt makes its own way), read with the Data
- * pages' queries. A card saying what it does; `compact`, the button alone,
- * for a panel's header.
+ * pages' queries. A sentence saying what it does and the button, for an
+ * `.on-card` to lay out (Get started's); `compact`, the button alone, for a
+ * panel's header.
  */
 export function AgentSetup({
   ontology,
@@ -111,12 +112,11 @@ export function AgentSetup({
   return compact ? (
     button
   ) : (
-    <Callout
-      icon={Bot}
-      tone="muted"
-      title="Set up with your agent"
-      text={WHAT}
-      action={button}
-    />
+    <>
+      <div className="on-card-text">
+        <p>{WHAT}</p>
+      </div>
+      {button}
+    </>
   );
 }
