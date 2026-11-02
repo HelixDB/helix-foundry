@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The hosted site's product analytics (src/web/analytics.ts): nothing is
 // sent or kept without a client id; a sign-in is reported when the tab that
 // started it is signed in; a job is reported when it starts and, once, when
-// a read sees it end. src/web/telemetry.tsx keeps page titles out.
+// a read sees it end. src/web/telemetry.tsx keeps page titles out and
+// records session replays with the paths masked.
 
 const sdk = vi.hoisted(() => ({
   track: vi.fn(),
@@ -379,5 +380,30 @@ describe("withoutTitle", () => {
     expect(withoutTitle(event)).toBe(true);
     expect(event).toEqual({ name: "screen_view", path: "/ask/*" });
     expect(sdk.setGlobalProperties).toHaveBeenCalledWith({ title: undefined });
+  });
+});
+
+describe("Telemetry", () => {
+  it("mounts no tracker without a client id", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "");
+    vi.resetModules();
+    const { Telemetry } = await import("@/web/telemetry");
+    expect(Telemetry()).toBeNull();
+  });
+
+  it("records replays with the tracker's path masks", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-test");
+    vi.resetModules();
+    const { MASK_PATTERNS, Telemetry, withoutTitle } = await import(
+      "@/web/telemetry"
+    );
+    // replay.js masks the URLs it records with the tracker's maskPatterns.
+    expect(Telemetry()?.props).toEqual({
+      clientId: "client-test",
+      maskPatterns: MASK_PATTERNS,
+      filter: withoutTitle,
+      trackInteractions: false,
+      replay: true,
+    });
   });
 });
