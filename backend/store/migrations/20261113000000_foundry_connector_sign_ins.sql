@@ -4,7 +4,8 @@
 -- time, and seals an empty secret, as a secretless kind does. account_id is
 -- the broker's id for the account; account_user_id the member it acts as,
 -- whom the broker says made it; account_label who the provider says signed
--- in. account_generation counts the connector's sign-ins: a sync breaks the
+-- in, for people, and account_identity its stable id there, which tells
+-- whether signing in again changed who it reads as (labels repeat). account_generation counts the connector's sign-ins: a sync breaks the
 -- account only while the generation it asked with is current.
 -- account_broken is why it needs signing in again (member_left,
 -- access_revoked, expired or account_missing, checked in code), NULL while
@@ -17,6 +18,7 @@ ALTER TABLE connectors
   ADD COLUMN account_id           VARCHAR(64)  NULL,
   ADD COLUMN account_user_id      CHAR(26)     NULL,
   ADD COLUMN account_label        VARCHAR(255) NULL,
+  ADD COLUMN account_identity     VARCHAR(255) NULL,
   ADD COLUMN account_generation   INT          NOT NULL DEFAULT 0,
   ADD COLUMN account_broken       VARCHAR(32)  NULL,
   ADD COLUMN account_broken_at    DATETIME(6)  NULL,
@@ -91,6 +93,7 @@ ALTER TABLE connectors
   DROP COLUMN account_broken_at,
   DROP COLUMN account_broken,
   DROP COLUMN account_generation,
+  DROP COLUMN account_identity,
   DROP COLUMN account_label,
   DROP COLUMN account_user_id,
   DROP COLUMN account_id;

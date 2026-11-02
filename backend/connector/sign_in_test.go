@@ -97,12 +97,12 @@ func TestSignedInLinear(t *testing.T) {
 	t.Run("names the user and their workspace", func(t *testing.T) {
 		url := routeServer(t, map[string]func(*http.Request) (int, string){
 			"/graphql": func(*http.Request) (int, string) {
-				return http.StatusOK, `{"data":{"viewer":{"name":"Ada Lovelace","organization":{"name":"Acme"}}}}`
+				return http.StatusOK, `{"data":{"viewer":{"id":"u-1","name":"Ada Lovelace","organization":{"id":"o-1","name":"Acme"}}}}`
 			},
 		})
-		got, err := kindOf(t, catalogFor(url), "linear").(Identifier).Identity(context.Background(), Source{Secret: "tok", SignIn: true})
-		if err != nil || got != "Ada Lovelace in Acme" {
-			t.Fatalf("Identity = %q, %v", got, err)
+		got, id, err := kindOf(t, catalogFor(url), "linear").(Identifier).Identity(context.Background(), Source{Secret: "tok", SignIn: true})
+		if err != nil || got != "Ada Lovelace in Acme" || id != "o-1/u-1" {
+			t.Fatalf("Identity = %q, %q, %v", got, id, err)
 		}
 	})
 }
@@ -113,7 +113,7 @@ func TestSignedInLinear(t *testing.T) {
 func installationsServer(t *testing.T, requests *[]string) string {
 	t.Helper()
 	routes := map[string]func(*http.Request) (int, string){
-		"/user": func(*http.Request) (int, string) { return http.StatusOK, `{"login":"ada-l"}` },
+		"/user": func(*http.Request) (int, string) { return http.StatusOK, `{"login":"ada-l","id":583231}` },
 		"/user/installations": func(*http.Request) (int, string) {
 			return http.StatusOK, `{"total_count":2,"installations":[{"id":7,"account":{"login":"acme"}},
 				{"id":8,"account":{"login":"umbrella"},"suspended_at":"2026-10-01T00:00:00Z"}]}`
@@ -220,9 +220,9 @@ func TestSignedInGitHub(t *testing.T) {
 	})
 	t.Run("names the user's login", func(t *testing.T) {
 		var requests []string
-		got, err := kindOf(t, catalogFor(installationsServer(t, &requests)), "github").(Identifier).Identity(context.Background(), signedIn)
-		if err != nil || got != "ada-l" {
-			t.Fatalf("Identity = %q, %v", got, err)
+		got, id, err := kindOf(t, catalogFor(installationsServer(t, &requests)), "github").(Identifier).Identity(context.Background(), signedIn)
+		if err != nil || got != "ada-l" || id != "583231" {
+			t.Fatalf("Identity = %q, %q, %v", got, id, err)
 		}
 	})
 }

@@ -138,7 +138,7 @@ type ConnectorSignInConnect struct {
 	// signs ConnectorID in again.
 	New *Connector
 	// ConnectorID is the connector signed in again, and Account the account
-	// it reads with now (ID, UserID and Label).
+	// it reads with now (ID, UserID, Label and Identity).
 	ConnectorID string
 	Account     ConnectorAccount
 	// IdentityChanged has the connector's next sync read in full: what it

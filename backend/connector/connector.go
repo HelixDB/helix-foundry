@@ -66,13 +66,16 @@ type Targeted interface {
 	Target(settings json.RawMessage) (string, error)
 }
 
-// Identifier is a kind that says who its credential reads as, for a person
-// to recognise the account a signed-in connector reads with.
+// Identifier is a kind that says who its credential reads as: for a person
+// to recognise the account a signed-in connector reads with, and to tell
+// whether signing in again changed it.
 type Identifier interface {
-	// Identity is the provider's name for the credential's identity: a
-	// GitHub login; a Linear user and their workspace. Its errors are the
-	// kind's, an *AuthError among them.
-	Identity(ctx context.Context, src Source) (string, error)
+	// Identity is the provider's name for the credential's identity, its
+	// label (a GitHub login; a Linear user and their workspace), and a
+	// stable id that tells one identity from another where labels repeat
+	// (a GitHub user's number). An empty id is an identity unknown. Its
+	// errors are the kind's, an *AuthError among them.
+	Identity(ctx context.Context, src Source) (label, id string, err error)
 }
 
 // SecretContext binds a sealed credential to its connector row, so a

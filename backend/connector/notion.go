@@ -163,28 +163,32 @@ func (k *notionKind) Streams(Source) []Stream { return []Stream{notionPagesStrea
 func (k *notionKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }
 
 // Identity is the name of the workspace the integration's bot belongs to,
-// from /v1/users/me: a public integration signed in to one workspace.
-func (k *notionKind) Identity(ctx context.Context, src Source) (string, error) {
+// from /v1/users/me: a public integration signed in to one workspace. Its
+// id is the workspace's, else the bot's: never a name, which another
+// workspace may share.
+func (k *notionKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	status, raw, err := k.client(src.Secret).do(ctx, "/v1/users/me", nil, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := notionStatus(status, "/v1/users/me"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	var me struct {
+		ID   string `json:"id"`
 		Name string `json:"name"`
 		Bot  struct {
+			WorkspaceID   string `json:"workspace_id"`
 			WorkspaceName string `json:"workspace_name"`
 		} `json:"bot"`
 	}
 	if err := json.Unmarshal(raw, &me); err != nil {
-		return "", fmt.Errorf("decode notion /v1/users/me: %w", err)
+		return "", "", fmt.Errorf("decode notion /v1/users/me: %w", err)
 	}
 	if name := cmp.Or(me.Bot.WorkspaceName, me.Name); name != "" {
-		return name, nil
+		return name, cmp.Or(me.Bot.WorkspaceID, me.ID), nil
 	}
-	return "", errors.New("notion /v1/users/me names no workspace")
+	return "", "", errors.New("notion /v1/users/me names no workspace")
 }
 
 // Discover proves the secret on the integration's own user, lists the

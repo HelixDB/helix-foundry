@@ -196,22 +196,27 @@ func (k *githubKind) Sync(ctx context.Context, src Source, table Table, w RowWri
 	return table, nil
 }
 
-// Identity is the login of the user the token reads as.
-func (k *githubKind) Identity(ctx context.Context, src Source) (string, error) {
+// Identity is the login of the user the token reads as, and their number.
+func (k *githubKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	status, body, err := k.get(ctx, src.Secret, "/user", nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := githubStatus(status, "/user"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	var user struct {
 		Login string `json:"login"`
+		ID    int64  `json:"id"`
 	}
 	if err := json.Unmarshal(body, &user); err != nil || user.Login == "" {
-		return "", fmt.Errorf("decode github /user: no login (%v)", err)
+		return "", "", fmt.Errorf("decode github /user: no login (%v)", err)
 	}
-	return user.Login, nil
+	id := ""
+	if user.ID != 0 {
+		id = strconv.FormatInt(user.ID, 10)
+	}
+	return user.Login, id, nil
 }
 
 // resolve reads the prepared settings and the repositories they name.

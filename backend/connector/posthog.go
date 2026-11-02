@@ -255,39 +255,46 @@ func (k *posthogKind) onlyProject(ctx context.Context, host string, header http.
 }
 
 // Identity is the email of the user the credential reads as, and their
-// organization's name, from /api/users/@me.
-func (k *posthogKind) Identity(ctx context.Context, src Source) (string, error) {
+// organization's name, from /api/users/@me; its id is the organization's
+// and the user's.
+func (k *posthogKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	var s PostHogSettings
 	if err := json.Unmarshal(orEmpty(src.Settings), &s); err != nil {
-		return "", invalid("PostHog settings are malformed")
+		return "", "", invalid("PostHog settings are malformed")
 	}
 	status, body, err := get(ctx, k.http, k.host(s)+"/api/users/@me/", http.Header{"Authorization": {"Bearer " + strings.TrimSpace(src.Secret)}})
 	switch {
 	case errors.Is(err, ErrPrivateAddress):
-		return "", invalid("that PostHog host is not on the public internet")
+		return "", "", invalid("that PostHog host is not on the public internet")
 	case err != nil:
-		return "", refused(err, "could not reach PostHog; check the region or host")
+		return "", "", refused(err, "could not reach PostHog; check the region or host")
 	case status == http.StatusUnauthorized:
-		return "", rejectedCredential("PostHog", nil, "PostHog rejected this key; check it and the region, then test again")
+		return "", "", rejectedCredential("PostHog", nil, "PostHog rejected this key; check it and the region, then test again")
 	case status >= 300:
-		return "", refused(nil, "PostHog returned HTTP %d for /api/users/@me; try again", status)
+		return "", "", refused(nil, "PostHog returned HTTP %d for /api/users/@me; try again", status)
 	}
 	var me struct {
+		UUID         string `json:"uuid"`
 		Email        string `json:"email"`
 		Organization struct {
+			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"organization"`
 	}
 	if err := json.Unmarshal(body, &me); err != nil {
-		return "", fmt.Errorf("decode posthog /api/users/@me: %w", err)
+		return "", "", fmt.Errorf("decode posthog /api/users/@me: %w", err)
+	}
+	id := ""
+	if me.UUID != "" && me.Organization.ID != "" {
+		id = me.Organization.ID + "/" + me.UUID
 	}
 	switch {
 	case me.Email == "":
-		return "", errors.New("posthog /api/users/@me names no user")
+		return "", "", errors.New("posthog /api/users/@me names no user")
 	case me.Organization.Name == "":
-		return me.Email, nil
+		return me.Email, id, nil
 	}
-	return me.Email + " in " + me.Organization.Name, nil
+	return me.Email + " in " + me.Organization.Name, id, nil
 }
 
 func (k *posthogKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }

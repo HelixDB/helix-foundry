@@ -199,11 +199,12 @@ func (k *stripeKind) mode(ctx context.Context, header http.Header) (string, erro
 }
 
 // Identity is the account's name as its dashboard shows it, else its
-// business name, its email or its id, from /v1/account.
-func (k *stripeKind) Identity(ctx context.Context, src Source) (string, error) {
+// business name, its email or its id, from /v1/account; its id is the
+// account's acct_ id.
+func (k *stripeKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	status, body, err := get(ctx, k.http, k.base+"/v1/account", stripeHeader(src))
 	if err := stripeRefusal(status, err, "/v1/account"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	var account struct {
 		ID              string `json:"id"`
@@ -218,12 +219,12 @@ func (k *stripeKind) Identity(ctx context.Context, src Source) (string, error) {
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(body, &account); err != nil {
-		return "", fmt.Errorf("decode stripe /v1/account: %w", err)
+		return "", "", fmt.Errorf("decode stripe /v1/account: %w", err)
 	}
 	if name := cmp.Or(account.Settings.Dashboard.DisplayName, account.BusinessProfile.Name, account.Email, account.ID); name != "" {
-		return name, nil
+		return name, account.ID, nil
 	}
-	return "", errors.New("stripe /v1/account names no account")
+	return "", "", errors.New("stripe /v1/account names no account")
 }
 
 func stripeHeader(src Source) http.Header {

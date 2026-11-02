@@ -21,7 +21,7 @@ func signedInConnector(t *testing.T, db store.Store, workspaceID, id, account, u
 	require.NoError(t, db.CreateConnector(context.Background(), &model.Connector{
 		ID: id, WorkspaceID: workspaceID, Kind: "github", Name: "GitHub", Config: json.RawMessage(`{"review_days":90}`),
 		SecretCiphertext: []byte("sealed-empty"), SecretKeyID: "k1", NextSyncAt: &now,
-		Account: &model.ConnectorAccount{ID: account, UserID: user, Label: "ada-l"},
+		Account: &model.ConnectorAccount{ID: account, UserID: user, Label: "ada-l", Identity: "583231"},
 	}))
 }
 
@@ -53,6 +53,7 @@ func TestConnectorAccounts(t *testing.T) {
 		assert.Equal(t, "acct-1", c.Account.ID)
 		assert.Equal(t, ada, c.Account.UserID)
 		assert.Equal(t, "ada-l", c.Account.Label)
+		assert.Equal(t, "583231", c.Account.Identity)
 		assert.Equal(t, 1, c.Account.Generation)
 		assert.Nil(t, c.Account.Broken)
 		assert.NotNil(t, c.Account.CheckedAt)
@@ -571,10 +572,11 @@ func TestConnectorSignIns(t *testing.T) {
 		si.ConnectorID = &connectorID
 		finishing(t, db, si)
 		require.NoError(t, db.ConnectConnectorSignIn(ctx, model.ConnectorSignInConnect{WorkspaceID: ws, SignInID: si.ID,
-			ConnectorID: connectorID, Account: model.ConnectorAccount{ID: "acct-2", UserID: grace, Label: "grace-h"}, IdentityChanged: true}))
+			ConnectorID: connectorID, Account: model.ConnectorAccount{ID: "acct-2", UserID: grace, Label: "grace-h", Identity: "77"},
+			IdentityChanged: true}))
 		c, err := db.GetConnector(ctx, ws, connectorID)
 		require.NoError(t, err)
-		assert.Equal(t, model.ConnectorAccount{ID: "acct-2", UserID: grace, Label: "grace-h", Generation: 2,
+		assert.Equal(t, model.ConnectorAccount{ID: "acct-2", UserID: grace, Label: "grace-h", Identity: "77", Generation: 2,
 			CheckedAt: c.Account.CheckedAt, ConnectedAt: c.Account.ConnectedAt}, *c.Account)
 		assert.NotNil(t, c.NextSyncAt, "it syncs once, now")
 		assert.Nil(t, c.SchedulePaused)

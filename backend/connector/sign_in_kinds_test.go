@@ -70,10 +70,11 @@ func TestSignedInKindsIdentity(t *testing.T) {
 			return http.StatusOK, `{"ok":true,"team":"Acme","team_id":"T1","user":"foundry","user_id":"U1","bot_id":"B1"}`
 		},
 		"/v1/users/me": func(*http.Request) (int, string) {
-			return http.StatusOK, `{"object":"user","type":"bot","name":"Helix Foundry","bot":{"owner":{"type":"workspace","workspace":true},"workspace_name":"Acme HQ"}}`
+			return http.StatusOK, `{"object":"user","id":"bot-1","type":"bot","name":"Helix Foundry",` +
+				`"bot":{"owner":{"type":"workspace","workspace":true},"workspace_name":"Acme HQ","workspace_id":"ws-9"}}`
 		},
 		"/api/users/@me/": func(*http.Request) (int, string) {
-			return http.StatusOK, `{"email":"ada@acme.test","organization":{"name":"Acme"}}`
+			return http.StatusOK, `{"uuid":"u-7","email":"ada@acme.test","organization":{"id":"o-7","name":"Acme"}}`
 		},
 		"/v2/me": func(*http.Request) (int, string) {
 			return http.StatusOK, `{"status":"success","data":{"id":7,"username":"ada","email":"ada@acme.test"}}`
@@ -85,25 +86,26 @@ func TestSignedInKindsIdentity(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer vended-google" {
 				return http.StatusUnauthorized, `{}`
 			}
-			return http.StatusOK, `{"user":{"emailAddress":"ada@acme.test","displayName":"Ada"}}`
+			return http.StatusOK, `{"user":{"emailAddress":"ada@acme.test","displayName":"Ada","permissionId":"0123"}}`
 		},
 	}
 	url := routeServer(t, routes)
 	catalog := NewCatalog(Endpoints{Slack: url + "/api", Notion: url, PostHogUS: url, PostHogEU: url, Calcom: url, Stripe: url, Google: url,
 		GoogleToken: url + "/token"}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{})
 	for _, tc := range []struct {
-		kind, settings, secret, want string
+		kind, settings, secret, want, id string
 	}{
-		{"slack", `{"history_days":90}`, "xoxb-1", "foundry in Acme"},
-		{"notion", `{}`, "vended-notion", "Acme HQ"},
-		{"posthog", `{"region":"us","event_days":30}`, "vended-posthog", "ada@acme.test in Acme"},
-		{"calcom", `{}`, "vended-calcom", "ada"},
-		{"stripe", `{}`, "vended-stripe", "Acme"},
-		{"google", `{"event_days":30}`, "vended-google", "ada@acme.test"},
+		{"slack", `{"history_days":90}`, "xoxb-1", "foundry in Acme", "T1/B1"},
+		{"notion", `{}`, "vended-notion", "Acme HQ", "ws-9"},
+		{"posthog", `{"region":"us","event_days":30}`, "vended-posthog", "ada@acme.test in Acme", "o-7/u-7"},
+		{"calcom", `{}`, "vended-calcom", "ada", "7"},
+		{"stripe", `{}`, "vended-stripe", "Acme", "acct_1"},
+		{"google", `{"event_days":30}`, "vended-google", "ada@acme.test", "0123"},
 	} {
-		got, err := kindOf(t, catalog, tc.kind).(Identifier).Identity(ctx, Source{Secret: tc.secret, Settings: json.RawMessage(tc.settings), SignIn: true})
-		if err != nil || got != tc.want {
-			t.Errorf("%s Identity = %q, %v; want %q", tc.kind, got, err, tc.want)
+		got, id, err := kindOf(t, catalog, tc.kind).(Identifier).Identity(ctx, Source{Secret: tc.secret, Settings: json.RawMessage(tc.settings),
+			SignIn: true})
+		if err != nil || got != tc.want || id != tc.id {
+			t.Errorf("%s Identity = %q, %q, %v; want %q, %q", tc.kind, got, id, err, tc.want, tc.id)
 		}
 	}
 }
@@ -119,7 +121,7 @@ func TestSignedInSlackBot(t *testing.T) {
 	slack := kindOf(t, NewCatalog(Endpoints{Slack: url + "/api"}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{}), "slack")
 	src := Source{Secret: "xoxb-looks-like-a-bot", Settings: json.RawMessage(`{"history_days":90}`), SignIn: true}
 	var invalidErr *InvalidError
-	if _, err := slack.(Identifier).Identity(context.Background(), src); !errors.As(err, &invalidErr) {
+	if _, _, err := slack.(Identifier).Identity(context.Background(), src); !errors.As(err, &invalidErr) {
 		t.Fatalf("Identity = %v, want the token refused as no bot's", err)
 	}
 	if _, err := slack.Discover(context.Background(), src); !errors.As(err, &invalidErr) {
@@ -145,7 +147,7 @@ func TestSignedInKindsRejectToken(t *testing.T) {
 		GoogleToken: url + "/token"}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{})
 	for kind, settings := range map[string]string{"slack": `{}`, "notion": `{}`, "posthog": `{"region":"us"}`, "calcom": `{}`, "stripe": `{}`,
 		"google": `{"event_days":30}`} {
-		_, err := kindOf(t, catalog, kind).(Identifier).Identity(ctx, Source{Secret: "rejected", Settings: json.RawMessage(settings), SignIn: true})
+		_, _, err := kindOf(t, catalog, kind).(Identifier).Identity(ctx, Source{Secret: "rejected", Settings: json.RawMessage(settings), SignIn: true})
 		var authErr *AuthError
 		var refusedErr *RefusedError
 		if !errors.As(err, &authErr) || !errors.As(err, &refusedErr) {
@@ -222,7 +224,7 @@ func TestSignedInGoogleEmptyToken(t *testing.T) {
 		if !errors.As(err, &authErr) {
 			t.Fatalf("Discover(%q) = %v, want an AuthError", secret, err)
 		}
-		if _, err := google.(Identifier).Identity(context.Background(), src); !errors.As(err, &authErr) {
+		if _, _, err := google.(Identifier).Identity(context.Background(), src); !errors.As(err, &authErr) {
 			t.Fatalf("Identity(%q) = %v, want an AuthError", secret, err)
 		}
 	}

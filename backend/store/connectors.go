@@ -23,24 +23,26 @@ func utcPtr(t *time.Time) any {
 const connectorColumns = `id, workspace_id, kind, name, config, secret_ciphertext, secret_key_id,
        secret_hint, created_by_user_id, created_at, updated_at, sync_every_seconds, next_sync_at, schedule_paused, change_cursor,
        account_id, account_user_id, account_label, account_generation, account_broken, account_broken_at, account_checked_at,
-       account_connected_at`
+       account_connected_at, account_identity`
 
 // CreateConnector stores a new connector. One with an Account is a signed-in
 // connector's first sign-in: generation 1, connected and vended for now.
 func (s *mysqlDB) CreateConnector(ctx context.Context, c *model.Connector) error {
-	var accountID, accountUser, accountLabel any
+	var accountID, accountUser, accountLabel, accountIdentity any
 	generation, connected := 0, "NULL"
 	if a := c.Account; a != nil {
-		accountID, accountUser, accountLabel, generation, connected = a.ID, a.UserID, a.Label, 1, "NOW(6)"
+		accountID, accountUser, accountLabel, accountIdentity, generation, connected = a.ID, a.UserID, a.Label, nullString(a.Identity), 1,
+			"NOW(6)"
 	}
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO connectors
   (id, workspace_id, kind, name, config, secret_ciphertext, secret_key_id, secret_hint, created_by_user_id,
-   sync_every_seconds, next_sync_at, account_id, account_user_id, account_label, account_generation, account_checked_at,
-   account_connected_at)
-VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+connected+`, `+connected+`)`,
+   sync_every_seconds, next_sync_at, account_id, account_user_id, account_label, account_identity, account_generation,
+   account_checked_at, account_connected_at)
+VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+connected+`, `+connected+`)`,
 		c.ID, c.WorkspaceID, c.Kind, c.Name, string(c.Config), c.SecretCiphertext, c.SecretKeyID,
-		c.SecretHint, c.CreatedByUserID, c.SyncEverySeconds, utcPtr(c.NextSyncAt), accountID, accountUser, accountLabel, generation,
+		c.SecretHint, c.CreatedByUserID, c.SyncEverySeconds, utcPtr(c.NextSyncAt), accountID, accountUser, accountLabel, accountIdentity,
+		generation,
 	)
 	return err
 }
@@ -419,13 +421,13 @@ func scanConnector(scanner rowScanner) (*model.Connector, error) {
 	var createdBy, paused, cursor sql.NullString
 	var every sql.NullInt64
 	var next sql.NullTime
-	var accountID, accountUser, accountLabel, broken sql.NullString
+	var accountID, accountUser, accountLabel, accountIdentity, broken sql.NullString
 	var generation int
 	var brokenAt, checkedAt, connectedAt sql.NullTime
 	if err := scanner.Scan(
 		&c.ID, &c.WorkspaceID, &c.Kind, &c.Name, &config, &c.SecretCiphertext, &c.SecretKeyID,
 		&c.SecretHint, &createdBy, &c.CreatedAt, &c.UpdatedAt, &every, &next, &paused, &cursor,
-		&accountID, &accountUser, &accountLabel, &generation, &broken, &brokenAt, &checkedAt, &connectedAt,
+		&accountID, &accountUser, &accountLabel, &generation, &broken, &brokenAt, &checkedAt, &connectedAt, &accountIdentity,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
@@ -451,6 +453,7 @@ func scanConnector(scanner rowScanner) (*model.Connector, error) {
 	}
 	if accountID.Valid {
 		c.Account = &model.ConnectorAccount{ID: accountID.String, UserID: accountUser.String, Label: accountLabel.String,
+			Identity:   accountIdentity.String,
 			Generation: generation, Broken: stringPtr(broken), BrokenAt: timePtr(brokenAt), CheckedAt: timePtr(checkedAt),
 			ConnectedAt: timePtr(connectedAt)}
 	}

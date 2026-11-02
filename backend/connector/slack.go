@@ -350,28 +350,33 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 	return d, nil
 }
 
-// Identity is the bot user's name and its workspace's, from auth.test.
-func (k *slackKind) Identity(ctx context.Context, src Source) (string, error) {
+// Identity is the bot user's name and its workspace's, from auth.test; its
+// id is the workspace's and the bot's (else the user's).
+func (k *slackKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	fields, _, err := k.client(src.Secret).call(ctx, "auth.test", nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	var user, team, botID string
-	_ = json.Unmarshal(fields["user"], &user) // missing ones name less
-	_ = json.Unmarshal(fields["team"], &team)
-	_ = json.Unmarshal(fields["bot_id"], &botID)
+	var user, team, teamID, userID, botID string
+	for field, into := range map[string]*string{"user": &user, "team": &team, "team_id": &teamID, "user_id": &userID, "bot_id": &botID} {
+		_ = json.Unmarshal(fields[field], into) // missing ones name less
+	}
 	if src.SignIn && botID == "" {
-		return "", errNotSlackBot
+		return "", "", errNotSlackBot
+	}
+	id := ""
+	if who := cmp.Or(botID, userID); teamID != "" && who != "" {
+		id = teamID + "/" + who
 	}
 	switch {
 	case user == "" && team == "":
-		return "", errors.New("slack auth.test names no user or team")
+		return "", "", errors.New("slack auth.test names no user or team")
 	case team == "":
-		return user, nil
+		return user, id, nil
 	case user == "":
-		return team, nil
+		return team, id, nil
 	}
-	return user + " in " + team, nil
+	return user + " in " + team, id, nil
 }
 
 func (k *slackKind) Hint(secret string) string {

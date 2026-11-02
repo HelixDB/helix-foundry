@@ -297,10 +297,10 @@ WHERE id=? AND workspace_id=? AND deleted_at IS NULL FOR UPDATE`, c.ConnectorID,
 	}
 	a := c.Account
 	if _, err := s.db.ExecContext(ctx, `UPDATE connectors
-SET account_id=?, account_user_id=?, account_label=?, account_generation=account_generation + 1, account_broken=NULL,
-  account_broken_at=NULL, account_checked_at=NOW(6), account_connected_at=NOW(6), next_sync_at=NOW(6), schedule_paused=NULL,
-  change_cursor=IF(?, NULL, change_cursor), updated_at=NOW(6)
-WHERE id=?`, a.ID, a.UserID, a.Label, c.IdentityChanged, c.ConnectorID); err != nil {
+SET account_id=?, account_user_id=?, account_label=?, account_identity=?, account_generation=account_generation + 1,
+  account_broken=NULL, account_broken_at=NULL, account_checked_at=NOW(6), account_connected_at=NOW(6), next_sync_at=NOW(6),
+  schedule_paused=NULL, change_cursor=IF(?, NULL, change_cursor), updated_at=NOW(6)
+WHERE id=?`, a.ID, a.UserID, a.Label, nullString(a.Identity), c.IdentityChanged, c.ConnectorID); err != nil {
 		return fmt.Errorf("sign connector %s in again: %w", c.ConnectorID, err)
 	}
 	if oldAccount.Valid && oldAccount.String != a.ID {

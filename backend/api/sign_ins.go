@@ -310,9 +310,9 @@ func (s *Service) FinishConnectorSignIn(ctx context.Context, req *foundryv1.Fini
 //     and the starter's, and the sign-in records it at once;
 //  2. the broker vends its token;
 //  3. Prepare checks the settings with it;
-//  4. the provider says who signed in (connector.Identifier), the account's
-//     label; signing in again as another identity has the next sync read
-//     in full;
+//  4. the provider says who signed in (connector.Identifier): the account's
+//     label, for people, and its stable id; signing in again as another
+//     id, or where either id is unknown, has the next sync read in full;
 //  5. Discover's failure is kept, in Foundry's words, as the sign-in's
 //     discovery problem, and doesn't stop it;
 //  6. one transaction creates the connector, due to sync now, or signs the
@@ -399,9 +399,9 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 	if src.Settings, err = kind.Prepare(src); err != nil {
 		return fail(foundrymodel.SignInSettingsInvalid, err)
 	}
-	var label string
+	var label, identity string
 	if identifier, ok := kind.(connector.Identifier); ok {
-		identity, err := identifier.Identity(ctx, src)
+		name, id, err := identifier.Identity(ctx, src)
 		var rejected *connector.AuthError
 		var refusedSettings *connector.InvalidError
 		switch {
@@ -412,10 +412,13 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 		case err != nil:
 			return fail(foundrymodel.SignInProviderError, err)
 		}
-		label = accountLabel(identity)
+		label, identity = accountLabel(name), clipChars(id, maxAccountLabelChars)
 	}
-	identityChanged := current != nil && current.Account != nil && current.Account.Label != "" && label != "" &&
-		!strings.EqualFold(label, current.Account.Label)
+	// Labels repeat (two Slack teams of one name), so the id decides. An id
+	// unknown on either side counts as a change: a full read costs one
+	// sync, and a wrong guess would keep rows the new identity can't see.
+	identityChanged := current != nil && current.Account != nil &&
+		(current.Account.Identity == "" || identity == "" || current.Account.Identity != identity)
 	var problem string
 	discovery, err := kind.Discover(ctx, src)
 	var rejected *connector.AuthError
@@ -430,7 +433,7 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 	}
 	connect := foundrymodel.ConnectorSignInConnect{WorkspaceID: ws, SignInID: si.ID, IdentityChanged: identityChanged,
 		DiscoveryProblem: problem}
-	signedIn := foundrymodel.ConnectorAccount{ID: account.ID, UserID: account.UserID, Label: label}
+	signedIn := foundrymodel.ConnectorAccount{ID: account.ID, UserID: account.UserID, Label: label, Identity: identity}
 	if current != nil {
 		connect.ConnectorID, connect.Account = current.ID, signedIn
 	} else {

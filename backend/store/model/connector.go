@@ -44,8 +44,12 @@ type ConnectorAccount struct {
 	// UserID is the member it acts as: the one the broker says made it.
 	UserID string
 	// Label is who the provider says signed in: a GitHub login; a Linear
-	// user and workspace.
+	// user and workspace. For people only: labels repeat.
 	Label string
+	// Identity is who signed in as the provider knows them, stably (a
+	// GitHub user's number): it tells whether signing in again changed who
+	// the connector reads as. Empty is unknown.
+	Identity string
 	// Generation counts the connector's sign-ins. A sync breaks the account
 	// only while it holds the generation it asked with, so a late failure
 	// never breaks one signed in again since.

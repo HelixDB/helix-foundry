@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -231,7 +232,7 @@ func (s *signInStore) ConnectConnectorSignIn(ctx context.Context, c foundrymodel
 		old := existing.Account.ID
 		now := time.Now()
 		existing.Account = &foundrymodel.ConnectorAccount{ID: c.Account.ID, UserID: c.Account.UserID, Label: c.Account.Label,
-			Generation: existing.Account.Generation + 1, ConnectedAt: &now}
+			Identity: c.Account.Identity, Generation: existing.Account.Generation + 1, ConnectedAt: &now}
 		existing.NextSyncAt = &now
 		if old != c.Account.ID {
 			s.purge(old)
@@ -288,6 +289,10 @@ type providers struct {
 	blank int
 	// slackBot is whether Slack's auth.test says a token is a bot's.
 	slackBot bool
+	// id is who's stable id at the provider, "user-" and their first name
+	// by default; noID leaves it out, as a provider that gives none.
+	id   string
+	noID bool
 }
 
 func newProviders(t *testing.T) (*providers, string) {
@@ -327,17 +332,20 @@ func newProviders(t *testing.T) (*providers, string) {
 			return
 		}
 		who := p.who
+		id := cmp.Or(p.id, "user-"+strings.ToLower(strings.Fields(who)[0]))
 		switch path := r.URL.Path; {
 		case path == "/graphql" && p.discoverError != "":
 			if body, _ := io.ReadAll(r.Body); !strings.Contains(string(body), "organization") {
 				fmt.Fprintf(w, `{"errors":[{"message":%q}]}`, p.discoverError)
 				return
 			}
-			fmt.Fprintf(w, `{"data":{"viewer":{"id":"u1","name":%q,"organization":{"name":"Acme"}}}}`, who)
+			fmt.Fprintf(w, `{"data":{"viewer":{"id":%q,"name":%q,"organization":{"id":"org-acme","name":"Acme"}}}}`, id, who)
+		case path == "/graphql" && p.noID:
+			fmt.Fprintf(w, `{"data":{"viewer":{"name":%q,"organization":{"name":"Acme"}}}}`, who)
 		case path == "/graphql":
-			fmt.Fprintf(w, `{"data":{"viewer":{"id":"u1","name":%q,"organization":{"name":"Acme"}}}}`, who)
+			fmt.Fprintf(w, `{"data":{"viewer":{"id":%q,"name":%q,"organization":{"id":"org-acme","name":"Acme"}}}}`, id, who)
 		case path == "/user":
-			fmt.Fprintf(w, `{"login":%q}`, strings.ToLower(strings.Fields(who)[0]))
+			fmt.Fprintf(w, `{"login":%q,"id":%d}`, strings.ToLower(strings.Fields(who)[0]), len(id))
 		case strings.HasPrefix(path, "/repos/"):
 			name := strings.ToLower(strings.Join(strings.Split(strings.TrimPrefix(path, "/repos/"), "/")[:2], "/"))
 			switch i := slices.Index(p.repos, name); {
@@ -823,6 +831,36 @@ func TestConnectorSignIns(t *testing.T) {
 		}
 		if account := f.store.rows[c.ID].Account; account.Broken != nil || !f.broker.Has(account.ID) {
 			t.Fatalf("account = %+v: a healthy connector froze", account)
+		}
+	})
+
+	// Who signed in is told by the provider's stable id, never by the label
+	// people read, which repeats; an id unknown on either side is a change,
+	// and reads in full.
+	t.Run("tells a change of identity by its id", func(t *testing.T) {
+		for _, tc := range []struct {
+			name            string
+			who, id         string
+			noID            bool
+			identityChanged bool
+		}{
+			{"same id, new name", "Ada King", "user-ada", false, false},
+			{"same name, another id", "Ada Lovelace", "user-ada-2", false, true},
+			{"no id", "Ada Lovelace", "", true, true},
+		} {
+			f := newSignInFixture(t)
+			first := f.connect(t, "user-1", linearSignIn())
+			c := f.store.rows[first.GetConnectorId()]
+			if c.Account.Identity != "org-acme/user-ada" {
+				t.Fatalf("stored identity = %q", c.Account.Identity)
+			}
+			f.providers.who, f.providers.id, f.providers.noID = tc.who, tc.id, tc.noID
+			si := f.start(t, as("user-1"), &foundryv1.StartConnectorSignInRequest{Kind: "linear", ConnectorId: c.ID})
+			f.authorize(t, as("user-1"), si.GetId())
+			done := f.finish(t, as("user-1"), si.GetId(), f.broker.Code(1), "")
+			if done.GetIdentityChanged() != tc.identityChanged {
+				t.Errorf("%s: identity changed = %v, want %v", tc.name, done.GetIdentityChanged(), tc.identityChanged)
+			}
 		}
 	})
 

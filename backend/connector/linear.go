@@ -111,24 +111,30 @@ func (k *linearKind) Discover(ctx context.Context, src Source) (Discovery, error
 }
 
 // Identity is the name of the Linear user the credential reads as, and of
-// their workspace.
-func (k *linearKind) Identity(ctx context.Context, src Source) (string, error) {
+// their workspace; its id is the workspace's and the user's.
+func (k *linearKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	var viewer struct {
 		Viewer struct {
+			ID           string `json:"id"`
 			Name         string `json:"name"`
 			Organization struct {
+				ID   string `json:"id"`
 				Name string `json:"name"`
 			} `json:"organization"`
 		} `json:"viewer"`
 	}
-	if err := k.query(ctx, src, `query { viewer { name organization { name } } }`, nil, &viewer); err != nil {
-		return "", err
+	if err := k.query(ctx, src, `query { viewer { id name organization { id name } } }`, nil, &viewer); err != nil {
+		return "", "", err
 	}
-	name, organization := viewer.Viewer.Name, viewer.Viewer.Organization.Name
-	if organization == "" {
-		return name, nil
+	v := viewer.Viewer
+	id := ""
+	if v.ID != "" && v.Organization.ID != "" {
+		id = v.Organization.ID + "/" + v.ID
 	}
-	return name + " in " + organization, nil
+	if v.Organization.Name == "" {
+		return v.Name, id, nil
+	}
+	return v.Name + " in " + v.Organization.Name, id, nil
 }
 
 func (k *linearKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 2) }

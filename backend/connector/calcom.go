@@ -147,19 +147,24 @@ func (k *calcomKind) Discover(ctx context.Context, src Source) (Discovery, error
 
 func (k *calcomKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 2) }
 
-// Identity is the username of the user the credential reads as, from /v2/me.
-func (k *calcomKind) Identity(ctx context.Context, src Source) (string, error) {
+// Identity is the username of the user the credential reads as, from
+// /v2/me, and their id.
+func (k *calcomKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	me, err := k.me(ctx, src.Secret)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	id := ""
+	if n, ok := me["id"].(float64); ok && n != 0 {
+		id = strconv.FormatInt(int64(n), 10)
 	}
 	if username, _ := me["username"].(string); username != "" {
-		return username, nil
+		return username, id, nil
 	}
 	if email, _ := me["email"].(string); email != "" {
-		return email, nil
+		return email, id, nil
 	}
-	return "", errors.New("cal.com /v2/me names no username")
+	return "", "", errors.New("cal.com /v2/me names no username")
 }
 
 func (k *calcomKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {

@@ -285,11 +285,11 @@ func (k *googleKind) Discover(ctx context.Context, src Source) (Discovery, error
 }
 
 // Identity is the email of the user the credential reads as, from Drive's
-// about.
-func (k *googleKind) Identity(ctx context.Context, src Source) (string, error) {
+// about; its id is the user's Drive permission id, else the email.
+func (k *googleKind) Identity(ctx context.Context, src Source) (string, string, error) {
 	c, err := k.client(src)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	const about = "/drive/v3/about?fields=user"
 	status, body, err := c.get(ctx, c.k.http, googleDrive, about)
@@ -297,20 +297,21 @@ func (k *googleKind) Identity(ctx context.Context, src Source) (string, error) {
 		err = c.status(status, body, googleDrive, about)
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var reply struct {
 		User struct {
 			EmailAddress string `json:"emailAddress"`
+			PermissionID string `json:"permissionId"`
 		} `json:"user"`
 	}
 	if err := json.Unmarshal(body, &reply); err != nil {
-		return "", fmt.Errorf("decode google drive about: %w", err)
+		return "", "", fmt.Errorf("decode google drive about: %w", err)
 	}
 	if reply.User.EmailAddress == "" {
-		return "", errors.New("google drive about names no user")
+		return "", "", errors.New("google drive about names no user")
 	}
-	return reply.User.EmailAddress, nil
+	return reply.User.EmailAddress, cmp.Or(reply.User.PermissionID, reply.User.EmailAddress), nil
 }
 
 // Hint is the key's service account and the last four characters of its
