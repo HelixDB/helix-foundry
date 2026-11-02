@@ -431,10 +431,10 @@ describe("onboardingPrompt's connectors that sign in", () => {
       connector_id: "<its id>",
       client_token: "<a new UUID>",
     });
-    for (const setting of ["name", "repos", "region", "project_id"])
+    for (const setting of ["name", "repos", "project_id"])
       expect(again).not.toHaveProperty(setting);
     expect(text).toContain(
-      "and nothing else: it keeps its name and settings, and the tool refuses `name`, `repos`, `region` and `project_id` with `connector_id`.",
+      "and nothing else: it keeps its name and settings, and the tool refuses `name`, `repos` and `project_id` with `connector_id`.",
     );
     expect(text).toContain(
       "- `account_needs_sign_in`: from `sync_connector`, the connector’s account needs signing in again",
@@ -452,7 +452,7 @@ describe("onboardingPrompt's connectors that sign in", () => {
     );
   });
 
-  it("gives GitHub's repositories and PostHog Cloud's region and project", () => {
+  it("gives GitHub's repositories and PostHog US Cloud's project", () => {
     expect(examples(text)).toContainEqual({
       workspace_id: "ws1",
       kind: "github",
@@ -462,20 +462,38 @@ describe("onboardingPrompt's connectors that sign in", () => {
     expect(examples(text)).toContainEqual({
       workspace_id: "ws1",
       kind: "posthog",
-      region: "<us or eu>",
       project_id: "<project id>",
       client_token: "<a new UUID>",
     });
     // Each kind's settings are its own: PostHog's carry no repos, and only
-    // PostHog's carry a region or project.
+    // PostHog's carry a project.
     const settings = examples(text).filter(
-      (p) => "repos" in p || "region" in p || "project_id" in p,
+      (p) => "repos" in p || "project_id" in p,
     );
     expect(settings.map((p) => p.kind)).toEqual(["github", "posthog"]);
     expect(text).toContain(
-      "`region` is `us` (the default) or `eu`, and without `project_id` it reads my account’s one project. A self-hosted PostHog connects through its form, with its key.",
+      "PostHog: signing in reads PostHog US Cloud only, so ask me which PostHog I use.",
     );
-    expect(text).not.toContain('"region": "custom"');
+    expect(text).toContain(
+      "PostHog EU Cloud or a self-hosted PostHog connects through its form, with its key.",
+    );
+  });
+
+  // Pipes' PostHog provider has no region: signing in is US Cloud's alone,
+  // so no payload carries one, on the landing page's prompt either.
+  it("sends no region in any payload", () => {
+    const landing = onboardingPrompt({
+      origin: "https://foundry.example.com",
+      mcpUrl: "https://mcp.example.com/mcp",
+      workspace: null,
+    });
+    for (const out of [text, landing]) {
+      const all = examples(out);
+      expect(all.length).toBeGreaterThan(0);
+      for (const payload of all) expect(payload).not.toHaveProperty("region");
+      expect(out).not.toContain('"region"');
+      expect(out).not.toContain("`region`");
+    }
   });
 
   it("says what Google Workspace and Notion read once signed in, one line each", () => {
