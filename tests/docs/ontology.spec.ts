@@ -241,7 +241,7 @@ test("ontology: video", async ({ browser, page }) => {
   );
   await caption(video, "Generate asks Foundry's agent for a new draft");
   await click(video.getByRole("link", { name: "Generate", exact: true }));
-  await caption(video, "Say what it should serve, in your words");
+  await caption(video, "Describe the questions you want to answer");
   await type(video.getByLabel("Goal"), GOAL);
   await caption(video, "Choose the connectors whose synced tables it reads");
   await click(video.getByRole("button", { name: "Show Stripe’s tables" }));
@@ -314,7 +314,7 @@ test("ontology: create video", async ({ browser }) => {
   ).toBeChecked({ timeout: 15_000 });
   await video.waitForTimeout(1500);
   await click(video.getByRole("button", { name: "Continue" }));
-  await caption(video, "Say what it should serve, in your words");
+  await caption(video, "Describe the questions you want to answer");
   await type(video.getByLabel("Goal"), GOAL);
   await click(video.getByRole("button", { name: "Continue" }));
   await caption(video, "Review, then create it with its first draft", 1800);
