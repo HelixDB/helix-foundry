@@ -1,0 +1,118 @@
+// Package integration exposes Foundry's operations to agent tools and HTTP clients.
+// Authentication, authorization and hosting-specific resources are supplied by the host.
+package integration
+
+import (
+	"context"
+	"log/slog"
+	"net/url"
+	"time"
+
+	"github.com/helixdb/helix-foundry/backend/config"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+type Grant string
+
+const (
+	UserOnly    Grant = "user"
+	QueryRead   Grant = "database.query.read"
+	QueryWrite  Grant = "database.query.write"
+	ProjectRead Grant = "project.read"
+)
+
+type Permission string
+
+const (
+	PermissionWorkspaceRead             Permission = "workspace.read"
+	PermissionDatabaseQueryRead         Permission = "database.query.read"
+	PermissionDatabaseQueryWrite        Permission = "database.query.write"
+	PermissionWorkspaceConnectorsManage Permission = "workspace.connectors.manage"
+	PermissionWorkspaceOntologyManage   Permission = "workspace.ontology.manage"
+)
+
+// Identity contains only trusted, host-derived identity and authorization decisions.
+// None of its callbacks may trust actor fields from a client's request.
+type Identity struct {
+	User, Agent, ServiceKey bool
+	WorkspaceID             string
+	EventSource             *EventSourceIdentity
+	HasPermission           func(Permission) bool
+	Allows                  func(workspaceID, projectID string, grant Grant) bool
+	Authorize               func(context.Context, any, Grant, ...string) error
+	WithScope               func(context.Context, string, bool) context.Context
+}
+
+type EventSourceIdentity struct{ WorkspaceID, ConnectorID string }
+
+type Directory interface {
+	AuthorizeCreate(ctx context.Context, workspaceID, projectID string) error
+	TenantWorkspace(ctx context.Context, tenantID string) (string, error)
+	CreateProject(ctx context.Context, workspaceID, slug, name string) (string, error)
+	CreateDatabase(ctx context.Context, projectID, name, slug string) (string, error)
+}
+
+type ConfirmationBinding struct {
+	ID, Token, Operation, Target, Audience, PayloadHash string
+}
+
+type Confirmation struct {
+	ID, Token string
+	ExpiresAt time.Time
+}
+
+// Confirmations must bind the authenticated principal in addition to Binding.
+// Consume must atomically spend the token before returning success.
+type Confirmations interface {
+	Prepare(context.Context, ConfirmationBinding) (Confirmation, error)
+	Consume(context.Context, ConfirmationBinding) error
+}
+
+type Call struct{ ResourceKind, ResourceID string }
+type Invocation func(context.Context, *Call) (any, int, error)
+type Runner func(context.Context, string, Invocation) (*mcp.CallToolResult, any, error)
+
+type Service struct {
+	Foundry                 FoundryBackendAPI
+	Actions                 FoundryActionAPI
+	Directory               Directory
+	Confirmations           Confirmations
+	Documents               config.DocumentsConfig
+	FoundryURL, ResourceURI string
+	EventsURL               *url.URL
+	Events                  bool
+	Wait                    time.Duration
+	Polls                   []time.Duration
+	RunTool                 Runner
+	Logger                  *slog.Logger
+}
+
+func (s *Service) AddTools(server *mcp.Server, identity *Identity) {
+	s.AddFoundryTools(server, identity)
+}
+func (s *Service) AddSendTool(server *mcp.Server, identity *Identity) {
+	s.AddFoundrySendTool(server, identity)
+}
+
+func (s *Service) Run(ctx context.Context, name string, invoke Invocation) (*mcp.CallToolResult, any, error) {
+	if s.RunTool != nil {
+		return s.RunTool(ctx, name, invoke)
+	}
+	started := time.Now()
+	call := &Call{}
+	out, count, err := invoke(ctx, call)
+	if s.Logger != nil {
+		code := ""
+		if err != nil {
+			code = string(stableErrorCode(err))
+		}
+		s.Logger.Info("Foundry tool call", "tool", name, "resource_kind", call.ResourceKind, "resource_id", call.ResourceID,
+			"duration_ms", time.Since(started).Milliseconds(), "result_count", count, "error_code", code)
+	}
+	if err != nil {
+		return nil, nil, ToolError(err)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: untrustedContentNotice}}}, out, nil
+}
+
+type ConfirmationOutput = confirmationOutput

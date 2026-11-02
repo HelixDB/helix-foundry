@@ -29,7 +29,7 @@ let ontologyPath = "",
   generationPath = "";
 
 // The first workspace opens on its onboarding, Get started, which is all it
-// offers until it has an ontology. Use my own data, alone on a local build,
+// offers until it has an ontology. Use my own data, selected on a local build,
 // continues to the first ontology's sources step, which connects the database
 // and uploads the document; the ontology is named from them and goes on a new
 // database. Each test opens it afresh.
@@ -40,7 +40,11 @@ async function toSources(page: Page) {
 
 // The install made the owner's first workspace as it first started, so the
 // site opens in it, never on the page that creates one.
-test("opens in the workspace the install starts with", async ({ page }) => {
+test("opens in the workspace the install starts with", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
@@ -52,6 +56,14 @@ test("opens in the workspace the install starts with", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Create your first workspace" }),
   ).toHaveCount(0);
+  await page.getByRole("radio", { name: "Set up with your agent" }).click();
+  await page.getByRole("button", { name: "Copy prompt", exact: true }).click();
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  expect(prompt).toContain("http://localhost:8081/mcp");
+  expect(prompt).toContain("FOUNDRY_LOCAL_TOKEN");
+  expect(prompt).toContain("helix_list_workspaces");
+  expect(prompt).not.toContain("mcp.helix-db.com");
+  expect(prompt).not.toContain("helix_signup");
 });
 
 test("connects and syncs a PostgreSQL database", async ({ page }) => {

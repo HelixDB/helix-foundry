@@ -246,6 +246,9 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 			return nil, err
 		}
 	}
+	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, logger.With("component", "integration"))
+	ep.RegisterHTTPHandler("/mcp", integrations)
+	ep.RegisterHTTPHandler("/v1/ontologies/", integrations)
 	return f, nil
 }
 

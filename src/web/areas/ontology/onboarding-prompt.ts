@@ -1,3 +1,4 @@
+import { localOnboardingPrompt } from "./local-onboarding-prompt";
 import type { FoundryOntology } from "../../../shared/wfe";
 import { paths } from "../../paths";
 import {
@@ -56,6 +57,7 @@ export type OnboardingWorkspace = {
 };
 
 export type OnboardingPromptInput = {
+  local?: boolean;
   // Foundry's origin: "https://foundry.helix-db.com".
   origin: string;
   // The Helix MCP's URL, for the commands that add it.
@@ -145,6 +147,7 @@ function standing(o: OnboardingOntology): string {
  * ontology, else from its setup's step on.
  */
 export function onboardingPrompt(input: OnboardingPromptInput): string {
+  if (input.local) return localOnboardingPrompt(input);
   const known = input.workspace !== null ? input : null,
     ws = known?.workspace.id ?? "<workspace id>",
     o = known?.ontology ?? null,
@@ -432,9 +435,9 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
       : [
           "## Run it on my computer",
           "",
-          "Only if I asked for it. Foundry then runs in Docker here, for me alone: no sign-in, no Helix MCP and none of the steps above. You install and start it; I make the ontology in its pages, and you help me there.",
+          "Only if I asked for it. Foundry then runs in Docker here, for me alone: no sign-in. You install and start it, then connect its local MCP at http://localhost:8081/mcp using the existing owner token as local/README.md describes. Open Foundry and copy its Set up with your agent prompt to continue through the local tools.",
           "",
-          `1. Check that Docker runs with Compose v2 (\`docker compose version\`), and that ports 3000 and 8333 are free: the site answers only at ${LOCAL_ORIGIN}.`,
+          `1. Check that Docker runs with Compose v2 (\`docker compose version\`), and that ports 3000, 8081 and 8333 are free: the site answers only at ${LOCAL_ORIGIN}.`,
           `2. Ask me where to put it, then \`git clone ${LOCAL_SOURCE}\`.`,
           "3. Before its first start, ask me which AI it runs on, then start it, in `helix-foundry`:",
           "   - by default, `docker compose up -d --wait`. It takes `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from the shell that runs it, so if yours has one I haven’t chosen, use `env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY docker compose up -d --wait`;",

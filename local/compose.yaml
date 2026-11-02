@@ -9,7 +9,8 @@
 # volume: its connector key seals every database password and API key given
 # to Foundry. `docker compose down -v` deletes it with the data.
 #
-# The site is the only way in. foundry (Foundry's API, its directory and its
+# The site serves the browser; foundry serves MCP and HTTP integrations on
+# loopback :8081. foundry (Foundry's API, its directory and its
 # workers), the ontology agent and the S3-compatible store share one network
 # namespace (the `pod` service), as they share a pod in the cloud: the agent
 # serves foundry on 127.0.0.1, and documents are PUT from the browser to the
@@ -79,7 +80,7 @@ services:
   # Owns the shared network namespace; restarting the others leaves it be.
   pod:
     image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
-    ports: ["127.0.0.1:8333:8333"]
+    ports: ["127.0.0.1:8333:8333", "127.0.0.1:8081:8081"]
     # Connectors reach a database on this machine as host.docker.internal,
     # on Linux as on Docker Desktop.
     extra_hosts: ["host.docker.internal:host-gateway"]

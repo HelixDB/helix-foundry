@@ -43,9 +43,9 @@ export function AgentSetup({
   ontology?: OnboardingOntology;
   compact?: boolean;
 }) {
-  // A local build has no Helix MCP: its workspace isn't in Helix Cloud.
+  // Both hosted and local owners can continue setup through their MCP.
   const { id, name, role, notify } = useWorkspace(),
-    manage = !LOCAL && canManage(role);
+    manage = canManage(role);
   const connectors = useQuery({ ...connectorsQuery(id), enabled: manage }),
     sets = useQuery({ ...documentSetQueries.list(id), enabled: manage }),
     documents = useQuery({ ...documentQueries.workspace(id), enabled: manage }),
@@ -57,6 +57,7 @@ export function AgentSetup({
       .writeText(
         onboardingPrompt({
           origin: window.location.origin,
+          local: LOCAL,
           mcpUrl: MCP_URL,
           eventsUrl: EVENTS_URL,
           workspace: { id, name },

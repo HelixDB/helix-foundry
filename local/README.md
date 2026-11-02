@@ -21,8 +21,8 @@ It opens in your first workspace, **My workspace**, made as the install first st
 
 | Service          | What it is                                                                                      |
 | ---------------- | ----------------------------------------------------------------------------------------------- |
-| `site`           | The Foundry app, on 127.0.0.1:3000. The only way in.                                            |
-| `foundry`        | Foundry's API, its directory of workspaces and databases, and its workers, in one process.      |
+| `site`           | The Foundry app, on 127.0.0.1:3000. The browser interface.                                      |
+| `foundry`        | Foundry's API and MCP on 127.0.0.1:8081, its directory and workers, in one process.             |
 | `ontology-agent` | Drafts ontologies, reads documents and answers questions, on the AI provider you choose.        |
 | `storage`        | S3-compatible store (SeaweedFS) for synced tables and documents, on 127.0.0.1:8333 for uploads. |
 | `mysql`          | Foundry's database.                                                                             |
@@ -77,3 +77,25 @@ The site must stay on `http://localhost:3000` and the store on `http://localhost
 
 - **The site:** the host side of its port, `FOUNDRY_ORIGIN`, and the store's `-s3.allowedOrigins`, which lets the site's page upload.
 - **The store:** the `pod`'s port, the store's `-s3.port` and its health check's `nc -z 127.0.0.1 <port>`, and `HELIX_LOCAL__S3__ENDPOINT: http://localhost:<port>` under foundry's `environment` (its config is in the image; `HELIX_*` variables override it).
+
+## Connect your agent
+
+The local MCP is `http://localhost:8081/mcp`. It supports the Foundry workflow: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
+
+Use the install’s existing owner token as a bearer. From the repository root, load it into the environment without printing it:
+
+```sh
+export FOUNDRY_LOCAL_TOKEN="$(docker compose exec -T foundry cat /secrets/site-token)"
+```
+
+Configure the MCP client to read `FOUNDRY_LOCAL_TOKEN` and send `Authorization: Bearer <token>`. The token acts as the owner of every local workspace. Keep it in the client’s environment, out of prompts and browser code. No OAuth sign-in is required. The API port is published only on loopback; tools run on this computer.
+
+Changes use `helix_prepare_foundry_operation` followed by `helix_execute_foundry_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
+
+## Ask over HTTP
+
+Use `POST http://localhost:8081/v1/ontologies/<ontology-id>/ask` with the same bearer, `Content-Type: application/json`, an `Idempotency-Key` of at most 64 bytes, and `{"question":"What is in the data?"}`. The ontology must have a ready or partial current load and an AI provider configured.
+
+A request waits up to 25 seconds. A terminal question returns 200; a pending question returns 202 and a relative `Location`. GET that location with the same bearer until `done` is true. Inspect `status`, including `cannot_answer`, `failed` and `cancelled`. Reuse the idempotency key after a lost POST response; it returns the original question and load. Disconnecting stops the wait, not the durable question.
+
+Answers and citations use the same compact result as MCP, without query output rows. See [the HTTP contract](../contract/foundry-integration.openapi.json) and [the Python tool example](../examples/ask_tool.py). The hosted API uses the same routes on `https://mcp.helix-db.com`, with an existing service credential granted query-read access to the ontology’s project.

@@ -531,25 +531,22 @@ export function NewOntologyPage() {
         <TrySample />
         <h2 className="on-start-or">Or start with your own</h2>
         <div className="on-card">
-          {!LOCAL && (
-            <div className="on-start-toggle">
-              <Segmented
-                label="Start with your own"
-                value={start}
-                onChange={setStart}
-                options={[
-                  { value: "agent", label: "Set up with your agent" },
-                  { value: "own", label: "Use my own data" },
-                ]}
-              />
-            </div>
-          )}
+          <div className="on-start-toggle">
+            <Segmented
+              label="Start with your own"
+              value={start}
+              onChange={setStart}
+              options={[
+                { value: "agent", label: "Set up with your agent" },
+                { value: "own", label: "Use my own data" },
+              ]}
+            />
+          </div>
           {start === "agent" ? (
             <AgentSetup />
           ) : (
             <>
               <div className="on-card-text">
-                {LOCAL && <strong>Use my own data</strong>}
                 <p>
                   Connect a database or app, or upload documents, and Foundry
                   does the rest.

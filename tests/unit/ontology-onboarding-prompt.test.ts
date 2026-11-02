@@ -803,3 +803,30 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(text).toContain("`ask_url`");
   });
 });
+
+describe("local onboarding through MCP", () => {
+  const text = onboardingPrompt({
+    ...input(),
+    local: true,
+    origin: "http://localhost:3000",
+    mcpUrl: "http://localhost:8081/mcp",
+  });
+  it("uses the local owner and the full connector/document workflow", () => {
+    expect(text).toContain("http://localhost:8081/mcp");
+    expect(text).toContain("FOUNDRY_LOCAL_TOKEN");
+    expect(text).toContain("helix_list_workspaces");
+    expect(text).toContain("helix_prepare_foundry_operation");
+    expect(text).toContain("helix_execute_foundry_operation");
+    expect(text).toContain("helix_foundry_complete_document_upload");
+    expect(text).toContain("generate_ontology");
+    expect(text).toContain("create_load");
+    expect(text).toContain("helix_foundry_ask");
+    expect(text).toContain(
+      "consumption alone does not prove execution succeeded",
+    );
+    expect(text).not.toContain("create_event_source");
+    expect(text).not.toContain("Helix subscription");
+    expect(text).not.toContain("helix_get_started");
+    expect(text).not.toContain("sign in as me");
+  });
+});
