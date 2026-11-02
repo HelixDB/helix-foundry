@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -190,12 +191,28 @@ func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConn
 		}
 		// A blank credential keeps the stored one, unless the access needs
 		// none: then the old one is sealed over with nothing.
-		if !secretless && src.Secret == "" {
+		kept := !secretless && src.Secret == ""
+		if kept {
 			secret, err := keyring.Open(current.SecretCiphertext, current.SecretKeyID, connector.SecretContext(current.ID))
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "open connector %s credential: %v", current.ID, err)
 			}
 			src.Secret = string(secret)
+		}
+		// Settings that send the credential to another server move it: the
+		// stored credential never goes there, so moving needs it entered again.
+		moved := false
+		if targeted, ok := kind.(connector.Targeted); ok {
+			prepared, err := kind.Prepare(src)
+			if err != nil {
+				return nil, connectorError(ctx, err)
+			}
+			was, errWas := targeted.Target(current.Config)
+			now, errNow := targeted.Target(prepared)
+			moved = errWas != nil || errNow != nil || was != now
+		}
+		if kept && moved {
+			return nil, status.Error(codes.InvalidArgument, "these settings connect to a different server; enter the credential again")
 		}
 		settings, d, err := s.testSource(ctx, req.GetWorkspaceId(), kind, src)
 		if err != nil {
@@ -208,7 +225,7 @@ func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConn
 			} else if !errors.Is(err, foundrystore.ErrNotFound) {
 				return nil, status.Errorf(codes.Internal, "read active sync: %v", err)
 			}
-			if err := s.releaseOld(ctx, kind, keyring, current, src.Secret); err != nil {
+			if err := s.releaseOld(ctx, kind, keyring, current, src.Secret, moved); err != nil {
 				return nil, err
 			}
 		}
@@ -298,17 +315,22 @@ func (s *Service) DeleteConnector(ctx context.Context, req *foundryv1.DeleteConn
 // such as a replication slot, before new settings replace them. Saving forgets
 // the change cursor, so no later sync would release it, and a PostgreSQL slot
 // can only be dropped from the database that made it. The update's credential
-// is tried first, then the stored one. A source neither can reach is likely
-// gone and doesn't block the change; one that refuses the drop does.
-func (s *Service) releaseOld(ctx context.Context, kind connector.Kind, keyring *secretbox.Keyring, current *foundrymodel.Connector, secret string) error {
+// is tried first, unless the update moved to another server (the old one may
+// not be the customer's), then the stored one. A source neither can reach is
+// likely gone and doesn't block the change; one that refuses the drop does.
+func (s *Service) releaseOld(ctx context.Context, kind connector.Kind, keyring *secretbox.Keyring, current *foundrymodel.Connector, secret string, moved bool) error {
 	releaser, ok := kind.(connector.Releaser)
 	if !ok {
 		return nil
 	}
-	secrets := []string{secret}
-	if stored, err := keyring.Open(current.SecretCiphertext, current.SecretKeyID, connector.SecretContext(current.ID)); err == nil && string(stored) != secret {
+	var secrets []string
+	if !moved {
+		secrets = append(secrets, secret)
+	}
+	if stored, err := keyring.Open(current.SecretCiphertext, current.SecretKeyID, connector.SecretContext(current.ID)); err == nil {
 		secrets = append(secrets, string(stored))
 	}
+	secrets = slices.Compact(secrets)
 	var err error
 	for _, secret := range secrets {
 		src := connector.Source{Settings: current.Config, Secret: secret, WorkspaceID: current.WorkspaceID, ConnectorID: current.ID}

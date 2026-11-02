@@ -244,6 +244,10 @@ func pgRows(ctx context.Context, conn *pgx.Conn, query string, args []any, each 
 
 func (k *postgresKind) Hint(string) string { return "password set" }
 
+func (k *postgresKind) Target(settings json.RawMessage) (string, error) {
+	return databaseTarget(settings)
+}
+
 // Sync copies one table from a consistent snapshot. PostgreSQL encodes each
 // row as JSON itself, so no column type needs mapping here.
 func (k *postgresKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {

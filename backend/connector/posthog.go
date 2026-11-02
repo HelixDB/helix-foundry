@@ -236,6 +236,15 @@ func (k *posthogKind) onlyProject(ctx context.Context, host string, header http.
 
 func (k *posthogKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }
 
+// Target is the PostHog the key is sent to: a cloud region, or a custom host.
+func (k *posthogKind) Target(settings json.RawMessage) (string, error) {
+	var s PostHogSettings
+	if err := json.Unmarshal(settings, &s); err != nil {
+		return "", err
+	}
+	return s.Region + " " + s.Host, nil
+}
+
 const posthogMaxPages = 20_000
 
 // posthogPage is the HogQL page size; tests shrink it to exercise paging.

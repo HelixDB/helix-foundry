@@ -1323,6 +1323,31 @@ describe("editing and deleting", () => {
     expect(repos.connector.config.github.repos).toEqual(["acme/api"]);
   });
 
+  it("keeps a stored credential only for the server it was entered for", () => {
+    const c = create(pg(), "postgres");
+    const edit = (extra: object) =>
+      call("PATCH", `${base()}/connectors/${c.id}`, {
+        config: pg({ password: "", ...extra }),
+      });
+    for (const moved of [
+      { host: "db.attacker.example" },
+      { port: 6543 },
+      { disableTls: true },
+    ])
+      expect(refusal(edit(moved))).toEqual({
+        status: 400,
+        message:
+          "these settings connect to a different server; enter the credential again",
+      });
+    ok(edit({ database: "crm" }));
+    vi.advanceTimersByTime(3000);
+    ok(
+      call("PATCH", `${base()}/connectors/${c.id}`, {
+        config: pg({ host: "db2.example.com" }),
+      }),
+    );
+  });
+
   it("refuses what the WFE refuses", () => {
     const c = create({ stripe: { apiKey: stripeKey } });
     const patch = (body: unknown) =>

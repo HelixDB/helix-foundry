@@ -409,7 +409,8 @@ func TestExecuteDatabaseReadQuery(t *testing.T) {
 	if resp.GetStatusCode() != http.StatusTeapot || string(resp.GetResponseJson()) != `{"rows":[]}` || resp.GetContentType() != "application/json" {
 		t.Fatalf("response = %v", resp)
 	}
-	if got.URL.Path != "/v2/query" || got.Header.Get("X-Helix-Tenant-ID") != tenant || got.Header.Get("Authorization") != "" || gotBody != read {
+	if got.URL.Path != "/v2/query" || got.Header.Get("X-Helix-Tenant-ID") != tenant || got.Header.Get("Authorization") != "" ||
+		gotBody != `{"query":{"q":1},"request_type":"read"}` {
 		t.Fatalf("request = %s %v %q", got.URL, got.Header, gotBody)
 	}
 
@@ -419,8 +420,25 @@ func TestExecuteDatabaseReadQuery(t *testing.T) {
 	wantCode(t, err, codes.InvalidArgument, "variant is required")
 	_, err = query(tenant, `{"request_type":"read"}`)
 	wantCode(t, err, codes.InvalidArgument, "valid v3 query request")
-	_, err = query(tenant, `{"request_type":"write","query":{}}`)
+	// A write hidden behind a duplicate, another case or the camelCase alias
+	// never reaches the database.
+	for _, write := range []string{
+		`{"request_type":"write","query":{}}`,
+		`{"request_type":"write","Request_Type":"read","query":{}}`,
+		`{"request_type":"read","requestType":"write","query":{}}`,
+		`{"request_type":["read"],"query":{}}`,
+	} {
+		_, err = query(tenant, write)
+		wantCode(t, err, codes.InvalidArgument, `must be "read"`)
+	}
+	_, err = query(tenant, `{"request_type":"read","request_type":"write","query":{}}`)
 	wantCode(t, err, codes.InvalidArgument, `must be "read"`)
+	if _, err = query(tenant, `{"request_type":"write","request_type":"read","query":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody != `{"query":{},"request_type":"read"}` {
+		t.Fatalf("forwarded %q, want the checked request alone", gotBody)
+	}
 	_, err = query(tenant, `{"request_type":"read","query":"`+strings.Repeat("x", directory.MaxQueryRequestBytes)+`"}`)
 	wantCode(t, err, codes.ResourceExhausted, "request exceeds")
 	_, err = query(tenant, `{"request_type":"read","query":"huge"}`)

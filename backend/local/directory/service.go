@@ -353,15 +353,22 @@ func (s *Service) ReadQuery(ctx context.Context, tenantID string, query []byte) 
 	if len(query) > MaxQueryRequestBytes {
 		return helixgateway.Response{}, status.Error(codes.ResourceExhausted, "query request exceeds broker limit")
 	}
-	var envelope struct {
-		RequestType string          `json:"request_type"`
-		Query       json.RawMessage `json:"query"`
-	}
-	if err := json.Unmarshal(query, &envelope); err != nil || len(envelope.Query) == 0 {
+	// A map, not a struct, which would match keys in any case and take the
+	// last of duplicates, so the request_type checked could differ from the
+	// one HelixDB reads.
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(query, &envelope); err != nil || len(envelope["query"]) == 0 {
 		return helixgateway.Response{}, status.Error(codes.InvalidArgument, "query_json must be a valid v3 query request")
 	}
-	if envelope.RequestType != "read" {
+	var requestType string
+	if _, alias := envelope["requestType"]; alias || json.Unmarshal(envelope["request_type"], &requestType) != nil || requestType != "read" {
 		return helixgateway.Response{}, status.Error(codes.InvalidArgument, `query request_type must be "read"`)
+	}
+	// Written again from the object checked, as graphproxy does: a duplicate
+	// request_type HelixDB might read in place of this one is gone.
+	query, err := json.Marshal(envelope)
+	if err != nil {
+		return helixgateway.Response{}, status.Error(codes.InvalidArgument, "query_json must be a valid v3 query request")
 	}
 	t, err := s.store.Tenant(ctx, tenantID)
 	if errors.Is(err, store.ErrNotFound) {

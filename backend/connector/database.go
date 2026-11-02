@@ -114,6 +114,17 @@ func prepareDatabase(src Source, defaultPort int, defaultSchema string) (Databas
 	return s, nil
 }
 
+// databaseTarget is a Postgres or MySQL server and what the connection trusts
+// as it: a password kept for one is never sent to another.
+func databaseTarget(settings json.RawMessage) (string, error) {
+	var s DatabaseSettings
+	if err := json.Unmarshal(settings, &s); err != nil {
+		return "", err
+	}
+	target, err := json.Marshal([]any{s.Host, s.Port, s.DisableTLS, s.CA})
+	return string(target), err
+}
+
 // tlsConfig verifies the server against the system roots plus the settings' CA.
 func (s DatabaseSettings) tlsConfig() *tls.Config {
 	if s.DisableTLS {
