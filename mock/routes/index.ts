@@ -9,6 +9,7 @@ import { documentRoutes } from "./documents";
 import { enrichmentRoutes } from "./enrichment";
 import { eventSourceRoutes } from "./event-sources";
 import { reviewRoutes } from "./reviews";
+import { signInRoutes } from "./sign-ins";
 import { loadRoutes } from "./loads";
 import { ontologiesRoutes } from "./ontologies";
 import { ontologyRoutes } from "./ontology";
@@ -25,6 +26,7 @@ export const routes: MockRoute[] = [
   ...billingRoutes,
   ...usageRoutes,
   ...dataRoutes,
+  ...signInRoutes,
   ...eventSourceRoutes,
   ...dataLayoutRoutes,
   ...ontologiesRoutes,
