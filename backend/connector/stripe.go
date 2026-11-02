@@ -1,8 +1,10 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -79,7 +81,8 @@ type stripeKind struct {
 }
 
 type StripeSettings struct {
-	// Mode is live or test, read from the key.
+	// Mode is live or test, read from the key; a vended key without a mode
+	// in its prefix takes it from its balance (Discover).
 	Mode string `json:"mode"`
 	// Events is whether the key can read events, so a change sync can follow
 	// them; Discover sets it.
@@ -89,18 +92,26 @@ type StripeSettings struct {
 func (k *stripeKind) Name() string        { return "stripe" }
 func (k *stripeKind) DisplayName() string { return "Stripe" }
 
+var _ Identifier = (*stripeKind)(nil)
+
+// Prepare checks a key's format and reads its mode from its prefix. A key
+// the broker vended has no format of ours to check: its prefix gives its
+// mode when it has one, as a pasted key's does, and Discover reads it
+// otherwise.
 func (k *stripeKind) Prepare(src Source) (json.RawMessage, error) {
 	key := strings.TrimSpace(src.Secret)
-	if !stripeKeyRE.MatchString(key) {
+	if !src.SignIn && !stripeKeyRE.MatchString(key) {
 		return nil, invalid("enter a Stripe secret or restricted key (sk_… or rk_…)")
 	}
 	var settings StripeSettings
 	if err := json.Unmarshal(orEmpty(src.Settings), &settings); err != nil {
 		return nil, invalid("Stripe settings are malformed")
 	}
-	settings.Mode = "test"
-	if strings.Contains(key, "_live_") {
+	switch {
+	case strings.Contains(key, "_live_"):
 		settings.Mode = "live"
+	case strings.Contains(key, "_test_") || !src.SignIn:
+		settings.Mode = "test"
 	}
 	return json.Marshal(settings)
 }
@@ -124,7 +135,7 @@ func (k *stripeKind) Discover(ctx context.Context, src Source) (Discovery, error
 		case err != nil:
 			return false, refused(err, "could not reach Stripe; try again")
 		case status == http.StatusUnauthorized:
-			return false, refused(nil, "Stripe rejected this key; check it and test again")
+			return false, rejectedCredential("Stripe", nil, "Stripe rejected this key; check it and test again")
 		case status == http.StatusForbidden:
 			return false, nil
 		case status >= 300:
@@ -140,6 +151,11 @@ func (k *stripeKind) Discover(ctx context.Context, src Source) (Discovery, error
 		return Discovery{}, refused(nil, "this key cannot read any supported Stripe objects; grant read access and test again")
 	}
 	settings.Events = readable[stripeEventsPath]
+	if settings.Mode == "" && src.SignIn {
+		if settings.Mode, err = k.mode(ctx, header); err != nil {
+			return Discovery{}, err
+		}
+	}
 	if !settings.Events {
 		d.Warnings = append(d.Warnings, "this key can't read events, so on Pro and Max every sync reads every object in full; "+
 			"grant Events: Read to read only what changed")
@@ -151,6 +167,54 @@ func (k *stripeKind) Discover(ctx context.Context, src Source) (Discovery, error
 }
 
 func (k *stripeKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 2) }
+
+// mode reads whether a vended key is live or test, for one whose prefix
+// doesn't say, from its balance's livemode: Stripe's Account object carries
+// none.
+func (k *stripeKind) mode(ctx context.Context, header http.Header) (string, error) {
+	status, body, err := get(ctx, k.http, k.base+"/v1/balance", header)
+	if err := stripeRefusal(status, err, "/v1/balance"); err != nil {
+		return "", err
+	}
+	var balance struct {
+		Livemode *bool `json:"livemode"`
+	}
+	if err := json.Unmarshal(body, &balance); err != nil || balance.Livemode == nil {
+		return "", fmt.Errorf("stripe /v1/balance: no livemode (%v)", err)
+	}
+	if *balance.Livemode {
+		return "live", nil
+	}
+	return "test", nil
+}
+
+// Identity is the account's name as its dashboard shows it, else its
+// business name, its email or its id, from /v1/account.
+func (k *stripeKind) Identity(ctx context.Context, src Source) (string, error) {
+	status, body, err := get(ctx, k.http, k.base+"/v1/account", stripeHeader(src))
+	if err := stripeRefusal(status, err, "/v1/account"); err != nil {
+		return "", err
+	}
+	var account struct {
+		ID              string `json:"id"`
+		Email           string `json:"email"`
+		BusinessProfile struct {
+			Name string `json:"name"`
+		} `json:"business_profile"`
+		Settings struct {
+			Dashboard struct {
+				DisplayName string `json:"display_name"`
+			} `json:"dashboard"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(body, &account); err != nil {
+		return "", fmt.Errorf("decode stripe /v1/account: %w", err)
+	}
+	if name := cmp.Or(account.Settings.Dashboard.DisplayName, account.BusinessProfile.Name, account.Email, account.ID); name != "" {
+		return name, nil
+	}
+	return "", errors.New("stripe /v1/account names no account")
+}
 
 func stripeHeader(src Source) http.Header {
 	return http.Header{
@@ -291,7 +355,7 @@ func stripeRefusal(status int, err error, path string) error {
 	case err != nil:
 		return refused(err, "could not reach Stripe; the sync will retry")
 	case status == http.StatusUnauthorized:
-		return refused(nil, "Stripe rejected this key; update the connector")
+		return rejectedCredential("Stripe", nil, "Stripe rejected this key; update the connector")
 	case status == http.StatusForbidden:
 		return refused(nil, "this key can no longer read %s; grant read access in Stripe", path)
 	case status >= 300:

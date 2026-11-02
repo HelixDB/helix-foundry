@@ -28,8 +28,10 @@ import (
 var _ PassKind = (*slackKind)(nil)
 
 // slackTokenRE is a bot token. A user token (xoxp-) reads as its person,
-// their direct messages included, so Foundry takes none.
+// their direct messages included, so Foundry takes none, pasted or vended.
 var slackTokenRE = regexp.MustCompile(`^xoxb-[A-Za-z0-9-]+$`)
+
+var _ Identifier = (*slackKind)(nil)
 
 const (
 	defaultSlackHistoryDays = 90
@@ -176,8 +178,15 @@ type SlackSettings struct {
 	HistoryDays int `json:"history_days"`
 }
 
+// Prepare checks a key's format. A token the broker vended has none of
+// ours to check, but a user token is refused as a pasted one is: signing in
+// must install the bot.
 func (k *slackKind) Prepare(src Source) (json.RawMessage, error) {
-	if !slackTokenRE.MatchString(strings.TrimSpace(src.Secret)) {
+	secret := strings.TrimSpace(src.Secret)
+	switch {
+	case src.SignIn && strings.HasPrefix(secret, "xoxp-"):
+		return nil, invalid("Slack gave a user token, which reads as its person, direct messages included: sign in with the bot instead")
+	case !src.SignIn && !slackTokenRE.MatchString(secret):
 		return nil, invalid("enter a Slack bot token (xoxb-…)")
 	}
 	var s SlackSettings
@@ -325,6 +334,26 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 		}
 	}
 	return d, nil
+}
+
+// Identity is the bot user's name and its workspace's, from auth.test.
+func (k *slackKind) Identity(ctx context.Context, src Source) (string, error) {
+	fields, _, err := k.client(src.Secret).call(ctx, "auth.test", nil)
+	if err != nil {
+		return "", err
+	}
+	var user, team string
+	_ = json.Unmarshal(fields["user"], &user) // missing ones name less
+	_ = json.Unmarshal(fields["team"], &team)
+	switch {
+	case user == "" && team == "":
+		return "", errors.New("slack auth.test names no user or team")
+	case team == "":
+		return user, nil
+	case user == "":
+		return team, nil
+	}
+	return user + " in " + team, nil
 }
 
 func (k *slackKind) Hint(secret string) string {
@@ -1277,7 +1306,7 @@ func (c *slackClient) call(ctx context.Context, method string, query url.Values)
 	case answer.OK:
 		return fields, header, nil
 	case slackRejected[answer.Error]:
-		return nil, nil, refused(nil, "Slack rejected this token; check it and enter it again")
+		return nil, nil, rejectedCredential("Slack", nil, "Slack rejected this token; check it and enter it again")
 	case answer.Error == "missing_scope":
 		return nil, nil, refused(errMissingScope, "add the %s scope to the app and reinstall it", cmp.Or(answer.Needed, "missing"))
 	case slackGone[answer.Error] != nil:

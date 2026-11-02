@@ -212,6 +212,18 @@ type AuthError struct {
 
 func (e *AuthError) Error() string { return e.Provider + " rejected the credential" }
 
+// rejectedCredential is the refusal of a credential provider rejected
+// outright, worded for a key: an *AuthError, beside cause when the kind
+// keeps one, so a signed-in connector's callers ask its broker for a fresh
+// token or say to sign it in again.
+func rejectedCredential(provider string, cause error, format string, args ...any) error {
+	var err error = &AuthError{Provider: provider}
+	if cause != nil {
+		err = errors.Join(cause, err)
+	}
+	return refused(err, format, args...)
+}
+
 // Endpoints are the SaaS API roots; tests point them at local servers.
 type Endpoints struct {
 	Stripe string
