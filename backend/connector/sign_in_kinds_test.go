@@ -18,7 +18,7 @@ func TestSignedInKindsPrepare(t *testing.T) {
 	for _, tc := range []struct{ kind, settings string }{
 		{"slack", `{"history_days":30}`},
 		{"notion", `{}`},
-		{"posthog", `{"region":"eu","project_id":"42"}`},
+		{"posthog", `{"region":"us","project_id":"42"}`},
 		{"calcom", `{}`},
 		{"stripe", `{}`},
 		{"google", `{"event_days":30}`},
@@ -36,10 +36,14 @@ func TestSignedInKindsPrepare(t *testing.T) {
 	}
 
 	// Refused for a signed-in connector as settings_invalid: a Slack user
-	// token reads as its person, and a self-hosted PostHog keeps its key.
+	// token reads as its person, and PostHog's other cloud and a
+	// self-hosted PostHog keep their keys: Pipes' PostHog provider
+	// authorizes in one region.
 	for _, tc := range []struct{ kind, secret, settings, want string }{
 		{"slack", "xoxp-1-2-3", `{}`, "user token"},
-		{"posthog", "tok", `{"region":"custom","host":"https://posthog.acme.test"}`, "PostHog Cloud only"},
+		{"posthog", "tok", `{"region":"custom","host":"https://posthog.acme.test"}`, "PostHog US Cloud only"},
+		{"posthog", "tok", `{"region":"eu"}`, "connect PostHog EU Cloud or a self-hosted PostHog with a personal API key"},
+		{"posthog", "", `{"region":"eu","project_id":"42"}`, "US Cloud only"},
 		{"google", "tok", `{"subject":"ada@acme.test"}`, "acts as no other"},
 	} {
 		_, err := kindOf(t, catalog, tc.kind).Prepare(Source{Secret: tc.secret, Settings: json.RawMessage(tc.settings), SignIn: true})

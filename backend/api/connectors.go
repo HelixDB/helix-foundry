@@ -356,7 +356,8 @@ func (s *Service) signedInSettings(ctx context.Context, kind connector.Kind, cur
 // connector of kind read more than current does; "" when they don't:
 //   - GitHub: a repository current doesn't name, or none named (every one
 //     it can reach) where current names some;
-//   - PostHog: another project, or region, of what the member can see.
+//   - PostHog: another project of what the member can see (signed in, it
+//     reads one region only).
 //
 // Every other kind reads all its account can, whatever its settings.
 func widening(kind string, current, settings json.RawMessage) string {
@@ -379,10 +380,9 @@ func widening(kind string, current, settings json.RawMessage) string {
 			}
 		}
 	case "posthog":
-		const widens = "change the PostHog project or region it reads"
+		const widens = "change the PostHog project it reads"
 		var was, now connector.PostHogSettings
-		if json.Unmarshal(current, &was) != nil || json.Unmarshal(settings, &now) != nil || was.Region != now.Region ||
-			was.ProjectID != now.ProjectID {
+		if json.Unmarshal(current, &was) != nil || json.Unmarshal(settings, &now) != nil || was.ProjectID != now.ProjectID {
 			return widens
 		}
 	}

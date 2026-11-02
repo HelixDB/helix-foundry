@@ -1019,6 +1019,7 @@ func TestSignInSettings(t *testing.T) {
 		"a Slack token": {Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{BotToken: "xoxb-1"}}},
 		"a self-hosted PostHog": {Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "custom",
 			Host: "https://posthog.acme.test"}}},
+		"PostHog EU Cloud": {Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "eu"}}},
 		"a Google user to act as": {Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{Subject: "ada@acme.test"}}},
 	} {
 		kind, _, _, err := sourceFromProto(catalog, cfg)
@@ -1046,8 +1047,8 @@ func TestStartEveryKind(t *testing.T) {
 		{"notion", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Notion{Notion: &foundryv1.NotionConnectorConfig{}}}, `{}`},
 		{"posthog", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{}}},
 			`{"region":"us","event_days":30}`},
-		{"posthog", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "eu",
-			ProjectId: "42"}}}, `{"region":"eu","project_id":"42","event_days":30}`},
+		{"posthog", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "us",
+			ProjectId: "42"}}}, `{"region":"us","project_id":"42","event_days":30}`},
 		{"calcom", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Calcom{Calcom: &foundryv1.CalcomConnectorConfig{}}}, `{}`},
 		{"stripe", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Stripe{Stripe: &foundryv1.StripeConnectorConfig{}}}, `{"mode":""}`},
 		{"google", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{}}},
@@ -1089,7 +1090,7 @@ func TestSignedInWidening(t *testing.T) {
 		{"github", `{}`, `{"repos":["a/b"]}`, false},
 		{"posthog", `{"region":"us","project_id":"1","event_days":30}`, `{"region":"us","project_id":"1","event_days":90}`, false},
 		{"posthog", `{"region":"us","project_id":"1"}`, `{"region":"us","project_id":"2"}`, true},
-		{"posthog", `{"region":"us","project_id":"1"}`, `{"region":"eu","project_id":"1"}`, true},
+
 		{"posthog", `{"region":"us","project_id":"1"}`, `{"region":"us"}`, true},
 		{"slack", `{"history_days":30}`, `{"history_days":365}`, false},
 		{"google", `{"event_days":30}`, `{"event_days":365}`, false},
@@ -1110,7 +1111,7 @@ func TestSignedInWidening(t *testing.T) {
 		Account: &foundrymodel.ConnectorAccount{ID: "acct-1", UserID: "user-1"}}
 	other := connector.Source{Settings: json.RawMessage(`{"region":"us","project_id":"2","event_days":30}`)}
 	err = s.signedInSettings(as("user-2"), kind, current, other)
-	if reasonOf(err) != "ACCOUNT_OWNER_ONLY" || !strings.Contains(status.Convert(err).Message(), "Only Ada Lovelace can change the PostHog project") {
+	if reasonOf(err) != "ACCOUNT_OWNER_ONLY" || !strings.Contains(status.Convert(err).Message(), "Only Ada Lovelace can change the PostHog project it reads") {
 		t.Fatalf("another member's change of project = %v", err)
 	}
 	if err := s.signedInSettings(as("user-1"), kind, current, other); err != nil {

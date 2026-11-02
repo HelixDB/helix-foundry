@@ -84,9 +84,14 @@ func (k *posthogKind) DisplayName() string { return "PostHog" }
 
 var _ Identifier = (*posthogKind)(nil)
 
+// PostHogSignInRegion is the region Pipes' PostHog provider authorizes in:
+// it has no region setting, so a signed-in PostHog reads this cloud only
+// (verify on dev).
+const PostHogSignInRegion = "us"
+
 // Prepare checks a key's format and the settings. A token the broker vended
-// has no format of ours to check; it reads PostHog Cloud only, so a
-// self-hosted PostHog (region custom) keeps its key.
+// has no format of ours to check; it reads PostHogSignInRegion's cloud
+// only, so the other cloud and a self-hosted PostHog keep their keys.
 func (k *posthogKind) Prepare(src Source) (json.RawMessage, error) {
 	if !src.SignIn && !posthogKeyRE.MatchString(strings.TrimSpace(src.Secret)) {
 		return nil, invalid("enter a PostHog personal API key (phx_…)")
@@ -104,9 +109,6 @@ func (k *posthogKind) Prepare(src Source) (json.RawMessage, error) {
 			return nil, invalid("a PostHog host is only used with the custom region")
 		}
 	case "custom":
-		if src.SignIn {
-			return nil, invalid("signing in reads PostHog Cloud only: connect a self-hosted PostHog with a personal API key")
-		}
 		u, err := url.Parse(strings.TrimSpace(s.Host))
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 			return nil, invalid("enter the HTTPS address of your PostHog, without credentials")
@@ -114,6 +116,11 @@ func (k *posthogKind) Prepare(src Source) (json.RawMessage, error) {
 		s.Host = u.Scheme + "://" + u.Host
 	default:
 		return nil, invalid("PostHog region must be us, eu or custom")
+	}
+	if src.SignIn && s.Region != PostHogSignInRegion {
+		other := map[string]string{"us": "EU", "eu": "US"}[PostHogSignInRegion]
+		return nil, invalid("signing in reads PostHog %s Cloud only: connect PostHog %s Cloud or a self-hosted PostHog with a personal API key",
+			strings.ToUpper(PostHogSignInRegion), other)
 	}
 	s.ProjectID = strings.TrimSpace(s.ProjectID)
 	if s.ProjectID != "" && !posthogProjectRE.MatchString(s.ProjectID) {
