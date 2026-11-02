@@ -411,9 +411,9 @@ func (s *Syncer) accountFailure(ctx context.Context, c *model.Connector, kind co
 		if !broke {
 			return &Failure{Message: kind.DisplayName() + " was signed in again during the sync; Helix will retry", Err: err}
 		}
-		accountBreaks.WithLabelValues(broken.Reason).Inc()
-		log.From(ctx).Warn("a signed-in connector's account broke", "connector", c.ID, "workspace", c.WorkspaceID,
-			"reason", broken.Reason, "generation", c.Account.Generation)
+		CountAccountBreak(broken.Reason)
+		log.From(ctx).Warn("a signed-in connector's account broke", "workspace", c.WorkspaceID, "connector", c.ID, "kind", c.Kind,
+			"user", c.Account.UserID, "account", c.Account.ID, "reason", broken.Reason, "generation", c.Account.Generation)
 		fallthrough
 	case errors.As(err, &broken):
 		return &Failure{Message: AccountBrokenMessage(kind.DisplayName(), broken.Reason), Permanent: true, Err: err}

@@ -79,13 +79,14 @@ func (t *Task) purgeAccounts(ctx context.Context) {
 				continue
 			}
 			accountPurges.WithLabelValues("deleted").Inc()
-			log.From(ctx).Info("purged a connector account", "workspace", p.WorkspaceID, "kind", p.Kind, "account", p.AccountID)
+			log.From(ctx).Info("purged a connector account", "workspace", p.WorkspaceID, "kind", p.Kind, "account", p.AccountID,
+				"user", p.UserID)
 			continue
 		}
 		accountPurges.WithLabelValues("failed").Inc()
 		wait := min(time.Minute<<min(p.Attempts, 16), purgeBackoffMax)
 		log.From(ctx).Warn("purge a connector account failed", "workspace", p.WorkspaceID, "kind", p.Kind, "account", p.AccountID,
-			"attempts", p.Attempts+1, "retry_in", wait, "err", err)
+			"user", p.UserID, "attempts", p.Attempts+1, "retry_in", wait, "err", err)
 		if rerr := t.accounts.RetryConnectorAccountPurge(ctx, p.ID, err.Error(), wait); rerr != nil {
 			log.From(ctx).Warn("retry connector account purge failed", "purge", p.ID, "err", rerr)
 		}
@@ -129,8 +130,9 @@ func (t *Task) checkAccounts(ctx context.Context) {
 			}
 			accountChecks.WithLabelValues("broken").Inc()
 			if broke {
-				log.From(ctx).Warn("the weekly check found a connector's account broken", "connector", c.ID, "workspace", c.WorkspaceID,
-					"kind", c.Kind, "reason", broken.Reason, "generation", c.Account.Generation)
+				syncer.CountAccountBreak(broken.Reason)
+				log.From(ctx).Warn("the weekly check found a connector's account broken", "workspace", c.WorkspaceID, "connector", c.ID,
+					"kind", c.Kind, "user", c.Account.UserID, "account", c.Account.ID, "reason", broken.Reason, "generation", c.Account.Generation)
 			}
 		case errors.Is(err, ports.ErrAccountsUnavailable):
 			accountChecks.WithLabelValues("unavailable").Inc()

@@ -27,6 +27,10 @@ var (
 	}, []string{"reason"})
 )
 
+// CountAccountBreak counts an account a sync or the weekly check found
+// broken, by reason.
+func CountAccountBreak(reason string) { accountBreaks.WithLabelValues(reason).Inc() }
+
 // accountChecks records the tokens the broker vends.
 type accountChecks interface {
 	MarkConnectorAccountChecked(ctx context.Context, workspaceID, connectorID string) error
