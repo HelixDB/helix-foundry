@@ -5,8 +5,7 @@
    a slim bar, the conversation (the only part that scrolls) in one centred
    column, and the composer pinned under it. */
 
-/* Threads: New thread, the threads by recency, and the month's spend. Only
-   the threads scroll. */
+/* Threads: New thread and the threads by recency. Only the threads scroll. */
 .ak-panel {
   display: flex;
   flex: 1;
@@ -134,45 +133,6 @@
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
-}
-/* The month's spend in a line; the limits behind it. */
-.ak-budget {
-  flex: none;
-  padding: 8px 12px 12px;
-  border-top: 1px solid var(--hf-border);
-}
-.ak-budget > summary,
-.ak-budget[open] > summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 6px 10px;
-  border-radius: var(--hf-radius);
-  color: var(--hf-muted);
-  font-size: var(--hf-text-sm);
-  line-height: 1.4;
-  list-style: none;
-}
-.ak-budget > summary::-webkit-details-marker {
-  display: none;
-}
-.ak-budget > summary:hover {
-  background: var(--hf-hover);
-  color: var(--hf-text);
-}
-.ak-budget > summary svg {
-  flex: none;
-}
-.ak-budget strong {
-  color: var(--hf-text);
-  font-weight: 600;
-}
-.ak-budget p {
-  margin: 4px 10px 0;
-  color: var(--hf-text-2);
-  font-size: var(--hf-text-sm);
-  line-height: 1.5;
 }
 
 /* The conversation: a slim bar, then the questions and their replies in

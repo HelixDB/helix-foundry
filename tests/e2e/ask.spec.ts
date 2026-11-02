@@ -203,17 +203,6 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
     question.getByRole("link", { name: "Draft a new version with this" }),
   ).toHaveCount(0);
   await expect(step("Read rule breaks")).toContainText("5 records, more");
-  // Spend shows against the questions budget, under the threads, with the
-  // limits behind it.
-  const budget = page
-    .getByRole("region", { name: "Analyst threads" })
-    .getByRole("group", { name: "Questions budget" });
-  await expect(budget).toContainText("$0.07 of $30.00 this month");
-  await expect(budget.getByText(/A question spends at most/)).toBeHidden();
-  await budget.getByText("$0.07 of $30.00 this month").click();
-  await expect(budget).toContainText(
-    "A question spends at most $0.50, 20 steps and 4 minutes; 2 run at a time and 30 an hour per workspace.",
-  );
 
   // A result chip lights the step that returned it.
   await answer
@@ -784,14 +773,11 @@ test("groups the threads by when they were last asked in", async ({ page }) => {
   await expect(
     threads.getByRole("list", { name: "Older" }).getByRole("link"),
   ).toHaveText([/^What did Globex sign last year\?/]);
-  // A new thread is the page; the month's spend sits under the threads.
+  // A new thread is the page.
   await expect(page.getByRole("link", { name: "New thread" })).toHaveAttribute(
     "aria-current",
     "page",
   );
-  await expect(
-    page.getByRole("group", { name: "Questions budget" }),
-  ).toContainText("$0.28 of $30.00 this month");
 });
 
 test("on a phone, shows the threads as the page and in the drawer's sidebar", async ({
