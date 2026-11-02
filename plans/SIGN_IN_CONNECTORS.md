@@ -138,10 +138,18 @@ type ProviderAccounts interface {
 	// signing in: none when they can't (hosted: no WorkOS organization, no
 	// WorkOS membership of it, or Pipes switched off).
 	Kinds(ctx context.Context, workspaceID, userID string) ([]string, error)
-	// Authorize is the provider's URL for the user to authorize a.
+	// Authorize is the provider's URL for the user to authorize a. With
+	// a.AccountID set, an account the broker no longer has is an
+	// *AccountBroken{account_missing}: Foundry authorizes again for a new
+	// account, and only once that succeeds records the old one as missing
+	// (a broker may answer so for a switched-off integration too).
 	Authorize(ctx context.Context, a AccountAuthorization) (string, error)
 	// Finish saves the account the user authorized, having checked it is the
-	// workspace's and was made by ref.UserID; otherwise it deletes it.
+	// workspace's and was made by ref.UserID; otherwise it deletes it and
+	// fails (ErrAccountNotThisWorkspace), returning the refused account with
+	// the error so Foundry purges it too. ref.AccountID is set when the
+	// sign-in reauthorized the connector's own account: Finish never deletes
+	// that one. A lapsed, reused or mismatched code is ErrAccountCodeRejected.
 	Finish(ctx context.Context, ref AccountRef, code, verifier string) (ProviderAccount, error)
 	// Token is the account's current credential, asked for as ref.UserID.
 	Token(ctx context.Context, ref AccountRef) (Credential, error)
@@ -152,7 +160,10 @@ type ProviderAccounts interface {
 type AccountAuthorization struct {
 	WorkspaceID, UserID, Kind, Label string
 	ReturnTo, Challenge              string // S256
-	AccountID                        string // set: sign this account in again
+	// AccountID, when set, reauthorizes that account. Foundry sets it only
+	// when UserID is the member the account acts as: an account can't move
+	// to another member, so anyone else signing in again makes a new one.
+	AccountID string
 }
 
 type AccountRef struct{ WorkspaceID, UserID, Kind, AccountID string }
@@ -173,6 +184,11 @@ type AccountBroken struct {
 // ErrAccountsUnavailable is any other failure to reach the accounts:
 // switched off, unreachable, rate-limited. It is retried, never a break.
 var ErrAccountsUnavailable = errors.New("signing in to providers is unavailable")
+
+// ErrAccountCodeRejected: Finish's code lapsed, was used, or its verifier
+// doesn't match. ErrAccountNotThisWorkspace: the account isn't the
+// workspace's, or wasn't made by the user finishing.
+var ErrAccountCodeRejected, ErrAccountNotThisWorkspace error
 ```
 
 - **Wiring:** the port goes in `api.Deps` (`api/deps.go:22`) as `Accounts`, and in the sync worker's `Deps` (`workers/foundry-sync-worker/task.go:38-49`) as `optional:"true"`, passed to `syncer.Syncer`.
@@ -301,8 +317,9 @@ Regenerate with `buf generate && buf generate --template buf.internal.gen.yaml`,
 - The first Authorize makes the verifier and seals it with the connector keyring (context `sign-in:<id>`). Later ones reuse it.
 - **Calls `Accounts.Authorize`:**
   - intent `add` for a new connector;
-  - `reauthorize` with the account when signing in again;
-  - `add` again when the old account is `account_missing`.
+  - `reauthorize` with the account only when the caller is the account's `account_user_id` and it isn't broken `member_left` or `account_missing`. Pipes can't move an account to another member, and Finish refuses an account another user made, so a reauthorize by anyone else would cost the connector its account;
+  - `add` for everyone else signing in again. Once it connects, the old account goes to the purges.
+  - A reauthorize answered `AccountBroken{account_missing}` is retried once with `add`. Only when that succeeds is `account_missing` recorded at the connector's generation; if it fails, its error is the answer and nothing is recorded, since Pipes answers a switched-off integration the same way.
 - Sets `AUTHORIZING`, moves `expires_at` to 15 minutes from now, and answers with the URL.
 
 **Finish**
@@ -315,8 +332,8 @@ Regenerate with `buf generate && buf generate --template buf.internal.gen.yaml`,
   Only the claimant may end it.
 
 - **Without a code:** `error=access_denied` is `DECLINED`; anything else is `FAILED` `provider_error`.
-- **Otherwise** it runs under `context.WithoutCancel` with its own 60-second timeout, so a closed tab or a 504 at `/papi` doesn't stop it halfway:
-  1. `Accounts.Finish`. Write `account_id` on the row at once.
+- **Otherwise** it runs under `context.WithoutCancel` with its own 60-second timeout for the provider calls, so a closed tab or a 504 at `/papi` doesn't stop it halfway. Each store write that records how it ended, the compensating delete and the final read get a fresh 10-second context of their own, so a slow provider can't leave the outcome unrecorded. A sign-in still `FINISHING` after 5 minutes (a crashed finish) reads `FAILED` `unavailable`, may authorize again, and its account is purged.
+  1. `Accounts.Finish`, with `ref.AccountID` set when it reauthorized. Write `account_id` on the row at once; if that write fails, delete the account unless it is the one the connector reads with. A refused account that Finish returns with its error goes to the purges in the transaction that ends the sign-in, unless a live connector reads with it.
   2. `Accounts.Token`.
   3. `Prepare` with `Source.SignIn`. A refusal is `FAILED` `settings_invalid`.
   4. The provider identity (`connector.Identifier`, below), for `account_label`. When signing in again to a different identity, set `identity_changed`.
@@ -367,9 +384,12 @@ Regenerate with `buf generate && buf generate --template buf.internal.gen.yaml`,
 - For a connector with an account, the syncer asks Pipes again once and retries. Pipes refreshes an expired token, which covers a token that ran out mid-sync; `Credential.ExpiresAt` is logged.
 - A second rejection is `AccountBroken{access_revoked}`.
 
+**A sync that outlives a sign-in again.** A sync records the `account_generation` it read with. Its cursor write and `FinishConnectorSync`'s schedule writes apply only while that generation is current. Otherwise the cursor is dropped, `schedule_paused` is left alone, and `next_sync_at` is set to now. A sync of the old account can't then undo the new sign-in's full read, or pause a connector that was just signed in again. A key connector stays at generation 0.
+
 **Weekly check.**
 
 - The schedule loop asks Pipes for every connector with an account not vended in 7 days, paused or manual-only ones included.
+- A check that gets no token defers that account by an hour (`DeferConnectorAccountCheck`), and the loop moves on. The tick stops early only after 3 unavailable answers in a row, so one unreachable account can't hold back every other.
 - This keeps GitHub's refresh token (6 months) from lapsing, and catches accounts that broke outside Helix: a membership removed in WorkOS directly, a grant revoked at the provider.
 
 The token is never logged.
@@ -416,7 +436,9 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
   - `established_by_user_id` is the actor's WorkOS user;
   - the state is `connected`.
 
-  On any mismatch it deletes the account and fails. Otherwise it returns the Helix user mapped from `established_by_user_id`.
+  On any mismatch it deletes the account (never `ref.AccountID`) and returns it with `ErrAccountNotThisWorkspace`. A 400 is `ErrAccountCodeRejected`. Otherwise it returns `ref.UserID`, the user `established_by_user_id` was just checked against.
+
+- **`Authorize`** requires Pipes' `completion` to be exactly `finish_required`, so Foundry's checks and the PKCE binding can't be skipped. A 404 on a reauthorize is `AccountBroken{account_missing}`.
 
 - **`Token`** vends with `supports_multiple_connections: true`, as `ref.UserID`. Answers map as follows:
   - **active:** the value and `expires_at`;
@@ -425,7 +447,7 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
     - a failed refresh is `expired`;
     - any other is `access_revoked`;
   - **`not_installed`** (Pipes has no such account): `account_missing`;
-  - **a 403** ("User does not have access to the specified organization"): `member_left`;
+  - **a 403** carrying exactly "User does not have access to the specified organization": `member_left`. Any other 403 (a narrowed key, say) is unavailable and counted as an unknown answer, so it can't break every connector;
   - **an `error` value it doesn't know:** `ErrAccountsUnavailable`, with an alert.
 - **`Delete`:** a 404 is done.
 
@@ -1002,5 +1024,5 @@ These are answered during verification on dev.
   - its token's format;
   - Pipes refreshing its 24-hour tokens;
   - whether a Linear workspace that requires approving OAuth apps lands on the callback with an error, or not at all.
-- **What `reauthorize` does to `established_by`,** when a different member signs in again.
+- **What `reauthorize` does to `established_by`.** No longer a risk: only the account's own member reauthorizes, and anyone else adds a new account. Worth recording on dev all the same.
 - **GitHub's per-user cap on tokens** for one app.
