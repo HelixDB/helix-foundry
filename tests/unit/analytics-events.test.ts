@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/web/api";
-import { jobStarted, trackEvent } from "@/web/analytics";
-import { syncConnector } from "@/web/areas/data/data-api";
-import { moveDocument } from "@/web/areas/documents/documents-api";
+import { api, ApiError } from "@/web/api";
+import { jobSeen, jobStarted, trackEvent } from "@/web/analytics";
+import { connectorsQuery, syncConnector } from "@/web/areas/data/data-api";
 import {
+  documentQueries,
+  moveDocument,
+} from "@/web/areas/documents/documents-api";
+import {
+  askQuestion,
   cancelQuestion,
+  createLoad,
+  generateOntology,
   reviseOntologyVersion,
   setCurrentLoad,
   setCurrentVersion,
@@ -13,7 +19,8 @@ import { deleteReviewDecision, settleReview } from "@/web/areas/reviews/api";
 import { cancelPlan, resumePlan } from "@/web/areas/workspace/plan";
 
 // The API calls that report a custom event (src/web/analytics.ts): once the
-// WFE accepts them, and never when it refuses.
+// WFE accepts them, and never when it refuses; those that start a job start
+// it (jobStarted) or report why the WFE refused it.
 
 vi.mock("@/web/api", async (actual) => ({
   ...(await actual<typeof import("@/web/api")>()),
@@ -28,17 +35,18 @@ vi.mock("@/web/analytics", () => ({
 const call = vi.mocked(api);
 
 beforeEach(() => {
-  call.mockReset().mockResolvedValue({ generation: { id: "gen_1" } });
+  call.mockReset().mockResolvedValue({
+    generation: { id: "gen_1" },
+    load: { id: "load_1" },
+    question: { id: "q_1" },
+    sync: { id: "sync_1" },
+  });
   vi.mocked(trackEvent).mockClear();
   vi.mocked(jobStarted).mockClear();
+  vi.mocked(jobSeen).mockClear();
 });
 
 const cases: [string, () => Promise<unknown>, unknown[]][] = [
-  [
-    "a sync, with where it was queued",
-    () => syncConnector("ws", "c1", "tree"),
-    ["connector_sync_started", { from: "tree" }],
-  ],
   ["a document move", () => moveDocument("ws", "d1", "s1"), ["document_moved"]],
   [
     "a version made current",
@@ -90,17 +98,133 @@ describe("custom events of API calls", () => {
     expect(trackEvent).not.toHaveBeenCalled();
   });
 
-  it("starts a revision job as a preview or a save", async () => {
-    await reviseOntologyVersion("ws", "o", "v", { edits: [], dryRun: true });
-    await reviseOntologyVersion("ws", "o", "v", { edits: [] });
-    expect(vi.mocked(jobStarted).mock.calls).toEqual([
-      ["revision", "gen_1", "preview"],
-      ["revision", "gen_1", "save"],
+  const jobs: [string, () => Promise<unknown>, unknown[], string | null][] = [
+    [
+      "a sync, with where it was queued",
+      () => syncConnector("ws", "c1", "tree"),
+      [{ job: "sync", from: "tree" }, "sync_1"],
+      null,
+    ],
+    [
+      "a generation, with its source",
+      () => generateOntology("ws", "o", { sample: "acme" }),
+      [{ job: "generation", source: "sample" }, "gen_1"],
+      "generation_refused",
+    ],
+    [
+      "a revision's preview",
+      () => reviseOntologyVersion("ws", "o", "v", { edits: [], dryRun: true }),
+      [{ job: "revision", mode: "preview" }, "gen_1"],
+      "revision_refused",
+    ],
+    [
+      "a revision that saves",
+      () => reviseOntologyVersion("ws", "o", "v", { edits: [] }),
+      [{ job: "revision", mode: "save" }, "gen_1"],
+      "revision_refused",
+    ],
+    [
+      "a load",
+      () => createLoad("ws", "o", { versionId: "v", clientToken: "t" }),
+      [{ job: "load" }, "load_1"],
+      "load_refused",
+    ],
+    [
+      "a question",
+      () =>
+        askQuestion("ws", "o", {
+          loadId: "l",
+          question: "?",
+          clientToken: "t",
+        }),
+      [{ job: "question" }, "q_1"],
+      "question_refused",
+    ],
+  ];
+
+  it.each(jobs)("starts %s once it is accepted", async (_, run, started) => {
+    await run();
+    expect(vi.mocked(jobStarted).mock.calls).toEqual([started]);
+    expect(trackEvent).not.toHaveBeenCalled();
+  });
+
+  it.each(jobs)(
+    "reports why %s was refused, and starts nothing",
+    async (_, run, __, refused) => {
+      call.mockRejectedValueOnce(new ApiError("slow down", 429));
+      await expect(run()).rejects.toThrow("slow down");
+      call.mockRejectedValueOnce(new ApiError("over the cap", 400));
+      await expect(run()).rejects.toThrow("over the cap");
+      call.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      await expect(run()).rejects.toThrow("Failed to fetch");
+      expect(jobStarted).not.toHaveBeenCalled();
+      expect(vi.mocked(trackEvent).mock.calls).toEqual(
+        refused
+          ? [
+              [refused, { reason: "rate_limit" }],
+              [refused, { reason: "refused" }],
+              [refused, { reason: "error" }],
+            ]
+          : [],
+      );
+    },
+  );
+
+  it("leaves a generation already live unreported: callers follow it", async () => {
+    call.mockRejectedValueOnce(new ApiError("already live", 409));
+    await expect(generateOntology("ws", "o", {})).rejects.toThrow();
+    expect(trackEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("reads that see jobs end", () => {
+  it("hands each connector's newest sync to jobSeen, with its kind", async () => {
+    call.mockResolvedValueOnce({
+      connectors: [
+        {
+          id: "c1",
+          kind: "stripe",
+          lastSync: { id: "s1", status: "CONNECTOR_SYNC_STATUS_FAILED" },
+        },
+        { id: "c2", kind: "newkind", lastSync: { id: "s2" } },
+        { id: "c3", kind: "github" },
+      ],
+    });
+    await connectorsQuery("ws").queryFn();
+    expect(vi.mocked(jobSeen).mock.calls).toEqual([
+      [
+        "sync",
+        [
+          { id: "s1", status: "CONNECTOR_SYNC_STATUS_FAILED", kind: "stripe" },
+          { id: "s2", kind: "other" },
+          undefined,
+        ],
+      ],
     ]);
-    call.mockRejectedValueOnce(new Error("refused"));
-    await expect(
-      reviseOntologyVersion("ws", "o", "v", { edits: [] }),
-    ).rejects.toThrow("refused");
-    expect(jobStarted).toHaveBeenCalledTimes(2);
+  });
+
+  it("hands each upload's read to jobSeen, with its format and code", async () => {
+    const pdf = {
+      id: "d1",
+      mediaType: "application/pdf",
+      read: {
+        state: "FOUNDRY_FILE_READ_STATE_FAILED",
+        error: { code: "unsupported", message: "Scanned PDF: no text to read" },
+      },
+    };
+    call.mockResolvedValueOnce({ documents: [pdf, { id: "d2" }] });
+    await documentQueries.workspace("ws").queryFn();
+    call.mockResolvedValueOnce({ document: pdf });
+    await documentQueries.workspaceDocument("ws", "d1").queryFn();
+    const read = {
+      id: "d1",
+      status: "FOUNDRY_FILE_READ_STATE_FAILED",
+      format: "application/pdf",
+      code: "unsupported",
+    };
+    expect(vi.mocked(jobSeen).mock.calls).toEqual([
+      ["read", [read, { id: "d2" }]],
+      ["read", [read]],
+    ]);
   });
 });

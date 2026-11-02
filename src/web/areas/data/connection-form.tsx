@@ -174,7 +174,9 @@ export function ConnectionForm({
       // tables and its error describe the old ones.
       const result = await testConnector(id, toConfig(form, [])).catch(
         (e: unknown) => {
-          if (edits.current === at) throw e;
+          if (edits.current !== at) return;
+          trackEvent("connector_test_failed", { kind: form.kind });
+          throw e;
         },
       );
       if (!result || edits.current !== at) return;

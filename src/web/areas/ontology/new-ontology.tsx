@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { LOCAL } from "../../../shared/deployment";
 import type { FoundryEventSourceMode } from "../../../shared/wfe";
-import { ApiError } from "../../api";
+import { ApiError, refusalOf } from "../../api";
 import {
   Button,
   ButtonLink,
@@ -301,6 +301,16 @@ export function NewOntologyPage() {
   const at = wizard.steps.findIndex((s) => s.id === wizard.current),
     step = wizard.steps[at]!;
   const choosing = onboarding && !own;
+  // The step shown, for where the wizard is left (Databuddy drops ?step=),
+  // once `first` is known.
+  const shown =
+    !choosing &&
+    canManage(role) &&
+    (onboarding || !!ontologies.data) &&
+    step.id;
+  useEffect(() => {
+    if (shown) trackEvent("ontology_step_shown", { step: shown, first });
+  }, [shown, first]);
   const crumbs = onboarding
       ? undefined
       : [{ label: "Ontologies", to: paths.ontologies() }],
@@ -441,6 +451,9 @@ export function NewOntologyPage() {
         void qc.invalidateQueries({ queryKey: [id, key] });
     } catch (e) {
       setError(e);
+      trackEvent("ontology_create_failed", {
+        reason: isNoSubscription(e) ? "no_subscription" : refusalOf(e),
+      });
       void qc.invalidateQueries({ queryKey: [id, "databases"] });
     } finally {
       setPending(false);

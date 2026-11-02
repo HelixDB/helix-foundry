@@ -25,7 +25,7 @@ import { X } from "lucide-react";
 import { LOCAL } from "../shared/deployment";
 import type { WhoamiResponse } from "../shared/wfe";
 import { signInPath } from "../shared/return-path";
-import { signedIn, trackEvent } from "./analytics";
+import { identifyUser, signedIn, trackEvent } from "./analytics";
 import { ApiError } from "./api";
 import { Button, SkeletonText } from "./kit";
 import { paths } from "./paths";
@@ -231,6 +231,7 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
   useEffect(() => {
     if (signedInTo) signedIn(signedInTo);
   }, [signedInTo]);
+  useEffect(() => identifyUser(me.user.id), [me.user.id]);
   useEffect(() => {
     if (!linked || !list.data) return;
     if (

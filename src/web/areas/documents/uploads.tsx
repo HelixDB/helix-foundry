@@ -3,13 +3,14 @@ import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, X } from "lucide-react";
 import type { FoundryDocumentSet } from "../../../shared/wfe";
-import { trackEvent } from "../../analytics";
+import { jobStarted, trackEvent } from "../../analytics";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { Button, IconButton, SourceLogo, cx } from "../../kit";
 import { AiGate, SettingsLinked, useAiConfigured } from "../workspace/ai-gate";
 import { documentsChanged, uploadDocument } from "./documents-api";
 import {
+  fileRead,
   formatBytes,
   formatOf,
   kindText,
@@ -61,7 +62,17 @@ export function useUploads() {
       end.step === "done" &&
       end.result.kind !== "existing" &&
       formatOf(end.document.mediaType)?.mediaType;
-    if (format) trackEvent("document_uploaded", { format });
+    if (format) {
+      trackEvent("document_uploaded", { format });
+      // A table file or PDF Foundry reads next: its end is reported once a
+      // read of the documents sees it.
+      if (end.step === "done" && fileRead(end.document).state === "reading")
+        jobStarted({ job: "read" }, end.document.id);
+    }
+    if (end.step === "failed")
+      trackEvent("document_upload_failed", {
+        reason: end.retry ? "error" : "refused",
+      });
     return end;
   };
   // Uploads may start reads in any ontology: once a batch settles, what
