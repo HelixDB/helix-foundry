@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/helixdb/helix-foundry/backend/access"
+	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
@@ -34,6 +35,8 @@ type accessStore struct {
 	// its other loads, by load.
 	inputs     map[string]foundrymodel.FoundryLoadInputs
 	olderLoads map[string]foundrymodel.FoundryLoadInputs
+	// holdings are what each load holds, document by document.
+	holdings map[string]access.Holdings
 	// granteeSpend is what each grantee's questions charged to the month.
 	granteeSpend map[access.Principal]foundrymodel.FoundryQuestionSpend
 	// versionInputs are what a new load of each version would hold.
@@ -78,6 +81,14 @@ func (s *accessStore) ListFoundryLoadInputs(_ context.Context, workspaceID strin
 		}
 	}
 	return out, nil
+}
+
+func (s *accessStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (access.Holdings, error) {
+	h, ok := s.holdings[loadID]
+	if !ok {
+		return access.Holdings{}, foundrystore.ErrNotFound
+	}
+	return h, nil
 }
 
 func (s *accessStore) SumFoundryGranteeQuestionSpend(_ context.Context, _ string, grantee access.Principal, _ time.Time) (foundrymodel.FoundryQuestionSpend, error) {
@@ -194,9 +205,9 @@ var (
 
 // accessService serves ws-1: Billing (ont-1), whose current load (load-1, of
 // ver-1) holds Stripe's customers and General's documents, and Payroll
-// (ont-3, load-3), which holds PostgreSQL's people too. The agent's key holds
+// (ont-3, load-3), which holds PostgreSQL's people alone. The agent's key holds
 // Stripe and General, so it reads Billing but not Payroll; user-9 holds
-// General alone.
+// General alone, and so holds part of Billing.
 func accessService(t *testing.T) (*Service, *accessStore) {
 	t.Helper()
 	s, questions := questionService(t)
@@ -215,7 +226,7 @@ func accessService(t *testing.T) (*Service, *accessStore) {
 	general := access.SetRef{SetID: "set-general"}
 	store.inputs = map[string]foundrymodel.FoundryLoadInputs{
 		"ont-1": {LoadID: "load-1", VersionID: "ver-1", Inputs: access.Inputs{Tables: []access.TableRef{stripeCustomers}, Sets: []access.SetRef{general}}},
-		"ont-3": {LoadID: "load-3", VersionID: "ver-3", Inputs: access.Inputs{Tables: []access.TableRef{stripeCustomers, pgPeople}}},
+		"ont-3": {LoadID: "load-3", VersionID: "ver-3", Inputs: access.Inputs{Tables: []access.TableRef{pgPeople}}},
 	}
 	store.grants = []foundrymodel.FoundryAccessGrant{
 		{ID: "g1", WorkspaceID: "ws-1", Principal: agentKey, Target: access.ConnectorTarget("conn-1")},
@@ -592,6 +603,160 @@ func TestGranteeAnswers(t *testing.T) {
 	})
 }
 
+// A grantee that holds only some of a load's sources reads that part: the
+// version as the agent projects it, and reads and questions told what it holds.
+func TestGranteePartial(t *testing.T) {
+	s, store := accessService(t)
+	const view = `{"as_of":"2026-10-30","results":[{"ok":{"kind":"view","ontology_toml":"projected","mappings_toml":"held mappings","partial":["Customer"]}}]}`
+	reader := &fakeFoundryRead{result: view}
+	s.deps.FoundryRead = reader
+	mixed := "load-4"
+	store.ontologies["ont-4"] = &foundrymodel.FoundryOntology{ID: "ont-4", WorkspaceID: "ws-1", Name: "Mixed", ProjectID: "proj-1", TenantID: "tenant-4",
+		CurrentLoadID: &mixed, CreatedAt: time.Now()}
+	store.loads = append(store.loads, &foundrymodel.FoundryLoad{ID: "load-4", OntologyID: "ont-4", VersionID: "ver-4", Version: 4, Status: foundrymodel.FoundryLoadReady})
+	generation := "gen-4"
+	store.versions = append(store.versions, &foundrymodel.OntologyVersion{ID: "ver-4", WorkspaceID: "ws-1", OntologyID: "ont-4",
+		Format: foundrymodel.OntologyFormatAgentBundle, GenerationID: &generation,
+		Definition: json.RawMessage(`{"format":"agent_bundle","ontology_toml":"whole","mappings_toml":"every mapping","draft":{"draft":{"items":{"secret":{}}}},"questions":[{"id":"Q1"}]}`)})
+	general, hr := access.SetRef{SetID: "set-general"}, access.SetRef{SetID: "set-hr"}
+	store.inputs["ont-4"] = foundrymodel.FoundryLoadInputs{LoadID: "load-4", VersionID: "ver-4",
+		Inputs: access.Inputs{Tables: []access.TableRef{stripeCustomers, pgPeople}, Sets: []access.SetRef{general, hr}}}
+	store.holdings = map[string]access.Holdings{"load-4": {
+		Tables:    []access.TableRef{stripeCustomers, pgPeople},
+		Files:     []access.DocumentRef{{ID: "file-general", Set: general}, {ID: "file-hr", Set: hr}},
+		Documents: []access.DocumentRef{{ID: "doc-general", Set: general}, {ID: "doc-hr", Set: hr}},
+		Decisions: []access.PropDecision{{Type: "Customer", Prop: "plan", Sets: []access.SetRef{hr}, Recorded: true}},
+	}}
+	store.documents = append(store.documents,
+		&foundrymodel.FoundryDocument{ID: "doc-general", WorkspaceID: "ws-1", SetID: "set-general", Name: "general.md", MediaType: foundrymodel.FoundryMediaMarkdown,
+			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/general"},
+		&foundrymodel.FoundryDocument{ID: "doc-hr", WorkspaceID: "ws-1", SetID: "set-hr", Name: "hr.md", MediaType: foundrymodel.FoundryMediaMarkdown,
+			Status: foundrymodel.FoundryDocumentUploaded, S3Key: "docs/hr"})
+	store.members["load-4"] = []string{"doc-general", "doc-hr"}
+	store.holding = map[string][]string{"doc-general": {"ont-4"}, "doc-hr": {"ont-4"}}
+	conn, as := served(t, s)
+	client := foundryv1.NewFoundryServiceClient(conn)
+	ctx := as(agent)
+
+	t.Run("listed as part", func(t *testing.T) {
+		got, err := client.ListFoundryOntologies(ctx, &foundryv1.ListFoundryOntologiesRequest{WorkspaceId: "ws-1"})
+		if err != nil || len(got.GetOntologies()) != 2 {
+			t.Fatalf("%+v, %v", got, err)
+		}
+		partial := map[string]bool{}
+		for _, o := range got.GetOntologies() {
+			partial[o.GetId()] = o.GetPartialAccess()
+		}
+		if !partial["ont-4"] || partial["ont-1"] {
+			t.Fatalf("%v", partial)
+		}
+		my, err := client.GetMyFoundryAccess(ctx, &foundryv1.GetMyFoundryAccessRequest{WorkspaceId: "ws-1"})
+		if err != nil || !slices.Equal(my.GetOntologyIds(), []string{"ont-1", "ont-4"}) || !slices.Equal(my.GetPartialOntologyIds(), []string{"ont-4"}) {
+			t.Fatalf("%+v, %v", my, err)
+		}
+	})
+	t.Run("the version as it sees it", func(t *testing.T) {
+		got, err := client.GetOntologyVersion(ctx, &foundryv1.GetOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "ver-4"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields := got.GetVersion().GetDefinition().GetFields()
+		if fields["ontology_toml"].GetStringValue() != "projected" || fields["mappings_toml"].GetStringValue() != "held mappings" ||
+			fields["draft"] != nil || fields["questions"] != nil || got.GetVersion().GetGenerationId() != "" || len(got.GetVersion().GetDocumentSetIds()) != 0 {
+			t.Fatalf("%+v", got.GetVersion())
+		}
+		read := reader.requests[len(reader.requests)-1]
+		if read.GetReadsJson() != `[{"view":{}}]` || read.GetOntologyToml() != "whole" || read.GetMappingsToml() != "every mapping" {
+			t.Fatalf("%+v", read)
+		}
+		// What it reads says what it holds, and what it doesn't is left out.
+		want := `{"sources":["` + ontologyagent.TableSourceID("conn-1", "customers") + `","file-general"],"documents":{"only":["doc-general"]},"sets":["set-general"],"enrichment":false,"withheld":[{"type":"Customer","prop":"plan"}]}`
+		if read.GetVisibilityJson() != want {
+			t.Fatalf("visibility %s, want %s", read.GetVisibilityJson(), want)
+		}
+		// One whose agent answers nothing readable gives nothing away.
+		reader.result = `{"results":[]}`
+		if _, err := client.GetOntologyVersion(ctx, &foundryv1.GetOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "ver-4"}); status.Code(err) != codes.Internal {
+			t.Fatal(err)
+		}
+		reader.result = view
+	})
+	t.Run("reads told what it holds", func(t *testing.T) {
+		before := len(reader.requests)
+		reader.result = `{"as_of":"2026-10-30","results":[{"ok":{}}]}`
+		defer func() { reader.result = view }()
+		if _, err := client.ReadFoundryGraph(ctx, &foundryv1.ReadFoundryGraphRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", LoadId: "load-4", ReadsJson: `[{"query":{}}]`}); err != nil {
+			t.Fatal(err)
+		}
+		read := reader.requests[before]
+		if read.GetVisibilityJson() == "" || read.GetMappingsToml() != "every mapping" {
+			t.Fatalf("%+v", read)
+		}
+		// A load it holds all of is read whole, as it was.
+		if _, err := client.ReadFoundryGraph(ctx, &foundryv1.ReadFoundryGraphRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", LoadId: "load-1", ReadsJson: `[{"query":{}}]`}); err != nil {
+			t.Fatal(err)
+		}
+		if last := reader.requests[len(reader.requests)-1]; last.GetVisibilityJson() != "" || last.GetMappingsToml() != "" {
+			t.Fatalf("%+v", last)
+		}
+	})
+	t.Run("only documents it holds", func(t *testing.T) {
+		list, err := client.ListFoundryOntologyDocuments(ctx, &foundryv1.ListFoundryOntologyDocumentsRequest{WorkspaceId: "ws-1", OntologyId: "ont-4"})
+		if err != nil || len(list.GetDocuments()) != 1 || list.GetDocuments()[0].GetId() != "doc-general" {
+			t.Fatalf("%+v, %v", list, err)
+		}
+		if _, err := client.GetFoundryOntologyDocument(ctx, &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "doc-general"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.GetFoundryOntologyDocument(ctx, &foundryv1.GetFoundryOntologyDocumentRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "doc-hr"}); status.Code(err) != codes.NotFound {
+			t.Fatal(err)
+		}
+	})
+	t.Run("an answer reads while its grants hold what it read", func(t *testing.T) {
+		token := "seen"
+		q := &foundrymodel.FoundryQuestion{ID: "q-seen", WorkspaceID: "ws-1", OntologyID: "ont-4", LoadID: "load-4", VersionID: "ver-4", ThreadID: "q-seen",
+			Question: "x", ClientToken: &token, Grantee: &agentKey, Seen: &access.Inputs{Tables: []access.TableRef{stripeCustomers}, Sets: []access.SetRef{general}},
+			Status: foundrymodel.FoundryQuestionAnswered}
+		store.questions = append(store.questions, q)
+		get := func() error {
+			_, err := client.GetFoundryQuestion(ctx, &foundryv1.GetFoundryQuestionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "q-seen"})
+			return err
+		}
+		if err := get(); err != nil {
+			t.Fatal(err)
+		}
+		q.Seen.Sets = []access.SetRef{hr}
+		if err := get(); status.Code(err) != codes.NotFound {
+			t.Fatal(err)
+		}
+	})
+	t.Run("owners see who reads part", func(t *testing.T) {
+		list, err := client.ListFoundryAccess(as(person), &foundryv1.ListFoundryAccessRequest{WorkspaceId: "ws-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range list.GetOntologies() {
+			if o.GetOntologyId() == "ont-4" && (len(o.GetReaders()) != 0 || len(o.GetPartialReaders()) != 2) {
+				t.Fatalf("%+v", o)
+			}
+		}
+	})
+	t.Run("a load it can't tell the holdings of", func(t *testing.T) {
+		delete(store.holdings, "load-4")
+		if _, err := client.GetOntologyVersion(ctx, &foundryv1.GetOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-4", Id: "ver-4"}); status.Code(err) != codes.NotFound {
+			t.Fatal(err)
+		}
+	})
+	t.Run("nothing of a load whose holdings can't be told at all", func(t *testing.T) {
+		l := store.inputs["ont-4"]
+		l.Inputs.Unknown = true
+		store.inputs["ont-4"] = l
+		if _, err := client.GetFoundryOntology(ctx, &foundryv1.GetFoundryOntologyRequest{WorkspaceId: "ws-1", OntologyId: "ont-4"}); status.Code(err) != codes.NotFound {
+			t.Fatal(err)
+		}
+	})
+}
+
 // A grantee names documents only by id, and only those in sets it holds.
 func TestGranteeDocuments(t *testing.T) {
 	s, store := accessService(t)
@@ -633,9 +798,9 @@ func TestGetMyFoundryAccess(t *testing.T) {
 		ontologies         []string
 	}{
 		"an agent's key, as a grantee":         {agent, true, true, []string{"ont-1"}},
-		"a member, as a grantee":               {member, true, true, nil},
+		"a member, as a grantee":               {member, true, true, []string{"ont-1"}},
 		"a grantee with nothing":               {ports.Actor{Source: ports.SourceGrantee, UserID: "nobody", WorkspaceID: "ws-1"}, true, false, nil},
-		"the host's member, holding grants":    {ports.Actor{Source: ports.SourceUser, UserID: "user-9", WorkspaceID: "ws-1"}, false, true, nil},
+		"the host's member, holding grants":    {ports.Actor{Source: ports.SourceUser, UserID: "user-9", WorkspaceID: "ws-1"}, false, true, []string{"ont-1"}},
 		"the host's key, holding grants":       {ports.Actor{Source: ports.SourceMCP, ServiceCredentialID: "cred-1", WorkspaceID: "ws-1"}, false, true, []string{"ont-1"}},
 		"the host's caller, holding no grants": {person, false, false, nil},
 		"no user or key":                       {ports.Actor{Source: ports.SourceEventSource, EventSourceTokenID: "t", WorkspaceID: "ws-1"}, false, false, nil},
@@ -821,15 +986,17 @@ func TestRestrictedMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, who := range []ports.Actor{eve, viaMCP} {
-		if got := list(t, who); got != nil {
-			t.Fatalf("restricted, holding General alone: %v", got)
+		if got := list(t, who); !slices.Equal(got, []string{"ont-1"}) {
+			t.Fatalf("restricted, holding General alone, reads the part of Billing it holds: %v", got)
 		}
 		if _, err := client.ListConnectors(as(who), &foundryv1.ListConnectorsRequest{WorkspaceId: "ws-1"}); status.Code(err) != codes.PermissionDenied {
 			t.Fatalf("restricted, the Data area: %v", err)
 		}
 	}
-	if got := list(t, ports.Actor{Source: ports.SourceUser, UserID: "user-9", WorkspaceID: "ws-2"}); len(got) != 0 {
-		t.Fatalf("restricted in ws-1 only: another workspace's call reads as the host's caller: %v", got)
+	elsewhere, err := client.ListFoundryOntologies(as(ports.Actor{Source: ports.SourceUser, UserID: "user-9", WorkspaceID: "ws-2"}),
+		&foundryv1.ListFoundryOntologiesRequest{WorkspaceId: "ws-2"})
+	if err != nil || len(elsewhere.GetOntologies()) != 1 || elsewhere.GetOntologies()[0].GetTenantId() == "" {
+		t.Fatalf("restricted in ws-1 only: another workspace's call reads as the host's caller: %+v, %v", elsewhere, err)
 	}
 
 	t.Run("holding a team's grants", func(t *testing.T) {

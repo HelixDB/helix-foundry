@@ -170,6 +170,8 @@ type ReadStore interface {
 	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
+	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
+	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen access.Inputs) error
 	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
 	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
 	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)

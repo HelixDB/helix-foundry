@@ -22,4 +22,7 @@ type FoundryLoadInputs struct {
 	LoadID     string
 	VersionID  string
 	Inputs     access.Inputs
+	// Partial says the grantee it was read for holds only some of it, which
+	// handlers narrow what they answer by.
+	Partial bool
 }

@@ -3,6 +3,7 @@ package foundryaskworker
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
@@ -29,6 +30,26 @@ func granteeHarness(t *testing.T) (*harness, *model.FoundryQuestion) {
 	}}}
 	q := question(1)
 	q.Grantee = &key
+	return h, q
+}
+
+// partHarness is granteeHarness with a load that holds more than the key's
+// grants do: PostgreSQL's people, and doc-2 in a set it doesn't hold.
+func partHarness(t *testing.T) (*harness, *model.FoundryQuestion) {
+	t.Helper()
+	h, q := granteeHarness(t)
+	h.store.grants = []model.FoundryAccessGrant{
+		{WorkspaceID: "ws-1", Principal: *q.Grantee, Target: access.TableTarget("conn-1", "customers")},
+		{WorkspaceID: "ws-1", Principal: *q.Grantee, Target: access.DocumentSetTarget("set-1")},
+	}
+	h.store.currentLoads = map[string]model.FoundryLoadInputs{"ont-1": {LoadID: "load-1", VersionID: "ver-3", Inputs: access.Inputs{
+		Tables: []access.TableRef{{ConnectorID: "conn-1", Table: "customers"}, {ConnectorID: "conn-gone", Table: "deals"}},
+		Sets:   []access.SetRef{{SetID: "set-1"}, {SetID: "set-other"}},
+	}}}
+	h.store.holdings = map[string]access.Holdings{"load-1": {
+		Tables:    []access.TableRef{{ConnectorID: "conn-1", Table: "customers"}, {ConnectorID: "conn-gone", Table: "deals"}},
+		Documents: []access.DocumentRef{{ID: "doc-1", Set: access.SetRef{SetID: "set-1"}}, {ID: "doc-2", Set: access.SetRef{SetID: "set-other"}}},
+	}}
 	return h, q
 }
 
@@ -77,10 +98,99 @@ func TestGranteeQuestions(t *testing.T) {
 			t.Fatalf("told %v", told)
 		}
 	})
+	// Of a load it holds only some of, it is asked with what it holds, and
+	// told only of that, and what it read is kept with its answer.
+	t.Run("asked of the part it holds", func(t *testing.T) {
+		h, q := partHarness(t)
+		settled := h.run(t, q)
+		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		req, _ := decodeAsk(t, h.agent.calls()[0])
+		catalog := []ontologyagent.CatalogEntry{
+			{ID: ontologyagent.TableSourceID("conn-1", "customers"), Kind: ontologyagent.CatalogTable, Name: "Stripe / customers"},
+			{ID: "set-1", Kind: ontologyagent.CatalogDocumentSet, Name: "Contracts"},
+		}
+		if fmt.Sprint(req.Catalog) != fmt.Sprint(catalog) {
+			t.Fatalf("catalog %+v", req.Catalog)
+		}
+		want := ontologyagent.Visibility{
+			Sources: []string{ontologyagent.TableSourceID("conn-1", "customers")}, Sets: []string{"set-1"},
+			Documents: ontologyagent.VisibleDocuments{Only: []string{"doc-1"}}, Withheld: []ontologyagent.WithheldProp{},
+		}
+		if req.Visibility == nil || fmt.Sprintf("%+v", *req.Visibility) != fmt.Sprintf("%+v", want) {
+			t.Fatalf("visibility %+v, want %+v", req.Visibility, want)
+		}
+		seen := access.Inputs{Tables: []access.TableRef{{ConnectorID: "conn-1", Table: "customers"}}, Sets: []access.SetRef{{SetID: "set-1"}}}
+		if fmt.Sprint(h.store.seen[q.ID]) != fmt.Sprint(seen) {
+			t.Fatalf("seen %+v", h.store.seen)
+		}
+	})
+	// Holding less of it by the time it's answered, its answer isn't kept.
+	for name, shrink := range map[string]func(*harness){
+		"a document moved out of what it holds": func(h *harness) {
+			holdings := h.store.holdings["load-1"]
+			holdings.Documents = []access.DocumentRef{{ID: "doc-1", Set: access.SetRef{SetID: "set-other"}}, {ID: "doc-2", Set: access.SetRef{SetID: "set-1"}}}
+			h.store.holdings["load-1"] = holdings
+		},
+		"a value decided from what it doesn't hold": func(h *harness) {
+			holdings := h.store.holdings["load-1"]
+			holdings.Decisions = []access.PropDecision{{Type: "Customer", Prop: "plan", Sets: []access.SetRef{{SetID: "set-other"}}, Recorded: true}}
+			h.store.holdings["load-1"] = holdings
+		},
+		"it no longer holds any of it": func(h *harness) { h.store.grants = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, q := partHarness(t)
+			answerIt := h.agent.ask
+			h.agent.ask = func(req string, stream agentv1.Agent_AskServer) error {
+				h.store.mu.Lock()
+				shrink(h)
+				h.store.mu.Unlock()
+				return answerIt(req, stream)
+			}
+			settled := h.run(t, q)
+			if len(settled) != 1 || settled[0].Status != model.FoundryQuestionFailed || settled[0].Error != noLongerGranted || settled[0].Result != nil {
+				t.Fatalf("settled %+v", settled)
+			}
+		})
+	}
+	// A full grantee whose coverage narrowed while it ran read more than it now holds.
+	t.Run("its grants come to cover less of it while it runs", func(t *testing.T) {
+		h, q := granteeHarness(t)
+		answerIt := h.agent.ask
+		h.agent.ask = func(req string, stream agentv1.Agent_AskServer) error {
+			h.store.mu.Lock()
+			l := h.store.currentLoads["ont-1"]
+			l.Inputs.Tables = append(slices.Clone(l.Inputs.Tables), access.TableRef{ConnectorID: "conn-other", Table: "x"})
+			h.store.currentLoads["ont-1"] = l
+			h.store.mu.Unlock()
+			return answerIt(req, stream)
+		}
+		settled := h.run(t, q)
+		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionFailed || settled[0].Error != noLongerGranted {
+			t.Fatalf("settled %+v", settled)
+		}
+	})
+	// Told of a turn that read part of a load while its grants hold that part.
+	t.Run("told of a part it still holds", func(t *testing.T) {
+		h, q := partHarness(t)
+		holds := access.Inputs{Sets: []access.SetRef{{SetID: "set-1"}}}
+		lost := access.Inputs{Sets: []access.SetRef{{SetID: "set-other"}}}
+		h.store.history = []*model.FoundryQuestion{
+			{Question: "kept", LoadID: "load-1", Seen: &holds, Result: json.RawMessage(answeredResult)},
+			{Question: "lost", LoadID: "load-1", Seen: &lost, Result: json.RawMessage(answeredResult)},
+		}
+		h.run(t, q)
+		req, _ := decodeAsk(t, h.agent.calls()[0])
+		if len(req.History) != 1 || req.History[0].Question != "kept" {
+			t.Fatalf("told %+v", req.History)
+		}
+	})
 	// Grants taken away before it runs, or another load made current, and it
 	// fails for good without asking.
 	for name, change := range map[string]func(*harness){
-		"its grants taken away": func(h *harness) { h.store.grants = h.store.grants[1:] },
+		"its grants taken away": func(h *harness) { h.store.grants = nil },
 		"another load current": func(h *harness) {
 			l := h.store.currentLoads["ont-1"]
 			l.LoadID = "load-2"

@@ -309,7 +309,15 @@ func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymod
 	}
 	return slices.DeleteFunc(slices.Clone(questions), func(q *foundrymodel.FoundryQuestion) bool {
 		l, held := loads[q.LoadID]
-		return !held || !grants.Covers(l.Inputs)
+		switch {
+		case !held:
+			return true
+		case q.Seen != nil:
+			// It read only part of the load: that part is what it says.
+			return !grants.Covers(*q.Seen)
+		default:
+			return !grants.Covers(l.Inputs)
+		}
 	}), nil
 }
 

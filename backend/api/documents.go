@@ -597,6 +597,18 @@ func (s *Service) ListFoundryOntologyDocuments(ctx context.Context, req *foundry
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "list documents: %v", err)
 	}
+	// Of a load it holds only some of, a grantee lists only what it holds.
+	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
+		g, _ := access.GranteeFrom(ctx)
+		byID := make(map[string]*foundrymodel.FoundryDocument, len(docs))
+		for _, d := range docs {
+			byID[d.ID] = d
+		}
+		if err := s.granteeDocuments(ctx, g, byID); err != nil {
+			return nil, err
+		}
+		docs = slices.DeleteFunc(slices.Clone(docs), func(d *foundrymodel.FoundryDocument) bool { return byID[d.ID] == nil })
+	}
 	extractions := map[string]*foundrymodel.FoundryDocumentExtraction{}
 	if currentLoad != "" {
 		ids := make([]string, 0, len(docs))
@@ -631,6 +643,16 @@ func (s *Service) GetFoundryOntologyDocument(ctx context.Context, req *foundryv1
 		// A grantee gets a document the load its grants cover holds.
 		if err := s.heldBy(ctx, doc, func(ontologyID string) bool { return ontologyID == o.ID }); err != nil {
 			return nil, err
+		}
+		if granted.Partial {
+			g, _ := access.GranteeFrom(ctx)
+			byID := map[string]*foundrymodel.FoundryDocument{doc.ID: doc}
+			if err := s.granteeDocuments(ctx, g, byID); err != nil {
+				return nil, err
+			}
+			if byID[doc.ID] == nil {
+				return nil, status.Error(codes.NotFound, "document not found")
+			}
 		}
 		o.CurrentLoadID = &granted.LoadID
 	}

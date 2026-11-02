@@ -1204,8 +1204,10 @@ message GetMyFoundryAccessResponse {
   bool grantee = 1;
   // The caller holds grants, through itself or its teams.
   bool has_grants = 2;
-  // The live ontologies whose current loads its grants cover.
+  // The live ontologies whose current loads its grants hold any of.
   repeated string ontology_ids = 3;
+  // Those of them it holds only some of.
+  repeated string partial_ontology_ids = 4;
 }
 
 // SetFoundryMemberRestrictedRequest restricts user_id, or lifts it.

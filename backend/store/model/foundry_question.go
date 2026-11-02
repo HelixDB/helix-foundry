@@ -68,7 +68,9 @@ type FoundryQuestion struct {
 	AskedByUserID *string
 	// Grantee is who asked through source grants, set only for such a
 	// question: the question is that principal's own, and runs as its.
-	Grantee    *access.Principal
+	Grantee *access.Principal
+	// Seen is what that grantee held of the load when it ran, if not all of it.
+	Seen       *access.Inputs
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time

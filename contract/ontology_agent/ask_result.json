@@ -214,6 +214,13 @@
               "type": "string",
               "const": "rows"
             },
+            "more": {
+              "description": "For a reader who sees only some of the rows: whether a next page holds more, which\n`total` can't say.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "rows": {
               "description": "The rows, in order.",
               "type": "array",
@@ -222,7 +229,7 @@
               }
             },
             "total": {
-              "description": "How many distinct rows there are in all.",
+              "description": "How many distinct rows there are in all; for a reader who sees only some of them,\nhow many of these it sees.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -1144,6 +1151,12 @@
           "type": "integer",
           "format": "uint",
           "default": 50,
+          "minimum": 0
+        },
+        "offset": {
+          "description": "How many rows, in order, to pass over first: the next page's is this page's plus its\n`limit`. At most 10,000.",
+          "type": "integer",
+          "format": "uint",
           "minimum": 0
         },
         "order_by": {

@@ -131,6 +131,10 @@ type memStore struct {
 	version    *model.OntologyVersion
 	generation *model.OntologyGeneration
 	history    []*model.FoundryQuestion
+	// holdings are what each load holds, document by document, and seen what
+	// each question that read part of its load read.
+	holdings map[string]access.Holdings
+	seen     map[string]access.Inputs
 	// olderLoads are loads other than the current ones, by load.
 	olderLoads map[string]model.FoundryLoadInputs
 	// cancelAfter cancels the question once that many appends stored events
@@ -269,6 +273,22 @@ func (s *memStore) ListFoundryCurrentLoadInputs(_ context.Context, _ string, ont
 		}
 	}
 	return out, nil
+}
+
+func (s *memStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (access.Holdings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.holdings[loadID], nil
+}
+
+func (s *memStore) SetFoundryQuestionSeen(_ context.Context, questionID string, seen access.Inputs) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen == nil {
+		s.seen = map[string]access.Inputs{}
+	}
+	s.seen[questionID] = seen
+	return nil
 }
 
 func (s *memStore) ListFoundryLoadInputs(_ context.Context, _ string, loadIDs []string) (map[string]model.FoundryLoadInputs, error) {

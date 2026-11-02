@@ -44,6 +44,8 @@ type store interface {
 	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
 	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
 	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
+	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
+	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen access.Inputs) error
 	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
 }
 
@@ -143,7 +145,11 @@ func (r *runner) run(ctx context.Context, q *model.FoundryQuestion, lost func())
 		c := ai.ResolveFailure(err).Logged(ctx, err)
 		return a, &failure{Message: c.Message, Permanent: c.Permanent, Err: err}
 	}
-	request, err := r.request(ctx, q)
+	held, err := r.granted(ctx, q)
+	if err != nil {
+		return a, err
+	}
+	request, err := r.request(ctx, q, held)
 	if err != nil {
 		return a, err
 	}
@@ -197,8 +203,13 @@ func (r *runner) run(ctx context.Context, q *model.FoundryQuestion, lost func())
 	if err := r.ask(ctx, q, body, resolved, lost, a); err != nil {
 		return a, err
 	}
-	// A grantee whose grants were taken away while it ran gets no answer.
-	if _, err := r.granted(ctx, q); err != nil {
+	// A grantee whose grants were taken away while it ran gets no answer, and
+	// one who holds less of the load than it did gets none it could say more in.
+	still, err := r.granted(ctx, q)
+	if err == nil && !still.within(held) {
+		err = errNoLongerGranted
+	}
+	if err != nil {
 		a.outcome.Result = nil
 		return a, err
 	}
@@ -210,25 +221,41 @@ const noLongerGranted = "your access to this ontology changed; ask again"
 
 var errNoLongerGranted = permanent(noLongerGranted, nil)
 
+// heldLoad is what the grantee that asked a question holds of its load.
+type heldLoad struct {
+	grants *access.Grants
+	// part is what it holds, when it isn't all of the load.
+	part *access.Part
+}
+
+// within reports whether h, read after an answer, still holds all that the
+// answer read, before.
+func (h heldLoad) within(before heldLoad) bool {
+	if before.grants == nil || before.part == nil {
+		return h.part == nil
+	}
+	return h.part == nil || h.part.Holds(*before.part)
+}
+
 // granted is what the grants of the grantee that asked q (and of its teams,
-// now) cover, nil for a question someone else asked: q's load must still be
-// its ontology's current one, and covered, or the question fails
-// (errNoLongerGranted).
-func (r *runner) granted(ctx context.Context, q *model.FoundryQuestion) (*access.Grants, error) {
+// now) hold of its load, none for a question someone else asked: q's load must
+// still be its ontology's current one, and they must hold some of it, or the
+// question fails (errNoLongerGranted).
+func (r *runner) granted(ctx context.Context, q *model.FoundryQuestion) (heldLoad, error) {
 	if q.Grantee == nil {
-		return nil, nil
+		return heldLoad{}, nil
 	}
 	principals := []access.Principal{*q.Grantee}
 	if q.Grantee.Kind == access.PrincipalUser {
 		teams, err := r.db.FoundryTeamsOf(ctx, q.WorkspaceID, q.Grantee.ID)
 		if err != nil {
-			return nil, retry("could not read your access; Helix will retry", err)
+			return heldLoad{}, retry("could not read your access; Helix will retry", err)
 		}
 		principals = access.Grantee{Principal: *q.Grantee, Teams: teams}.Principals()
 	}
 	held, err := r.db.ListFoundryAccessGrants(ctx, q.WorkspaceID, principals)
 	if err != nil {
-		return nil, retry("could not read your access; Helix will retry", err)
+		return heldLoad{}, retry("could not read your access; Helix will retry", err)
 	}
 	targets := make([]access.Target, len(held))
 	for i, g := range held {
@@ -237,23 +264,29 @@ func (r *runner) granted(ctx context.Context, q *model.FoundryQuestion) (*access
 	grants := access.NewGrants(targets)
 	loads, err := r.db.ListFoundryCurrentLoadInputs(ctx, q.WorkspaceID, []string{q.OntologyID})
 	if err != nil {
-		return nil, retry("could not read your access; Helix will retry", err)
+		return heldLoad{}, retry("could not read your access; Helix will retry", err)
 	}
-	if load, ok := loads[q.OntologyID]; !ok || load.LoadID != q.LoadID || !grants.Covers(load.Inputs) {
-		return nil, errNoLongerGranted
+	load, ok := loads[q.OntologyID]
+	switch {
+	case !ok || load.LoadID != q.LoadID || !grants.Reaches(load.Inputs):
+		return heldLoad{}, errNoLongerGranted
+	case grants.Covers(load.Inputs):
+		return heldLoad{grants: &grants}, nil
 	}
-	return &grants, nil
+	holdings, err := r.db.FoundryLoadHoldings(ctx, q.WorkspaceID, q.LoadID)
+	if err != nil {
+		return heldLoad{}, retry("could not read your access; Helix will retry", err)
+	}
+	part := grants.Part(holdings)
+	return heldLoad{grants: &grants, part: &part}, nil
 }
 
 // request builds the question's AskRequest, all but its Helix target. A
-// grantee's question is asked only while its grants cover the load, without
-// the goal its ontology was drafted from, and with only the document sets of
-// the catalog it holds.
-func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontologyagent.AskRequest, error) {
-	grants, err := r.granted(ctx, q)
-	if err != nil {
-		return nil, err
-	}
+// grantee's question is asked without the goal its ontology was drafted from,
+// and with only what it holds of the catalog; of a load it holds only some of,
+// with what it holds.
+func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held heldLoad) (*ontologyagent.AskRequest, error) {
+	grants := held.grants
 	load, err := r.db.GetFoundryLoad(ctx, q.OntologyID, q.LoadID)
 	switch {
 	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && load.Status == model.FoundryLoadDeleted:
@@ -311,15 +344,25 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontolo
 	if err != nil {
 		return nil, retry("could not read the version's document sets; Helix will retry", err)
 	}
-	if req.Catalog, err = r.catalog(ctx, q.WorkspaceID, tables, files, scope, grants); err != nil {
+	if req.Catalog, err = r.catalog(ctx, q.WorkspaceID, tables, files, scope, held); err != nil {
 		return nil, err
+	}
+	if held.part != nil {
+		// What it reads of the load is what its answer can say; the answer reads
+		// only while its grants hold that.
+		visibility := ontologyagent.VisibilityOf(*held.part)
+		req.Visibility = &visibility
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, held.part.Inputs()); err != nil {
+			return nil, retry("could not record your access; Helix will retry", err)
+		}
 	}
 	history, err := r.db.ListFoundryQuestionHistory(ctx, q, ontologyagent.MaxAskHistory)
 	if err != nil {
 		return nil, retry("could not read the thread; Helix will retry", err)
 	}
 	if grants != nil && len(history) > 0 {
-		// A grantee is told only what it said about loads its grants cover now.
+		// A grantee is told only what it said of loads its grants cover now, or
+		// of the part of one they still hold.
 		loadIDs := make([]string, len(history))
 		for i, h := range history {
 			loadIDs[i] = h.LoadID
@@ -330,8 +373,15 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontolo
 			return nil, retry("could not read the thread; Helix will retry", err)
 		}
 		history = slices.DeleteFunc(history, func(h *model.FoundryQuestion) bool {
-			l, held := loads[h.LoadID]
-			return !held || !grants.Covers(l.Inputs)
+			l, ok := loads[h.LoadID]
+			switch {
+			case !ok:
+				return true
+			case h.Seen != nil:
+				return !grants.Covers(*h.Seen)
+			default:
+				return !grants.Covers(l.Inputs)
+			}
 		})
 	}
 	for _, h := range history {
@@ -346,7 +396,8 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion) (*ontolo
 // document set by its id, as the generator gave them. A connector, file or
 // set deleted since is named by its id.
 func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model.OntologyGenerationTable, files []model.OntologyGenerationDocument,
-	scope []string, grants *access.Grants) ([]ontologyagent.CatalogEntry, error) {
+	scope []string, held heldLoad) ([]ontologyagent.CatalogEntry, error) {
+	grants := held.grants
 	connectors, err := r.db.ListConnectors(ctx, workspaceID)
 	if err != nil {
 		return nil, retry("could not read the workspace's connectors; Helix will retry", err)
@@ -357,6 +408,9 @@ func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model
 	}
 	out := make([]ontologyagent.CatalogEntry, 0, len(tables)+len(files)+len(scope))
 	for _, t := range tables {
+		if held.part != nil && !grants.CoversTable(access.TableRef{ConnectorID: t.ConnectorID, Table: t.Table}) {
+			continue
+		}
 		name, ok := names[t.ConnectorID]
 		if !ok {
 			name = t.ConnectorID
@@ -378,8 +432,8 @@ func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model
 		if s.Owner != nil {
 			ref.ConnectorID = s.Owner.ConnectorID
 		}
-		// A grantee's catalog names only the sets it holds; its load's tables
-		// and files are all covered, or it wasn't asked.
+		// A grantee's catalog names only the sets it holds; of a load it holds
+		// all of, its tables and files are all covered.
 		if grants == nil || grants.CoversSet(ref) {
 			setNames[s.ID] = s.DisplayName()
 		}
@@ -394,6 +448,9 @@ func (r *runner) catalog(ctx context.Context, workspaceID string, tables []model
 			return nil, retry("could not read the version's files; Helix will retry", err)
 		}
 		for _, f := range files {
+			if held.part != nil && !slices.Contains(held.part.Files, f.ID) {
+				continue
+			}
 			name := f.ID
 			if d, ok := docs[f.ID]; ok {
 				set, ok := setNames[d.SetID]

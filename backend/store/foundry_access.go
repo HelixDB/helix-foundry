@@ -204,7 +204,7 @@ func (s *mysqlDB) foundryLoadInputs(ctx context.Context, workspaceID, query stri
 			return nil, fmt.Errorf("read load %s's generation input: %w", loadID, err)
 		}
 		// A load names its tables only through its generation.
-		in := &access.Inputs{Uncoverable: !marked || input == nil}
+		in := &access.Inputs{Unknown: !marked || input == nil}
 		if input != nil {
 			for _, t := range input.Tables {
 				in.Tables = append(in.Tables, access.TableRef{ConnectorID: t.ConnectorID, Table: t.Table})
@@ -334,7 +334,7 @@ WHERE v.id=? AND v.ontology_id=? AND v.workspace_id=?`, versionID, ontologyID, w
 	}
 	var in access.Inputs
 	if input == nil {
-		in.Uncoverable = true
+		in.Unknown = true
 		return in, nil
 	}
 	for _, t := range input.Tables {
@@ -399,6 +399,100 @@ WHERE r.ontology_id=? AND r.kind='prop' GROUP BY 1, 2, 3`, ontologyID)
 		}
 	}
 	return in, rows.Err()
+}
+
+// FoundryLoadHoldings is what a load of the workspace holds, document by
+// document, each by the set it is in now, for reading the part of it a
+// grantee holds. A load it can't tell is ErrNotFound.
+func (s *mysqlDB) FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error) {
+	var raw []byte
+	var enriched bool
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(g.input, CAST('null' AS JSON)),
+  EXISTS (SELECT 1 FROM foundry_load_enrichments e WHERE e.load_id = l.id)
+FROM foundry_loads l
+JOIN foundry_ontologies o ON o.id = l.ontology_id
+JOIN foundry_load_access a ON a.load_id = l.id
+JOIN foundry_ontology_versions v ON v.id = l.version_id
+LEFT JOIN foundry_ontology_generations g ON g.id = v.generation_id
+WHERE l.id=? AND o.workspace_id=? AND o.deleted_at IS NULL AND l.status IN ('ready', 'partial')`, loadID, workspaceID).Scan(&raw, &enriched)
+	if errors.Is(err, sql.ErrNoRows) {
+		return access.Holdings{}, ErrNotFound
+	}
+	if err != nil {
+		return access.Holdings{}, err
+	}
+	var input *model.OntologyGenerationInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return access.Holdings{}, fmt.Errorf("read load %s's generation input: %w", loadID, err)
+	}
+	if input == nil {
+		return access.Holdings{}, ErrNotFound
+	}
+	out := access.Holdings{Enrichment: enriched}
+	for _, t := range input.Tables {
+		out.Tables = append(out.Tables, access.TableRef{ConnectorID: t.ConnectorID, Table: t.Table})
+	}
+	documents := func(query string, args []any) ([]access.DocumentRef, error) {
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var refs []access.DocumentRef
+		for rows.Next() {
+			var d access.DocumentRef
+			if err := rows.Scan(&d.ID, &d.Set.SetID, &d.Set.ConnectorID); err != nil {
+				return nil, err
+			}
+			refs = append(refs, d)
+		}
+		return refs, rows.Err()
+	}
+	if out.Documents, err = documents(`SELECT ld.document_id, COALESCE(d.set_id, ''), COALESCE(st.connector_id, '') FROM foundry_load_documents ld
+LEFT JOIN foundry_documents d ON d.id = ld.document_id
+LEFT JOIN foundry_document_sets st ON st.id = d.set_id
+WHERE ld.load_id=? ORDER BY ld.document_id`, []any{loadID}); err != nil {
+		return access.Holdings{}, err
+	}
+	if len(input.Documents) > 0 {
+		ids := make([]string, len(input.Documents))
+		for i, d := range input.Documents {
+			ids[i] = d.ID
+		}
+		if out.Files, err = documents(`SELECT d.id, COALESCE(d.set_id, ''), COALESCE(st.connector_id, '') FROM foundry_documents d
+LEFT JOIN foundry_document_sets st ON st.id = d.set_id
+WHERE d.workspace_id=? AND d.id IN (`+idPlaceholders(len(ids))+`) ORDER BY d.id`, append([]any{workspaceID}, toAnySlice(ids)...)); err != nil {
+			return access.Holdings{}, err
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT ldc.type, ldc.prop, dd.decision_id IS NOT NULL, COALESCE(d.set_id, ''), COALESCE(st.connector_id, '')
+FROM foundry_load_decisions ldc
+LEFT JOIN foundry_review_decision_documents dd ON dd.decision_id = ldc.id
+LEFT JOIN foundry_documents d ON d.id = dd.document_id
+LEFT JOIN foundry_document_sets st ON st.id = d.set_id
+WHERE ldc.load_id=? AND ldc.kind='prop' ORDER BY ldc.type, ldc.prop`, loadID)
+	if err != nil {
+		return access.Holdings{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ty, prop string
+		var recorded bool
+		var set access.SetRef
+		if err := rows.Scan(&ty, &prop, &recorded, &set.SetID, &set.ConnectorID); err != nil {
+			return access.Holdings{}, err
+		}
+		i := slices.IndexFunc(out.Decisions, func(d access.PropDecision) bool { return d.Type == ty && d.Prop == prop })
+		if i < 0 {
+			out.Decisions = append(out.Decisions, access.PropDecision{Type: ty, Prop: prop, Recorded: true})
+			i = len(out.Decisions) - 1
+		}
+		out.Decisions[i].Recorded = out.Decisions[i].Recorded && recorded
+		if recorded {
+			out.Decisions[i].Sets = append(out.Decisions[i].Sets, set)
+		}
+	}
+	return out, rows.Err()
 }
 
 // ListFoundryOntologiesHoldingDocument returns the live ontologies of the

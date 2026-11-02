@@ -115,3 +115,92 @@ func ExampleGrants_Covers() {
 	// true
 	// false
 }
+
+func TestGrantsReach(t *testing.T) {
+	stripe := access.TableRef{ConnectorID: "stripe", Table: "customers"}
+	crm := access.TableRef{ConnectorID: "crm", Table: "accounts"}
+	general := access.SetRef{SetID: "general"}
+	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("general"), access.EnrichmentTarget()})
+	for name, tc := range map[string]struct {
+		in   access.Inputs
+		want bool
+	}{
+		"a table it holds":          {access.Inputs{Tables: []access.TableRef{crm, stripe}}, true},
+		"a set it holds":            {access.Inputs{Sets: []access.SetRef{{SetID: "hr"}, general}}, true},
+		"profiles":                  {access.Inputs{Enrichment: true}, true},
+		"a decision it can't cover": {access.Inputs{Tables: []access.TableRef{stripe}, Uncoverable: true}, true},
+		"nothing it holds":          {access.Inputs{Tables: []access.TableRef{crm}, Sets: []access.SetRef{{SetID: "hr"}}}, false},
+		"what can't be told":        {access.Inputs{Tables: []access.TableRef{stripe}, Unknown: true}, false},
+	} {
+		if got := g.Reaches(tc.in); got != tc.want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+	if access.NewGrants(nil).Reaches(access.Inputs{Enrichment: true}) {
+		t.Error("no grants reach profiles")
+	}
+	if g.Covers(access.Inputs{Tables: []access.TableRef{stripe}, Unknown: true}) {
+		t.Error("what can't be told isn't covered")
+	}
+}
+
+func TestGrantsPart(t *testing.T) {
+	stripe := access.TableRef{ConnectorID: "stripe", Table: "customers"}
+	crm := access.TableRef{ConnectorID: "crm", Table: "accounts"}
+	general, hr := access.SetRef{SetID: "general"}, access.SetRef{SetID: "hr"}
+	holdings := access.Holdings{
+		Tables:     []access.TableRef{stripe, crm},
+		Files:      []access.DocumentRef{{ID: "f1", Set: general}, {ID: "f2", Set: hr}},
+		Documents:  []access.DocumentRef{{ID: "d1", Set: general}, {ID: "d2", Set: hr}, {ID: "d3", Set: general}},
+		Enrichment: true,
+		Decisions: []access.PropDecision{
+			{Type: "A", Prop: "kept", Sets: []access.SetRef{general}, Recorded: true},
+			{Type: "A", Prop: "other", Sets: []access.SetRef{hr}, Recorded: true},
+			{Type: "A", Prop: "other", Sets: []access.SetRef{hr}, Recorded: true},
+			{Type: "B", Prop: "unrecorded"},
+		},
+	}
+	part := access.NewGrants([]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("general")}).Part(holdings)
+	want := access.Part{
+		Tables: []access.TableRef{stripe}, Files: []string{"f1"}, Documents: []string{"d1", "d3"}, Sets: []access.SetRef{general},
+		Withheld: []access.PropRef{{Type: "A", Prop: "other"}, {Type: "B", Prop: "unrecorded"}},
+	}
+	if fmt.Sprintf("%+v", part) != fmt.Sprintf("%+v", want) {
+		t.Fatalf("%+v, want %+v", part, want)
+	}
+	if got := part.Inputs(); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", access.Inputs{Tables: []access.TableRef{stripe}, Sets: []access.SetRef{general}}) {
+		t.Fatalf("%+v", got)
+	}
+	all := access.NewGrants([]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("general"), access.DocumentSetTarget("hr"), access.EnrichmentTarget()}).Part(holdings)
+	if !all.AllDocuments || !all.Enrichment {
+		t.Fatalf("%+v", all)
+	}
+}
+
+func TestPartHolds(t *testing.T) {
+	stripe := access.TableRef{ConnectorID: "stripe", Table: "customers"}
+	before := access.Part{Tables: []access.TableRef{stripe}, Files: []string{"f"}, Documents: []string{"d"}, Enrichment: true,
+		Withheld: []access.PropRef{{Type: "A", Prop: "p"}}}
+	for name, tc := range map[string]struct {
+		now  access.Part
+		want bool
+	}{
+		"the same":        {before, true},
+		"more":            {access.Part{Tables: []access.TableRef{stripe, {ConnectorID: "crm", Table: "x"}}, Files: []string{"f", "g"}, Documents: []string{"d", "e"}, Enrichment: true}, true},
+		"every document":  {access.Part{Tables: []access.TableRef{stripe}, Files: []string{"f"}, AllDocuments: true, Enrichment: true}, true},
+		"a table less":    {access.Part{Files: []string{"f"}, Documents: []string{"d"}, Enrichment: true}, false},
+		"a file less":     {access.Part{Tables: []access.TableRef{stripe}, Documents: []string{"d"}, Enrichment: true}, false},
+		"a document less": {access.Part{Tables: []access.TableRef{stripe}, Files: []string{"f"}, Enrichment: true}, false},
+		"no profiles":     {access.Part{Tables: []access.TableRef{stripe}, Files: []string{"f"}, Documents: []string{"d"}}, false},
+		"more withheld": {access.Part{Tables: []access.TableRef{stripe}, Files: []string{"f"}, Documents: []string{"d"}, Enrichment: true,
+			Withheld: []access.PropRef{{Type: "A", Prop: "q"}}}, false},
+	} {
+		if got := tc.now.Holds(before); got != tc.want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+	wasAll := access.Part{AllDocuments: true}
+	if (access.Part{Documents: []string{"d"}}).Holds(wasAll) {
+		t.Error("some documents don't hold what every document did")
+	}
+}

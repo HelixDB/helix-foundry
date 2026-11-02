@@ -648,6 +648,9 @@ message FoundryOntology {
   google.protobuf.Timestamp refresh_due_at = 13;
   // Why an owed refresh waits: busy (a job is live); empty otherwise.
   string refresh_waiting = 14;
+  // The caller holds only some of what its current load holds, and reads that
+  // part: set only for a caller who reads through source grants.
+  bool partial_access = 15;
 }
 
 message FoundryOntologyLastLoad {
@@ -1591,6 +1594,8 @@ message FoundryOntologyAccess {
   FoundryLoadAccessInputs inputs      = 3;
   // The principals whose own grants cover it.
   repeated FoundryPrincipal readers = 4;
+  // The principals whose own grants hold only some of it, who read that part.
+  repeated FoundryPrincipal partial_readers = 5;
 }
 
 // FoundryAccessLoss is a principal that would stop reading an ontology
@@ -1598,6 +1603,8 @@ message FoundryOntologyAccess {
 message FoundryAccessLoss {
   FoundryPrincipal principal   = 1;
   string           ontology_id = 2;
+  // It would still read the part its grants hold.
+  bool keeps_part = 3;
 }
 
 // FoundryTeam is a team of the workspace's members: each holds the team's

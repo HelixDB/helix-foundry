@@ -157,7 +157,7 @@ func (s *Service) GetFoundryOntology(ctx context.Context, req *foundryv1.GetFoun
 }
 
 // granteeFoundryOntologies lists the ontologies whose current loads the
-// grantee's grants cover, newest first, all on one page.
+// grantee's grants hold anything of, newest first, all on one page.
 func (s *Service) granteeFoundryOntologies(ctx context.Context, g access.Grantee) (*foundryv1.ListFoundryOntologiesResponse, error) {
 	loads, err := s.granteeLoads(ctx, g, nil)
 	if err != nil {
@@ -198,7 +198,7 @@ func (s *Service) granteeFoundryOntology(ctx context.Context, o *foundrymodel.Fo
 		return nil, status.Errorf(codes.Internal, "get current load: %v", err)
 	}
 	out := &foundryv1.FoundryOntology{
-		Id: o.ID, Name: o.Name, CreatedAt: timestamppb.New(o.CreatedAt),
+		Id: o.ID, Name: o.Name, CreatedAt: timestamppb.New(o.CreatedAt), PartialAccess: granted.Partial,
 		CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: load.ID, Version: load.OntologyVersion()},
 	}
 	if load.FinishedAt != nil {

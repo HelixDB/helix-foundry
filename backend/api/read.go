@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	foundryreadv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundryread/v1"
@@ -58,10 +59,18 @@ func (s *Service) ReadFoundryGraph(ctx context.Context, req *foundryv1.ReadFound
 	if err := json.Unmarshal(v.Definition, &def); err != nil || v.Format != foundrymodel.OntologyFormatAgentBundle {
 		return nil, status.Errorf(codes.Internal, "the load's version %s is not an ontology agent draft", v.ID)
 	}
-	out, err := s.deps.FoundryRead.Read(ctx, &foundryreadv1.ReadRequest{
+	read := &foundryreadv1.ReadRequest{
 		WorkspaceId: o.WorkspaceID, OntologyId: o.ID, LoadId: load.ID, OntologyVersion: load.OntologyVersion(),
 		OntologyToml: def.OntologyTOML, ReadsJson: req.GetReadsJson(),
-	})
+	}
+	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
+		g, _ := access.GranteeFrom(ctx)
+		if read.VisibilityJson, err = s.granteeVisibility(ctx, g, load.ID); err != nil {
+			return nil, err
+		}
+		read.MappingsToml = def.MappingsTOML
+	}
+	out, err := s.deps.FoundryRead.Read(ctx, read)
 	if err != nil {
 		return nil, err
 	}

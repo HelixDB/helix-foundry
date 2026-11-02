@@ -233,7 +233,39 @@ VALUES (?, ?, ?, 'prop', 'Customer', 'c1', 'name', '"x"', ?, NOW(6))`, l.LoadID,
 		_, err := testDB.Exec(`DELETE FROM foundry_load_access WHERE load_id=?`, l.LoadID)
 		require.NoError(t, err)
 		got, _ := inputs(t)
-		assert.True(t, got.Inputs.Uncoverable)
+		assert.True(t, got.Inputs.Unknown)
+		_, err = f.db.FoundryLoadHoldings(ctx, ws, l.LoadID)
+		assert.ErrorIs(t, err, store.ErrNotFound)
+		_, err = testDB.Exec(`INSERT INTO foundry_load_access (load_id) VALUES (?)`, l.LoadID)
+		require.NoError(t, err)
+	})
+	t.Run("what a load holds, document by document", func(t *testing.T) {
+		decision := id26("DEC-HOLD")
+		_, err := testDB.Exec(`INSERT INTO foundry_load_decisions (load_id, id, ontology_id, kind, type, entity_key, prop, value, decided_by_user_id, decided_at)
+VALUES (?, ?, ?, 'prop', 'Customer', 'c1', 'name', '"x"', ?, NOW(6))`, l.LoadID, decision, f.ontology.ID, id26("U-ACL"))
+		require.NoError(t, err)
+		_, err = testDB.Exec(`INSERT INTO foundry_load_enrichments (load_id, workspace_id, ontology_id, job_id, status) VALUES (?, ?, ?, ?, 'preparing')`,
+			l.LoadID, ws, f.ontology.ID, l.LoadID)
+		require.NoError(t, err)
+		h, err := f.db.FoundryLoadHoldings(ctx, ws, l.LoadID)
+		require.NoError(t, err)
+		set := access.SetRef{SetID: general}
+		assert.Equal(t, []access.TableRef{{ConnectorID: "stripe", Table: "customers"}, {ConnectorID: "pg", Table: "people"}}, h.Tables)
+		assert.Equal(t, []access.DocumentRef{{ID: doc, Set: set}}, h.Documents)
+		assert.Equal(t, []access.DocumentRef{{ID: file, Set: set}}, h.Files)
+		assert.True(t, h.Enrichment)
+		assert.Equal(t, []access.PropDecision{{Type: "Customer", Prop: "name"}}, h.Decisions, "no documents recorded")
+		_, err = testDB.Exec(`INSERT INTO foundry_review_decision_documents (decision_id, document_id) VALUES (?, ?)`, decision, doc)
+		require.NoError(t, err)
+		h, err = f.db.FoundryLoadHoldings(ctx, ws, l.LoadID)
+		require.NoError(t, err)
+		assert.Equal(t, []access.PropDecision{{Type: "Customer", Prop: "name", Sets: []access.SetRef{set}, Recorded: true}}, h.Decisions)
+		_, err = f.db.FoundryLoadHoldings(ctx, id26("ACL-ELSEWHERE"), l.LoadID)
+		assert.ErrorIs(t, err, store.ErrNotFound, "another workspace's")
+		_, err = testDB.Exec(`DELETE FROM foundry_load_decisions WHERE id=?`, decision)
+		require.NoError(t, err)
+		_, err = testDB.Exec(`DELETE FROM foundry_load_enrichments WHERE load_id=?`, l.LoadID)
+		require.NoError(t, err)
 	})
 	t.Run("a version's inputs", func(t *testing.T) {
 		in, err := f.db.FoundryVersionInputs(ctx, ws, f.ontology.ID, versionID)
@@ -244,7 +276,7 @@ VALUES (?, ?, ?, 'prop', 'Customer', 'c1', 'name', '"x"', ?, NOW(6))`, l.LoadID,
 		bare := f.version(t, "ACL-bare")
 		in, err = f.db.FoundryVersionInputs(ctx, ws, f.ontology.ID, bare)
 		require.NoError(t, err)
-		assert.True(t, in.Uncoverable, "a version names its tables only through its generation")
+		assert.True(t, in.Unknown, "a version names its tables only through its generation")
 	})
 }
 
@@ -322,6 +354,15 @@ reserved_micros=?, charged_at=NOW(6) WHERE id=?`, 50, f.id(2))
 	limits.GranteeCapMicros = 400 + questionCap
 	_, err = ask(7, &agent, limits)
 	require.NoError(t, err)
+
+	seen := access.Inputs{Sets: []access.SetRef{{SetID: "set-1"}}}
+	require.NoError(t, f.db.SetFoundryQuestionSeen(ctx, f.id(1), seen))
+	stored, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(1))
+	require.NoError(t, err)
+	assert.Equal(t, &seen, stored.Seen)
+	notSeen, err := f.db.GetFoundryQuestion(ctx, f.ontologyID, f.id(2))
+	require.NoError(t, err)
+	assert.Nil(t, notSeen.Seen)
 
 	limits.GranteePerHour = 0
 	_, err = ask(8, &agent, limits)

@@ -15,7 +15,8 @@ import (
 const foundryQuestionColumns = `id, workspace_id, ontology_id, load_id, version_id, thread_id, question, focus, status, result, error,
        client_token, lease_owner, lease_until, attempts, next_attempt_at, max_usd_micros, reserved_micros, usd_micros,
        input_tokens, output_tokens, last_seq, asked_by_user_id, created_at, started_at, finished_at,
-       (SELECT CONCAT(g.principal_kind, ' ', g.principal_id) FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id)`
+       (SELECT CONCAT(g.principal_kind, ' ', g.principal_id) FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id),
+       (SELECT g.seen FROM foundry_question_grantees g WHERE g.question_id = foundry_questions.id)`
 
 // claimFoundryQuestionTries bounds the questions one claim looks at: each one
 // its workspace's limits hold back is deferred, or failed, so the next is
@@ -100,6 +101,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
 VALUES (?, ?, ?, ?)`, q.ID, q.OntologyID, q.Grantee.Kind.String(), q.Grantee.ID)
 		return err
 	})
+}
+
+// SetFoundryQuestionSeen records what the grantee that asked a question held of
+// its load when it ran, when that wasn't all of it.
+func (s *mysqlDB) SetFoundryQuestionSeen(ctx context.Context, questionID string, seen access.Inputs) error {
+	raw, err := json.Marshal(seen)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE foundry_question_grantees SET seen=? WHERE question_id=?`, string(raw), questionID)
+	return err
 }
 
 // askedBy is the condition that a question was asked by grantee: always
@@ -440,13 +452,13 @@ func (s *mysqlDB) queryFoundryQuestions(ctx context.Context, query string, args 
 func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 	var q model.FoundryQuestion
 	var status string
-	var focus, result, errText, clientToken, leaseOwner, askedBy, grantee sql.NullString
+	var focus, result, errText, clientToken, leaseOwner, askedBy, grantee, seen sql.NullString
 	var leaseUntil, startedAt, finishedAt sql.NullTime
 	spend := &q.Spend
 	if err := scanner.Scan(&q.ID, &q.WorkspaceID, &q.OntologyID, &q.LoadID, &q.VersionID, &q.ThreadID, &q.Question, &focus, &status,
 		&result, &errText, &clientToken, &leaseOwner, &leaseUntil, &q.Attempts, &q.NextAttemptAt, &q.MaxUSDMicros,
 		&q.ReservedMicros, &spend.USDMicros, &spend.InputTokens, &spend.OutputTokens, &q.LastSeq, &askedBy, &q.CreatedAt,
-		&startedAt, &finishedAt, &grantee,
+		&startedAt, &finishedAt, &grantee, &seen,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -454,6 +466,12 @@ func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {
 		return nil, err
 	}
 	q.Status = model.FoundryQuestionStatus(status)
+	if seen.Valid {
+		q.Seen = &access.Inputs{}
+		if err := json.Unmarshal([]byte(seen.String), q.Seen); err != nil {
+			return nil, fmt.Errorf("foundry question %s: read what it saw: %w", q.ID, err)
+		}
+	}
 	if grantee.Valid {
 		kind, id, _ := strings.Cut(grantee.String, " ")
 		k, err := access.ParsePrincipalKind(kind)

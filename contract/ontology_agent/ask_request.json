@@ -85,6 +85,17 @@
     "request_id": {
       "description": "The question's id, the same on every attempt.",
       "type": "string"
+    },
+    "visibility": {
+      "description": "What the asker holds of the load, when it isn't everything: the question sees the\nversion and the load as those sources fill them, and reads nothing raw or historic.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Visibility"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -184,6 +195,33 @@
           "description": "`{base_url}/responses`.",
           "type": "string",
           "const": "responses"
+        }
+      ]
+    },
+    "DocumentAccess": {
+      "description": "Which of a load's documents a reader holds.",
+      "oneOf": [
+        {
+          "description": "Every one.",
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "description": "These, by id.",
+          "type": "object",
+          "properties": {
+            "only": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "only"
+          ]
         }
       ]
     },
@@ -592,6 +630,68 @@
       "required": [
         "input",
         "output"
+      ]
+    },
+    "Visibility": {
+      "description": "What a reader holds of a load, as whoever serves it works out from its grants.",
+      "type": "object",
+      "properties": {
+        "documents": {
+          "description": "The load's documents it holds.",
+          "$ref": "#/$defs/DocumentAccess",
+          "default": "all"
+        },
+        "enrichment": {
+          "description": "Whether it holds People enrichment's profiles.",
+          "type": "boolean",
+          "default": false
+        },
+        "sets": {
+          "description": "The document sets it holds a document of: a route that reads only other sets reads\nnothing it holds.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "sources": {
+          "description": "The tables and table files it holds, by the ids mappings read them by.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "withheld": {
+          "description": "Properties someone decided from documents it doesn't hold.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/WithheldProp"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "WithheldProp": {
+      "description": "A property a reader doesn't see at all.",
+      "type": "object",
+      "properties": {
+        "prop": {
+          "description": "The property.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "prop"
       ]
     }
   }

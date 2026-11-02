@@ -176,8 +176,9 @@ func (s *Service) grantsOf(ctx context.Context, workspaceID string, principals [
 	return access.NewGrants(targets), nil
 }
 
-// granteeLoads are the current loads g's grants cover, by ontology: of
-// ontologyIDs, or of every live ontology when it names none.
+// granteeLoads are the current loads g's grants hold anything of, by ontology:
+// of ontologyIDs, or of every live ontology when it names none. One they hold
+// only some of is Partial.
 func (s *Service) granteeLoads(ctx context.Context, g access.Grantee, ontologyIDs []string) (map[string]foundrymodel.FoundryLoadInputs, error) {
 	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
 	if err != nil || grants.Empty() {
@@ -187,13 +188,38 @@ func (s *Service) granteeLoads(ctx context.Context, g access.Grantee, ontologyID
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read current loads: %v", err)
 	}
-	covered := map[string]foundrymodel.FoundryLoadInputs{}
+	held := map[string]foundrymodel.FoundryLoadInputs{}
 	for ontologyID, l := range loads {
-		if grants.Covers(l.Inputs) {
-			covered[ontologyID] = l
+		switch {
+		case grants.Covers(l.Inputs):
+			held[ontologyID] = l
+		case grants.Reaches(l.Inputs):
+			l.Partial = true
+			held[ontologyID] = l
 		}
 	}
-	return covered, nil
+	return held, nil
+}
+
+// granteeVisibility is what a grantee's call sends the agent of a load it holds
+// only some of, as JSON, and the version's mappings it needs them with.
+func (s *Service) granteeVisibility(ctx context.Context, g access.Grantee, loadID string) (string, error) {
+	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	if err != nil {
+		return "", err
+	}
+	holdings, err := s.deps.DB.FoundryLoadHoldings(ctx, g.WorkspaceID, loadID)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return "", status.Error(codes.NotFound, "load not found")
+	}
+	if err != nil {
+		return "", status.Errorf(codes.Internal, "read the load's holdings: %v", err)
+	}
+	raw, err := json.Marshal(ontologyagent.VisibilityOf(grants.Part(holdings)))
+	if err != nil {
+		return "", status.Errorf(codes.Internal, "encode visibility: %v", err)
+	}
+	return string(raw), nil
 }
 
 // ListFoundryAccess returns every grant and, for each live ontology with a
@@ -236,8 +262,11 @@ func (s *Service) ListFoundryAccess(ctx context.Context, req *foundryv1.ListFoun
 		l := loads[ontologyID]
 		out := &foundryv1.FoundryOntologyAccess{OntologyId: ontologyID, LoadId: l.LoadID, Inputs: inputsToProto(l.Inputs)}
 		for _, p := range principals {
-			if access.NewGrants(held[p]).Covers(l.Inputs) {
+			switch grants := access.NewGrants(held[p]); {
+			case grants.Covers(l.Inputs):
 				out.Readers = append(out.Readers, principalToProto(p))
+			case grants.Reaches(l.Inputs):
+				out.PartialReaders = append(out.PartialReaders, principalToProto(p))
 			}
 		}
 		resp.Ontologies = append(resp.Ontologies, out)
@@ -316,7 +345,13 @@ func (s *Service) GetMyFoundryAccess(ctx context.Context, req *foundryv1.GetMyFo
 	if err != nil {
 		return nil, err
 	}
-	return &foundryv1.GetMyFoundryAccessResponse{Grantee: grantee, HasGrants: !grants.Empty(), OntologyIds: slices.Sorted(maps.Keys(loads))}, nil
+	resp := &foundryv1.GetMyFoundryAccessResponse{Grantee: grantee, HasGrants: !grants.Empty(), OntologyIds: slices.Sorted(maps.Keys(loads))}
+	for _, id := range resp.OntologyIds {
+		if loads[id].Partial {
+			resp.PartialOntologyIds = append(resp.PartialOntologyIds, id)
+		}
+	}
+	return resp, nil
 }
 
 // PreviewFoundryAccessChange returns each principal whose own grants cover
@@ -416,7 +451,8 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 		was, ok := before[ontologyID]
 		for _, p := range principals {
 			if ok && access.NewGrants(held[p]).Covers(was) && !access.NewGrants(heldAfter[p]).Covers(after[ontologyID]) {
-				resp.Losses = append(resp.Losses, &foundryv1.FoundryAccessLoss{Principal: principalToProto(p), OntologyId: ontologyID})
+				resp.Losses = append(resp.Losses, &foundryv1.FoundryAccessLoss{Principal: principalToProto(p), OntologyId: ontologyID,
+					KeepsPart: access.NewGrants(heldAfter[p]).Reaches(after[ontologyID])})
 			}
 		}
 	}
@@ -496,6 +532,7 @@ func grantToProto(gr foundrymodel.FoundryAccessGrant) *foundryv1.FoundryAccessGr
 }
 
 func inputsToProto(in access.Inputs) *foundryv1.FoundryLoadAccessInputs {
+	in.Uncoverable = in.Uncoverable || in.Unknown
 	out := &foundryv1.FoundryLoadAccessInputs{Enrichment: in.Enrichment, Uncoverable: in.Uncoverable}
 	for _, t := range in.Tables {
 		out.Tables = append(out.Tables, &foundryv1.FoundryLoadAccessInputs_Table{ConnectorId: t.ConnectorID, Table: t.Table})

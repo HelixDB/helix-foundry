@@ -812,6 +812,16 @@ func (u Unimplemented) ListFoundryAccessGrants(context.Context, string, []access
 	return nil, nil
 }
 
+func (u Unimplemented) FoundryLoadHoldings(context.Context, string, string) (access.Holdings, error) {
+	u.unimplemented("FoundryLoadHoldings")
+	return access.Holdings{}, nil
+}
+
+func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, access.Inputs) error {
+	u.unimplemented("SetFoundryQuestionSeen")
+	return nil
+}
+
 func (u Unimplemented) ListFoundryLoadInputs(context.Context, string, []string) (map[string]model.FoundryLoadInputs, error) {
 	u.unimplemented("ListFoundryLoadInputs")
 	return nil, nil

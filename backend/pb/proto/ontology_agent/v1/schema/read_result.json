@@ -105,6 +105,37 @@
       "description": "One read's answer, by its kind.",
       "oneOf": [
         {
+          "description": "The version as the reader sees it; empty for a reader that holds all of it, which reads\nthe version itself.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "view"
+            },
+            "mappings_toml": {
+              "description": "`mappings.toml` of the sources it holds.",
+              "type": "string"
+            },
+            "ontology_toml": {
+              "description": "`ontology.toml` without what the reader's sources don't fill.",
+              "type": "string"
+            },
+            "partial": {
+              "description": "Every type (`Type`), property (`Type.prop`) and link it sees only some of.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "ontology_toml",
+            "mappings_toml",
+            "partial"
+          ]
+        },
+        {
           "description": "What rules give about an entity.",
           "type": "object",
           "properties": {
@@ -297,6 +328,13 @@
               "type": "string",
               "const": "rows"
             },
+            "more": {
+              "description": "For a reader who sees only some of the rows: whether a next page holds more, which\n`total` can't say.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "rows": {
               "description": "The rows, in order.",
               "type": "array",
@@ -305,7 +343,7 @@
               }
             },
             "total": {
-              "description": "How many distinct rows there are in all.",
+              "description": "How many distinct rows there are in all; for a reader who sees only some of them,\nhow many of these it sees.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -792,6 +830,31 @@
             "message": {
               "description": "For a person.",
               "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ]
+        },
+        {
+          "description": "It would test, order, group or count something the reader sees only some of, which\nwould tell it about the rest.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "not_visible"
+            },
+            "message": {
+              "description": "For a person.",
+              "type": "string"
+            },
+            "pointer": {
+              "description": "For a query, a JSON pointer to what is asked of too much.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -1487,6 +1550,12 @@
           "type": "integer",
           "format": "uint",
           "default": 50,
+          "minimum": 0
+        },
+        "offset": {
+          "description": "How many rows, in order, to pass over first: the next page's is this page's plus its\n`limit`. At most 10,000.",
+          "type": "integer",
+          "format": "uint",
           "minimum": 0
         },
         "order_by": {

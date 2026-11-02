@@ -14,10 +14,12 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/ontology"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
+	foundryreadv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundryread/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
@@ -102,8 +104,54 @@ func (s *Service) GetOntologyVersion(ctx context.Context, req *foundryv1.GetOnto
 		// A draft's cards measured what its generation read, and its
 		// rationale says how; a grantee reads only the load.
 		resp.Version.EvidenceWithheld = withoutCards(resp.Version.Definition) || resp.Version.EvidenceWithheld
+		if granted.Partial {
+			err = s.projectVersion(ctx, o, granted, v, resp.Version)
+		}
 	}
 	return resp, err
+}
+
+// projectVersion narrows a version to what a grantee who holds only some of its
+// load's sources may see: its two files as the agent projects them, without the
+// draft that drafted them, its questions or the sets it reads, which say what
+// the rest of its sources are.
+func (s *Service) projectVersion(ctx context.Context, o *foundrymodel.FoundryOntology, granted foundrymodel.FoundryLoadInputs,
+	v *foundrymodel.OntologyVersion, out *foundryv1.OntologyVersion) error {
+	if s.deps.FoundryRead == nil {
+		return status.Error(codes.Unavailable, "graph reads are not available here")
+	}
+	var def ontologyagent.Definition
+	if err := json.Unmarshal(v.Definition, &def); err != nil || v.Format != foundrymodel.OntologyFormatAgentBundle {
+		return status.Errorf(codes.Internal, "the load's version %s is not an ontology agent draft", v.ID)
+	}
+	g, _ := access.GranteeFrom(ctx)
+	visibility, err := s.granteeVisibility(ctx, g, granted.LoadID)
+	if err != nil {
+		return err
+	}
+	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, granted.LoadID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "get load: %v", err)
+	}
+	read, err := s.deps.FoundryRead.Read(ctx, &foundryreadv1.ReadRequest{
+		WorkspaceId: o.WorkspaceID, OntologyId: o.ID, LoadId: granted.LoadID, OntologyVersion: load.OntologyVersion(),
+		OntologyToml: def.OntologyTOML, ReadsJson: `[{"view":{}}]`, VisibilityJson: visibility, MappingsToml: def.MappingsTOML,
+	})
+	if err != nil {
+		return err
+	}
+	view, err := ontologyagent.ParseReadView(read.GetResultJson())
+	if err != nil {
+		return status.Errorf(codes.Internal, "read the version's view: %v", err)
+	}
+	fields := out.GetDefinition().GetFields()
+	delete(fields, "draft")
+	delete(fields, "questions")
+	fields["ontology_toml"] = structpb.NewStringValue(view.OntologyTOML)
+	fields["mappings_toml"] = structpb.NewStringValue(view.MappingsTOML)
+	out.GenerationId = ""
+	out.DocumentSetIds = nil
+	return nil
 }
 
 // CreateOntologyVersion stores a hand-written version after validating it

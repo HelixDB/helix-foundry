@@ -1,6 +1,9 @@
 package access
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // TargetKind is what a grant gives.
 type TargetKind uint8
@@ -94,13 +97,16 @@ type SetRef struct{ SetID, ConnectorID string }
 
 // Inputs are what a load holds, as far as grants go: the tables it read,
 // the sets its documents and table files are in now, whether it applied
-// People enrichment's profiles, and whether it holds anything no grant can
-// cover (a review decision whose documents were never recorded).
+// People enrichment's profiles, whether it holds anything no grant can cover
+// (a review decision whose documents were never recorded), and whether what it
+// holds can't be told at all (Unknown: a load made before grants could cover
+// one, or with no generation to read its inputs from).
 type Inputs struct {
 	Tables      []TableRef
 	Sets        []SetRef
 	Enrichment  bool
 	Uncoverable bool
+	Unknown     bool
 }
 
 // Grants are the targets a grantee holds, through itself and its teams.
@@ -134,7 +140,8 @@ func (g Grants) Empty() bool {
 	return len(g.connectors)+len(g.tables)+len(g.sets) == 0 && !g.enrichment
 }
 
-func (g Grants) coversTable(t TableRef) bool { return g.connectors[t.ConnectorID] || g.tables[t] }
+// CoversTable reports whether the grants cover a table.
+func (g Grants) CoversTable(t TableRef) bool { return g.connectors[t.ConnectorID] || g.tables[t] }
 
 // CoversSet reports whether the grants cover a document in set s.
 func (g Grants) CoversSet(s SetRef) bool {
@@ -146,7 +153,7 @@ func (g Grants) CoversSet(s SetRef) bool {
 func (g Grants) Missing(in Inputs) Inputs {
 	var out Inputs
 	for _, t := range in.Tables {
-		if !g.coversTable(t) {
+		if !g.CoversTable(t) {
 			out.Tables = append(out.Tables, t)
 		}
 	}
@@ -157,6 +164,7 @@ func (g Grants) Missing(in Inputs) Inputs {
 	}
 	out.Enrichment = in.Enrichment && !g.enrichment
 	out.Uncoverable = in.Uncoverable
+	out.Unknown = in.Unknown
 	return out
 }
 
@@ -166,5 +174,119 @@ func (g Grants) Missing(in Inputs) Inputs {
 //	g.Covers(access.Inputs{Tables: []access.TableRef{{ConnectorID: "stripe", Table: "customers"}}}) // true
 func (g Grants) Covers(in Inputs) bool {
 	m := g.Missing(in)
-	return len(m.Tables)+len(m.Sets) == 0 && !m.Enrichment && !m.Uncoverable
+	return len(m.Tables)+len(m.Sets) == 0 && !m.Enrichment && !m.Uncoverable && !m.Unknown
+}
+
+// Reaches reports whether the grants hold anything of in, so a grantee may
+// read the part of its load they hold. What holds what can't be told isn't
+// read at all.
+//
+//	g := access.NewGrants([]access.Target{access.ConnectorTarget("stripe")})
+//	g.Reaches(access.Inputs{Tables: []access.TableRef{{ConnectorID: "stripe", Table: "customers"}, {ConnectorID: "crm", Table: "accounts"}}}) // true
+func (g Grants) Reaches(in Inputs) bool {
+	if in.Unknown {
+		return false
+	}
+	return in.Enrichment && g.enrichment || slices.ContainsFunc(in.Tables, g.CoversTable) || slices.ContainsFunc(in.Sets, g.CoversSet)
+}
+
+// DocumentRef is a document or table file of a load, and the set it is in now.
+type DocumentRef struct {
+	ID  string
+	Set SetRef
+}
+
+// PropDecision is a value someone decided for a property of a type: the sets
+// of the documents it was decided from, which none are if they were never
+// recorded.
+type PropDecision struct {
+	Type, Prop string
+	Sets       []SetRef
+	Recorded   bool
+}
+
+// Holdings are what a load holds, document by document: Inputs in the detail a
+// read of part of it needs.
+type Holdings struct {
+	Tables     []TableRef
+	Files      []DocumentRef
+	Documents  []DocumentRef
+	Enrichment bool
+	Decisions  []PropDecision
+}
+
+// PropRef is a property of a type.
+type PropRef struct{ Type, Prop string }
+
+// Part is what a grantee holds of a load it doesn't hold all of. AllDocuments
+// says it holds every one of the load's documents, whatever Documents lists.
+type Part struct {
+	Tables       []TableRef
+	Files        []string
+	AllDocuments bool
+	Documents    []string
+	Sets         []SetRef
+	Enrichment   bool
+	// Withheld are the properties decided from documents it doesn't hold.
+	Withheld []PropRef
+}
+
+// Part is what the grants hold of h.
+//
+//	g := access.NewGrants([]access.Target{access.DocumentSetTarget("contracts")})
+//	g.Part(access.Holdings{Documents: []access.DocumentRef{{ID: "d1", Set: access.SetRef{SetID: "contracts"}}, {ID: "d2", Set: access.SetRef{SetID: "hr"}}}}).Documents // [d1]
+func (g Grants) Part(h Holdings) Part {
+	out := Part{Enrichment: h.Enrichment && g.enrichment, AllDocuments: true}
+	addSet := func(s SetRef) {
+		if !slices.Contains(out.Sets, s) {
+			out.Sets = append(out.Sets, s)
+		}
+	}
+	for _, t := range h.Tables {
+		if g.CoversTable(t) {
+			out.Tables = append(out.Tables, t)
+		}
+	}
+	for _, f := range h.Files {
+		if g.CoversSet(f.Set) {
+			out.Files = append(out.Files, f.ID)
+			addSet(f.Set)
+		}
+	}
+	for _, d := range h.Documents {
+		if g.CoversSet(d.Set) {
+			out.Documents = append(out.Documents, d.ID)
+			addSet(d.Set)
+		} else {
+			out.AllDocuments = false
+		}
+	}
+	for _, d := range h.Decisions {
+		if !d.Recorded || !g.Covers(Inputs{Sets: d.Sets}) {
+			prop := PropRef{Type: d.Type, Prop: d.Prop}
+			if !slices.Contains(out.Withheld, prop) {
+				out.Withheld = append(out.Withheld, prop)
+			}
+		}
+	}
+	return out
+}
+
+// Holds reports whether p holds all of before: nothing it could read then is
+// out of its reach now.
+//
+//	(access.Part{Documents: []string{"d1", "d2"}}).Holds(access.Part{Documents: []string{"d1"}}) // true
+func (p Part) Holds(before Part) bool {
+	subset := func(have, had []string) bool {
+		return !slices.ContainsFunc(had, func(x string) bool { return !slices.Contains(have, x) })
+	}
+	documents := p.AllDocuments || !before.AllDocuments && subset(p.Documents, before.Documents)
+	tables := !slices.ContainsFunc(before.Tables, func(t TableRef) bool { return !slices.Contains(p.Tables, t) })
+	withheld := !slices.ContainsFunc(p.Withheld, func(w PropRef) bool { return !slices.Contains(before.Withheld, w) })
+	return documents && tables && withheld && subset(p.Files, before.Files) && (p.Enrichment || !before.Enrichment)
+}
+
+// Inputs is what p reads, for telling later whether grants still hold it.
+func (p Part) Inputs() Inputs {
+	return Inputs{Tables: p.Tables, Sets: p.Sets, Enrichment: p.Enrichment}
 }

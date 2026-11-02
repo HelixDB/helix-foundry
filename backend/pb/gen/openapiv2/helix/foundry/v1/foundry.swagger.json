@@ -5111,6 +5111,10 @@
         },
         "ontologyId": {
           "type": "string"
+        },
+        "keepsPart": {
+          "type": "boolean",
+          "description": "It would still read the part its grants hold."
         }
       },
       "description": "FoundryAccessLoss is a principal that would stop reading an ontology\nthrough grants."
@@ -6178,6 +6182,10 @@
         "refreshWaiting": {
           "type": "string",
           "description": "Why an owed refresh waits: busy (a job is live); empty otherwise."
+        },
+        "partialAccess": {
+          "type": "boolean",
+          "description": "The caller holds only some of what its current load holds, and reads that\npart: set only for a caller who reads through source grants."
         }
       },
       "description": "FoundryOntology is a workspace's ontology, bound to one Helix database: a\ntenant of one of the workspace's projects. Statuses are the lowercase names\nthe Foundry contract fixes."
@@ -6201,6 +6209,14 @@
             "$ref": "#/definitions/v1FoundryPrincipal"
           },
           "description": "The principals whose own grants cover it."
+        },
+        "partialReaders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryPrincipal"
+          },
+          "description": "The principals whose own grants hold only some of it, who read that part."
         }
       },
       "description": "FoundryOntologyAccess is an ontology's current load as grants see it."
@@ -6773,7 +6789,14 @@
           "items": {
             "type": "string"
           },
-          "description": "The live ontologies whose current loads its grants cover."
+          "description": "The live ontologies whose current loads its grants hold any of."
+        },
+        "partialOntologyIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Those of them it holds only some of."
         }
       }
     },
