@@ -2,9 +2,6 @@ import { isFoundryLabel } from "../../../shared/foundry-labels";
 import type { DynamicQueryRequest, JsonValue } from "../explore/database-query";
 import {
   MAX_COUNTS,
-  countCost,
-  countEntries,
-  countOf,
   scopedPredicates,
   type Scope,
 } from "../explore/load-scope";
@@ -21,7 +18,7 @@ import {
 // Records: an ontology's database as a table, one type of a load's version
 // at a time. Every read is a v3 dynamic read query run with the user's
 // session (POST /v1/databases:query-read, ../explore/database-query.ts),
-// scoped to one load or to Other data (../explore/load-scope.ts); this
+// scoped to one load (../explore/load-scope.ts); this
 // module builds them and reads their answers, trusting nothing in them.
 //
 // - Types are counted from Helix's bitmaps (`count` over `$label ==` and
@@ -123,33 +120,30 @@ export function recordTypes(naming: Naming): TypeNaming[] {
 
 /**
  * How many nodes each type has in the scope, from bitmaps: the type's and
- * the load's intersected, or for Other data the type's less every load's.
- * At most maxTypes types, in requests of at most MAX_COUNTS counts (in
- * Other data a type a version names takes one per load besides its own,
- * see countCost), read one after another.
+ * the load's intersected. At most maxTypes types, in requests of at most
+ * MAX_COUNTS counts, read one after another.
  */
 export function typeCountsRequests(
   scope: Scope,
   types: string[],
 ): { request: DynamicQueryRequest; types: string[] }[] {
-  const batches = types
-    .slice(0, RECORDS_LIMITS.maxTypes)
-    .reduce<{ types: string[]; cost: number }[]>((out, t) => {
-      const cost = countCost(scope, "node", t),
-        last = out[out.length - 1];
-      if (last && last.cost + cost <= MAX_COUNTS) {
-        last.types.push(t);
-        last.cost += cost;
-      } else out.push({ types: [t], cost });
-      return out;
-    }, []);
-  return batches.map((b) => ({
-    types: b.types,
+  const listed = types.slice(0, RECORDS_LIMITS.maxTypes);
+  const batches = Array.from(
+    { length: Math.ceil(listed.length / MAX_COUNTS) },
+    (_, k) => listed.slice(k * MAX_COUNTS, (k + 1) * MAX_COUNTS),
+  );
+  return batches.map((batch) => ({
+    types: batch,
     request: request(
       "foundry_record_counts",
-      b.types.flatMap((t, i) =>
-        countEntries(scope, "node", t, `count_${i}`, count),
-      ),
+      batch.map((t, i) => ({
+        name: `count_${i}`,
+        root: count({
+          nodes_where: {
+            predicate: { and: { predicates: scopedPredicates(scope, t) } },
+          },
+        }),
+      })),
     ),
   }));
 }
@@ -157,17 +151,13 @@ export function typeCountsRequests(
 /** Each type's count from typeCountsRequests' answers, or null when one doesn't say. */
 export function parseTypeCounts(
   bodies: readonly unknown[],
-  scope: Scope,
   batches: readonly { types: string[] }[],
 ): Map<string, number | null> {
   return new Map(
     batches.flatMap((b, k) => {
       const body = bodies[k];
       const data = isRow(body) ? body : {};
-      return b.types.map(
-        (t, i) =>
-          [t, countOf(data, scope, "node", t, `count_${i}`, total)] as const,
-      );
+      return b.types.map((t, i) => [t, total(data[`count_${i}`])] as const);
     }),
   );
 }
@@ -488,7 +478,7 @@ export function pageRead(
   if (search.kind === "none") return { kind: "none" };
   const params: Record<string, Param> =
     search.kind === "match" ? { ...search.params } : {};
-  const where: Ast[] = scopedPredicates(scope, "node", t.name);
+  const where: Ast[] = scopedPredicates(scope, t.name);
   const filter = activeFilter(view);
   if (filter) {
     const f = filterOf(t, filter.field, filter.value);

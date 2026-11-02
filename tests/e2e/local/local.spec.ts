@@ -131,6 +131,12 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
     page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
 
+  // No Helix MCP here, so no Getting into production.
+  const production = page.getByRole("region", {
+    name: "Getting into production",
+  });
+  await expect(production).toHaveCount(0);
+
   // The picker names no dashboard and no team.
   await page.goto("/workspaces");
   await expect(
@@ -157,6 +163,12 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await expect(
     page.getByRole("heading", { name: "Create your first workspace" }),
   ).toHaveCount(0);
+  // No Helix MCP here, so no agent to set it up and nothing to toggle.
+  await expect(page.getByText("Use my own data")).toBeVisible();
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy prompt" })).toHaveCount(
+    0,
+  );
 
   // Another workspace is still made from the switcher, and opens on its own
   // onboarding.
@@ -225,11 +237,18 @@ test("walks a new install through the sample company, from its database to Ask",
     page.getByRole("group", { name: "Suggested questions" }),
   ).toBeVisible();
 
-  // Acme Corp's database is a connection in Data, like any other.
+  // Acme Corp's database is a connection in Data, like any other, and every
+  // page says this is the sample, with the way on to its last step once the
+  // question this test left behind has ended.
   await page.goto("/data");
   await expect(
     page.getByText("Acme Corp", { exact: true }).first(),
   ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Sample data" })
+      .getByRole("link", { name: "Get started with your own data" }),
+  ).toHaveAttribute("href", "/ontology/sample#own-data", { timeout: 60_000 });
   expect(await page.locator("script[data-databuddy-injected]").count()).toBe(0);
   expect(tracked).toEqual([]);
 });
@@ -315,7 +334,7 @@ test("keeps only settings and the theme in the account menu", async ({
 test("offers every connector to a new workspace", async ({ page }) => {
   // Its onboarding's sources step adds data through the Data area's picker.
   await createGlobex(page);
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Add data" }).first().click();
   const picker = page.locator("dialog[open]");
   await expect(picker).toHaveAccessibleName("Where is your data?");
@@ -361,7 +380,7 @@ test("creates a database in this computer's Helix, without a plan or keys to rev
   // project named as the workspace. A document uploaded in its onboarding
   // gives the first draft something to read.
   await createGlobex(page);
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   // The sources step offers no API source, and says nothing of agents'
   // pieces.
   await expect(

@@ -37,7 +37,7 @@ const read: QueryExecutor = async (request) => {
   };
 };
 const LOAD = "load_1";
-const SCOPE: Scope = { kind: "load", id: LOAD };
+const SCOPE: Scope = { id: LOAD };
 
 const naming = namingOf({
   id: "ver_2",
@@ -138,24 +138,9 @@ describe("recordQueries", () => {
   });
 });
 
-describe("recordQueries in Other data", () => {
-  it("counts a type's nodes no load wrote: its count less the loads'", async () => {
-    // The team's own sales channel, beside the load's two.
-    graph.addNode("SalesChannel", { entity_key: "99", code: 99 });
-    const other: Scope = {
-      kind: "other",
-      loads: [LOAD],
-      shared: { nodes: new Set(["SalesChannel"]), edges: new Set() },
-    };
-    const counts = await recordQueries
-      .counts("ws", "o", read, other, naming)
-      .queryFn({});
-    expect(counts.get("SalesChannel")).toBe(1);
-    const page = await recordQueries
-      .page("ws", "o", read, other, naming, channel, view())
-      .queryFn({});
-    expect(page.rows.map((r) => r.name)).toEqual(["99"]);
-    // Keys differ per load, so the views cache apart.
+describe("recordQueries across loads", () => {
+  it("caches each load's views apart", () => {
+    const other: Scope = { id: "load_other" };
     expect(
       recordQueries.page("ws", "o", read, other, naming, channel, view())
         .queryKey,

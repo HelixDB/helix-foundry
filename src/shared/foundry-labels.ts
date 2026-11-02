@@ -53,7 +53,7 @@ export const FOUNDRY_EDGE_LABELS: readonly FoundryEdgeLabel[] = Object.freeze(
 /**
  * The property every node and edge a load writes carries: the load's id.
  * Equality-indexed per label, so a label's nodes in one load are a bitmap
- * read. Nodes and edges without it are not Foundry's (Other data).
+ * read. Nodes and edges without it are not Foundry's.
  */
 export const FOUNDRY_LOAD = "foundry_load";
 

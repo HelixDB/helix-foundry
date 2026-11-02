@@ -100,9 +100,7 @@ function Context({
               ? loadOptionLabel(choice.load)
               : choice.kind === "missing"
                 ? "A deleted load"
-                : choice.kind === "other"
-                  ? "Other data: what no load wrote"
-                  : "Nothing loaded yet"}
+                : "Nothing loaded yet"}
           </p>
         )}
         {compare && <p>Compared with {loadOptionLabel(compare)}</p>}

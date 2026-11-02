@@ -387,7 +387,7 @@ test("names what a load holds by the load's version", async ({ page }) => {
   await expect(grid(page, "Customer").getByRole("row")).toHaveCount(2);
 });
 
-test("falls back to raw labels with no current version", async ({ page }) => {
+test("says to finish setting up with no current version", async ({ page }) => {
   // A new ontology on the team's own database: no version names anything.
   await signIn(page);
   await startOntology(page, "Orders");
@@ -399,41 +399,19 @@ test("falls back to raw labels with no current version", async ({ page }) => {
     .getByRole("link", { name: "Explorer" })
     .click();
   await page.getByRole("radio", { name: "Records" }).click();
-  // Nothing is loaded: Records says to finish setting it up, and the team's
-  // own data is Other data, whose graph Records opens.
+  // Nothing is loaded: Records says to finish setting it up.
   await expect(
     page.getByRole("main").getByRole("link", { name: "Finish setting up" }),
   ).toBeVisible();
-  await page.goto(`${new URL(page.url()).pathname}?load=other`);
-  await expect(page.getByText("No version is current yet")).toBeVisible();
-  await page.getByRole("link", { name: "Open the graph" }).click();
-  await expect(page).toHaveURL(/\?load=other$/);
-
-  // The graph keeps the explorer's own captions and every property.
-  await expect(
-    page.getByRole("application", {
-      name: "Graph of orders: 7 nodes, 4 edges",
-    }),
-  ).toBeVisible({ timeout: 15_000 });
-  const jump = page.getByRole("combobox", { name: "Jump to a node" });
-  await jump.fill("Grace");
-  await page
-    .getByRole("option", { name: /Grace Hopper/ })
-    .first()
-    .click();
-  await expect(page.locator(".ex-canvas [aria-live=polite]")).toHaveText(
-    "Selected Account: Grace Hopper",
-  );
-  await expect(
-    page.getByRole("complementary", { name: "Inspector" }),
-  ).toContainText("account_id");
 });
 
-test("says when it couldn't read the current version, and reads it again", async ({
+test("says when it couldn't read the load's version, and reads it again", async ({
   page,
 }) => {
   const version =
-    "**/papi/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts/versions/ver_seed_1";
+    "**/papi/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts/versions/ver_seed_3";
+  await signIn(page);
+  await load(page);
   await page.route(version, (route) =>
     route.fulfill({
       status: 503,
@@ -441,18 +419,16 @@ test("says when it couldn't read the current version, and reads it again", async
       body: JSON.stringify({ code: 14, message: "upstream connect error" }),
     }),
   );
-  await signIn(page);
-  // Other data: with nothing loaded, the default reads no version.
-  await page.goto(`${X}/records?load=other`);
+  await page.goto(`${X}/records`);
   // Not "names no types": a failed read says so, and offers Retry.
-  await expect(page.getByText("Couldn’t read the current version")).toBeVisible(
-    { timeout: 10_000 },
-  );
+  await expect(page.getByText("Couldn’t read the load’s version")).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.getByText("upstream connect error")).toBeVisible();
   await expect(page.getByText("names no types")).toHaveCount(0);
   await page.unroute(version);
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("Nothing loaded yet")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Types" })).toBeVisible();
 });
 
 test("says how many more quotes a document has than the drawer shows", async ({

@@ -19,32 +19,18 @@ import {
   buildSampleRequest,
   buildSchemaProbeRequest,
   buildSearchRequest,
-  emptyLabels,
   EXPLORER_LIMITS,
   fallbackShape,
-  parseLabelCounts,
   parseSearch,
 } from "@/web/areas/explore/explorer/lib/queries";
 import type { NodeFetchShape } from "@/web/areas/explore/explorer/lib/types";
-import {
-  holds,
-  isShared,
-  otherCount,
-  scopedLabel,
-  type Scope,
-} from "@/web/areas/explore/load-scope";
+import { holds, scopedLabel, type Scope } from "@/web/areas/explore/load-scope";
 
 // The Explorer's reads in a load (load-versioning plan, section 3): every
 // label source is `$label == x and foundry_load == L` (two bitmaps), nothing
-// reads the whole graph, and Other data is the labels' counts less the
-// loads'.
+// reads the whole graph.
 
-const LOAD: Scope = { kind: "load", id: "01JDLOAD" };
-const OTHER: Scope = {
-  kind: "other",
-  loads: ["L1", "L2"],
-  shared: { nodes: new Set(["Customer"]), edges: new Set(["billed_to"]) },
-};
+const LOAD: Scope = { id: "01JDLOAD" };
 const SHAPE: NodeFetchShape = { keys: ["name"], heavyKeys: [] };
 
 /** Every object in a request, depth first. */
@@ -94,7 +80,7 @@ const page = (scope: Scope, view: Partial<RecordsView>) => {
 /**
  * The reads of rows (not counts) of every view: the Explorer's identity
  * lookup and label page, Records' pages, an entity's page and a document's
- * view. In Other data each reads a shared label by its missing load.
+ * view.
  */
 const reads = (scope: Scope): DynamicQueryRequest[] => [
   buildIdentityRequest({
@@ -204,7 +190,7 @@ describe("reads in a load", () => {
   });
 
   it("read a label as P(label, L): both constants, so both bitmaps serve it", () => {
-    expect(scopedLabel(LOAD, "node", "Customer")).toEqual({
+    expect(scopedLabel(LOAD, "Customer")).toEqual({
       and: {
         predicates: [
           {
@@ -269,122 +255,7 @@ describe("reads in a load", () => {
   });
 });
 
-const IS_NULL = JSON.stringify({ is_null: { property: "foundry_load" } });
-
-/** The labels a source's predicate reads, as constants. */
-const labelsOf = (predicate: unknown) =>
-  [
-    ...JSON.stringify(predicate).matchAll(
-      /"left":\{"property":"\$label"\},"right":\{"constant":\{"string":"([^"]+)"/g,
-    ),
-  ].map((m) => m[1]!);
-
-describe("Other data", () => {
-  it("reads a shared label's rows by their missing load, in every view", () => {
-    let shared = 0;
-    for (const request of reads(OTHER))
-      for (const op of operations(request.query)) {
-        const target = op.nodes_where ? "node" : op.edges_where ? "edge" : null;
-        if (!target) continue;
-        const { predicate } = (op.nodes_where ?? op.edges_where) as {
-          predicate: unknown;
-        };
-        const labels = labelsOf(predicate);
-        expect(labels.length, request.query_name ?? "").toBeGreaterThan(0);
-        const json = JSON.stringify(predicate);
-        // Never a load's: no foundry_load constant under Other data.
-        expect(json).not.toContain('"property":"foundry_load"},"right"');
-        if (
-          labels.some((l) =>
-            isShared(OTHER as Extract<Scope, { kind: "other" }>, target, l),
-          )
-        ) {
-          shared += 1;
-          expect(json, request.query_name ?? "").toContain(IS_NULL);
-        }
-      }
-    expect(shared).toBeGreaterThan(5);
-  });
-
-  it("is a label's count less every load's, from bitmaps only", () => {
-    expect(otherCount(120, [50, 50])).toBe(20);
-    expect(otherCount(10, [5, 6])).toBe(0);
-    expect(otherCount(null, [1])).toBeNull();
-    expect(otherCount(10, [1, null])).toBeNull();
-    const labels = { nodes: ["Customer", "Note"], edges: ["billed_to"] };
-    const request = buildLabelCountsRequest(labels, { scope: OTHER });
-    const returns = (request.query as { read: { returns: string[] } }).read
-      .returns;
-    // Customer is shared: its count and one per load. Note is the team's own.
-    expect(returns).toEqual([
-      "node_count_0",
-      "node_count_0_load_0",
-      "node_count_0_load_1",
-      "node_count_1",
-      "edge_count_0",
-      "edge_count_0_load_0",
-      "edge_count_0_load_1",
-    ]);
-    expect(JSON.stringify(request.query)).not.toContain("is_null");
-    expect(JSON.stringify(request.query)).not.toContain("is_in");
-    const body = {
-      node_count_0: 130,
-      node_count_0_load_0: 64,
-      node_count_0_load_1: 64,
-      node_count_1: 7,
-      edge_count_0: 138,
-      edge_count_0_load_0: 69,
-      edge_count_0_load_1: 69,
-    };
-    const stats = parseLabelCounts(body, labels, OTHER);
-    expect(stats.nodeLabels).toEqual([
-      { label: "Customer", count: 2 },
-      { label: "Note", count: 7 },
-    ]);
-    // billed_to holds nothing but the loads' edges.
-    expect(stats.edgeLabels).toEqual([]);
-    expect(emptyLabels(body, labels, OTHER)).toEqual({
-      nodes: [],
-      edges: ["billed_to"],
-    });
-  });
-
-  it("pages a shared label by its missing load and other labels plainly", () => {
-    const shared = JSON.stringify(
-      buildLabelPageRequest({
-        scope: OTHER,
-        label: "Customer",
-        afterDbId: null,
-        shape: SHAPE,
-      }).query,
-    );
-    expect(shared).toContain('{"is_null":{"property":"foundry_load"}}');
-    const own = JSON.stringify(
-      buildLabelPageRequest({
-        scope: OTHER,
-        label: "Note",
-        afterDbId: null,
-        shape: SHAPE,
-      }).query,
-    );
-    expect(own).not.toContain('foundry_load"}}');
-    expect(own).not.toContain("is_null");
-  });
-
-  it("leaves out a shared label's total, which no index can count", () => {
-    const returns = (label: string) =>
-      (
-        buildLabelPageRequest({
-          scope: OTHER,
-          label,
-          afterDbId: null,
-          shape: SHAPE,
-        }).query as { read: { returns: string[] } }
-      ).read.returns;
-    expect(returns("Customer")).toEqual(["page"]);
-    expect(returns("Note")).toEqual(["page", "total"]);
-  });
-
+describe("a load's rows", () => {
   it("projects the load within the shape's key cap", () => {
     const keys = Array.from({ length: 300 }, (_, i) => `k${i}`);
     const json = JSON.stringify(
@@ -402,45 +273,10 @@ describe("Other data", () => {
     expect(properties).toHaveLength(2 + EXPLORER_LIMITS.maxShapeKeys);
   });
 
-  it("counts within maxCountLabels per request: a shared label takes one count per load", () => {
-    const many = {
-      nodes: Array.from({ length: 30 }, (_, i) => `Customer${i}`),
-      edges: [],
-    };
-    const scope: Scope = {
-      ...OTHER,
-      shared: { nodes: new Set(many.nodes), edges: new Set() },
-    };
-    const request = buildLabelCountsRequest(many, { scope });
-    const returns = (request.query as { read: { returns: string[] } }).read
-      .returns;
-    // 3 counts each (the label, two loads): 20 labels fit in 60.
-    expect(returns).toHaveLength(60);
-    expect(
-      parseLabelCounts({}, many, scope).nodeLabels.filter(
-        (l) => l.count === null,
-      ),
-    ).toHaveLength(30);
-  });
-
-  it("tells Foundry's labels and the versions' from the team's own", () => {
-    expect(
-      isShared(
-        OTHER as Extract<Scope, { kind: "other" }>,
-        "node",
-        "FoundryMention",
-      ),
-    ).toBe(true);
-    expect(
-      isShared(OTHER as Extract<Scope, { kind: "other" }>, "edge", "billed_to"),
-    ).toBe(true);
-    expect(
-      isShared(OTHER as Extract<Scope, { kind: "other" }>, "node", "Note"),
-    ).toBe(false);
-    expect(holds(OTHER, { name: "x" })).toBe(true);
-    expect(holds(OTHER, { foundry_load: null })).toBe(true);
-    expect(holds(OTHER, { foundry_load: "L1" })).toBe(false);
+  it("holds only what carries the load's id", () => {
     expect(holds(LOAD, { foundry_load: "01JDLOAD" })).toBe(true);
+    expect(holds(LOAD, { foundry_load: "L1" })).toBe(false);
+    expect(holds(LOAD, { foundry_load: null })).toBe(false);
     expect(holds(LOAD, {})).toBe(false);
   });
 });

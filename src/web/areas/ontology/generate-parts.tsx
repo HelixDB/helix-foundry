@@ -79,6 +79,7 @@ import {
   setRoom,
   setSourcesText,
 } from "./model";
+import { isSampleConnector, isSampleSet } from "./sample";
 
 // What a generation is asked for, shared by Generate (./generate.tsx), the
 // new-ontology wizard (./new-ontology.tsx) and an unfinished ontology's
@@ -93,6 +94,11 @@ import {
 // mappings as one table, `events`, or by entity extraction as its own set
 // of pieces (one of the sets, never listed among them); of a set, every
 // table file Foundry has read is a table of its own.
+//
+// The sample company's connector and set are no source of an ontology of the
+// user's own: every part here leaves them out, as the pages' checks do
+// (isSampleConnector, isSampleSet), unless told `keepSample`: the sample's own
+// ontology, which can still be drafted again.
 //
 // Neither page sends the user to Data. Add data opens the Data area's
 // picker over the page; the new connection's first sync shows in its row
@@ -135,6 +141,7 @@ export function GoalPanel({
   chosen,
   chosenEvents,
   chosenSets,
+  keepSample = false,
 }: {
   goal: string;
   setGoal: (goal: string) => void;
@@ -143,13 +150,16 @@ export function GoalPanel({
   chosen: ReadonlySet<string> | null;
   chosenEvents: ReadonlyMap<string, FoundryEventSourceMode> | null;
   chosenSets: ReadonlySet<string> | null;
+  keepSample?: boolean;
 }) {
   const { id, name, notify } = useWorkspace();
   const connectors = useQuery(connectorsQuery(id)),
     sets = useQuery(documentSetQueries.list(id)),
     documents = useQuery(documentQueries.workspace(id));
   const chars = [...goal.trim()].length,
-    list = connectors.data?.connectors || [];
+    list = (connectors.data?.connectors || []).filter(
+      (c) => keepSample || !isSampleConnector(c),
+    );
   const copyPrompt = () =>
     navigator.clipboard
       .writeText(
@@ -173,7 +183,9 @@ export function GoalPanel({
             })),
           // An API source's own set is its line's, read by extraction.
           sets: setFolders(
-            (sets.data || []).filter((s) => !isEventSourceSet(s)),
+            (sets.data || []).filter(
+              (s) => !isEventSourceSet(s) && (keepSample || !isSampleSet(s)),
+            ),
             documents.data || [],
           ).map((f) => ({
             name: setLabel(f.set),
@@ -235,9 +247,11 @@ export function GoalPanel({
 export function ConnectorPicker({
   chosen,
   setChosen,
+  keepSample = false,
 }: {
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
+  keepSample?: boolean;
 }) {
   const { id, notify } = useWorkspace(),
     qc = useQueryClient();
@@ -249,7 +263,7 @@ export function ConnectorPicker({
   const [connecting, setConnecting] = useState(false),
     [syncing, setSyncing] = useState("");
   const list = (connectors.data?.connectors || []).filter(
-    (c) => !isEventSource(c.kind),
+    (c) => !isEventSource(c.kind) && (keepSample || !isSampleConnector(c)),
   );
   const usable = list.filter(synced);
   const selected = chosen ?? new Set(usable.map((c) => c.id));
@@ -506,6 +520,7 @@ export function SourcesPicker({
   chosenSets,
   setChosenSets,
   failed,
+  keepSample = false,
 }: {
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
@@ -514,16 +529,22 @@ export function SourcesPicker({
   chosenSets: Set<string> | null;
   setChosenSets: Dispatch<SetStateAction<Set<string> | null>>;
   failed?: { error: Error; retry: () => void } | null;
+  keepSample?: boolean;
 }) {
   return (
     <div className="on-stack">
-      <ConnectorPicker chosen={chosen} setChosen={setChosen} />
+      <ConnectorPicker
+        chosen={chosen}
+        setChosen={setChosen}
+        keepSample={keepSample}
+      />
       <EventSourcePicker chosen={chosenEvents} setChosen={setChosenEvents} />
       <SetPicker
         chosen={chosenSets}
         setChosen={setChosenSets}
         chosenEvents={chosenEvents}
         failed={failed}
+        keepSample={keepSample}
       />
     </div>
   );
@@ -845,11 +866,13 @@ export function SetPicker({
   setChosen,
   chosenEvents,
   failed,
+  keepSample = false,
 }: {
   chosen: Set<string> | null;
   setChosen: Dispatch<SetStateAction<Set<string> | null>>;
   chosenEvents: EventChoices | null;
   failed?: { error: Error; retry: () => void } | null;
+  keepSample?: boolean;
 }) {
   const { id } = useWorkspace();
   const sets = useQuery(documentSetQueries.list(id)),
@@ -878,7 +901,7 @@ export function SetPicker({
     owned,
     ordered: setList,
   } = pickerSets(
-    sets.data || [],
+    (sets.data || []).filter((x) => keepSample || !isSampleSet(x)),
     connectors.data?.connectors || [],
     connectorLabel,
   );

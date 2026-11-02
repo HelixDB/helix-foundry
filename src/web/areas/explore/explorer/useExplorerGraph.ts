@@ -16,9 +16,9 @@ import {
   FOUNDRY_EDGE_LABELS,
   FOUNDRY_NODE_LABELS,
 } from "../../../../shared/foundry-labels";
-import { isShared, type Scope } from "../load-scope";
+import type { Scope } from "../load-scope";
 import type { IndexCatalogEntry, LabelExclusion } from "./lib/types";
-import { excludes, shownGraph, shownLabels, shownStats } from "./lib/exclusion";
+import { excludes, shownGraph, shownLabels } from "./lib/exclusion";
 
 import {
   canvasRoom,
@@ -67,9 +67,7 @@ import {
   buildEdgeCountRequest,
   buildIdentityRequest,
   buildLabelCountsRequest,
-  buildLabelDiscoveryRequest,
   buildLabelPageRequest,
-  buildLabelScanRequest,
   buildNeighborhoodRequest,
   buildNodesByIdRequest,
   buildSampleRequest,
@@ -90,16 +88,13 @@ import {
   parseEdgeCount,
   parseIdentity,
   parseLabelCounts,
-  parseLabelDiscovery,
   parseLabelPage,
-  parseLabelScan,
   parseNeighborhood,
   parseNodes,
   parseSample,
   parseSchemaProbe,
   parseSearch,
   withoutEdgeProperties,
-  type LabelDiscovery,
 } from "./lib/queries";
 import {
   createRequestLimiter,
@@ -109,13 +104,7 @@ import {
   type RequestLimiter,
   type RequestPacing,
 } from "./lib/request-limiter";
-import {
-  asStringArray,
-  readRememberedLabels,
-  readStored,
-  rememberLabels,
-  writeStored,
-} from "./lib/storage";
+import { asStringArray, readStored, writeStored } from "./lib/storage";
 import type {
   DegreeInfo,
   DegreeProbe,
@@ -147,9 +136,8 @@ export interface ExplorerNotifyEvent {
 export interface UseExplorerGraphOptions {
   execute: QueryExecutor;
   /**
-   * What the explorer reads (../load-scope.ts): one load, whose labels are
-   * its version's (`layout`) and whose first view is seeded from its hub
-   * types, or Other data, found and sampled as a plain database is.
+   * The load the explorer reads (../load-scope.ts): its labels are its
+   * version's (`layout`) and its first view is seeded from its hub types.
    * Changing it reboots.
    */
   scope: Scope;
@@ -224,14 +212,9 @@ export interface ExplorerGraph {
   visible: GraphData;
   /** Label counts for the rail: the counted labels, plus labels loaded since (count unknown). */
   labels: { nodes: LabelCount[]; edges: LabelCount[] };
-  refresh(options?: { small?: boolean }): void;
-  /** Finds and counts labels again, the cheap way (no full scan). */
+  refresh(): void;
+  /** Counts the load's labels again. */
   retryOverview(): void;
-  /**
-   * Lists every label with exact counts by reading the whole graph. Slow and
-   * heavy on a large database: only ever run because the user asked.
-   */
-  scanLabels(): Promise<boolean>;
   loadSample(): void;
   /** In a load: reads the next ring around the outermost nodes, within a budget. */
   showMore(): Promise<void>;
@@ -268,8 +251,6 @@ export interface ExplorerGraph {
     nodeIds: string[],
     options?: { confirmed?: boolean },
   ): Promise<void>;
-  /** Until when (epoch ms) "Scan for all labels" is held back because an earlier scan may still be running. */
-  scanBlockedUntil: number | null;
   /**
    * The executor for queries the user runs (the query dock): through the
    * explorer's limiter as user requests (a token, then at once), so the
@@ -312,13 +293,6 @@ export interface ExplorerGraph {
 }
 
 const CAP = EXPLORER_LIMITS.maxCanvasNodes;
-const SMALL_SAMPLE_NODES = 100;
-const SMALL_SAMPLE_EDGES = 300;
-/** Nodes per property refetch with a probed shape (light values only). */
-const REFETCH_BATCH = 100;
-/** Nodes per refetch of full rows (no probe), which may carry heavy values. */
-const REFETCH_FULL_BATCH = 25;
-const REFETCH_MIN_BATCH = 5;
 const LABEL_PAGE_MAX_REQUESTS = 4;
 /**
  * Pages one "load more" of a side known to be small may fetch while every
@@ -360,25 +334,6 @@ function isRateLimited(result: DatabaseQueryResult): boolean {
   );
 }
 
-/** Failures after which a label scan may still be running on the database. */
-function scanMayStillRun(failure: QueryFailure): boolean {
-  return (
-    isTimeout(failure) ||
-    failure.kind === "network" ||
-    failure.kind === "aborted"
-  );
-}
-
-/** How long "Scan for all labels" is held back after a scan that may still be running. */
-const SCAN_COOLDOWN_MS = 60_000;
-
-function scanCooldownKey(storageKey: string): string {
-  return `${storageKey}.scanCooldownUntil`;
-}
-
-const asTimestamp = (value: unknown) =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-
 /** Gateway codes that mean the database (or its gateway) is refusing work right now. */
 const REFUSING_CODES = new Set([
   "rate_limit_unavailable",
@@ -401,9 +356,6 @@ function haltsBoot(failure: QueryFailure): boolean {
     [429, 502, 503, 504].includes(failure.status)
   );
 }
-
-const formatLabelCount = (count: number) =>
-  `${count.toLocaleString("en-US")} ${count === 1 ? "label" : "labels"}`;
 
 /** The notice that offers to connect nodes the explorer didn't connect on its own. */
 const CONNECT_NOTICE_ID = "connect-skipped";
@@ -431,25 +383,6 @@ const countedKey = (target: "node" | "edge", label: string) =>
   `${target}:${label}`;
 
 /**
- * The labels to count at boot, in priority order: what discovery saw (they
- * certainly exist), then the index catalog, then labels remembered from
- * earlier visits. Over the per-request cap, the later ones go uncounted.
- */
-function bootLabels(
-  discovery: LabelDiscovery | null,
-  catalog: { nodes: string[]; edges: string[] },
-  remembered: { nodes: string[]; edges: string[] },
-): { nodes: string[]; edges: string[] } {
-  const order = (...lists: string[][]) => [
-    ...new Set(lists.flat().filter((label) => label !== "")),
-  ];
-  return {
-    nodes: order(discovery?.nodes ?? [], catalog.nodes, remembered.nodes),
-    edges: order(discovery?.edges ?? [], catalog.edges, remembered.edges),
-  };
-}
-
-/**
  * A load's labels: its version's types and links, and Foundry's own, less
  * what is excluded (Foundry's, unless shown).
  */
@@ -467,24 +400,6 @@ function loadLabels(
     },
     exclude,
   );
-}
-
-/**
- * Labels a counts request covered that its stats left out: counted at zero
- * (parseLabelCounts drops those), so gone or never written.
- */
-function emptyLabelsOf(
-  asked: { nodes: readonly string[]; edges: readonly string[] },
-  stats: LabelStats,
-): { nodes: string[]; edges: string[] } {
-  const missing = (list: readonly string[], kept: LabelCount[]) => {
-    const exists = new Set(kept.map((entry) => entry.label));
-    return list.filter((label) => !exists.has(label));
-  };
-  return {
-    nodes: missing(asked.nodes, stats.nodeLabels),
-    edges: missing(asked.edges, stats.edgeLabels),
-  };
 }
 
 /** Late label counting: labels per request and requests per boot. */
@@ -550,12 +465,6 @@ export function useExplorerGraph(
   });
 
   const generationRef = useRef(0);
-  /**
-   * The database was seen to hold excluded labels (found, remembered or
-   * scanned since the boot): the counted labels don't cover every node, so
-   * a sample never reads "the whole graph".
-   */
-  const excludedSeenRef = useRef(false);
   const controllersRef = useRef(new Set<AbortController>());
   const keyedRef = useRef(new Map<string, AbortController>());
   const busyRef = useRef(new Map<string, string>());
@@ -1185,7 +1094,6 @@ export function useExplorerGraph(
   const countLabels = useCallback(
     async (
       labels: { nodes: string[]; edges: string[] },
-      complete: { nodes: boolean; edges: boolean },
       opts: { probe: boolean },
     ): Promise<
       | {
@@ -1222,11 +1130,11 @@ export function useExplorerGraph(
         );
         if (!result) return null;
         if (result.ok) {
-          const stats = parseLabelCounts(result.body, labels, scope, complete);
+          const stats = parseLabelCounts(result.body, labels);
           if (attempt.rows === 0)
             return { kind: "counted", stats, probe: null };
-          // Probe only what is known to exist: a remembered label counted at zero has no schema to
-          // show, and one over the cap (not counted yet) may be gone too.
+          // Probe only what is known to exist: a label counted at zero has no schema to show, and
+          // one over the cap (not counted yet) may hold nothing too.
           const existing = {
             nodes: stats.nodeLabels
               .filter((entry) => entry.count !== null)
@@ -1255,36 +1163,20 @@ export function useExplorerGraph(
     [run],
   );
 
-  /** Finds labels without reading the whole graph; null when the response no longer matters. */
-  const discoverLabels = useCallback(async (): Promise<
-    | { kind: "found"; discovery: LabelDiscovery }
-    | { kind: "failed"; failure: QueryFailure }
-    | null
-  > => {
-    const result = await run("Find labels", buildLabelDiscoveryRequest());
-    if (!result) return null;
-    if (!result.ok) return { kind: "failed", failure: result };
-    return { kind: "found", discovery: parseLabelDiscovery(result.body) };
-  }, [run]);
-
   const loadSampleWith = useCallback(
     async (
       stats: Pick<LabelStats, "nodeLabels" | "edgeLabels" | "partial"> | null,
       shape: NodeFetchShape,
-      small: boolean,
     ): Promise<SampleOutcome | null> => {
       const nodeLabels = stats?.nodeLabels ?? null;
       const budget = {
-        ...(small
-          ? { nodeBudget: SMALL_SAMPLE_NODES, edgeBudget: SMALL_SAMPLE_EDGES }
-          : {}),
         edgeLabels:
           stats && stats.edgeLabels.length > 0 ? stats.edgeLabels : null,
         scope: optionsRef.current.scope,
       };
       let used = shape;
       let result = await run(
-        small ? "Load a small sample" : "Load a sample",
+        "Load a sample",
         buildSampleRequest({ nodeLabels, shape, ...budget }),
       );
       if (result && !result.ok && isTooLarge(result) && !isLightShape(shape)) {
@@ -1323,62 +1215,6 @@ export function useExplorerGraph(
     [run],
   );
 
-  /**
-   * Fills in properties of nodes that were loaded without them, a batch at a
-   * time. Without a probed shape it fetches full rows, in smaller batches
-   * that shrink further if a response is still too large.
-   */
-  const refetchProperties = useCallback(
-    async (dbIds: number[], shape: NodeFetchShape, generation: number) => {
-      let size = shape.keys === null ? REFETCH_FULL_BATCH : REFETCH_BATCH;
-      for (let start = 0; start < dbIds.length; ) {
-        if (generation !== generationRef.current) return;
-        const batch = dbIds.slice(start, start + size);
-        // Nodes cleared or removed meanwhile don't need their properties.
-        const wanted = batch.filter((dbId) =>
-          stateRef.current.store.nodes.has(nodeKey(dbId)),
-        );
-        if (wanted.length === 0) {
-          start += batch.length;
-          continue;
-        }
-        const result = await run(
-          `Load properties of ${wanted.length} ${wanted.length === 1 ? "node" : "nodes"}`,
-          buildNodesByIdRequest({ dbIds: wanted, shape }),
-        );
-        if (!result) return;
-        if (!result.ok) {
-          if (isTooLarge(result) && size > REFETCH_MIN_BATCH) {
-            size = Math.max(REFETCH_MIN_BATCH, Math.floor(size / 4));
-            continue;
-          }
-          notify({
-            tone: "error",
-            title: "Couldn't load node properties",
-            description:
-              "Some nodes show only their label and id. Expanding a node loads its properties.",
-            failure: result,
-          });
-          return;
-        }
-        // The shape knows every key these nodes list as not loaded, so its omitted lists are exact.
-        mergeInto(
-          { nodes: parseNodes(result.body, shape) },
-          { replaceOmitted: true },
-        );
-        start += batch.length;
-      }
-    },
-    [mergeInto, notify, run],
-  );
-
-  /**
-   * Puts the first view on the canvas. Label pages, search reveals and query
-   * results can land while it loads; the sample merges into them instead of
-   * replacing them. The sample carries its own edges, so only the few nodes
-   * that were there first are connected to it (from their side: the sample's
-   * nodes are never probed or connected on their own).
-   */
   const placeSample = useCallback(
     async (
       sample: Extract<SampleOutcome, { kind: "loaded" }>,
@@ -1491,7 +1327,7 @@ export function useExplorerGraph(
         return;
       }
       if (outcome.kind === "stale") return;
-      const sample = await loadSampleWith(stats, shape, false);
+      const sample = await loadSampleWith(stats, shape);
       if (!sample || !alive()) return;
       if (sample.kind === "failed")
         dispatch({ type: "sample/failed", failure: sample.failure });
@@ -1575,273 +1411,72 @@ export function useExplorerGraph(
     [],
   );
 
-  const remember = useCallback(
-    (stats: LabelStats, forget?: { nodes: string[]; edges: string[] }) => {
-      rememberLabels(
-        optionsRef.current.storageKey,
-        {
-          nodes: stats.nodeLabels.map((entry) => entry.label),
-          edges: stats.edgeLabels.map((entry) => entry.label),
-        },
-        { forget },
-      );
-    },
-    [],
-  );
-
   /**
-   * The first view: find labels (bounded discovery reads, the index catalog
-   * and labels remembered for this database), count them from their bitmaps
-   * and probe their properties in one request, then load a sample per label.
+   * The first view: the load's labels (its version's types and links, and
+   * Foundry's own when shown), counted in the load from their bitmaps with
+   * their properties probed in one request, then seeded from its hub types.
    * Nothing here reads the whole graph; a gateway refusing queries or a
    * timeout on these cheap requests stops the boot right away.
    */
-  const boot = useCallback(
-    async ({ small = false }: { small?: boolean } = {}) => {
-      abortAll();
-      const generation = (generationRef.current += 1);
-      const alive = () => generation === generationRef.current;
-      const { canRead, storageKey: key, indexes } = optionsRef.current;
-      confirmedSidesRef.current = new Set();
-      countedRef.current = new Set();
-      backlogRef.current = new Set();
-      lateCountsRef.current = 0;
-      lateBusyRef.current = false;
-      lateFailuresRef.current = 0;
-      dispatch({
-        type: "boot",
-        noAccess: canRead === false,
-        hiddenLabels: readStored(hiddenLabelsKey(key), asStringArray) ?? [],
-      });
-      if (canRead === false) return;
+  const boot = useCallback(async () => {
+    abortAll();
+    const generation = (generationRef.current += 1);
+    const alive = () => generation === generationRef.current;
+    const { canRead, storageKey: key } = optionsRef.current;
+    confirmedSidesRef.current = new Set();
+    countedRef.current = new Set();
+    backlogRef.current = new Set();
+    lateCountsRef.current = 0;
+    lateBusyRef.current = false;
+    lateFailuresRef.current = 0;
+    dispatch({
+      type: "boot",
+      noAccess: canRead === false,
+      hiddenLabels: readStored(hiddenLabelsKey(key), asStringArray) ?? [],
+    });
+    if (canRead === false) return;
 
-      // A load: its labels are its version's (and Foundry's own, when
-      // shown), counted in the load; the first view is seeded.
-      if (optionsRef.current.scope.kind === "load") {
-        const { scope, layout, exclude } = optionsRef.current;
-        const labels = loadLabels(layout, exclude);
-        dispatch({ type: "overview/loading" });
-        const counted = await countLabels(
-          labels,
-          { nodes: true, edges: true },
-          { probe: true },
-        );
-        if (!counted || !alive()) return;
-        let stats: LabelStats | null = null;
-        let shape = fallbackShape();
-        if (counted.kind === "failed") {
-          dispatch({ type: "overview/failed", failure: counted.failure });
-          if (counted.halt) {
-            dispatch({
-              type: "boot/failed",
-              failure: counted.failure,
-              stage: "labels",
-            });
-            return;
-          }
-        } else {
-          stats = counted.stats;
-          markCounted(countedLabels(labels, scope));
-          dispatch({ type: "overview/loaded", stats });
-          if (counted.probe) {
-            dispatch({ type: "schema/loaded", ...counted.probe });
-            shape = counted.probe.shape;
-          }
-          if (stats.nodeLabels.length === 0) {
-            dispatch({ type: "boot/empty" });
-            return;
-          }
-        }
-        dispatch({ type: "sample/loading" });
-        await seedFirstView(stats, shape, alive);
-        return;
-      }
-
-      dispatch({ type: "overview/loading" });
-      const found = await discoverLabels();
-      if (!found || !alive()) return;
-      if (found.kind === "failed" && haltsBoot(found.failure)) {
-        dispatch({ type: "overview/failed", failure: found.failure });
+    const { layout, exclude } = optionsRef.current;
+    const labels = loadLabels(layout, exclude);
+    dispatch({ type: "overview/loading" });
+    const counted = await countLabels(labels, { probe: true });
+    if (!counted || !alive()) return;
+    let stats: LabelStats | null = null;
+    let shape = fallbackShape();
+    if (counted.kind === "failed") {
+      dispatch({ type: "overview/failed", failure: counted.failure });
+      if (counted.halt) {
         dispatch({
           type: "boot/failed",
-          failure: found.failure,
+          failure: counted.failure,
           stage: "labels",
         });
         return;
       }
-      // A database error here (an engine without one of the operations, say)
-      // only costs the discovered labels; the others still get counted.
-      const discovery = found.kind === "found" ? found.discovery : null;
-      if (discovery?.empty) {
-        dispatch({
-          type: "overview/loaded",
-          stats: { nodeLabels: [], edgeLabels: [], nodeTotal: 0, edgeTotal: 0 },
-        });
+    } else {
+      stats = counted.stats;
+      markCounted(countedLabels(labels));
+      dispatch({ type: "overview/loaded", stats });
+      if (counted.probe) {
+        dispatch({ type: "schema/loaded", ...counted.probe });
+        shape = counted.probe.shape;
+      }
+      if (stats.nodeLabels.length === 0) {
         dispatch({ type: "boot/empty" });
         return;
       }
-      const remembered = readRememberedLabels(key);
-      const known = bootLabels(discovery, indexLabels(indexes), remembered);
-      const labels = shownLabels(known, optionsRef.current.exclude);
-      excludedSeenRef.current =
-        labels.nodes.length + labels.edges.length <
-        known.nodes.length + known.edges.length;
-      const complete = {
-        nodes: discovery?.nodesExhausted ?? false,
-        edges: discovery?.edgesExhausted ?? false,
-      };
-
-      let stats: LabelStats | null = null;
-      let probe: { schemas: LabelSchema[]; shape: NodeFetchShape } | null =
-        null;
-      if (labels.nodes.length > 0 || labels.edges.length > 0) {
-        const counted = await countLabels(labels, complete, { probe: true });
-        if (!counted || !alive()) return;
-        if (counted.kind === "failed") {
-          dispatch({ type: "overview/failed", failure: counted.failure });
-          if (counted.halt) {
-            dispatch({
-              type: "boot/failed",
-              failure: counted.failure,
-              stage: "labels",
-            });
-            return;
-          }
-        } else {
-          stats = counted.stats;
-          probe = counted.probe;
-          const capped = countedLabels(labels, optionsRef.current.scope);
-          // Only the labels the request covered; those over the cap are counted in the background.
-          markCounted(capped);
-          dispatch({ type: "overview/loaded", stats });
-          if (probe) dispatch({ type: "schema/loaded", ...probe });
-          // Labels counted at zero are gone (or were never written): stop remembering them.
-          remember(stats, emptyLabelsOf(capped, stats));
-          const dropped = [...capped.dropped.nodes, ...capped.dropped.edges];
-          if (dropped.length > 0) {
-            notify({
-              tone: "info",
-              title: `${formatLabelCount(dropped.length)} not counted yet`,
-              description: `Each request counts up to ${EXPLORER_LIMITS.maxCountLabels} node and ${EXPLORER_LIMITS.maxCountLabels} edge labels; the rest (${dropped.slice(0, 5).join(", ")}${dropped.length > 5 ? ", …" : ""}) are counted in the background, a request at a time.`,
-            });
-          }
-        }
-      } else if (found.kind === "failed") {
-        dispatch({ type: "overview/failed", failure: found.failure });
-      }
-
-      if (stats && stats.nodeLabels.length > 0) {
-        const shape = probe?.shape ?? fallbackShape();
-        dispatch({ type: "sample/loading" });
-        const sample = await loadSampleWith(stats, shape, small);
-        if (!sample || !alive()) return;
-        if (sample.kind === "failed") {
-          dispatch({ type: "sample/failed", failure: sample.failure });
-          return;
-        }
-        await placeSample(sample, sample.truncated);
-        // A probe that found no light keys leaves nothing to fill in.
-        if (sample.light && shape.keys?.length !== 0 && alive()) {
-          await refetchProperties(
-            sample.graph.nodes.map((node) => node.dbId),
-            shape,
-            generation,
-          );
-        }
-        return;
-      }
-
-      // No label known to hold nodes (discovery failed or found only labels
-      // that are gone): start from the first nodes by id, then count and
-      // probe the labels they carry.
-      if (!stats) dispatch({ type: "overview/loading" });
-      dispatch({ type: "sample/loading" });
-      const sample = await loadSampleWith(null, fallbackShape(), small);
-      if (!sample || !alive()) return;
-      if (sample.kind === "failed") {
-        if (haltsBoot(sample.failure))
-          dispatch({
-            type: "boot/failed",
-            failure: sample.failure,
-            stage: "sample",
-          });
-        else dispatch({ type: "sample/failed", failure: sample.failure });
-        return;
-      }
-      if (
-        sample.graph.nodes.length === 0 &&
-        stateRef.current.store.nodes.size === 0
-      ) {
-        if (!stats)
-          dispatch({
-            type: "overview/loaded",
-            stats: {
-              nodeLabels: [],
-              edgeLabels: [],
-              nodeTotal: 0,
-              edgeTotal: 0,
-            },
-          });
-        dispatch({ type: "boot/empty" });
-        return;
-      }
-      await placeSample(sample, true);
-      const sampled = {
-        nodes: [
-          ...new Set(sample.graph.nodes.map((node) => node.label)),
-        ].sort(),
-        edges: [
-          ...new Set(sample.graph.edges.map((edge) => edge.label)),
-        ].sort(),
-      };
-      const counted = await countLabels(
-        sampled,
-        { nodes: false, edges: false },
-        { probe: true },
-      );
-      if (!counted || !alive()) return;
-      if (counted.kind === "failed") {
-        dispatch({ type: "overview/failed", failure: counted.failure });
-        return;
-      }
-      markCounted(countedLabels(sampled, optionsRef.current.scope));
-      dispatch({ type: "overview/loaded", stats: counted.stats });
-      remember(counted.stats);
-      if (counted.probe) dispatch({ type: "schema/loaded", ...counted.probe });
-      if (sample.light && counted.probe?.shape.keys?.length !== 0) {
-        await refetchProperties(
-          sample.graph.nodes.map((node) => node.dbId),
-          counted.probe?.shape ?? fallbackShape(),
-          generation,
-        );
-      }
-    },
-    [
-      abortAll,
-      countLabels,
-      discoverLabels,
-      dispatch,
-      loadSampleWith,
-      markCounted,
-      notify,
-      placeSample,
-      refetchProperties,
-      remember,
-      seedFirstView,
-    ],
-  );
+    }
+    dispatch({ type: "sample/loading" });
+    await seedFirstView(stats, shape, alive);
+  }, [abortAll, countLabels, dispatch, markCounted, seedFirstView]);
 
   // Boot on mount and whenever the database, the load, its version or read
   // access changes.
   const exclusion = options.exclude;
-  const scopeId =
-    options.scope.kind === "load"
-      ? `load:${options.scope.id}`
-      : `other:${options.scope.loads.join(",")}`;
   const layoutKey = options.layout
     ? `${options.layout.types.join(",")}|${options.layout.links.map((l) => l.name).join(",")}`
     : "";
-  const bootKey = `${storageKey}|${scopeId}|${layoutKey}|${String(options.canRead)}|${exclusion ? `${exclusion.nodePrefix}|${exclusion.edgePrefix}` : ""}`;
+  const bootKey = `${storageKey}|${options.scope.id}|${layoutKey}|${String(options.canRead)}|${exclusion ? `${exclusion.nodePrefix}|${exclusion.edgePrefix}` : ""}`;
   useEffect(() => {
     void boot();
     return () => {
@@ -1860,12 +1495,9 @@ export function useExplorerGraph(
     );
   }, [hiddenLabels, storageKey]);
 
-  const refresh = useCallback(
-    (opts?: { small?: boolean }) => void boot(opts),
-    [boot],
-  );
+  const refresh = useCallback(() => void boot(), [boot]);
 
-  /** Finds and counts labels again (discovery plus bitmap counts), keeping the canvas. */
+  /** Counts the load's labels again, keeping the canvas. */
   const retryOverview = useCallback(() => {
     void track("overview", async () => {
       const generation = generationRef.current;
@@ -1882,70 +1514,9 @@ export function useExplorerGraph(
         }
       };
       dispatch({ type: "overview/loading" });
-      if (optionsRef.current.scope.kind === "load") {
-        const { scope, layout, exclude } = optionsRef.current;
-        const labels = loadLabels(layout, exclude);
-        const counted = await countLabels(
-          labels,
-          { nodes: true, edges: true },
-          { probe: false },
-        );
-        if (!counted) return restore();
-        if (counted.kind === "failed") {
-          dispatch({ type: "overview/failed", failure: counted.failure });
-          notify({
-            tone: "error",
-            title: "Couldn't count labels",
-            failure: counted.failure,
-          });
-          return;
-        }
-        markCounted(countedLabels(labels, scope));
-        dispatch({ type: "overview/loaded", stats: counted.stats });
-        return;
-      }
-      const found = await discoverLabels();
-      if (!found) return restore();
-      if (found.kind === "failed" && haltsBoot(found.failure)) {
-        dispatch({ type: "overview/failed", failure: found.failure });
-        notify({
-          tone: "error",
-          title: "Couldn't count labels",
-          failure: found.failure,
-        });
-        return;
-      }
-      const discovery = found.kind === "found" ? found.discovery : null;
-      const current = stateRef.current;
-      const seen = railLabels(current);
-      const known = bootLabels(
-        discovery,
-        indexLabels(optionsRef.current.indexes),
-        {
-          nodes: [
-            ...seen.nodes.map((entry) => entry.label),
-            ...readRememberedLabels(optionsRef.current.storageKey).nodes,
-          ],
-          edges: [
-            ...seen.edges.map((entry) => entry.label),
-            ...readRememberedLabels(optionsRef.current.storageKey).edges,
-          ],
-        },
-      );
-      const labels = shownLabels(known, optionsRef.current.exclude);
-      if (
-        labels.nodes.length + labels.edges.length <
-        known.nodes.length + known.edges.length
-      )
-        excludedSeenRef.current = true;
-      const counted = await countLabels(
-        labels,
-        {
-          nodes: discovery?.nodesExhausted ?? false,
-          edges: discovery?.edgesExhausted ?? false,
-        },
-        { probe: false },
-      );
+      const { layout, exclude } = optionsRef.current;
+      const labels = loadLabels(layout, exclude);
+      const counted = await countLabels(labels, { probe: false });
       if (!counted) return restore();
       if (counted.kind === "failed") {
         dispatch({ type: "overview/failed", failure: counted.failure });
@@ -1956,174 +1527,23 @@ export function useExplorerGraph(
         });
         return;
       }
-      const capped = countedLabels(labels, optionsRef.current.scope);
-      markCounted(capped);
+      markCounted(countedLabels(labels));
       dispatch({ type: "overview/loaded", stats: counted.stats });
-      remember(counted.stats, emptyLabelsOf(capped, counted.stats));
     });
-  }, [
-    countLabels,
-    discoverLabels,
-    dispatch,
-    markCounted,
-    notify,
-    remember,
-    track,
-  ]);
+  }, [countLabels, dispatch, markCounted, notify, track]);
 
-  // A scan that timed out (or was cancelled) may still be reading on the
-  // database; another one right away would double the load. Remembered per
-  // database, so a reload doesn't lift it.
-  const [scanBlockedUntil, setScanBlockedUntil] = useState<number | null>(
-    () => {
-      const until = readStored(scanCooldownKey(storageKey), asTimestamp);
-      return until !== null && until > Date.now() ? until : null;
-    },
-  );
-  useEffect(() => {
-    const until = readStored(scanCooldownKey(storageKey), asTimestamp);
-    setScanBlockedUntil(until !== null && until > Date.now() ? until : null);
-  }, [storageKey]);
-  useEffect(() => {
-    if (scanBlockedUntil === null) return;
-    const timer = window.setTimeout(
-      () => setScanBlockedUntil(null),
-      Math.max(0, scanBlockedUntil - Date.now()),
-    );
-    return () => window.clearTimeout(timer);
-  }, [scanBlockedUntil]);
-  const holdScans = useCallback(() => {
-    const until = Date.now() + SCAN_COOLDOWN_MS;
-    writeStored(scanCooldownKey(optionsRef.current.storageKey), until);
-    setScanBlockedUntil(until);
-  }, []);
-
-  const scanLabels = useCallback(async (): Promise<boolean> => {
-    // A load's labels are its version's: nothing to scan for.
-    if (optionsRef.current.scope.kind === "load") return false;
-    const blocked = readStored(
-      scanCooldownKey(optionsRef.current.storageKey),
-      asTimestamp,
-    );
-    if (blocked !== null && blocked > Date.now()) return false;
-    const outcome = await track("scan", async () => {
-      const result = await run(
-        "Scan every node and edge for labels",
-        buildLabelScanRequest(),
-        {
-          key: "scan",
-          automatic: false,
-        },
-      );
-      // Cancelled (Clear, a refresh), timed out or cut off: the database may still be scanning.
-      if (!result || (!result.ok && scanMayStillRun(result))) holdScans();
-      if (!result) return false;
-      if (!result.ok) {
-        notify({
-          tone: "error",
-          title: "The label scan failed",
-          description: isTimeout(result)
-            ? "Reading every node and edge took too long, and it may still be running on the database, so scanning again waits a minute. The labels found so far stay listed."
-            : undefined,
-          failure: isTimeout(result) ? undefined : result,
-        });
-        return false;
-      }
-      const scanned = parseLabelScan(result.body);
-      const shownScan = shownStats(scanned, optionsRef.current.exclude);
-      if (
-        shownScan.nodeLabels.length + shownScan.edgeLabels.length <
-        scanned.nodeLabels.length + scanned.edgeLabels.length
-      )
-        excludedSeenRef.current = true;
-      // The scan counts the loads' nodes too: Other data under each label is
-      // counted again, from bitmaps, in the scope.
-      const listed = {
-        nodes: shownScan.nodeLabels.map((entry) => entry.label),
-        edges: shownScan.edgeLabels.map((entry) => entry.label),
-      };
-      const recount = await countLabels(
-        listed,
-        { nodes: true, edges: true },
-        { probe: false },
-      );
-      if (!recount) return false;
-      if (recount.kind === "failed") {
-        notify({
-          tone: "error",
-          title: "Couldn't count the labels the scan found",
-          failure: recount.failure,
-        });
-        return false;
-      }
-      const stats = recount.stats;
-      markCounted(countedLabels(listed, optionsRef.current.scope));
-      dispatch({ type: "overview/loaded", stats });
-      // The scan lists every label, so it replaces what was remembered: hidden ones too, so
-      // showing them later lists them without another scan (reads drop them while hidden).
-      rememberLabels(
-        optionsRef.current.storageKey,
-        {
-          nodes: scanned.nodeLabels.map((entry) => entry.label),
-          edges: scanned.edgeLabels.map((entry) => entry.label),
-        },
-        { replace: true },
-      );
-      notify({
-        tone: "info",
-        title: "Every label is listed",
-        description: "Counts and totals are exact.",
-      });
-      return true;
-    });
-    return outcome ?? false;
-  }, [countLabels, dispatch, holdScans, markCounted, notify, run, track]);
-
-  /**
-   * Loads a fresh sample onto an empty (cleared) canvas without rebooting.
-   * The sample carries its own edges, so nothing is connected afterwards
-   * (connecting ~400 nodes would read every edge of each, hubs included).
-   */
+  /** Seeds a fresh first view onto an empty (cleared) canvas without rebooting. */
   const loadSample = useCallback(() => {
     void track("sample", async () => {
       const current = stateRef.current;
       const generation = generationRef.current;
-      const shape = current.shape;
-      if (optionsRef.current.scope.kind === "load") {
-        await seedFirstView(
-          current.overview.stats,
-          shape,
-          () => generation === generationRef.current,
-        );
-        return;
-      }
-      const result = await loadSampleWith(current.overview.stats, shape, false);
-      if (!result) return;
-      if (result.kind === "failed") {
-        notify({
-          tone: "error",
-          title: "Couldn't load a sample",
-          failure: result.failure,
-        });
-        return;
-      }
-      mergeInto(result.graph);
-      if (result.light && shape.keys?.length !== 0) {
-        await refetchProperties(
-          result.graph.nodes.map((node) => node.dbId),
-          shape,
-          generation,
-        );
-      }
+      await seedFirstView(
+        current.overview.stats,
+        current.shape,
+        () => generation === generationRef.current,
+      );
     });
-  }, [
-    loadSampleWith,
-    mergeInto,
-    notify,
-    refetchProperties,
-    seedFirstView,
-    track,
-  ]);
+  }, [seedFirstView, track]);
 
   const expandPage = useCallback(
     async (
@@ -2465,20 +1885,6 @@ export function useExplorerGraph(
             hidden: false,
           });
         }
-        // Other data under a label the loads share is told apart by a
-        // missing load, which no index finds: the page filters the label.
-        const { scope } = optionsRef.current;
-        if (
-          !page &&
-          scope.kind === "other" &&
-          scope.loads.length > 0 &&
-          isShared(scope, "node", label)
-        )
-          notify({
-            tone: "info",
-            title: `Filtering every ${label} node`,
-            description: `The loads hold ${label} nodes too: finding the ones no load wrote reads the whole label, which takes a while when it is large.`,
-          });
         dispatch({ type: "labelPage/loading", label });
         const target = EXPLORER_LIMITS.pageSize;
         const added: string[] = [];
@@ -2836,12 +2242,6 @@ export function useExplorerGraph(
       const second = await scan;
       if (!second) return null;
       const hits = combineHits(first.hits, second.hits);
-      // A hit's label exists; the next visit counts it without discovering it.
-      if (hits.length > 0) {
-        rememberLabels(optionsRef.current.storageKey, {
-          nodes: hits.map((hit) => hit.node.label),
-        });
-      }
       return { hits, failure: first.failure ?? second.failure };
     },
     [run],
@@ -3173,27 +2573,12 @@ export function useExplorerGraph(
     [state.store, state.hiddenLabels, state.hiddenNodes],
   );
 
-  // The counted labels plus any loaded or probed since (one discovery missed, or written after the counts).
+  // The counted labels plus any loaded or probed since (one its version doesn't name, or written after the counts).
   const { overview, store, schemas, labelPages } = state;
   const labels = useMemo(
     () => railLabels({ overview, store, schemas, labelPages }),
     [overview, store, schemas, labelPages],
   );
-
-  // Every label seen (counted, sampled, paged, expanded, found, shown from a
-  // query) is remembered for this database, so the next visit counts it
-  // without having to discover it again.
-  useEffect(() => {
-    if (labels.nodes.length === 0 && labels.edges.length === 0) return;
-    rememberLabels(storageKey, {
-      nodes: labels.nodes
-        .filter((entry) => entry.count !== 0)
-        .map((entry) => entry.label),
-      edges: labels.edges
-        .filter((entry) => entry.count !== 0)
-        .map((entry) => entry.label),
-    });
-  }, [labels, storageKey]);
 
   // Labels without a count (seen after the boot, over the per-request cap, or
   // named by an index catalog that arrived late) are counted from their
@@ -3203,15 +2588,9 @@ export function useExplorerGraph(
   // after a backoff, a few times at most.
   const phase = state.phase;
   const overviewStatus = overview.status;
-  const scanning = state.pending.has("scan");
   const catalog = options.indexes;
   useEffect(() => {
-    if (
-      phase !== "ready" ||
-      overviewStatus !== "ready" ||
-      scanning ||
-      lateBusyRef.current
-    )
+    if (phase !== "ready" || overviewStatus !== "ready" || lateBusyRef.current)
       return;
     const fromCatalog = shownLabels(indexLabels(catalog), exclusion);
     const pick = (
@@ -3245,17 +2624,12 @@ export function useExplorerGraph(
     const fromBacklog = backlog.nodes.length > 0 || backlog.edges.length > 0;
     if (!fromBacklog && lateCountsRef.current >= LATE_COUNT_MAX_REQUESTS)
       return;
-    // What one request counts: Other data's shared labels take a count per load.
-    const fit = countedLabels(
-      fromBacklog
-        ? backlog
-        : {
-            nodes: pending.nodes.slice(0, cap),
-            edges: pending.edges.slice(0, cap),
-          },
-      optionsRef.current.scope,
-    );
-    const wanted = { nodes: fit.nodes, edges: fit.edges };
+    const wanted = fromBacklog
+      ? backlog
+      : {
+          nodes: pending.nodes.slice(0, cap),
+          edges: pending.edges.slice(0, cap),
+        };
     if (wanted.nodes.length === 0 && wanted.edges.length === 0) return;
     const timer = window.setTimeout(() => {
       const generation = generationRef.current;
@@ -3266,29 +2640,20 @@ export function useExplorerGraph(
         const title = fromBacklog
           ? "Count the remaining labels"
           : "Count newly seen labels";
-        const { scope } = optionsRef.current;
         const result = await run(
           title,
-          buildLabelCountsRequest(wanted, { scope }),
+          buildLabelCountsRequest(wanted, { scope: optionsRef.current.scope }),
         );
         // After a refresh the new boot owns the counts (and reset this bookkeeping).
         if (generation !== generationRef.current) return;
         if (result?.ok) {
           lateFailuresRef.current = 0;
-          // Labels counted at zero (remembered, but deleted since) leave the rail and are forgotten.
-          const gone = emptyLabels(
-            result.body,
-            wanted,
-            optionsRef.current.scope,
-          );
+          // Labels counted at zero leave the rail.
           dispatch({
             type: "overview/merged",
-            stats: parseLabelCounts(result.body, wanted, scope),
-            gone,
+            stats: parseLabelCounts(result.body, wanted),
+            gone: emptyLabels(result.body, wanted),
           });
-          if (gone.nodes.length > 0 || gone.edges.length > 0) {
-            rememberLabels(optionsRef.current.storageKey, {}, { forget: gone });
-          }
         } else {
           // Failed, rate-limited past its retries, or cancelled by Clear: the labels stay
           // uncounted (and in the backlog), and are counted again after a wait.
@@ -3312,7 +2677,6 @@ export function useExplorerGraph(
   }, [
     phase,
     overviewStatus,
-    scanning,
     catalog,
     exclusion,
     labels,
@@ -3330,7 +2694,6 @@ export function useExplorerGraph(
       labels,
       refresh,
       retryOverview,
-      scanLabels,
       loadSample,
       showMore,
       canShowMore,
@@ -3342,7 +2705,6 @@ export function useExplorerGraph(
       probeDegree,
       countRelationships,
       connectNodes,
-      scanBlockedUntil,
       executeUserQuery,
       search,
       revealNode,
@@ -3364,7 +2726,6 @@ export function useExplorerGraph(
       labels,
       refresh,
       retryOverview,
-      scanLabels,
       loadSample,
       showMore,
       canShowMore,
@@ -3376,7 +2737,6 @@ export function useExplorerGraph(
       probeDegree,
       countRelationships,
       connectNodes,
-      scanBlockedUntil,
       executeUserQuery,
       search,
       revealNode,

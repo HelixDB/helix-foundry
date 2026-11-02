@@ -40,11 +40,7 @@ const breaksOf = (loadId: string, constraint: string, ...more: Ast[]): Ast => ({
     predicate: {
       and: {
         predicates: [
-          ...scopedPredicates(
-            { kind: "load", id: loadId },
-            "node",
-            N.Violation,
-          ),
+          ...scopedPredicates({ id: loadId }, N.Violation),
           constant("constraint", constraint),
           ...more,
         ],
@@ -303,11 +299,7 @@ export function entityNamesRequest(
               predicate: {
                 and: {
                   predicates: [
-                    ...scopedPredicates(
-                      { kind: "load", id: loadId },
-                      "node",
-                      type,
-                    ),
+                    ...scopedPredicates({ id: loadId }, type),
                     {
                       is_in: {
                         value: {

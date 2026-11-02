@@ -589,7 +589,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
   // another load's is read from the database and found there or not.
   const selection = useLoadSelection(),
     { link } = selection,
-    scope = selection.scope ?? { kind: "load", id: "" },
+    scope = selection.scope ?? { id: "" },
     current =
       selection.choice.kind === "load" && !!selection.choice.load.current;
   const { read: readDb } = useTenantReads();
@@ -604,11 +604,9 @@ export function DocumentPage({ documentId }: { documentId: string }) {
   const sets = useQuery(documentSetQueries.list(id));
   const d = doc.data?.document;
   const setName = sets.data?.find((s) => s.id === d?.setId)?.name || "";
-  // Other data holds no documents (a document is only ever read into a
-  // load), so it reads nothing.
   // Out of scope, a load stores its text and sections, nothing else.
   const read =
-    selection.scope?.kind === "load" &&
+    !!selection.scope &&
     (current
       ? d?.extraction?.status === "extracted" ||
         d?.extraction?.status === "out_of_scope"
@@ -793,18 +791,6 @@ export function DocumentPage({ documentId }: { documentId: string }) {
             loaded={loaded}
             docName={docName}
             setName={setName}
-          />
-        ) : selection.choice.kind === "other" ? (
-          <Callout
-            icon={FileClock}
-            tone="muted"
-            title="Documents are read into loads"
-            text="Other data is what no load wrote, so it holds no documents. A load shows what was read from this one."
-            action={
-              <Button size="sm" onClick={() => selection.select("")}>
-                Show the current load
-              </Button>
-            }
           />
         ) : (
           read &&

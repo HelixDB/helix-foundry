@@ -14,7 +14,13 @@ import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { CommandPalette } from "./CommandPalette";
 import { ChromeBoundary } from "./ErrorBoundary";
 import { PanelSlotContext, ShellContext, type PanelSlot } from "./context";
-import { activeSection, primaryNav, secondaryNav, sectionPanels } from "./nav";
+import {
+  ShellBanner,
+  activeSection,
+  primaryNav,
+  secondaryNav,
+  sectionPanels,
+} from "./nav";
 import { Rail } from "./Rail";
 import { recordRecent } from "./recents";
 import { Sidebar } from "./Sidebar";
@@ -114,10 +120,10 @@ function PanelAside({
   );
 }
 
-// Workspace chrome: the sidebar on every page, with the open section's
-// panel beside it when it has one, mobile bar and drawer, and the command
-// palette. While the workspace is onboarding, the sidebar holds only the
-// workspace and the account, and there is no palette.
+// Workspace chrome: an area's banner across the top when it shows one, the
+// sidebar on every page, with the open section's panel beside it when it has
+// one, mobile bar and drawer, and the command palette. While the workspace is onboarding, the
+// sidebar holds only the workspace and the account, and there is no palette.
 export function Shell({
   workspaces,
   current,
@@ -202,10 +208,17 @@ export function Shell({
     <ShellContext.Provider value={shell}>
       <PanelSlotContext.Provider value={slot}>
         <PageVisitContext.Provider value={visit}>
+          <a className="hf-skip" href="#main">
+            Skip to content
+          </a>
+          {ShellBanner && (
+            <ChromeBoundary name="Banner">
+              <Suspense fallback={null}>
+                <ShellBanner />
+              </Suspense>
+            </ChromeBoundary>
+          )}
           <div className="hf-shell">
-            <a className="hf-skip" href="#main">
-              Skip to content
-            </a>
             <aside className="hf-sidebar">
               <ChromeBoundary name="Sidebar" fallback={<SidebarFallback />}>
                 <Sidebar {...sidebarProps} />

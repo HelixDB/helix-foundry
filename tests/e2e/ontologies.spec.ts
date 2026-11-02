@@ -111,7 +111,7 @@ test("creates an ontology on an existing database and explores what it holds", a
 
   // Its pages sit under its row in the panel; the Explorer, a section of
   // its own, opens it: with nothing loaded it says to finish setting it up,
-  // and reads the database the team already filled as Other data.
+  // and reads nothing of what the team already put in the database.
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(list.locator(".on-panel-row")).toHaveCount(4);
   await expect(list.getByRole("link", { name: /^Orders/ })).toHaveAttribute(
@@ -132,27 +132,7 @@ test("creates an ontology on an existing database and explores what it holds", a
     .getByRole("main")
     .getByRole("link", { name: "Finish setting up" })
     .waitFor();
-  await page.goto(`${new URL(page.url()).pathname}?load=other`);
-  await expect(
-    page.getByRole("application", {
-      name: "Graph of orders: 7 nodes, 4 edges",
-    }),
-  ).toBeVisible({ timeout: 15_000 });
-  const labels = page.getByRole("complementary", { name: "Labels" });
-  await expect(labels).toContainText("Account");
-  await expect(labels).toContainText("PLACED");
-  await labels.getByRole("button", { name: /^Order node label/ }).click();
-  const inspector = page.getByRole("complementary", { name: "Inspector" });
-  await expect(inspector).toContainText("Node label");
-  await expect(inspector).toContainText("In the database4");
-  // Every read went through query-read for this database; nothing wrote.
-  const reads = (await mock.stats()).requests.filter((r) =>
-    r.includes("/v1/databases:"),
-  );
-  expect(reads.length).toBeGreaterThan(0);
-  expect(new Set(reads)).toEqual(
-    new Set(["POST /v1/databases:query-read 200"]),
-  );
+  await expect(page.getByRole("application")).toHaveCount(0);
 });
 
 test("lists the ontologies beside the sidebar, with the open one's pages", async ({
@@ -293,7 +273,8 @@ test("gives a new workspace only the wizard until its first ontology", async ({
   await expect(page.getByRole("button", { name: "Cancel" })).toHaveCount(0);
   // Use my own data asks only what to draft from and the goal: no name and
   // no database, and Back returns to the start.
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("radio", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Your first ontology" }),
   ).toBeVisible();
@@ -362,8 +343,11 @@ test("goes back to the wizard once the last ontology is deleted, and tells a mem
   await expect(page.getByText("This workspace isn’t set up yet")).toBeVisible();
   await expect(page.getByLabel("Ontology name")).toHaveCount(0);
   await expect(
-    page.getByRole("status").filter({ hasText: "Set up with your agent" }),
+    page.getByRole("radio", { name: "Set up with your agent" }),
   ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy prompt" })).toHaveCount(
+    0,
+  );
 });
 
 test("on a phone, shows the rail and the ontologies in the drawer", async ({

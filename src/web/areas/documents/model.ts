@@ -16,6 +16,7 @@ import type { Status } from "../../kit";
 import { plural } from "../../kit/util";
 import { setFolders, type SetFolder } from "../data/model";
 import type { Span } from "../explore/model";
+import { isSampleSet } from "../ontology/sample";
 
 // The documents' logic, kept apart from their components so it is tested
 // on its own: what may be uploaded and how a document or set may be named,
@@ -861,15 +862,17 @@ export const DEFAULT_SET_NAME = "General";
 /**
  * The set uploads go to unless another is picked: of the sets people made,
  * General when the workspace has it, else the oldest; "" when it has none.
- * A connector's sets take no uploads, so a workspace with only those has
- * none, and its first upload makes General.
+ * A connector's sets take no uploads, and the sample company's only one
+ * sent to it, so a workspace with only those has none, and its first upload
+ * makes General.
  *
  * @example
  * defaultSetId([{ id: "a", name: "Board" }, { id: "g", name: "General" }]); // "g"
  * defaultSetId([{ id: "n", name: "Notes", connector: { connectorId: "c" } }]); // ""
+ * defaultSetId([{ id: "s", name: "Acme Corp sample" }]); // ""
  */
 export function defaultSetId(sets: readonly FoundryDocumentSet[]) {
-  const made = sets.filter((s) => !s.connector);
+  const made = sets.filter((s) => !s.connector && !isSampleSet(s));
   return (made.find((s) => s.name === DEFAULT_SET_NAME) || made[0])?.id || "";
 }
 

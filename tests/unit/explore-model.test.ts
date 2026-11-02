@@ -72,7 +72,7 @@ const chunk = {
 // The load the tests' reads are scoped to.
 const LOAD = "load_1";
 // Reads within that load.
-const SCOPE: Scope = { kind: "load", id: LOAD };
+const SCOPE: Scope = { id: LOAD };
 
 /**
  * What one load of the contracts draft writes into `db`: three customers,
@@ -883,16 +883,8 @@ describe("two loads and the team's own data side by side", () => {
     entity_key: "cus_GLOBEX01",
     name: "Globex (the team's own)",
   });
-  const L1: Scope = { kind: "load", id: LOAD },
-    L2: Scope = { kind: "load", id: "load_2" },
-    OTHER: Scope = {
-      kind: "other",
-      loads: [LOAD, "load_2"],
-      shared: {
-        nodes: new Set(["Contract", "Customer", "Invoice"]),
-        edges: new Set(["billed_to", "signed_with"]),
-      },
-    };
+  const L1: Scope = { id: LOAD },
+    L2: Scope = { id: "load_2" };
   const globex = { type: "Customer", key: "cus_GLOBEX01" };
 
   it("reads an entity's page from its load only", () => {
@@ -908,9 +900,6 @@ describe("two loads and the team's own data side by side", () => {
       "in billed_to in_2001",
       "in signed_with Renewal",
     ]);
-    const own = parseEntity(read(db, entityRequest(OTHER, globex)));
-    expect(own.entity?.name).toBe("Globex (the team's own)");
-    expect(own.facts).toEqual([]);
     // A fact's evidence is its load's.
     const page = parseEntity(read(db, entityRequest(L2, globex)));
     const evidence = parseFactEvidence(
@@ -934,8 +923,6 @@ describe("two loads and the team's own data side by side", () => {
       "Renewal",
       "Globex Corporation",
     ]);
-    // Documents are always a load's: none in the team's own data.
-    expect(first(OTHER).stored).toBe(false);
     // A quote's facts are its load's: the first load's, read in the
     // second, aren't there.
     const facts = (scope: Scope, evidence: Scope) => {

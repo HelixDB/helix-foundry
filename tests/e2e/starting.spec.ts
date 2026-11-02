@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import {
   createdOntology,
   expect,
-  finishOntology,
+  loadContracts,
   mock,
   signIn,
   startOntology,
@@ -67,24 +67,14 @@ async function loadVersion1(page: Page, overview: string): Promise<string> {
 test("says a new database is starting, and shows what it holds once it answers", async ({
   page,
 }) => {
-  // The database refuses its first two reads.
-  await mock.configure({ startingQueries: { orders: 2 } });
-  await signIn(page);
-  await startOntology(page, "Orders");
-  await page.getByRole("radio", { name: "orders in Production" }).check();
-  await finishOntology(page);
-  await createdOntology(page);
-  await page
-    .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("link", { name: "Explorer" })
-    .click();
-  // Nothing is loaded, so nothing is read; the database's own data is
-  // Other data.
-  await page
-    .getByRole("main")
-    .getByRole("link", { name: "Finish setting up" })
-    .waitFor();
-  await page.goto(`${new URL(page.url()).pathname}?load=other`);
+  await mock.configure({ ontologyStepMs: 300, loadStepMs: 100 });
+  const overview = await newBillingOntology(page);
+  await loadVersion1(page, overview);
+  // The database refuses its next two reads, from a page that reads none of
+  // its own first.
+  await page.goto("/settings");
+  await mock.configure({ startingQueries: { sandbox: 2 } });
+  await page.goto(overview.replace("/ontology/", "/explore/"));
 
   const starting = page
     .getByRole("status")
@@ -94,7 +84,7 @@ test("says a new database is starting, and shows what it holds once it answers",
   // Retry reads now: refused again, the card stays, not an error.
   await starting.getByRole("button", { name: "Retry" }).click();
   await expect
-    .poll(async () => (await mock.settings()).startingQueries?.orders)
+    .poll(async () => (await mock.settings()).startingQueries?.sandbox)
     .toBe(0);
   await expect(starting).toBeVisible();
   await expect(page.getByText(/refusing queries/)).toHaveCount(0);
@@ -102,9 +92,7 @@ test("says a new database is starting, and shows what it holds once it answers",
 
   // It reads again by itself, 5 s later, and shows what the database holds.
   await expect(
-    page.getByRole("application", {
-      name: "Graph of orders: 7 nodes, 4 edges",
-    }),
+    page.getByRole("application", { name: /^Graph of sandbox: \d+ nodes/ }),
   ).toBeVisible({ timeout: 15_000 });
   await expect(starting).toHaveCount(0);
 });
@@ -114,9 +102,11 @@ test("keeps the error card for an older ontology's database", async ({
 }) => {
   // Customer contracts was created long ago: its database refusing a read
   // is the platform failure it is, with a Retry and no reading by itself.
-  await mock.configure({ startingQueries: { contracts: 1 } });
   await signIn(page);
-  await page.goto("/explore/ont_acme_contracts/records?load=other");
+  await loadContracts(page);
+  await page.goto("/settings");
+  await mock.configure({ startingQueries: { contracts: 1 } });
+  await page.goto("/explore/ont_acme_contracts/records");
   await expect(
     page.getByText("The database's gateway is refusing queries"),
   ).toBeVisible();
@@ -126,7 +116,7 @@ test("keeps the error card for an older ontology's database", async ({
     page.getByText("The database's gateway is refusing queries"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("Nothing loaded yet")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Types" })).toBeVisible();
 });
 
 test("says a load waits for a new database to start, then reads its records once it answers", async ({

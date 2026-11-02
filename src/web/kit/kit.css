@@ -831,7 +831,7 @@
 }
 .hf-toolbar.is-sticky {
   position: sticky;
-  top: 0;
+  top: var(--hf-shell-top);
   z-index: 5;
   padding: 8px 0;
   background: var(--hf-bg);

@@ -20,7 +20,6 @@ import {
   loadBadge,
   loadOptionLabel,
   loadVersion,
-  versionLabels,
   versionLayout,
   withLoad,
   jobDuration,
@@ -465,7 +464,6 @@ describe("versioned loads", () => {
       load: c,
       explicit: true,
     });
-    expect(chooseLoad(loads, "A", "other")).toEqual({ kind: "other" });
     expect(chooseLoad(loads, "A", "gone")).toEqual({
       kind: "missing",
       id: "gone",
@@ -476,12 +474,10 @@ describe("versioned loads", () => {
       load: b,
       explicit: false,
     });
-    // No load at all: nothing to read, whatever the URL names, but Other
-    // data when asked for.
+    // No load at all: nothing to read, whatever the URL names.
     expect(chooseLoad([], undefined, null)).toEqual({ kind: "none" });
     expect(chooseLoad([], "A", null)).toEqual({ kind: "none" });
     expect(chooseLoad([], undefined, "gone")).toEqual({ kind: "none" });
-    expect(chooseLoad([], undefined, "other")).toEqual({ kind: "other" });
   });
 
   it("labels a load in a picker and says what may be done to it", () => {
@@ -558,8 +554,8 @@ describe("versioned loads", () => {
     expect(withLoad("/explore/o/records", "L1")).toBe(
       "/explore/o/records?load=L1",
     );
-    expect(withLoad("/explore/o/entities/e?tab=facts", "other")).toBe(
-      "/explore/o/entities/e?tab=facts&load=other",
+    expect(withLoad("/explore/o/entities/e?tab=facts", "L1")).toBe(
+      "/explore/o/entities/e?tab=facts&load=L1",
     );
     expect(withLoad("/ontology/o/documents/d#s-1-2", "L1")).toBe(
       "/ontology/o/documents/d?load=L1#s-1-2",
@@ -568,11 +564,5 @@ describe("versioned loads", () => {
 
   it("lays a version out for a load's explorer: hubs first, links with ends", () => {
     expect(versionLayout(null)).toEqual({ types: [], links: [] });
-    expect(
-      versionLabels([
-        { types: new Map([["A", 1]]), links: new Set(["r"]) },
-        { types: new Map([["B", 1]]), links: new Set(["s"]) },
-      ]),
-    ).toEqual({ nodes: new Set(["A", "B"]), edges: new Set(["r", "s"]) });
   });
 });

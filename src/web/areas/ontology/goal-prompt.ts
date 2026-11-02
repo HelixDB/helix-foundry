@@ -159,7 +159,7 @@ export type GoalPromptInput = {
 // Text from data on one line in a code span whose fence no run of backticks
 // in it matches, so no name can end its span, its line or the prompt's
 // instructions.
-const span = (text: string) => {
+export const span = (text: string) => {
   const one = text.replace(/\s+/g, " "),
     fence = "`".repeat(
       Math.max(0, ...(one.match(/`+/g) || []).map((r) => r.length)) + 1,

@@ -109,7 +109,12 @@
                   "input": {
                     "where": {
                       "input": { "nodes": { "reference": { "param": "id" } } },
-                      "predicate": { "is_null": { "property": "foundry_load" } }
+                      "predicate": {
+                        "eq": {
+                          "left": { "property": "foundry_load" },
+                          "right": { "constant": { "string": "load_1" } }
+                        }
+                      }
                     }
                   },
                   "properties": [
@@ -228,11 +233,25 @@
                           "input": {
                             "nodes_where": {
                               "predicate": {
-                                "eq": {
-                                  "left": { "property": "$label" },
-                                  "right": {
-                                    "constant": { "string": "Document" }
-                                  }
+                                "and": {
+                                  "predicates": [
+                                    {
+                                      "eq": {
+                                        "left": { "property": "$label" },
+                                        "right": {
+                                          "constant": { "string": "Document" }
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "eq": {
+                                        "left": { "property": "foundry_load" },
+                                        "right": {
+                                          "constant": { "string": "load_1" }
+                                        }
+                                      }
+                                    }
+                                  ]
                                 }
                               }
                             }
@@ -305,9 +324,25 @@
                           "input": {
                             "nodes_where": {
                               "predicate": {
-                                "eq": {
-                                  "left": { "property": "$label" },
-                                  "right": { "constant": { "string": "User" } }
+                                "and": {
+                                  "predicates": [
+                                    {
+                                      "eq": {
+                                        "left": { "property": "$label" },
+                                        "right": {
+                                          "constant": { "string": "User" }
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "eq": {
+                                        "left": { "property": "foundry_load" },
+                                        "right": {
+                                          "constant": { "string": "load_1" }
+                                        }
+                                      }
+                                    }
+                                  ]
                                 }
                               }
                             }

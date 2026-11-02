@@ -4,7 +4,6 @@ import {
   excludes,
   shownGraph,
   shownLabels,
-  shownStats,
 } from "@/web/areas/explore/explorer/lib/exclusion";
 import { asBoolean } from "@/web/areas/explore/explorer/lib/storage";
 import type {
@@ -100,55 +99,6 @@ describe("shownGraph", () => {
     expect(shownGraph({ nodes: [node(1, "FoundryChunk")] }, foundry)).toEqual({
       nodes: [],
     });
-  });
-});
-
-describe("shownStats", () => {
-  it("drops excluded labels and what they added to the totals", () => {
-    const stats = {
-      nodeLabels: [
-        { label: "Customer", count: 64 },
-        { label: "FoundryChunk", count: 3 },
-        { label: "FoundryMention", count: null },
-      ],
-      edgeLabels: [
-        { label: "FOUNDRY_ABOUT", count: 64 },
-        { label: "signed_with", count: 2 },
-      ],
-      nodeTotal: 67,
-      edgeTotal: 66,
-      partial: { nodes: true, edges: false },
-    };
-    expect(shownStats(stats, foundry)).toEqual({
-      nodeLabels: [{ label: "Customer", count: 64 }],
-      edgeLabels: [{ label: "signed_with", count: 2 }],
-      nodeTotal: 64,
-      edgeTotal: 2,
-      partial: { nodes: true, edges: false },
-    });
-    expect(shownStats(stats, undefined)).toBe(stats);
-  });
-
-  it("takes a scan's excluded counts from its exact totals, never below zero", () => {
-    // A full scan's totals count every node, not only the listed labels.
-    const scan = {
-      nodeLabels: [
-        { label: "Customer", count: 2 },
-        { label: "FoundryDocument", count: 1 },
-      ],
-      edgeLabels: [{ label: "FOUNDRY_IN_DOCUMENT", count: 5 }],
-      nodeTotal: 10,
-      edgeTotal: 3,
-    };
-    expect(shownStats(scan, foundry)).toEqual({
-      nodeLabels: [{ label: "Customer", count: 2 }],
-      edgeLabels: [],
-      nodeTotal: 9,
-      edgeTotal: 0,
-    });
-    expect(
-      shownStats({ ...scan, nodeTotal: null, edgeTotal: null }, foundry),
-    ).toMatchObject({ nodeTotal: null, edgeTotal: null });
   });
 });
 

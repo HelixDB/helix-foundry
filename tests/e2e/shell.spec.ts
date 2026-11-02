@@ -283,7 +283,7 @@ test("switches the ontology from the Explorer's and Ask's headers", async ({
   const orders = await addOrders(page);
   const picker = page.getByRole("combobox", { name: "Ontology" });
   // The graph opens the other's graph, without this one's load or node.
-  await page.goto(`/explore/${CONTRACTS}?load=other&node=3`);
+  await page.goto(`/explore/${CONTRACTS}?load=load_gone&node=3`);
   await choose(picker, "Orders");
   await expect(page).toHaveURL(new RegExp(`/explore/${orders}$`));
   // Orders has nothing loaded and no current version: it says to finish
@@ -292,7 +292,7 @@ test("switches the ontology from the Explorer's and Ask's headers", async ({
     page.getByRole("main").getByRole("link", { name: "Finish setting up" }),
   ).toBeVisible();
   // Records open the other's records, without this one's view.
-  await page.goto(`/explore/${CONTRACTS}/records?load=other&type=Customer`);
+  await page.goto(`/explore/${CONTRACTS}/records?load=load_gone&type=Customer`);
   await choose(picker, "Orders");
   await expect(page).toHaveURL(new RegExp(`/explore/${orders}/records$`));
   await expect(
@@ -387,7 +387,13 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
   // The sidebar's controls take focus in order, the threads after the
   // sections.
   await page.getByRole("link", { name: "Helix Foundry home" }).focus();
-  const expected = ["Search", "Workspace: Acme", ...sections, "New thread"];
+  const expected = [
+    "Search",
+    "Workspace: Acme",
+    ...sections,
+    "Resize Analyst threads",
+    "New thread",
+  ];
   const order: string[] = [];
   for (let i = 0; i < expected.length; i++) {
     await page.keyboard.press("Tab");
@@ -443,4 +449,99 @@ test("shows the labelled sidebar on every page, Ask's threads under its sections
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Analyst");
   await expect(threads.getByRole("link", { name: "New thread" })).toBeVisible();
+});
+
+test("moves the line above Ask's threads by keys and by dragging, and remembers it", async ({
+  page,
+}) => {
+  await signIn(page);
+  const handle = page.getByRole("separator", {
+      name: "Resize Analyst threads",
+    }),
+    threads = page.getByRole("region", { name: "Analyst threads" }),
+    nav = page.getByRole("navigation", { name: "Main navigation" }),
+    at = (value: number) =>
+      expect(handle).toHaveAttribute("aria-valuenow", String(value)),
+    bottomOf = async (l: Locator) => {
+      const box = (await l.boundingBox())!;
+      return box.y + box.height;
+    };
+  // It starts a little under the sections.
+  await at(28);
+  await expect(handle).toHaveAttribute("aria-orientation", "horizontal");
+  await expect(handle).toHaveAttribute("aria-valuemin", "0");
+  const max = Number(await handle.getAttribute("aria-valuemax"));
+  expect(max).toBeGreaterThan(92);
+
+  // The keys move it, no higher than the sections' links and no lower than
+  // the threads keep their height above the sidebar's foot.
+  await handle.focus();
+  await page.keyboard.press("ArrowDown");
+  await at(44);
+  await page.keyboard.press("ArrowUp");
+  await at(28);
+  await page.keyboard.press("Shift+ArrowDown");
+  await at(92);
+  await page.keyboard.press("Home");
+  await at(0);
+  expect((await handle.boundingBox())!.y).toBeGreaterThanOrEqual(
+    await bottomOf(nav),
+  );
+  await page.keyboard.press("ArrowUp");
+  await at(0);
+  await page.keyboard.press("End");
+  await at(max);
+  expect((await threads.boundingBox())!.height).toBeGreaterThanOrEqual(159);
+  await expect(page.getByRole("button", { name: "Account" })).toBeInViewport();
+  await page.keyboard.press("ArrowDown");
+  await at(max);
+  await page.keyboard.press("Home");
+
+  // The pointer drags it, and past the end it comes back with the pointer.
+  const box = (await handle.boundingBox())!,
+    x = box.x + box.width / 2,
+    y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 5000, { steps: 2 });
+  await at(max);
+  await page.mouse.move(x, y + 60, { steps: 2 });
+  await at(60);
+  await page.mouse.up();
+  await page.mouse.move(x, y + 90);
+  await at(60);
+
+  // This browser remembers it, on a phone's drawer too, where a finger moves
+  // it.
+  await page.reload();
+  await at(60);
+  const size = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  const drawer = page.getByRole("dialog", { name: "Navigation" }),
+    inDrawer = drawer.getByRole("separator", {
+      name: "Resize Analyst threads",
+    });
+  await expect(inDrawer).toHaveAttribute("aria-valuenow", "60");
+  await expect(inDrawer).toHaveCSS("touch-action", "none");
+  await drawer.getByRole("button", { name: "Close navigation" }).click();
+
+  // A short window gives the threads their height first, and a taller one
+  // has the choice back.
+  await page.setViewportSize({ width: size.width, height: 420 });
+  await at(0);
+  await expect(handle).toHaveAttribute("aria-valuemax", "0");
+  expect((await threads.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+  await page.setViewportSize(size);
+  await at(60);
+
+  // A double-click puts it back, and a stored value that makes no sense
+  // reads as the default.
+  await handle.dblclick();
+  await at(28);
+  await page.evaluate(() =>
+    localStorage.setItem("foundry.sidebar.sectionOffset", "soon"),
+  );
+  await page.reload();
+  await at(28);
 });

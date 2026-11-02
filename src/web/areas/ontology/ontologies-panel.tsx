@@ -35,8 +35,8 @@ import { ontologyName } from "./scope";
 // outside the page's routes. `onNavigate` runs on every link it follows
 // (a phone's drawer closes on it).
 
-// /ontology/{ontologyId}..., but not /ontology/new.
-const ONTOLOGY_PAGE = /^\/ontology\/(?!new(?:\/|$))([^/]+)/;
+// /ontology/{ontologyId}..., but not /ontology/new or /ontology/sample.
+const ONTOLOGY_PAGE = /^\/ontology\/(?!(?:new|sample)(?:\/|$))([^/]+)/;
 // /ontology/{ontologyId}/documents, and /{documentId} under it.
 const DOCUMENTS_PAGE = /^\/ontology\/([^/]+)\/documents(?:\/([^/]+))?\/?$/;
 // From this many ontologies, the list gets a filter.

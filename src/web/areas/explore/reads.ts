@@ -7,7 +7,7 @@ import {
   type DynamicQueryRequest,
   type QueryExecutor,
 } from "./database-query";
-import { scopeKey, type Scope } from "./load-scope";
+import type { Scope } from "./load-scope";
 import {
   documentFactsRequest,
   documentRequest,
@@ -122,7 +122,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "document",
       documentId,
       naming.version,
@@ -168,7 +168,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "document",
       documentId,
       naming.version,
@@ -197,7 +197,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "entity",
       identity,
       naming.version,
@@ -240,7 +240,7 @@ export const readQueries = {
       "ontology",
       o,
       "read",
-      scopeKey(scope),
+      scope.id,
       "entity",
       identity,
       "evidence",

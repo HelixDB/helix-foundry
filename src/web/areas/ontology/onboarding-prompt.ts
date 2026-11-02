@@ -47,8 +47,8 @@ export type OnboardingWorkspace = {
   workspace: { id: string; name: string };
   // Null while the workspace has none: the setup starts by creating one.
   ontology: OnboardingOntology | null;
-  // Every connector, API source and document set of the workspace: the
-  // agent chooses.
+  // Every connector, API source and document set of the workspace (the
+  // sample company's aside, but in the sample's own setup): the agent chooses.
   connectors: readonly Omit<PromptConnector, "chosen">[];
   eventSources?: readonly Omit<PromptEventSource, "chosen">[];
   sets: readonly Omit<PromptSet, "chosen">[];
@@ -71,6 +71,16 @@ export type OnboardingPromptInput = {
   // so the agent finds it and reads the rest with the tools.
   | { workspace: null }
 );
+
+/** What Foundry is, for an agent that has never heard of it. */
+export const WHAT_FOUNDRY_IS =
+  "Helix Foundry turns a business’s data, the tables it syncs from apps and databases and the documents it’s given, into an ontology: the kinds of things in the business, how they link and the rules they follow. It loads the ontology into a Helix graph database, where people and AI agents explore it and ask it questions.";
+
+/** The commands that add the Helix MCP at `mcpUrl`, a line per agent. */
+export const addHelixMcp = (mcpUrl: string): readonly string[] => [
+  `- Claude Code: \`claude mcp add --transport http helix ${mcpUrl}\`, then \`/mcp\` to sign in.`,
+  `- Codex: \`codex mcp add helix --url ${mcpUrl} && codex mcp login helix\`.`,
+];
 
 // A local install, for a prompt without a workspace: the repository it's
 // cloned from, and where it answers (local/compose.yaml).
@@ -248,7 +258,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           : [
               `1. Choose what it reads, at most ${MAX_TABLES} tables in all, synced tables, API sources and table files together. It needs at least one source: a synced table, an API source whose table has rows or, for extraction, whose \`event_source.extraction.documents\` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text or a PDF Helix has read.`,
               `   - \`document_set_ids\`: the sets whose documents serve the goal, at most ${MAX_GENERATION_SETS} with the API sources read by extraction. List each one: left out, it reads no documents.`,
-              `   - \`connector_ids\`: the connectors whose tables serve the goal. Left out, it’s every connector but the API sources (so only when they hold ${MAX_TABLES} tables or fewer).`,
+              "   - `connector_ids`: the connectors whose tables serve the goal. List each one: left out, it’s every connector but the API sources.",
               `   - \`event_sources\`: \`[{"connector_id": "<API source id>", "mode": "structured"}]\` for each API source that serves the goal, read through mappings, or \`"mode": "extraction"\` for one whose pieces carry text, read by entity extraction. Extraction reads the source’s newest 500 pieces as documents of its own set, one of the ${MAX_GENERATION_SETS} sets, which \`document_set_ids\` never names; it needs the source’s \`text_field\` and \`helix_foundry_list_connectors\` to show its \`event_source.extraction.documents\` above 0. Left out, it reads none; \`connector_ids\` never names one.`,
               '   - From documents or API sources alone, leave out `connector_ids` and send `"no_connectors": true`.',
               `2. \`generate_ontology\`, target ${target}, payload \`{"goal": "<the goal>", "connector_ids": ["<connector id>"], "event_sources": [{"connector_id": "<API source id>", "mode": "structured"}], "document_set_ids": ["<set id>"]}\`, or from documents alone \`{"goal": "<the goal>", "no_connectors": true, "document_set_ids": ["<set id>"]}\`, or from an API source alone \`{"goal": "<the goal>", "no_connectors": true, "event_sources": [{"connector_id": "<API source id>", "mode": "structured"}]}\`, or by extraction \`{"goal": "<the goal>", "no_connectors": true, "event_sources": [{"connector_id": "<API source id>", "mode": "extraction"}]}\`. Its result is the generation. It spends on models: say so when you tell me what will run, with what it reads.`,
@@ -299,7 +309,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
     "",
     "## What Foundry is",
     "",
-    "Helix Foundry turns a business’s data, the tables it syncs from apps and databases and the documents it’s given, into an ontology: the kinds of things in the business, how they link and the rules they follow. It loads the ontology into a Helix graph database, where people and AI agents explore it and ask it questions.",
+    WHAT_FOUNDRY_IS,
     "",
     known
       ? `Foundry is at ${input.origin}. Every Foundry link takes \`?workspace=<workspace id>\`: this workspace opens at ${link(paths.home())}.`
@@ -319,8 +329,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           "If you don’t have the MCP’s tools (`helix_list_workspaces` and the rest), add it, and have me sign in. If its tools only appear after a restart, I’ll resume this conversation (`claude --continue`, `codex resume --last`).",
           "",
         ]),
-    `- Claude Code: \`claude mcp add --transport http helix ${input.mcpUrl}\`, then \`/mcp\` to sign in.`,
-    `- Codex: \`codex mcp add helix --url ${input.mcpUrl} && codex mcp login helix\`.`,
+    ...addHelixMcp(input.mcpUrl),
     "",
     ...(known
       ? [

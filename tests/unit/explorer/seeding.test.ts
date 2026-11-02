@@ -42,7 +42,7 @@ const LAYOUT: VersionLayout = {
     { name: "billed", from: "Invoice", to: "Customer" },
   ],
 };
-const L1: Scope = { kind: "load", id: "L1" };
+const L1: Scope = { id: "L1" };
 
 /** The shop, written by one load; `customers` hubs with their orders and invoices. */
 function shop(g: LoadGraph, customers = 6, ordersEach = 6) {

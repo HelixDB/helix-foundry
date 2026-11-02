@@ -1,6 +1,6 @@
 import "./ontology.css";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Copy } from "lucide-react";
+import { Copy } from "lucide-react";
 import { LOCAL } from "../../../shared/deployment";
 import { Button, connectorLabel } from "../../kit";
 import { useWorkspace } from "../../ui";
@@ -14,15 +14,16 @@ import { setLabel } from "../documents/model";
 import { promptDocuments, promptEventSource } from "./goal-prompt";
 import { isEventSourceSet } from "./model";
 import { onboardingPrompt, type OnboardingOntology } from "./onboarding-prompt";
-import { Callout, canManage } from "./parts";
+import { canManage } from "./parts";
+import { isSampleConnector, isSampleSet } from "./sample";
 
 // Set per stamp in next.config.ts.
-const MCP_URL =
+export const MCP_URL =
   process.env.NEXT_PUBLIC_HELIX_MCP_URL || "https://mcp.helix-db.com/mcp";
 // Empty on a stamp without the HTTP endpoint (prod, local mode): no HTTP.
 const EVENTS_URL = process.env.NEXT_PUBLIC_HELIX_EVENTS_URL || "";
 const WHAT =
-  "Copy a prompt for Claude Code, Codex or another agent with the Helix MCP. It takes the setup on from here, and asks you before each change.";
+  "Copy a prompt into Claude Code, Codex or another agent, and it does the setup with you.";
 
 /**
  * "Set up with your agent", for owners and admins: copies the onboarding
@@ -32,15 +33,20 @@ const WHAT =
  * sources, document sets (never an API source's own, which the WFE takes
  * only as the source's extraction pick) and the kinds not connected (never
  * API sources, which the prompt makes its own way), read with the Data
- * pages' queries. A card saying what it does; `compact`, the button alone,
- * for a panel's header.
+ * pages' queries. Of these the sample company's connector and set are left
+ * out, as the sample's data is no source of the user's own ontology, unless
+ * `keepSample`: the sample's own. A sentence saying what it does and the
+ * button, for an `.on-card` to lay out (Get started's); `compact`, the button
+ * alone, for a panel's header.
  */
 export function AgentSetup({
   ontology,
   compact = false,
+  keepSample = false,
 }: {
   ontology?: OnboardingOntology;
   compact?: boolean;
+  keepSample?: boolean;
 }) {
   // A local build has no Helix MCP: its workspace isn't in Helix Cloud.
   const { id, name, role, notify } = useWorkspace(),
@@ -50,7 +56,9 @@ export function AgentSetup({
     documents = useQuery({ ...documentQueries.workspace(id), enabled: manage }),
     kinds = useQuery({ ...connectorKindsQuery(id), enabled: manage });
   if (!manage) return null;
-  const list = connectors.data?.connectors || [];
+  const list = (connectors.data?.connectors || []).filter(
+    (c) => keepSample || !isSampleConnector(c),
+  );
   const copy = () =>
     navigator.clipboard
       .writeText(
@@ -72,7 +80,9 @@ export function AgentSetup({
             .filter((c) => isEventSource(c.kind))
             .map((c) => ({ id: c.id, ...promptEventSource(c) })),
           sets: setFolders(
-            (sets.data || []).filter((s) => !isEventSourceSet(s)),
+            (sets.data || []).filter(
+              (s) => !isEventSourceSet(s) && (keepSample || !isSampleSet(s)),
+            ),
             documents.data || [],
           ).map((f) => ({
             id: f.set.id,
@@ -111,12 +121,11 @@ export function AgentSetup({
   return compact ? (
     button
   ) : (
-    <Callout
-      icon={Bot}
-      tone="muted"
-      title="Set up with your agent"
-      text={WHAT}
-      action={button}
-    />
+    <>
+      <div className="on-card-text">
+        <p>{WHAT}</p>
+      </div>
+      {button}
+    </>
   );
 }

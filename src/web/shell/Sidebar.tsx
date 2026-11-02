@@ -1,7 +1,13 @@
-import { Suspense } from "react";
+import {
+  Suspense,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Search, Settings, X } from "lucide-react";
-import { SkeletonText, cx } from "../kit";
+import { SkeletonText, cx, useStoredState } from "../kit";
 import { paths } from "../paths";
 import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
@@ -16,6 +22,13 @@ import {
 } from "./nav";
 import { useShell } from "./context";
 import { ChromeBoundary } from "./ErrorBoundary";
+import {
+  SECTION_MIN_HEIGHT,
+  SECTION_OFFSET_KEY,
+  clampSectionOffset,
+  maxSectionOffset,
+  storedSectionOffset,
+} from "./section-offset";
 import { ariaShortcut, shortcut } from "./shortcut";
 
 // Settings sits beside the user in the footer rather than in the section list.
@@ -116,6 +129,83 @@ function NavLinks({
   );
 }
 
+// What the open section shows under the sections, with the line above it a
+// handle: a pointer, a finger or the keys move it, between right under the
+// sections and what the content keeps (section-offset.ts). What was chosen
+// stays stored while a short window can't give it, so a taller one has it back.
+function SectionSplit({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  const split = useRef<HTMLDivElement>(null),
+    [stored, setStored] = useStoredState(SECTION_OFFSET_KEY, ""),
+    [room, setRoom] = useState(0),
+    [drag, setDrag] = useState<{ y: number; from: number } | null>(null),
+    max = maxSectionOffset(room),
+    offset = clampSectionOffset(storedSectionOffset(stored), room),
+    move = (to: number) => setStored(String(clampSectionOffset(to, room)));
+  // The offset is the split's own top padding, so its height doesn't follow it.
+  useLayoutEffect(() => {
+    const el = split.current!;
+    setRoom(el.clientHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setRoom(el.clientHeight));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div
+      ref={split}
+      className="hf-sidebar-split"
+      style={{ minHeight: SECTION_MIN_HEIGHT, paddingTop: offset }}
+    >
+      <div
+        role="separator"
+        className={cx("hf-sidebar-handle", drag && "is-dragging")}
+        aria-orientation="horizontal"
+        aria-label={`Resize ${label}`}
+        aria-valuemin={0}
+        aria-valuemax={max}
+        aria-valuenow={offset}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setDrag({ y: event.clientY, from: offset });
+        }}
+        onPointerMove={(event) => {
+          if (drag) move(drag.from + event.clientY - drag.y);
+        }}
+        onLostPointerCapture={() => setDrag(null)}
+        onDoubleClick={() => setStored("")}
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 64 : 16,
+            to =
+              event.key === "ArrowUp"
+                ? offset - step
+                : event.key === "ArrowDown"
+                  ? offset + step
+                  : event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? max
+                      : null;
+          if (to === null) return;
+          event.preventDefault();
+          move(to);
+        }}
+      />
+      <section className="hf-sidebar-section" aria-label={label}>
+        {children}
+      </section>
+    </div>
+  );
+}
+
 // The sidebar, on every page beside the page (and in a phone's drawer where
 // the open section has no panel: Rail.tsx): the mark and search, the
 // workspace, the sections with their names, what the open section shows
@@ -190,11 +280,7 @@ export function Sidebar({
         {!extra && <div className="hf-nav-spacer" />}
       </nav>
       {extra && (
-        <section
-          key={section}
-          className="hf-sidebar-section"
-          aria-label={extra.label}
-        >
+        <SectionSplit key={section} label={extra.label}>
           <ChromeBoundary
             name={extra.label}
             fallback={
@@ -213,7 +299,7 @@ export function Sidebar({
               <extra.component onNavigate={onClose} />
             </Suspense>
           </ChromeBoundary>
-        </section>
+        </SectionSplit>
       )}
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />

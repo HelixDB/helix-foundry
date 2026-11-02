@@ -66,7 +66,9 @@ import {
   sourceLabel,
 } from "./parts";
 import { generateOntology, ontologyQueries } from "./queries";
+import { isSampleConnector, isSampleSet } from "./sample";
 import { ontologyName, useOntology } from "./scope";
+import { useSampleOntology } from "./use-sample-ontology";
 
 // An unfinished ontology's overview carries on the new-ontology wizard's
 // steps from where its setup is (ontologySetup): Name and Database done, then Connect your data or upload documents
@@ -84,7 +86,9 @@ import { ontologyName, useOntology } from "./scope";
 // kind, once the connectors are read), and then open on Generate. A live
 // generation shows in its step (the generations query polls while it
 // runs), a failed one says why with Try again. Members see the same steps
-// without what they can't do.
+// without what they can't do. The sample company's connector and set are left
+// out of it all, whatever was chosen before, unless this is the sample's own
+// ontology.
 //
 // It is one card: its head says how far the setup is and holds Set up with
 // your agent (./agent-setup.tsx); the head's title minimises it to that
@@ -151,7 +155,8 @@ export function SetupFlow({
   const { id, role } = useWorkspace(),
     { id: o, ontology } = useOntology(),
     qc = useQueryClient(),
-    [params, setParams] = useSearchParams();
+    [params, setParams] = useSearchParams(),
+    keepSample = useSampleOntology()?.id === o;
   // Minimised in this browser, per ontology.
   const [minimisedText, setMinimisedText] = useStoredState(
       `foundry.ontology.setup.minimised.v1:${id}:${o}`,
@@ -245,8 +250,12 @@ export function SetupFlow({
     },
     {
       // Loading until the API sources to start with are known.
-      connectors: chosenEvents ? connectors.data?.connectors : undefined,
-      sets: sets.data,
+      connectors: chosenEvents
+        ? connectors.data?.connectors?.filter(
+            (c) => keepSample || !isSampleConnector(c),
+          )
+        : undefined,
+      sets: sets.data?.filter((s) => keepSample || !isSampleSet(s)),
       documents: documents.data,
     },
     params.get("step") ?? (before ? "draft" : null),
@@ -373,6 +382,7 @@ export function SetupFlow({
             setChosenEvents={setChosenEvents}
             chosenSets={chosenSets}
             setChosenSets={setChosenSets}
+            keepSample={keepSample}
           />
         );
       case "goal":
@@ -384,6 +394,7 @@ export function SetupFlow({
             chosen={chosen}
             chosenEvents={chosenEvents}
             chosenSets={chosenSets}
+            keepSample={keepSample}
           />
         );
       case "draft":
@@ -418,7 +429,13 @@ export function SetupFlow({
         </button>
       }
       subtitle={`${done} of 7 required steps done${minimised ? ` · Next: ${next}` : ""}`}
-      actions={<AgentSetup ontology={{ ...ontology, setup }} compact />}
+      actions={
+        <AgentSetup
+          ontology={{ ...ontology, setup }}
+          keepSample={keepSample}
+          compact
+        />
+      }
     >
       {!minimised && (
         <ol id={stepsId} className="on-wizard" aria-label="Setup steps">

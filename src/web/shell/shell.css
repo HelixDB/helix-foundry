@@ -1,7 +1,8 @@
-/* App shell: sidebar, mobile bar, command palette, activity tray, toast. */
+/* App shell: banner, strip, sidebar, mobile bar, command palette, activity
+   tray, toast. */
 .hf-shell {
   display: flex;
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--hf-shell-top));
   background: var(--hf-bg);
 }
 .hf-skip {
@@ -19,13 +20,57 @@
   transform: none;
 }
 
+/* An area's banner (AreaShell's): above the sidebar and the page, in view as
+   they scroll. While one shows, --hf-shell-top is its height, and whatever is
+   placed against the viewport's top or height (the sidebar, the panel, the
+   mobile bar, full-height pages, sticky columns, what scrolls into view) takes
+   it off. On a phone its line wraps to two. */
+:root:has(.hf-banner) {
+  --hf-shell-top: 36px;
+}
+html {
+  scroll-padding-top: var(--hf-shell-top);
+}
+.hf-banner {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: grid;
+  place-content: center;
+  min-height: var(--hf-shell-top);
+  padding: 0 var(--hf-space-2);
+  border-bottom: 1px solid var(--hf-accent-border);
+  background: var(--hf-accent-soft);
+  color: var(--hf-text);
+  font-size: var(--hf-text-base);
+  line-height: 18px;
+  text-align: center;
+}
+.hf-banner a,
+.hf-banner a:hover {
+  margin-left: var(--hf-space-1);
+  color: var(--hf-accent-text);
+  font-weight: 500;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+@media (max-width: 800px) {
+  :root:has(.hf-banner) {
+    --hf-shell-top: 48px;
+  }
+  .hf-banner {
+    padding: 0 var(--hf-space-15);
+    font-size: var(--hf-text-sm);
+  }
+}
+
 /* Sidebar */
 .hf-sidebar {
   position: sticky;
-  top: 0;
+  top: var(--hf-shell-top);
   flex: none;
   width: var(--hf-sidebar-width);
-  height: 100dvh;
+  height: calc(100dvh - var(--hf-shell-top));
   border-right: 1px solid var(--hf-border);
   background: var(--hf-sidebar);
   transition: width 180ms var(--hf-ease);
@@ -182,17 +227,59 @@
   min-height: 16px;
 }
 /* What the open section shows under the sections (Ask's threads): the rest
-   of the sidebar, edge to edge, scrolling on its own. */
+   of the sidebar, edge to edge, scrolling on its own. The split's top padding
+   is how far its line sits under the sections, and its least height what the
+   content keeps (SectionSplit in Sidebar.tsx). */
 .hf-nav.has-section {
   flex: none;
+}
+.hf-sidebar-split {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  margin: 4px -10px 0;
 }
 .hf-sidebar-section {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  margin: 4px -10px 0;
   border-top: 1px solid var(--hf-border);
+}
+/* The section's top border is the line this drags: it takes no height of its
+   own, and shows on the border while it's hovered, focused or dragged. */
+.hf-sidebar-handle {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  height: 8px;
+  margin: -4px 0;
+  cursor: row-resize;
+  touch-action: none;
+}
+.hf-app .hf-sidebar-handle:focus-visible {
+  outline-offset: -2px;
+}
+.hf-sidebar-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transition: background var(--hf-duration) var(--hf-ease);
+}
+.hf-sidebar-handle:hover::after,
+.hf-sidebar-handle:focus-visible::after,
+.hf-sidebar-handle.is-dragging::after {
+  background: var(--hf-focus);
+}
+/* A finger needs more to hold, within the padding of what's under it. */
+@media (hover: none) {
+  .hf-sidebar-handle {
+    height: 20px;
+    margin: -10px 0;
+  }
 }
 .hf-nav-link {
   display: flex;
@@ -583,13 +670,13 @@
 /* Section panel: beside the sidebar, scrolling on its own. */
 .hf-section-panel {
   position: sticky;
-  top: 0;
+  top: var(--hf-shell-top);
   z-index: 19;
   display: flex;
   flex: none;
   flex-direction: column;
   width: 280px;
-  height: 100dvh;
+  height: calc(100dvh - var(--hf-shell-top));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1026,7 +1113,7 @@ main.hf-main:focus {
   }
   .hf-mobile-bar {
     position: sticky;
-    top: 0;
+    top: var(--hf-shell-top);
     z-index: 30;
     display: flex;
     align-items: center;

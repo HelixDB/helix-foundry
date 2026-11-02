@@ -5,9 +5,7 @@ import type { IndexCatalogEntry } from "@/web/areas/explore/explorer/lib/types";
 import type { Scope } from "@/web/areas/explore/load-scope";
 
 import connectFixture from "./__fixtures__/connect.json";
-import discoveryFixture from "./__fixtures__/label-discovery.json";
 import labelPageFixture from "./__fixtures__/label-page.json";
-import scanFixture from "./__fixtures__/label-scan.json";
 import labelsFixture from "./__fixtures__/labels.json";
 import missingFixture from "./__fixtures__/neighborhood-missing.json";
 import selfLoopFixture from "./__fixtures__/neighborhood-self-loop.json";
@@ -25,9 +23,7 @@ import {
   buildDegreeRequest,
   buildEdgeCountRequest,
   buildLabelCountsRequest,
-  buildLabelDiscoveryRequest,
   buildLabelPageRequest,
-  buildLabelScanRequest,
   buildNeighborhoodRequest,
   buildNodesByIdRequest,
   buildSampleRequest,
@@ -40,7 +36,6 @@ import {
   fetchesEdgeProperties,
   isLargeProbe,
   isLightShape,
-  labelProbeIds,
   lightShape,
   mergeLabelStats,
   nextEdgeCursor,
@@ -49,9 +44,7 @@ import {
   parseDegreeProbe,
   parseEdgeCount,
   parseLabelCounts,
-  parseLabelDiscovery,
   parseLabelPage,
-  parseLabelScan,
   parseNeighborhood,
   parseNodes,
   parseSample,
@@ -65,20 +58,13 @@ import type {
   NodeFetchShape,
 } from "@/web/areas/explore/explorer/lib/types";
 
-// Fixtures are real responses captured from a local HelixDB v3 by
-// queries.live.test.ts (HELIX_EXPLORER_CAPTURE=1). Each holds the builder
-// arguments, the request they produced, and the database's response.
+// Fixtures hold the builder arguments, the request they produce, and a real
+// response captured from a local HelixDB v3.
 
 type Shaped = { shape: NodeFetchShape };
 const shapeOf = (fixture: { args: unknown }) => (fixture.args as Shaped).shape;
 
-// Other data with no load yet: every label reads plainly, as before loads
-// were versioned, so the captured requests still apply.
-const OTHER: Scope = {
-  kind: "other",
-  loads: [],
-  shared: { nodes: new Set(), edges: new Set() },
-};
+const LOAD: Scope = { id: "load_1" };
 
 const SHAPE: ProbedFetchShape = {
   keys: ["name", "title"],
@@ -164,15 +150,13 @@ function expectWellFormed(request: DynamicQueryRequest) {
 }
 
 describe("captured requests", () => {
-  // Builders must keep producing the exact requests the live database accepted.
+  // Builders must keep producing the exact requests fixtures record.
   it.each([
-    ["label scan", () => buildLabelScanRequest(), scanFixture],
-    ["label discovery", () => buildLabelDiscoveryRequest(), discoveryFixture],
     [
       "label counts with a probe",
       () =>
         buildLabelCountsRequest(labelsFixture.args.labels, {
-          scope: OTHER,
+          scope: LOAD,
           probeRows: labelsFixture.args.probeRows,
         }),
       labelsFixture,
@@ -182,7 +166,7 @@ describe("captured requests", () => {
       () => {
         const args = probeFixture.args;
         return buildSchemaProbeRequest(args.labels, {
-          scope: OTHER,
+          scope: LOAD,
           rowsPerLabel: args.rowsPerLabel,
         });
       },
@@ -196,7 +180,7 @@ describe("captured requests", () => {
             Parameters<typeof buildSampleRequest>[0],
             "scope"
           >),
-          scope: OTHER,
+          scope: LOAD,
         }),
       sampleFixture,
     ],
@@ -208,7 +192,7 @@ describe("captured requests", () => {
             Parameters<typeof buildLabelPageRequest>[0],
             "scope"
           >),
-          scope: OTHER,
+          scope: LOAD,
         }),
       labelPageFixture,
     ],
@@ -247,7 +231,7 @@ describe("captured requests", () => {
             Parameters<typeof buildSearchRequest>[0],
             "scope"
           >),
-          scope: OTHER,
+          scope: LOAD,
         }),
       searchFixture,
     ],
@@ -258,118 +242,11 @@ describe("captured requests", () => {
   });
 });
 
-describe("label scan (explicit only)", () => {
-  it("parses exact label counts and totals", () => {
-    const stats = parseLabelScan(scanFixture.response);
-    expect(stats.nodeLabels).toContainEqual({ label: "Document", count: 300 });
-    expect(stats.edgeLabels).toContainEqual({ label: "TAGGED", count: 1230 });
-    expect(stats.nodeTotal).toBe(1540);
-    expect(stats.edgeTotal).toBe(5605);
-    expect(stats.partial).toBeUndefined();
-  });
-
-  it("tolerates junk", () => {
-    expect(parseLabelScan(null)).toEqual({
-      nodeLabels: [],
-      edgeLabels: [],
-      nodeTotal: null,
-      edgeTotal: null,
-    });
-    expect(
-      parseLabelScan({
-        node_labels: [{ $label: "A", count: "x" }, { count: 2 }, 7],
-        node_total: -1,
-      }),
-    ).toEqual({
-      nodeLabels: [{ label: "A", count: null }],
-      edgeLabels: [],
-      nodeTotal: null,
-      edgeTotal: null,
-    });
-  });
-
-  it("is the only builder that reads the whole graph", () => {
-    expect(scansWholeGraph(buildLabelScanRequest())).toBe(true);
-  });
-});
-
-describe("label discovery", () => {
-  it("parses a captured discovery: first rows and id probes, merged", () => {
-    const found = parseLabelDiscovery(discoveryFixture.response);
-    expect(found.nodes).toEqual([
-      "Company",
-      "Document",
-      "Event",
-      "Project",
-      "User",
-    ]);
-    expect(found.edges).toEqual(
-      expect.arrayContaining(["FOLLOWS", "TAGGED", "WORKS_AT"]),
-    );
-    // 500 rows came back, so there may be more: nothing proves the lists complete.
-    expect(found).toMatchObject({
-      nodesExhausted: false,
-      edgesExhausted: false,
-      empty: false,
-    });
-  });
-
-  it("knows a short first read saw everything, and an empty one means no data", () => {
-    const small = {
-      first_nodes: [
-        { $label: "A", count: 3 },
-        { $label: "B", count: 1 },
-      ],
-      first_edges: [{ $label: "R", count: 2 }],
-      probed_nodes: [],
-      probed_edges: [],
-    };
-    expect(parseLabelDiscovery(small)).toEqual({
-      nodes: ["A", "B"],
-      edges: ["R"],
-      nodesExhausted: true,
-      edgesExhausted: true,
-      empty: false,
-    });
-    expect(
-      parseLabelDiscovery({ ...small, first_nodes: [], first_edges: [] }).empty,
-    ).toBe(true);
-    // An unreadable body proves nothing.
-    expect(parseLabelDiscovery(null)).toEqual({
-      nodes: [],
-      edges: [],
-      nodesExhausted: false,
-      edgesExhausted: false,
-      empty: false,
-    });
-  });
-
-  it("reads a bounded prefix and point-reads ids spread over the id space", () => {
-    const request = buildLabelDiscoveryRequest();
-    expectWellFormed(request);
-    expect(scansWholeGraph(request)).toBe(false);
-    const json = JSON.stringify(request.query);
-    expect(json).toContain(
-      `"limit":{"input":${ALL_NODES},"count":{"literal":${EXPLORER_LIMITS.discoveryRows}}}`,
-    );
-    expect(json).toContain(
-      `"limit":{"input":${ALL_EDGES},"count":{"literal":${EXPLORER_LIMITS.discoveryRows}}}`,
-    );
-    const ids = labelProbeIds();
-    expect(request.parameters).toEqual({ probe_ids: ids });
-    expect(ids[0]).toBe(512);
-    expect(ids.every((id, index) => index === 0 || id > ids[index - 1])).toBe(
-      true,
-    );
-    expect(Number.isSafeInteger(ids.at(-1)!)).toBe(true);
-  });
-});
-
 describe("label counts", () => {
   const { labels } = labelsFixture.args;
 
   it("parses captured bitmap counts and drops labels that are gone", () => {
-    const stats = parseLabelCounts(labelsFixture.response, labels, OTHER);
+    const stats = parseLabelCounts(labelsFixture.response, labels);
     expect(stats.nodeLabels).toEqual([
       { label: "Chunk", count: 40 },
       { label: "Company", count: 60 },
@@ -380,8 +257,8 @@ describe("label counts", () => {
     ]);
     expect(stats.edgeLabels.map((entry) => entry.label)).not.toContain("GONE");
     expect(stats.nodeTotal).toBe(1460);
-    // Labels came from discovery, so the totals are floors (Tag was never seen).
-    expect(stats.partial).toEqual({ nodes: true, edges: true });
+    // Every label was counted, so the totals are exact.
+    expect(stats.partial).toEqual({ nodes: false, edges: false });
     // The probe rows in the same response feed the schema probe.
     const { schemas, shape } = parseSchemaProbe(labelsFixture.response, {
       nodes: stats.nodeLabels.map((entry) => entry.label),
@@ -396,26 +273,26 @@ describe("label counts", () => {
   it("counts from label bitmaps and never reads the whole graph", () => {
     const request = buildLabelCountsRequest(
       { nodes: ["A", "B"], edges: ["R"] },
-      { scope: OTHER },
+      { scope: LOAD },
     );
     expectWellFormed(request);
     expect(request.query_name).toBe("explorer_label_counts");
     expect(scansWholeGraph(request)).toBe(false);
-    // Labels are constants, so the label bitmap serves the count on any engine (no parameter specialization needed).
+    // Labels and loads are constants, so their bitmaps serve the count on any engine (no parameter specialization needed).
     expect(request.parameters).toEqual({});
     expect(
       (request.query as { read: { returns: string[] } }).read.returns,
     ).toEqual(["node_count_0", "node_count_1", "edge_count_0"]);
     expect(JSON.stringify(request.query)).toContain(
-      '"count":{"input":{"nodes_where":{"predicate":{"eq":{"left":{"property":"$label"},"right":{"constant":{"string":"A"}}}}}}}',
+      '"count":{"input":{"nodes_where":{"predicate":{"and":{"predicates":[{"eq":{"left":{"property":"$label"},"right":{"constant":{"string":"A"}}}},{"eq":{"left":{"property":"foundry_load"},"right":{"constant":{"string":"load_1"}}}}]}}}}}',
     );
     expect(JSON.stringify(request.query)).toContain(
-      '"count":{"input":{"edges_where":{"predicate":{"eq":{"left":{"property":"$label"},"right":{"constant":{"string":"R"}}}}}}}',
+      '"count":{"input":{"edges_where":{"predicate":{"and":{"predicates":[{"eq":{"left":{"property":"$label"},"right":{"constant":{"string":"R"}}}},{"eq":{"left":{"property":"foundry_load"},"right":{"constant":{"string":"load_1"}}}}]}}}}}',
     );
     expect(JSON.stringify(request.query)).not.toContain('"param"');
     const probed = buildLabelCountsRequest(
       { nodes: ["A"], edges: [] },
-      { scope: OTHER, probeRows: 2 },
+      { scope: LOAD, probeRows: 2 },
     );
     expectWellFormed(probed);
     expect(probed.query_name).toBe("explorer_labels");
@@ -425,7 +302,7 @@ describe("label counts", () => {
     // Nothing to count still makes a valid (and free) request.
     const none = buildLabelCountsRequest(
       { nodes: [], edges: [] },
-      { scope: OTHER },
+      { scope: LOAD },
     );
     expectWellFormed(none);
     expect(scansWholeGraph(none)).toBe(false);
@@ -436,17 +313,14 @@ describe("label counts", () => {
       { length: 70 },
       (_, index) => `L${String(index).padStart(2, "0")}`,
     );
-    const capped = countedLabels(
-      { nodes: [...many, "L00", ""], edges: [] },
-      OTHER,
-    );
+    const capped = countedLabels({ nodes: [...many, "L00", ""], edges: [] });
     expect(capped.nodes).toHaveLength(EXPLORER_LIMITS.maxCountLabels);
     expect(capped.dropped.nodes).toEqual(
       many.slice(EXPLORER_LIMITS.maxCountLabels),
     );
     const request = buildLabelCountsRequest(
       { nodes: many, edges: [] },
-      { scope: OTHER, probeRows: 1 },
+      { scope: LOAD, probeRows: 1 },
     );
     const returns = (request.query as { read: { returns: string[] } }).read
       .returns;
@@ -462,15 +336,12 @@ describe("label counts", () => {
         1,
       ]),
     );
-    const stats = parseLabelCounts(body, { nodes: many, edges: [] }, OTHER, {
-      nodes: true,
-      edges: true,
-    });
+    const stats = parseLabelCounts(body, { nodes: many, edges: [] });
     expect(
       stats.nodeLabels.filter((entry) => entry.count === null),
     ).toHaveLength(10);
     expect(stats.nodeTotal).toBe(EXPLORER_LIMITS.maxCountLabels);
-    // Uncounted labels make the total a floor even when every label is known.
+    // Uncounted labels make the total a floor.
     expect(stats.partial).toEqual({ nodes: true, edges: false });
   });
 
@@ -478,7 +349,6 @@ describe("label counts", () => {
     const stats = parseLabelCounts(
       { node_count_0: 5, node_count_1: 0 },
       { nodes: ["A", "B"], edges: [] },
-      OTHER,
     );
     const merged = mergeLabelStats(
       {
@@ -488,7 +358,6 @@ describe("label counts", () => {
       parseLabelCounts(
         { node_count_0: 7, edge_count_0: 2 },
         { nodes: ["C"], edges: ["R"] },
-        OTHER,
       ),
     );
     expect(merged.nodeLabels).toEqual([
@@ -498,7 +367,7 @@ describe("label counts", () => {
     expect(merged.edgeLabels).toEqual([{ label: "R", count: 2 }]);
     expect(merged.nodeTotal).toBe(12);
     expect(merged.edgeTotal).toBe(2);
-    expect(merged.partial).toEqual({ nodes: true, edges: true });
+    expect(merged.partial).toEqual({ nodes: false, edges: false });
   });
 });
 
@@ -506,7 +375,7 @@ describe("labels counted at zero", () => {
   it("names the counted labels a response found empty, and drops their uncounted entries from stats", () => {
     const asked = { nodes: ["Gone", "User"], edges: ["OLD"] };
     const body = { node_count_0: 0, node_count_1: 3, edge_count_0: 0 };
-    expect(emptyLabels(body, asked, OTHER)).toEqual({
+    expect(emptyLabels(body, asked)).toEqual({
       nodes: ["Gone"],
       edges: ["OLD"],
     });
@@ -523,8 +392,8 @@ describe("labels counted at zero", () => {
     };
     const merged = mergeLabelStats(
       stats,
-      parseLabelCounts(body, asked, OTHER),
-      emptyLabels(body, asked, OTHER),
+      parseLabelCounts(body, asked),
+      emptyLabels(body, asked),
     );
     expect(merged.nodeLabels).toEqual([
       { label: "Company", count: 2 },
@@ -640,14 +509,14 @@ describe("schema probe", () => {
     const many = Array.from({ length: 50 }, (_, index) => `L${index}`);
     const request = buildSchemaProbeRequest(
       { nodes: many, edges: many },
-      { scope: OTHER },
+      { scope: LOAD },
     );
     expectWellFormed(request);
     const entries = (request.query as { read: { entries: unknown[] } }).read
       .entries;
     expect(entries).toHaveLength(EXPLORER_LIMITS.maxProbeLabels * 2);
     expectWellFormed(
-      buildSchemaProbeRequest({ nodes: [], edges: [] }, { scope: OTHER }),
+      buildSchemaProbeRequest({ nodes: [], edges: [] }, { scope: LOAD }),
     );
   });
 
@@ -662,7 +531,7 @@ describe("schema probe", () => {
     expect(result.heavyByLabel).toEqual({ A: ["data"], B: [] });
     // B's own pages can still fetch it.
     const page = buildLabelPageRequest({
-      scope: OTHER,
+      scope: LOAD,
       label: "B",
       afterDbId: null,
       shape: result,
@@ -692,7 +561,7 @@ describe("sample", () => {
 
   it("seeds every node label and connects them with a few edges of every edge label, never expanding a node", () => {
     const request = buildSampleRequest({
-      scope: OTHER,
+      scope: LOAD,
       nodeLabels: [
         { label: "A", count: 1000 },
         { label: "B", count: null },
@@ -714,7 +583,7 @@ describe("sample", () => {
       [
         ...json.matchAll(
           new RegExp(
-            `"${source}":\\{"predicate":\\{"eq":\\{"left":\\{"property":"\\$label"\\},"right":\\{"constant":\\{"string":"(\\w+)"\\}\\}\\}\\}\\}\\},"count":\\{"literal":(\\d+)\\}`,
+            `"${source}":\\{"predicate":\\{"and":\\{"predicates":\\[\\{"eq":\\{"left":\\{"property":"\\$label"\\},"right":\\{"constant":\\{"string":"(\\w+)"\\}\\}\\}\\},\\{"eq":\\{"left":\\{"property":"foundry_load"\\},"right":\\{"constant":\\{"string":"load_1"\\}\\}\\}\\}\\]\\}\\}\\}\\},"count":\\{"literal":(\\d+)\\}`,
             "g",
           ),
         ),
@@ -740,7 +609,7 @@ describe("sample", () => {
 
   it("never reads the whole graph: no labels, no rows", () => {
     const request = buildSampleRequest({
-      scope: OTHER,
+      scope: LOAD,
       nodeLabels: null,
       shape: fallbackShape(),
       nodeBudget: 50,
@@ -841,7 +710,7 @@ describe("label pages", () => {
 
   it("asks for one extra row and counts (from the bitmap) only on the first page", () => {
     const first = buildLabelPageRequest({
-      scope: OTHER,
+      scope: LOAD,
       label: "User",
       afterDbId: null,
       pageSize: 10,
@@ -858,7 +727,7 @@ describe("label pages", () => {
     expect(JSON.stringify(first.query)).toContain('"count":{"literal":11}');
     expect(JSON.stringify(first.query)).not.toContain('"skip"');
     const next = buildLabelPageRequest({
-      scope: OTHER,
+      scope: LOAD,
       label: "User",
       afterDbId: 41,
       offset: 20,
@@ -1072,11 +941,15 @@ describe("search", () => {
       Parameters<typeof buildSearchRequest>[0],
       "scope"
     >),
-    scope: OTHER,
+    scope: LOAD,
   };
 
   it("parses captured hits in priority order without duplicates", () => {
-    const hits = parseSearch(searchFixture.response, args.shape, args);
+    // The capture's rows carry no load, so no scope filters them here.
+    const hits = parseSearch(searchFixture.response, args.shape, {
+      ...args,
+      scope: undefined,
+    });
     expect(hits[0]).toMatchObject({ via: "id", node: { dbId: 977 } });
     const text = hits.filter((hit) => hit.via === "text");
     expect(text.length).toBeGreaterThan(0);
@@ -1096,7 +969,7 @@ describe("search", () => {
     const base = { textIndexes: [], containsTargets: [], shape: SHAPE };
     expect(
       buildSearchRequest({
-        scope: OTHER,
+        scope: LOAD,
         ...base,
         text: "x",
         idCandidate: null,
@@ -1104,7 +977,7 @@ describe("search", () => {
     ).toBeNull();
     expect(
       buildSearchRequest({
-        scope: OTHER,
+        scope: LOAD,
         ...base,
         text: "  ",
         idCandidate: null,
@@ -1114,7 +987,7 @@ describe("search", () => {
     ).toBeNull();
     expect(
       buildSearchRequest({
-        scope: OTHER,
+        scope: LOAD,
         ...base,
         text: "x",
         idCandidate: null,
@@ -1125,7 +998,7 @@ describe("search", () => {
 
   it("runs only the id lookup for a bare number with no text sources", () => {
     const request = buildSearchRequest({
-      scope: OTHER,
+      scope: LOAD,
       text: "42",
       idCandidate: 42,
       textIndexes: [],
@@ -1145,14 +1018,14 @@ describe("search", () => {
     };
     expect(
       JSON.stringify(
-        buildSearchRequest({ scope: OTHER, ...opts, shape: SHAPE })!.query,
+        buildSearchRequest({ scope: LOAD, ...opts, shape: SHAPE })!.query,
       ),
     ).toContain(
       '"properties":["$id","$label","foundry_load","$score","title","name"]',
     );
     expect(
       JSON.stringify(
-        buildSearchRequest({ scope: OTHER, ...opts, shape: fallbackShape() })!
+        buildSearchRequest({ scope: LOAD, ...opts, shape: fallbackShape() })!
           .query,
       ),
     ).toContain('"value_map"');
@@ -1166,7 +1039,7 @@ describe("search", () => {
       keysByLabel: { Document: ["title", "lang"] },
     };
     const request = buildSearchRequest({
-      scope: OTHER,
+      scope: LOAD,
       text: "graph",
       idCandidate: null,
       textIndexes: [
@@ -1205,7 +1078,7 @@ describe("search", () => {
   it("names a request with only contains scans, so the cheap sources can run apart from it", () => {
     const base = { text: "Ada", textIndexes: [], shape: SHAPE };
     const scan = buildSearchRequest({
-      scope: OTHER,
+      scope: LOAD,
       ...base,
       idCandidate: null,
       containsTargets: [{ label: "User", keys: ["name"] }],
@@ -1213,7 +1086,7 @@ describe("search", () => {
     expect(scan.query_name).toBe("explorer_search_contains");
     expectWellFormed(scan);
     const indexed = buildSearchRequest({
-      scope: OTHER,
+      scope: LOAD,
       ...base,
       idCandidate: 7,
       textIndexes: [{ label: "User", property: "name" }],
@@ -1306,12 +1179,12 @@ describe("edge fetch shape", () => {
     expect(fetchesEdgeProperties(shape)).toBe(true);
     const requests = [
       buildSampleRequest({
-        scope: OTHER,
+        scope: LOAD,
         nodeLabels: [{ label: "Doc", count: 3 }],
         shape,
       }),
       buildSampleRequest({
-        scope: OTHER,
+        scope: LOAD,
         nodeLabels: [{ label: "Doc", count: 10_000 }],
         shape,
       }),
@@ -1379,7 +1252,7 @@ describe("edge fetch shape", () => {
     expect(isLightShape(fallbackShape())).toBe(false);
     const sample = JSON.stringify(
       buildSampleRequest({
-        scope: OTHER,
+        scope: LOAD,
         nodeLabels: [{ label: "Doc", count: 3 }],
         shape: bare,
       }).query,
@@ -1664,22 +1537,20 @@ describe("degree", () => {
 describe("every builder", () => {
   it("sends typed parameters and explorer_ names", () => {
     const requests = [
-      buildLabelScanRequest(),
-      buildLabelDiscoveryRequest(),
-      buildLabelCountsRequest({ nodes: ["A"], edges: ["R"] }, { scope: OTHER }),
+      buildLabelCountsRequest({ nodes: ["A"], edges: ["R"] }, { scope: LOAD }),
       buildLabelCountsRequest(
         { nodes: ["A"], edges: ["R"] },
-        { scope: OTHER, probeRows: 2 },
+        { scope: LOAD, probeRows: 2 },
       ),
-      buildSchemaProbeRequest({ nodes: ["A"], edges: ["R"] }, { scope: OTHER }),
+      buildSchemaProbeRequest({ nodes: ["A"], edges: ["R"] }, { scope: LOAD }),
       buildSampleRequest({
-        scope: OTHER,
+        scope: LOAD,
         nodeLabels: [{ label: "A", count: 10_000 }],
         shape: SHAPE,
       }),
-      buildSampleRequest({ scope: OTHER, nodeLabels: [], shape: SHAPE }),
+      buildSampleRequest({ scope: LOAD, nodeLabels: [], shape: SHAPE }),
       buildLabelPageRequest({
-        scope: OTHER,
+        scope: LOAD,
         label: "A",
         afterDbId: null,
         shape: fallbackShape(),
@@ -1692,7 +1563,7 @@ describe("every builder", () => {
       buildDegreeProbeRequest({ dbIds: [7, 8] }),
       buildNodesByIdRequest({ dbIds: [7], shape: SHAPE, probeDegree: true }),
       buildSearchRequest({
-        scope: OTHER,
+        scope: LOAD,
         text: "q",
         idCandidate: 3,
         textIndexes: [{ label: "A", property: "t" }],
@@ -1700,7 +1571,7 @@ describe("every builder", () => {
         shape: SHAPE,
       })!,
       buildSearchRequest({
-        scope: OTHER,
+        scope: LOAD,
         text: "q",
         idCandidate: null,
         textIndexes: [],
@@ -1709,14 +1580,10 @@ describe("every builder", () => {
       })!,
     ];
     for (const request of requests) expectWellFormed(request);
-    // Only the explicit label scan reads the whole graph.
-    expect(
-      requests.filter(scansWholeGraph).map((request) => request.query_name),
-    ).toEqual(["explorer_label_scan"]);
+    // None reads the whole graph.
+    expect(requests.filter(scansWholeGraph)).toEqual([]);
     expect(new Set(requests.map((request) => request.query_name))).toEqual(
       new Set([
-        "explorer_label_scan",
-        "explorer_label_discovery",
         "explorer_label_counts",
         "explorer_labels",
         "explorer_schema_probe",
@@ -1753,9 +1620,7 @@ describe("every builder", () => {
     ];
     for (const body of bodies) {
       expect(() => {
-        parseLabelScan(body);
-        parseLabelDiscovery(body);
-        parseLabelCounts(body, { nodes: ["A"], edges: ["R"] }, OTHER);
+        parseLabelCounts(body, { nodes: ["A"], edges: ["R"] });
         parseSchemaProbe(body, { nodes: ["A"], edges: ["R"] });
         parseSample(body, SHAPE);
         parseLabelPage(body, SHAPE);

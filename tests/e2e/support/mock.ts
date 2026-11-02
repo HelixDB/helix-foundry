@@ -194,12 +194,13 @@ export async function startOntology(page: Page, name: string) {
 
 /**
  * Opens a new workspace's first ontology from its onboarding, with Use my own
- * data: the sources step shows, the first of the only steps it asks (no name,
- * no database).
+ * data (the other side of Get started's toggle): the sources step shows, the
+ * first of the only steps it asks (no name, no database).
  */
 export async function startFirstOntology(page: Page) {
   await page.goto("/ontology/new");
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("radio", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
 }
 
 /**
@@ -240,6 +241,32 @@ export async function createFirstOntology(page: Page): Promise<string> {
   await page.getByRole("button", { name: "Skip" }).click();
   await page.getByRole("button", { name: "Create and generate" }).click();
   return createdOntology(page);
+}
+
+/** Makes Customer contracts' version 3 current and loads it: Stripe's customers and invoices. */
+export async function loadContracts(page: Page) {
+  await mock.configure({ loadStepMs: 100 });
+  await page.goto("/ontology/ont_acme_contracts/versions/ver_seed_3");
+  await page.getByRole("button", { name: "Make current" }).click();
+  await page
+    .getByRole("dialog", { name: "Make version 3 current?" })
+    .getByRole("button", { name: "Make current" })
+    .click();
+  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
+  await page.goto("/ontology/ont_acme_contracts#loads");
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "Load data" })
+    .first()
+    .click();
+  await page
+    .getByRole("dialog", { name: "Load version 3 into contracts?" })
+    .getByRole("button", { name: "Load" })
+    .click();
+  await expect(page).toHaveURL(/\/loads\/load_/);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
+  ).toBeVisible({ timeout: 20_000 });
 }
 
 /** A CSRF token for the signed-in page's session. */

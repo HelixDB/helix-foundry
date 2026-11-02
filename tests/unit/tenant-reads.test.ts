@@ -111,7 +111,7 @@ describe("tenant reads", () => {
       "ws",
       "o",
       reads.read,
-      { kind: "load", id: "load_1" },
+      { id: "load_1" },
       { type: "Customer", key: "c" },
     );
     const error = await entity.queryFn({}).catch((e: unknown) => e);

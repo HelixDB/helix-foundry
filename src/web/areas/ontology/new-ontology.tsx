@@ -52,7 +52,7 @@ import {
   type WizardStepId,
 } from "./model";
 import { Callout, FlowStep, canManage, type Arrival } from "./parts";
-import { SAMPLE } from "./sample";
+import { SAMPLE, isSampleConnector, isSampleSet } from "./sample";
 import { TrySample } from "./try-sample";
 import {
   createOntology,
@@ -68,9 +68,11 @@ import {
 // step: either will do, so someone with only documents generates from
 // them), a goal, then a review. Data is connected and documents uploaded in
 // place (./generate-parts.tsx, shared with Generate), so nobody leaves for
-// Data and comes back. The step is the URL's ?step= (none is the first), so
-// Back, Forward and a refresh keep it; the steps' checks, where Back and
-// Continue go and what each step chose are the model's (newOntologyWizard).
+// Data and comes back. The sample company's connector and set are no source
+// here, whatever the choices kept name: this ontology is the user's own. The
+// step is the URL's ?step= (none is the first), so Back, Forward and a refresh
+// keep it; the steps' checks, where Back and Continue go and what each step
+// chose are the model's (newOntologyWizard).
 //
 // The choices are kept in this tab (sessionStorage) until the ontology's
 // first generation starts, with one client token and what an earlier
@@ -84,8 +86,10 @@ import {
 //
 // While the workspace has no ontology, this page is its onboarding, all the
 // shell offers (main.tsx): it has no way back to Ontologies, and first asks
-// how to start: the sample company (./try-sample.tsx, its own page), the
-// user's own data (the wizard), or Set up with your agent.
+// how to start: the sample company (./try-sample.tsx, its own page), else
+// one section toggling Set up with your agent (the default) and the user's
+// own data (the wizard). A local build has no Helix MCP, so no agent and
+// nothing to toggle: only the user's own data.
 // A workspace's first ontology of its own (the sample's doesn't count) asks
 // only what to draft from and the goal (firstOntologyWizard): it is named
 // from its sources, goes on a new database, and its first draft is made
@@ -187,6 +191,7 @@ export function NewOntologyPage() {
   const [own, setOwn] = useState(() =>
       ["step", "add", "event_source"].some((k) => params.has(k)),
     ),
+    [start, setStart] = useState(LOCAL ? "own" : "agent"),
     [adding, setAdding] = useState(() => params.get("add")),
     // The API source a token link opens the send panel of.
     [sending, setSending] = useState(() =>
@@ -280,8 +285,10 @@ export function NewOntologyPage() {
     facts = {
       databases: choices,
       projects: databases.data?.map((p) => p.project),
-      connectors: connectors.data?.connectors,
-      sets: sets.data,
+      connectors: connectors.data?.connectors?.filter(
+        (c) => !isSampleConnector(c),
+      ),
+      sets: sets.data?.filter((s) => !isSampleSet(s)),
       documents: documents.data,
     };
   const wizard = first
@@ -523,30 +530,48 @@ export function NewOntologyPage() {
       <Page width="narrow">
         <PageHeader
           title={title}
-          subtitle="Foundry turns your databases, apps and documents into an ontology: one connected graph of your business that you and your agents can ask questions of."
+          subtitle="Foundry turns your data into an ontology: a graph you can ask questions of."
         />
         <TrySample />
         <h2 className="on-start-or">Or start with your own</h2>
-        <div className="on-start-grid">
-          <Callout
-            icon={Database}
-            tone="muted"
-            title="Use my own data"
-            text="Connect a database or app, or upload documents, and say what the ontology should serve. Foundry drafts it, loads it and emails you when it’s ready, in a few minutes."
-            action={
+        <div className="on-card">
+          {!LOCAL && (
+            <div className="on-start-toggle">
+              <Segmented
+                label="Start with your own"
+                value={start}
+                onChange={setStart}
+                options={[
+                  { value: "agent", label: "Set up with your agent" },
+                  { value: "own", label: "Use my own data" },
+                ]}
+              />
+            </div>
+          )}
+          {start === "agent" ? (
+            <AgentSetup />
+          ) : (
+            <>
+              <div className="on-card-text">
+                {LOCAL && <strong>Use my own data</strong>}
+                <p>
+                  Connect a database or app, or upload documents, and Foundry
+                  does the rest.
+                </p>
+              </div>
               <Button
                 size="sm"
+                iconRight={ArrowRight}
                 onClick={() => {
                   trackEvent("onboarding_own_data_clicked");
                   setOwn(true);
                   go(wizard.steps[0]!.id);
                 }}
               >
-                Use my own data
+                Continue
               </Button>
-            }
-          />
-          <AgentSetup />
+            </>
+          )}
         </div>
         {adding !== null && (
           <ConnectData
