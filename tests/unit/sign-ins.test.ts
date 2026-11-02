@@ -15,12 +15,15 @@ import {
   isProviderUrl,
   needsSignIn,
   readConnect,
+  readPicks,
   signInFailure,
   startAgainPath,
   widenRefusal,
   widensReach,
+  withConnected,
   writeConnect,
   type ConnectEntry,
+  type ReturnPicks,
 } from "@/web/areas/data/sign-ins";
 
 // Connecting by signing in at the provider, in the browser: what the tab
@@ -408,5 +411,61 @@ describe("widening a signed-in GitHub connector", () => {
     ).toBe(
       "Only the member who connected it, whose GitHub access it reads with, can add repositories or read every one. You can remove some.",
     );
+  });
+});
+
+describe("a page's picks across the round trip", () => {
+  const PICKS: ReturnPicks = {
+    goal: "顧客".repeat(200),
+    connectorIds: ["conn_1"],
+    eventSources: [["conn_e", "FOUNDRY_EVENT_SOURCE_MODE_EXTRACTION"]],
+    setIds: ["set_1"],
+  };
+
+  it("keeps them in the tab's entry, however long the goal", () => {
+    const s = storage();
+    writeConnect(s, { ...ENTRY, picks: PICKS });
+    expect(readConnect(s)?.picks).toEqual(PICKS);
+    // A captured answer keeps them too.
+    const replaced: string[] = [];
+    captureCallback(
+      new URL("https://foundry.helix-db.com/connect/callback?connect_code=c"),
+      s,
+      (p) => replaced.push(p),
+    );
+    expect(readConnect(s)?.picks).toEqual(PICKS);
+  });
+
+  it("reads them without trusting them", () => {
+    expect(readPicks(null)).toBeUndefined();
+    expect(readPicks({ connectorIds: [] })).toBeUndefined();
+    expect(
+      readPicks({
+        goal: "g",
+        connectorIds: "conn_1",
+        eventSources: [
+          ["c", "MODE_OTHER"],
+          ["", "FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED"],
+        ],
+        setIds: [1],
+      }),
+    ).toEqual({
+      goal: "g",
+      connectorIds: null,
+      eventSources: [],
+      setIds: null,
+    });
+  });
+
+  it("adds the connector a sign-in made to a choice of some", () => {
+    expect(withConnected(PICKS, "conn_9").connectorIds).toEqual([
+      "conn_1",
+      "conn_9",
+    ]);
+    expect(withConnected(PICKS, "conn_1").connectorIds).toEqual(["conn_1"]);
+    // Every synced one includes it already.
+    expect(
+      withConnected({ ...PICKS, connectorIds: null }, "conn_9").connectorIds,
+    ).toBeNull();
   });
 });

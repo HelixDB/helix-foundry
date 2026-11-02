@@ -2,6 +2,7 @@ import type {
   Connector,
   ConnectorAccountBroken,
   ConnectorSignIn,
+  FoundryEventSourceMode,
 } from "../../../shared/wfe";
 import { parseReturnPath } from "../../../shared/return-path";
 import { formatDate } from "../../kit/util";
@@ -31,6 +32,67 @@ const PROVIDERS: Record<string, string> = {
 export const providerName = (kind: string) =>
   PROVIDERS[kind] || kind.charAt(0).toUpperCase() + kind.slice(1);
 
+/**
+ * A page's own choices of what to draft from, kept in this tab's entry
+ * across the provider's round trip and handed back to the page as router
+ * state, so its return path stays short (a goal may be long): Generate's
+ * and an ontology's setup's. Each field as the page holds it: no connector
+ * ids are every synced one, and no API sources or sets are not chosen yet.
+ * The wizard keeps its own choices in this tab.
+ */
+export type ReturnPicks = {
+  goal: string;
+  connectorIds: string[] | null;
+  eventSources: [string, FoundryEventSourceMode][] | null;
+  setIds: string[] | null;
+};
+
+const texts = (v: unknown): string[] | null =>
+  Array.isArray(v) && v.every((x) => typeof x === "string") ? v : null;
+const MODES = new Set<unknown>([
+  "FOUNDRY_EVENT_SOURCE_MODE_STRUCTURED",
+  "FOUNDRY_EVENT_SOURCE_MODE_EXTRACTION",
+]);
+
+/** Picks read back from storage or router state, if well formed. */
+export function readPicks(v: unknown): ReturnPicks | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const p = v as Record<string, unknown>;
+  if (typeof p.goal !== "string") return undefined;
+  const events = Array.isArray(p.eventSources)
+    ? (p.eventSources as unknown[]).filter(
+        (e): e is [string, FoundryEventSourceMode] =>
+          Array.isArray(e) &&
+          e.length === 2 &&
+          typeof e[0] === "string" &&
+          e[0] !== "" &&
+          MODES.has(e[1]),
+      )
+    : null;
+  return {
+    goal: p.goal,
+    connectorIds: texts(p.connectorIds),
+    eventSources: events,
+    setIds: texts(p.setIds),
+  };
+}
+
+/**
+ * The picks with the connector a sign-in made among those chosen: added to
+ * a choice of some, while every synced one (none named) includes it.
+ */
+export function withConnected(
+  picks: ReturnPicks,
+  connectorId: string,
+): ReturnPicks {
+  const ids = picks.connectorIds;
+  return {
+    ...picks,
+    connectorIds:
+      ids && !ids.includes(connectorId) ? [...ids, connectorId] : ids,
+  };
+}
+
 /** The sign-in this tab sent to the provider, and what came back. */
 export type ConnectEntry = {
   workspaceId: string;
@@ -39,6 +101,8 @@ export type ConnectEntry = {
   // Where to go once connected, with `connected=<connector id>`: the page
   // the form was opened over. None: the connector's own page.
   returnPath?: string;
+  // That page's own choices, handed back to it (ReturnPicks).
+  picks?: ReturnPicks;
   // Set when it signs this connector in again.
   connectorId?: string;
   // What the provider sent the callback (a code, or an error without one)
@@ -74,6 +138,7 @@ export function readConnect(storage: Storage | null): ConnectEntry | null {
       signInId,
       kind,
       returnPath: text(e.returnPath),
+      picks: readPicks(e.picks),
       connectorId: text(e.connectorId),
       code: text(e.code),
       error: text(e.error),
@@ -125,6 +190,7 @@ export function captureCallback(
       signInId: entry.signInId,
       kind: entry.kind,
       returnPath: entry.returnPath,
+      picks: entry.picks,
       connectorId: entry.connectorId,
       ...(code ? { code } : { error: error || "unknown" }),
       at: now,
