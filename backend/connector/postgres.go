@@ -32,7 +32,8 @@ func (k *postgresKind) Prepare(src Source) (json.RawMessage, error) {
 
 // postgresSettings are the stored settings plus what Discover and Start work
 // out for one sync. Discover recomputes Keyless and Unpublished every time,
-// and Snapshot only ever travels from Start to the full read.
+// and Snapshot only ever travels from Start or SourceSnapshot to the full
+// read's tables.
 type postgresSettings struct {
 	DatabaseSettings
 	// Keyless are the tables without a primary key; they are always read in full.

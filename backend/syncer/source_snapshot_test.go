@@ -180,7 +180,7 @@ func TestSyncerSourceSnapshot(t *testing.T) {
 const testPostgres = "postgres://helix:helix@127.0.0.1:5433/helix_connector_test?sslmode=disable"
 
 // postgresKind is the PostgreSQL kind under the test plans' name, fake,
-// running after once each table is read; fail fails a table's next read.
+// calling after once each table is read; fail fails a table's next read.
 type postgresKind struct {
 	connector.SnapshotKind
 	after func(table string)

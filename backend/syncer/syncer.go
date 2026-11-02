@@ -179,8 +179,8 @@ const releaseTimeout = 30 * time.Second
 //  4. Read in full or read changes (readMode); in full when a stream
 //     catches up on what a paused sync skipped (Allowances). A full read
 //     compares each table with its snapshot; a change read merges into it.
-//     A kind that can reads the tables it reads in full at one snapshot
-//     of its source (connector.SnapshotKind, readTables).
+//     A connector.SnapshotKind reads the tables it reads in full at one
+//     snapshot of its source (readTables).
 //     A table that did not change keeps its snapshot; one that did gets a
 //     new snapshot and a change batch, in one lease-guarded write.
 //  5. Once every table is in, empty the document sets of streams no longer
