@@ -177,7 +177,9 @@ func (s *Service) GetConnectorSignIn(ctx context.Context, req *foundryv1.GetConn
 // PKCE verifier and seals it (signInVerifier); every later one shares it.
 // Signing a connector in again reauthorizes its account when the caller is
 // the member it acts as (reauthorizes); anyone else makes a new account,
-// which replaces it. The sign-in then lasts signInTTL more.
+// which replaces it. An account the broker lost (account_missing) is
+// recorded so, and a new one made instead. The sign-in then lasts signInTTL
+// more.
 func (s *Service) AuthorizeConnectorSignIn(ctx context.Context, req *foundryv1.AuthorizeConnectorSignInRequest) (
 	*foundryv1.AuthorizeConnectorSignInResponse, error) {
 	catalog, keyring, err := s.connectors(req.GetWorkspaceId())
@@ -205,15 +207,16 @@ func (s *Service) AuthorizeConnectorSignIn(ctx context.Context, req *foundryv1.A
 	}
 	auth := ports.AccountAuthorization{WorkspaceID: si.WorkspaceID, UserID: caller.UserID, Kind: si.Kind, Label: si.Name,
 		ReturnTo: req.GetReturnTo()}
+	var current *foundrymodel.Connector
 	if si.ConnectorID != nil {
-		c, err := s.loadConnector(ctx, si.WorkspaceID, *si.ConnectorID)
+		current, err = s.loadConnector(ctx, si.WorkspaceID, *si.ConnectorID)
 		if status.Code(err) == codes.NotFound {
 			return nil, foundryPrecondition(si.WorkspaceID, "SIGN_IN_ENDED", "the connector this sign-in was for was deleted")
 		}
 		if err != nil {
 			return nil, err
 		}
-		auth.AccountID = reauthorizes(c, caller.UserID)
+		auth.AccountID = reauthorizes(current, caller.UserID)
 	}
 	verifier, err := s.signInVerifier(ctx, keyring, si)
 	if err != nil {
@@ -221,6 +224,20 @@ func (s *Service) AuthorizeConnectorSignIn(ctx context.Context, req *foundryv1.A
 	}
 	auth.Challenge = pkceChallenge(verifier)
 	url, err := s.deps.Accounts.Authorize(ctx, auth)
+	var broken *ports.AccountBroken
+	if auth.AccountID != "" && errors.As(err, &broken) && broken.Reason == ports.AccountAccountMissing {
+		// The broker lost the account: no reauthorization can bring it back.
+		// Foundry's record says so, at the generation read, and the user
+		// makes a new account, which replaces it.
+		if _, berr := s.deps.DB.BreakConnectorAccount(ctx, si.WorkspaceID, current.ID, current.Account.Generation,
+			ports.AccountAccountMissing); berr != nil {
+			log.From(ctx).Warn("record a lost connector account failed", "connector", current.ID, "err", berr)
+		}
+		log.From(ctx).Info("a connector's account is gone from the broker; authorizing a new one", "workspace", si.WorkspaceID,
+			"connector", current.ID, "account", auth.AccountID, "sign_in", si.ID)
+		auth.AccountID = ""
+		url, err = s.deps.Accounts.Authorize(ctx, auth)
+	}
 	if err != nil {
 		log.From(ctx).Warn("authorize a connector sign-in failed", "workspace", si.WorkspaceID, "sign_in", si.ID, "kind", si.Kind, "err", err)
 		return nil, accountsUnavailable(err)

@@ -84,13 +84,18 @@ func (a *Accounts) Kinds(_ context.Context, _, userID string) ([]string, error) 
 }
 
 // Authorize answers with the provider's page, which carries the code its
-// callback gets (Code).
+// callback gets (Code). Reauthorizing an account it doesn't have (deleted,
+// say) is an AccountBroken for account_missing, as the hosted broker
+// answers.
 func (a *Accounts) Authorize(_ context.Context, auth ports.AccountAuthorization) (string, error) {
 	if err := a.call("Authorize"); err != nil {
 		return "", err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if _, ok := a.accounts[auth.AccountID]; auth.AccountID != "" && !ok {
+		return "", &ports.AccountBroken{Reason: ports.AccountAccountMissing}
+	}
 	a.next++
 	c := fmt.Sprintf("code-%d", a.next)
 	a.codes[c] = &code{challenge: auth.Challenge, auth: auth}

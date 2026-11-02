@@ -74,7 +74,10 @@ ORDER BY id FOR UPDATE`, workspaceID, userID)
 // again for reason, as BreakConnectorAccounts does, only while the account
 // is live, not broken already, and its generation is still generation: a
 // sync that asked for a token before the connector was signed in again
-// can't break the account it reads with now. It reports whether it broke it.
+// can't break the account it reads with now. account_missing alone replaces
+// a reason recorded before, keeping when the account broke: only a new
+// account fixes a lost one, so signing in again must make one. It reports
+// whether it broke it.
 func (s *mysqlDB) BreakConnectorAccount(ctx context.Context, workspaceID, connectorID string, generation int, reason string) (bool, error) {
 	if !slices.Contains(model.ConnectorAccountReasons, reason) {
 		return false, fmt.Errorf("break connector account: %q is no reason", reason)
@@ -83,8 +86,9 @@ func (s *mysqlDB) BreakConnectorAccount(ctx context.Context, workspaceID, connec
 	err := s.inTx(ctx, func(tx *mysqlDB) error {
 		var locked string
 		err := tx.db.QueryRowContext(ctx, `SELECT id FROM connectors
-WHERE id=? AND workspace_id=? AND account_id IS NOT NULL AND account_generation=? AND account_broken IS NULL AND deleted_at IS NULL
-FOR UPDATE`, connectorID, workspaceID, generation).Scan(&locked)
+WHERE id=? AND workspace_id=? AND account_id IS NOT NULL AND account_generation=? AND deleted_at IS NULL
+  AND (account_broken IS NULL OR ? = 'account_missing' AND account_broken <> 'account_missing')
+FOR UPDATE`, connectorID, workspaceID, generation, reason).Scan(&locked)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -97,7 +101,8 @@ FOR UPDATE`, connectorID, workspaceID, generation).Scan(&locked)
 	return broke, err
 }
 
-// breakAccounts marks the connectors' accounts broken for reason, now, and
+// breakAccounts marks the connectors' accounts broken for reason (when they
+// weren't broken already, now), and
 // stops them syncing: none is scheduled, and each queued sync ends failed
 // without running. A running sync goes on, but schedules nothing when it
 // ends (FinishConnectorSync), and its next attempt is refused before it
@@ -107,7 +112,7 @@ func (s *mysqlDB) breakAccounts(ctx context.Context, ids []string, reason string
 		return nil
 	}
 	in, args := idPlaceholders(len(ids)), toAnySlice(ids)
-	if _, err := s.db.ExecContext(ctx, `UPDATE connectors SET account_broken=?, account_broken_at=NOW(6), next_sync_at=NULL
+	if _, err := s.db.ExecContext(ctx, `UPDATE connectors SET account_broken=?, account_broken_at=COALESCE(account_broken_at, NOW(6)), next_sync_at=NULL
 WHERE id IN (`+in+`)`, append([]any{reason}, args...)...); err != nil {
 		return fmt.Errorf("break connector accounts: %w", err)
 	}

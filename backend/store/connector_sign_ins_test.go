@@ -156,6 +156,31 @@ func TestConnectorAccounts(t *testing.T) {
 		assert.Equal(t, "access_revoked", *c.Account.Broken)
 	})
 
+	// Only a new account fixes one the broker lost: account_missing replaces
+	// a reason recorded before, keeping when the data froze.
+	t.Run("records a lost account over another reason", func(t *testing.T) {
+		ctx := context.Background()
+		db := newTestStore(t)
+		signedInConnector(t, db, ws, id26("ACC-LOST"), "acct-1", ada)
+		_, err := db.BreakConnectorAccount(ctx, ws, id26("ACC-LOST"), 1, "access_revoked")
+		require.NoError(t, err)
+		before, err := db.GetConnector(ctx, ws, id26("ACC-LOST"))
+		require.NoError(t, err)
+		for _, tc := range []struct {
+			generation int
+			reason     string
+			want       bool
+		}{{1, "expired", false}, {0, "account_missing", false}, {1, "account_missing", true}, {1, "account_missing", false}} {
+			broke, err := db.BreakConnectorAccount(ctx, ws, id26("ACC-LOST"), tc.generation, tc.reason)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, broke, "%s at %d", tc.reason, tc.generation)
+		}
+		c, err := db.GetConnector(ctx, ws, id26("ACC-LOST"))
+		require.NoError(t, err)
+		assert.Equal(t, "account_missing", *c.Account.Broken)
+		assert.Equal(t, *before.Account.BrokenAt, *c.Account.BrokenAt, "its data froze when it first broke")
+	})
+
 	// Nothing schedules a broken account: not the schedule, and not a sync
 	// that ends after the break, even one that succeeded.
 	t.Run("keeps a broken account unscheduled", func(t *testing.T) {
