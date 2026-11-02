@@ -15,6 +15,7 @@ import { promptDocuments, promptEventSource } from "./goal-prompt";
 import { isEventSourceSet } from "./model";
 import { onboardingPrompt, type OnboardingOntology } from "./onboarding-prompt";
 import { canManage } from "./parts";
+import { isSampleConnector, isSampleSet } from "./sample";
 
 // Set per stamp in next.config.ts.
 export const MCP_URL =
@@ -32,16 +33,20 @@ const WHAT =
  * sources, document sets (never an API source's own, which the WFE takes
  * only as the source's extraction pick) and the kinds not connected (never
  * API sources, which the prompt makes its own way), read with the Data
- * pages' queries. A sentence saying what it does and the button, for an
- * `.on-card` to lay out (Get started's); `compact`, the button alone, for a
- * panel's header.
+ * pages' queries. Of these the sample company's connector and set are left
+ * out, as the sample's data is no source of the user's own ontology, unless
+ * `keepSample`: the sample's own. A sentence saying what it does and the
+ * button, for an `.on-card` to lay out (Get started's); `compact`, the button
+ * alone, for a panel's header.
  */
 export function AgentSetup({
   ontology,
   compact = false,
+  keepSample = false,
 }: {
   ontology?: OnboardingOntology;
   compact?: boolean;
+  keepSample?: boolean;
 }) {
   // A local build has no Helix MCP: its workspace isn't in Helix Cloud.
   const { id, name, role, notify } = useWorkspace(),
@@ -51,7 +56,9 @@ export function AgentSetup({
     documents = useQuery({ ...documentQueries.workspace(id), enabled: manage }),
     kinds = useQuery({ ...connectorKindsQuery(id), enabled: manage });
   if (!manage) return null;
-  const list = connectors.data?.connectors || [];
+  const list = (connectors.data?.connectors || []).filter(
+    (c) => keepSample || !isSampleConnector(c),
+  );
   const copy = () =>
     navigator.clipboard
       .writeText(
@@ -73,7 +80,9 @@ export function AgentSetup({
             .filter((c) => isEventSource(c.kind))
             .map((c) => ({ id: c.id, ...promptEventSource(c) })),
           sets: setFolders(
-            (sets.data || []).filter((s) => !isEventSourceSet(s)),
+            (sets.data || []).filter(
+              (s) => !isEventSourceSet(s) && (keepSample || !isSampleSet(s)),
+            ),
             documents.data || [],
           ).map((f) => ({
             id: f.set.id,

@@ -52,7 +52,7 @@ import {
   type WizardStepId,
 } from "./model";
 import { Callout, FlowStep, canManage, type Arrival } from "./parts";
-import { SAMPLE } from "./sample";
+import { SAMPLE, isSampleConnector, isSampleSet } from "./sample";
 import { TrySample } from "./try-sample";
 import {
   createOntology,
@@ -68,9 +68,11 @@ import {
 // step: either will do, so someone with only documents generates from
 // them), a goal, then a review. Data is connected and documents uploaded in
 // place (./generate-parts.tsx, shared with Generate), so nobody leaves for
-// Data and comes back. The step is the URL's ?step= (none is the first), so
-// Back, Forward and a refresh keep it; the steps' checks, where Back and
-// Continue go and what each step chose are the model's (newOntologyWizard).
+// Data and comes back. The sample company's connector and set are no source
+// here, whatever the choices kept name: this ontology is the user's own. The
+// step is the URL's ?step= (none is the first), so Back, Forward and a refresh
+// keep it; the steps' checks, where Back and Continue go and what each step
+// chose are the model's (newOntologyWizard).
 //
 // The choices are kept in this tab (sessionStorage) until the ontology's
 // first generation starts, with one client token and what an earlier
@@ -283,8 +285,10 @@ export function NewOntologyPage() {
     facts = {
       databases: choices,
       projects: databases.data?.map((p) => p.project),
-      connectors: connectors.data?.connectors,
-      sets: sets.data,
+      connectors: connectors.data?.connectors?.filter(
+        (c) => !isSampleConnector(c),
+      ),
+      sets: sets.data?.filter((s) => !isSampleSet(s)),
       documents: documents.data,
     };
   const wizard = first

@@ -47,8 +47,8 @@ export type OnboardingWorkspace = {
   workspace: { id: string; name: string };
   // Null while the workspace has none: the setup starts by creating one.
   ontology: OnboardingOntology | null;
-  // Every connector, API source and document set of the workspace: the
-  // agent chooses.
+  // Every connector, API source and document set of the workspace (the
+  // sample company's aside, but in the sample's own setup): the agent chooses.
   connectors: readonly Omit<PromptConnector, "chosen">[];
   eventSources?: readonly Omit<PromptEventSource, "chosen">[];
   sets: readonly Omit<PromptSet, "chosen">[];
@@ -258,7 +258,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           : [
               `1. Choose what it reads, at most ${MAX_TABLES} tables in all, synced tables, API sources and table files together. It needs at least one source: a synced table, an API source whose table has rows or, for extraction, whose \`event_source.extraction.documents\` is above 0, a table file Helix has read, or a set holding Markdown, MDX, text or a PDF Helix has read.`,
               `   - \`document_set_ids\`: the sets whose documents serve the goal, at most ${MAX_GENERATION_SETS} with the API sources read by extraction. List each one: left out, it reads no documents.`,
-              `   - \`connector_ids\`: the connectors whose tables serve the goal. Left out, it’s every connector but the API sources (so only when they hold ${MAX_TABLES} tables or fewer).`,
+              "   - `connector_ids`: the connectors whose tables serve the goal. List each one: left out, it’s every connector but the API sources.",
               `   - \`event_sources\`: \`[{"connector_id": "<API source id>", "mode": "structured"}]\` for each API source that serves the goal, read through mappings, or \`"mode": "extraction"\` for one whose pieces carry text, read by entity extraction. Extraction reads the source’s newest 500 pieces as documents of its own set, one of the ${MAX_GENERATION_SETS} sets, which \`document_set_ids\` never names; it needs the source’s \`text_field\` and \`helix_foundry_list_connectors\` to show its \`event_source.extraction.documents\` above 0. Left out, it reads none; \`connector_ids\` never names one.`,
               '   - From documents or API sources alone, leave out `connector_ids` and send `"no_connectors": true`.',
               `2. \`generate_ontology\`, target ${target}, payload \`{"goal": "<the goal>", "connector_ids": ["<connector id>"], "event_sources": [{"connector_id": "<API source id>", "mode": "structured"}], "document_set_ids": ["<set id>"]}\`, or from documents alone \`{"goal": "<the goal>", "no_connectors": true, "document_set_ids": ["<set id>"]}\`, or from an API source alone \`{"goal": "<the goal>", "no_connectors": true, "event_sources": [{"connector_id": "<API source id>", "mode": "structured"}]}\`, or by extraction \`{"goal": "<the goal>", "no_connectors": true, "event_sources": [{"connector_id": "<API source id>", "mode": "extraction"}]}\`. Its result is the generation. It spends on models: say so when you tell me what will run, with what it reads.`,

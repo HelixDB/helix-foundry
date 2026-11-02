@@ -33,7 +33,9 @@ import {
 } from "./model";
 import { canManage } from "./parts";
 import { generateOntology, isLive, ontologyQueries } from "./queries";
+import { isSampleConnector, isSampleSet } from "./sample";
 import { ontologyName, useOntology } from "./scope";
+import { useSampleOntology } from "./use-sample-ontology";
 
 // /ontology/:ontologyId/generate: a new version of an ontology, drafted from
 // what it should serve and what it reads, in one step as the new-ontology
@@ -62,7 +64,9 @@ export function GeneratePage() {
     { id: o, ontology } = useOntology(),
     navigate = useNavigate(),
     qc = useQueryClient(),
-    [params] = useSearchParams();
+    [params] = useSearchParams(),
+    sample = useSampleOntology(),
+    keepSample = sample?.id === o;
   const connectors = useQuery(connectorsQuery(id)),
     generations = useQuery(ontologyQueries.generations(id, o)),
     sets = useQuery(documentSetQueries.list(id)),
@@ -71,11 +75,13 @@ export function GeneratePage() {
       ...ontologyQueries.version(id, o, ontology.currentVersionId || ""),
       enabled: !!ontology.currentVersionId,
     });
+  const setChoices = sets.data?.filter((s) => keepSample || !isSampleSet(s));
   // The chosen sets start as the prefill's, else the current version's,
   // once what they come from has loaded; null until then.
   const prefill = params.get("sets"),
     fromCurrent = prefill === null && !!ontology.currentVersionId;
-  const setsLoaded = !!sets.data && (!fromCurrent || !!current.data);
+  const setsLoaded =
+    !!sets.data && sample !== undefined && (!fromCurrent || !!current.data);
   const [chosenSets, setChosenSets] = useState<Set<string> | null>(null);
   useEffect(() => {
     if (setsLoaded && chosenSets === null)
@@ -84,7 +90,7 @@ export function GeneratePage() {
           startingSets(
             prefill,
             current.data?.version?.documentSetIds,
-            sets.data!,
+            setChoices!,
           ),
         ),
       );
@@ -136,8 +142,10 @@ export function GeneratePage() {
       setIds: chosenSets || new Set(),
     },
     {
-      connectors: connectors.data?.connectors,
-      sets: sets.data,
+      connectors: connectors.data?.connectors?.filter(
+        (c) => keepSample || !isSampleConnector(c),
+      ),
+      sets: setChoices,
       documents: documents.data,
     },
   );
@@ -201,6 +209,7 @@ export function GeneratePage() {
           chosen={chosen}
           chosenEvents={chosenEvents}
           chosenSets={chosenSets}
+          keepSample={keepSample}
         />
         <Section
           id="on-sources"
@@ -219,6 +228,7 @@ export function GeneratePage() {
                 ? { error: current.error, retry: () => void current.refetch() }
                 : null
             }
+            keepSample={keepSample}
           />
         </Section>
         <div className="on-generate-foot">

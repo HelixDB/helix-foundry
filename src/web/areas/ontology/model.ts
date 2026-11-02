@@ -2571,7 +2571,10 @@ export function setSourcesText(documents: readonly FoundryDocument[]) {
  * is ready, and said in a `note` once something is: a generation started
  * now leaves it out. None chosen of the connectors sends `noConnectors`.
  * `documents` are the uploads: a connector's set holds text only, counted
- * by the set.
+ * by the set. What `facts` lack counts as gone, whatever `draft` names:
+ * it is how an ontology of the user's own never sees the sample company's
+ * connector and set (isSampleConnector, isSampleSet), even as every synced
+ * connector or in a choice made earlier.
  *
  * API sources (kind events) are chosen in `eventSources` only, each with
  * its mode: every synced connector, and `connectorIds`, leave them out, and
@@ -2628,7 +2631,7 @@ export function generationSources(
       (s) => draft.setIds.has(s.id) && !isEventSourceSet(s),
     ),
     uploads = documentSources(
-      (facts.documents || []).filter((d) => draft.setIds.has(d.setId || "")),
+      (facts.documents || []).filter((d) => sets.some((s) => s.id === d.setId)),
     ),
     docs = {
       ...uploads,

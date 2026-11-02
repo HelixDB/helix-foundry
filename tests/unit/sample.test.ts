@@ -1,9 +1,15 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Connector, FoundryDocumentSet } from "@/shared/wfe";
 import { fileProblem } from "@/web/areas/documents/model";
-import { MAX_GOAL, MAX_TABLES } from "@/web/areas/ontology/model";
-import { SAMPLE, sampleInView } from "@/web/areas/ontology/sample";
+import {
+  MAX_GOAL,
+  MAX_TABLES,
+  firstOntologyWizard,
+  generationSources,
+} from "@/web/areas/ontology/model";
+import { SAMPLE, isSampleSet, sampleInView } from "@/web/areas/ontology/sample";
 import { readPdfText } from "../../mock/pdf-text";
 
 // The sample company the first ontology's wizard offers is what
@@ -297,5 +303,198 @@ describe("the sample company's database", () => {
     expect(await host({ NEXT_PUBLIC_APP_ENV: "dev" })).toMatch(
       /^helix-dev-sample\.[a-z0-9]+\.us-east-2\.rds\.amazonaws\.com$/,
     );
+  });
+});
+
+// Only the sample's own ontology draws on the sample's data. Each @example is
+// checked here.
+describe("the sample's sources", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+  // SAMPLE reads its host once, as a build fixes it.
+  const load = async (host: string) => {
+    vi.stubEnv("NEXT_PUBLIC_SAMPLE_DB_HOST", host);
+    vi.resetModules();
+    return import("@/web/areas/ontology/sample");
+  };
+  const postgres = {
+    host: "db.example",
+    port: 5432,
+    database: "acme",
+    user: "acme_reader",
+  };
+  const connector = (
+    name: string,
+    config: Connector["config"],
+    kind = "postgres",
+  ): Connector => ({
+    id: name,
+    kind,
+    name,
+    config,
+    tables: [{ name: "accounts" }],
+  });
+  const sampleDb = connector("Acme Corp", { postgres });
+
+  it("knows the connector by what it connects to, whatever it is called", async () => {
+    const { isSampleConnector } = await load("db.example");
+    expect(isSampleConnector(sampleDb)).toBe(true);
+    expect(isSampleConnector(connector("Renamed", { postgres }))).toBe(true);
+  });
+
+  it("leaves a look-alike as the user's own", async () => {
+    const { isSampleConnector } = await load("db.example");
+    for (const own of [
+      connector("Acme Corp", {
+        postgres: { ...postgres, host: "mine.example" },
+      }),
+      connector("Acme Corp", { postgres: { ...postgres, database: "mine" } }),
+      connector("Acme Corp", { postgres: { ...postgres, user: "me" } }),
+      // The same address on another engine, and a kind with no database.
+      connector("Acme Corp", { mysql: postgres }, "mysql"),
+      connector("Acme Corp", { stripe: { apiKey: "" } }, "stripe"),
+      connector("Acme Corp", null),
+      connector("Acme Corp", undefined),
+    ])
+      expect(isSampleConnector(own), JSON.stringify(own)).toBe(false);
+  });
+
+  it("finds no connector in a build with no sample database", async () => {
+    const { isSampleConnector } = await load("");
+    expect(isSampleConnector(sampleDb)).toBe(false);
+    expect(
+      isSampleConnector(
+        connector("Acme Corp", { postgres: { ...postgres, host: "" } }),
+      ),
+    ).toBe(false);
+  });
+
+  it("knows the set as the sample's page finds it", () => {
+    expect(isSampleSet({ id: "s1", name: SAMPLE.set.name })).toBe(true);
+    expect(isSampleSet({ id: "s2", name: "General" })).toBe(false);
+    expect(isSampleSet({ id: "s3" })).toBe(false);
+    // A connection's own set is the connection's, whatever it is called.
+    expect(
+      isSampleSet({
+        id: "s4",
+        name: SAMPLE.set.name,
+        connector: { connectorId: "c1" },
+      }),
+    ).toBe(false);
+  });
+
+  describe("taken out of what a draft is checked and sent from", () => {
+    const set: FoundryDocumentSet = { id: "sample", name: SAMPLE.set.name },
+      general: FoundryDocumentSet = { id: "general", name: "General" },
+      document = (id: string, setId: string) => ({
+        id,
+        setId,
+        mediaType: "text/markdown",
+        status: "uploaded" as const,
+      }),
+      documents = [document("d1", "sample"), document("d2", "general")];
+    const mine = {
+      ...connector("Acme Corp", {
+        postgres: { ...postgres, host: "mine.example" },
+      }),
+      id: "mine",
+    };
+    // What the wizard, Generate and the setup do with what the workspace holds.
+    const own = async (connectors: Connector[], sets: FoundryDocumentSet[]) => {
+      const { isSampleConnector } = await load("db.example");
+      return {
+        connectors: connectors.filter((c) => !isSampleConnector(c)),
+        sets: sets.filter((s) => !isSampleSet(s)),
+        documents,
+      };
+    };
+
+    it("sends no connector, never an empty list, for every synced one with only the sample's", async () => {
+      const { state, request } = generationSources(
+        { connectorIds: null, eventSources: new Map(), setIds: new Set() },
+        await own([sampleDb], [set]),
+      );
+      expect(request).toEqual({ noConnectors: true, documentSetIds: [] });
+      expect(state).toEqual({
+        kind: "blocked",
+        reason: "Connect your data or upload documents to continue.",
+      });
+    });
+
+    it("keeps a look-alike among every synced one", async () => {
+      const { request } = generationSources(
+        { connectorIds: null, eventSources: new Map(), setIds: new Set() },
+        await own([sampleDb, mine], [set]),
+      );
+      expect(request).toEqual({ connectorIds: [mine.id], documentSetIds: [] });
+    });
+
+    it("counts a choice made earlier that names them as gone, with the set's documents", async () => {
+      const { state, request } = generationSources(
+        {
+          connectorIds: new Set([sampleDb.id]),
+          eventSources: new Map(),
+          setIds: new Set([set.id]),
+        },
+        await own([sampleDb], [set]),
+      );
+      expect(request).toEqual({ noConnectors: true, documentSetIds: [] });
+      expect(state.kind).toBe("blocked");
+    });
+
+    it("leaves the sets chosen beside them", async () => {
+      const { state, request } = generationSources(
+        {
+          connectorIds: null,
+          eventSources: new Map(),
+          setIds: new Set([set.id, general.id]),
+        },
+        await own([sampleDb], [set, general]),
+      );
+      expect(request).toEqual({
+        noConnectors: true,
+        documentSetIds: [general.id],
+      });
+      expect(state).toEqual({
+        kind: "ready",
+        summary: "General: 1 document",
+      });
+    });
+
+    it("names a first ontology from what is left", async () => {
+      const wizard = firstOntologyWizard(
+        {
+          connectorIds: null,
+          eventSources: new Map(),
+          setIds: new Set([set.id, general.id]),
+          goal: "",
+        },
+        { projects: [], ...(await own([sampleDb], [set, general])) },
+        "Mine",
+        "review",
+      );
+      expect(wizard.request?.name).toBe("General");
+      expect(wizard.request?.generate).toEqual({
+        noConnectors: true,
+        documentSetIds: [general.id],
+      });
+    });
+
+    it("stays for the sample's own ontology, which reads them all", () => {
+      const { request } = generationSources(
+        {
+          connectorIds: null,
+          eventSources: new Map(),
+          setIds: new Set([set.id]),
+        },
+        { connectors: [sampleDb], sets: [set, general], documents },
+      );
+      expect(request).toEqual({
+        connectorIds: [sampleDb.id],
+        documentSetIds: [set.id],
+      });
+    });
   });
 });

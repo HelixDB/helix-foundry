@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   useQuery,
   useQueryClient,
@@ -50,7 +50,7 @@ import {
   questionQueries,
   setCurrentVersion,
 } from "./queries";
-import { SAMPLE, sampleDatabaseConfig } from "./sample";
+import { SAMPLE, isSampleSet, sampleDatabaseConfig } from "./sample";
 import { InOntology } from "./scope";
 import { OntologySchema } from "./suggested-ontology";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -98,8 +98,7 @@ export async function addSampleFiles(
     staleTime: 0,
   });
   const set =
-    sets.find((s) => !s.connector && s.name === SAMPLE.set.name) ??
-    (await createDocumentSet(ws, SAMPLE.set)).set;
+    sets.find(isSampleSet) ?? (await createDocumentSet(ws, SAMPLE.set)).set;
   let done = 0;
   const ends = await Promise.all(
     names.map(async (name) => {
@@ -474,6 +473,35 @@ export function SampleTour() {
   useEffect(() => {
     if (answered) trackEvent("sample_answered");
   }, [answered]);
+  // The banner's link opens this page on its last step. What sits above that
+  // arrives when it arrives (the steps as the walk reads them, then an answer's
+  // charts and names, read once near the view), so the page stays on it until
+  // the reader moves: a click, a key or scrolling up, as a resting finger on a
+  // trackpad sends tiny wheel events.
+  const toOwnData = useLocation().hash === "#own-data";
+  useEffect(() => {
+    if (!toOwnData) return;
+    const growing = new ResizeObserver(() =>
+      document.getElementById("own-data")?.scrollIntoView({ block: "end" }),
+    );
+    growing.observe(document.body);
+    const moved = new AbortController(),
+      { signal } = moved;
+    const stop = () => {
+      growing.disconnect();
+      moved.abort();
+    };
+    window.addEventListener(
+      "wheel",
+      (e) => {
+        if (e.deltaY < -4) stop();
+      },
+      { signal },
+    );
+    for (const input of ["pointerdown", "keydown"])
+      window.addEventListener(input, stop, { signal });
+    return stop;
+  }, [toOwnData]);
   // What the load made of each document: read, or failed and why.
   const extractions = (
     useQuery({ ...documentQueries.list(id, o), enabled: loaded }).data
@@ -719,6 +747,7 @@ export function SampleTour() {
           </span>
         </FlowStep>
         <FlowStep
+          id="own-data"
           number={6}
           title="Now connect your own data"
           text="Your databases, apps and documents, made into an ontology the same way."

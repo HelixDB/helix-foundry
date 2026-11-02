@@ -238,7 +238,8 @@ test("walks a new install through the sample company, from its database to Ask",
   ).toBeVisible();
 
   // Acme Corp's database is a connection in Data, like any other, and every
-  // page says this is the sample, with the way back to its page.
+  // page says this is the sample, with the way on to its last step once the
+  // question this test left behind has ended.
   await page.goto("/data");
   await expect(
     page.getByText("Acme Corp", { exact: true }).first(),
@@ -246,8 +247,8 @@ test("walks a new install through the sample company, from its database to Ask",
   await expect(
     page
       .getByRole("region", { name: "Sample data" })
-      .getByRole("link", { name: "Back to getting started" }),
-  ).toHaveAttribute("href", "/ontology/sample");
+      .getByRole("link", { name: "Get started with your own data" }),
+  ).toHaveAttribute("href", "/ontology/sample#own-data", { timeout: 60_000 });
   expect(await page.locator("script[data-databuddy-injected]").count()).toBe(0);
   expect(tracked).toEqual([]);
 });

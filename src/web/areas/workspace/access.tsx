@@ -633,6 +633,7 @@ function AgentsPanel({ data }: { data: AccessData }) {
                   <>
                     <Button
                       size="sm"
+                      data-track="access-sources"
                       aria-label={`Sources for ${k.name || k.id}`}
                       onClick={() => setEditing(k)}
                     >
@@ -733,6 +734,7 @@ function RestrictSwitch({
       <input
         type="checkbox"
         role="switch"
+        data-track="access-restrict"
         aria-label={`Restrict ${name}`}
         aria-description={can.ok ? undefined : can.why}
         checked={shown}
@@ -817,6 +819,7 @@ function PeoplePanel({ data }: { data: AccessData }) {
                         <RestrictSwitch member={m} restricted={isRestricted} />
                         <Button
                           size="sm"
+                          data-track="access-sources"
                           aria-label={`Sources for ${nameOf(m)}`}
                           onClick={() => setEditing(m)}
                         >
@@ -1009,6 +1012,7 @@ function TeamsPanel({ data }: { data: AccessData }) {
                     <>
                       <Button
                         size="sm"
+                        data-track="access-sources"
                         aria-label={`Sources for ${t.name}`}
                         onClick={() => setEditing(t)}
                       >

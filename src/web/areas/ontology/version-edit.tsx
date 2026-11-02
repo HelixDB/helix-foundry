@@ -61,7 +61,9 @@ import {
   reviseOntologyVersion,
   setCurrentVersion,
 } from "./queries";
+import { isSampleSet } from "./sample";
 import { useOntology } from "./scope";
+import { useSampleOntology } from "./use-sample-ontology";
 import { documentSetQueries } from "../documents/documents-api";
 import { useAccessCheck } from "../workspace/access-guard";
 
@@ -171,7 +173,8 @@ export function AgentEdit({
   setTryBase: Dispatch<SetStateAction<TryBase | null>>;
 }) {
   const { id: ws, role } = useWorkspace(),
-    { id: o } = useOntology();
+    { id: o } = useOntology(),
+    keepSample = useSampleOntology()?.id === o;
   const qc = useQueryClient();
   // The Types tab's Edit enrichment opens a type: ?item=type.Person.
   const [params] = useSearchParams();
@@ -339,8 +342,15 @@ export function AgentEdit({
             selected={selected}
             items={items}
             edits={edits}
+            // A route names a set its version then reads: the sample
+            // company's only in the sample's own ontology.
             sets={
-              sets.data && new Map(sets.data.map((x) => [x.id, x.name || ""]))
+              sets.data &&
+              new Map(
+                sets.data
+                  .filter((x) => keepSample || !isSampleSet(x))
+                  .map((x) => [x.id, x.name || ""]),
+              )
             }
             onDirty={() => {
               setDirty(true);
