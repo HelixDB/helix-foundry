@@ -246,6 +246,20 @@ func (s *signInStore) ConnectConnectorSignIn(ctx context.Context, c foundrymodel
 
 func (s *signInStore) MarkConnectorAccountChecked(context.Context, string, string) error { return nil }
 
+// BreakConnectorAccount breaks as the MySQL store does: only at generation,
+// and over a recorded reason only for account_missing.
+func (s *signInStore) BreakConnectorAccount(_ context.Context, _, connectorID string, generation int, reason string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.rows[connectorID]
+	if c == nil || c.Account == nil || c.Account.Generation != generation ||
+		c.Account.Broken != nil && (reason != ports.AccountAccountMissing || *c.Account.Broken == reason) {
+		return false, nil
+	}
+	c.Account.Broken = &reason
+	return true, nil
+}
+
 func (s *signInStore) ListConnectors(_ context.Context, workspaceID string) ([]*foundrymodel.Connector, error) {
 	var out []*foundrymodel.Connector
 	for _, c := range s.rows {
@@ -701,6 +715,35 @@ func TestConnectorSignIns(t *testing.T) {
 		if !done.GetIdentityChanged() || c.Account.UserID != "user-2" || c.Account.Label != "Grace Hopper in Acme" || c.Account.Generation != 3 ||
 			c.Account.ID == account || !slices.Equal(f.store.purged, []string{account}) || f.broker.Finishes()[2].AccountID != "" {
 			t.Fatalf("done = %v, account = %+v, purged %v", done, c.Account, f.store.purged)
+		}
+	})
+
+	// An account the broker lost can't be reauthorized: the connector's
+	// record says so, and its member makes a new account instead.
+	t.Run("makes a new account where the broker lost it", func(t *testing.T) {
+		f := newSignInFixture(t)
+		first := f.connect(t, "user-1", linearSignIn())
+		c := f.store.rows[first.GetConnectorId()]
+		revoked := ports.AccountAccessRevoked
+		c.Account.Broken = &revoked
+		lost := c.Account.ID
+		f.broker.Delete(context.Background(), ports.AccountRef{AccountID: lost}) //nolint:errcheck // removed by hand in WorkOS
+		ctx := as("user-1")
+		si := f.start(t, ctx, &foundryv1.StartConnectorSignInRequest{Kind: "linear", ConnectorId: c.ID})
+		if url := f.authorize(t, ctx, si.GetId()); !strings.HasPrefix(url, "https://provider.test/authorize") {
+			t.Fatalf("url = %q", url)
+		}
+		auths := f.broker.Authorizations()
+		if f.broker.Calls("Authorize") != 3 || auths[len(auths)-1].AccountID != "" {
+			t.Fatalf("authorize calls = %d, last = %+v: want a reauthorization, then a new account", f.broker.Calls("Authorize"), auths[len(auths)-1])
+		}
+		if broken := f.store.rows[c.ID].Account.Broken; broken == nil || *broken != ports.AccountAccountMissing {
+			t.Fatalf("broken = %v, want account_missing", broken)
+		}
+		done := f.finish(t, ctx, si.GetId(), f.broker.Code(len(auths)-1), "")
+		if account := f.store.rows[c.ID].Account; statusOf(done) != foundryv1.ConnectorSignInStatus_CONNECTOR_SIGN_IN_STATUS_CONNECTED ||
+			account.ID == lost || account.Broken != nil {
+			t.Fatalf("done = %v, account = %+v", done, account)
 		}
 	})
 
