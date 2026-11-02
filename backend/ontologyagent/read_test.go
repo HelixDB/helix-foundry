@@ -394,3 +394,21 @@ func TestParseReadView(t *testing.T) {
 		}
 	}
 }
+
+// A read refused for what a reader sees only some of is an answer, not a broken
+// result, and a view read is answered by a view.
+func TestCheckReadResultOfPart(t *testing.T) {
+	reads, err := ParseReads(`[{"query":{"start":{"type":"A"},"return":{"count":{}}}},{"view":{}}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"as_of":"2026-10-30","stats":{"instances":0,"wall_ms":1},"results":[
+		{"error":{"code":"not_visible","message":"/start/type: A is only partly held","pointer":"/start/type"}},
+		{"ok":{"kind":"view","ontology_toml":"o","mappings_toml":"m","partial":["A"]}}]}`
+	if err := contracttest.Validate(t, contracttest.Schema(t, "read_result.json"), []byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckReadResult([]byte(raw), reads); err != nil {
+		t.Fatal(err)
+	}
+}

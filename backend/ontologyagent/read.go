@@ -248,7 +248,7 @@ type ReadFailure struct {
 // readFailureCodes are the codes a whole read may fail with, and
 // partFailureCodes those part of an entity read may (PartFailure).
 var (
-	readFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadTooBroad, ReadUnknownEntity, ReadInvalid}
+	readFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadTooBroad, ReadUnknownEntity, ReadInvalid, ReadNotVisible}
 	partFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadInvalid}
 )
 
@@ -283,7 +283,7 @@ func decodeReadFailure(data json.RawMessage, codes []ReadErrorCode) (ReadFailure
 			return ReadFailure{}, fmt.Errorf("too_broad error lacks its limit or count")
 		}
 		f.Limit, f.Count = *raw.Limit, *raw.Count
-	case ReadInvalid:
+	case ReadInvalid, ReadNotVisible:
 		f.Pointer = raw.Pointer
 	}
 	return f, nil
