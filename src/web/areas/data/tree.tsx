@@ -286,7 +286,7 @@ export function DataTree({
           {dragged && (
             <div className="dt-drag">
               {dragged.type === "connector" ? (
-                <SourceLogo source={dragged.kind} size={16} />
+                <SourceLogo source={dragged.kind} size={20} />
               ) : dragged.type === "document" ? (
                 <FileText size={15} className="dt-icon" aria-hidden />
               ) : (
@@ -517,7 +517,7 @@ function ConnectorItem({
         ) : (
           <span className="dt-twist" aria-hidden />
         )}
-        <SourceLogo source={c.kind} size={16} />
+        <SourceLogo source={c.kind} size={20} />
         <InlineName
           name={name}
           to={paths.connection(c.id)}
