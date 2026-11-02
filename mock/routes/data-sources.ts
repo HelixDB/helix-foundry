@@ -80,7 +80,16 @@ export type Source = {
   secret: string;
   // Never from settings: the S3 kind derives its external ID from it.
   workspaceId: string;
+  // Connected by signing in at the provider (GitHub, Linear): it reads with
+  // a token the broker vends for each use, never stored, so `secret` is
+  // empty and no key format is checked.
+  signIn?: boolean;
 };
+
+// Helix Foundry's GitHub App (the dev stamp's), which a signed-in GitHub
+// connector reads private repositories through, where it is installed.
+export const GITHUB_APP_INSTALL_URL =
+  "https://github.com/apps/helix-foundry-dev/installations/new";
 
 /** Why a source was refused: a setting to fix, or the source saying no. */
 export type Refusal = { code: "INVALID_ARGUMENT" | "FAILED_PRECONDITION" };
@@ -2318,6 +2327,8 @@ export function keyHint(key: string, prefixParts: number) {
 export function prepare(
   config: unknown,
   workspaceId: string,
+  // As a signed-in connector: GitHub and Linear without their credential.
+  signIn = false,
 ): Source | SourceError {
   const c = (config || {}) as Partial<Record<ConnectorKindName, any>>;
   const set = kinds.map((k) => k.name).filter((k) => c[k] !== undefined);
@@ -2385,9 +2396,10 @@ export function prepare(
       };
     }
     case "github": {
-      const token = String(raw.token || "").trim(),
+      const token = signIn ? "" : String(raw.token || "").trim(),
         g = raw as GitHubConnectorConfig;
       if (
+        !signIn &&
         !/^(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})$/.test(
           token,
         )
@@ -2414,9 +2426,18 @@ export function prepare(
         },
         secret: token,
         workspaceId,
+        ...(signIn ? { signIn } : {}),
       };
     }
     case "linear": {
+      if (signIn)
+        return {
+          kind,
+          settings: { linear: {} },
+          secret: "",
+          workspaceId,
+          signIn,
+        };
       const key = String(raw.apiKey || "").trim();
       if (!/^lin_api_[A-Za-z0-9]+$/.test(key))
         return invalid("enter a Linear personal API key (lin_api_…)");
@@ -2585,6 +2606,12 @@ export function discover(
     };
   if ("github" in s) {
     const missing = (s.github.repos || []).find((r) => /\/missing$/i.test(r));
+    // Signed in, it reads where Helix Foundry is installed: a repository it
+    // can't see is the app's install to make, not a credential to change.
+    if (missing && src.signIn)
+      return refused(
+        `Helix Foundry can't see ${missing}: install it on ${missing.split("/")[0]} (${GITHUB_APP_INSTALL_URL}), then Sync now`,
+      );
     if (missing)
       return invalid(
         `GitHub has no repository ${missing} that this token can read`,

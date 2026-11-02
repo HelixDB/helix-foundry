@@ -14,8 +14,9 @@ import {
 // Adding a route: add one line in your area's section, then the matching
 // mock route under mock/routes/. tests/papi-allowlist.test.ts fails if a line
 // is not in the WFE contract. Do not add routes the UI does not call, and
-// never add SSO management, role changes or member removal (they stay in the
-// dashboard).
+// never add sign-in, SSO management, role changes or member removal (they
+// stay in the dashboard). A connector's sign-in at its provider is not that
+// sign-in (see Data).
 
 export type PapiArea =
   | "auth"
@@ -151,6 +152,32 @@ export const papiRoutes = [
     area: "data",
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/foundry/connector-syncs/{id}",
+  },
+
+  // Data: connecting GitHub or Linear by signing in at the provider (start,
+  // read, the provider's page to authorize at, and finishing from
+  // /connect/callback). These sign a connector in to the user's account at
+  // that provider, through WorkOS Pipes: they aren't Helix's sign-in, which
+  // this file never allows.
+  {
+    area: "data",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/sign-ins",
+  },
+  {
+    area: "data",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}",
+  },
+  {
+    area: "data",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}:authorize",
+  },
+  {
+    area: "data",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}:finish",
   },
 
   // Data: an API source's send tokens (made and shown once here, listed,

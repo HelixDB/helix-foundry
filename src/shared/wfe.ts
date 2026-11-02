@@ -361,6 +361,12 @@ export type S3ConnectorSetup = {
   // This workspace's; required by the trust policy.
   externalId?: string;
 };
+/**
+ * v1GitHubConnectorSetup: Helix Foundry's GitHub App, which a signed-in
+ * GitHub connector reads private repositories through, where it is
+ * installed.
+ */
+export type GitHubConnectorSetup = { installUrl?: string };
 /** v1ConnectorKind: GET .../foundry/connector-kinds, in display order. */
 export type ConnectorKind = {
   kind: string;
@@ -370,6 +376,12 @@ export type ConnectorKind = {
   available?: boolean;
   // s3 only, and only where role access is configured (proto oneof setup).
   s3?: S3ConnectorSetup | null;
+  // github only, where it connects by signing in (the same oneof).
+  github?: GitHubConnectorSetup | null;
+  // True when the caller can connect the kind by signing in at its
+  // provider (StartConnectorSignIn) instead of entering a key: GitHub and
+  // Linear, hosted, for a member of the workspace's WorkOS organization.
+  signIn?: boolean;
 };
 /** helixwfev1ListConnectorKindsResponse */
 export type ListConnectorKindsResponse = { kinds?: ConnectorKind[] };
@@ -608,6 +620,44 @@ export type ConnectorSync = {
   nextAttemptAt?: string | null;
 };
 
+/** v1ConnectorAccountState */
+export type ConnectorAccountState =
+  | "CONNECTOR_ACCOUNT_STATE_UNSPECIFIED"
+  | "CONNECTOR_ACCOUNT_STATE_CONNECTED"
+  // It doesn't sync until an owner or admin signs it in again; its tables
+  // keep what the last sync read.
+  | "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN";
+/** v1ConnectorAccountBroken: why an account needs signing in again. */
+export type ConnectorAccountBroken =
+  | "CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED"
+  // The member it reads as left the workspace.
+  | "CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT"
+  // The provider rejected its access, or it was revoked there.
+  | "CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED"
+  // Its access lapsed and couldn't be renewed.
+  | "CONNECTOR_ACCOUNT_BROKEN_EXPIRED"
+  // The broker (hosted: WorkOS Pipes) no longer has the account.
+  | "CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING";
+/**
+ * v1ConnectorAccount: the provider account a connector connected by
+ * signing in reads with, in place of a stored key. The credential stays
+ * with the broker; the connector asks it for a token each time it reads.
+ */
+export type ConnectorAccount = {
+  // Who the provider says signed in: a GitHub login; a Linear user and
+  // workspace.
+  label?: string;
+  state?: ConnectorAccountState;
+  // Unspecified while connected.
+  broken?: ConnectorAccountBroken;
+  brokenAt?: string | null;
+  // The member whose access it reads with, and their name: "a former
+  // member" once they have left the workspace.
+  userId?: string;
+  connectedBy?: string;
+  connectedAt?: string | null;
+};
+
 /** v1Connector */
 export type Connector = {
   id: string;
@@ -626,6 +676,9 @@ export type Connector = {
   // When it syncs by itself; unset for an API source, which syncs as its
   // pieces arrive.
   schedule?: ConnectorSchedule | null;
+  // Set when it was connected by signing in at its provider; its
+  // `secretHint` is then empty.
+  account?: ConnectorAccount | null;
 };
 
 /**
@@ -642,8 +695,15 @@ export type ConnectorSchedule = {
   pausedReason?: string;
 };
 
-/** helixwfev1ListConnectorsResponse: GET .../foundry/connectors */
+/**
+ * helixwfev1ListConnectorsResponse: GET .../foundry/connectors. With
+ * `?needsSignIn=true` (ListConnectorsQuery), only the connectors whose
+ * account needs signing in again, without their tables or syncs: the cheap
+ * read the shell's notice of them makes.
+ */
 export type ListConnectorsResponse = { connectors?: Connector[] };
+/** ListConnectors' query parameters. */
+export type ListConnectorsQuery = { needsSignIn?: boolean };
 /**
  * helixwfev1ConnectorResponse: create, get and update. `discovery` is set
  * only when the call tested the credential.
@@ -736,6 +796,102 @@ export type ListFoundryEventBatchesResponse = {
   pendingPieces?: string;
   capacity?: EventSourceCapacity | null;
 };
+
+// Connecting GitHub or Linear by signing in at the provider (hosted: through
+// WorkOS Pipes) instead of entering a key: routes under
+// /v1/workspaces/{workspaceId}/foundry/sign-ins. A user, or their agent,
+// starts a sign-in with the connector's settings; that user authorizes it in
+// their browser, which the provider sends back to the site's
+// /connect/callback, which finishes it: the connector is made (or signed in
+// again) and its first sync scheduled. Only its starter may authorize or
+// finish it. No provider text is returned: failures are codes.
+
+/** v1ConnectorSignInStatus */
+export type ConnectorSignInStatus =
+  | "CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED"
+  // Started; its link not yet followed.
+  | "CONNECTOR_SIGN_IN_STATUS_PENDING"
+  // Sent to the provider to authorize.
+  | "CONNECTOR_SIGN_IN_STATUS_AUTHORIZING"
+  // Its callback arrived and is being finished.
+  | "CONNECTOR_SIGN_IN_STATUS_FINISHING"
+  | "CONNECTOR_SIGN_IN_STATUS_CONNECTED"
+  // The user declined at the provider. Authorizing again retries it.
+  | "CONNECTOR_SIGN_IN_STATUS_DECLINED"
+  // See `failure`. Authorizing again retries it.
+  | "CONNECTOR_SIGN_IN_STATUS_FAILED"
+  // 15 minutes passed since it started or was last authorized.
+  | "CONNECTOR_SIGN_IN_STATUS_EXPIRED";
+/** v1ConnectorSignInFailure: why a sign-in failed, for the site to word. */
+export type ConnectorSignInFailure =
+  | "CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED"
+  // The provider or the broker answered with an error.
+  | "CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR"
+  // The callback's code had lapsed or was already used.
+  | "CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED"
+  // The account isn't this workspace's, or wasn't made by its starter.
+  | "CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE"
+  // The provider refused the token it issued.
+  | "CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED"
+  // The connector's settings were refused.
+  | "CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID"
+  // The broker couldn't be reached.
+  | "CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE";
+/** v1ConnectorSignIn */
+export type ConnectorSignIn = {
+  id: string;
+  kind?: string;
+  name?: string;
+  status?: ConnectorSignInStatus;
+  // Set with CONNECTOR_SIGN_IN_STATUS_FAILED.
+  failure?: ConnectorSignInFailure;
+  // The connector it made, or signs in again.
+  connectorId?: string;
+  // Set when the connector was made but can't read all it names, in
+  // Foundry's words: a repository the GitHub App can't see, say.
+  discoveryProblem?: string;
+  // Signing in again changed the provider account the connector reads with.
+  identityChanged?: boolean;
+  // The caller started it: only they can authorize and finish it.
+  mine?: boolean;
+  createdAt?: string | null;
+  expiresAt?: string | null;
+  // The connector's settings, chosen before signing in; never a credential.
+  config?: ConnectorConfig | null;
+};
+/**
+ * FoundryServiceStartConnectorSignInBody: POST .../foundry/sign-ins (owners
+ * and admins, for a kind with `signIn`). `config` holds the settings with
+ * every credential field empty; `connectorId` signs that connector in
+ * again instead of making one. The same `clientToken` returns the sign-in
+ * the first call started.
+ */
+export type StartConnectorSignInRequest = {
+  kind: string;
+  name?: string;
+  config?: ConnectorConfig;
+  connectorId?: string;
+  clientToken?: string;
+};
+/** v1ConnectorSignInResponse: start, get and finish. */
+export type ConnectorSignInResponse = { signIn: ConnectorSignIn };
+/**
+ * FoundryServiceAuthorizeConnectorSignInBody: POST .../sign-ins/{id}:authorize,
+ * by its starter, until it connects: again after a decline or a failure.
+ * `returnTo` is the site's callback, which the WFE must list.
+ */
+export type AuthorizeConnectorSignInRequest = { returnTo: string };
+/** v1AuthorizeConnectorSignInResponse: the provider's page to send the browser to. */
+export type AuthorizeConnectorSignInResponse = { url: string };
+/**
+ * FoundryServiceFinishConnectorSignInBody: POST .../sign-ins/{id}:finish,
+ * from the callback: its `connectCode`, or its `error` when it came back
+ * without one (access_denied: declined). A repeat returns the sign-in as it
+ * stands.
+ */
+export type FinishConnectorSignInRequest =
+  | { connectCode: string }
+  | { error: string };
 
 // ---------------------------------------------------------------- Ontology: versions and generations
 
