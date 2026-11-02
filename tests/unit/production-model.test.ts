@@ -87,11 +87,11 @@ describe("productionProgress", () => {
     expect(states(p)).toEqual(["done", "current"]);
   });
 
-  it("keeps a prompt copied before the ontology done", () => {
+  it("keeps the query to come until there's an ontology, even once copied", () => {
     const p = productionProgress(false, true);
-    expect(p.done).toBe(1);
+    expect(p.done).toBe(0);
     expect(p.current).toBe("ontology");
-    expect(states(p)).toEqual(["current", "done"]);
+    expect(states(p)).toEqual(["current", "upcoming"]);
   });
 
   it("has no current step once both are done", () => {

@@ -168,6 +168,10 @@ test("says it is sample data, and its link back to the tour shows every step don
   await expect(page).toHaveURL(/\/ask\/[^/]+$/);
   await expect(page.locator(".hf-strip")).toHaveCount(0);
   await expect(production).toContainText("0 of 2");
+  // The prompt waits for an ontology of the workspace's own.
+  await expect(
+    production.getByRole("button", { name: "Copy prompt" }),
+  ).toBeDisabled();
   await page.goto("/data");
   await back.click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);
