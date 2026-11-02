@@ -189,7 +189,7 @@ func (s *Service) GetConnector(ctx context.Context, req *foundryv1.GetConnectorR
 // A signed-in connector takes no credential: it is signed in again instead.
 // Its settings are tested with a token its broker vends, and it still seals
 // nothing, so the token is never stored. Only the member whose access it
-// reads with widens what it reads (ACCOUNT_OWNER_ONLY, widensReach); others
+// reads with widens what it reads (ACCOUNT_OWNER_ONLY, widening); others
 // may narrow it.
 func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConnectorRequest) (*foundryv1.ConnectorResponse, error) {
 	catalog, keyring, err := s.connectors(req.GetWorkspaceId())
@@ -329,9 +329,9 @@ func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConn
 
 // signedInSettings refuses what a signed-in connector's new settings may not
 // do: carry a credential, or, for anyone but the member whose access it
-// reads with, widen what it reads. That access may reach repositories other
-// companies installed Helix Foundry's GitHub App on, so another owner or
-// admin narrows it only.
+// reads with, widen what it reads (widening). That access may reach what
+// other companies let the member see, such as repositories they installed
+// Helix Foundry's GitHub App on, so another owner or admin narrows it only.
 func (s *Service) signedInSettings(ctx context.Context, kind connector.Kind, current *foundrymodel.Connector, src connector.Source) error {
 	if src.Secret != "" {
 		return status.Errorf(codes.FailedPrecondition, "%s signs in with %s: sign it in again instead of entering a key",
@@ -341,37 +341,52 @@ func (s *Service) signedInSettings(ctx context.Context, kind connector.Kind, cur
 	if err != nil {
 		return connectorError(ctx, err)
 	}
-	if actor(ctx).UserID != current.Account.UserID && widensReach(kind.Name(), current.Config, settings) {
-		return foundryPrecondition(current.WorkspaceID, "ACCOUNT_OWNER_ONLY", fmt.Sprintf(
-			"Only %s can add repositories, or read every one: %s reads with their %s access. You can narrow them",
-			s.connectedBy(ctx, current.Account), current.Name, kind.DisplayName()))
+	if widens := widening(kind.Name(), current.Config, settings); widens != "" && actor(ctx).UserID != current.Account.UserID {
+		msg := fmt.Sprintf("Only %s can %s: %s reads with their %s access", s.connectedBy(ctx, current.Account), widens, current.Name,
+			kind.DisplayName())
+		if kind.Name() == "github" {
+			msg += ". You can narrow them"
+		}
+		return foundryPrecondition(current.WorkspaceID, "ACCOUNT_OWNER_ONLY", msg)
 	}
 	return nil
 }
 
-// widensReach reports whether settings let a signed-in connector of kind read
-// more than current does: for GitHub, a repository current doesn't name, or
-// none named (every one it can reach) where current names some.
-func widensReach(kind string, current, settings json.RawMessage) bool {
-	if kind != "github" {
-		return false
-	}
-	var was, now connector.GitHubSettings
-	if json.Unmarshal(current, &was) != nil || json.Unmarshal(settings, &now) != nil {
-		return true
-	}
-	switch {
-	case len(now.Repos) == 0:
-		return len(was.Repos) > 0
-	case len(was.Repos) == 0:
-		return false
-	}
-	for _, repo := range now.Repos {
-		if !slices.ContainsFunc(was.Repos, func(w string) bool { return strings.EqualFold(w, repo) }) {
-			return true
+// widening says, in a refusal's words, how settings would let a signed-in
+// connector of kind read more than current does; "" when they don't:
+//   - GitHub: a repository current doesn't name, or none named (every one
+//     it can reach) where current names some;
+//   - PostHog: another project, or region, of what the member can see.
+//
+// Every other kind reads all its account can, whatever its settings.
+func widening(kind string, current, settings json.RawMessage) string {
+	switch kind {
+	case "github":
+		const widens = "add repositories, or read every one"
+		var was, now connector.GitHubSettings
+		if json.Unmarshal(current, &was) != nil || json.Unmarshal(settings, &now) != nil {
+			return widens
+		}
+		switch {
+		case len(now.Repos) == 0 && len(was.Repos) > 0:
+			return widens
+		case len(now.Repos) == 0, len(was.Repos) == 0:
+			return ""
+		}
+		for _, repo := range now.Repos {
+			if !slices.ContainsFunc(was.Repos, func(w string) bool { return strings.EqualFold(w, repo) }) {
+				return widens
+			}
+		}
+	case "posthog":
+		const widens = "change the PostHog project or region it reads"
+		var was, now connector.PostHogSettings
+		if json.Unmarshal(current, &was) != nil || json.Unmarshal(settings, &now) != nil || was.Region != now.Region ||
+			was.ProjectID != now.ProjectID {
+			return widens
 		}
 	}
-	return false
+	return ""
 }
 
 // sameJSON compares stored settings by value, since MySQL rewrites JSON on the way in.

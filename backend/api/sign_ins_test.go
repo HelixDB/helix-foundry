@@ -1002,10 +1002,121 @@ func TestSignInSettings(t *testing.T) {
 		Linear: &foundryv1.LinearConnectorConfig{}}}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("another kind's config = %v", err)
 	}
-	if widensReach("github", json.RawMessage(`{"repos":["a/b"]}`), json.RawMessage(`{"repos":["A/B"]}`)) ||
-		!widensReach("github", json.RawMessage(`{"repos":["a/b"]}`), json.RawMessage(`{}`)) ||
-		widensReach("github", json.RawMessage(`{}`), json.RawMessage(`{"repos":["a/b"]}`)) ||
-		widensReach("linear", json.RawMessage(`{}`), json.RawMessage(`{}`)) {
-		t.Fatal("widensReach")
+
+	// Every kind that signs in starts from its defaults, and refuses what a
+	// signed-in connector can't be: a credential, a self-hosted PostHog, a
+	// Google user to act as.
+	for _, kind := range []string{"github", "linear", "slack", "notion", "posthog", "calcom", "stripe", "google"} {
+		k, err := catalog.Kind(kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := signInSettings(context.Background(), catalog, k, nil); err != nil {
+			t.Errorf("%s defaults: %v", kind, err)
+		}
+	}
+	for name, cfg := range map[string]*foundryv1.ConnectorConfig{
+		"a Slack token": {Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{BotToken: "xoxb-1"}}},
+		"a self-hosted PostHog": {Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "custom",
+			Host: "https://posthog.acme.test"}}},
+		"a Google user to act as": {Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{Subject: "ada@acme.test"}}},
+	} {
+		kind, _, _, err := sourceFromProto(catalog, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := signInSettings(context.Background(), catalog, kind, cfg); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s = %v, want it refused", name, err)
+		}
+	}
+}
+
+// Every kind that signs in starts with no token yet, and the settings an
+// agent sends it (the MCP's defaults): Start checks them as Prepare does
+// and stores them; Stripe's mode waits for the vended key.
+func TestStartEveryKind(t *testing.T) {
+	f := newSignInFixture(t)
+	f.broker.Offered = []string{"github", "linear", "slack", "notion", "posthog", "calcom", "stripe", "google"}
+	for _, tc := range []struct {
+		kind   string
+		config *foundryv1.ConnectorConfig
+		stored string
+	}{
+		{"slack", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Slack{Slack: &foundryv1.SlackConnectorConfig{}}}, `{"history_days":90}`},
+		{"notion", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Notion{Notion: &foundryv1.NotionConnectorConfig{}}}, `{}`},
+		{"posthog", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{}}},
+			`{"region":"us","event_days":30}`},
+		{"posthog", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Posthog{Posthog: &foundryv1.PostHogConnectorConfig{Region: "eu",
+			ProjectId: "42"}}}, `{"region":"eu","project_id":"42","event_days":30}`},
+		{"calcom", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Calcom{Calcom: &foundryv1.CalcomConnectorConfig{}}}, `{}`},
+		{"stripe", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Stripe{Stripe: &foundryv1.StripeConnectorConfig{}}}, `{"mode":""}`},
+		{"google", &foundryv1.ConnectorConfig{Kind: &foundryv1.ConnectorConfig_Google{Google: &foundryv1.GoogleWorkspaceConnectorConfig{}}},
+			`{"subject":"","event_days":90}`},
+		{"slack", nil, `{"history_days":90}`},
+	} {
+		si := f.start(t, as("user-1"), &foundryv1.StartConnectorSignInRequest{Kind: tc.kind, Config: tc.config})
+		if stored := f.store.signIns[si.GetId()].Config; !jsonEqual(t, stored, tc.stored) || si.GetStatus() !=
+			foundryv1.ConnectorSignInStatus_CONNECTOR_SIGN_IN_STATUS_PENDING {
+			t.Errorf("%s: stored %s, status %v; want %s", tc.kind, stored, si.GetStatus(), tc.stored)
+		}
+		delete(f.store.signIns, si.GetId()) // within the caps
+	}
+}
+
+func jsonEqual(t *testing.T, got json.RawMessage, want string) bool {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal(got, &g); err != nil {
+		t.Fatalf("stored %s: %v", got, err)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprint(g) == fmt.Sprint(w)
+}
+
+// Only the member whose access a signed-in connector reads with widens what
+// it reads: GitHub's repositories, PostHog's project and region. Every other
+// kind reads all its account can, whatever its settings.
+func TestSignedInWidening(t *testing.T) {
+	for _, tc := range []struct {
+		kind, was, now string
+		widens         bool
+	}{
+		{"github", `{"repos":["a/b"]}`, `{"repos":["A/B"]}`, false},
+		{"github", `{"repos":["a/b"]}`, `{"repos":["a/b","a/c"]}`, true},
+		{"github", `{"repos":["a/b"]}`, `{}`, true},
+		{"github", `{}`, `{"repos":["a/b"]}`, false},
+		{"posthog", `{"region":"us","project_id":"1","event_days":30}`, `{"region":"us","project_id":"1","event_days":90}`, false},
+		{"posthog", `{"region":"us","project_id":"1"}`, `{"region":"us","project_id":"2"}`, true},
+		{"posthog", `{"region":"us","project_id":"1"}`, `{"region":"eu","project_id":"1"}`, true},
+		{"posthog", `{"region":"us","project_id":"1"}`, `{"region":"us"}`, true},
+		{"slack", `{"history_days":30}`, `{"history_days":365}`, false},
+		{"google", `{"event_days":30}`, `{"event_days":365}`, false},
+		{"linear", `{}`, `{}`, false},
+	} {
+		if got := widening(tc.kind, json.RawMessage(tc.was), json.RawMessage(tc.now)) != ""; got != tc.widens {
+			t.Errorf("%s %s → %s widens = %v", tc.kind, tc.was, tc.now, got)
+		}
+	}
+
+	s := &Service{deps: &runtimeDeps{People: people{}}}
+	kind, err := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{}, connector.S3Options{}, connector.EventsOptions{}).Kind("posthog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := &foundrymodel.Connector{WorkspaceID: "ws-1", Kind: "posthog", Name: "Product analytics",
+		Config:  json.RawMessage(`{"region":"us","project_id":"1","event_days":30}`),
+		Account: &foundrymodel.ConnectorAccount{ID: "acct-1", UserID: "user-1"}}
+	other := connector.Source{Settings: json.RawMessage(`{"region":"us","project_id":"2","event_days":30}`)}
+	err = s.signedInSettings(as("user-2"), kind, current, other)
+	if reasonOf(err) != "ACCOUNT_OWNER_ONLY" || !strings.Contains(status.Convert(err).Message(), "Only Ada Lovelace can change the PostHog project") {
+		t.Fatalf("another member's change of project = %v", err)
+	}
+	if err := s.signedInSettings(as("user-1"), kind, current, other); err != nil {
+		t.Fatalf("the account's member's change of project = %v", err)
+	}
+	if err := s.signedInSettings(as("user-2"), kind, current, connector.Source{Settings: json.RawMessage(`{"region":"us","project_id":"1","event_days":90}`)}); err != nil {
+		t.Fatalf("another member's change of event days = %v", err)
 	}
 }
