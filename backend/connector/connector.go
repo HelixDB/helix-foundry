@@ -29,6 +29,11 @@ type Source struct {
 	// Captures are the capture methods the workspace's plan allows. A kind
 	// with more than one way to follow a table takes the best one allowed.
 	Captures []Capture
+	// SignIn is set when Secret is a token the host's broker vended for a
+	// signed-in connector's account, not a key a person entered: Prepare
+	// skips the key's format checks (and takes no Secret at all, to check
+	// settings alone), and the kind sends it as the OAuth token it is.
+	SignIn bool
 }
 
 func (s Source) Allows(c Capture) bool { return slices.Contains(s.Captures, c) }
@@ -59,6 +64,15 @@ type Targeted interface {
 	// Target names where prepared settings send the credential; two settings
 	// with equal targets send it to the same server.
 	Target(settings json.RawMessage) (string, error)
+}
+
+// Identifier is a kind that says who its credential reads as, for a person
+// to recognise the account a signed-in connector reads with.
+type Identifier interface {
+	// Identity is the provider's name for the credential's identity: a
+	// GitHub login; a Linear user and their workspace. Its errors are the
+	// kind's, an *AuthError among them.
+	Identity(ctx context.Context, src Source) (string, error)
 }
 
 // SecretContext binds a sealed credential to its connector row, so a
@@ -186,6 +200,18 @@ func refused(err error, format string, args ...any) error {
 	return &RefusedError{Message: fmt.Sprintf(format, args...), Err: err}
 }
 
+// AuthError is the provider rejecting the credential itself, not one
+// request: GitHub's HTTP 401, Linear's AUTHENTICATION_ERROR. It rides in the
+// RefusedError that words it for a key, so a caller that doesn't look for it
+// reads a refusal; one that does (errors.As) asks a signed-in connector's
+// broker for a fresh token, or says to sign it in again.
+type AuthError struct {
+	// Provider is the kind's display name.
+	Provider string
+}
+
+func (e *AuthError) Error() string { return e.Provider + " rejected the credential" }
+
 // Endpoints are the SaaS API roots; tests point them at local servers.
 type Endpoints struct {
 	Stripe string
@@ -206,6 +232,10 @@ type Endpoints struct {
 	// S3 and STS replace AWS's own endpoints in tests; empty uses AWS's.
 	S3  string
 	STS string
+	// GitHubAppInstall is where a signed-in GitHub connector's messages send
+	// people to install Helix Foundry's GitHub App
+	// (foundry.connectors.github_app_install_url); empty names no link.
+	GitHubAppInstall string
 }
 
 func DefaultEndpoints() Endpoints {
@@ -242,7 +272,7 @@ func NewCatalog(endpoints Endpoints, guard Guard, s3 S3Options, pushed EventsOpt
 		&stripeKind{base: endpoints.Stripe, http: saas},
 		&workosKind{base: endpoints.WorkOS, http: saas},
 		&posthogKind{us: endpoints.PostHogUS, eu: endpoints.PostHogEU, http: guard.HTTPClient(), files: files},
-		&githubKind{base: endpoints.GitHub, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: withinHost}},
+		&githubKind{base: endpoints.GitHub, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: withinHost}, install: endpoints.GitHubAppInstall},
 		&linearKind{base: endpoints.Linear, http: saas},
 		&calcomKind{base: endpoints.Calcom, http: saas},
 		&granolaKind{base: endpoints.Granola, http: saas},
