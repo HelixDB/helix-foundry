@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/connector"
+	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -167,6 +172,293 @@ func TestSyncerSourceSnapshot(t *testing.T) {
 		}
 		if kind.opened != 0 || !slices.Equal(kind.synced, []string{"a"}) {
 			t.Fatalf("opened %d, read %v", kind.opened, kind.synced)
+		}
+	})
+}
+
+// The test PostgreSQL of compose.test.yaml (docker compose -f compose.test.yaml up -d --wait).
+const testPostgres = "postgres://helix:helix@127.0.0.1:5433/helix_connector_test?sslmode=disable"
+
+// postgresKind is the PostgreSQL kind under the test plans' name, fake,
+// running after once each table is read; fail fails a table's next read.
+type postgresKind struct {
+	connector.SnapshotKind
+	after func(table string)
+	fail  map[string]error
+	read  []string
+}
+
+func (k *postgresKind) Name() string { return "fake" }
+
+func (k *postgresKind) Sync(ctx context.Context, src connector.Source, table connector.Table, w connector.RowWriter) (connector.Table, error) {
+	k.read = append(k.read, table.Name)
+	if err := k.fail[table.Name]; err != nil {
+		delete(k.fail, table.Name)
+		return connector.Table{}, err
+	}
+	got, err := k.SnapshotKind.Sync(ctx, src, table, w)
+	if k.after != nil {
+		k.after(table.Name)
+	}
+	return got, err
+}
+
+// postgresCDCKind is postgresKind following its tables through the log.
+type postgresCDCKind struct {
+	*postgresKind
+	connector.ChangeReader
+	connector.Releaser
+}
+
+// postgresAdmin is a superuser connection to the test database.
+func postgresAdmin(t *testing.T) *pgx.Conn {
+	t.Helper()
+	conn, err := pgx.Connect(context.Background(), testPostgres)
+	if err != nil {
+		t.Fatalf("connect test postgres (are the test databases up? compose.test.yaml): %v", err)
+	}
+	t.Cleanup(func() { conn.Close(context.Background()) })
+	return conn
+}
+
+func postgresExec(t *testing.T, statements string) {
+	t.Helper()
+	if _, err := postgresAdmin(t).Exec(context.Background(), statements); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// postgresFixture is a connector on tables a and b of a schema of its own,
+// each at generation 1, read by a role of its own (grants, such as
+// REPLICATION), so its sessions are told apart from every other test's; kind
+// reads it. The returned func moves both tables a generation on in one
+// transaction.
+func postgresFixture(t *testing.T, code, grants string, settings map[string]any) (fixture, *postgresKind, string, func()) {
+	t.Helper()
+	name := fmt.Sprintf("syncer_test_%d", time.Now().UnixNano())
+	postgresExec(t, fmt.Sprintf(`CREATE SCHEMA %[1]s;
+CREATE TABLE %[1]s.a (id INT PRIMARY KEY, generation INT NOT NULL);
+CREATE TABLE %[1]s.b (id INT PRIMARY KEY, generation INT NOT NULL);
+INSERT INTO %[1]s.a VALUES (1, 1); INSERT INTO %[1]s.b VALUES (1, 1);
+CREATE ROLE %[1]s LOGIN %[2]s PASSWORD 'reader';
+GRANT USAGE ON SCHEMA %[1]s TO %[1]s; GRANT SELECT ON ALL TABLES IN SCHEMA %[1]s TO %[1]s;`, name, grants))
+	t.Cleanup(func() {
+		ctx := context.Background()
+		conn, err := pgx.Connect(ctx, testPostgres)
+		if err != nil {
+			return
+		}
+		defer conn.Close(ctx)
+		_, _ = conn.Exec(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1", name)
+		_, _ = conn.Exec(ctx, fmt.Sprintf("DROP SCHEMA %[1]s CASCADE; DROP OWNED BY %[1]s; DROP ROLE %[1]s", name))
+	})
+	config := map[string]any{"host": "127.0.0.1", "port": 5433, "database": "helix_connector_test", "user": name,
+		"schema": name, "disable_tls": true}
+	maps.Copy(config, settings)
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t, "http://unused", "fake", string(raw), plan{code: code})
+	c := f.store.connectors["conn-1"]
+	if c.SecretCiphertext, c.SecretKeyID, err = f.syncer.Keys.Seal([]byte("reader"), connector.SecretContext(c.ID)); err != nil {
+		t.Fatal(err)
+	}
+	pg, err := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{AllowPrivate: true}, connector.S3Options{},
+		connector.EventsOptions{}).Kind("postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind := &postgresKind{SnapshotKind: pg.(connector.SnapshotKind), fail: map[string]error{}}
+	f.syncer.Catalog = connector.NewCatalogOf(kind)
+	return f, kind, name, func() {
+		postgresExec(t, fmt.Sprintf("BEGIN; UPDATE %[1]s.a SET generation = generation + 1; UPDATE %[1]s.b SET generation = generation + 1; COMMIT;", name))
+	}
+}
+
+// postgresHolding is the pids of role's client sessions idle in a
+// transaction: a snapshot held open between reads.
+func postgresHolding(t *testing.T, role string) []int32 {
+	t.Helper()
+	rows, err := postgresAdmin(t).Query(context.Background(), `SELECT pid FROM pg_stat_activity
+WHERE usename = $1 AND backend_type = 'client backend' AND state LIKE 'idle in transaction%'`, role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pids, err := pgx.CollectRows(rows, pgx.RowTo[int32])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pids
+}
+
+// waitPostgresGone waits for role's client sessions to end: the server ends
+// a closed connection's backend a moment after the client goes.
+func waitPostgresGone(t *testing.T, role string) {
+	t.Helper()
+	conn := postgresAdmin(t)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		var open int
+		if err := conn.QueryRow(context.Background(), `SELECT count(*) FROM pg_stat_activity
+WHERE usename = $1 AND backend_type = 'client backend'`, role).Scan(&open); err != nil {
+			t.Fatal(err)
+		}
+		if open == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d sessions of %s are still open", open, role)
+		}
+	}
+}
+
+func TestSyncerPostgresSnapshot(t *testing.T) {
+	ctx := context.Background()
+	// The issue's interleaving, through the syncer: a commit between two
+	// tables' reads shows in both tables' snapshots or in neither.
+	t.Run("stores both tables at one moment though both change between their reads", func(t *testing.T) {
+		f, kind, role, next := postgresFixture(t, "free", "", nil)
+		var held []int32
+		kind.after = func(table string) {
+			if table == "a" {
+				held = postgresHolding(t, role)
+				next()
+			}
+		}
+		before := sourceSnapshotCount("one")
+		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
+			t.Fatal(err)
+		}
+		if len(held) != 1 {
+			t.Fatalf("sessions holding a snapshot during the read = %v, want one", held)
+		}
+		for _, table := range []string{"a", "b"} {
+			if got := f.snapshotRows(t, table); !slices.Equal(got, []string{`{"id":1,"generation":1}`}) {
+				t.Fatalf("%s = %v, want generation 1", table, got)
+			}
+		}
+		if got := sourceSnapshotCount("one") - before; got != 1 {
+			t.Fatalf("counted %v reads at one snapshot", got)
+		}
+		waitPostgresGone(t, role)
+	})
+	// The retry's snapshot is later than the first attempt's: a table that
+	// attempt stored is read again, or it would show the older moment.
+	t.Run("reads every table again on a retry", func(t *testing.T) {
+		f, kind, role, next := postgresFixture(t, "free", "", nil)
+		kind.fail["b"] = &connector.RefusedError{Message: "the database is restarting"}
+		if _, err := f.syncer.Run(ctx, f.sync); err == nil {
+			t.Fatal("the first attempt succeeded, want it to fail after storing a")
+		}
+		// The failed attempt let its snapshot go too.
+		waitPostgresGone(t, role)
+		next()
+		kind.read = nil
+		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(kind.read, []string{"a", "b"}) {
+			t.Fatalf("the retry read %v, want a and b", kind.read)
+		}
+		for _, table := range []string{"a", "b"} {
+			if got := f.snapshotRows(t, table); !slices.Equal(got, []string{`{"id":1,"generation":2}`}) {
+				t.Fatalf("%s = %v, want the retry's generation 2", table, got)
+			}
+		}
+		waitPostgresGone(t, role)
+	})
+	t.Run("lets the snapshot go when a read fails", func(t *testing.T) {
+		f, kind, role, _ := postgresFixture(t, "free", "", nil)
+		f.syncer.MaxRows = 0
+		var held []int32
+		kind.after = func(string) { held = postgresHolding(t, role) }
+		if _, err := f.syncer.Run(ctx, f.sync); err == nil || !strings.Contains(err.Error(), "more than 0 rows") {
+			t.Fatalf("Run error = %v, want table a over the row limit", err)
+		}
+		if len(held) != 1 {
+			t.Fatalf("sessions holding a snapshot during the read = %v, want one", held)
+		}
+		waitPostgresGone(t, role)
+	})
+	// A server that never saw the snapshot, or that ended its holder, refuses
+	// it: that table is read as it was before, and the sync says so.
+	t.Run("reads on when the server refuses a table the snapshot, and says so", func(t *testing.T) {
+		f, kind, role, next := postgresFixture(t, "free", "", nil)
+		kind.after = func(table string) {
+			if table != "a" {
+				return
+			}
+			for _, pid := range postgresHolding(t, role) {
+				postgresExec(t, fmt.Sprintf("SELECT pg_terminate_backend(%d)", pid))
+			}
+			waitPostgresGone(t, role)
+			next()
+		}
+		before := sourceSnapshotCount("apart")
+		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
+			t.Fatal(err)
+		}
+		if a, b := f.snapshotRows(t, "a"), f.snapshotRows(t, "b"); !slices.Equal(a, []string{`{"id":1,"generation":1}`}) ||
+			!slices.Equal(b, []string{`{"id":1,"generation":2}`}) {
+			t.Fatalf("a = %v, b = %v, want b read at a moment of its own", a, b)
+		}
+		if got := sourceSnapshotCount("apart") - before; got != 1 {
+			t.Fatalf("counted %v reads apart, want 1", got)
+		}
+		waitPostgresGone(t, role)
+	})
+	// CDC's full read keeps the slot's snapshot, which its stream starts
+	// from, and holds no other; the next sync reads the changes since.
+	t.Run("keeps the replication slot's snapshot with CDC", func(t *testing.T) {
+		publication := fmt.Sprintf("pub_%d", time.Now().UnixNano())
+		f, kind, role, next := postgresFixture(t, "max", "REPLICATION", map[string]any{
+			"cdc": map[string]any{"enabled": true, "publication": publication}})
+		postgresExec(t, fmt.Sprintf("CREATE PUBLICATION %s FOR TABLE %s.a, %s.b", publication, role, role))
+		t.Cleanup(func() {
+			admin := postgresAdmin(t)
+			_, _ = admin.Exec(context.Background(), "DROP PUBLICATION IF EXISTS "+publication)
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+				if _, err := admin.Exec(context.Background(), `SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots
+WHERE slot_name = 'helix_foundry_conn_1'`); err == nil {
+					return
+				}
+			}
+		})
+		pg := kind.SnapshotKind.(interface {
+			connector.ChangeReader
+			connector.Releaser
+		})
+		f.syncer.Catalog = connector.NewCatalogOf(&postgresCDCKind{postgresKind: kind, ChangeReader: pg, Releaser: pg})
+		var held []int32
+		kind.after = func(table string) {
+			if table == "a" {
+				held = postgresHolding(t, role)
+				next()
+			}
+		}
+		res, err := f.syncer.Run(ctx, f.sync)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Mode != model.ConnectorSyncFull || len(held) != 0 {
+			t.Fatalf("mode %s, sessions holding a snapshot = %v, want a full read at the slot's snapshot alone", res.Mode, held)
+		}
+		for _, table := range []string{"a", "b"} {
+			if got := f.snapshotRows(t, table); !slices.Equal(got, []string{`{"id":1,"generation":1}`}) {
+				t.Fatalf("%s = %v, want the slot's generation 1", table, got)
+			}
+		}
+		res, err = f.syncer.Run(ctx, newSync("sync-2"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Mode != model.ConnectorSyncChanges || !slices.Equal(slices.Sorted(slices.Values(res.Changed)), []string{"a", "b"}) {
+			t.Fatalf("second sync = %+v, want the change read of both", res)
+		}
+		for _, table := range []string{"a", "b"} {
+			if got := f.snapshotRows(t, table); !slices.Equal(got, []string{`{"id":1,"generation":2}`}) {
+				t.Fatalf("%s = %v, want the change read's generation 2", table, got)
+			}
 		}
 	})
 }
