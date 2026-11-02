@@ -72,6 +72,10 @@ type ReadStore interface {
 	// workspace's signed-in connectors, live or deleted but not yet purged:
 	// what a host deletes from its broker before DeleteWorkspaceConnectors.
 	ListConnectorAccounts(ctx context.Context, workspaceID string) ([]model.ConnectorAccountRef, error)
+	ListConnectorAccountChecks(ctx context.Context, before time.Time, limit int) ([]*model.Connector, error)
+	ListConnectorAccountPurges(ctx context.Context, limit int) ([]*model.ConnectorAccountPurge, error)
+	ConnectorAccountPurgeBacklog(ctx context.Context) (int, *time.Time, error)
+	GetConnectorSignIn(ctx context.Context, workspaceID, id string) (*model.ConnectorSignIn, error)
 	GetActiveConnectorSync(ctx context.Context, workspaceID, connectorID string) (*model.ConnectorSync, error)
 	GetConnectorSync(ctx context.Context, workspaceID, id string) (*model.ConnectorSync, error)
 	ListConnectorSyncs(ctx context.Context, workspaceID, connectorID string, limit int) ([]*model.ConnectorSync, error)
@@ -189,6 +193,20 @@ type Store interface {
 	// ports.Account* reason), and stops it syncing. Its host calls it in the
 	// transaction that removes the member.
 	BreakConnectorAccounts(ctx context.Context, workspaceID, userID, reason string) error
+	BreakConnectorAccount(ctx context.Context, workspaceID, connectorID string, generation int, reason string) (bool, error)
+	MarkConnectorAccountChecked(ctx context.Context, workspaceID, connectorID string) error
+	DeleteConnectorAccountPurge(ctx context.Context, id string) error
+	RetryConnectorAccountPurge(ctx context.Context, id, lastError string, after time.Duration) error
+	// Connector sign-ins (connector_sign_ins.go): started, authorized, then
+	// claimed by the one finish that ends them.
+	StartConnectorSignIn(ctx context.Context, start model.ConnectorSignInStart) (*model.ConnectorSignIn, error)
+	SetConnectorSignInVerifier(ctx context.Context, workspaceID, id string, ciphertext []byte, keyID string) error
+	AuthorizeConnectorSignIn(ctx context.Context, workspaceID, id string, ttl, stale time.Duration) error
+	ClaimConnectorSignIn(ctx context.Context, workspaceID, id string) error
+	SetConnectorSignInAccount(ctx context.Context, workspaceID, id, accountID string) error
+	FailConnectorSignIn(ctx context.Context, workspaceID, id string, end model.ConnectorSignInEnd) error
+	ConnectConnectorSignIn(ctx context.Context, c model.ConnectorSignInConnect) error
+	DeleteEndedConnectorSignIns(ctx context.Context, after time.Duration, limit int) (int, error)
 	EnqueueConnectorSync(ctx context.Context, sync *model.ConnectorSync) error
 	ClaimConnectorSync(ctx context.Context, workerID string, lease time.Duration) (*model.ConnectorSync, error)
 	RenewConnectorSyncLease(ctx context.Context, id, workerID string, lease time.Duration) error

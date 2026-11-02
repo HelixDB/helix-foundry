@@ -75,6 +75,70 @@ func (u Unimplemented) BreakConnectorAccounts(context.Context, string, string, s
 	u.unimplemented("BreakConnectorAccounts")
 	return nil
 }
+func (u Unimplemented) BreakConnectorAccount(context.Context, string, string, int, string) (bool, error) {
+	u.unimplemented("BreakConnectorAccount")
+	return false, nil
+}
+func (u Unimplemented) ListConnectorAccountChecks(context.Context, time.Time, int) ([]*model.Connector, error) {
+	u.unimplemented("ListConnectorAccountChecks")
+	return nil, nil
+}
+func (u Unimplemented) MarkConnectorAccountChecked(context.Context, string, string) error {
+	u.unimplemented("MarkConnectorAccountChecked")
+	return nil
+}
+func (u Unimplemented) ListConnectorAccountPurges(context.Context, int) ([]*model.ConnectorAccountPurge, error) {
+	u.unimplemented("ListConnectorAccountPurges")
+	return nil, nil
+}
+func (u Unimplemented) ConnectorAccountPurgeBacklog(context.Context) (int, *time.Time, error) {
+	u.unimplemented("ConnectorAccountPurgeBacklog")
+	return 0, nil, nil
+}
+func (u Unimplemented) DeleteConnectorAccountPurge(context.Context, string) error {
+	u.unimplemented("DeleteConnectorAccountPurge")
+	return nil
+}
+func (u Unimplemented) RetryConnectorAccountPurge(context.Context, string, string, time.Duration) error {
+	u.unimplemented("RetryConnectorAccountPurge")
+	return nil
+}
+func (u Unimplemented) GetConnectorSignIn(context.Context, string, string) (*model.ConnectorSignIn, error) {
+	u.unimplemented("GetConnectorSignIn")
+	return nil, nil
+}
+func (u Unimplemented) StartConnectorSignIn(context.Context, model.ConnectorSignInStart) (*model.ConnectorSignIn, error) {
+	u.unimplemented("StartConnectorSignIn")
+	return nil, nil
+}
+func (u Unimplemented) SetConnectorSignInVerifier(context.Context, string, string, []byte, string) error {
+	u.unimplemented("SetConnectorSignInVerifier")
+	return nil
+}
+func (u Unimplemented) AuthorizeConnectorSignIn(context.Context, string, string, time.Duration, time.Duration) error {
+	u.unimplemented("AuthorizeConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) ClaimConnectorSignIn(context.Context, string, string) error {
+	u.unimplemented("ClaimConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) SetConnectorSignInAccount(context.Context, string, string, string) error {
+	u.unimplemented("SetConnectorSignInAccount")
+	return nil
+}
+func (u Unimplemented) FailConnectorSignIn(context.Context, string, string, model.ConnectorSignInEnd) error {
+	u.unimplemented("FailConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) ConnectConnectorSignIn(context.Context, model.ConnectorSignInConnect) error {
+	u.unimplemented("ConnectConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) DeleteEndedConnectorSignIns(context.Context, time.Duration, int) (int, error) {
+	u.unimplemented("DeleteEndedConnectorSignIns")
+	return 0, nil
+}
 func (u Unimplemented) DeleteWorkspaceConnectors(context.Context, string) error {
 	u.unimplemented("DeleteWorkspaceConnectors")
 	return nil
