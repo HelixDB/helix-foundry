@@ -255,6 +255,25 @@ func TestConnectorAccounts(t *testing.T) {
 		assert.Equal(t, []string{"github/acct-1@" + ada, "github/acct-2@" + grace}, purges(t))
 	})
 
+	// An account two live connectors read with goes only with the last.
+	t.Run("purges a deleted connector's account only once nothing reads with it", func(t *testing.T) {
+		ctx := context.Background()
+		db := newTestStore(t)
+		createWorkspace(t, ws)
+		signedInConnector(t, db, ws, id26("ACC-SHARE1"), "acct-shared", ada)
+		signedInConnector(t, db, ws, id26("ACC-SHARE2"), "acct-shared", ada)
+		require.NoError(t, db.DeleteConnector(ctx, ws, id26("ACC-SHARE1")))
+		assert.Empty(t, purges(t), "the other connector still reads with it")
+		require.NoError(t, db.DeleteConnector(ctx, ws, id26("ACC-SHARE2")))
+		assert.Equal(t, []string{"github/acct-shared@" + ada}, purges(t))
+
+		signedInConnector(t, db, ws, id26("ACC-SHARE3"), "acct-both", ada)
+		signedInConnector(t, db, ws, id26("ACC-SHARE4"), "acct-both", ada)
+		require.NoError(t, db.DeleteWorkspaceConnectors(ctx, ws))
+		assert.Equal(t, []string{"github/acct-both@" + ada, "github/acct-shared@" + ada}, purges(t),
+			"a workspace's connectors let it go once all are deleted")
+	})
+
 	t.Run("works through purges with backoff", func(t *testing.T) {
 		ctx := context.Background()
 		db := newTestStore(t)

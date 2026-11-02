@@ -187,15 +187,23 @@ func (s *mysqlDB) DeleteWorkspaceConnectors(ctx context.Context, workspaceID str
 //     and its batches wait for the sync worker's purge of deleted sources
 //     (ListFoundryEventBatchPurges). No other kind has either;
 //   - a signed-in connector's account waits for the sync worker's purge,
-//     which deletes it from the broker (ListConnectorAccountPurges).
+//     which deletes it from the broker (ListConnectorAccountPurges), unless
+//     another live connector reads with it.
 func (s *mysqlDB) deleteConnector(ctx context.Context, workspaceID, id string) (tables, sets []string, err error) {
-	if _, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_connector_account_purges (id, workspace_id, kind, account_id, user_id)
-SELECT ?, workspace_id, kind, account_id, account_user_id FROM connectors WHERE id=? AND account_id IS NOT NULL`, newID(), id); err != nil {
-		return nil, nil, fmt.Errorf("purge connector %s account: %w", id, err)
+	var kind string
+	var accountID, accountUser sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT kind, account_id, account_user_id FROM connectors WHERE id=?`, id).Scan(
+		&kind, &accountID, &accountUser); err != nil {
+		return nil, nil, fmt.Errorf("read connector %s account: %w", id, err)
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE connectors SET deleted_at=NOW(6), updated_at=NOW(6), next_sync_at=NULL WHERE id=?`,
 		id); err != nil {
 		return nil, nil, fmt.Errorf("delete connector %s: %w", id, err)
+	}
+	if accountID.Valid {
+		if err := s.purgeUnusedAccount(ctx, workspaceID, kind, accountID.String, accountUser.String); err != nil {
+			return nil, nil, err
+		}
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_event_source_tokens SET revoked_at=NOW(6)
 WHERE connector_id=? AND workspace_id=? AND revoked_at IS NULL`, id, workspaceID); err != nil {
