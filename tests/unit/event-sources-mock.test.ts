@@ -683,7 +683,7 @@ describe("an API source in the Data routes", () => {
         displayName: "API source",
         requiresPro: false,
         available: true,
-        // Only GitHub and Linear connect by signing in.
+        // Only the kinds Pipes signs in to do.
         signIn: false,
       });
     const made = ok(

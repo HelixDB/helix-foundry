@@ -971,6 +971,59 @@ export function toConfig(
 }
 
 /**
+ * The settings a kind that signs in sends without its credential, to start
+ * a sign-in or to change a signed-in connector: what the provider's
+ * sign-in can't stand for. GitHub's repositories and review history,
+ * Slack's history, PostHog's project and event history (US Cloud only: EU
+ * Cloud and self-hosted keep their key), Google's event history (it reads as the
+ * person who signs in, with no service account or subject); nothing for
+ * Linear, Notion, Cal.com and Stripe. Undefined for a kind that can't.
+ *
+ * @example
+ * signInConfig({ kind: "slack", botToken: "", historyDays: "30" }); // { slack: { historyDays: 30 } }
+ */
+export function signInConfig(
+  form: ConnectionForm,
+): ConnectorConfig | undefined {
+  switch (form.kind) {
+    case "github":
+      return {
+        github: {
+          repos: githubRepos(form.repos),
+          reviewDays: Number(form.reviewDays) || 0,
+        },
+      };
+    case "slack":
+      return { slack: { historyDays: Number(form.historyDays) || 0 } };
+    case "posthog":
+      // Pipes' PostHog signs in to US Cloud only.
+      return form.region === "us"
+        ? {
+            posthog: {
+              region: "us",
+              ...(form.projectId.trim()
+                ? { projectId: form.projectId.trim() }
+                : {}),
+              eventDays: Number(form.eventDays) || 0,
+            },
+          }
+        : undefined;
+    case "google":
+      return { google: { eventDays: Number(form.eventDays) || 0 } };
+    case "linear":
+      return { linear: {} };
+    case "notion":
+      return { notion: {} };
+    case "calcom":
+      return { calcom: {} };
+    case "stripe":
+      return { stripe: {} };
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Whether the form holds a credential (an edit may leave it blank): an S3
  * role needs its ARN, an S3 key its secret.
  */

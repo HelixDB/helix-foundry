@@ -13,6 +13,7 @@ import {
   test,
   uploadCard,
   uploadInData,
+  chooseKeyForm,
 } from "./support/mock";
 
 // Documents in the Data explorer: sets as folders (new, renamed in place,
@@ -345,6 +346,7 @@ test("makes General for a workspace's first upload in the Data tree, after an on
   await page.getByRole("button", { name: "Add data" }).first().click();
   const connect = page.locator("dialog[open]");
   await connect.getByRole("button", { name: "Stripe", exact: true }).click();
+  await chooseKeyForm(connect);
   await connect
     .getByLabel("Restricted API key")
     .fill("sk_test_51E2eFirstOntology");

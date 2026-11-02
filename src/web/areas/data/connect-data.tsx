@@ -32,7 +32,7 @@ import { AgentSignIn, SignInReturn } from "./sign-in";
 // without it. A new connection opens its page, unless the caller takes it
 // (`onConnected`) to stay where it is.
 //
-// GitHub and Linear may connect by signing in at the provider (the kind's
+// A kind may connect by signing in at its provider (the kind's
 // `signIn`), a round trip that leaves the page: the callback comes back to
 // `returnPath` with `connected=<id>` (else the page's SignInReturn; a
 // caller that stays where it is gets its own page by default), else to the

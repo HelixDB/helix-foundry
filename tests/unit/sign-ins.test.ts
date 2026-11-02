@@ -18,8 +18,12 @@ import {
   readPicks,
   signInFailure,
   startAgainPath,
+  isSignInKind,
+  keyInstead,
+  providerName,
   widenRefusal,
   widensReach,
+  widensRepos,
   withConnected,
   writeConnect,
   type ConnectEntry,
@@ -383,15 +387,54 @@ describe("an account", () => {
   });
 });
 
-describe("widening a signed-in GitHub connector", () => {
-  it("is what the WFE's widensReach says: Ada left it blank, so Grace may restrict it to acme/api", () => {
-    expect(widensReach([], ["acme/api"])).toBe(false);
-    expect(widensReach([], [])).toBe(false);
+describe("widening a signed-in connector", () => {
+  it("is what the WFE's widensReach says of GitHub: Ada left it blank, so Grace may restrict it to acme/api", () => {
+    expect(widensRepos([], ["acme/api"])).toBe(false);
+    expect(widensRepos([], [])).toBe(false);
     // Back to every repository, or one not named before, widens it.
-    expect(widensReach(["acme/api"], [])).toBe(true);
-    expect(widensReach(["acme/api"], ["acme/api", "acme/web"])).toBe(true);
+    expect(widensRepos(["acme/api"], [])).toBe(true);
+    expect(widensRepos(["acme/api"], ["acme/api", "acme/web"])).toBe(true);
     // Fewer, or the same in another case, doesn't.
-    expect(widensReach(["acme/api", "acme/web"], ["ACME/API"])).toBe(false);
+    expect(widensRepos(["acme/api", "acme/web"], ["ACME/API"])).toBe(false);
+    expect(
+      widensReach(
+        { github: { repos: ["acme/api"] } },
+        { github: { repos: ["acme/api", "acme/web"] } },
+      ),
+    ).toBe(true);
+  });
+
+  it("is a PostHog project changed", () => {
+    const was = { posthog: { region: "us", projectId: "12345" } };
+    expect(
+      widensReach(was, { posthog: { region: "us", projectId: "12345" } }),
+    ).toBe(false);
+    expect(
+      widensReach(was, { posthog: { region: "us", projectId: "67890" } }),
+    ).toBe(true);
+    expect(widensReach(was, { posthog: { region: "us" } })).toBe(true);
+    // Its event history is anyone's.
+    expect(
+      widensReach(was, {
+        posthog: { region: "us", projectId: "12345", eventDays: 90 },
+      }),
+    ).toBe(false);
+  });
+
+  it("is never another kind's settings", () => {
+    expect(
+      widensReach(
+        { slack: { historyDays: 30 } },
+        { slack: { historyDays: 365 } },
+      ),
+    ).toBe(false);
+    expect(
+      widensReach(
+        { google: { eventDays: 30 } },
+        { google: { eventDays: 365 } },
+      ),
+    ).toBe(false);
+    expect(widensReach(null, { notion: {} })).toBe(false);
   });
 
   it("names who may, never as a former member", () => {
@@ -411,6 +454,50 @@ describe("widening a signed-in GitHub connector", () => {
     ).toBe(
       "Only the member who connected it, whose GitHub access it reads with, can add repositories or read every one. You can remove some.",
     );
+    expect(
+      widenRefusal({
+        kind: "posthog",
+        account: { connectedBy: "Ada Lovelace" },
+      }),
+    ).toBe(
+      "Only Ada Lovelace, whose PostHog access it reads with, can change its project.",
+    );
+  });
+});
+
+describe("the kinds that sign in", () => {
+  it("are every kind Pipes signs in to, each with its provider and its way back to a key", () => {
+    expect(
+      [
+        "github",
+        "linear",
+        "slack",
+        "notion",
+        "posthog",
+        "calcom",
+        "stripe",
+        "google",
+      ].map((k) => isSignInKind(k) && [providerName(k), keyInstead(k)]),
+    ).toEqual([
+      ["GitHub", "Use a personal access token instead"],
+      ["Linear", "Use a personal API key instead"],
+      ["Slack", "Use a bot token instead"],
+      ["Notion", "Use an integration secret instead"],
+      ["PostHog", "Use a personal API key instead"],
+      ["Cal.com", "Use an API key instead"],
+      ["Stripe", "Use a restricted key instead"],
+      ["Google", "Use a service account key instead"],
+    ]);
+    for (const k of [
+      "granola",
+      "workos",
+      "postgres",
+      "mysql",
+      "s3",
+      "events",
+      "constructor",
+    ])
+      expect(isSignInKind(k), k).toBe(false);
   });
 });
 

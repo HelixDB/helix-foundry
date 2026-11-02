@@ -1,13 +1,15 @@
 import type {
   Connector,
   ConnectorAccountBroken,
+  ConnectorConfig,
   ConnectorSignIn,
   FoundryEventSourceMode,
 } from "../../../shared/wfe";
 import { parseReturnPath } from "../../../shared/return-path";
 import { formatDate } from "../../kit/util";
 
-// Connecting GitHub or Linear by signing in at the provider: what this tab
+// Connecting a source by signing in at its provider: which kinds may, and
+// what each says in place of its credential; what this tab
 // keeps between the click and the provider's return, what the callback does
 // with its URL before any API call, where it returns once connected, and
 // the words for each outcome and for an account that needs signing in
@@ -24,13 +26,36 @@ export const CONNECT_KEY = "foundry.connect.v1";
 /** How long a connect code lasts after the provider's redirect. */
 export const CODE_LIFETIME_MS = 90_000;
 
-/** The providers that connect by signing in, by kind. */
-const PROVIDERS: Record<string, string> = {
-  github: "GitHub",
-  linear: "Linear",
-};
+/**
+ * The kinds that may connect by signing in (Pipes' OAuth), by the provider
+ * a user signs in at, and the way back to the kind's credential: its form
+ * as it is with a key. Which a workspace's user may is the kind's `signIn`;
+ * PostHog signs in to US Cloud only: EU Cloud and self-hosted keep a key.
+ */
+const SIGN_IN_KINDS = {
+  github: ["GitHub", "Use a personal access token instead"],
+  linear: ["Linear", "Use a personal API key instead"],
+  slack: ["Slack", "Use a bot token instead"],
+  notion: ["Notion", "Use an integration secret instead"],
+  posthog: ["PostHog", "Use a personal API key instead"],
+  calcom: ["Cal.com", "Use an API key instead"],
+  stripe: ["Stripe", "Use a restricted key instead"],
+  google: ["Google", "Use a service account key instead"],
+} as const;
+export type SignInKind = keyof typeof SIGN_IN_KINDS;
+
+/** Whether `kind` is one that may connect by signing in. */
+export const isSignInKind = (kind: string): kind is SignInKind =>
+  Object.hasOwn(SIGN_IN_KINDS, kind);
+
+/** Who a user signs in at to connect `kind`: "GitHub", "Google". */
 export const providerName = (kind: string) =>
-  PROVIDERS[kind] || kind.charAt(0).toUpperCase() + kind.slice(1);
+  isSignInKind(kind)
+    ? SIGN_IN_KINDS[kind][0]
+    : kind.charAt(0).toUpperCase() + kind.slice(1);
+
+/** The link back to `kind`'s credential form: "Use a bot token instead". */
+export const keyInstead = (kind: SignInKind) => SIGN_IN_KINDS[kind][1];
 
 /**
  * A page's own choices of what to draft from, kept in this tab's entry
@@ -389,17 +414,43 @@ export function accountLine(c: Pick<Connector, "kind" | "account">) {
  * where some were, or a repository not named before (case aside). From
  * every repository, any list narrows it.
  */
-export function widensReach(was: readonly string[], now: readonly string[]) {
+export function widensRepos(was: readonly string[], now: readonly string[]) {
   if (!now.length) return was.length > 0;
   if (!was.length) return false;
   return now.some((r) => !was.some((w) => w.toLowerCase() === r.toLowerCase()));
 }
 
+/**
+ * Whether a signed-in connector's settings `now` let it read more than
+ * `was` (both as stored) does, as the WFE's widensReach decides: GitHub's
+ * repositories (widensRepos); PostHog's project changed, which reads
+ * another project with the member's access (its region is US Cloud,
+ * fixed). No other kind's settings reach further.
+ */
+export function widensReach(
+  was: ConnectorConfig | null | undefined,
+  now: ConnectorConfig,
+) {
+  if ("github" in now)
+    return widensRepos(
+      (was && "github" in was && was.github.repos) || [],
+      now.github.repos || [],
+    );
+  if ("posthog" in now) {
+    const before = was && "posthog" in was ? was.posthog : {};
+    return (before.projectId || "") !== (now.posthog.projectId || "");
+  }
+  return false;
+}
+
 /** Why someone else may not widen a signed-in connector, as a sentence. */
 export function widenRefusal(c: Pick<Connector, "kind" | "account">) {
   const who =
-    memberName(c.account?.connectedBy) || "the member who connected it";
-  return `Only ${who}, whose ${providerName(c.kind)} access it reads with, can add repositories or read every one. You can remove some.`;
+      memberName(c.account?.connectedBy) || "the member who connected it",
+    provider = providerName(c.kind);
+  return c.kind === "posthog"
+    ? `Only ${who}, whose ${provider} access it reads with, can change its project.`
+    : `Only ${who}, whose ${provider} access it reads with, can add repositories or read every one. You can remove some.`;
 }
 
 /** Why an account needs signing in again, as a sentence. */

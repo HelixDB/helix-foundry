@@ -283,6 +283,14 @@ export async function loadContracts(page: Page) {
   ).toBeVisible({ timeout: 20_000 });
 }
 
+/**
+ * A kind that signs in opens its form on Connect with <provider>: its key's
+ * form is behind the kind's "Use … instead".
+ */
+export async function chooseKeyForm(form: Locator) {
+  await form.getByRole("button", { name: /^Use (a|an) .+ instead$/ }).click();
+}
+
 /** A CSRF token for the signed-in page's session. */
 export async function csrfToken(page: Page): Promise<string> {
   const res = await page.request.get("/papi/csrf");

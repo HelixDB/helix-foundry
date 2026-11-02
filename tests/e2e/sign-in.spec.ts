@@ -9,7 +9,7 @@ import {
   test,
 } from "./support/mock";
 
-// Connecting GitHub and Linear by signing in at the provider, through the
+// Connecting a source by signing in at its provider, through the
 // mock's consent page (/mock/connect, standing in for WorkOS Pipes and the
 // provider): from Data, from an agent's link (during onboarding too), its
 // retries and refusals, and a connector whose account breaks.
@@ -52,8 +52,8 @@ async function consent(
   return signInId;
 }
 
-/** Opens GitHub's form from Data's Add data. */
-async function openForm(page: Page, kind: "GitHub" | "Linear") {
+/** Opens a kind's form from Data's Add data. */
+async function openForm(page: Page, kind: string) {
   await page.goto("/data?add=1");
   await dialog(page).getByRole("button", { name: kind, exact: true }).click();
 }
@@ -591,6 +591,130 @@ test("comes back to an ontology's setup with what it chose", async ({
   ).toBeChecked(SYNCED);
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByLabel("Goal")).toHaveValue("Billing health");
+});
+
+test("connects Slack by signing in, keeping its history and refusing a user token", async ({
+  page,
+}) => {
+  await signIn(page);
+  await openForm(page, "Slack");
+  const form = dialog(page);
+  await expect(form.locator(".connection-guide")).toContainText(
+    "invite it to each channel to sync",
+  );
+  await expect(form.getByLabel("Bot token")).toHaveCount(0);
+  await form.getByLabel("Days of history").fill("30");
+  await form.getByRole("button", { name: "Connect with Slack" }).click();
+  // Signed in as a user token's account: refused, as a pasted one is.
+  await consent(page, "Authorize", "Ada (xoxp user token)");
+  await expect(
+    page.getByText("The connection’s settings were refused"),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Start again" }).click();
+  await expect(dialog(page)).toHaveAttribute("aria-label", "Slack");
+  await dialog(page).getByLabel("Days of history").fill("30");
+  await dialog(page)
+    .getByRole("button", { name: "Connect with Slack" })
+    .click();
+  await consent(page, "Authorize");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Slack" }),
+  ).toBeVisible();
+  const details = page.locator(".hf-kv");
+  await expect(details).toContainText(
+    "Reads with Ada Lovelace’s Slack access (Acme · @Helix Foundry)",
+  );
+  await expect(details).toContainText("30 days");
+  await expect(
+    page.locator(".hf-page-header").getByText("Synced", { exact: true }),
+  ).toBeVisible(SYNCED);
+});
+
+test("connects Notion by signing in, reading the pages chosen at Notion", async ({
+  page,
+}) => {
+  await signIn(page);
+  await openForm(page, "Notion");
+  const form = dialog(page);
+  await expect(form.locator(".connection-guide")).toContainText(
+    "At Notion’s screen, choose the pages and databases Helix Foundry may read",
+  );
+  await expect(form.getByLabel("Integration secret")).toHaveCount(0);
+  await expect(
+    form.getByRole("button", { name: "Use an integration secret instead" }),
+  ).toBeVisible();
+  await form.getByRole("button", { name: "Connect with Notion" }).click();
+  await consent(page, "Authorize");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Notion" }),
+  ).toBeVisible();
+  await expect(page.locator(".hf-kv")).toContainText(
+    "Reads with Ada Lovelace’s Notion access (Acme)",
+  );
+  await expect(
+    page.locator(".hf-page-header").getByText("Synced", { exact: true }),
+  ).toBeVisible(SYNCED);
+  // Its pages are documents of its own, as a key's are.
+  await expect(page.getByRole("list", { name: "Document sets" })).toContainText(
+    "Pages",
+  );
+});
+
+test("signs PostHog in on US Cloud only, and lets only its member change the project", async ({
+  page,
+  browser,
+}) => {
+  await signIn(page);
+  await openForm(page, "PostHog");
+  const form = dialog(page);
+  await expect(form.getByLabel("Personal API key")).toHaveCount(0);
+  // EU Cloud keeps its key: Pipes' PostHog signs in to US Cloud only.
+  await form.getByRole("combobox", { name: "Region" }).click();
+  await page.getByRole("option", { name: "EU Cloud" }).click();
+  await expect(form.getByLabel("Personal API key")).toBeVisible();
+  await expect(form).toContainText(
+    "EU Cloud and self-hosted PostHog connect with a personal API key: signing in reaches US Cloud only.",
+  );
+  await expect(
+    form.getByRole("button", { name: "Connect with PostHog" }),
+  ).toHaveCount(0);
+  await form.getByRole("combobox", { name: "Region" }).click();
+  await page.getByRole("option", { name: "US Cloud" }).click();
+  await form.getByLabel("Project ID (optional)").fill("12345");
+  await form.getByRole("button", { name: "Connect with PostHog" }).click();
+  await consent(page, "Authorize");
+  await expect(page).toHaveURL(/\/data\/connections\/conn_\w+$/);
+  const id = new URL(page.url()).pathname.split("/").pop()!;
+  await expect(
+    page.locator(".hf-page-header").getByText("Synced", { exact: true }),
+  ).toBeVisible(SYNCED);
+
+  await mock.configure({ alanRole: "WORKSPACE_ROLE_ADMIN" });
+  const alan = await as(browser, "alan@example.com");
+  await alan.goto(`/data/connections/${id}`);
+  await alan.getByRole("button", { name: "Connection actions" }).click();
+  await alan.getByRole("menuitem", { name: "Edit connection" }).click();
+  const edit = dialog(alan);
+  const project = edit.getByLabel("Project ID (optional)");
+  await expect(project).toHaveValue("12345");
+  // Signed in, its region is US Cloud's.
+  await expect(edit.getByRole("combobox", { name: "Region" })).toHaveCount(0);
+  await project.fill("67890");
+  await expect(edit.getByRole("alert")).toHaveText(
+    "Only Ada Lovelace, whose PostHog access it reads with, can change its project.",
+  );
+  await expect(
+    edit.getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
+  // Its event history is anyone's to change.
+  await project.fill("12345");
+  await edit.getByLabel("Event history (days)").fill("60");
+  await expect(edit.getByRole("alert")).toHaveCount(0);
+  const save = alan.waitForResponse(
+    (r) => r.request().method() === "PATCH" && r.url().includes(id),
+  );
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  expect((await save).status()).toBe(200);
 });
 
 test("offers no sign-in where the stamp doesn't", async ({ page }) => {

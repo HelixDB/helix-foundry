@@ -154,7 +154,7 @@ export const papiRoutes = [
     path: "/v1/workspaces/{workspaceId}/foundry/connector-syncs/{id}",
   },
 
-  // Data: connecting GitHub or Linear by signing in at the provider (start,
+  // Data: connecting a source by signing in at its provider (start,
   // read, the provider's page to authorize at, and finishing from
   // /connect/callback). These sign a connector in to the user's account at
   // that provider, through WorkOS Pipes: they aren't Helix's sign-in, which
