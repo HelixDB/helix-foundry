@@ -184,7 +184,76 @@ describe("starting a sign-in", () => {
 
   it("allows five live sign-ins a user", () => {
     for (let i = 0; i < 5; i++) started({ kind: "linear" });
-    expect(refusal(start({ kind: "linear" })).status).toBe(429);
+    expect(refusal(start({ kind: "linear" }))).toEqual({
+      status: 429,
+      message:
+        "too many sign-ins: at most 5 at once in a workspace, and 20 an hour",
+      reason: undefined,
+    });
+  });
+
+  it("allows a user 20 starts an hour across every workspace", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    db.workspaces.set("ws_globex", {
+      id: "ws_globex",
+      slug: "globex",
+      displayName: "Globex",
+      status: "RESOURCE_STATUS_ACTIVE",
+    });
+    db.memberships.push({
+      id: "mem_ada_globex",
+      workspaceId: "ws_globex",
+      userId: "usr_ada",
+      role: "WORKSPACE_ROLE_OWNER",
+      createdAt: "",
+    });
+    const startIn = (ws: string) =>
+      call("POST", `/v1/workspaces/${ws}/foundry/sign-ins`, { kind: "linear" });
+    // Five live in each workspace, twice, each five running out first.
+    for (let round = 0; round < 2; round++) {
+      for (let i = 0; i < 5; i++) {
+        ok(startIn(ACME));
+        ok(startIn("ws_globex"));
+      }
+      vi.setSystemTime(Date.now() + 16 * 60_000);
+    }
+    // None is live, but 20 started within the hour.
+    expect(refusal(startIn(ACME)).status).toBe(429);
+    vi.setSystemTime(Date.now() + 30 * 60_000);
+    ok(startIn(ACME));
+  });
+
+  it("checks what a start is for before a client token returns what it started", () => {
+    started({ kind: "linear", clientToken: "t1" });
+    expect(
+      refusal(
+        start({
+          kind: "linear",
+          clientToken: "t1",
+          config: { linear: { apiKey: "lin_api_123" } },
+        }),
+      ),
+    ).toMatchObject({ status: 400 });
+    expect(
+      refusal(
+        start({ kind: "github", connectorId: "conn_gone", clientToken: "t1" }),
+      ).status,
+    ).toBe(404);
+  });
+
+  it("keeps a connector's name and settings when it is signed in again", async () => {
+    const { connectorId } = await connectGitHub();
+    for (const body of [
+      { name: "Renamed" },
+      { config: { github: { repos: ["acme/api"] } } },
+    ])
+      expect(
+        refusal(start({ kind: "github", connectorId, ...body })),
+      ).toMatchObject({
+        status: 400,
+        message:
+          "signing a connector in again keeps its name and settings; change them on its page",
+      });
   });
 });
 
@@ -291,7 +360,7 @@ describe("authorizing and finishing", () => {
     ).toMatchObject({
       reason: "SIGN_IN_IN_PROGRESS",
       message:
-        "Ada Lovelace is signing GitHub in again; wait for them to finish",
+        "Ada Lovelace is signing this connector in already; try again once they finish",
     });
   });
 
@@ -305,6 +374,50 @@ describe("authorizing and finishing", () => {
     vi.setSystemTime(Date.now() + 6 * 60_000);
     expect(signInOf(s.id).status).toBe("CONNECTOR_SIGN_IN_STATUS_EXPIRED");
     expect(refusal(authorize(s.id)).reason).toBe("SIGN_IN_ENDED");
+  });
+
+  it("ends a sign-in whose connector was deleted", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const deleted = async () => {
+      const { connectorId } = await connectGitHub();
+      // Its first sync ends before it can be deleted.
+      vi.setSystemTime(Date.now() + 5000);
+      return connectorId!;
+    };
+    // Authorize is refused once it's gone.
+    const first = await deleted();
+    const pending = started({ kind: "github", connectorId: first });
+    ok(call("DELETE", `${base}/connectors/${first}`));
+    expect(refusal(authorize(pending.id))).toMatchObject({
+      reason: "SIGN_IN_ENDED",
+      message: "the connector this sign-in was for was deleted",
+    });
+    // Finish fails it, its code unspent.
+    const second = await deleted();
+    const s = started({ kind: "github", connectorId: second });
+    ok(authorize(s.id));
+    const code = (await consent(s.id)).searchParams.get("connect_code");
+    ok(call("DELETE", `${base}/connectors/${second}`));
+    expect(
+      ok<{ signIn: ConnectorSignIn }>(finish(s.id, { connectCode: code }))
+        .signIn,
+    ).toMatchObject({
+      status: "CONNECTOR_SIGN_IN_STATUS_FAILED",
+      failure: "CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE",
+    });
+  });
+
+  it("changes no identity for the same account in another case", async () => {
+    const { connectorId } = await connectGitHub([], "ada");
+    const again = started({ kind: "github", connectorId });
+    ok(authorize(again.id));
+    const code = (await consent(again.id, "ADA")).searchParams.get(
+      "connect_code",
+    );
+    expect(
+      ok<{ signIn: ConnectorSignIn }>(finish(again.id, { connectCode: code }))
+        .signIn.identityChanged,
+    ).toBe(false);
   });
 
   it("connects a repository the app can't see, saying so", async () => {
@@ -342,7 +455,7 @@ describe("a signed-in connector", () => {
       expect(refusal(patch(repos, "usr_alan"))).toMatchObject({
         reason: "ACCOUNT_OWNER_ONLY",
         message:
-          "only Ada Lovelace, whose GitHub access it reads with, can add repositories or read every one",
+          "Only Ada Lovelace can add repositories, or read every one: GitHub reads with their GitHub access. You can narrow them",
       });
     ok(patch(["acme/api"], "usr_alan"));
     // A change of settings syncs: the next waits for it.
@@ -351,6 +464,31 @@ describe("a signed-in connector", () => {
     expect(connector(connectorId!).config).toEqual({
       github: { token: "", repos: ["acme/api", "acme/docs"], reviewDays: 30 },
     });
+  });
+
+  it("lets another admin narrow every repository to some: Ada left it blank; Alan restricts it to acme/api", async () => {
+    const { connectorId } = await connectGitHub([]);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 5000);
+    Object.assign(config, { alanRole: "WORKSPACE_ROLE_ADMIN" });
+    const patch = (repos: string[]) =>
+      call(
+        "PATCH",
+        `${base}/connectors/${connectorId}`,
+        { config: { github: { token: "", repos, reviewDays: 30 } } },
+        "usr_alan",
+      );
+    ok(patch(["acme/api"]));
+    expect(connector(connectorId!).config).toMatchObject({
+      github: { repos: ["acme/api"] },
+    });
+    vi.setSystemTime(Date.now() + 5000);
+    // Back to every repository, or another one, widens it again.
+    expect(refusal(patch([])).reason).toBe("ACCOUNT_OWNER_ONLY");
+    expect(refusal(patch(["acme/api", "acme/web"])).reason).toBe(
+      "ACCOUNT_OWNER_ONLY",
+    );
+    ok(patch(["ACME/API"]));
   });
 
   it("breaks: frozen until it is signed in again, as another account", async () => {

@@ -301,7 +301,7 @@ export const needsSignIn = (c: Pick<Connector, "account">) =>
 
 // The member's name, unless the WFE no longer names them.
 const FORMER = /^a former member$/i;
-const memberName = (name?: string) =>
+export const memberName = (name?: string) =>
   name && !FORMER.test(name.trim()) ? name.trim() : "";
 
 /**
@@ -314,6 +314,26 @@ export function accountLine(c: Pick<Connector, "kind" | "account">) {
   const who = memberName(a.connectedBy) || "a former member",
     label = a.label?.trim();
   return `Reads with ${who}’s ${providerName(c.kind)} access${label ? ` (${label})` : ""}`;
+}
+
+/**
+ * Whether a signed-in GitHub connector's repositories `now` let it read
+ * more than `was` does, as the WFE's widensReach decides, which only the
+ * account's member may do: none named (every repository it can reach)
+ * where some were, or a repository not named before (case aside). From
+ * every repository, any list narrows it.
+ */
+export function widensReach(was: readonly string[], now: readonly string[]) {
+  if (!now.length) return was.length > 0;
+  if (!was.length) return false;
+  return now.some((r) => !was.some((w) => w.toLowerCase() === r.toLowerCase()));
+}
+
+/** Why someone else may not widen a signed-in connector, as a sentence. */
+export function widenRefusal(c: Pick<Connector, "kind" | "account">) {
+  const who =
+    memberName(c.account?.connectedBy) || "the member who connected it";
+  return `Only ${who}, whose ${providerName(c.kind)} access it reads with, can add repositories or read every one. You can remove some.`;
 }
 
 /** Why an account needs signing in again, as a sentence. */
