@@ -231,11 +231,17 @@ test("walks a new install through the sample company, from its database to Ask",
     page.getByRole("group", { name: "Suggested questions" }),
   ).toBeVisible();
 
-  // Acme Corp's database is a connection in Data, like any other.
+  // Acme Corp's database is a connection in Data, like any other, and every
+  // page says this is the sample, with the way back to its page.
   await page.goto("/data");
   await expect(
     page.getByText("Acme Corp", { exact: true }).first(),
   ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Sample data" })
+      .getByRole("link", { name: "Back to getting started" }),
+  ).toHaveAttribute("href", "/ontology/sample");
   expect(await page.locator("script[data-databuddy-injected]").count()).toBe(0);
   expect(tracked).toEqual([]);
 });

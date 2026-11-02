@@ -61,13 +61,19 @@ export type SidebarSection = { label: string; component: PanelComponent };
 
 // What each area contributes to the shell: sidebar children per section (an
 // area may fill several sections), fixed or from the page's path (the pages
-// of one ontology), a section's panel or what it shows in the sidebar, and
-// palette groups.
+// of one ontology), a section's panel or what it shows in the sidebar, the
+// banner across the top (one area's), and palette groups.
 export type AreaShell = {
   subnav?: Partial<
     Record<SectionId, NavChild[] | ((pathname: string) => NavChild[])>
   >;
   panel?: Partial<Record<SectionId, SectionPanel>>;
   sidebar?: Partial<Record<SectionId, SidebarSection>>;
+  // Above the sidebar and the page. Lazy, rendered outside the page's routes
+  // as a "component" panel is, it decides from the URL and the query cache,
+  // and renders one <div className="hf-banner"> or nothing: shell.css takes
+  // that div's height (--hf-shell-top) off whatever is placed against the
+  // viewport.
+  banner?: ComponentType;
   palette?: PaletteSource[];
 };
