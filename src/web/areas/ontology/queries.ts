@@ -22,7 +22,7 @@ import type {
   StopLoadEnrichmentResponse,
 } from "../../../shared/wfe";
 import { jobSeen, jobStarted, trackEvent } from "../../analytics";
-import { api } from "../../api";
+import { api, ApiError, refusalOf } from "../../api";
 
 // The Ontology area's WFE calls, as TanStack Query options keyed by
 // workspace, then ontology: [ws, "ontology", ontologyId, ...]. Every route
@@ -200,8 +200,16 @@ export const generateOntology = async (
   const r = await api<OntologyGenerationResponse>(
     `${at(ws, o)}:generate`,
     body,
+  ).catch((e: unknown) => {
+    // A 409 is an earlier attempt's live generation, which callers follow.
+    if (!(e instanceof ApiError && e.status === 409))
+      trackEvent("generation_refused", { reason: refusalOf(e) });
+    throw e;
+  });
+  jobStarted(
+    { job: "generation", source: body.sample ? "sample" : "ai" },
+    r.generation?.id,
   );
-  jobStarted("generation", r.generation?.id, body.sample ? "sample" : "ai");
   return r;
 };
 
@@ -224,8 +232,13 @@ export const createLoad = async (
   o: string,
   body: CreateLoadRequest,
 ) => {
-  const r = await api<LoadResponse>(`${at(ws, o)}/loads`, body);
-  jobStarted("load", r.load.id);
+  const r = await api<LoadResponse>(`${at(ws, o)}/loads`, body).catch(
+    (e: unknown) => {
+      trackEvent("load_refused", { reason: refusalOf(e) });
+      throw e;
+    },
+  );
+  jobStarted({ job: "load" }, r.load.id);
   return r;
 };
 
@@ -270,8 +283,14 @@ export const reviseOntologyVersion = async (
   const r = await api<OntologyGenerationResponse>(
     `${at(ws, o)}/versions/${enc(versionId)}:revise`,
     body,
+  ).catch((e: unknown) => {
+    trackEvent("revision_refused", { reason: refusalOf(e) });
+    throw e;
+  });
+  jobStarted(
+    { job: "revision", mode: body.dryRun ? "preview" : "save" },
+    r.generation?.id,
   );
-  jobStarted("revision", r.generation?.id, body.dryRun ? "preview" : "save");
   return r;
 };
 
@@ -338,8 +357,13 @@ export const askQuestion = async (
   o: string,
   body: AskQuestionRequest,
 ) => {
-  const r = await api<QuestionResponse>(questions(ws, o), body);
-  jobStarted("question", r.question.id);
+  const r = await api<QuestionResponse>(questions(ws, o), body).catch(
+    (e: unknown) => {
+      trackEvent("question_refused", { reason: refusalOf(e) });
+      throw e;
+    },
+  );
+  jobStarted({ job: "question" }, r.question.id);
   return r;
 };
 

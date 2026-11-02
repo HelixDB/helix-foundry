@@ -1,5 +1,7 @@
 import "./workspace.css";
+import { useEffect } from "react";
 import { Sparkles } from "lucide-react";
+import { trackEvent } from "../../analytics";
 import { ButtonLink, cx } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
@@ -35,6 +37,7 @@ export function ProGate({
   className?: string;
 }) {
   const { role, name } = useWorkspace();
+  useEffect(() => trackEvent("pro_gate_shown", { feature }), [feature]);
   return (
     <div
       role="note"
