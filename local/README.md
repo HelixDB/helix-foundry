@@ -73,29 +73,47 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 **Secrets.** `secrets` holds the site's token, the store's secret, MySQL's password and the connector key. Without it the restored data doesn't open: MySQL keeps the password it was first started with, and the connector key seals every database password and API key in the store. Whoever has it and the rest can read every one of them, so keep `secrets.tar.gz` encrypted, or apart from the other archives, and your `local/.env`, if you made one, with it.
 
-**Back up**, from the repository's root. `docker compose down` stops everything first, giving a load or question in flight up to two minutes to finish or be handed back, and the archives go into a folder only you can read:
+**Back up** from where you run Foundry: the repository's root, or `local/` for a `setup.sh` install that must run from there (above). `docker compose down` stops everything first, giving a load or question in flight up to two minutes to finish or be handed back, and the archives go into a folder only you can read. The block stops at the first step that fails, and the stack stays stopped until it runs to the end:
 
 ```sh
 backup=~/foundry-backup-$(date +%F-%H%M)
-mkdir -m 700 "$backup"
-docker compose config --images | sort -u > "$backup/images.txt"
-docker compose down
-for v in mysql storage helix work secrets; do
-  docker run --rm -v helix-foundry_$v:/volume:ro alpine:3.22 tar -czf - -C /volume . > "$backup/$v.tar.gz"
-done
-docker compose up -d --wait
+(
+  set -eu -o pipefail
+  mkdir -m 700 "$backup"
+  docker compose config --images | sort -u > "$backup/images.txt"
+  docker compose down
+  for v in mysql storage helix work secrets; do
+    docker volume inspect "helix-foundry_$v" > /dev/null
+    docker run --rm -v "helix-foundry_$v:/volume:ro" alpine:3.22 tar -czf - -C /volume . > "$backup/$v.tar.gz"
+    gzip -t "$backup/$v.tar.gz"
+  done
+  docker compose up -d --wait
+)
 ```
 
-**Restore** onto the images the backup lists: the same release of this repository, with the same `local/.env`. Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
+**Restore** onto the images the backup lists: the same release of this repository, with the same `local/.env`, run from the same place. If you keep `secrets.tar.gz` apart or encrypted, put it back in the backup's folder, decrypted, first. Then check the backup. This changes nothing, and prints `backup ok` only when the images match and every archive is whole:
 
 ```sh
-backup=~/foundry-backup-2026-11-02-1413  # the backup's folder
-docker compose config --images | sort -u | diff - "$backup/images.txt"  # prints nothing
-docker compose create  # makes the volumes, empty, and starts nothing
-for v in mysql storage helix work secrets; do
-  docker run --rm -i -v helix-foundry_$v:/volume alpine:3.22 tar -xzf - -C /volume < "$backup/$v.tar.gz"
-done
-docker compose up -d --wait
+backup=~/foundry-backup-2026-11-02-1413
+(
+  set -eu -o pipefail
+  docker compose config --images | sort -u | diff - "$backup/images.txt"
+  for v in mysql storage helix work secrets; do gzip -t "$backup/$v.tar.gz"; done
+  echo backup ok
+)
+```
+
+Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first, once the check passes. Then restore, in the same shell (it reads `$backup`); it stops at the first step that fails. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
+
+```sh
+(
+  set -eu -o pipefail
+  docker compose create
+  for v in mysql storage helix work secrets; do
+    docker run --rm -i -v "helix-foundry_$v:/volume" alpine:3.22 tar -xzf - -C /volume < "$backup/$v.tar.gz"
+  done
+  docker compose up -d --wait
+)
 ```
 
 **Check it**, after a restore and in a rehearsal on another machine now and then:
