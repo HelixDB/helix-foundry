@@ -158,6 +158,7 @@ function UpgradeDialog({
       onClose={onClose}
     >
       <form
+        data-replay-block
         onSubmit={async (e) => {
           e.preventDefault();
           setPending(true);

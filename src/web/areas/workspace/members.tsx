@@ -78,6 +78,7 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
     >
       <form
+        data-replay-block
         onSubmit={async (e) => {
           e.preventDefault();
           setPending(true);
@@ -234,7 +235,7 @@ export function MembersTab() {
             </Button>
           </div>
         ) : list.length ? (
-          <ul className="wk-members" aria-label="Members">
+          <ul className="wk-members" aria-label="Members" data-replay-block>
             {list.map((m, i) => (
               <MemberRow
                 key={m.id || m.user?.id || i}

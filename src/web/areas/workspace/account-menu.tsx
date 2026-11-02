@@ -114,11 +114,11 @@ export function AccountMenu({
       triggerClassName="hf-user-trigger"
       trigger={
         <>
-          <span className="hf-avatar" aria-hidden>
+          <span className="hf-avatar" aria-hidden data-replay-block>
             {initials(user.name)}
           </span>
           {!collapsed && (
-            <span className="hf-user-text">
+            <span className="hf-user-text" data-replay-block>
               <strong>{user.name}</strong>
               <small>{user.email}</small>
             </span>
@@ -126,10 +126,12 @@ export function AccountMenu({
         </>
       }
     >
-      <MenuHeader
-        title={user.name}
-        subtitle={`${roleLabel[current.role]} · ${current.name}`}
-      />
+      <div data-replay-block>
+        <MenuHeader
+          title={user.name}
+          subtitle={`${roleLabel[current.role]} · ${current.name}`}
+        />
+      </div>
       <MenuSeparator />
       {!onboarding && (
         <MenuItem icon={Settings} to={paths.settings()}>

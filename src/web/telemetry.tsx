@@ -53,11 +53,17 @@ export function withoutTitle(event: { title?: unknown }): boolean {
 }
 
 /**
- * Page views and the custom events of ./analytics.ts. No web vitals (the
- * tracker sends them with the path unmasked, table names and all),
- * interactions (they name the element clicked, which may be a document or
- * an entity), errors (their messages may quote the WFE's), outgoing links (a
- * document's source page) or session replay.
+ * Page views, the custom events of ./analytics.ts and session replay. No web
+ * vitals (the tracker sends them with the path unmasked, table names and
+ * all), interactions (they name the element clicked, which may be a document
+ * or an entity), errors (their messages may quote the WFE's) or outgoing
+ * links (a document's source page).
+ *
+ * Replay (replay.js, also on in the site's Databuddy settings) masks all page
+ * text, attribute text and typed input, records no canvas (the Explorer's
+ * graph), iframe (a PDF) or image bytes, and records URLs without their query
+ * or hash, paths masked by MASK_PATTERNS. What shows a person's account,
+ * the members or a payment form is also `data-replay-block`: left out whole.
  */
 export function Telemetry() {
   if (!Databuddy) return null;
@@ -67,6 +73,7 @@ export function Telemetry() {
       maskPatterns={MASK_PATTERNS}
       filter={withoutTitle}
       trackInteractions={false}
+      replay
     />
   );
 }
