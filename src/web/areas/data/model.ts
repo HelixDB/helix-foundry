@@ -107,6 +107,23 @@ export function syncBadge(
   }
 }
 
+/**
+ * A connector as a status badge: its newest sync's (syncBadge), unless its
+ * account needs signing in again, which stops every sync until it is.
+ *
+ * @example
+ * connectorBadge({ account: { state: "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN" } });
+ * // { status: "stale", label: "Needs signing in again" }
+ */
+export function connectorBadge(
+  c: Pick<Connector, "lastSync" | "account">,
+  now = Date.now(),
+): { status: Status; label: string } {
+  return c.account?.state === "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN"
+    ? { status: "stale", label: "Needs signing in again" }
+    : syncBadge(c.lastSync, now);
+}
+
 /** When the connector's tables were last refreshed: its newest table snapshot. */
 export function lastSyncedAt(c: Connector): string | undefined {
   return (c.tables || [])

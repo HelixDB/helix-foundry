@@ -890,3 +890,53 @@
   color: var(--hf-warning-text);
   font-weight: 500;
 }
+
+/* Connecting by signing in at the provider: the button and the way to the
+   credential's form instead, on one row. */
+.dc-sign-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Connections whose account needs signing in again: a strip at the top of
+   every page (the shell's), with Sign in again and Later. */
+.dc-account-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 8px var(--hf-space-3);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--hf-warning) 40%, var(--hf-border));
+  background: var(--hf-warning-soft);
+  color: var(--hf-text);
+}
+.dc-account-banner-icon {
+  flex: none;
+  color: var(--hf-warning-text);
+}
+.dc-account-banner-text {
+  flex: 1;
+  min-width: min(260px, 100%);
+  margin: 0;
+  font-size: var(--hf-text-sm);
+  line-height: 1.45;
+}
+.dc-account-banner-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+.dc-account-banner-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--hf-danger-text);
+  font-size: var(--hf-text-sm);
+}
+.dc-account-dialog-note {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
