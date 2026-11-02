@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 )
 
 // stripeVersion pins the API shape the sync reads.
@@ -152,9 +154,17 @@ func (k *stripeKind) Discover(ctx context.Context, src Source) (Discovery, error
 	}
 	settings.Events = readable[stripeEventsPath]
 	if settings.Mode == "" && src.SignIn {
-		if settings.Mode, err = k.mode(ctx, header); err != nil {
+		// Nothing reads the mode: one that can't be read is left empty, and
+		// read again next time, unless the provider rejected the token.
+		mode, err := k.mode(ctx, header)
+		var rejected *AuthError
+		switch {
+		case errors.As(err, &rejected):
 			return Discovery{}, err
+		case err != nil:
+			log.From(ctx).Warn("read a signed-in stripe connector's mode failed", "connector", src.ConnectorID, "err", err)
 		}
+		settings.Mode = mode
 	}
 	if !settings.Events {
 		d.Warnings = append(d.Warnings, "this key can't read events, so on Pro and Max every sync reads every object in full; "+

@@ -174,6 +174,21 @@ func TestSignedInStripeMode(t *testing.T) {
 	if prepared, _ := stripe.Prepare(Source{Secret: "rk_test_vended", SignIn: true}); string(prepared) != `{"mode":"test"}` {
 		t.Fatalf("Prepare = %s, want the prefix's mode", prepared)
 	}
+
+	// Nothing reads the mode: a balance that can't be read leaves it empty,
+	// and the sync goes on. Only a rejected token stops it.
+	for status, want := range map[int]bool{http.StatusForbidden: true, http.StatusOK: true, http.StatusUnauthorized: false} {
+		api := newAPIServer(t, map[string]int{"/v1/balance": status}, map[string]string{"/v1/balance": `{"object":"balance"}`})
+		d, err := kindOf(t, catalogFor(api.url), "stripe").Discover(context.Background(),
+			Source{Secret: "an-opaque-vended-token", Settings: json.RawMessage(`{"mode":""}`), SignIn: true})
+		var authErr *AuthError
+		switch {
+		case want && (err != nil || !strings.Contains(string(d.Settings), `"mode":""`)):
+			t.Fatalf("balance %d: Discover = %s, %v; want it to go on without a mode", status, d.Settings, err)
+		case !want && !errors.As(err, &authErr):
+			t.Fatalf("balance %d: Discover = %v, want the rejection", status, err)
+		}
+	}
 }
 
 // A signed-in PostHog source that sees several projects lists their IDs:
