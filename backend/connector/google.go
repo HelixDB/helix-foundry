@@ -584,9 +584,12 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 	case status == http.StatusUnauthorized && c.vended != "":
 		return rejectedCredential("Google", nil, "Google rejected the access this connector signed in with; sign it in again")
 	// Only a Workspace admin reads the Directory; a signed-in user who isn't
-	// one, or whose account is no Workspace's, finds it refused.
+	// one, or whose account is no Workspace's, finds it refused. An API not
+	// enabled is said as such below.
 	case api == googleDirectory && c.vended != "" && (status == http.StatusBadRequest || status == http.StatusForbidden ||
-		status == http.StatusNotFound) && !slices.ContainsFunc(reasons, func(r string) bool { return slices.Contains(googleLimits, r) }):
+		status == http.StatusNotFound) && !slices.ContainsFunc(reasons, func(r string) bool {
+		return slices.Contains(googleLimits, r) || r == "accessNotConfigured" || r == "SERVICE_DISABLED"
+	}):
 		return refused(errUnreadable, "the signed-in user is not a Workspace admin, so the Directory's users can't be read")
 	// The token endpoint took the key, and get tried a new token, so the
 	// key is not the fault.

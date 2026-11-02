@@ -214,4 +214,17 @@ func TestSignedInGoogle(t *testing.T) {
 			t.Fatalf("bearers = %v, want the vended token alone", bearers)
 		}
 	}
+
+	// An API Helix's project hasn't enabled is said as such, not as a user
+	// who isn't an admin.
+	c, err := google.(*googleKind).client(Source{Secret: "vended-google", Settings: settings, SignIn: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.status(http.StatusForbidden, []byte(`{"error":{"code":403,"message":"Admin SDK API has not been used","errors":[{"reason":"accessNotConfigured"}]}}`),
+		googleDirectory, googleDirectory.probe)
+	var refusedErr *RefusedError
+	if !errors.As(err, &refusedErr) || !strings.Contains(refusedErr.Message, "enable the Admin SDK API in Helix Foundry's Google Cloud project") {
+		t.Fatalf("status = %v", err)
+	}
 }
