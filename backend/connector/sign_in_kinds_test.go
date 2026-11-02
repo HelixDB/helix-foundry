@@ -15,19 +15,20 @@ import (
 // still checks its settings.
 func TestSignedInKindsPrepare(t *testing.T) {
 	catalog := catalogFor("http://unused")
-	for _, tc := range []struct{ kind, settings string }{
-		{"slack", `{"history_days":30}`},
-		{"notion", `{}`},
-		{"posthog", `{"region":"us","project_id":"42"}`},
-		{"calcom", `{}`},
-		{"stripe", `{}`},
-		{"google", `{"event_days":30}`},
+	// Slack's vended token must still be a bot's: a rotating one is.
+	for _, tc := range []struct{ kind, settings, vended string }{
+		{"slack", `{"history_days":30}`, "xoxe.xoxb-1-opaque"},
+		{"notion", `{}`, "an-opaque-vended-token"},
+		{"posthog", `{"region":"us","project_id":"42"}`, "an-opaque-vended-token"},
+		{"calcom", `{}`, "an-opaque-vended-token"},
+		{"stripe", `{}`, "an-opaque-vended-token"},
+		{"google", `{"event_days":30}`, "an-opaque-vended-token"},
 	} {
-		for _, secret := range []string{"an-opaque-vended-token", ""} {
+		for _, secret := range []string{tc.vended, ""} {
 			if _, err := kindOf(t, catalog, tc.kind).Prepare(Source{Secret: secret, Settings: json.RawMessage(tc.settings), SignIn: true}); err != nil {
 				t.Errorf("%s Prepare(%q) = %v", tc.kind, secret, err)
 			}
-			_, err := kindOf(t, catalog, tc.kind).Prepare(Source{Secret: "an-opaque-vended-token", Settings: json.RawMessage(tc.settings)})
+			_, err := kindOf(t, catalog, tc.kind).Prepare(Source{Secret: tc.vended, Settings: json.RawMessage(tc.settings)})
 			var invalidErr *InvalidError
 			if !errors.As(err, &invalidErr) {
 				t.Errorf("%s takes a key it can't read the format of: %v", tc.kind, err)
@@ -40,7 +41,9 @@ func TestSignedInKindsPrepare(t *testing.T) {
 	// self-hosted PostHog keep their keys: Pipes' PostHog provider
 	// authorizes in one region.
 	for _, tc := range []struct{ kind, secret, settings, want string }{
-		{"slack", "xoxp-1-2-3", `{}`, "user token"},
+		{"slack", "xoxp-1-2-3", `{}`, "no bot's"},
+		{"slack", "xoxe.xoxp-1-2-3", `{}`, "no bot's"},
+		{"slack", "an-opaque-token", `{}`, "no bot's"},
 		{"posthog", "tok", `{"region":"custom","host":"https://posthog.acme.test"}`, "PostHog US Cloud only"},
 		{"posthog", "tok", `{"region":"eu"}`, "connect PostHog EU Cloud or a self-hosted PostHog with a personal API key"},
 		{"posthog", "", `{"region":"eu","project_id":"42"}`, "US Cloud only"},
@@ -52,8 +55,10 @@ func TestSignedInKindsPrepare(t *testing.T) {
 			t.Errorf("%s Prepare = %v, want it refused saying %q", tc.kind, err, tc.want)
 		}
 	}
-	if _, err := kindOf(t, catalog, "slack").Prepare(Source{Secret: "xoxb-1-2-3", SignIn: true}); err != nil {
-		t.Errorf("a vended bot token: %v", err)
+	for _, bot := range []string{"xoxb-1-2-3", "xoxe.xoxb-1-2-3", ""} {
+		if _, err := kindOf(t, catalog, "slack").Prepare(Source{Secret: bot, SignIn: true}); err != nil {
+			t.Errorf("a vended bot token %q: %v", bot, err)
+		}
 	}
 }
 
@@ -62,7 +67,7 @@ func TestSignedInKindsIdentity(t *testing.T) {
 	ctx := context.Background()
 	routes := map[string]func(*http.Request) (int, string){
 		"/api/auth.test": func(*http.Request) (int, string) {
-			return http.StatusOK, `{"ok":true,"team":"Acme","team_id":"T1","user":"foundry","user_id":"U1"}`
+			return http.StatusOK, `{"ok":true,"team":"Acme","team_id":"T1","user":"foundry","user_id":"U1","bot_id":"B1"}`
 		},
 		"/v1/users/me": func(*http.Request) (int, string) {
 			return http.StatusOK, `{"object":"user","type":"bot","name":"Helix Foundry","bot":{"owner":{"type":"workspace","workspace":true},"workspace_name":"Acme HQ"}}`
@@ -100,6 +105,25 @@ func TestSignedInKindsIdentity(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("%s Identity = %q, %v; want %q", tc.kind, got, err, tc.want)
 		}
+	}
+}
+
+// auth.test says whose a token is: one that is no bot's, signed in, is
+// refused as settings, whatever it looks like.
+func TestSignedInSlackBot(t *testing.T) {
+	url := routeServer(t, map[string]func(*http.Request) (int, string){
+		"/api/auth.test": func(*http.Request) (int, string) {
+			return http.StatusOK, `{"ok":true,"team":"Acme","team_id":"T1","user":"ada","user_id":"U1"}`
+		},
+	})
+	slack := kindOf(t, NewCatalog(Endpoints{Slack: url + "/api"}, Guard{AllowPrivate: true}, S3Options{}, EventsOptions{}), "slack")
+	src := Source{Secret: "xoxb-looks-like-a-bot", Settings: json.RawMessage(`{"history_days":90}`), SignIn: true}
+	var invalidErr *InvalidError
+	if _, err := slack.(Identifier).Identity(context.Background(), src); !errors.As(err, &invalidErr) {
+		t.Fatalf("Identity = %v, want the token refused as no bot's", err)
+	}
+	if _, err := slack.Discover(context.Background(), src); !errors.As(err, &invalidErr) {
+		t.Fatalf("Discover = %v, want the token refused as no bot's", err)
 	}
 }
 

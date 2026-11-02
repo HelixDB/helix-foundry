@@ -403,9 +403,12 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 	if identifier, ok := kind.(connector.Identifier); ok {
 		identity, err := identifier.Identity(ctx, src)
 		var rejected *connector.AuthError
+		var refusedSettings *connector.InvalidError
 		switch {
 		case errors.As(err, &rejected):
 			return fail(foundrymodel.SignInTokenRejected, err)
+		case errors.As(err, &refusedSettings):
+			return fail(foundrymodel.SignInSettingsInvalid, err)
 		case err != nil:
 			return fail(foundrymodel.SignInProviderError, err)
 		}

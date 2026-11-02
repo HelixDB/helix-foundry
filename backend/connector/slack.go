@@ -31,6 +31,10 @@ var _ PassKind = (*slackKind)(nil)
 // their direct messages included, so Foundry takes none, pasted or vended.
 var slackTokenRE = regexp.MustCompile(`^xoxb-[A-Za-z0-9-]+$`)
 
+// slackBotPrefixes are the bot tokens a broker may vend: a bot's token, or
+// the rotating token Slack's token rotation gives a bot.
+var slackBotPrefixes = []string{"xoxb-", "xoxe.xoxb-"}
+
 var _ Identifier = (*slackKind)(nil)
 
 const (
@@ -152,8 +156,13 @@ func slackHistoryScope(private bool) string {
 // and the token's scopes.
 type slackAuth struct {
 	team, bot string
-	scopes    slackScopes
+	// botID is the bot's id; empty when the token isn't a bot's.
+	botID  string
+	scopes slackScopes
 }
+
+// errNotSlackBot is a signed-in token auth.test says is no bot's.
+var errNotSlackBot = invalid("Slack signed in as a person, not the app's bot: sign it in again, installing the app's bot")
 
 // slackConversations is the channel_days table's stream: each channel day's messages.
 var slackConversations = Stream{Name: "conversations", Table: "channel_days", Title: "Conversations", Format: Markdown,
@@ -178,14 +187,16 @@ type SlackSettings struct {
 	HistoryDays int `json:"history_days"`
 }
 
-// Prepare checks a key's format. A token the broker vended has none of
-// ours to check, but a user token is refused as a pasted one is: signing in
-// must install the bot.
+// Prepare checks a key's format. A token the broker vended must be a bot's
+// too (slackBotPrefixes), or none yet at Start: a user token reads as its
+// person, direct messages included, so signing in must install the bot.
+// auth.test says whose a token is (botID), which Discover and Identity
+// check of a signed-in source.
 func (k *slackKind) Prepare(src Source) (json.RawMessage, error) {
 	secret := strings.TrimSpace(src.Secret)
 	switch {
-	case src.SignIn && strings.HasPrefix(secret, "xoxp-"):
-		return nil, invalid("Slack gave a user token, which reads as its person, direct messages included: sign in with the bot instead")
+	case src.SignIn && secret != "" && !slices.ContainsFunc(slackBotPrefixes, func(p string) bool { return strings.HasPrefix(secret, p) }):
+		return nil, invalid("Slack gave a token that is no bot's, which reads as its person, direct messages included: sign in with the bot instead")
 	case !src.SignIn && !slackTokenRE.MatchString(secret):
 		return nil, invalid("enter a Slack bot token (xoxb-…)")
 	}
@@ -223,6 +234,9 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 	auth, err := c.auth(ctx)
 	if err != nil {
 		return Discovery{}, err
+	}
+	if src.SignIn && auth.botID == "" {
+		return Discovery{}, errNotSlackBot
 	}
 	var (
 		mu      sync.Mutex
@@ -342,9 +356,13 @@ func (k *slackKind) Identity(ctx context.Context, src Source) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var user, team string
+	var user, team, botID string
 	_ = json.Unmarshal(fields["user"], &user) // missing ones name less
 	_ = json.Unmarshal(fields["team"], &team)
+	_ = json.Unmarshal(fields["bot_id"], &botID)
+	if src.SignIn && botID == "" {
+		return "", errNotSlackBot
+	}
 	switch {
 	case user == "" && team == "":
 		return "", errors.New("slack auth.test names no user or team")
@@ -1324,6 +1342,7 @@ func (c *slackClient) auth(ctx context.Context) (slackAuth, error) {
 	var a slackAuth
 	_ = json.Unmarshal(fields["team_id"], &a.team) // for the documents' links
 	_ = json.Unmarshal(fields["user"], &a.bot)     // for the invite warning
+	_ = json.Unmarshal(fields["bot_id"], &a.botID) // a bot's token has one
 	if listed, ok := header[http.CanonicalHeaderKey("X-OAuth-Scopes")]; ok {
 		a.scopes = slackScopes{}
 		for scope := range strings.SplitSeq(strings.Join(listed, ","), ",") {

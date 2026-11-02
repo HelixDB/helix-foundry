@@ -286,6 +286,8 @@ type providers struct {
 	discoverError string
 	// blank counts the requests that came with no token at all.
 	blank int
+	// slackBot is whether Slack's auth.test says a token is a bot's.
+	slackBot bool
 }
 
 func newProviders(t *testing.T) (*providers, string) {
@@ -307,6 +309,14 @@ func newProviders(t *testing.T) (*providers, string) {
 		auth := r.Header.Get("Authorization")
 		if strings.TrimSpace(strings.TrimPrefix(auth, "Bearer")) == "" {
 			p.blank++
+		}
+		if strings.HasPrefix(r.URL.Path, "/slack/") {
+			botID := ""
+			if p.slackBot {
+				botID = `,"bot_id":"B1"`
+			}
+			fmt.Fprintf(w, `{"ok":true,"team":"Acme","team_id":"T1","user":"helix","user_id":"U1"%s}`, botID)
+			return
 		}
 		if !strings.HasPrefix(auth, "Bearer token-") || p.rejected[strings.TrimPrefix(auth, "Bearer ")] {
 			if r.URL.Path == "/graphql" {
@@ -381,7 +391,7 @@ func newSignInFixture(t *testing.T) signInFixture {
 	}
 	p, url := newProviders(t)
 	endpoints := connector.DefaultEndpoints()
-	endpoints.GitHub, endpoints.Linear = url, url
+	endpoints.GitHub, endpoints.Linear, endpoints.Slack = url, url, url+"/slack"
 	cfg := &config.Config{}
 	cfg.Foundry.Connectors.SignInReturnTo = []string{callback}
 	cfg.Foundry.Connectors.GitHubAppInstallURL = "https://github.com/apps/helix-foundry/installations/new"
@@ -660,6 +670,20 @@ func TestConnectorSignIns(t *testing.T) {
 		}
 		if f.providers.blank != 0 {
 			t.Fatalf("%d requests reached the provider with no token", f.providers.blank)
+		}
+	})
+
+	// What the provider says of the token can refuse it as settings: a Slack
+	// token auth.test says is no bot's ends the sign-in settings_invalid.
+	t.Run("fails a Slack sign-in that isn't the app's bot", func(t *testing.T) {
+		f := newSignInFixture(t)
+		f.broker.Offered, f.broker.TokenPrefix = []string{"slack"}, "xoxb-"
+		ctx := as("user-1")
+		si := f.start(t, ctx, &foundryv1.StartConnectorSignInRequest{Kind: "slack"})
+		f.authorize(t, ctx, si.GetId())
+		if got := f.finish(t, ctx, si.GetId(), f.broker.Code(0), ""); got.GetFailure() !=
+			foundryv1.ConnectorSignInFailure_CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID {
+			t.Fatalf("finished = %v", got)
 		}
 	})
 

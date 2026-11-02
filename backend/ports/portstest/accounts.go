@@ -32,6 +32,9 @@ type Accounts struct {
 	// KeepRefused makes Finish's own delete of an account it refuses fail:
 	// the broker keeps it.
 	KeepRefused bool
+	// TokenPrefix starts every token vended, as a provider's own tokens
+	// start (xoxb- for a Slack bot's).
+	TokenPrefix string
 	// Disabled is the integration switched off, as Pipes answers it:
 	// reauthorizing any account reads as account_missing, and authorizing a
 	// new one is unavailable.
@@ -175,7 +178,7 @@ func (a *Accounts) Token(_ context.Context, ref ports.AccountRef) (ports.Credent
 		return ports.Credential{}, &ports.AccountBroken{Reason: acct.broken}
 	}
 	expires := time.Now().Add(time.Hour)
-	return ports.Credential{Value: tokenOf(ref.AccountID, acct.token), ExpiresAt: &expires}, nil
+	return ports.Credential{Value: a.tokenOf(ref.AccountID, acct.token), ExpiresAt: &expires}, nil
 }
 
 // Delete forgets the account; one already gone is no error.
@@ -189,7 +192,9 @@ func (a *Accounts) Delete(_ context.Context, ref ports.AccountRef) error {
 	return nil
 }
 
-func tokenOf(accountID string, n int) string { return fmt.Sprintf("token-%s-%d", accountID, n) }
+func (a *Accounts) tokenOf(accountID string, n int) string {
+	return fmt.Sprintf("%stoken-%s-%d", a.TokenPrefix, accountID, n)
+}
 
 // Code is the code the n-th Authorize (from 0) gave its callback.
 func (a *Accounts) Code(n int) string { return fmt.Sprintf("code-%d", a.codeNumber(n)) }
@@ -237,7 +242,7 @@ func (a *Accounts) Add(ref ports.AccountRef) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.accounts[ref.AccountID] = &account{ref: ref, token: 1}
-	return tokenOf(ref.AccountID, 1)
+	return a.tokenOf(ref.AccountID, 1)
 }
 
 // Has reports whether the broker holds the account.
@@ -252,7 +257,7 @@ func (a *Accounts) Has(accountID string) bool {
 func (a *Accounts) CurrentToken(accountID string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return tokenOf(accountID, a.accounts[accountID].token)
+	return a.tokenOf(accountID, a.accounts[accountID].token)
 }
 
 // Rotate gives the account a new token, as the broker's refresh does.
