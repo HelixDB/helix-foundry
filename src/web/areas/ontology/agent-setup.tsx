@@ -17,7 +17,7 @@ import { onboardingPrompt, type OnboardingOntology } from "./onboarding-prompt";
 import { canManage } from "./parts";
 
 // Set per stamp in next.config.ts.
-const MCP_URL =
+export const MCP_URL =
   process.env.NEXT_PUBLIC_HELIX_MCP_URL || "https://mcp.helix-db.com/mcp";
 // Empty on a stamp without the HTTP endpoint (prod, local mode): no HTTP.
 const EVENTS_URL = process.env.NEXT_PUBLIC_HELIX_EVENTS_URL || "";

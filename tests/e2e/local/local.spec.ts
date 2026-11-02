@@ -131,6 +131,16 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
     page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
 
+  // No Helix MCP here, so no Getting into production, here or above any other
+  // page.
+  const production = page.getByRole("region", {
+    name: "Getting into production",
+  });
+  await expect(production).toHaveCount(0);
+  await page.goto("/settings/ai");
+  await expect(page.getByRole("main")).toBeVisible();
+  await expect(page.locator(".hf-strip")).toHaveCount(0);
+
   // The picker names no dashboard and no team.
   await page.goto("/workspaces");
   await expect(

@@ -62,7 +62,8 @@ export type SidebarSection = { label: string; component: PanelComponent };
 // What each area contributes to the shell: sidebar children per section (an
 // area may fill several sections), fixed or from the page's path (the pages
 // of one ontology), a section's panel or what it shows in the sidebar, the
-// banner across the top (one area's), and palette groups.
+// banner across the top and the strip above the page (one area's each), and
+// palette groups.
 export type AreaShell = {
   subnav?: Partial<
     Record<SectionId, NavChild[] | ((pathname: string) => NavChild[])>
@@ -75,5 +76,10 @@ export type AreaShell = {
   // that div's height (--hf-shell-top) off whatever is placed against the
   // viewport.
   banner?: ComponentType;
+  // Above the page, in its column, scrolling away with it. Lazy and outside
+  // the page's routes as the banner is, it renders one
+  // <div className="hf-strip"> or nothing: shell.css takes that div's height
+  // (--hf-main-top) off what fills the window's height from inside the page.
+  strip?: ComponentType;
   palette?: PaletteSource[];
 };

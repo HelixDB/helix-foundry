@@ -66,7 +66,7 @@ export const SAMPLE = {
 
 // The ontology a page of the app has open: its own pages, the Explorer's and
 // Ask's.
-const OPEN_ONTOLOGY = /^\/(?:ontology|explore|ask)\/([^/]+)/;
+export const OPEN_ONTOLOGY = /^\/(?:ontology|explore|ask)\/([^/]+)/;
 
 /**
  * Whether what `pathname` shows is the sample's, `sampleId` being its

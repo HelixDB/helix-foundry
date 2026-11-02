@@ -1,5 +1,6 @@
 import { lazy } from "react";
 import { Shapes } from "lucide-react";
+import { LOCAL } from "../../../shared/deployment";
 import type { AreaShell } from "../../shell/types";
 import { ontologyPaths as paths } from "./paths";
 import { ontologyQueries } from "./queries";
@@ -9,7 +10,9 @@ import { ontologyQueries } from "./queries";
 // with its section: the workspace's ontologies, the open one's pages under
 // its row (on its documents pages, its documents explorer instead); the
 // Explorer's pages fill theirs. Ask's threads sit in the sidebar itself,
-// under the sections. The sample company's banner sits across the top.
+// under the sections. The sample company's banner sits across the top, and
+// Getting into production's strip above the page (a local install has no
+// Helix MCP, so no strip).
 
 const OntologiesPanel = lazy(() =>
   import("./ontologies-panel").then((m) => ({ default: m.OntologiesPanel })),
@@ -24,6 +27,9 @@ const ExplorerContext = lazy(() =>
 );
 const SampleBanner = lazy(() =>
   import("./sample-banner").then((m) => ({ default: m.SampleBanner })),
+);
+const ProductionStrip = lazy(() =>
+  import("./production").then((m) => ({ default: m.ProductionStrip })),
 );
 
 export const ontologyShell: AreaShell = {
@@ -41,6 +47,7 @@ export const ontologyShell: AreaShell = {
   },
   sidebar: { ask: { label: "Analyst threads", component: AskThreads } },
   banner: SampleBanner,
+  strip: LOCAL ? undefined : ProductionStrip,
   palette: [
     {
       id: "ontologies",
