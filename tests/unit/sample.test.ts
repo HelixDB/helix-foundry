@@ -42,8 +42,13 @@ function table(name: string): Row[] {
 
 describe("sampleInView", () => {
   it("is everywhere while the sample is the only ontology", () => {
-    for (const path of ["/", "/data", "/settings/billing", "/ontology/new"])
+    for (const path of ["/", "/data", "/settings/billing"])
       expect(sampleInView(path, "o1", 1)).toBe(true);
+  });
+
+  it("is never on the page making a new ontology", () => {
+    for (const ontologies of [1, 2])
+      expect(sampleInView("/ontology/new", "o1", ontologies)).toBe(false);
   });
 
   it("is on the sample's own pages and its tour beside other ontologies", () => {
