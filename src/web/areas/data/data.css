@@ -530,6 +530,10 @@
 .dt-drag .dt-name {
   font-weight: 600;
 }
+/* A folder's copy has no icon, so its name sits as far from either end. */
+.dt-drag > .dt-name:first-child {
+  padding-left: 4px;
+}
 
 /* The Data page: the connections' grid, and the document sets as a list
    on the Datasets card's surface. A set a drag of files would land in
