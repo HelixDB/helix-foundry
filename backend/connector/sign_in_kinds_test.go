@@ -212,6 +212,45 @@ func TestSignedInPostHogProjects(t *testing.T) {
 	}
 }
 
+// Only a 403 or 404 on the Directory's first request says a signed-in user
+// isn't an admin. A 400 is the error it is, and a refusal past the first
+// page is the listing stopping part way, as for a service account.
+func TestSignedInGoogleDirectoryRefusals(t *testing.T) {
+	ctx := context.Background()
+	notAuthorized := `{"error":{"code":403,"message":"Not Authorized to access this resource/api","errors":[{"reason":"forbidden"}]}}`
+	directory := func(first int, later int) map[string]func(*http.Request) (int, string) {
+		return map[string]func(*http.Request) (int, string){
+			"/drive/v3/files":                    func(*http.Request) (int, string) { return http.StatusOK, `{"files":[]}` },
+			"/calendar/v3/users/me/calendarList": func(*http.Request) (int, string) { return http.StatusOK, `{"items":[]}` },
+			"/admin/directory/v1/users": func(r *http.Request) (int, string) {
+				switch {
+				case r.URL.Query().Get("pageToken") != "":
+					return later, notAuthorized
+				case first != http.StatusOK:
+					return first, `{"error":{"code":400,"message":"Bad Request","errors":[{"reason":"badRequest"}]}}`
+				}
+				return http.StatusOK, `{"users":[{"id":"1","primaryEmail":"ada@acme.test"}],"nextPageToken":"p2"}`
+			},
+		}
+	}
+	src := Source{Secret: "vended-google", Settings: json.RawMessage(`{"subject":"","event_days":30}`), SignIn: true}
+	google := func(routes map[string]func(*http.Request) (int, string)) Kind {
+		url := routeServer(t, routes)
+		return kindOf(t, NewCatalog(Endpoints{Google: url, GoogleToken: url + "/token"}, Guard{}, S3Options{}, EventsOptions{}), "google")
+	}
+
+	_, err := google(directory(http.StatusBadRequest, http.StatusOK)).Discover(ctx, src)
+	var refusedErr *RefusedError
+	if !errors.As(err, &refusedErr) || !strings.Contains(refusedErr.Message, "HTTP 400") {
+		t.Fatalf("Discover = %v, want the Directory's 400", err)
+	}
+
+	_, err = google(directory(http.StatusOK, http.StatusForbidden)).Sync(ctx, src, Table{Name: "users"}, &rowSink{})
+	if !errors.As(err, &refusedErr) || !strings.Contains(refusedErr.Message, "part way through") || strings.Contains(refusedErr.Message, "not a Workspace admin") {
+		t.Fatalf("Sync = %v, want the listing stopped part way", err)
+	}
+}
+
 // A signed-in Google source with an empty token is rejected as any token
 // no provider takes, never read as a service account with none.
 func TestSignedInGoogleEmptyToken(t *testing.T) {

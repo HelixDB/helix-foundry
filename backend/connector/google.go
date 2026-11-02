@@ -589,11 +589,13 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 	switch {
 	case status == http.StatusUnauthorized && c.signIn:
 		return rejectedCredential("Google", nil, "Google rejected the access this connector signed in with; sign it in again")
-	// Only a Workspace admin reads the Directory; a signed-in user who isn't
-	// one, or whose account is no Workspace's, finds it refused. An API not
+	// Only a Workspace admin reads the Directory: a signed-in user who isn't
+	// one, or whose account is no Workspace's, finds its first request
+	// refused. A refusal past the first page is the listing stopping part
+	// way (pages), and any other answer says what it says; an API not
 	// enabled is said as such below.
-	case api == googleDirectory && c.signIn && (status == http.StatusBadRequest || status == http.StatusForbidden ||
-		status == http.StatusNotFound) && !slices.ContainsFunc(reasons, func(r string) bool {
+	case api == googleDirectory && c.signIn && (status == http.StatusForbidden || status == http.StatusNotFound) &&
+		!strings.Contains(target, "pageToken=") && !slices.ContainsFunc(reasons, func(r string) bool {
 		return slices.Contains(googleLimits, r) || r == "accessNotConfigured" || r == "SERVICE_DISABLED"
 	}):
 		return refused(errUnreadable, "the signed-in user is not a Workspace admin, so the Directory's users can't be read")
@@ -603,7 +605,7 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 		return refused(nil, "Google refused the %s API's access token for %s; try again", api.name, c.settings.Subject)
 	case status == http.StatusForbidden && (slices.Contains(reasons, "accessNotConfigured") || slices.Contains(reasons, "SERVICE_DISABLED")):
 		return refused(errUnreadable, "enable the %s API in %s", api.name, c.project())
-	case status == http.StatusForbidden && api == googleDirectory && strings.Contains(message, "Not Authorized to access this resource/api"):
+	case status == http.StatusForbidden && api == googleDirectory && !c.signIn && strings.Contains(message, "Not Authorized to access this resource/api"):
 		return refused(errUnreadable, "%s is not an admin, so the Directory's users can't be read", c.settings.Subject)
 	case status == http.StatusForbidden || status == http.StatusNotFound:
 		return refused(errNoAccess, "%s cannot read %s as %s; check its access and test again", c.credential(), path, c.who())
