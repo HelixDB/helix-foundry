@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/filesource"
@@ -29,6 +30,10 @@ type Source struct {
 	// Captures are the capture methods the workspace's plan allows. A kind
 	// with more than one way to follow a table takes the best one allowed.
 	Captures []Capture
+	// apart is set on a source a SnapshotKind bound to a snapshot the source
+	// may refuse: a table's Sync marks it when the source refused the table
+	// that snapshot and read it at a moment of its own instead.
+	apart *atomic.Bool
 }
 
 func (s Source) Allows(c Capture) bool { return slices.Contains(s.Captures, c) }
@@ -59,6 +64,30 @@ type Targeted interface {
 	// Target names where prepared settings send the credential; two settings
 	// with equal targets send it to the same server.
 	Target(settings json.RawMessage) (string, error)
+}
+
+// SnapshotKind is a kind that can read every table of a full read at one
+// snapshot of its source, so the tables agree with each other: a change
+// committed while they are read shows in all of them or in none.
+type SnapshotKind interface {
+	Kind
+	// SourceSnapshot holds one snapshot of the source open for the tables
+	// read with the returned Source, until its Close. A source Start already
+	// bound to a snapshot keeps it. An error holds nothing open: each table
+	// is then read at a moment of its own, as by any other kind.
+	SourceSnapshot(ctx context.Context, src Source) (SourceSnapshot, error)
+}
+
+// SourceSnapshot is the one moment of a source a full read's tables are read at.
+type SourceSnapshot struct {
+	// Source is what every table's Sync reads with.
+	Source Source
+	// Close releases the snapshot once the tables are read, on every path,
+	// and reports whether every table was read at it: false when the source
+	// refused some table the snapshot, as a server other than the one
+	// holding it does, and that table was read at a moment of its own.
+	// Never nil.
+	Close func() (whole bool)
 }
 
 // SecretContext binds a sealed credential to its connector row, so a

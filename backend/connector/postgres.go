@@ -3,13 +3,16 @@ package connector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"regexp"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type postgresKind struct {
@@ -37,7 +40,8 @@ type postgresSettings struct {
 	// Unpublished are, with CDC on, the keyed tables the publication leaves
 	// out; they keep the cursor-column method.
 	Unpublished []string `json:"unpublished,omitempty"`
-	// Snapshot is the replication slot's exported snapshot, which the full read imports.
+	// Snapshot is the snapshot every table of the full read imports: the
+	// replication slot's (Start), else the full read's own (SourceSnapshot).
 	Snapshot string `json:"snapshot,omitempty"`
 }
 
@@ -248,10 +252,70 @@ func (k *postgresKind) Target(settings json.RawMessage) (string, error) {
 	return databaseTarget(settings)
 }
 
-// Sync copies one table from a consistent snapshot. PostgreSQL encodes each
-// row as JSON itself, so no column type needs mapping here.
+// Sync copies one table from a consistent snapshot: the full read's, when
+// src carries one, else its own. PostgreSQL encodes each row as JSON itself,
+// so no column type needs mapping here.
 func (k *postgresKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {
 	return table, k.copyRows(ctx, src, table.Name, w)
+}
+
+var _ SnapshotKind = (*postgresKind)(nil)
+
+// SourceSnapshot exports one snapshot for a full read from a connection of
+// its own, dialed through the guard with the read's settings, and holds it
+// in a read-only repeatable-read transaction until Close; every table's read
+// imports it (copyRows). The transaction sits idle between the reads, so it
+// first turns off idle_in_transaction_session_timeout for its session, a
+// server's setting that would end it: as the transaction's first statement,
+// which a transaction pooler sends to the server connection holding the
+// snapshot. A source the replication slot bound (Start) keeps the slot's
+// snapshot, which the slot's position matches.
+//
+// What it costs the source: one more connection for as long as the full
+// read lasts, and the row versions the snapshot sees, which vacuum keeps
+// until it ends.
+func (k *postgresKind) SourceSnapshot(ctx context.Context, src Source) (SourceSnapshot, error) {
+	s, err := decodePostgresSettings(src.Settings)
+	if err != nil {
+		return SourceSnapshot{}, err
+	}
+	if s.Snapshot != "" {
+		return SourceSnapshot{Source: src, Close: func() bool { return true }}, nil
+	}
+	conn, err := k.connect(ctx, s.DatabaseSettings, src.Secret)
+	if err != nil {
+		return SourceSnapshot{}, connectFailure(err)
+	}
+	// Closing the connection ends the transaction, and the snapshot with it.
+	end := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = conn.Close(ctx) // best-effort: the server ends the transaction with the connection
+	}
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		end()
+		return SourceSnapshot{}, connectFailure(err)
+	}
+	if _, err := tx.Exec(ctx, "SET idle_in_transaction_session_timeout = 0"); err != nil {
+		end()
+		return SourceSnapshot{}, fmt.Errorf("keep the snapshot's transaction open: %w", err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT pg_catalog.pg_export_snapshot()").Scan(&s.Snapshot); err != nil {
+		end()
+		return SourceSnapshot{}, fmt.Errorf("export a snapshot: %w", err)
+	}
+	settings, err := json.Marshal(s)
+	if err != nil {
+		end()
+		return SourceSnapshot{}, fmt.Errorf("encode postgres settings: %w", err)
+	}
+	read := src
+	read.Settings, read.apart = settings, new(atomic.Bool)
+	return SourceSnapshot{Source: read, Close: func() bool {
+		end()
+		return !read.apart.Load()
+	}}, nil
 }
 
 // pgRowJSON is how every read encodes a row of the table aliased t, so a row
@@ -275,14 +339,31 @@ func (k *postgresKind) copyRows(ctx context.Context, src Source, table string, w
 		return connectFailure(err)
 	}
 	defer conn.Close(context.Background())
-	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	readOnly := pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
+	tx, err := conn.BeginTx(ctx, readOnly)
 	if err != nil {
 		return connectFailure(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }() // a no-op after Commit
 	if s.Snapshot != "" {
 		if _, err := tx.Exec(ctx, "SET TRANSACTION SNAPSHOT '"+s.Snapshot+"'"); err != nil {
-			return fmt.Errorf("import snapshot %s: %w", s.Snapshot, err)
+			// The server refused the full read's own snapshot: it is not the
+			// server holding it, as behind a load-balanced reader endpoint, or
+			// it ended the holding transaction. This table is read at a moment
+			// of its own, as before the read shared one, and src says so. The
+			// slot's snapshot is the one its position matches, so it is never
+			// read around.
+			var refusal *pgconn.PgError
+			if src.apart == nil || !errors.As(err, &refusal) {
+				return fmt.Errorf("import snapshot %s: %w", s.Snapshot, err)
+			}
+			src.apart.Store(true)
+			if err := tx.Rollback(ctx); err != nil {
+				return connectFailure(err)
+			}
+			if tx, err = conn.BeginTx(ctx, readOnly); err != nil {
+				return connectFailure(err)
+			}
 		}
 	}
 	rows, err := tx.Query(ctx, "SELECT "+pgRowJSON+" FROM "+pgx.Identifier{s.Schema, table}.Sanitize()+" t")

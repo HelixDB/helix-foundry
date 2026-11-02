@@ -19,6 +19,8 @@ import (
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // Failure is why a sync stopped. Message is written for the customer; Err
@@ -113,6 +115,15 @@ type Syncer struct {
 	Allowances map[string]model.FoundrySetAllowance
 }
 
+// sourceSnapshots counts the full reads of a connector.SnapshotKind that
+// finished (readTables).
+var sourceSnapshots = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_sync_source_snapshots_total",
+	Help: "Finished full reads of two or more tables by a kind that reads them at one snapshot of its source, by kind and outcome: " +
+		"one (every table at it), apart (the source refused some table the snapshot, read at a moment of its own) " +
+		"or unavailable (the source took no snapshot; every table at a moment of its own).",
+}, []string{"kind", "outcome"})
+
 // Result is what a sync did, for the worker to schedule the next one.
 type Result struct {
 	Rows int64
@@ -168,6 +179,8 @@ const releaseTimeout = 30 * time.Second
 //  4. Read in full or read changes (readMode); in full when a stream
 //     catches up on what a paused sync skipped (Allowances). A full read
 //     compares each table with its snapshot; a change read merges into it.
+//     A kind that can reads the tables it reads in full at one snapshot
+//     of its source (connector.SnapshotKind, readTables).
 //     A table that did not change keeps its snapshot; one that did gets a
 //     new snapshot and a change batch, in one lease-guarded write.
 //  5. Once every table is in, empty the document sets of streams no longer
@@ -460,7 +473,8 @@ func (r *run) result(res Result) Result {
 // done reports a table this sync already wrote on an earlier attempt, which
 // is not read again. A followed table is always read again: this attempt's
 // cursor is later than the one the earlier attempt read up to, so skipping
-// it would lose the changes in between.
+// it would lose the changes in between. So is every table of a read at one
+// snapshot of its source (readTables).
 func (r *run) done(table string, followed bool) bool {
 	if p := r.previous[table]; !followed && p != nil && p.SyncID == r.sync.ID {
 		r.keep(p)
@@ -509,12 +523,39 @@ func (r *run) readFull(ctx context.Context, reader connector.ChangeReader, table
 // readTables reads tables in full, one at a time, or all in one pass for a
 // PassKind. A table an earlier attempt of this sync wrote is not read again
 // (done); a pass still reads it, into writers that discard it.
-func (r *run) readTables(ctx context.Context, src connector.Source, tables []connector.Table, followed map[string]bool) error {
+//
+// A SnapshotKind reads two or more tables at one snapshot of its source, so
+// they agree with each other, and then reads again every table an earlier
+// attempt wrote, which shows another moment. A source that takes no
+// snapshot, or refuses a table it, is read as before, a table at a moment
+// of its own, and the log and helix_foundry_sync_source_snapshots_total say so.
+func (r *run) readTables(ctx context.Context, src connector.Source, tables []connector.Table, followed map[string]bool) (err error) {
 	if pass, ok := r.kind.(connector.PassKind); ok {
 		return r.passTables(ctx, pass, src, tables, followed)
 	}
+	shared := false
+	if snapshots, ok := r.kind.(connector.SnapshotKind); ok && len(tables) > 1 {
+		snap, serr := snapshots.SourceSnapshot(ctx, src)
+		outcome := "unavailable"
+		if serr != nil {
+			log.From(ctx).Warn("the source took no snapshot: each table is read at a moment of its own",
+				"connector", r.sync.ConnectorID, "err", serr)
+		} else {
+			shared, src, outcome = true, snap.Source, "one"
+		}
+		defer func() {
+			if shared && !snap.Close() {
+				outcome = "apart"
+				log.From(ctx).Warn("the source refused a table the full read's snapshot: it was read at a moment of its own",
+					"connector", r.sync.ConnectorID)
+			}
+			if err == nil {
+				sourceSnapshots.WithLabelValues(r.kind.Name(), outcome).Inc()
+			}
+		}()
+	}
 	for _, table := range tables {
-		if r.done(table.Name, followed[table.Name]) {
+		if !shared && r.done(table.Name, followed[table.Name]) {
 			continue
 		}
 		if err := r.fullTable(ctx, src, table); err != nil {
