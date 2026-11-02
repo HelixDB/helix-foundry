@@ -747,6 +747,18 @@ describe("document sets", () => {
     expect(defaultSetId([general, ...sets])).toBe("set_g");
   });
 
+  it("never uploads into the sample's set by default", () => {
+    const sample = { id: "set_s", name: "Acme Corp sample" };
+    // Only the sample's: as a workspace with none, so the first upload makes
+    // General.
+    expect(defaultSetId([sample])).toBe("");
+    // The oldest set people made, after the sample's.
+    expect(defaultSetId([sample, sets[0]!])).toBe("set_b");
+    expect(defaultSetId([sample, ...sets])).toBe("set_g");
+    // Set apart by its name, as the sample's page finds it.
+    expect(defaultSetId([{ ...sample, name: "Acme Corp" }])).toBe("set_s");
+  });
+
   it("names a connector's set with its connection", () => {
     expect(
       setLabel({

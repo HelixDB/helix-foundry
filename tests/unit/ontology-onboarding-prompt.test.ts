@@ -454,7 +454,7 @@ describe("onboardingPrompt with API sources", () => {
       "Left out, it reads none; `connector_ids` never names one.",
     );
     expect(text).toContain(
-      "Left out, it’s every connector but the API sources (so only when they hold 50 tables or fewer).",
+      "List each one: left out, it’s every connector but the API sources.",
     );
     expect(text).toContain(
       'or from an API source alone `{"goal": "<the goal>", "no_connectors": true, "event_sources": [{"connector_id": "<API source id>", "mode": "structured"}]}`, or by extraction',
