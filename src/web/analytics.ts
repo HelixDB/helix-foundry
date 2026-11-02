@@ -22,6 +22,7 @@ import type {
 import type { WizardStepId } from "./areas/ontology/model";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
+import type { SignInFailureCode } from "./areas/data/sign-ins";
 
 // The hosted site's product analytics, in Databuddy (./telemetry.tsx loads
 // its tracker). next.config.ts sets the stamp's client id only in a build
@@ -108,13 +109,16 @@ export type AnalyticsEvents = {
   };
   document_moved: undefined;
   document_set_created: undefined;
-  // Connecting a source by signing in at the provider: its button,
-  // as the page leaves for the provider (to a new connection or signing one
-  // in again), then how the callback found the sign-in ended.
+  // Connecting a source by signing in at the provider: its button, as the
+  // page leaves for the provider (to a new connection or signing one in
+  // again), or why it couldn't; then how the callback found the sign-in
+  // ended, a failure with its code.
   connector_sign_in_started: { kind: ConnectorKindName };
+  connector_sign_in_refused: { kind: ConnectorKindName; reason: Refusal };
   connector_sign_in_finished: {
     kind: ConnectorKindName;
     outcome: "connected" | "declined" | "failed" | "expired";
+    reason?: SignInFailureCode;
   };
 
   // Jobs: reported when they start and, by whichever read of them sees it

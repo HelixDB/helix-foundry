@@ -21,6 +21,7 @@ import { useSignInStart, type SignedInArrival } from "./sign-in";
 import {
   codeStale,
   connectedPath,
+  failureCode,
   forgetConnect,
   providerName,
   readConnect,
@@ -147,6 +148,14 @@ export function ConnectCallbackPage() {
           kind: entry.kind as ConnectorKindName,
           outcome:
             OUTCOMES[s.status as keyof typeof OUTCOMES] || ("failed" as const),
+          // Why it dropped off: a failure's code (a stale code is one).
+          ...(s.status === "CONNECTOR_SIGN_IN_STATUS_FAILED"
+            ? {
+                reason: stale
+                  ? ("code_expired" as const)
+                  : failureCode(s.failure),
+              }
+            : {}),
         });
       if (s.status !== "CONNECTOR_SIGN_IN_STATUS_CONNECTED" || !s.connectorId) {
         setPhase({

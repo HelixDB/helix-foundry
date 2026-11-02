@@ -308,6 +308,43 @@ export function startAgainPath(
   return url.pathname + url.search + url.hash;
 }
 
+/** A failed sign-in's code, as analytics names it: "code_expired". */
+export type SignInFailureCode =
+  | "provider_error"
+  | "code_expired"
+  | "not_this_workspace"
+  | "token_rejected"
+  | "settings_invalid"
+  | "unavailable"
+  | "unknown";
+
+/**
+ * A failure's code without its enum's prefix, for analytics: a fixed
+ * vocabulary, never the provider's text.
+ *
+ * @example
+ * failureCode("CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED"); // "code_expired"
+ */
+export function failureCode(
+  failure: ConnectorSignIn["failure"],
+): SignInFailureCode {
+  const code = (failure || "")
+    .replace("CONNECTOR_SIGN_IN_FAILURE_", "")
+    .toLowerCase();
+  return (
+    (
+      [
+        "provider_error",
+        "code_expired",
+        "not_this_workspace",
+        "token_rejected",
+        "settings_invalid",
+        "unavailable",
+      ] as const
+    ).find((c) => c === code) ?? "unknown"
+  );
+}
+
 /** How a sign-in that didn't connect is worded, and what it offers. */
 export type SignInFailure = {
   title: string;
