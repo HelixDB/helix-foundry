@@ -750,6 +750,26 @@ func TestConnectorSignIns(t *testing.T) {
 		}
 	})
 
+	// The broker answers account_missing for a switched-off integration
+	// too: when no new account can be made either, nothing is recorded, and
+	// a healthy connector stays as it was.
+	t.Run("records nothing when a new account can't be made either", func(t *testing.T) {
+		f := newSignInFixture(t)
+		first := f.connect(t, "user-1", linearSignIn())
+		c := f.store.rows[first.GetConnectorId()]
+		ctx := as("user-1")
+		si := f.start(t, ctx, &foundryv1.StartConnectorSignInRequest{Kind: "linear", ConnectorId: c.ID})
+		f.broker.Disabled = true
+		_, err := f.s.AuthorizeConnectorSignIn(ctx, &foundryv1.AuthorizeConnectorSignInRequest{WorkspaceId: "ws-1", Id: si.GetId(),
+			ReturnTo: callback})
+		if status.Code(err) != codes.Unavailable || f.broker.Calls("Authorize") != 3 {
+			t.Fatalf("Authorize = %v after %d calls, want the retry's unavailable", err, f.broker.Calls("Authorize"))
+		}
+		if account := f.store.rows[c.ID].Account; account.Broken != nil || !f.broker.Has(account.ID) {
+			t.Fatalf("account = %+v: a healthy connector froze", account)
+		}
+	})
+
 	// A member whose account's member left makes a new account too, even the
 	// one who left.
 	t.Run("makes a new account where its member left", func(t *testing.T) {

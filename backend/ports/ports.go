@@ -312,9 +312,11 @@ type ProviderAccounts interface {
 	Kinds(ctx context.Context, workspaceID, userID string) ([]string, error)
 	// Authorize is the provider's page for the user to authorize a. With
 	// a.AccountID set (a reauthorization), an account the broker no longer
-	// has is an *AccountBroken{Reason: AccountAccountMissing}: Foundry then
-	// records the connector's account as missing and authorizes again
-	// without AccountID, making a new account.
+	// has is an *AccountBroken{Reason: AccountAccountMissing}. Foundry then
+	// authorizes again without AccountID, for a new account, and only once
+	// that succeeds records the connector's account as missing: a broker
+	// that can't tell a lost account from a switched-off integration may
+	// answer so for either.
 	Authorize(ctx context.Context, a AccountAuthorization) (string, error)
 	// Finish saves the account the user authorized, having checked it is
 	// the workspace's and was made by ref.UserID; otherwise it deletes it

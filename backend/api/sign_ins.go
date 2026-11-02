@@ -177,8 +177,10 @@ func (s *Service) GetConnectorSignIn(ctx context.Context, req *foundryv1.GetConn
 // PKCE verifier and seals it (signInVerifier); every later one shares it.
 // Signing a connector in again reauthorizes its account when the caller is
 // the member it acts as (reauthorizes); anyone else makes a new account,
-// which replaces it. An account the broker lost (account_missing) is
-// recorded so, and a new one made instead. The sign-in then lasts signInTTL
+// which replaces it. A reauthorization the broker answers account_missing
+// is tried once more as a new account; only once that works is the
+// connector's account recorded as missing, since the broker answers so for
+// an integration that is switched off too. The sign-in then lasts signInTTL
 // more.
 func (s *Service) AuthorizeConnectorSignIn(ctx context.Context, req *foundryv1.AuthorizeConnectorSignInRequest) (
 	*foundryv1.AuthorizeConnectorSignInResponse, error) {
@@ -226,17 +228,20 @@ func (s *Service) AuthorizeConnectorSignIn(ctx context.Context, req *foundryv1.A
 	url, err := s.deps.Accounts.Authorize(ctx, auth)
 	var broken *ports.AccountBroken
 	if auth.AccountID != "" && errors.As(err, &broken) && broken.Reason == ports.AccountAccountMissing {
-		// The broker lost the account: no reauthorization can bring it back.
-		// Foundry's record says so, at the generation read, and the user
-		// makes a new account, which replaces it.
-		if _, berr := s.deps.DB.BreakConnectorAccount(ctx, si.WorkspaceID, current.ID, current.Account.Generation,
-			ports.AccountAccountMissing); berr != nil {
-			log.From(ctx).Warn("record a lost connector account failed", "connector", current.ID, "err", berr)
-		}
-		log.From(ctx).Info("a connector's account is gone from the broker; authorizing a new one", "workspace", si.WorkspaceID,
-			"connector", current.ID, "account", auth.AccountID, "sign_in", si.ID)
+		// The broker has no such account, or its integration is off: it
+		// can't say which. A new account tells: if the broker makes one, the
+		// old is gone, and Foundry's record says so, at the generation read;
+		// if not, nothing is recorded and the retry's error is the answer.
+		lost := auth.AccountID
 		auth.AccountID = ""
-		url, err = s.deps.Accounts.Authorize(ctx, auth)
+		if url, err = s.deps.Accounts.Authorize(ctx, auth); err == nil {
+			if _, berr := s.deps.DB.BreakConnectorAccount(ctx, si.WorkspaceID, current.ID, current.Account.Generation,
+				ports.AccountAccountMissing); berr != nil {
+				log.From(ctx).Warn("record a lost connector account failed", "connector", current.ID, "err", berr)
+			}
+			log.From(ctx).Info("a connector's account is gone from the broker; authorizing a new one", "workspace", si.WorkspaceID,
+				"connector", current.ID, "account", lost, "sign_in", si.ID)
+		}
 	}
 	if err != nil {
 		log.From(ctx).Warn("authorize a connector sign-in failed", "workspace", si.WorkspaceID, "sign_in", si.ID, "kind", si.Kind, "err", err)
