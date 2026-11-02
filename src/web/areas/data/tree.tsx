@@ -20,7 +20,6 @@ import {
 import {
   ChevronRight,
   FileText,
-  Folder,
   FolderInput,
   RefreshCw,
   Table2,
@@ -285,12 +284,11 @@ export function DataTree({
         <DragOverlay dropAnimation={null} modifiers={[upAndDown]}>
           {dragged && (
             <div className="dt-drag">
-              {dragged.type === "connector" ? (
+              {dragged.type === "connector" && (
                 <SourceLogo source={dragged.kind} size={20} />
-              ) : dragged.type === "document" ? (
+              )}
+              {dragged.type === "document" && (
                 <FileText size={15} className="dt-icon" aria-hidden />
-              ) : (
-                <Folder size={15} className="dt-icon" aria-hidden />
               )}
               <span className="dt-name">{dragged.name}</span>
             </div>
@@ -337,7 +335,6 @@ function ConnectorFolder({
     >
       <FolderRow
         level={1}
-        open={open}
         toggle={() => toggle(node.key)}
         count={node.items.length}
         name={
@@ -650,7 +647,6 @@ function ConnectorSetItem({
     <li className="dt-node" aria-label={label} {...item}>
       <FolderRow
         level={3}
-        open={open}
         toggle={toggle}
         count={held}
         name={
