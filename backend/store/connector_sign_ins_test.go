@@ -212,6 +212,24 @@ func TestConnectorAccounts(t *testing.T) {
 		c, err := db.GetConnector(ctx, ws, id26("ACC-OLD"))
 		require.NoError(t, err)
 		assert.Equal(t, before, c.UpdatedAt, "a check is no change to the connector")
+
+		// A check that got no token comes again an hour later; a deferral
+		// never moves a check back.
+		_, err = testDB.Exec(`UPDATE connectors SET account_checked_at=NOW(6) - INTERVAL 8 DAY WHERE id=?`, id26("ACC-NEW"))
+		require.NoError(t, err)
+		retry := time.Now().Add(time.Hour - 7*24*time.Hour)
+		require.NoError(t, db.DeferConnectorAccountCheck(ctx, ws, id26("ACC-NEW"), retry))
+		due, err = db.ListConnectorAccountChecks(ctx, time.Now().Add(-7*24*time.Hour), 10)
+		require.NoError(t, err)
+		assert.Empty(t, due, "deferred an hour")
+		due, err = db.ListConnectorAccountChecks(ctx, time.Now().Add(2*time.Hour-7*24*time.Hour), 10)
+		require.NoError(t, err)
+		require.Len(t, due, 1)
+		assert.Equal(t, id26("ACC-NEW"), due[0].ID)
+		require.NoError(t, db.DeferConnectorAccountCheck(ctx, ws, id26("ACC-OLD"), retry))
+		c, err = db.GetConnector(ctx, ws, id26("ACC-OLD"))
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now(), *c.Account.CheckedAt, time.Minute, "a deferral never moves a check back")
 	})
 
 	// Deleting a connector, or a workspace's, lets its account go: the purge

@@ -54,7 +54,9 @@ type ConnectorAccount struct {
 	// nil while connected. Nothing syncs it until someone signs it in again.
 	Broken   *string
 	BrokenAt *time.Time
-	// CheckedAt is when the broker last vended a token for it.
+	// CheckedAt is when the broker last vended a token for it, or, after a
+	// weekly check that got none, a time moved on so the next check comes
+	// later (DeferConnectorAccountCheck).
 	CheckedAt *time.Time
 	// ConnectedAt is when it was last signed in.
 	ConnectedAt *time.Time

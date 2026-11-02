@@ -162,6 +162,20 @@ WHERE id=? AND workspace_id=? AND account_id IS NOT NULL`, connectorID, workspac
 	return nil
 }
 
+// DeferConnectorAccountCheck records a weekly check that got no token for
+// the connector's account: its check time moves on to checkedAt (never
+// back), so it falls due again once checkedAt is a check interval ago, and
+// the accounts after it are checked meanwhile. The weekly check sets it so
+// the next comes an hour later.
+func (s *mysqlDB) DeferConnectorAccountCheck(ctx context.Context, workspaceID, connectorID string, checkedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE connectors SET account_checked_at=GREATEST(COALESCE(account_checked_at, ?), ?), updated_at=updated_at
+WHERE id=? AND workspace_id=? AND account_id IS NOT NULL`, checkedAt.UTC(), checkedAt.UTC(), connectorID, workspaceID)
+	if err != nil {
+		return fmt.Errorf("defer connector %s account check: %w", connectorID, err)
+	}
+	return nil
+}
+
 // ListConnectorAccountPurges lists up to limit broker accounts whose purge is
 // due, longest due first.
 func (s *mysqlDB) ListConnectorAccountPurges(ctx context.Context, limit int) ([]*model.ConnectorAccountPurge, error) {

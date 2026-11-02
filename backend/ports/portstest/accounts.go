@@ -34,6 +34,7 @@ type Accounts struct {
 	OnFinish func()
 
 	mu             sync.Mutex
+	failures       map[string]error
 	authorizations []ports.AccountAuthorization
 	finishes       []ports.AccountRef
 	codes          map[string]*code
@@ -147,6 +148,8 @@ func (a *Accounts) Token(_ context.Context, ref ports.AccountRef) (ports.Credent
 	defer a.mu.Unlock()
 	acct, ok := a.accounts[ref.AccountID]
 	switch {
+	case a.failures[ref.AccountID] != nil:
+		return ports.Credential{}, a.failures[ref.AccountID]
 	case !ok:
 		return ports.Credential{}, &ports.AccountBroken{Reason: ports.AccountAccountMissing}
 	case acct.broken != "":
@@ -238,6 +241,17 @@ func (a *Accounts) Rotate(accountID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.accounts[accountID].token++
+}
+
+// Fail makes Token fail with err for the account, as a broker that can't
+// reach it does; nil ends that.
+func (a *Accounts) Fail(accountID string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.failures == nil {
+		a.failures = map[string]error{}
+	}
+	a.failures[accountID] = err
 }
 
 // Break makes Token refuse the account for reason, a ports.Account* reason.
