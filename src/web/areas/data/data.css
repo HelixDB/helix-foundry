@@ -623,6 +623,16 @@
 .dc-pro-gate {
   margin-bottom: var(--hf-space-2);
 }
+/* A connection's page: one box, the page header's, with its logo filling it.
+   The logo's 42px is that box inside its border. A logo with no file keeps the
+   kit's smaller icon: its lines would look heavy at this size. */
+.hf-page-header-icon > .hf-logo {
+  border: 0;
+}
+.hf-page-header-icon > .hf-logo img {
+  width: 88%;
+  height: 88%;
+}
 .dc-table-icon {
   display: inline-flex;
   align-items: center;
