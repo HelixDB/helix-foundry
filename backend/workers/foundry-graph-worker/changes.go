@@ -167,13 +167,15 @@ func changeFiles(ctx context.Context, db changeLog, files snapshot.Store, workDi
 }
 
 // withoutChanges sends the snapshot of each source whose stream the agent
-// holds at another position than its change file starts from.
+// holds at another position than its change file starts from. A table two
+// mappings read is one source and two streams, so each stream is judged
+// against what was sent, not against what an earlier stream already cleared.
 func withoutChanges(sources []ontologyagent.Source, positions []ontologyagent.StoredPosition) ([]ontologyagent.Source, error) {
 	out := slices.Clone(sources)
 	for _, p := range positions {
 		id, _, _ := cutStream(p.Stream)
-		i := slices.IndexFunc(out, func(s ontologyagent.Source) bool { return s.ID == id })
-		if i < 0 || out[i].Changes == nil {
+		i := slices.IndexFunc(sources, func(s ontologyagent.Source) bool { return s.ID == id })
+		if i < 0 || sources[i].Changes == nil {
 			return nil, fmt.Errorf("the agent's stream %q is no change file Helix sent", p.Stream)
 		}
 		out[i].Changes = nil

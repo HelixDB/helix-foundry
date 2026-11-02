@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The hosted site's product analytics (src/web/analytics.ts): nothing is
 // sent or kept without a client id; a sign-in is reported when the tab that
 // started it is signed in; a job is reported when it starts and, once, when
-// a read sees it end. src/web/telemetry.tsx keeps page titles out.
+// a read sees it end. src/web/telemetry.tsx keeps page titles out and
+// turns on everything the tracker records, replays with the paths masked.
 
 const sdk = vi.hoisted(() => ({
   track: vi.fn(),
@@ -250,6 +251,31 @@ describe("jobs", () => {
     expect(local.values.has(PENDING)).toBe(false);
   });
 
+  it("reports a revision's start and end with its mode, apart from generations", async () => {
+    const a = await load();
+    a.jobStarted("revision", "rev_1", "preview");
+    a.jobStarted("revision", "rev_2", "save");
+    a.jobStarted("revision", "rev_3", "save");
+    // Revisions are generations: a read of them sees both kinds.
+    const seen = [
+      { id: "rev_1", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
+      { id: "rev_2", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
+      { id: "rev_3", status: "ONTOLOGY_GENERATION_STATUS_FAILED" },
+    ] as const;
+    a.jobSeen("generation", seen);
+    a.jobSeen("revision", seen);
+    a.jobSeen("revision", seen);
+    expect(sent()).toEqual([
+      ["revision_started", { mode: "preview" }],
+      ["revision_started", { mode: "save" }],
+      ["revision_started", { mode: "save" }],
+      ["revision_succeeded", { mode: "preview" }],
+      ["revision_succeeded", { mode: "save" }],
+      ["revision_failed", { mode: "save" }],
+    ]);
+    expect(local.values.has(PENDING)).toBe(false);
+  });
+
   it("reports a ready or partial load, and forgets a failed one", async () => {
     const a = await load();
     for (const id of ["load_1", "load_2", "load_3"]) a.jobStarted("load", id);
@@ -346,20 +372,26 @@ describe("jobs", () => {
     expect(Object.keys(JSON.parse(local.values.get(PENDING)!))).toEqual([
       "load_2",
     ]);
-    // A source that isn't one of its words reads as the agent's.
+    // A source or mode that isn't one of its words reads as the agent's, or
+    // a save.
     local.values.set(
       PENDING,
       JSON.stringify({
         gen_1: { job: "generation", source: "<b>", at: Date.now() },
+        rev_1: { job: "revision", mode: "<b>", at: Date.now() },
       }),
     );
     a.jobSeen("generation", [
       { id: "gen_1", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
     ]);
+    a.jobSeen("revision", [
+      { id: "rev_1", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
+    ]);
     expect(sent()).toEqual([
       ["load_started", undefined],
       ["load_started", undefined],
       ["generation_succeeded", { source: "ai" }],
+      ["revision_succeeded", { mode: "save" }],
     ]);
   });
 
@@ -379,5 +411,33 @@ describe("withoutTitle", () => {
     expect(withoutTitle(event)).toBe(true);
     expect(event).toEqual({ name: "screen_view", path: "/ask/*" });
     expect(sdk.setGlobalProperties).toHaveBeenCalledWith({ title: undefined });
+  });
+});
+
+describe("Telemetry", () => {
+  it("mounts no tracker without a client id", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "");
+    vi.resetModules();
+    const { Telemetry } = await import("@/web/telemetry");
+    expect(Telemetry()).toBeNull();
+  });
+
+  it("records everything, replays with the tracker's path masks", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-test");
+    vi.resetModules();
+    const { MASK_PATTERNS, Telemetry, withoutTitle } = await import(
+      "@/web/telemetry"
+    );
+    // replay.js masks the URLs it records with the tracker's maskPatterns.
+    expect(Telemetry()?.props).toEqual({
+      clientId: "client-test",
+      maskPatterns: MASK_PATTERNS,
+      filter: withoutTitle,
+      trackWebVitals: true,
+      trackErrors: true,
+      trackOutgoingLinks: true,
+      trackInteractions: true,
+      replay: true,
+    });
   });
 });

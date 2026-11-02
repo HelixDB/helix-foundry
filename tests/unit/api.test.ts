@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 type Call = { url: string; init: RequestInit };
 let calls: Call[], replies: Response[], assigned: string[];
 
+// Sign-out's event, in the order the page leaves after it.
+vi.mock("@/web/analytics", () => ({
+  trackBeforeLeaving: async (name: string) =>
+    void assigned.push(`event ${name}`),
+}));
+
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -294,14 +300,17 @@ describe("signOut()", () => {
     await signOut();
     expect(calls[1]!.url).toBe("/auth/logout");
     expect(header(calls[1]!, "x-helix-csrf")).toBe("t");
-    expect(assigned).toEqual(["https://api.workos.test/logout"]);
+    expect(assigned).toEqual([
+      "event signed_out",
+      "https://api.workos.test/logout",
+    ]);
   });
 
   it("still lands on sign-in without a session", async () => {
     const { signOut } = await load();
     replies.push(json(401, { code: "UNAUTHENTICATED" }));
     await signOut();
-    expect(assigned).toEqual(["/login"]);
+    expect(assigned).toEqual(["event signed_out", "/login"]);
   });
 });
 

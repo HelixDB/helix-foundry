@@ -1,7 +1,7 @@
 import "./ask.css";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Gauge, SquarePen } from "lucide-react";
+import { SquarePen } from "lucide-react";
 import {
   ButtonLink,
   SkeletonText,
@@ -12,15 +12,13 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
-import { formatUsd } from "../documents/model";
 import { askOntologyId, askView, threadGroups, threadsOf } from "./ask-model";
 import { withLoad } from "./model";
 import { questionQueries } from "./queries";
 
 // Ask's threads, in the shell's sidebar under the sections (and, on a narrow
-// screen, as the Ask page itself until a thread is chosen): New thread, the
-// threads grouped by recency as chat apps list them, and the month's spend
-// on questions. The shell renders it
+// screen, as the Ask page itself until a thread is chosen): New thread and
+// the threads grouped by recency as chat apps list them. The shell renders it
 // outside the ontology's scope, so it reads the ontology from the path and
 // the threads from the questions list the page shares; its links keep the
 // page's `?load=`.
@@ -47,8 +45,7 @@ function Threads({
     [params] = useSearchParams(),
     now = useNow(60_000);
   const list = useQuery(questionQueries.list(ws, o));
-  const threads = threadsOf(list.data?.questions || []),
-    budget = list.data?.budget;
+  const threads = threadsOf(list.data?.questions || []);
   // What the page shows: on a narrow screen without a thread chosen, these
   // threads, and a new thread about an entity isn't New thread's page.
   const view = askView(
@@ -133,27 +130,6 @@ function Threads({
           ))
         )}
       </nav>
-      {budget && (
-        <details className="ak-budget" aria-label="Questions budget">
-          <summary>
-            <Gauge size={14} aria-hidden />
-            <span>
-              <strong>{formatUsd(budget.spentUsdMicros || 0)}</strong> of{" "}
-              {formatUsd(budget.monthlyUsdMicros || 0)} this month
-            </span>
-          </summary>
-          <p>
-            Spent on questions by the workspace this month
-            {Number(budget.reservedUsdMicros || 0) > 0 &&
-              `, and ${formatUsd(budget.reservedUsdMicros)} held for questions running`}
-            . A question spends at most{" "}
-            {formatUsd(budget.questionUsdMicros || 0)}, {budget.maxSteps ?? 20}{" "}
-            steps and {Math.round((budget.maxWallSecs ?? 240) / 60)} minutes;{" "}
-            {budget.concurrentLimit ?? 2} run at a time and{" "}
-            {budget.hourlyLimit ?? 30} an hour per workspace.
-          </p>
-        </details>
-      )}
     </div>
   );
 }

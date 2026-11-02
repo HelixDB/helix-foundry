@@ -624,6 +624,7 @@ export const dataRoutes: MockRoute[] = [
             };
         } else {
           const part = config[c.kind] || (config[c.kind] = {});
+          let kept = false;
           // S3 keeps it only in key mode: a role stores no secret, so moving
           // to one drops the old key.
           if (c.kind === "s3") {
@@ -640,10 +641,32 @@ export const dataRoutes: MockRoute[] = [
                     : c.kind === "google"
                       ? "serviceAccountKey"
                       : "apiKey";
-            if (!part[field]) part[field] = c.source.secret;
+            kept = !part[field];
+            if (kept) part[field] = c.source.secret;
           }
           const tested = testSource(c.workspaceId, config);
           if ("status" in tested) return tested;
+          // As the backend's connector.Targeted: a kept credential goes only
+          // to the server it was entered for (a database's host, port, TLS
+          // and CA, PostHog's region and host).
+          const target = (settings: ConnectorConfig) => {
+            const s: Record<string, unknown> = Object.values(settings)[0] || {};
+            return JSON.stringify([
+              s.host,
+              s.port,
+              s.disableTls,
+              s.ca,
+              s.region,
+            ]);
+          };
+          if (
+            kept &&
+            target(tested.source.settings) !== target(c.source.settings)
+          )
+            return fail(
+              "INVALID_ARGUMENT",
+              "these settings connect to a different server; enter the credential again",
+            );
           if (
             JSON.stringify(tested.source.settings) !==
               JSON.stringify(c.source.settings) &&

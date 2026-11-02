@@ -101,6 +101,19 @@ func TestWithoutChanges(t *testing.T) {
 			t.Fatalf("withoutChanges = (%+v, %v)", got, err)
 		}
 	})
+	// Two mappings read one table: the source is cleared once, for both streams.
+	t.Run("sends one snapshot for two streams of a table", func(t *testing.T) {
+		sources := []ontologyagent.Source{
+			{ID: "src_a", Changes: &ontologyagent.ChangeFile{Path: "a", FromSeq: 1, ToSeq: 2}},
+			{ID: "src_b", Changes: &ontologyagent.ChangeFile{Path: "b", FromSeq: 1, ToSeq: 2}},
+		}
+		got, err := withoutChanges(sources, []ontologyagent.StoredPosition{
+			{Stream: "src_a\x1fcustomers"}, {Stream: "src_a\x1faccounts"},
+		})
+		if err != nil || got[0].Changes != nil || got[1].Changes == nil || sources[0].Changes == nil {
+			t.Fatalf("withoutChanges = (%+v, %v)", got, err)
+		}
+	})
 	// A stream Helix sent no change file for can't be at the wrong position.
 	t.Run("refuses a stream it sent whole", func(t *testing.T) {
 		if _, err := withoutChanges([]ontologyagent.Source{{ID: "src_a"}}, []ontologyagent.StoredPosition{{Stream: "src_a\x1fx"}}); err == nil {
@@ -239,6 +252,34 @@ func TestApplyChangeFiles(t *testing.T) {
 			t.Fatalf("%d ingests, want the change file then the snapshot", len(ingests))
 		}
 		if _, ok := sentAccess(t, ingests[1], source)["file"]; !ok || !strings.Contains(ingests[1], `"request_id":"job-4:snapshots"`) {
+			t.Fatalf("second request = %s", ingests[1])
+		}
+	})
+
+	// After an interrupted apply the agent lists every stream of a change file
+	// with no position to continue from. Two mappings on the table are two
+	// streams, and the attempt still ends with one snapshot of it.
+	t.Run("sends the snapshot of a table two mappings read", func(t *testing.T) {
+		h := newHarness(t)
+		h.store.pending = nil
+		source := changedCustomers(t, h)
+		h.agent.ingest = func(req string, stream agentv1.Agent_IngestServer) error {
+			if _, ok := sentAccess(t, req, source)["changes"]; ok {
+				return ingestEvents(stream, nil, `{"status":"position_mismatch","streams":[`+
+					`{"stream":"`+source+`\u001fcustomers","stored_change_seq":null},`+
+					`{"stream":"`+source+`\u001faccounts","stored_change_seq":null}]}`)
+			}
+			return ingestApplied(req, stream)
+		}
+		outcome := h.run(t, applyJob())
+		if outcome.Status != model.FoundryGraphJobSucceeded || !outcome.IngestDone {
+			t.Fatalf("outcome = %+v", outcome)
+		}
+		ingests, _ := h.agent.calls()
+		if len(ingests) != 2 {
+			t.Fatalf("%d ingests, want the change file then the snapshot", len(ingests))
+		}
+		if _, ok := sentAccess(t, ingests[1], source)["file"]; !ok {
 			t.Fatalf("second request = %s", ingests[1])
 		}
 	})

@@ -323,7 +323,10 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
                 pending={action.pending}
                 disabled={live || gated}
                 onClick={() =>
-                  action.run(() => syncConnector(id, c.id), "Sync queued")
+                  action.run(
+                    () => syncConnector(id, c.id, "connection"),
+                    "Sync queued",
+                  )
                 }
               >
                 {live ? "Syncing…" : "Sync now"}

@@ -171,7 +171,7 @@ export function SampleTour() {
             config: await sampleDatabaseConfig(),
           })
         ).connector;
-      if (!connector.lastSync) await syncConnector(id, connector.id);
+      if (!connector.lastSync) await syncConnector(id, connector.id, "sample");
       setMade((m) => ({ ...m, connectorId: connector.id }));
       await until(async () => {
         const c = (

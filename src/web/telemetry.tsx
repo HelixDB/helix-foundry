@@ -53,11 +53,22 @@ export function withoutTitle(event: { title?: unknown }): boolean {
 }
 
 /**
- * Page views and the custom events of ./analytics.ts. No web vitals (the
- * tracker sends them with the path unmasked, table names and all),
- * interactions (they name the element clicked, which may be a document or
- * an entity), errors (their messages may quote the WFE's), outgoing links (a
- * document's source page) or session replay.
+ * Everything the tracker records: page views, the custom events of
+ * ./analytics.ts, web vitals, uncaught errors, outgoing links, interactions
+ * and session replay. Page views and replays mask paths with MASK_PATTERNS;
+ * the tracker sends web vitals and errors with the path as it is (ids and
+ * table names), an error's message and stack, an outgoing link's address
+ * (no query) and text, and, of interactions, counts and the label of a
+ * rage- or dead-clicked element (its data-track, aria-label, test id, name
+ * or id, emails and digits taken out). `data-track` attributes aren't read:
+ * events are trackEvent's typed ones. Hash changes aren't page views: a
+ * document's hash marks a span.
+ *
+ * Replay (replay.js, also on in the site's Databuddy settings) masks all page
+ * text, attribute text and typed input, records no canvas (the Explorer's
+ * graph), iframe (a PDF) or image bytes, and records URLs without their query
+ * or hash, paths masked by MASK_PATTERNS. What shows a person's account,
+ * the members or a payment form is also `data-replay-block`: left out whole.
  */
 export function Telemetry() {
   if (!Databuddy) return null;
@@ -66,7 +77,11 @@ export function Telemetry() {
       clientId={DATABUDDY_CLIENT_ID}
       maskPatterns={MASK_PATTERNS}
       filter={withoutTitle}
-      trackInteractions={false}
+      trackWebVitals
+      trackErrors
+      trackOutgoingLinks
+      trackInteractions
+      replay
     />
   );
 }

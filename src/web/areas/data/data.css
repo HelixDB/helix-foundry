@@ -319,6 +319,13 @@
 .dt-toggle:hover .dt-chevron {
   color: var(--hf-text);
 }
+/* A connection's logo reads larger than its row's text, in its row and in
+   the copy that follows a drag: a 20px box, its glyph filling more of it than
+   the kit's (a wordmark already does). */
+:is(.dt-row, .dt-drag) > .hf-logo :is(img, svg) {
+  width: 88%;
+  height: 88%;
+}
 .dt-row > .dt-count,
 .dt-row > .hf-status-dot {
   margin-left: auto;
@@ -522,6 +529,10 @@
 }
 .dt-drag .dt-name {
   font-weight: 600;
+}
+/* A folder's copy has no icon, so its name sits as far from either end. */
+.dt-drag > .dt-name:first-child {
+  padding-left: 4px;
 }
 
 /* The Data page: the connections' grid, and the document sets as a list

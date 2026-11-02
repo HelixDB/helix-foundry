@@ -7,6 +7,7 @@ import type {
   WorkspaceMember,
   WorkspaceRole as WfeRole,
 } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { api } from "../../api";
 import {
   Button,
@@ -78,6 +79,7 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
     >
       <form
+        data-replay-block
         onSubmit={async (e) => {
           e.preventDefault();
           setPending(true);
@@ -91,6 +93,9 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
                 role,
               } satisfies InviteWorkspaceMemberRequest,
             );
+            trackEvent("workspace_member_invited", {
+              role: role === "WORKSPACE_ROLE_ADMIN" ? "admin" : "member",
+            });
             notify(`Invitation sent to ${to}`);
             onClose();
           } catch (err) {
@@ -234,7 +239,7 @@ export function MembersTab() {
             </Button>
           </div>
         ) : list.length ? (
-          <ul className="wk-members" aria-label="Members">
+          <ul className="wk-members" aria-label="Members" data-replay-block>
             {list.map((m, i) => (
               <MemberRow
                 key={m.id || m.user?.id || i}

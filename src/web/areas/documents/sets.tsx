@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FoundryDocument, FoundryDocumentSet } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { Button, Dialog, Select, SkeletonText } from "../../kit";
 import { useWorkspace } from "../../ui";
 import { ontologyQueries } from "../ontology/queries";
@@ -76,7 +77,10 @@ export function SetDialog({
           const body = { name: name.trim(), description: description.trim() };
           try {
             if (set) await updateDocumentSet(id, set.id, body);
-            else await createDocumentSet(id, body);
+            else {
+              await createDocumentSet(id, body);
+              trackEvent("document_set_created");
+            }
             await qc.invalidateQueries({ queryKey: [id, "document-sets"] });
             notify(set ? `Saved ${body.name}.` : `Created ${body.name}.`);
             onClose();
