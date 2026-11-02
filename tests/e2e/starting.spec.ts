@@ -80,7 +80,7 @@ test("says a new database is starting, and shows what it holds once it answers",
     .getByRole("status")
     .filter({ hasText: "Your new database is starting" });
   await expect(starting).toBeVisible();
-  await expect(starting).toContainText("reads it again by itself");
+  await expect(starting).toContainText("The page updates automatically.");
   // Retry reads now: refused again, the card stays, not an error.
   await starting.getByRole("button", { name: "Retry" }).click();
   await expect
@@ -231,8 +231,7 @@ test("says the Loads page's counts and a compare wait for a new database, then s
   // Two loads of version 1: the second is current.
   const first = await loadVersion1(page, overview);
   const second = await loadVersion1(page, overview);
-  const STARTING =
-    "The new database is still starting; this reads it again by itself.";
+  const STARTING = "Your database is starting. The page updates automatically.";
   const waiting = page.getByRole("status").filter({ hasText: STARTING });
 
   // The Loads page's counts: each load's is refused once, says the database

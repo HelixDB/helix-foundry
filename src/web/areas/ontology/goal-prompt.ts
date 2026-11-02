@@ -9,7 +9,7 @@ import { eventsConfig, eventsTable } from "../data/model";
 import { fileRead, readKindOf, readsAsText } from "../documents/model";
 import { DOCUMENTS_PER_SET, MAX_GOAL } from "./model";
 
-// The prompt "What should it serve?" copies for the user's own AI assistant:
+// The prompt "What do you want to understand?" copies for the user's own AI assistant:
 // what the generation will read, and how to turn what the assistant knows of
 // the user's work into a goal, asking the user what it can't tell. The goal
 // is the ontology agent's whole brief (its workflow and its one goal), and

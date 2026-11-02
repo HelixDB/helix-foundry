@@ -154,7 +154,7 @@ function UpgradeDialog({
   return (
     <Dialog
       title="Upgrade Foundry"
-      description={`Pick a plan for ${name}. You’ll pay on a secure Stripe page.`}
+      description={`Choose a plan for ${name}. A saved payment method may be charged immediately. Otherwise, you’ll complete payment on Stripe.`}
       onClose={onClose}
     >
       <form
@@ -234,7 +234,7 @@ function UpgradeDialog({
         <div className="hf-form-actions">
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" pending={pending}>
-            Continue to payment
+            Upgrade to {TIER_NAME[tier]}
           </Button>
         </div>
       </form>

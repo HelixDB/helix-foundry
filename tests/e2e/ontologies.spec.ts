@@ -524,7 +524,7 @@ test("deletes an ontology and its loads, leaving its database for another", asyn
     name: "Delete Customer contracts?",
   });
   await expect(confirm).toContainText(
-    "deletes what its loads wrote from contracts, with any edges added to those nodes. The database stays in Helix with your own data, and your documents stay in Connectors.",
+    "the data its loads wrote to contracts. Edges attached to those nodes are also deleted. The database, your other data and documents in Connectors are kept.",
   );
   await confirm.getByRole("button", { name: "Delete ontology" }).click();
   // /ontology opens the list's first left, never the one deleted: the

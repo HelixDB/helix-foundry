@@ -538,7 +538,7 @@ function CountCell({
     return (
       <span
         className="on-muted"
-        title="The new database is still starting; this reads it again by itself."
+        title="Your database is starting. The page updates automatically."
       >
         …
       </span>

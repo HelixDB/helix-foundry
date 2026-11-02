@@ -128,7 +128,7 @@ const toggle = (set: ReadonlySet<string>, key: string) => {
 };
 
 /**
- * "What should it serve?": the goal, counted in characters as the WFE does,
+ * "What do you want to understand?": the goal, counted in characters as the WFE does,
  * and a prompt to copy for the user's own AI agent (./goal-prompt.ts) that
  * describes the ontology's chosen connectors, API sources and sets
  * (`chosen` as ConnectorPicker's, `chosenEvents` as EventSourcePicker's,
@@ -200,14 +200,14 @@ export function GoalPanel({
       )
       .then(() =>
         notify(
-          "Copied the prompt: paste it into your agent, and its goal here.",
+          "Prompt copied. Paste it into your AI agent, then paste the suggested goal here.",
         ),
       )
       .catch(() => notify("Couldn’t copy the prompt.", true));
   return (
     <Panel
-      title="What should it serve?"
-      subtitle="The questions people will ask of it, in your words. The agent models what they need. Not sure? Copy a prompt for your own AI agent: it describes what you chose and writes this with you."
+      title="What do you want to understand?"
+      subtitle="Describe the questions you want to answer. For help, copy the prompt into your AI agent."
       actions={
         <Button
           size="sm"
