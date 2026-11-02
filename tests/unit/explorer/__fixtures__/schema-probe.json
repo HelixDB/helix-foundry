@@ -48,9 +48,25 @@
                       "input": {
                         "nodes_where": {
                           "predicate": {
-                            "eq": {
-                              "left": { "property": "$label" },
-                              "right": { "constant": { "string": "Document" } }
+                            "and": {
+                              "predicates": [
+                                {
+                                  "eq": {
+                                    "left": { "property": "$label" },
+                                    "right": {
+                                      "constant": { "string": "Document" }
+                                    }
+                                  }
+                                },
+                                {
+                                  "eq": {
+                                    "left": { "property": "foundry_load" },
+                                    "right": {
+                                      "constant": { "string": "load_1" }
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -72,9 +88,25 @@
                       "input": {
                         "nodes_where": {
                           "predicate": {
-                            "eq": {
-                              "left": { "property": "$label" },
-                              "right": { "constant": { "string": "Event" } }
+                            "and": {
+                              "predicates": [
+                                {
+                                  "eq": {
+                                    "left": { "property": "$label" },
+                                    "right": {
+                                      "constant": { "string": "Event" }
+                                    }
+                                  }
+                                },
+                                {
+                                  "eq": {
+                                    "left": { "property": "foundry_load" },
+                                    "right": {
+                                      "constant": { "string": "load_1" }
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -96,9 +128,25 @@
                       "input": {
                         "nodes_where": {
                           "predicate": {
-                            "eq": {
-                              "left": { "property": "$label" },
-                              "right": { "constant": { "string": "User" } }
+                            "and": {
+                              "predicates": [
+                                {
+                                  "eq": {
+                                    "left": { "property": "$label" },
+                                    "right": {
+                                      "constant": { "string": "User" }
+                                    }
+                                  }
+                                },
+                                {
+                                  "eq": {
+                                    "left": { "property": "foundry_load" },
+                                    "right": {
+                                      "constant": { "string": "load_1" }
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -120,9 +168,25 @@
                       "input": {
                         "edges_where": {
                           "predicate": {
-                            "eq": {
-                              "left": { "property": "$label" },
-                              "right": { "constant": { "string": "FOLLOWS" } }
+                            "and": {
+                              "predicates": [
+                                {
+                                  "eq": {
+                                    "left": { "property": "$label" },
+                                    "right": {
+                                      "constant": { "string": "FOLLOWS" }
+                                    }
+                                  }
+                                },
+                                {
+                                  "eq": {
+                                    "left": { "property": "foundry_load" },
+                                    "right": {
+                                      "constant": { "string": "load_1" }
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -144,9 +208,25 @@
                       "input": {
                         "edges_where": {
                           "predicate": {
-                            "eq": {
-                              "left": { "property": "$label" },
-                              "right": { "constant": { "string": "WORKS_AT" } }
+                            "and": {
+                              "predicates": [
+                                {
+                                  "eq": {
+                                    "left": { "property": "$label" },
+                                    "right": {
+                                      "constant": { "string": "WORKS_AT" }
+                                    }
+                                  }
+                                },
+                                {
+                                  "eq": {
+                                    "left": { "property": "foundry_load" },
+                                    "right": {
+                                      "constant": { "string": "load_1" }
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           }
                         }

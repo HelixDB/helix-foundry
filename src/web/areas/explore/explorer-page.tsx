@@ -29,7 +29,6 @@ import {
   type DatabaseExplorerProps,
 } from "./explorer/DatabaseExplorer";
 import type { GraphNode, LabelExclusion } from "./explorer/lib/types";
-import type { Scope } from "./load-scope";
 import { entityRow } from "./model";
 import { isInternal, readable } from "./naming";
 import { useTenantReads } from "./tenant-reads";
@@ -38,15 +37,15 @@ import { useNaming } from "./use-naming";
 
 // /explore/:ontologyId: helix-website's graph explorer on the
 // ontology's database, reading with the user's session, within one load
-// (`?load=`, the current one by default) or Other data (`?load=other`), and
-// with `&compare=<load>` two loads side by side over their diff; with no
+// (`?load=`, the current one by default), and with `&compare=<load>` two
+// loads side by side over their diff; with no
 // load at all it reads nothing and says how to load one. Its labels,
 // canvas, inspector and search are the explorer's own: on one load the page
 // is the explorer, its labels in the section's panel beside the rail and its
 // inspector the right-hand sidebar; a compare's two sides are each a box of
-// their own. In a load the labels list the load's version, the first view
-// is seeded from its hub types,
-// and a node reached outside the load is drawn dashed. A node that is one of
+// their own. The labels list the load's version, the first view is seeded
+// from its hub types, and a node reached outside the load is drawn dashed. A
+// node that is one of
 // the ontology's entities also opens its page here, reads by the load's
 // version's names (./naming.ts), and leaves the layout's own properties out
 // of the inspector. Foundry's own labels stay hidden until the viewer shows
@@ -77,25 +76,21 @@ function identityOf(node: GraphNode): Omit<Focus, "seq"> | null {
   return null;
 }
 
-/** One explorer of the page, on one load (or Other data). */
+/** One explorer of the page, on one load. */
 function LoadExplorer({
   frame,
-  scope,
   load,
   focus,
   onSelectNode,
   syncUrl,
   loads,
-  onShowOtherData,
 }: {
   frame: DatabaseExplorerProps["frame"];
-  scope: Scope;
-  load: FoundryLoad | null;
+  load: FoundryLoad;
   focus?: Focus | null;
   onSelectNode?: (node: GraphNode | null) => void;
   syncUrl: boolean;
   loads: readonly FoundryLoad[];
-  onShowOtherData: () => void;
 }) {
   const { id: ws, slug, notify } = useWorkspace(),
     { id: o, ontology } = useOntology(),
@@ -108,20 +103,20 @@ function LoadExplorer({
     [tenantId, createdAt],
   );
   // The load's version names what shows and lays out the rail and first view.
+  const scope = useMemo(() => ({ id: load.id }), [load.id]);
   const versionId =
-    load?.versionId ||
+    load.versionId ||
     loads.find((l) => l.current)?.versionId ||
     ontology.currentVersionId ||
     "";
   const { naming } = useNaming(versionId);
   const version = useQuery({
     ...ontologyQueries.version(ws, o, versionId),
-    enabled: !!versionId && scope.kind === "load",
+    enabled: !!versionId,
   });
   const layout = useMemo(
-    () =>
-      scope.kind === "load" ? versionLayout(version.data?.version) : undefined,
-    [scope.kind, version.data],
+    () => versionLayout(version.data?.version),
+    [version.data],
   );
   // A local build has no members or billing to send anyone to.
   const links = useMemo(
@@ -135,8 +130,7 @@ function LoadExplorer({
           },
     [slug, o],
   );
-  const loadParam =
-    scope.kind === "load" ? (load?.current ? null : scope.id) : "other";
+  const loadParam = load.current ? null : load.id;
   // An entity node (a type of the ontology with its key or name) has a page.
   const openPage = useCallback(
     (node: GraphNode) => {
@@ -168,11 +162,11 @@ function LoadExplorer({
       isInternal(naming, target, label, key),
     [naming],
   );
-  // "Load v3 · 18 Oct" for a node a load wrote; "Other data" for the rest.
+  // "Load v3 · 18 Oct" for a node a load wrote; "Not from a load" for the rest.
   const provenance = useCallback(
     (node: GraphNode) => {
       const id = node.properties[FOUNDRY_LOAD];
-      if (typeof id !== "string") return "Other data";
+      if (typeof id !== "string") return "Not from a load";
       const l = loads.find((x) => x.id === id);
       if (!l) return "A deleted load";
       const day = l.createdAt
@@ -187,7 +181,7 @@ function LoadExplorer({
   );
   // A load's explorer waits for its version: the labels and the first view
   // come from it.
-  if (scope.kind === "load" && versionId && version.isPending)
+  if (versionId && version.isPending)
     return frame.kind === "page" ? (
       <>
         {frame.header(null)}
@@ -200,14 +194,13 @@ function LoadExplorer({
     );
   return (
     <DatabaseExplorer
-      key={`${tenantId}|${scope.kind === "load" ? scope.id : "other"}`}
+      key={`${tenantId}|${load.id}`}
       frame={frame}
       target={target}
       scope={scope}
       layout={layout}
       limiter={limiter}
       textOverFetch={loads.length + 1}
-      onShowOtherData={onShowOtherData}
       provenance={provenance}
       onSelectNode={onSelectNode}
       focus={focus}
@@ -299,7 +292,7 @@ export function ExplorerPage() {
   const stuck =
     (choice.kind === "missing" && !selection.pending) || !!selection.failed;
   const none = choice.kind === "none" && !selection.pending;
-  if (stuck || none || !selection.scope)
+  if (stuck || none || choice.kind !== "load")
     return (
       <div className="ex-view">
         <ExplorerTop view="graph" selection={selection} />
@@ -314,8 +307,7 @@ export function ExplorerPage() {
         </div>
       </div>
     );
-  const showOther = () => selection.select("other");
-  if (compare && choice.kind === "load")
+  if (compare)
     return (
       <div className="ex-view is-compare">
         {top()}
@@ -331,13 +323,11 @@ export function ExplorerPage() {
               </h2>
               <LoadExplorer
                 frame={{ kind: "side" }}
-                scope={selection.scope}
                 load={choice.load}
                 loads={loads}
                 focus={focus.a}
                 onSelectNode={follow("a")}
                 syncUrl
-                onShowOtherData={showOther}
               />
             </section>
             <section
@@ -350,13 +340,11 @@ export function ExplorerPage() {
               </h2>
               <LoadExplorer
                 frame={{ kind: "side" }}
-                scope={{ kind: "load", id: compare.id }}
                 load={compare}
                 loads={loads}
                 focus={focus.b}
                 onSelectNode={follow("b")}
                 syncUrl={false}
-                onShowOtherData={showOther}
               />
             </section>
           </div>
@@ -373,11 +361,9 @@ export function ExplorerPage() {
     <div className="ex-view is-graph">
       <LoadExplorer
         frame={{ kind: "page", header: top }}
-        scope={selection.scope}
-        load={choice.kind === "load" ? choice.load : null}
+        load={choice.load}
         loads={loads}
         syncUrl
-        onShowOtherData={showOther}
       />
     </div>
   );

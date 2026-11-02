@@ -1,10 +1,4 @@
-import type {
-  ElementTarget,
-  GraphData,
-  LabelCount,
-  LabelExclusion,
-  LabelStats,
-} from "./types";
+import type { ElementTarget, GraphData, LabelExclusion } from "./types";
 
 // What the reads bring back, without the labels the explorer leaves out
 // (types.ts LabelExclusion). Without an exclusion each returns its input.
@@ -69,39 +63,5 @@ export function shownGraph(
           !dropped.has(e.target),
       ),
     }),
-  };
-}
-
-/**
- * Label stats without the excluded labels. A total loses what they counted:
- * the sum of the other labels' counts, or a scanned total less theirs. A
- * label whose count is unknown added nothing to it, so takes nothing away.
- */
-export function shownStats(
-  stats: LabelStats,
-  exclusion: LabelExclusion | undefined,
-): LabelStats {
-  if (!exclusion) return stats;
-  const side = (
-    target: ElementTarget,
-    entries: LabelCount[],
-    total: number | null,
-  ) => {
-    const less = entries
-      .filter((e) => excludes(exclusion, target, e.label))
-      .reduce((sum, e) => sum + (e.count ?? 0), 0);
-    return {
-      entries: entries.filter((e) => !excludes(exclusion, target, e.label)),
-      total: total === null ? null : Math.max(0, total - less),
-    };
-  };
-  const nodes = side("node", stats.nodeLabels, stats.nodeTotal);
-  const edges = side("edge", stats.edgeLabels, stats.edgeTotal);
-  return {
-    ...stats,
-    nodeLabels: nodes.entries,
-    edgeLabels: edges.entries,
-    nodeTotal: nodes.total,
-    edgeTotal: edges.total,
   };
 }

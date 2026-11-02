@@ -106,9 +106,23 @@
                       "input": {
                         "nodes_where": {
                           "predicate": {
-                            "eq": {
-                              "left": { "property": "$label" },
-                              "right": { "constant": { "string": "Tag" } }
+                            "and": {
+                              "predicates": [
+                                {
+                                  "eq": {
+                                    "left": { "property": "$label" },
+                                    "right": { "constant": { "string": "Tag" } }
+                                  }
+                                },
+                                {
+                                  "eq": {
+                                    "left": { "property": "foundry_load" },
+                                    "right": {
+                                      "constant": { "string": "load_1" }
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -169,9 +183,21 @@
                   "input": {
                     "nodes_where": {
                       "predicate": {
-                        "eq": {
-                          "left": { "property": "$label" },
-                          "right": { "constant": { "string": "Tag" } }
+                        "and": {
+                          "predicates": [
+                            {
+                              "eq": {
+                                "left": { "property": "$label" },
+                                "right": { "constant": { "string": "Tag" } }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": { "property": "foundry_load" },
+                                "right": { "constant": { "string": "load_1" } }
+                              }
+                            }
+                          ]
                         }
                       }
                     }

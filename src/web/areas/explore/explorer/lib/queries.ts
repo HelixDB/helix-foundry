@@ -1,16 +1,6 @@
 import { FOUNDRY_LOAD } from "../../../../../shared/foundry-labels";
 import type { DynamicQueryRequest } from "../../database-query";
-import {
-  countCost,
-  countEntries,
-  countOf,
-  holds,
-  isShared,
-  nodeInScope,
-  scopedLabel,
-  type Scope,
-  type Target,
-} from "../../load-scope";
+import { holds, inLoad, scopedLabel, type Scope } from "../../load-scope";
 import type { IndexCatalogEntry } from "./types";
 
 import {
@@ -90,19 +80,16 @@ import type {
  * and other heavy properties never ride along; only `value_map` (shape.keys
  * null) returns everything.
  *
- * Nothing the explorer runs on its own reads the whole graph. Labels are
- * found by a bounded discovery read and counted from the label bitmaps
- * (`count` over `nodes_where $label == "x"` is answered from the bitmap's
- * cardinality). `count`/`group_count` over `all` scan every node and edge;
- * only the explicit "Scan for all labels" does that.
+ * Nothing the explorer runs reads the whole graph. Labels are counted from the
+ * label bitmaps (`count` over `nodes_where $label == "x"` is answered from the
+ * bitmap's cardinality).
  *
- * Every label read is scoped (../../load-scope.ts): in a load, its source is
+ * Every label read is scoped (../../load-scope.ts): its source is
  * `$label == "x" and foundry_load == "<load>"`, two bitmaps intersected, and
- * nothing reads `nodes`/`edges` `all` (discovery and the label scan run for
- * Other data only, whose labels are the database's own). A load's edges stay
- * inside it, so reads that follow edges (expansions, degree probes, connect)
- * need no filter; every node row carries `foundry_load`, so a node reached
- * outside the load is told apart.
+ * nothing reads `nodes`/`edges` `all`. A load's labels are its version's. Its
+ * edges stay inside it, so reads that follow edges (expansions, degree probes,
+ * connect) need no filter; every node row carries `foundry_load`, so a node
+ * reached outside the load is told apart.
  */
 
 export interface ExplorerLimits {
@@ -128,8 +115,6 @@ export interface ExplorerLimits {
   connectEdgeLimit: number;
   /** Most property keys in one `values` projection. */
   maxShapeKeys: number;
-  /** Nodes and edges the label discovery reads from the start of each id space. */
-  discoveryRows: number;
   /** Node and edge labels counted per request (each); the rest stay uncounted. */
   maxCountLabels: number;
   /**
@@ -172,7 +157,6 @@ export const EXPLORER_LIMITS: Readonly<ExplorerLimits> = Object.freeze({
   searchK: 10,
   connectEdgeLimit: 1000,
   maxShapeKeys: MAX_SHAPE_KEYS,
-  discoveryRows: 500,
   maxCountLabels: 60,
   degreeThreshold: 1000,
   probeBatch: 10,
@@ -201,8 +185,6 @@ const I64_ARRAY: ParamType = { array: "i64" };
 const bound = (count: number): Ast => ({
   literal: Math.max(0, Math.floor(count)),
 });
-const nodesAll = (): Ast => ({ nodes: { reference: "all" } });
-const edgesAll = (): Ast => ({ edges: { reference: "all" } });
 const nodesVar = (name: string): Ast => ({
   nodes: { reference: { var: name } },
 });
@@ -217,10 +199,10 @@ const edgesParam = (param: string): Ast => ({
 });
 /** A label's nodes in the scope: `$label == "<label>"` (a constant) and the scope's filter. */
 const nodesIn = (scope: Scope, label: string): Ast => ({
-  nodes_where: { predicate: scopedLabel(scope, "node", label) },
+  nodes_where: { predicate: scopedLabel(scope, label) },
 });
 const edgesIn = (scope: Scope, label: string): Ast => ({
-  edges_where: { predicate: scopedLabel(scope, "edge", label) },
+  edges_where: { predicate: scopedLabel(scope, label) },
 });
 const limit = (input: Ast, count: number): Ast => ({
   limit: { input, count: bound(count) },
@@ -364,106 +346,7 @@ const validIds = (ids: readonly number[]) => [
   ...new Set(ids.filter((id) => toDbId(id) !== null)),
 ];
 
-// Label discovery and counts
-
-/**
- * Node or edge ids spread over the whole id space: four per power of two
- * from 2^9 up to 2^53 (the largest integer a JSON number carries exactly).
- * Ids come from a per-database sequence, and bulk loads write one label
- * after another, so a label holding a real share of the graph owns a run of
- * ids that some probe lands in. A probe on a missing id costs one point read
- * and returns nothing.
- */
-export function labelProbeIds(): number[] {
-  const ids: number[] = [];
-  for (let exponent = 9; exponent < 53; exponent++) {
-    for (let step = 0; step < 4; step++)
-      ids.push(Math.floor(2 ** (exponent + step / 4)));
-  }
-  return [...new Set(ids)];
-}
-
-/**
- * Which labels exist, without reading the whole graph: the labels of the
- * first `discoveryRows` nodes and edges by id (a scan that stops after that
- * many rows) and of the nodes and edges at `labelProbeIds()` (point reads).
- * Labels it misses are found later (the index catalog, labels remembered
- * from earlier visits, whatever gets loaded) or by an explicit full scan.
- * Other data only: a load's labels are its version's.
- */
-export function buildLabelDiscoveryRequest(
-  opts: { rows?: number } = {},
-): DynamicQueryRequest {
-  const rows = positive(opts.rows, EXPLORER_LIMITS.discoveryRows);
-  return readRequest(
-    "explorer_label_discovery",
-    [
-      {
-        name: "first_nodes",
-        root: groupCount(limit(nodesAll(), rows), "$label"),
-      },
-      {
-        name: "first_edges",
-        root: groupCount(limit(edgesAll(), rows), "$label"),
-      },
-      {
-        name: "probed_nodes",
-        root: groupCount(nodesParam("probe_ids"), "$label"),
-      },
-      {
-        name: "probed_edges",
-        root: groupCount(edgesParam("probe_ids"), "$label"),
-      },
-    ],
-    { probe_ids: { value: labelProbeIds(), type: I64_ARRAY } },
-  );
-}
-
-export interface LabelDiscovery {
-  nodes: string[];
-  edges: string[];
-  /**
-   * The first-rows read came back short, so it saw every node (or edge) and
-   * the label list on that side is complete.
-   */
-  nodesExhausted: boolean;
-  edgesExhausted: boolean;
-  /** No node at all: the database is empty. */
-  empty: boolean;
-}
-
-export function parseLabelDiscovery(
-  body: unknown,
-  rows?: number,
-): LabelDiscovery {
-  const data = isRecord(body) ? body : {};
-  const limitRows = positive(rows, EXPLORER_LIMITS.discoveryRows);
-  const seen = (value: unknown) =>
-    labelCounts(value).reduce((sum, entry) => sum + (entry.count ?? 0), 0);
-  const names = (...values: unknown[]) =>
-    [
-      ...new Set(
-        values.flatMap((value) =>
-          labelCounts(value).map((entry) => entry.label),
-        ),
-      ),
-    ]
-      .filter((label) => label !== "")
-      .sort((a, b) => a.localeCompare(b));
-  const firstNodes = Array.isArray(data.first_nodes)
-    ? seen(data.first_nodes)
-    : null;
-  const firstEdges = Array.isArray(data.first_edges)
-    ? seen(data.first_edges)
-    : null;
-  return {
-    nodes: names(data.first_nodes, data.probed_nodes),
-    edges: names(data.first_edges, data.probed_edges),
-    nodesExhausted: firstNodes !== null && firstNodes < limitRows,
-    edgesExhausted: firstEdges !== null && firstEdges < limitRows,
-    empty: firstNodes === 0,
-  };
-}
+// Label counts
 
 /** Distinct non-empty labels in the order given. */
 function uniqueLabels(list: readonly string[]): string[] {
@@ -475,46 +358,31 @@ function uniqueLabels(list: readonly string[]): string[] {
 }
 
 /**
- * The labels a count request covers, in order, while each side's entries fit
- * `maxCountLabels`, and the ones left out.
+ * The labels a count request covers, in order, up to `maxCountLabels` a side,
+ * and the ones left out.
  */
-export function countedLabels(
-  labels: {
-    nodes: readonly string[];
-    edges: readonly string[];
-  },
-  scope: Scope,
-): {
+export function countedLabels(labels: {
+  nodes: readonly string[];
+  edges: readonly string[];
+}): {
   nodes: string[];
   edges: string[];
   dropped: { nodes: string[]; edges: string[] };
 } {
   const cap = EXPLORER_LIMITS.maxCountLabels;
-  const side = (target: Target, list: readonly string[]) => {
-    const all = uniqueLabels(list);
-    let used = 0,
-      fit = 0;
-    for (const label of all) {
-      const cost = countCost(scope, target, label);
-      if (used + cost > cap) break;
-      used += cost;
-      fit += 1;
-    }
-    return { kept: all.slice(0, fit), dropped: all.slice(fit) };
-  };
-  const nodes = side("node", labels.nodes);
-  const edges = side("edge", labels.edges);
+  const nodes = uniqueLabels(labels.nodes),
+    edges = uniqueLabels(labels.edges);
   return {
-    nodes: nodes.kept,
-    edges: edges.kept,
-    dropped: { nodes: nodes.dropped, edges: edges.dropped },
+    nodes: nodes.slice(0, cap),
+    edges: edges.slice(0, cap),
+    dropped: { nodes: nodes.slice(cap), edges: edges.slice(cap) },
   };
 }
 
 /**
  * Node and edge counts per label in the scope, each read from bitmaps (no
- * rows): the label's and the load's intersected, or for Other data the
- * label's less every load's. At most `maxCountLabels` counts per side. With
+ * rows): the label's and the load's intersected. At most `maxCountLabels`
+ * counts per side. With
  * `probeRows`, the same request also probes a few full rows of the first
  * `maxProbeLabels` labels (see buildSchemaProbeRequest; parseSchemaProbe
  * reads them from this response), so the first view needs one request for
@@ -525,15 +393,17 @@ export function buildLabelCountsRequest(
   opts: { scope: Scope; probeRows?: number },
 ): DynamicQueryRequest {
   const { scope } = opts;
-  const { nodes, edges } = countedLabels(labels, scope);
+  const { nodes, edges } = countedLabels(labels);
   const params: Params = {};
   const entries: Entry[] = [
-    ...nodes.flatMap((label, index) =>
-      countEntries(scope, "node", label, `node_count_${index}`, count),
-    ),
-    ...edges.flatMap((label, index) =>
-      countEntries(scope, "edge", label, `edge_count_${index}`, count),
-    ),
+    ...nodes.map((label, index) => ({
+      name: `node_count_${index}`,
+      root: count(nodesIn(scope, label)),
+    })),
+    ...edges.map((label, index) => ({
+      name: `edge_count_${index}`,
+      root: count(edgesIn(scope, label)),
+    })),
   ];
   const probeRows =
     opts.probeRows === undefined
@@ -554,32 +424,21 @@ export function buildLabelCountsRequest(
 }
 
 /**
- * Label stats from a counts response. Labels that turn out to have nothing
- * (deleted since they were remembered, an index on an unused label, a type
- * this load holds none of) are left out; labels past the cap keep a null
- * count. Totals add up the known counts, so they are lower bounds unless
- * `complete` says every label on that side is known and every count came
- * back.
+ * Label stats from a counts response. Labels that turn out to have nothing (a
+ * type this load holds none of, an index on an unused label) are left out;
+ * labels past the cap keep a null count, which makes that side's totals lower
+ * bounds.
  */
 export function parseLabelCounts(
   body: unknown,
   labels: { nodes: readonly string[]; edges: readonly string[] },
-  scope: Scope,
-  complete: { nodes: boolean; edges: boolean } = { nodes: false, edges: false },
 ): LabelStats {
   const data = isRecord(body) ? body : {};
-  const counted = countedLabels(labels, scope);
-  const side = (target: Target, list: string[], dropped: string[]) => {
+  const counted = countedLabels(labels);
+  const side = (target: "node" | "edge", list: string[], dropped: string[]) => {
     const entries: LabelCount[] = [];
     list.forEach((label, index) => {
-      const value = countOf(
-        data,
-        scope,
-        target,
-        label,
-        `${target}_count_${index}`,
-        total,
-      );
+      const value = total(data[`${target}_count_${index}`]);
       if (value === 0) return;
       entries.push({ label, count: value });
     });
@@ -597,18 +456,15 @@ export function parseLabelCounts(
     edgeLabels,
     nodeTotal: sum(nodeLabels),
     edgeTotal: sum(edgeLabels),
-    partial: {
-      nodes: !complete.nodes || unknown(nodeLabels),
-      edges: !complete.edges || unknown(edgeLabels),
-    },
+    partial: { nodes: unknown(nodeLabels), edges: unknown(edgeLabels) },
   };
 }
 
 /**
  * Folds counts for more labels (seen after the boot) into existing stats.
  * Totals grow by what the new labels add; they stay lower bounds. `gone`
- * names labels those counts found empty (remembered from an earlier visit
- * and deleted since, say): an uncounted entry for one of them is dropped.
+ * names labels those counts found empty: an uncounted entry for one of them
+ * is dropped.
  */
 export function mergeLabelStats(
   stats: LabelStats,
@@ -649,49 +505,19 @@ export function mergeLabelStats(
   };
 }
 
-/** The labels a counts response found empty (each side), so they can be forgotten. */
+/** The labels a counts response found empty (each side). */
 export function emptyLabels(
   body: unknown,
   labels: { nodes: readonly string[]; edges: readonly string[] },
-  scope: Scope,
 ): { nodes: string[]; edges: string[] } {
   const data = isRecord(body) ? body : {};
-  const counted = countedLabels(labels, scope);
-  const side = (target: Target, list: string[]) =>
-    list.filter(
-      (label, index) =>
-        countOf(
-          data,
-          scope,
-          target,
-          label,
-          `${target}_count_${index}`,
-          total,
-        ) === 0,
-    );
+  const counted = countedLabels(labels);
+  const side = (target: "node" | "edge", list: string[]) =>
+    list.filter((_, index) => total(data[`${target}_count_${index}`]) === 0);
   return {
     nodes: side("node", counted.nodes),
     edges: side("edge", counted.edges),
   };
-}
-
-// Full label scan (explicit only)
-
-/**
- * Every label with its exact count, and exact totals: `group_count` and
- * `count` over every node and edge. This reads the whole graph (seconds to
- * minutes on a large database, and heavy on its CPU), so the explorer runs
- * it only when the user asks ("Scan for all labels"), never on its own, and
- * only for Other data: its counts include the loads', so the labels it finds
- * are counted again in the scope.
- */
-export function buildLabelScanRequest(): DynamicQueryRequest {
-  return readRequest("explorer_label_scan", [
-    { name: "node_labels", root: groupCount(nodesAll(), "$label") },
-    { name: "edge_labels", root: groupCount(edgesAll(), "$label") },
-    { name: "node_total", root: count(nodesAll()) },
-    { name: "edge_total", root: count(edgesAll()) },
-  ]);
 }
 
 function labelCounts(value: unknown): LabelCount[] {
@@ -711,17 +537,6 @@ const total = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : null;
-
-/** Exact stats from a full label scan: every label, so no `partial`. */
-export function parseLabelScan(body: unknown): LabelStats {
-  const data = isRecord(body) ? body : {};
-  return {
-    nodeLabels: labelCounts(data.node_labels),
-    edgeLabels: labelCounts(data.edge_labels),
-    nodeTotal: total(data.node_total),
-    edgeTotal: total(data.edge_total),
-  };
-}
 
 // Schema probe
 
@@ -999,9 +814,8 @@ export function extendShape(
  * Seeds per label for the first view: an even split of the seed budget,
  * smallest labels first so their leftovers go to the larger ones, at least
  * `sampleMinPerLabel` each. With more labels than the budget covers, the
- * largest labels win. A label without a count (over the count cap, say, or
- * remembered from an earlier visit and maybe deleted since) is unknown, not
- * huge: it comes after every counted label and gets the minimum.
+ * largest labels win. A label without a count (over the count cap, say) is
+ * unknown, not huge: it comes after every counted label and gets the minimum.
  */
 export function allocateSample(
   labels: LabelCount[],
@@ -1049,12 +863,12 @@ export function allocateSample(
 }
 
 /**
- * The first view of Other data (a load's is seeded from its hub types:
- * ./seeding.ts): a few nodes of every node label (seeds, so each label
- * shows) and a few edges of every edge label with the nodes on both ends (so
- * the view is connected), every source scoped. Never the whole graph: the
- * scope is a part of the database, so a label's count says nothing of the
- * rest, and no label means no rows.
+ * The first view when a load has nothing to seed from (its usual one starts
+ * from its hub types: ./seeding.ts): a few nodes of every node label (seeds,
+ * so each label shows) and a few edges of every edge label with the nodes on
+ * both ends (so the view is connected), every source scoped. Never the whole
+ * graph: the scope is a part of the database, so a label's count says nothing
+ * of the rest, and no label means no rows.
  *
  * Edges come straight off the edge label bitmaps rather than from expanding
  * the seeds: reading one node's edges costs time in its degree whatever the
@@ -1207,11 +1021,7 @@ export function buildLabelPageRequest(opts: {
       ),
     },
   ];
-  // The total is a bitmap count, except for Other data under a label the
-  // loads share (no index finds a missing load): the rail's count stands.
-  const indexed =
-    opts.scope.kind === "load" || !isShared(opts.scope, "node", opts.label);
-  if (first && indexed) entries.push({ name: "total", root: count(source) });
+  if (first) entries.push({ name: "total", root: count(source) });
   return readRequest("explorer_label_page", entries);
 }
 
@@ -1757,7 +1567,7 @@ export function buildSearchRequest(opts: {
     // A point read, then checked against the scope.
     entries.push({
       name: "by_id",
-      root: project(where(nodesParam("id"), nodeInScope(opts.scope)), keys),
+      root: project(where(nodesParam("id"), inLoad(opts.scope.id)), keys),
     });
   }
 
@@ -2133,7 +1943,7 @@ export function buildIdentityRequest(opts: {
   const predicate: Ast = {
     and: {
       predicates: [
-        scopedLabel(opts.scope, "node", opts.label),
+        scopedLabel(opts.scope, opts.label),
         {
           eq: {
             left: { property: opts.property },

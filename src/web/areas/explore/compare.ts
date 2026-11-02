@@ -66,7 +66,7 @@ export function keysRequest(load: string, type: string): DynamicQueryRequest {
         limit: {
           input: {
             nodes_where: {
-              predicate: scopedLabel({ kind: "load", id: load }, "node", type),
+              predicate: scopedLabel({ id: load }, type),
             },
           },
           count: { literal: COMPARE_LIMITS.keysPerSide + 1 },

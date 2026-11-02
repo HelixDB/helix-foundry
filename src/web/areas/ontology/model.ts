@@ -1982,30 +1982,26 @@ export function loadActions(l: FoundryLoad): {
 // ---------------------------------------------------------------- Choosing a load
 
 /**
- * The load a page reads, from its `?load=`: the named load, Other data
- * ("other"), or by default the current load, else the newest one while none
- * is current (even one still being written). With no load at all there is
- * nothing to read but Other data, which only `?load=other` asks for: the
- * pages say to load the ontology instead. A load the list doesn't hold
- * (deleted, or never this ontology's) is missing.
+ * The load a page reads, from its `?load=`: the named load, or by default the
+ * current load, else the newest one while none is current (even one still
+ * being written). With no load at all there is nothing to read: the pages say
+ * to load the ontology instead. A load the list doesn't hold (deleted, or never
+ * this ontology's) is missing.
  */
 export type LoadChoice =
   | { kind: "load"; load: FoundryLoad; explicit: boolean }
-  | { kind: "other" }
   | { kind: "missing"; id: string }
   | { kind: "none" };
 
 /**
  * @example
  * chooseLoad([], undefined, null); // { kind: "none" }
- * chooseLoad([], undefined, "other"); // { kind: "other" }
  */
 export function chooseLoad(
   loads: readonly FoundryLoad[],
   currentId: string | undefined,
   param: string | null,
 ): LoadChoice {
-  if (param === "other") return { kind: "other" };
   const [newest] = loads;
   if (!newest) return { kind: "none" };
   if (param) {
@@ -2062,23 +2058,6 @@ export function loadOptionLabel(l: FoundryLoad): string {
       break;
   }
   return parts.join(" · ");
-}
-
-/**
- * The labels some load's version names (its types and links), for telling
- * Other data from the loads' under them; versions are immutable, so each is
- * read once.
- */
-export function versionLabels(
-  namings: readonly {
-    types: ReadonlyMap<string, unknown>;
-    links: ReadonlySet<string>;
-  }[],
-): { nodes: Set<string>; edges: Set<string> } {
-  return {
-    nodes: new Set(namings.flatMap((n) => [...n.types.keys()])),
-    edges: new Set(namings.flatMap((n) => [...n.links])),
-  };
 }
 
 /**

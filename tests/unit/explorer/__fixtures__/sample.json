@@ -124,9 +124,21 @@
                   "input": {
                     "nodes_where": {
                       "predicate": {
-                        "eq": {
-                          "left": { "property": "$label" },
-                          "right": { "constant": { "string": "User" } }
+                        "and": {
+                          "predicates": [
+                            {
+                              "eq": {
+                                "left": { "property": "$label" },
+                                "right": { "constant": { "string": "User" } }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": { "property": "foundry_load" },
+                                "right": { "constant": { "string": "load_1" } }
+                              }
+                            }
+                          ]
                         }
                       }
                     }
@@ -154,9 +166,21 @@
                   "input": {
                     "edges_where": {
                       "predicate": {
-                        "eq": {
-                          "left": { "property": "$label" },
-                          "right": { "constant": { "string": "TAGGED" } }
+                        "and": {
+                          "predicates": [
+                            {
+                              "eq": {
+                                "left": { "property": "$label" },
+                                "right": { "constant": { "string": "TAGGED" } }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": { "property": "foundry_load" },
+                                "right": { "constant": { "string": "load_1" } }
+                              }
+                            }
+                          ]
                         }
                       }
                     }
@@ -174,9 +198,21 @@
                   "input": {
                     "edges_where": {
                       "predicate": {
-                        "eq": {
-                          "left": { "property": "$label" },
-                          "right": { "constant": { "string": "FOLLOWS" } }
+                        "and": {
+                          "predicates": [
+                            {
+                              "eq": {
+                                "left": { "property": "$label" },
+                                "right": { "constant": { "string": "FOLLOWS" } }
+                              }
+                            },
+                            {
+                              "eq": {
+                                "left": { "property": "foundry_load" },
+                                "right": { "constant": { "string": "load_1" } }
+                              }
+                            }
+                          ]
                         }
                       }
                     }
