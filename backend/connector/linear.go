@@ -252,6 +252,10 @@ func (k *linearKind) query(ctx context.Context, src Source, query string, variab
 	switch {
 	case status == http.StatusUnauthorized:
 		return rejected
+	case len(resp.Errors) > 0 && src.SignIn:
+		// A signed-in connector's messages reach its sign-in and agents:
+		// they carry Foundry's words only, and Linear's go to the log.
+		return refused(fmt.Errorf("linear: %s", resp.Errors[0].Message), "Linear refused the request; try again")
 	case len(resp.Errors) > 0:
 		message := resp.Errors[0].Message
 		if len(message) > 200 {

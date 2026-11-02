@@ -672,8 +672,9 @@ func accountLabel(identity string) string {
 }
 
 // discoveryProblem is what a connector a sign-in made can't read, in
-// Foundry's words: a kind's message, else a general one. The detail is
-// logged only.
+// Foundry's words: a kind's message (a kind keeps the provider's text out of
+// a signed-in source's messages), else a general one. The detail is logged
+// only.
 func discoveryProblem(kind connector.Kind, err error) string {
 	var invalidErr *connector.InvalidError
 	var refusedErr *connector.RefusedError
