@@ -69,9 +69,12 @@ type ReadStore interface {
 	// Foundry connectors
 	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
 	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
-	// ListConnectorAccounts is the provider account of each of the
-	// workspace's signed-in connectors, live or deleted but not yet purged:
-	// what a host deletes from its broker before DeleteWorkspaceConnectors.
+	// ListConnectorAccounts is every provider account the workspace holds:
+	// its live signed-in connectors', those waiting to be purged (deleted
+	// connectors'), and those its sign-ins hold without having connected.
+	// It is what a host deletes from its broker before
+	// DeleteWorkspaceConnectors, which queues the connectors' for the purge
+	// too.
 	ListConnectorAccounts(ctx context.Context, workspaceID string) ([]model.ConnectorAccountRef, error)
 	ListConnectorAccountChecks(ctx context.Context, before time.Time, limit int) ([]*model.Connector, error)
 	ListConnectorAccountPurges(ctx context.Context, limit int) ([]*model.ConnectorAccountPurge, error)
