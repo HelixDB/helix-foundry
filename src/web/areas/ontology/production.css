@@ -97,9 +97,12 @@
   font-weight: 500;
   line-height: 20px;
 }
-.pd-step.is-done .pd-step-title,
-.pd-step.is-upcoming .pd-step-title {
+.pd-step.is-done .pd-step-title {
   color: var(--hf-muted);
+}
+/* Not reachable yet: the whole step recedes. */
+.pd-step.is-upcoming {
+  opacity: 0.45;
 }
 .pd-step-note {
   margin: 0;
