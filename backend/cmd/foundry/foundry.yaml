@@ -98,6 +98,13 @@ foundry:
     max_usd: 0.5
     max_steps: 20
     max_wall_secs: 299
+    # Each read of a question: 30 s and 100,000 matches, so a month of one
+    # type's rows (50,000 in 8 s on a 300,000-row load, measured) answers,
+    # where the agent's own 5 s and 20,000 stop it. Each Helix request of a
+    # read ends at helix_timeout_secs, kept as long as a read may run.
+    read_wall_ms: 30000
+    read_scan_entities: 100000
+    helix_timeout_secs: 30
     monthly_usd: 30
     max_running: 2
     per_hour: 30

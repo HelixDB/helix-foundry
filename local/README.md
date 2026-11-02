@@ -63,6 +63,20 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 - **Memory.** Ollama loads one model at a time, runs one call at a time, and keeps the model loaded for 10 minutes after the last call. When memory runs out, Ollama is the first process killed, so a model call fails and HelixDB and MySQL keep running. A larger context window takes more memory: Ollama loads models with `FOUNDRY_AI_CONTEXT_TOKENS`, drafting's 65,536 when empty.
 - **Only Foundry reaches it.** Ollama's API takes no key, so it listens on the agent's loopback alone: no other container, and nothing outside Docker, can reach it.
 
+## Questions
+
+Each read of the graph a question makes may run 30 s and read 100,000 matches into memory, and each of its Helix requests ends at 30 s; the whole question has 299 s, the most the ontology agent allows. That answers reads over a month of one type's rows (50,000 orders of a 300,000-order load took 6 to 8 s a read), where the hosted caps, the agent's own 5 s and 20,000, stop them. A `helix_query` read, which the agent writes in Helix's own query language, runs inside Helix and only the Helix timeout and the question's time bound it.
+
+A read stopped at a cap fails its step, which says which cap and its value, and the agent then reads narrower or answers that it can't:
+
+| The step says                                                                                                | Its setting                                                          |
+| ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `too slow: the read ran past limits.read.wall_ms, 30000 ms`                                                  | `foundry.ask.read_wall_ms`, in milliseconds, at most `max_wall_secs` |
+| `too broad: the query would read … matches into memory, more than limits.read.scan_entities, 100000, allows` | `foundry.ask.read_scan_entities`                                     |
+| `the store did not answer within 30s: each graph request ends at helix.timeout_secs`                         | `foundry.ask.helix_timeout_secs`                                     |
+
+To change one, add its variable to foundry's `environment` in `local/compose.yaml` (`HELIX_FOUNDRY__ASK__READ_WALL_MS`, `HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES`, `HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS`) and run `docker compose up -d` again. A read's wall time past the Helix timeout helps only a read of several requests, so raise both together. More matches take more memory, and the answer to one Helix request is at most 32 MiB. These caps need a `foundry` image and an `ontology-agent` newer than the release's: `foundry` 0.1.1 and `ontology-agent` 0.1.0 read every question with the agent's own caps.
+
 ## Images
 
 `docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
