@@ -40,13 +40,19 @@ import (
 // an agent, the site or Foundry's database. Where there is no broker (a
 // local build), no kind signs in.
 
+// signInFinishTimeout bounds a finish's calls to the broker and the
+// provider, which run past a closed tab or a front end's timeout; a test
+// shortens it.
+var signInFinishTimeout = 60 * time.Second
+
 const (
 	// signInTTL is how long a sign-in lasts from its start, and from each
 	// authorization.
 	signInTTL = 15 * time.Minute
-	// signInFinishTimeout bounds a finish, which runs past a closed tab or a
-	// front end's timeout.
-	signInFinishTimeout = 60 * time.Second
+	// signInRecordTimeout bounds each write that records how a finish went,
+	// and the read that answers with it: each has its own, so a finish that
+	// spent its time on the provider still records its end.
+	signInRecordTimeout = 10 * time.Second
 	// signInStale is when a finish that never ended (its process died)
 	// reads failed and may authorize again: well past signInFinishTimeout.
 	signInStale = 5 * time.Minute
@@ -169,8 +175,9 @@ func (s *Service) GetConnectorSignIn(ctx context.Context, req *foundryv1.GetConn
 // page, until the sign-in connects: after a decline or a failure too, so a
 // retry keeps the agent's wait on the same sign-in. The first call makes the
 // PKCE verifier and seals it (signInVerifier); every later one shares it.
-// Signing a connector in again reauthorizes its account, unless the broker
-// lost it. The sign-in then lasts signInTTL more.
+// Signing a connector in again reauthorizes its account when the caller is
+// the member it acts as (reauthorizes); anyone else makes a new account,
+// which replaces it. The sign-in then lasts signInTTL more.
 func (s *Service) AuthorizeConnectorSignIn(ctx context.Context, req *foundryv1.AuthorizeConnectorSignInRequest) (
 	*foundryv1.AuthorizeConnectorSignInResponse, error) {
 	catalog, keyring, err := s.connectors(req.GetWorkspaceId())
@@ -206,10 +213,7 @@ func (s *Service) AuthorizeConnectorSignIn(ctx context.Context, req *foundryv1.A
 		if err != nil {
 			return nil, err
 		}
-		// An account the broker lost is replaced, not reauthorized.
-		if a := c.Account; a != nil && (a.Broken == nil || *a.Broken != ports.AccountAccountMissing) {
-			auth.AccountID = a.ID
-		}
+		auth.AccountID = reauthorizes(c, caller.UserID)
 	}
 	verifier, err := s.signInVerifier(ctx, keyring, si)
 	if err != nil {
@@ -268,9 +272,10 @@ func (s *Service) FinishConnectorSignIn(ctx context.Context, req *foundryv1.Fini
 		if err := s.finishSignIn(finishCtx, catalog, keyring, si, req.GetConnectCode(), req.GetError()); err != nil {
 			return nil, err
 		}
-		ctx = finishCtx
 	}
-	ended, err := s.loadSignIn(ctx, si.WorkspaceID, si.ID)
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+	ended, err := s.loadSignIn(readCtx, si.WorkspaceID, si.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -294,8 +299,11 @@ func (s *Service) FinishConnectorSignIn(ctx context.Context, req *foundryv1.Fini
 //
 // A failure ends it failed with a fixed code, never the provider's text, and
 // an account it saved goes to the purge, unless the connector reads with it
-// already (FailConnectorSignIn). Its error is the store's, when it can't
-// record the end: the sign-in then reads failed once stale.
+// already (FailConnectorSignIn): an account the connector signed in again
+// reads with is never let go. Its error is the store's, when it can't record
+// the end: the sign-in then reads failed once stale. ctx bounds the calls to
+// the broker and the provider; each write that records the outcome has a
+// time of its own (recordContext).
 func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, keyring *secretbox.Keyring,
 	si *foundrymodel.ConnectorSignIn, code, callbackError string) error {
 	ws := si.WorkspaceID
@@ -320,7 +328,19 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 	if err != nil {
 		return fail(foundrymodel.SignInUnavailable, fmt.Errorf("open the verifier: %w", err))
 	}
-	account, err := s.deps.Accounts.Finish(ctx, ports.AccountRef{WorkspaceID: ws, UserID: si.CreatedByUserID, Kind: si.Kind}, code, string(verifier))
+	// The connector signed in again comes first: the account it reads with
+	// is the broker's to keep (Finish's ref.AccountID when reauthorized), and
+	// never deleted here.
+	var current *foundrymodel.Connector
+	settings := si.Config
+	ref := ports.AccountRef{WorkspaceID: ws, UserID: si.CreatedByUserID, Kind: si.Kind}
+	if si.ConnectorID != nil {
+		if current, err = s.deps.DB.GetConnector(ctx, ws, *si.ConnectorID); err != nil {
+			return fail(foundrymodel.SignInUnavailable, fmt.Errorf("read the connector signed in again: %w", err))
+		}
+		settings, ref.AccountID = current.Config, reauthorizes(current, si.CreatedByUserID)
+	}
+	account, err := s.deps.Accounts.Finish(ctx, ref, code, string(verifier))
 	switch {
 	case errors.Is(err, ports.ErrAccountCodeRejected):
 		return fail(foundrymodel.SignInCodeExpired, err)
@@ -331,22 +351,8 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 	case err != nil:
 		return fail(foundrymodel.SignInProviderError, err)
 	}
-	if err := s.deps.DB.SetConnectorSignInAccount(ctx, ws, si.ID, account.ID); err != nil {
-		// Nothing records the account to purge it later: let it go now.
-		ref := ports.AccountRef{WorkspaceID: ws, UserID: account.UserID, Kind: si.Kind, AccountID: account.ID}
-		if derr := s.deps.Accounts.Delete(ctx, ref); derr != nil {
-			log.From(ctx).Error("delete an unrecorded connector account failed", "workspace", ws, "sign_in", si.ID, "account", account.ID,
-				"err", derr)
-		}
-		return status.Errorf(codes.Internal, "record the sign-in's account: %v", err)
-	}
-	var current *foundrymodel.Connector
-	settings := si.Config
-	if si.ConnectorID != nil {
-		if current, err = s.deps.DB.GetConnector(ctx, ws, *si.ConnectorID); err != nil {
-			return fail(foundrymodel.SignInUnavailable, fmt.Errorf("read the connector signed in again: %w", err))
-		}
-		settings = current.Config
+	if err := s.recordAccount(ctx, si, current, account); err != nil {
+		return err
 	}
 	credential, err := s.deps.Accounts.Token(ctx, ports.AccountRef{WorkspaceID: ws, UserID: account.UserID, Kind: si.Kind, AccountID: account.ID})
 	var broken *ports.AccountBroken
@@ -405,7 +411,9 @@ func (s *Service) finishSignIn(ctx context.Context, catalog *connector.Catalog, 
 		}
 		connect.New = c
 	}
-	err = s.deps.DB.ConnectConnectorSignIn(ctx, connect)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+	err = s.deps.DB.ConnectConnectorSignIn(recordCtx, connect)
 	switch {
 	case errors.Is(err, foundrystore.ErrWorkspaceDeleting):
 		return fail(foundrymodel.SignInUnavailable, err)
@@ -431,10 +439,56 @@ func (s *Service) endSignIn(ctx context.Context, si *foundrymodel.ConnectorSignI
 	connectorSignIns.WithLabelValues(si.Kind, outcome).Inc()
 	log.From(ctx).Warn("connector sign-in ended", "workspace", si.WorkspaceID, "user", si.CreatedByUserID, "kind", si.Kind,
 		"sign_in", si.ID, "outcome", outcome, "err", err)
-	if err := s.deps.DB.FailConnectorSignIn(ctx, si.WorkspaceID, si.ID, foundrymodel.ConnectorSignInEnd{Status: end, Failure: failure}); err != nil {
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+	if err := s.deps.DB.FailConnectorSignIn(recordCtx, si.WorkspaceID, si.ID, foundrymodel.ConnectorSignInEnd{Status: end, Failure: failure}); err != nil {
 		return status.Errorf(codes.Internal, "end sign-in: %v", err)
 	}
 	return nil
+}
+
+// recordAccount records the account the broker saved on the sign-in, so
+// that one the finish never uses is purged. When it can't, nothing would
+// purge it: it is deleted now, unless it is the account current, the
+// connector signed in again, reads with, which reauthorizing gave back.
+func (s *Service) recordAccount(ctx context.Context, si *foundrymodel.ConnectorSignIn, current *foundrymodel.Connector,
+	account ports.ProviderAccount) error {
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+	err := s.deps.DB.SetConnectorSignInAccount(recordCtx, si.WorkspaceID, si.ID, account.ID)
+	if err == nil {
+		return nil
+	}
+	if current == nil || current.Account == nil || current.Account.ID != account.ID {
+		ref := ports.AccountRef{WorkspaceID: si.WorkspaceID, UserID: account.UserID, Kind: si.Kind, AccountID: account.ID}
+		if derr := s.deps.Accounts.Delete(recordCtx, ref); derr != nil {
+			log.From(ctx).Error("delete an unrecorded connector account failed", "workspace", si.WorkspaceID, "sign_in", si.ID,
+				"account", account.ID, "err", derr)
+		}
+	}
+	return status.Errorf(codes.Internal, "record the sign-in's account: %v", err)
+}
+
+// recordContext is a context of its own, for a write that records how a
+// finish went: the finish's may have run out, and the caller may be gone.
+func recordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), signInRecordTimeout)
+}
+
+// reauthorizes is the account of c a sign-in by userID reauthorizes: its own
+// account, when userID is the member it acts as and the broker still has
+// it. An account can't move to another member, so anyone else, like a
+// member signing in after the account's member left, makes a new account
+// (""), which replaces it.
+func reauthorizes(c *foundrymodel.Connector, userID string) string {
+	a := c.Account
+	if a == nil || a.UserID != userID {
+		return ""
+	}
+	if a.Broken != nil && (*a.Broken == ports.AccountMemberLeft || *a.Broken == ports.AccountAccountMissing) {
+		return ""
+	}
+	return a.ID
 }
 
 // ownSignIn reads the caller's own sign-in, for authorizing or finishing,

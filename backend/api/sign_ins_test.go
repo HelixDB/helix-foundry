@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,8 @@ type signInStore struct {
 	signIns  map[string]*foundrymodel.ConnectorSignIn
 	purged   []string
 	deleting bool
+	// failSetAccount fails recording a finish's account.
+	failSetAccount bool
 }
 
 func (s *signInStore) held(accountID string) bool {
@@ -101,7 +104,10 @@ func (s *signInStore) StartConnectorSignIn(_ context.Context, start foundrymodel
 	return &copied, nil
 }
 
-func (s *signInStore) GetConnectorSignIn(_ context.Context, workspaceID, id string) (*foundrymodel.ConnectorSignIn, error) {
+func (s *signInStore) GetConnectorSignIn(ctx context.Context, workspaceID, id string) (*foundrymodel.ConnectorSignIn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	si, ok := s.signIns[id]
@@ -153,7 +159,13 @@ func (s *signInStore) ClaimConnectorSignIn(_ context.Context, _, id string) erro
 	return nil
 }
 
-func (s *signInStore) SetConnectorSignInAccount(_ context.Context, _, id, accountID string) error {
+func (s *signInStore) SetConnectorSignInAccount(ctx context.Context, _, id, accountID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.failSetAccount {
+		return errors.New("connection reset")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	si := s.signIns[id]
@@ -164,7 +176,10 @@ func (s *signInStore) SetConnectorSignInAccount(_ context.Context, _, id, accoun
 	return nil
 }
 
-func (s *signInStore) FailConnectorSignIn(_ context.Context, _, id string, end foundrymodel.ConnectorSignInEnd) error {
+func (s *signInStore) FailConnectorSignIn(ctx context.Context, _, id string, end foundrymodel.ConnectorSignInEnd) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	si := s.signIns[id]
@@ -183,6 +198,9 @@ func (s *signInStore) FailConnectorSignIn(_ context.Context, _, id string, end f
 }
 
 func (s *signInStore) ConnectConnectorSignIn(ctx context.Context, c foundrymodel.ConnectorSignInConnect) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	si := s.signIns[c.SignInID]
@@ -243,12 +261,24 @@ type providers struct {
 	who      string
 	repos    []string
 	rejected map[string]bool
+	// hang holds every request until its caller gives up.
+	hang bool
 }
 
 func newProviders(t *testing.T) (*providers, string) {
 	t.Helper()
 	p := &providers{who: "Ada Lovelace", rejected: map[string]bool{}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.mu.Lock()
+		hang := p.hang
+		p.mu.Unlock()
+		if hang {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(time.Second):
+			}
+			return
+		}
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		auth := r.Header.Get("Authorization")
@@ -586,11 +616,14 @@ func TestConnectorSignIns(t *testing.T) {
 
 	// Signing in again keeps the connector: a generation more, no longer
 	// broken, reading with whoever signed it in.
+	// Only the account's own member reauthorizes it, and Finish is told so,
+	// so the broker never deletes it; anyone else makes a new account, which
+	// replaces it, and the old one is purged.
 	t.Run("signs a connector in again, by the same member and another", func(t *testing.T) {
 		f := newSignInFixture(t)
 		first := f.connect(t, "user-1", linearSignIn())
 		c := f.store.rows[first.GetConnectorId()]
-		broken := ports.AccountMemberLeft
+		broken := ports.AccountAccessRevoked
 		c.Account.Broken = &broken
 		account := c.Account.ID
 
@@ -609,16 +642,81 @@ func TestConnectorSignIns(t *testing.T) {
 			len(f.store.purged) != 0 {
 			t.Fatalf("done = %v, account = %+v, purged %v", done, c.Account, f.store.purged)
 		}
+		if ref := f.broker.Finishes()[1]; ref.AccountID != account || ref.UserID != "user-1" {
+			t.Fatalf("finish ref = %+v, want the reauthorized account named", ref)
+		}
 
 		f.providers.who = "Grace Hopper"
 		si = f.start(t, as("user-2"), again)
 		f.authorize(t, as("user-2"), si.GetId())
-		f.broker.Delete(context.Background(), ports.AccountRef{AccountID: account}) //nolint:errcheck // the broker lost it
+		if auth := f.broker.Authorizations()[2]; auth.AccountID != "" {
+			t.Fatalf("authorization = %+v: another member's account can't be reauthorized", auth)
+		}
 		done = f.finish(t, as("user-2"), si.GetId(), f.broker.Code(2), "")
 		c = f.store.rows[c.ID]
 		if !done.GetIdentityChanged() || c.Account.UserID != "user-2" || c.Account.Label != "Grace Hopper in Acme" || c.Account.Generation != 3 ||
-			!slices.Equal(f.store.purged, []string{account}) {
+			c.Account.ID == account || !slices.Equal(f.store.purged, []string{account}) || f.broker.Finishes()[2].AccountID != "" {
 			t.Fatalf("done = %v, account = %+v, purged %v", done, c.Account, f.store.purged)
+		}
+	})
+
+	// A member whose account's member left makes a new account too, even the
+	// one who left.
+	t.Run("makes a new account where its member left", func(t *testing.T) {
+		f := newSignInFixture(t)
+		first := f.connect(t, "user-1", linearSignIn())
+		c := f.store.rows[first.GetConnectorId()]
+		broken := ports.AccountMemberLeft
+		c.Account.Broken = &broken
+		si := f.start(t, as("user-1"), &foundryv1.StartConnectorSignInRequest{Kind: "linear", ConnectorId: c.ID})
+		f.authorize(t, as("user-1"), si.GetId())
+		if auth := f.broker.Authorizations()[1]; auth.AccountID != "" {
+			t.Fatalf("authorization = %+v, want a new account", auth)
+		}
+	})
+
+	// The broker saved an account the sign-in can't record: it goes at
+	// once, unless it is the account the connector reads with, which
+	// reauthorizing gave back.
+	t.Run("lets an unrecorded account go, never the connector's own", func(t *testing.T) {
+		f := newSignInFixture(t)
+		first := f.connect(t, "user-1", linearSignIn())
+		account := f.store.rows[first.GetConnectorId()].Account.ID
+		f.store.failSetAccount = true
+		ctx := as("user-1")
+		si := f.start(t, ctx, &foundryv1.StartConnectorSignInRequest{Kind: "linear", ConnectorId: first.GetConnectorId()})
+		f.authorize(t, ctx, si.GetId())
+		_, err := f.s.FinishConnectorSignIn(ctx, &foundryv1.FinishConnectorSignInRequest{WorkspaceId: "ws-1", Id: si.GetId(),
+			ConnectCode: f.broker.Code(1)})
+		if status.Code(err) != codes.Internal || !f.broker.Has(account) {
+			t.Fatalf("Finish = %v; broker still has the connector's account: %v", err, f.broker.Has(account))
+		}
+
+		fresh := f.start(t, ctx, linearSignIn())
+		f.authorize(t, ctx, fresh.GetId())
+		if _, err := f.s.FinishConnectorSignIn(ctx, &foundryv1.FinishConnectorSignInRequest{WorkspaceId: "ws-1", Id: fresh.GetId(),
+			ConnectCode: f.broker.Code(2)}); status.Code(err) != codes.Internal {
+			t.Fatalf("Finish = %v", err)
+		}
+		if made := f.broker.Finishes()[2]; made.AccountID != "" || f.broker.Calls("Delete") != 1 {
+			t.Fatalf("finish ref = %+v, deletes %d: the new account goes", made, f.broker.Calls("Delete"))
+		}
+	})
+
+	// A finish that spends its time on the provider still records its end,
+	// and answers with it.
+	t.Run("records the end of a finish that ran out of time", func(t *testing.T) {
+		saved := signInFinishTimeout
+		signInFinishTimeout = 200 * time.Millisecond
+		t.Cleanup(func() { signInFinishTimeout = saved })
+		f := newSignInFixture(t)
+		ctx := as("user-1")
+		si := f.start(t, ctx, linearSignIn())
+		f.authorize(t, ctx, si.GetId())
+		f.providers.hang = true
+		got := f.finish(t, ctx, si.GetId(), f.broker.Code(0), "")
+		if statusOf(got) != foundryv1.ConnectorSignInStatus_CONNECTOR_SIGN_IN_STATUS_FAILED || len(f.store.purged) != 1 {
+			t.Fatalf("finished = %v, purged %v", got, f.store.purged)
 		}
 	})
 

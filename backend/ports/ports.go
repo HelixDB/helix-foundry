@@ -280,8 +280,11 @@ type ProviderAccounts interface {
 	// Authorize is the provider's page for the user to authorize a.
 	Authorize(ctx context.Context, a AccountAuthorization) (string, error)
 	// Finish saves the account the user authorized, having checked it is
-	// the workspace's and was made by ref.UserID; otherwise it deletes it.
-	// ref.AccountID is empty.
+	// the workspace's and was made by ref.UserID; otherwise it deletes it
+	// and fails (ErrAccountNotThisWorkspace). ref.AccountID is set when the
+	// sign-in reauthorized that account, the connector's own
+	// (AccountAuthorization.AccountID): Finish never deletes it, and on a
+	// mismatch returns the error and leaves it alone.
 	Finish(ctx context.Context, ref AccountRef, code, verifier string) (ProviderAccount, error)
 	// Token is the account's current credential, asked for as ref.UserID.
 	Token(ctx context.Context, ref AccountRef) (Credential, error)
@@ -298,7 +301,11 @@ type AccountAuthorization struct {
 	// ReturnTo is the site's callback, Challenge the S256 PKCE challenge of
 	// the verifier Finish is given.
 	ReturnTo, Challenge string
-	AccountID           string
+	// AccountID, when set, reauthorizes that account. Foundry sets it only
+	// when UserID is the member the account acts as, since an account
+	// can't move to another member: anyone else signing a connector in
+	// again makes a new one.
+	AccountID string
 }
 
 // AccountRef names a workspace's account of a kind, used as UserID.
