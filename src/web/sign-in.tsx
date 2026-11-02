@@ -181,7 +181,7 @@ export function SignInPage() {
   return (
     <GatePage
       title="Sign in to Helix Foundry"
-      lede="Use the account you use for Helix. Your workspaces come with it."
+      lede="Sign in with your Helix account to access your workspaces."
     >
       {error && (
         <div role="alert" className="hf-gate-alert">
