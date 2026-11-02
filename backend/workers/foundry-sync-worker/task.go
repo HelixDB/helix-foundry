@@ -151,6 +151,11 @@ type Task struct {
 	// sourcesPurged is the last deleted event source the purge is done
 	// with, every one deleted before it done too (purgeEvents).
 	sourcesPurged model.FoundryEventSourcePurge
+	// accounts is the store's side of signed-in connectors' accounts, and
+	// broker the host's (Deps.Accounts): nil where none sign in, and
+	// keepAccounts does nothing.
+	accounts accountQueue
+	broker   ports.ProviderAccounts
 }
 
 func New(d Deps) (*Task, error) {
@@ -190,13 +195,14 @@ func New(d Deps) (*Task, error) {
 		MonthBudget:      d.Cfg.Foundry.Graph.MonthBudget,
 		Allowances:       d.Cfg.Foundry.SetAllowances(),
 		Plans:            d.Plans,
+		Accounts:         d.Accounts,
 	}
 	return &Task{
 		deps: d, cfg: d.Cfg.Foundry.Sync, queue: d.DB, runner: s,
 		workerID: id.NewWorkerID(), now: time.Now, tempDir: os.TempDir(),
 		snapshots: snapshots, documents: documents, jitter: rand.Float64, lag: syncLag, releaser: s, releaseKinds: s.ReleaserKinds(),
 		spacing:     model.EventSyncSpacing{After: ev.SyncAfter, PerMillionRows: ev.SyncAfterPerMillionRows},
-		persistWait: time.Second,
+		persistWait: time.Second, accounts: d.DB, broker: d.Accounts,
 	}, nil
 }
 
@@ -205,13 +211,14 @@ func (t *Task) Name() string { return Name }
 func (t *Task) Start(ctx context.Context) error {
 	t.sweepTemp(ctx)
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
-		// A sync can run for hours; the schedule, the refreshes, the sweep and the purge tick beside it.
+		// A sync can run for hours; the schedule and the accounts it keeps,
+		// the refreshes, the sweep and the purge tick beside it.
 		var side sync.WaitGroup
 		for _, tick := range []struct {
 			every time.Duration
 			fn    func(context.Context)
-		}{{t.cfg.SchedulePoll, t.schedule}, {t.cfg.RefreshPoll, t.refresh}, {sweepEvery, t.sweep}, {sweepEvery, t.purgeEvents},
-			{releaseEvery, t.release}} {
+		}{{t.cfg.SchedulePoll, t.schedule}, {t.cfg.SchedulePoll, t.keepAccounts}, {t.cfg.RefreshPoll, t.refresh}, {sweepEvery, t.sweep},
+			{sweepEvery, t.purgeEvents}, {releaseEvery, t.release}} {
 			side.Add(1)
 			go func() {
 				defer side.Done()
