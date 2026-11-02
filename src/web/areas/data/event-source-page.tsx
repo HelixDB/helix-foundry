@@ -167,7 +167,7 @@ export function EventSourcePage({ source: c }: { source: Connector }) {
     <Page>
       <PageHeader
         breadcrumbs={[...crumbs, { label: name }]}
-        icon={<SourceLogo source={c.kind} size={28} />}
+        icon={<SourceLogo source={c.kind} size={42} />}
         title={name}
         subtitle={connectorLabel(c.kind)}
         meta={
