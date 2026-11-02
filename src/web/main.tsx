@@ -231,7 +231,14 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
   useEffect(() => {
     if (signedInTo) signedIn(signedInTo);
   }, [signedInTo]);
-  useEffect(() => identifyUser(me.user.id), [me.user.id]);
+  useEffect(
+    () =>
+      identifyUser(me.user.id, {
+        email: me.user.email,
+        name: me.user.displayName,
+      }),
+    [me.user.id, me.user.email, me.user.displayName],
+  );
   useEffect(() => {
     if (!linked || !list.data) return;
     if (

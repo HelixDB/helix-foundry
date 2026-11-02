@@ -266,13 +266,18 @@ export function signedIn(
 }
 
 /**
- * The signed-in user, by the backend's user id (never an email or a name):
- * every event and replay from here on, in any session of this browser, is
- * theirs. Safe on every page load; the tracker sends it once a session.
+ * The signed-in user, by the backend's user id, with their email and name on
+ * the profile (Databuddy's own fields, so replays and profiles can be found
+ * by email): every event and replay from here on, in any session of this
+ * browser, is theirs. Safe on every page load; with details, the tracker
+ * sends it on each.
  */
-export function identifyUser(id: string) {
+export function identifyUser(
+  id: string,
+  { email, name }: { email?: string; name?: string } = {},
+) {
   if (!DATABUDDY_CLIENT_ID || !id) return;
-  identify(id);
+  identify(id, { ...(email && { email }), ...(name && { name }) });
 }
 
 /** Sign-out, before the page leaves: reports it as the user, then forgets them. */
