@@ -1155,24 +1155,20 @@
 .on-tour-sources small {
   color: var(--hf-text-2);
 }
-/* Onboarding's start: the sample, then the user's own data or agent. */
+/* Onboarding's start: the sample, then one card toggling the user's agent
+   and their own data. On a narrow phone the toggle's labels wrap. */
 .on-start-or {
   margin: 20px 0 8px;
   color: var(--hf-text-2);
   font-size: var(--hf-text-sm);
   font-weight: 500;
 }
-.on-start-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
-  gap: 12px;
+.on-start-toggle {
+  flex-basis: 100%;
 }
-.on-start-grid > .on-card {
-  flex-direction: column;
-}
-.on-start-grid > .on-card > .hf-btn,
-.on-start-grid .on-card-actions {
-  align-self: flex-start;
+.on-start-toggle .hf-segmented button {
+  height: auto;
+  min-height: 28px;
 }
 
 /* The tour's first answer, as Ask shows it, and the questions to ask next. */

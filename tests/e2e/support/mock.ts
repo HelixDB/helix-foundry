@@ -194,12 +194,13 @@ export async function startOntology(page: Page, name: string) {
 
 /**
  * Opens a new workspace's first ontology from its onboarding, with Use my own
- * data: the sources step shows, the first of the only steps it asks (no name,
- * no database).
+ * data (the other side of Get started's toggle): the sources step shows, the
+ * first of the only steps it asks (no name, no database).
  */
 export async function startFirstOntology(page: Page) {
   await page.goto("/ontology/new");
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("radio", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
 }
 
 /**

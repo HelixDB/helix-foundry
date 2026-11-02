@@ -157,6 +157,12 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await expect(
     page.getByRole("heading", { name: "Create your first workspace" }),
   ).toHaveCount(0);
+  // No Helix MCP here, so no agent to set it up and nothing to toggle.
+  await expect(page.getByText("Use my own data")).toBeVisible();
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy prompt" })).toHaveCount(
+    0,
+  );
 
   // Another workspace is still made from the switcher, and opens on its own
   // onboarding.
@@ -315,7 +321,7 @@ test("keeps only settings and the theme in the account menu", async ({
 test("offers every connector to a new workspace", async ({ page }) => {
   // Its onboarding's sources step adds data through the Data area's picker.
   await createGlobex(page);
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Add data" }).first().click();
   const picker = page.locator("dialog[open]");
   await expect(picker).toHaveAccessibleName("Where is your data?");
@@ -361,7 +367,7 @@ test("creates a database in this computer's Helix, without a plan or keys to rev
   // project named as the workspace. A document uploaded in its onboarding
   // gives the first draft something to read.
   await createGlobex(page);
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   // The sources step offers no API source, and says nothing of agents'
   // pieces.
   await expect(

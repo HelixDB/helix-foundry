@@ -293,7 +293,8 @@ test("gives a new workspace only the wizard until its first ontology", async ({
   await expect(page.getByRole("button", { name: "Cancel" })).toHaveCount(0);
   // Use my own data asks only what to draft from and the goal: no name and
   // no database, and Back returns to the start.
-  await page.getByRole("button", { name: "Use my own data" }).click();
+  await page.getByRole("radio", { name: "Use my own data" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: "Your first ontology" }),
   ).toBeVisible();
@@ -362,8 +363,11 @@ test("goes back to the wizard once the last ontology is deleted, and tells a mem
   await expect(page.getByText("This workspace isn’t set up yet")).toBeVisible();
   await expect(page.getByLabel("Ontology name")).toHaveCount(0);
   await expect(
-    page.getByRole("status").filter({ hasText: "Set up with your agent" }),
+    page.getByRole("radio", { name: "Set up with your agent" }),
   ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy prompt" })).toHaveCount(
+    0,
+  );
 });
 
 test("on a phone, shows the rail and the ontologies in the drawer", async ({
