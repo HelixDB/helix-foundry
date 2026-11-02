@@ -8,8 +8,8 @@ import type {
   ConnectorKindName,
   ConnectorSignIn,
 } from "../../../shared/wfe";
-import { trackBeforeLeavingAt } from "../../analytics";
-import { sentence } from "../../api";
+import { trackBeforeLeavingAt, trackEvent } from "../../analytics";
+import { refusalOf, sentence } from "../../api";
 import { Button, ButtonAnchor, KeyValue, formatDate, plural } from "../../kit";
 import { paths } from "../../paths";
 import { Loading, useWorkspace } from "../../ui";
@@ -134,6 +134,10 @@ export function useSignInStart() {
       });
       location.assign(url);
     } catch (e) {
+      trackEvent("connector_sign_in_refused", {
+        kind: r.kind as ConnectorKindName,
+        reason: refusalOf(e),
+      });
       setError(e as Error);
       setPending(false);
     }

@@ -12,6 +12,7 @@ import {
   captureCallback,
   codeStale,
   connectedPath,
+  failureCode,
   isProviderUrl,
   needsSignIn,
   readConnect,
@@ -462,6 +463,21 @@ describe("widening a signed-in connector", () => {
     ).toBe(
       "Only Ada Lovelace, whose PostHog access it reads with, can change its project.",
     );
+  });
+});
+
+describe("a failure's code", () => {
+  it("is the failure without its prefix, for analytics", () => {
+    expect(failureCode("CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED")).toBe(
+      "code_expired",
+    );
+    expect(failureCode("CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID")).toBe(
+      "settings_invalid",
+    );
+    expect(failureCode("CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED")).toBe(
+      "unknown",
+    );
+    expect(failureCode(undefined)).toBe("unknown");
   });
 });
 
