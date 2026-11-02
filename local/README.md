@@ -76,11 +76,12 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 **Back up**, from the repository's root:
 
 ```sh
-mkdir -m 700 ~/foundry-backup
-docker compose config --images > ~/foundry-backup/images.txt
+backup=~/foundry-backup-$(date +%F-%H%M)
+mkdir -m 700 "$backup"
+docker compose config --images | sort -u > "$backup/images.txt"
 docker compose down
 for v in mysql storage helix work secrets; do
-  docker run --rm -v helix-foundry_$v:/volume:ro alpine:3.22 tar -czf - -C /volume . > ~/foundry-backup/$v.tar.gz
+  docker run --rm -v helix-foundry_$v:/volume:ro alpine:3.22 tar -czf - -C /volume . > "$backup/$v.tar.gz"
 done
 docker compose up -d --wait
 ```
@@ -88,10 +89,11 @@ docker compose up -d --wait
 **Restore** onto the images the backup lists: the same release of this repository, with the same `local/.env`. Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
 
 ```sh
-docker compose config --images | diff - ~/foundry-backup/images.txt  # prints nothing
+backup=~/foundry-backup-2026-11-02-1400  # the backup's folder
+docker compose config --images | sort -u | diff - "$backup/images.txt"  # prints nothing
 docker compose create  # makes the volumes, empty, and starts nothing
 for v in mysql storage helix work secrets; do
-  docker run --rm -i -v helix-foundry_$v:/volume alpine:3.22 tar -xzf - -C /volume < ~/foundry-backup/$v.tar.gz
+  docker run --rm -i -v helix-foundry_$v:/volume alpine:3.22 tar -xzf - -C /volume < "$backup/$v.tar.gz"
 done
 docker compose up -d --wait
 ```
