@@ -136,8 +136,8 @@
   }
 }
 
-/* The strip: its label, two stations on a line, and the current step's
-   action at the right. */
+/* The strip, from the left: its label, two stations on a line, and the
+   current step's action. */
 .pd-strip-label {
   overflow: hidden;
   font-weight: 500;
@@ -184,7 +184,6 @@
 }
 .pd-strip-action {
   flex: none;
-  margin-left: auto;
 }
 .pd-strip-note {
   color: var(--hf-muted);
@@ -197,8 +196,7 @@
     padding-left: var(--hf-space-2);
   }
   /* A phone keeps the stations and the action. */
-  .hf-strip .pd-strip-label,
-  .hf-strip .pd-strip-dismiss {
+  .hf-strip .pd-strip-label {
     display: none;
   }
 }

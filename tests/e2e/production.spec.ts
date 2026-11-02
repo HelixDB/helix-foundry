@@ -11,7 +11,7 @@ import {
 // Getting into production: creating an ontology, then querying it through the
 // Helix MCP. Acme already has ontologies, so its next step is the MCP prompt.
 // On the Analyst, a card that never covers the conversation; everywhere else,
-// a strip above the page, until both are done or it is dismissed. The sample
+// a strip above the page, until both are done. The sample
 // doesn't count as an ontology (sample.spec.ts).
 
 const O = "/ontology/ont_acme_contracts",
@@ -200,23 +200,18 @@ test("the strip off the Analyst shows the current step's action, until both are 
   await expect(toggle(page)).toContainText("2 of 2");
 });
 
-test("the strip dismisses for good, and the card stays", async ({ page }) => {
+test("the strip keeps its action beside its stations, and can't be dismissed", async ({
+  page,
+}) => {
   await signIn(page);
   await page.goto("/data");
-  const strip = production(page);
-  await strip
-    .getByRole("button", { name: "Dismiss Getting into production" })
-    .click();
-  await expect(strip).toHaveCount(0);
-  await page.reload();
-  await expect(explorer(page)).toBeVisible();
-  await expect(strip).toHaveCount(0);
-
-  await page.goto(A);
-  await expect(toggle(page)).toContainText("1 of 2");
-  await expect(
-    production(page).getByRole("button", { name: "Copy prompt" }),
-  ).toBeEnabled();
+  const strip = production(page),
+    action = strip.getByRole("button", { name: "Copy MCP prompt" });
+  await expect(action).toBeVisible();
+  const stations = (await strip.getByRole("list").boundingBox())!,
+    box = (await action.boundingBox())!;
+  expect(box.x - (stations.x + stations.width)).toBeLessThan(40);
+  await expect(strip.getByRole("button")).toHaveCount(1);
 });
 
 test("on a phone, the strip is the stations and the action", async ({
@@ -231,9 +226,6 @@ test("on a phone, the strip is the stations and the action", async ({
   ).toBeVisible();
   await expect(strip.getByRole("list")).toBeVisible();
   await expect(strip.getByText("Getting into production")).toBeHidden();
-  await expect(
-    strip.getByRole("button", { name: "Dismiss Getting into production" }),
-  ).toBeHidden();
 });
 
 test("a member copies the prompt too", async ({ page }) => {

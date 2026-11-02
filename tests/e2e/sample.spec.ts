@@ -172,6 +172,12 @@ test("says it is sample data, and its link back to the tour shows every step don
   await expect(
     production.getByRole("button", { name: "Copy prompt" }),
   ).toBeDisabled();
+  // Making one of the workspace's own is no longer the sample.
+  await page.goto("/ontology/new");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "New ontology" }),
+  ).toBeVisible();
+  await expect(banner).toHaveCount(0);
   await page.goto("/data");
   await back.click();
   await expect(page).toHaveURL(/\/ontology\/sample$/);

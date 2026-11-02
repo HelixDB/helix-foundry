@@ -12,7 +12,6 @@ import {
 
 const EMPTY: ProductionState = {
   copied: false,
-  dismissed: false,
   minimised: false,
 };
 
@@ -24,7 +23,7 @@ describe("productionKey", () => {
 
 describe("parseProductionState", () => {
   it("reads what it wrote", () => {
-    const state = { copied: true, dismissed: true, minimised: true };
+    const state = { copied: true, minimised: true };
     expect(parseProductionState(JSON.stringify(state))).toEqual(state);
   });
 
@@ -43,7 +42,7 @@ describe("parseProductionState", () => {
       "1",
       '"copied"',
       "[true]",
-      '{"copied":"yes","dismissed":1,"minimised":null}',
+      '{"copied":"yes","minimised":null}',
     ])
       expect(parseProductionState(raw), raw).toEqual(EMPTY);
   });
@@ -125,7 +124,7 @@ describe("stripShown", () => {
       "/explore/o1/records",
       "/asking",
     ])
-      expect(stripShown(path, false, EMPTY, open), path).toBe(true);
+      expect(stripShown(path, false, open), path).toBe(true);
   });
 
   it("leaves the Analyst and the pages that make an ontology alone", () => {
@@ -137,23 +136,17 @@ describe("stripShown", () => {
       "/ontology/new/",
       "/ontology/sample",
     ])
-      expect(stripShown(path, false, EMPTY, open), path).toBe(false);
+      expect(stripShown(path, false, open), path).toBe(false);
   });
 
   it("doesn't show during onboarding", () => {
-    expect(stripShown("/settings", true, EMPTY, open)).toBe(false);
-  });
-
-  it("goes once dismissed", () => {
-    expect(
-      stripShown("/data", false, { ...EMPTY, dismissed: true }, open),
-    ).toBe(false);
+    expect(stripShown("/settings", true, open)).toBe(false);
   });
 
   it("goes once both steps are done", () => {
-    expect(
-      stripShown("/data", false, EMPTY, productionProgress(true, true)),
-    ).toBe(false);
+    expect(stripShown("/data", false, productionProgress(true, true))).toBe(
+      false,
+    );
   });
 });
 
