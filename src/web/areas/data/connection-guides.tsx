@@ -350,6 +350,10 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO foundry_readonly;`}</pre>
       <p>Run this as an administrator, replacing the database and password:</p>
       <pre>{`CREATE USER 'foundry'@'%' IDENTIFIED BY 'choose-a-password';
 GRANT SELECT ON app.* TO 'foundry'@'%';`}</pre>
+      <p>
+        A sync reads each table in its own transaction, so tables can reflect
+        slightly different moments.
+      </p>
       <DatabaseReach />
     </>
   ),
