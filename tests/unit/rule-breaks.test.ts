@@ -365,7 +365,7 @@ cardinality = "one"
         run(
           graph,
           entityRequest(
-            { kind: "load", id: "load_1" },
+            { id: "load_1" },
             ref.type === "Person"
               ? { type: ref.type, key: ref.id }
               : { type: ref.type, name: ref.id },

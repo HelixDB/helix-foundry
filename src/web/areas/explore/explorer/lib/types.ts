@@ -98,14 +98,12 @@ export interface LabelCount {
 export interface LabelStats {
   nodeLabels: LabelCount[];
   edgeLabels: LabelCount[];
-  /** Sum of the label counts, or the scanned total. A lower bound when `partial`. */
+  /** Sum of the label counts. A lower bound when `partial`. */
   nodeTotal: number | null;
   edgeTotal: number | null;
   /**
-   * Set when the label list on a side may be missing labels: labels were
-   * found by sampling (discovery, the index catalog, labels remembered from
-   * earlier visits) rather than a full scan, or some were not counted. That
-   * side's total is then "at least". Absent after a full label scan.
+   * Set when some labels on a side were not counted. That side's total is
+   * then "at least".
    */
   partial?: { nodes: boolean; edges: boolean };
 }

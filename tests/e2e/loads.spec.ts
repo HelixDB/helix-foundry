@@ -146,26 +146,6 @@ test("picks a load: the Explorer, Records, an entity's page and a document's vie
   await expect(page.getByText("This load didn’t read it")).toBeVisible();
   await page.getByRole("button", { name: "Show the current load" }).click();
   await expect(docPicker).toHaveText("Current · v3");
-  // Other data holds no documents: it says so rather than blame a load.
-  await choose(docPicker, "Other data");
-  await expect(page.getByText("Documents are read into loads")).toBeVisible();
-  await expect(page.getByText("This load didn’t read it")).toHaveCount(0);
-  await page.getByRole("button", { name: "Show the current load" }).click();
-  await expect(docPicker).toHaveText("Current · v3");
-
-  await page.goto(`${X}/records?load=${first}`);
-
-  // Other data: nothing in this database was written outside a load.
-  await choose(
-    page.getByRole("combobox", { name: "Load" }).first(),
-    "Other data",
-  );
-  await expect(page).toHaveURL(/load=other/);
-  await page.getByRole("radio", { name: "Graph" }).click();
-  await expect(page).toHaveURL(/explore\/ont_acme_contracts\?load=other/);
-  await expect(page.getByText("No other data")).toBeVisible({
-    timeout: 15_000,
-  });
 
   // A deleted or unknown load says so and offers the current one.
   await page.goto(`${X}?load=load_gone`);
@@ -175,9 +155,7 @@ test("picks a load: the Explorer, Records, an entity's page and a document's vie
   await expect(graph(page)).toBeVisible({ timeout: 15_000 });
 });
 
-test("says when the loads or Other data's versions can't be read, and retries", async ({
-  page,
-}) => {
+test("says when the loads can't be read, and retries", async ({ page }) => {
   await mock.configure({ loadStepMs: 100 });
   await signIn(page);
   await makeContractsCurrent(page);
@@ -199,22 +177,6 @@ test("says when the loads or Other data's versions can't be read, and retries", 
   await page.unroute(loadsRoute);
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByRole("list", { name: "Types" })).toBeVisible();
-
-  // Other data needs every load's version: without one it reads nothing,
-  // rather than take that load's entities for the team's own.
-  const versionRoute =
-    "**/foundry/ontologies/ont_acme_contracts/versions/ver_seed_3";
-  await page.route(versionRoute, down);
-  await page.goto(`${X}?load=other`);
-  await expect(
-    page.getByText("Couldn’t read the versions of the loads"),
-  ).toBeVisible({ timeout: 10_000 });
-  await expect(graph(page)).toHaveCount(0);
-  await page.unroute(versionRoute);
-  await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("No other data")).toBeVisible({
-    timeout: 15_000,
-  });
 });
 
 test("compares two loads side by side over their diff", async ({ page }) => {

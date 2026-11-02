@@ -283,7 +283,7 @@ test("switches the ontology from the Explorer's and Ask's headers", async ({
   const orders = await addOrders(page);
   const picker = page.getByRole("combobox", { name: "Ontology" });
   // The graph opens the other's graph, without this one's load or node.
-  await page.goto(`/explore/${CONTRACTS}?load=other&node=3`);
+  await page.goto(`/explore/${CONTRACTS}?load=load_gone&node=3`);
   await choose(picker, "Orders");
   await expect(page).toHaveURL(new RegExp(`/explore/${orders}$`));
   // Orders has nothing loaded and no current version: it says to finish
@@ -292,7 +292,7 @@ test("switches the ontology from the Explorer's and Ask's headers", async ({
     page.getByRole("main").getByRole("link", { name: "Finish setting up" }),
   ).toBeVisible();
   // Records open the other's records, without this one's view.
-  await page.goto(`/explore/${CONTRACTS}/records?load=other&type=Customer`);
+  await page.goto(`/explore/${CONTRACTS}/records?load=load_gone&type=Customer`);
   await choose(picker, "Orders");
   await expect(page).toHaveURL(new RegExp(`/explore/${orders}/records$`));
   await expect(

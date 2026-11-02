@@ -8,7 +8,7 @@ import { scopeOf } from "../../mock/graph/scope";
 import { runQuery } from "../../mock/graph/query";
 import { MockGraph } from "../../mock/graph/store";
 import { FOUNDRY_NODES } from "@/shared/foundry-labels";
-import { MAX_COUNTS, type Scope } from "@/web/areas/explore/load-scope";
+import type { Scope } from "@/web/areas/explore/load-scope";
 import { entityId } from "@/web/areas/explore/model";
 import {
   NO_NAMING,
@@ -71,7 +71,7 @@ const INVOICES: [string, string, number, string][] = [
 const g = new MockGraph();
 // The load the tests' reads are scoped to.
 const LOAD = "load_1";
-const SCOPE: Scope = { kind: "load", id: LOAD };
+const SCOPE: Scope = { id: LOAD };
 const chunk = {
   source: "src_customers",
   mapping: "customers",
@@ -153,7 +153,6 @@ describe("types and counts", () => {
     expect(
       parseTypeCounts(
         batches.map((b) => run(b.request)),
-        SCOPE,
         batches,
       ),
     ).toEqual(
@@ -187,9 +186,10 @@ describe("types and counts", () => {
 
   it("reads an answer it can't trust as unknown counts", () => {
     expect(
-      parseTypeCounts([{ count_0: -1, count_1: "3" }], SCOPE, [
-        { types: ["A", "B", "C"] },
-      ]),
+      parseTypeCounts(
+        [{ count_0: -1, count_1: "3" }],
+        [{ types: ["A", "B", "C"] }],
+      ),
     ).toEqual(
       new Map([
         ["A", null],
@@ -197,10 +197,10 @@ describe("types and counts", () => {
         ["C", null],
       ]),
     );
-    expect(parseTypeCounts([null], SCOPE, [{ types: ["A"] }])).toEqual(
+    expect(parseTypeCounts([null], [{ types: ["A"] }])).toEqual(
       new Map([["A", null]]),
     );
-    expect(parseTypeCounts([], SCOPE, [{ types: ["A"] }])).toEqual(
+    expect(parseTypeCounts([], [{ types: ["A"] }])).toEqual(
       new Map([["A", null]]),
     );
   });
@@ -218,45 +218,16 @@ describe("types and counts", () => {
     expect(
       parseTypeCounts(
         batches.map(() => ({})),
-        SCOPE,
         batches,
       ).size,
     ).toBe(RECORDS_LIMITS.maxTypes);
     expect(typeCountsRequests(SCOPE, [])).toEqual([]);
   });
-
-  it("splits Other data's counts by cost: a version's type takes one per load", () => {
-    const loads = ["L1", "L2", "L3", "L4", "L5"];
-    const types = Array.from({ length: 100 }, (_, i) => `T${i}`);
-    const other: Scope = {
-      kind: "other",
-      loads,
-      shared: { nodes: new Set(types.slice(0, 90)), edges: new Set() },
-    };
-    const batches = typeCountsRequests(other, types);
-    // 90 shared types at 6 counts each, then 10 plain ones at 1.
-    for (const b of batches) expect(entries(b)).toBeLessThanOrEqual(MAX_COUNTS);
-    expect(batches.map(entries).reduce((n, x) => n + x, 0)).toBe(90 * 6 + 10);
-    expect(batches.flatMap((b) => b.types)).toEqual(types);
-    // Each batch's answers are its own: Other(T) = count(T) − Σ count(T ∧ L).
-    const answers = batches.map((b) =>
-      Object.fromEntries(
-        b.types.flatMap((t, i) => [
-          [`count_${i}`, 10],
-          ...loads.map((_, k) => [`count_${i}_load_${k}`, 1]),
-        ]),
-      ),
-    );
-    const counts = parseTypeCounts(answers, other, batches);
-    expect(counts.get("T0")).toBe(5);
-    expect(counts.get("T89")).toBe(5);
-    expect(counts.get("T99")).toBe(10);
-  });
 });
 
 describe("two loads and the team's own data side by side", () => {
   // The same customers in two loads, each with its own name for the first,
-  // and a Customer the team added itself.
+  // and a Customer the team added itself, which neither load reads.
   const db = new MockGraph();
   for (const [load, suffix] of [
     ["L1", ""],
@@ -288,18 +259,12 @@ describe("two loads and the team's own data side by side", () => {
     expect(answer.status, JSON.stringify(answer.body)).toBe(200);
     return answer.body;
   };
-  const L1: Scope = { kind: "load", id: "L1" },
-    L2: Scope = { kind: "load", id: "L2" },
-    OTHER: Scope = {
-      kind: "other",
-      loads: ["L1", "L2"],
-      shared: { nodes: new Set(["Customer"]), edges: new Set() },
-    };
+  const L1: Scope = { id: "L1" },
+    L2: Scope = { id: "L2" };
   const counted = (scope: Scope) => {
     const batches = typeCountsRequests(scope, ["Customer"]);
     return parseTypeCounts(
       batches.map((b) => runIn(b.request)),
-      scope,
       batches,
     ).get("Customer");
   };
@@ -309,13 +274,14 @@ describe("two loads and the team's own data side by side", () => {
     return names(parsePage(runIn(read.request), naming, type("Customer")));
   };
 
-  it("counts and pages each load's rows only, and the team's as Other data", () => {
-    expect([counted(L1), counted(L2), counted(OTHER)]).toEqual([3, 3, 1]);
+  it("counts and pages each load's rows only, never the team's", () => {
+    expect([counted(L1), counted(L2)]).toEqual([3, 3]);
     expect(rowsOf(L1)).toContain("Globex Corporation");
     expect(rowsOf(L2)).toContain("Globex Corporation (v2)");
     expect(rowsOf(L1)).toHaveLength(3);
     expect(rowsOf(L2)).toHaveLength(3);
-    expect(rowsOf(OTHER)).toEqual(["Team account"]);
+    expect(rowsOf(L1)).not.toContain("Team account");
+    expect(rowsOf(L2)).not.toContain("Team account");
     // Search, filter and sort stay in the load.
     expect(rowsOf(L2, { search: "globex" })).toEqual([
       "Globex Corporation (v2)",

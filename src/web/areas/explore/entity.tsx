@@ -296,7 +296,7 @@ function Entity({
   const tenant = ontology.tenantId || "";
   const selection = useLoadSelection(),
     { link } = selection,
-    scope = selection.scope ?? { kind: "load", id: "" };
+    scope = selection.scope ?? { id: "" };
   const { naming, ready } = useNaming(selection.versionId);
   const { read } = useTenantReads();
   const entityRead = readQueries.entity(id, o, read, scope, identity, naming);
@@ -323,7 +323,7 @@ function Entity({
     enabled: !!selection.versionId,
   });
   const rules = rulesOf(version.data?.version);
-  const loadId = selection.scope?.kind === "load" ? selection.scope.id : "";
+  const loadId = selection.scope?.id ?? "";
   const derived = useQuery({
     ...graphReadQueries.entity(id, o, loadId, identity),
     enabled: !!tenant && !!rules && !!loadId,

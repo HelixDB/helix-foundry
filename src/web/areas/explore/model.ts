@@ -171,14 +171,14 @@ const label = (name: string): Ast => ({
 const nodesOf = (scope: Scope, type: string, ...more: Ast[]): Ast => ({
   nodes_where: {
     predicate: {
-      and: { predicates: [...scopedPredicates(scope, "node", type), ...more] },
+      and: { predicates: [...scopedPredicates(scope, type), ...more] },
     },
   },
 });
 const edgesOf = (scope: Scope, link: string, ...more: Ast[]): Ast => ({
   edges_where: {
     predicate: {
-      and: { predicates: [...scopedPredicates(scope, "edge", link), ...more] },
+      and: { predicates: [...scopedPredicates(scope, link), ...more] },
     },
   },
 });

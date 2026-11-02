@@ -1,5 +1,5 @@
 import type { QueryExecutor } from "../explore/database-query";
-import { scopeKey, type Scope } from "../explore/load-scope";
+import type { Scope } from "../explore/load-scope";
 import type { Naming, TypeNaming } from "../explore/naming";
 import { readOptions, runRead } from "../explore/reads";
 import {
@@ -35,7 +35,7 @@ export const recordQueries = {
         "ontology",
         o,
         "read",
-        scopeKey(scope),
+        scope.id,
         "records",
         naming.version,
         types,
@@ -46,7 +46,7 @@ export const recordQueries = {
         const bodies: unknown[] = [];
         for (const b of batches)
           bodies.push(await runRead(read, b.request, signal));
-        return parseTypeCounts(bodies, scope, batches);
+        return parseTypeCounts(bodies, batches);
       },
       ...readOptions,
     };
@@ -69,7 +69,7 @@ export const recordQueries = {
         "ontology",
         o,
         "read",
-        scopeKey(scope),
+        scope.id,
         "records",
         naming.version,
         t.name,

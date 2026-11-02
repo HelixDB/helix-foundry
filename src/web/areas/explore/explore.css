@@ -964,14 +964,6 @@
   font-size: var(--hf-text-xs);
   font-weight: 500;
 }
-.ex-label-group > .ex-other-note {
-  margin: 0;
-  padding: 0 14px 6px;
-  font-size: var(--hf-text-xs);
-}
-.ex-label-group > .ex-other-note + button {
-  margin: 0 10px;
-}
 .ex-label-group ul {
   margin: 0;
   padding: 0;

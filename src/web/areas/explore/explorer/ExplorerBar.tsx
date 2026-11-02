@@ -8,8 +8,8 @@ export interface ExplorerBarProps {
   /** The search box. */
   search: ReactNode;
   /**
-   * Shown on the canvas now, and in the database when known. `atLeast` marks
-   * a total that is a floor (labels found by sampling, not a full scan).
+   * Shown on the canvas now, and in the load when known. `atLeast` marks a
+   * total that is a floor (some labels aren't counted yet).
    */
   stats: {
     nodes: number;

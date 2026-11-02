@@ -185,21 +185,18 @@ function isTooLarge(failure: QueryFailure): boolean {
 }
 
 /**
- * The first view failed. At the sample, size and time failures offer a
- * smaller sample. At the labels step (a few cheap requests: discovery and
- * bitmap counts), a failure says the database or its gateway is in trouble,
- * so the card says that and offers only a retry.
+ * The first view failed. At the labels step (a cheap request: bitmap counts),
+ * a failure says the database or its gateway is in trouble, so the card says
+ * that.
  */
 export function LoadFailedState({
   failure,
   stage = "sample",
   onRetry,
-  onSmaller,
 }: {
   failure: QueryFailure;
   stage?: "labels" | "sample";
   onRetry: () => void;
-  onSmaller: () => void;
 }) {
   const description = describeFailure(failure, "read");
   const timeout = isTimeout(failure);
@@ -224,7 +221,7 @@ export function LoadFailedState({
         detail={<FailureDetail failure={failure} />}
       >
         {timeout
-          ? "Even finding and counting labels timed out, and those requests are small, so the database is likely overloaded or unavailable. The explorer stopped instead of adding load. Try again in a minute."
+          ? "Even counting labels timed out, and that request is small, so the database is likely overloaded or unavailable. The explorer stopped instead of adding load. Try again in a minute."
           : (description.hint ??
             "The explorer stopped instead of retrying. Try again in a minute.")}
       </StateCard>
@@ -256,27 +253,16 @@ export function LoadFailedState({
             Sign in again
           </Link>
         ) : (
-          <>
-            {sizeOrTime && (
-              <button
-                type="button"
-                onClick={onSmaller}
-                className={PRIMARY_BUTTON}
-              >
-                Load a smaller sample
-              </button>
-            )}
-            <button type="button" onClick={onRetry} className={OUTLINE_BUTTON}>
-              <RefreshCw aria-hidden="true" size={14} />
-              Retry
-            </button>
-          </>
+          <button type="button" onClick={onRetry} className={OUTLINE_BUTTON}>
+            <RefreshCw aria-hidden="true" size={14} />
+            Retry
+          </button>
         )
       }
       detail={<FailureDetail failure={failure} />}
     >
       {sizeOrTime
-        ? "A smaller sample usually works. From there, load labels and expand nodes as you go."
+        ? "The database may be busy. Try again in a minute."
         : description.hint}
     </StateCard>
   );
@@ -316,22 +302,12 @@ export function EmptyDatabaseState({
   databaseName,
   loadHref,
   internalsHidden = false,
-  other = false,
 }: {
   databaseName: string;
   loadHref?: string;
   /** Foundry's own records are left out, so the database may hold those. */
   internalsHidden?: boolean;
-  /** Other data: what no load wrote, so the loads' data is elsewhere. */
-  other?: boolean;
 }) {
-  if (other)
-    return (
-      <StateCard icon={<Waypoints size={22} />} title="No other data">
-        Everything in {databaseName} was written by a load. Pick a load to see
-        it.
-      </StateCard>
-    );
   return (
     <StateCard
       icon={<Waypoints size={22} />}
