@@ -22,7 +22,8 @@ func askRequest() AskRequest {
 		Catalog:  []CatalogEntry{{ID: "src_1", Kind: CatalogTable, Name: "Stripe / customers"}},
 		Question: "Which customers?", History: []AskTurn{},
 		Helix: HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 10, TimeoutSecs: 30},
-		AsOf:  "2026-10-19T12:00:00Z", Limits: Limits{MaxUSD: 0.5, MaxSteps: 10, MaxWallSecs: 120}, Models: houseAskModels(),
+		AsOf:  "2026-10-19T12:00:00Z", Models: houseAskModels(),
+		Limits: AskLimits{MaxUSD: 0.5, MaxSteps: 10, MaxWallSecs: 120, Read: AskReadLimits{WallMS: 5000, ScanEntities: 20000}},
 	}
 }
 
@@ -50,6 +51,33 @@ func TestAskRequest(t *testing.T) {
 		plain, _ := json.Marshal(askRequest())
 		if strings.Contains(string(plain), `"focus"`) {
 			t.Fatalf("a request without a focus sends one: %s", plain)
+		}
+	})
+
+	// Every read cap is sent, each at least 1 and none the agent doesn't
+	// take: a request without them reads with the agent's defaults, which
+	// Foundry's config would no longer say.
+	t.Run("sends every read cap the agent takes", func(t *testing.T) {
+		body, _ := json.Marshal(askRequest())
+		const sent = `"limits":{"max_usd":0.5,"max_steps":10,"max_wall_secs":120,"read":{"wall_ms":5000,"scan_entities":20000}}`
+		if !strings.Contains(string(body), sent) {
+			t.Fatalf("limits sent as %s", body)
+		}
+		schema := contracttest.Schema(t, "ask_request.json")
+		const caps = `"max_usd":0.5,"max_steps":10,"max_wall_secs":120`
+		for name, limits := range map[string]string{
+			"no wall time":         `{` + caps + `,"read":{"wall_ms":0,"scan_entities":20000}}`,
+			"no matches":           `{` + caps + `,"read":{"wall_ms":5000,"scan_entities":0}}`,
+			"a negative cap":       `{` + caps + `,"read":{"wall_ms":-1,"scan_entities":20000}}`,
+			"a fractional cap":     `{` + caps + `,"read":{"wall_ms":5000.5,"scan_entities":20000}}`,
+			"a cap it lacks":       `{` + caps + `,"read":{"wall_ms":5000,"scan_entities":20000,"instances":1}}`,
+			"not an object":        `{` + caps + `,"read":5000}`,
+			"a read cap misplaced": `{` + caps + `,"wall_ms":5000}`,
+		} {
+			loose := strings.Replace(string(body), sent, `"limits":`+limits, 1)
+			if err := contracttest.Validate(t, schema, []byte(loose)); err == nil {
+				t.Errorf("%s: ask_request.json accepted %s", name, loose)
+			}
 		}
 	})
 
