@@ -51,7 +51,7 @@ describe("data api", () => {
     await d.testConnector("ws_1", config);
     await d.createConnector("ws_1", { name: "S", config });
     await d.updateConnector("ws_1", "c1", { name: "T" });
-    await d.syncConnector("ws_1", "c1");
+    await d.syncConnector("ws_1", "c1", "connection");
     await d.deleteConnector("ws_1", "c1");
     expect(calls).toEqual([
       { method: "POST", url: `${F}/connectors:test`, body: { config } },

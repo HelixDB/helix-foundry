@@ -21,7 +21,7 @@ import type {
   SetCurrentOntologyVersionRequest,
   StopLoadEnrichmentResponse,
 } from "../../../shared/wfe";
-import { jobSeen, jobStarted } from "../../analytics";
+import { jobSeen, jobStarted, trackEvent } from "../../analytics";
 import { api } from "../../api";
 
 // The Ontology area's WFE calls, as TanStack Query options keyed by
@@ -134,6 +134,7 @@ export const ontologyQueries = {
         `${at(ws, o)}/generations?limit=100`,
       );
       jobSeen("generation", r.generations || []);
+      jobSeen("revision", r.generations || []);
       return r;
     },
     refetchInterval: (q: {
@@ -147,6 +148,7 @@ export const ontologyQueries = {
         `${at(ws, o)}/generations/${enc(id)}`,
       );
       jobSeen("generation", [r.generation]);
+      jobSeen("revision", [r.generation]);
       return r;
     },
     // Only while it is live: a refused read (gone, or no access) stops.
@@ -203,11 +205,18 @@ export const generateOntology = async (
   return r;
 };
 
-export const setCurrentVersion = (
+export const setCurrentVersion = async (
   ws: string,
   o: string,
   body: SetCurrentOntologyVersionRequest,
-) => api<OntologyVersionResponse>(`${at(ws, o)}:set-current`, body);
+) => {
+  const r = await api<OntologyVersionResponse>(
+    `${at(ws, o)}:set-current`,
+    body,
+  );
+  trackEvent("version_made_current");
+  return r;
+};
 
 /** Starts a load of `versionId`; the same client token is the same load. */
 export const createLoad = async (
@@ -224,8 +233,14 @@ export const createLoad = async (
  * Makes a ready or partial load the one reads go to; the documents it hasn't
  * read are read into it.
  */
-export const setCurrentLoad = (ws: string, o: string, id: string) =>
-  api<LoadResponse>(`${at(ws, o)}/loads/${enc(id)}:set-current`, {});
+export const setCurrentLoad = async (ws: string, o: string, id: string) => {
+  const r = await api<LoadResponse>(
+    `${at(ws, o)}/loads/${enc(id)}:set-current`,
+    {},
+  );
+  trackEvent("load_made_current");
+  return r;
+};
 
 /**
  * Stops a load's People enrichment lookups (owners and admins): a queued
@@ -246,16 +261,19 @@ export const deleteLoad = (ws: string, o: string, id: string) =>
   api<LoadResponse>(`${at(ws, o)}/loads/${enc(id)}`, undefined, "DELETE");
 
 /** Poll the response with ontologyQueries.generation, as for agent drafts. */
-export const reviseOntologyVersion = (
+export const reviseOntologyVersion = async (
   ws: string,
   o: string,
   versionId: string,
   body: ReviseOntologyVersionRequest,
-) =>
-  api<OntologyGenerationResponse>(
+) => {
+  const r = await api<OntologyGenerationResponse>(
     `${at(ws, o)}/versions/${enc(versionId)}:revise`,
     body,
   );
+  jobStarted("revision", r.generation?.id, body.dryRun ? "preview" : "save");
+  return r;
+};
 
 // ---------------------------------------------------------------- questions
 
@@ -326,5 +344,11 @@ export const askQuestion = async (
 };
 
 /** Stops a queued or running question; a running one is charged what it reserved. */
-export const cancelQuestion = (ws: string, o: string, id: string) =>
-  api<QuestionResponse>(`${questions(ws, o)}/${enc(id)}:cancel`, {});
+export const cancelQuestion = async (ws: string, o: string, id: string) => {
+  const r = await api<QuestionResponse>(
+    `${questions(ws, o)}/${enc(id)}:cancel`,
+    {},
+  );
+  trackEvent("question_cancelled");
+  return r;
+};

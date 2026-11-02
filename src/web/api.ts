@@ -7,6 +7,7 @@ import {
 import { LOCAL } from "../shared/deployment";
 import { signInPath } from "../shared/return-path";
 import { SESSION_EXPIRES_HEADER } from "../shared/session-contract";
+import { trackBeforeLeaving } from "./analytics";
 
 // Every WFE call goes through the same-origin /papi BFF, which adds the
 // session's bearer token: `api("/v1/whoami")` reaches the WFE's /v1/whoami.
@@ -216,5 +217,6 @@ export async function signOut() {
     // Without a session there is nothing to end: go to sign-in anyway.
   }
   clearCsrfToken();
+  await trackBeforeLeaving("signed_out");
   window.location.assign(target);
 }

@@ -7,6 +7,7 @@ import {
   type FoundryPlanResponse,
   type OpenBillingPortalResponse,
 } from "../../../shared/wfe";
+import { trackEvent } from "../../analytics";
 import { ApiError, api } from "../../api";
 import type { WorkspaceRole } from "../../ui";
 
@@ -178,12 +179,20 @@ export async function startCheckout({
 }
 
 /** Cancels or resumes whichever paid plan the workspace holds. */
-export const cancelPlan = async (workspaceId: string) =>
-  (await api<FoundryPlanResponse>("/v1/foundry/plan:cancel", { workspaceId }))
-    .plan || {};
-export const resumePlan = async (workspaceId: string) =>
-  (await api<FoundryPlanResponse>("/v1/foundry/plan:resume", { workspaceId }))
-    .plan || {};
+export const cancelPlan = async (workspaceId: string) => {
+  const { plan } = await api<FoundryPlanResponse>("/v1/foundry/plan:cancel", {
+    workspaceId,
+  });
+  trackEvent("plan_cancelled");
+  return plan || {};
+};
+export const resumePlan = async (workspaceId: string) => {
+  const { plan } = await api<FoundryPlanResponse>("/v1/foundry/plan:resume", {
+    workspaceId,
+  });
+  trackEvent("plan_resumed");
+  return plan || {};
+};
 
 /** The hosted billing portal's URL (invoices, payment methods). */
 export async function billingPortalUrl(workspaceId: string) {
