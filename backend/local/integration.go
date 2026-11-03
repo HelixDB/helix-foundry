@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -60,14 +61,22 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", stream)
 	mux.Handle("/v1/ontologies/", integration.NewHTTPHandler(func(r *http.Request, ontologyID string) (integration.HTTPCall, error) {
+		if !integration.ValidIDs([]string{ontologyID}) {
+			return integration.HTTPCall{}, integration.FoundryError(status.Error(codes.InvalidArgument, "invalid ontology id"))
+		}
 		workspaceID, err := dir.OntologyWorkspace(r.Context(), ontologyID)
 		return integration.HTTPCall{Context: r.Context(), Service: service, Identity: identity, WorkspaceID: workspaceID}, err
 	}))
+	hosts := integrationHosts(siteOrigin)
 	crossOrigin := http.NewCrossOriginProtection()
 	crossOrigin.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		refuse(w, "cross-origin request refused")
 	}))
 	return crossOrigin.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hosts[requestHost(r.Host)] {
+			refuse(w, "invalid host")
+			return
+		}
 		// Only the bearer is forwarded to gRPC; client-supplied actor metadata is discarded.
 		bearer := r.Header.Get("Authorization")
 		ctx, err := auth.gate(metadata.NewIncomingContext(r.Context(), metadata.Pairs("authorization", bearer)), directoryv1.DirectoryService_Whoami_FullMethodName, &directoryv1.WhoamiRequest{})
@@ -80,32 +89,24 @@ func IntegrationHandler(auth *Authenticator, dir *directory.Store, conn *grpc.Cl
 	}))
 }
 
-// GuardListener refuses a request for a host this install isn't, on every route of the REST
-// listener, the site's too: the listener is published on the host, so a page could otherwise
-// reach it through a name it rebinds to loopback. The token still gates every route but this.
-func GuardListener(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !installHost(r.Host) {
-			refuse(w, "invalid host")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// integrationHosts are the names MCP and HTTP Ask answer for: this machine's, a container's name for
+// this machine, and the host of the install's site. A page can't reach them through a name it rebinds
+// to loopback, and a single label is no exception: a DNS search suffix can resolve one.
+func integrationHosts(siteOrigin string) map[string]bool {
+	hosts := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true, "host.docker.internal": true}
+	if origin, err := url.Parse(siteOrigin); err == nil && origin.Hostname() != "" {
+		hosts[strings.ToLower(origin.Hostname())] = true
+	}
+	return hosts
 }
 
-// installHost is loopback, or a single label: a container's name on Docker's network (the site
-// calls pod), which no public DNS answers, so no page can rebind it.
-func installHost(hostport string) bool {
+// requestHost is a Host header's name, without its port or an IPv6 address's brackets.
+func requestHost(hostport string) string {
 	host := hostport
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
 	}
-	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	switch host {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	}
-	return host != "" && !strings.ContainsAny(host, ".:")
+	return strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
 }
 
 // newRequestID gives a response refused before integration's handler its ID, as that handler's.

@@ -38,7 +38,7 @@
             "name": "Idempotency-Key",
             "in": "header",
             "required": true,
-            "description": "Unique value of at most 64 bytes of UTF-8, compared exactly. Reuse with the same question when retrying.",
+            "description": "Unique value of at most 64 bytes of UTF-8, compared exactly and belonging to the caller, so another caller using the same value asks its own question. Reuse with the same question when retrying.",
             "schema": {
               "type": "string",
               "minLength": 1,
@@ -105,7 +105,7 @@
             }
           },
           "403": {
-            "description": "Insufficient permission, or a host or cross-origin request a local install refuses.",
+            "description": "A host or cross-origin request a local install refuses. A credential without permission gets 404, as for a resource that does not exist.",
             "content": {
               "application/json": {
                 "schema": {
@@ -116,6 +116,23 @@
           },
           "404": {
             "description": "Resource not found or inaccessible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The route takes only POST.",
+            "headers": {
+              "Allow": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -290,7 +307,7 @@
             }
           },
           "403": {
-            "description": "Insufficient permission, or a host or cross-origin request a local install refuses.",
+            "description": "A host or cross-origin request a local install refuses. A credential without permission gets 404, as for a resource that does not exist.",
             "content": {
               "application/json": {
                 "schema": {
@@ -301,6 +318,23 @@
           },
           "404": {
             "description": "Resource not found or inaccessible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The route takes only GET.",
+            "headers": {
+              "Allow": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

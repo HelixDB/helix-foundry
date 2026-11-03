@@ -27,16 +27,19 @@ type httpBackend struct {
 	foundryv1.FoundryServiceClient
 	// panicOnGet crashes the nth GetFoundryQuestion; 0 never does.
 	panicOnGet, gets int
-	mu               sync.Mutex
-	question         *foundryv1.FoundryQuestion
-	queued           int
-	queuedSignal     chan struct{}
-	err              error
+	// tokens are the client tokens asked with, in order.
+	tokens       []string
+	mu           sync.Mutex
+	question     *foundryv1.FoundryQuestion
+	queued       int
+	queuedSignal chan struct{}
+	err          error
 }
 
 func (b *httpBackend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQuestionRequest, _ ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.tokens = append(b.tokens, r.ClientToken)
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -79,9 +82,12 @@ func httpFixture(t *testing.T, state string) (http.Handler, *httpBackend) {
 		}
 		return nil
 	}}
-	h := NewHTTPHandler(func(r *http.Request, _ string) (HTTPCall, error) {
+	h := NewHTTPHandler(func(r *http.Request, ontologyID string) (HTTPCall, error) {
 		if r.Header.Get("Authorization") != "Bearer fixture" {
 			return HTTPCall{}, status.Error(codes.Unauthenticated, "secret reason")
+		}
+		if !ValidIDs([]string{ontologyID}) {
+			return HTTPCall{}, FoundryError(status.Error(codes.InvalidArgument, "invalid ontology id"))
 		}
 		return HTTPCall{Context: r.Context(), Service: s, Identity: i, WorkspaceID: "workspace-2"}, nil
 	})
@@ -112,11 +118,14 @@ func httpObservedFixture(t *testing.T, state string, bodyTimeout time.Duration) 
 		defer o.mu.Unlock()
 		o.seen = append(o.seen, outcome)
 	}
-	o.handler = newHTTPHandler(func(r *http.Request, _ string) (HTTPCall, error) {
+	o.handler = newHTTPHandler(func(r *http.Request, ontologyID string) (HTTPCall, error) {
 		if r.Header.Get("Authorization") != "Bearer fixture" {
 			return HTTPCall{Done: done}, status.Error(codes.Unauthenticated, "secret reason")
 		}
-		return HTTPCall{Context: r.Context(), Service: o.service, Identity: identity, WorkspaceID: "workspace-2", Done: done}, nil
+		if !ValidIDs([]string{ontologyID}) {
+			return HTTPCall{Done: done}, FoundryError(status.Error(codes.InvalidArgument, "invalid ontology id"))
+		}
+		return HTTPCall{Context: r.Context(), Service: o.service, Identity: identity, WorkspaceID: "workspace-2", Caller: r.Header.Get("X-Caller"), Done: done}, nil
 	}, bodyTimeout)
 	return o
 }
@@ -206,7 +215,7 @@ func TestHTTPValidationAndIsolation(t *testing.T) {
 	for _, key := range []string{"", strings.Repeat("x", 65), "\xff"} {
 		assert.Equal(t, 400, httpCall(h, "POST", "/v1/ontologies/ontology-1/ask", `{"question":"q"}`, key).Code)
 	}
-	assert.Equal(t, 403, httpCall(h, "POST", "/v1/ontologies/ontology-other/ask", `{"question":"q"}`, "key").Code)
+	assert.Equal(t, 404, httpCall(h, "POST", "/v1/ontologies/ontology-other/ask", `{"question":"q"}`, "key").Code)
 	r := httptest.NewRequest("POST", "/v1/ontologies/ontology-1/ask", strings.NewReader(`{"question":"q"}`))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -306,7 +315,7 @@ func TestHTTPOutcome(t *testing.T) {
 		{name: "a question that failed is a request that succeeded", state: "failed", method: "GET", path: httpQuestionPath, want: HTTPOutcome{Tool: HTTPGetQuestionTool, Status: 200, QuestionID: "question-1"}},
 		{name: "a question read", state: "answered", method: "GET", path: httpQuestionPath, want: HTTPOutcome{Tool: HTTPGetQuestionTool, Status: 200, QuestionID: "question-1"}},
 		{name: "a question no one has", state: "answered", method: "GET", path: "/v1/ontologies/ontology-1/questions/question-2", want: HTTPOutcome{Tool: HTTPGetQuestionTool, Status: 404, Code: "not_found"}},
-		{name: "refused", state: "answered", method: "POST", path: "/v1/ontologies/ontology-2/ask", want: HTTPOutcome{Tool: HTTPAskTool, Status: 403, Code: "permission_denied"}},
+		{name: "refused", state: "answered", method: "POST", path: "/v1/ontologies/ontology-2/ask", want: HTTPOutcome{Tool: HTTPAskTool, Status: 404, Code: "not_found"}},
 		{name: "a spent budget", state: "answered", method: "POST", path: httpAskPath, backendErr: status.Error(codes.FailedPrecondition, "spent"), want: HTTPOutcome{Tool: HTTPAskTool, Status: 412, Code: "failed_precondition"}},
 		{name: "an outage", state: "answered", method: "POST", path: httpAskPath, backendErr: status.Error(codes.Unavailable, "private"), want: HTTPOutcome{Tool: HTTPAskTool, Status: 503, Code: "backend_unavailable"}},
 	} {
@@ -405,7 +414,7 @@ func TestHTTPHangUpDoesNotHideARefusal(t *testing.T) {
 		want       string
 	}{
 		{name: "no credential", path: httpAskPath, anonymous: true, want: "unauthenticated"},
-		{name: "no access", path: "/v1/ontologies/ontology-2/ask", want: "permission_denied"},
+		{name: "no access", path: "/v1/ontologies/ontology-2/ask", want: "not_found"},
 		{name: "a limit", path: httpAskPath, backendErr: status.Error(codes.ResourceExhausted, "limit"), want: "resource_exhausted"},
 		{name: "a precondition", path: httpAskPath, backendErr: status.Error(codes.FailedPrecondition, "spent"), want: "failed_precondition"},
 		{name: "a call the hang-up cut", path: httpAskPath, backendErr: status.Error(codes.Canceled, "cancelled"), want: HTTPClientDisconnected},
@@ -548,7 +557,7 @@ func TestHTTPBodyDeadline(t *testing.T) {
 			assert.Equal(t, tc.status, o.outcome(t).Status)
 		})
 	}
-	// Nor does an id that can't be one wait on the body, with no route to its request's Done.
+	// Nor does an id that can't be one wait on the body.
 	t.Run("a malformed id, then a stalled body", func(t *testing.T) {
 		o := httpObservedFixture(t, "answered", timeout)
 		conn, err := net.Dial("tcp", httpServed(t, o).Listener.Addr().String())
@@ -562,7 +571,7 @@ func TestHTTPBodyDeadline(t *testing.T) {
 		defer response.Body.Close()
 		assert.Equal(t, http.StatusBadRequest, response.StatusCode)
 		assert.True(t, response.Close)
-		assert.Empty(t, o.seen)
+		assert.Equal(t, http.StatusBadRequest, o.outcome(t).Status)
 	})
 	// A deadline or its failed read must not outlive the request on a connection that goes on.
 	t.Run("a connection serves its next request", func(t *testing.T) {
@@ -613,29 +622,154 @@ func TestHTTPContextErrorsAreUnavailable(t *testing.T) {
 	}
 }
 
-// An id that can't be one is refused before anything looks it up.
-func TestHTTPMalformedIDsReachNoLookup(t *testing.T) {
-	resolved := 0
-	h := NewHTTPHandler(func(*http.Request, string) (HTTPCall, error) {
-		resolved++
-		return HTTPCall{}, status.Error(codes.NotFound, "not found")
-	})
+// A host refuses a malformed ontology id (ResolveHTTP) and the tool a malformed question id, each
+// after authenticating and before any lookup, and the host's Done hears of the 400 either way.
+func TestHTTPMalformedIDs(t *testing.T) {
 	for _, target := range []struct{ method, path string }{
 		{"POST", "/v1/ontologies/bad!id/ask"},
 		{"GET", "/v1/ontologies/bad!id/questions/question-1"},
 		{"GET", "/v1/ontologies/ontology-1/questions/bad!id"},
 		{"GET", "/v1/ontologies/%ff/questions/question-1"},
 	} {
-		w := httpCall(h, target.method, target.path, `{"question":"q"}`, "key")
-		assert.Equal(t, 400, w.Code, target.path)
-		var body struct {
-			Error struct{ Code, RequestID string }
-		}
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-		assert.Equal(t, "invalid_arguments", body.Error.Code)
-		assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
+		t.Run(target.path, func(t *testing.T) {
+			o := httpObservedFixture(t, "answered", httpBodyTimeout)
+			w := httptest.NewRecorder()
+			o.handler.ServeHTTP(w, httpObservedRequest(context.Background(), target.method, target.path, `{"question":"q"}`))
+			assert.Equal(t, 400, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), "invalid_arguments")
+			assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
+			got := o.outcome(t)
+			assert.Equal(t, 400, got.Status)
+			assert.Equal(t, "invalid_arguments", got.Code)
+			assert.Zero(t, o.backend.queued)
+			assert.Zero(t, o.backend.gets)
+		})
 	}
-	assert.Zero(t, resolved)
+	t.Run("an anonymous caller is told only that", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", httpBodyTimeout)
+		r := httpObservedRequest(context.Background(), "POST", "/v1/ontologies/bad!id/ask", `{"question":"q"}`)
+		r.Header.Del("Authorization")
+		w := httptest.NewRecorder()
+		o.handler.ServeHTTP(w, r)
+		assert.Equal(t, 401, w.Code)
+	})
+}
+
+// One caller's Idempotency-Key can't find another's question: a client token is unique per ontology,
+// not per caller.
+func TestHTTPIdempotencyKeysBelongToTheirCaller(t *testing.T) {
+	o := httpObservedFixture(t, "answered", httpBodyTimeout)
+	ask := func(caller, key string) string {
+		r := httpObservedRequest(context.Background(), "POST", httpAskPath, `{"question":"q"}`)
+		r.Header.Set("X-Caller", caller)
+		r.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		o.handler.ServeHTTP(w, r)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		return o.backend.tokens[len(o.backend.tokens)-1]
+	}
+	first := ask("credential-a", "retry-1")
+	assert.Equal(t, first, ask("credential-a", "retry-1"), "a retry is the same question")
+	for name, other := range map[string]string{
+		"another caller":                     ask("credential-b", "retry-1"),
+		"another key":                        ask("credential-a", "retry-2"),
+		"a key differing only in case":       ask("credential-a", "RETRY-1"),
+		"a key differing only in its spaces": ask("credential-a", "retry-1 "),
+		"a host with one caller":             ask("", "retry-1"),
+	} {
+		assert.NotEqual(t, first, other, name)
+	}
+	assert.Len(t, first, 64, "it must fit the column, whatever the key's length")
+	assert.Len(t, ask("credential-a", strings.Repeat("x", 64)), 64)
+	assert.NotContains(t, first, "retry-1")
+}
+
+// A message reaches a client only from the handler or through FoundryError: a host's refusal or an
+// Authorize error can name internals.
+func TestHTTPErrorsDoNotRepeatUncheckedMessages(t *testing.T) {
+	const private = "/helix.foundry.v1.FoundryService/Private is not available in local mode"
+	for grpcCode, want := range map[codes.Code]struct {
+		status int
+		code   string
+	}{
+		codes.InvalidArgument:    {400, "invalid_arguments"},
+		codes.FailedPrecondition: {412, "failed_precondition"},
+		codes.AlreadyExists:      {409, "already_exists"},
+		codes.ResourceExhausted:  {429, "resource_exhausted"},
+		codes.NotFound:           {404, "not_found"},
+		codes.PermissionDenied:   {404, "not_found"},
+	} {
+		w := httptest.NewRecorder()
+		WriteHTTPError(w, status.Error(grpcCode, private), "request")
+		assert.Equal(t, want.status, w.Code, grpcCode)
+		assert.Contains(t, w.Body.String(), `"code":"`+want.code+`"`, grpcCode)
+		assert.NotContains(t, w.Body.String(), "helix.foundry", grpcCode)
+	}
+	t.Run("a backend refusal FoundryError let through keeps its words", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		WriteHTTPError(w, FoundryError(status.Error(codes.FailedPrecondition, "the ontology has no load")), "request")
+		assert.Contains(t, w.Body.String(), "the ontology has no load")
+	})
+	t.Run("the handler's own refusals keep theirs", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", httpBodyTimeout)
+		r := httpObservedRequest(context.Background(), "POST", httpAskPath, `{"question":"q"}`)
+		r.Header.Set("Content-Type", "text/plain")
+		w := httptest.NewRecorder()
+		o.handler.ServeHTTP(w, r)
+		assert.Contains(t, w.Body.String(), "Content-Type must be application/json")
+	})
+	t.Run("an Authorize refusal does not", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", httpBodyTimeout)
+		h := newHTTPHandler(func(r *http.Request, _ string) (HTTPCall, error) {
+			return HTTPCall{Context: r.Context(), Service: o.service, WorkspaceID: "workspace-2", Identity: &Identity{
+				Authorize: func(context.Context, any, Grant, ...string) error {
+					return status.Error(codes.FailedPrecondition, private)
+				},
+			}}, nil
+		}, httpBodyTimeout)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httpObservedRequest(context.Background(), "GET", httpQuestionPath, ""))
+		assert.Equal(t, 412, w.Code)
+		assert.NotContains(t, w.Body.String(), "helix.foundry")
+	})
+}
+
+// Whatever no route takes still answers in the contract's error shape.
+func TestHTTPUnroutedRequestsAreTheContractsError(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		status       int
+		code, allow  string
+	}{
+		{"GET", httpAskPath, 405, "method_not_allowed", "POST"},
+		{"DELETE", httpAskPath, 405, "method_not_allowed", "POST"},
+		{"POST", httpQuestionPath, 405, "method_not_allowed", "GET"},
+		{"POST", "/v1/ontologies/ontology-1", 404, "not_found", ""},
+		{"GET", "/v1/ontologies/ontology-1/questions", 404, "not_found", ""},
+		{"GET", "/metrics", 404, "not_found", ""},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			o := httpObservedFixture(t, "answered", httpBodyTimeout)
+			w := httptest.NewRecorder()
+			o.handler.ServeHTTP(w, httpObservedRequest(context.Background(), tc.method, tc.path, ""))
+			assert.Equal(t, tc.status, w.Code)
+			assert.Equal(t, tc.allow, w.Header().Get("Allow"))
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+			var body struct {
+				Error struct {
+					Code      string `json:"code"`
+					Message   string `json:"message"`
+					RequestID string `json:"request_id"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+			assert.Equal(t, tc.code, body.Error.Code)
+			assert.NotEmpty(t, body.Error.Message)
+			assert.Equal(t, w.Header().Get("X-Request-ID"), body.Error.RequestID)
+			assert.NotEmpty(t, body.Error.RequestID)
+			assert.Empty(t, o.seen, "no route took it")
+		})
+	}
 }
 
 // A large integer stays exact whichever JSON reader the client has.

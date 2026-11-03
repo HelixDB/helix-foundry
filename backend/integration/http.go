@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,7 +16,6 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -41,6 +42,9 @@ type HTTPCall struct {
 	Service     *Service
 	Identity    *Identity
 	WorkspaceID string
+	// Caller names who is asking, among the callers of this host, so that one caller's
+	// Idempotency-Key can't meet another's (httpClientToken). A host with one caller leaves it empty.
+	Caller string
 	// Done, when set, is told how the request ended once its response is written. A host returns
 	// it alongside a refusal too, for one it means to audit.
 	Done func(HTTPOutcome)
@@ -60,7 +64,9 @@ type HTTPOutcome struct {
 	QuestionID string
 }
 
-// ResolveHTTP authenticates the request and resolves the ontology's workspace.
+// ResolveHTTP authenticates the request and resolves the ontology's workspace. It refuses a
+// malformed ontology id (ValidIDs) once it has authenticated and before it looks anything up: a
+// host's lookup may not be able to take one.
 type ResolveHTTP func(*http.Request, string) (HTTPCall, error)
 
 type httpRequestIDKey struct{}
@@ -82,14 +88,34 @@ func newHTTPHandler(resolve ResolveHTTP, bodyTimeout time.Duration) http.Handler
 	}
 	mux.HandleFunc("POST /v1/ontologies/{ontologyId}/ask", route(HTTPAskTool))
 	mux.HandleFunc("GET /v1/ontologies/{ontologyId}/questions/{questionId}", route(HTTPGetQuestionTool))
+	// The same paths by any other method, and whatever else reaches this handler, answer in the
+	// contract's error shape, as net/http's own plain text wouldn't.
+	mux.HandleFunc("/v1/ontologies/{ontologyId}/ask", httpMethodNotAllowed(http.MethodPost))
+	mux.HandleFunc("/v1/ontologies/{ontologyId}/questions/{questionId}", httpMethodNotAllowed(http.MethodGet))
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		refuseHTTPRoute(w, http.StatusNotFound, "not_found", "resource not found")
+	})
 	return mux
+}
+
+func httpMethodNotAllowed(allow string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", allow)
+		refuseHTTPRoute(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+	}
+}
+
+// refuseHTTPRoute answers a request no route took, which has no request ID yet.
+func refuseHTTPRoute(w http.ResponseWriter, statusCode int, code, message string) {
+	requestID := id.New()
+	w.Header().Set("X-Request-ID", requestID)
+	WriteHTTPRefusal(w, statusCode, code, message, requestID)
 }
 
 func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve ResolveHTTP, bodyTimeout time.Duration) {
 	// The GET route also matches HEAD, which would read no question and look pending.
 	if r.Method == http.MethodHead {
-		w.Header().Set("Allow", http.MethodGet)
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		httpMethodNotAllowed(http.MethodGet)(w, r)
 		return
 	}
 	client := r.Context()
@@ -105,11 +131,6 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve Reso
 	// body, net/http is already watching for a hang-up, a read this deadline would fail.
 	if tool == HTTPAskTool && r.ContentLength != 0 {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyTimeout))
-	}
-	// An id that can't be one is the caller's error, before anything looks it up.
-	if !ValidIDs([]string{r.PathValue("ontologyId")}, r.PathValue("questionId")) {
-		WriteHTTPError(w, status.Error(codes.InvalidArgument, "invalid ontology or question id"), requestID)
-		return
 	}
 	call := &Call{}
 	resolved, err := resolve(r, r.PathValue("ontologyId"))
@@ -160,12 +181,27 @@ func askHTTP(w http.ResponseWriter, r *http.Request, resolved HTTPCall, call *Ca
 	// gRPC can't marshal a string that isn't UTF-8, and headers may hold any byte above 0x7f.
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" || len(key) > 64 || !utf8.ValidString(key) {
-		return FoundryQuestionOutput{}, status.Error(codes.InvalidArgument, "Idempotency-Key is required, at most 64 bytes of UTF-8")
+		return FoundryQuestionOutput{}, invalidHTTPRequest("Idempotency-Key is required, at most 64 bytes of UTF-8")
 	}
 	out, _, err := resolved.Service.AskFoundryQuestion(resolved.Context, resolved.Identity, call, AskFoundryInput{
-		OntologyInput: OntologyInput{WorkspaceID: resolved.WorkspaceID, OntologyID: r.PathValue("ontologyId")}, Question: question, ClientToken: key,
+		OntologyInput: OntologyInput{WorkspaceID: resolved.WorkspaceID, OntologyID: r.PathValue("ontologyId")}, Question: question, ClientToken: httpClientToken(resolved.Caller, key),
 	})
 	return out, err
+}
+
+// httpClientToken is the client token of a caller's Idempotency-Key. A client token is unique per
+// ontology, not per caller, so one caller's key would otherwise find another's question, billed to
+// them, or be refused as used for one the caller never asked. Hashing it in the caller keeps those
+// apart, and keeps a key from meeting an MCP client's token. It also leaves nothing of the key for the
+// column's collation to fold: only the same bytes from the same caller are the same question.
+func httpClientToken(caller, key string) string {
+	sum := sha256.Sum256([]byte(caller + "\x00" + key))
+	return hex.EncodeToString(sum[:])
+}
+
+// invalidHTTPRequest is a refusal of the handler's own, whose message is for the client.
+func invalidHTTPRequest(message string) error {
+	return detailedToolError{code: errCodeInvalidArguments, message: message}
 }
 
 // readHTTPQuestion reads the body under a read deadline: a request's context doesn't bound reading
@@ -178,7 +214,7 @@ func askHTTP(w http.ResponseWriter, r *http.Request, resolved HTTPCall, call *Ca
 func readHTTPQuestion(w http.ResponseWriter, r *http.Request, bodyTimeout time.Duration) (string, error) {
 	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/json" {
-		return "", status.Error(codes.InvalidArgument, "Content-Type must be application/json")
+		return "", invalidHTTPRequest("Content-Type must be application/json")
 	}
 	// Resolving took some of what was first set, and the time was no fault of the client's.
 	deadline := time.Now().Add(bodyTimeout)
@@ -210,7 +246,7 @@ func httpBodyError(r *http.Request, err error, invalid string) error {
 	case r.Context().Err() != nil:
 		return r.Context().Err()
 	}
-	return status.Error(codes.InvalidArgument, invalid)
+	return invalidHTTPRequest(invalid)
 }
 
 // writeHTTPError answers with err and returns the status sent and the code to report. The code is
@@ -223,7 +259,10 @@ func writeHTTPError(w http.ResponseWriter, err error, requestID string, client c
 	return statusCode, code
 }
 
-// WriteHTTPError never exposes internal backend messages or authentication internals.
+// WriteHTTPError never exposes internal backend messages or authentication internals. A message
+// reaches the client only from a stable error: the handler's own, or one FoundryError let through.
+// Any other is a code and its fixed message, since a host's refusal or an Authorize error may name
+// internals. Every denial is not_found, as for the tools, so a caller can't probe for what exists.
 func WriteHTTPError(w http.ResponseWriter, err error, requestID string) {
 	writeHTTPErrorCode(w, err, requestID)
 }
@@ -233,15 +272,12 @@ func writeHTTPErrorCode(w http.ResponseWriter, err error, requestID string) (int
 	code, message, stable := ToolErrorDetails(err)
 	statusCode := http.StatusInternalServerError
 	if !stable {
-		message = status.Convert(err).Message()
 		switch errorCode(err) {
 		case codes.InvalidArgument:
 			code = "invalid_arguments"
 		case codes.Unauthenticated:
 			code = "unauthenticated"
-		case codes.PermissionDenied:
-			code = "permission_denied"
-		case codes.NotFound:
+		case codes.PermissionDenied, codes.NotFound:
 			code = "not_found"
 		case codes.FailedPrecondition:
 			code = "failed_precondition"
@@ -263,8 +299,6 @@ func writeHTTPErrorCode(w http.ResponseWriter, err error, requestID string) (int
 	case "unauthenticated":
 		statusCode, message = http.StatusUnauthorized, "a valid bearer token is required"
 		w.Header().Set("WWW-Authenticate", "Bearer")
-	case "permission_denied":
-		statusCode, message = http.StatusForbidden, "permission denied"
 	case "not_found":
 		statusCode, message = http.StatusNotFound, "resource not found"
 	case "failed_precondition", "foundry_pro_required":

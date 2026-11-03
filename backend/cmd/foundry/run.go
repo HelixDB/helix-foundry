@@ -232,7 +232,7 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		Interceptor: auth, BuildGateway: true,
 		// local/compose.mcp.yaml publishes REST on the host for agents; the probes
 		// stay on the health listener (serve), which isn't.
-		NoProbes: true, HTTPMiddleware: local.GuardListener,
+		NoProbes: true,
 	})
 	if err != nil {
 		_ = foundrySvc.Close()

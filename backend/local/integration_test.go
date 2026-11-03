@@ -104,30 +104,38 @@ func TestAuthorizeToolChecksEachDistinctCheckOnce(t *testing.T) {
 	assert.Contains(t, status.Convert(err).Message(), "ListFoundryEventBatches")
 }
 
-func TestGuardListenerAnswersOnlyThisInstallsHosts(t *testing.T) {
-	served := 0
-	guard := GuardListener(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served++ }))
+// MCP and HTTP Ask answer for an explicit list of names, so a page can't reach them through a name it
+// rebinds to loopback. A wrong token shows the guard passed: it answers 401, after the guard's 403.
+func TestIntegrationHandlerAnswersOnlyThisInstallsHosts(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	auth, err := NewAuthenticator(strings.Repeat("t", MinSiteToken), &fakeDirectory{owner: &directory.User{ID: "owner"}}, fakeOntologies{}, logger)
+	require.NoError(t, err)
+	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, "http://foundry.internal:3000", logger)
 	for host, allowed := range map[string]bool{
-		"localhost": true, "localhost:8081": true, "127.0.0.1": true, "127.0.0.1:8081": true, "[::1]": true, "[::1]:8081": true,
-		// The site's name for this listener on Docker's network.
-		"pod:8081": true, "foundry:8081": true,
+		"localhost": true, "localhost:8081": true, "LOCALHOST:8081": true, "127.0.0.1": true, "127.0.0.1:8081": true,
+		"[::1]": true, "[::1]:8081": true,
+		// A container's name for this machine, and the host the install's site is configured at.
+		"host.docker.internal:8081": true, "foundry.internal:8081": true,
 		"attacker.example": false, "attacker.example:8081": false, "localhost.attacker.example": false, "127.0.0.1.nip.io:8081": false,
 		"192.168.1.20:8081": false, "[fe80::1]:8081": false, "": false,
+		// A DNS search suffix can resolve a single label, so one is no safer than any other name.
+		"pod:8081": false, "foundry:8081": false,
 	} {
-		t.Run(host, func(t *testing.T) {
-			served = 0
-			r := httptest.NewRequest("GET", "/v1/whoami", nil)
-			r.Host = host
-			w := httptest.NewRecorder()
-			guard.ServeHTTP(w, r)
-			if allowed {
-				assert.Equal(t, 1, served)
-				return
-			}
-			assert.Zero(t, served)
-			assertRefusal(t, w, http.StatusForbidden, "permission_denied")
-			assert.Contains(t, w.Body.String(), "invalid host")
-		})
+		for _, path := range []string{"/mcp", "/v1/ontologies/ontology-1/questions/question-1"} {
+			t.Run(host+path, func(t *testing.T) {
+				r := httptest.NewRequest("POST", path, nil)
+				r.Host = host
+				r.Header.Set("Authorization", "Bearer wrong")
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				if allowed {
+					assert.Equal(t, http.StatusUnauthorized, w.Code)
+					return
+				}
+				assertRefusal(t, w, http.StatusForbidden, "permission_denied")
+				assert.Contains(t, w.Body.String(), "invalid host")
+			})
+		}
 	}
 }
 
@@ -161,6 +169,7 @@ func TestIntegrationHandlerRefusalsAreTheContractsError(t *testing.T) {
 	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, "http://localhost:3000", logger)
 	call := func(method, path, bearer string, headers map[string]string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, nil)
+		r.Host = "localhost:8081"
 		if bearer != "" {
 			r.Header.Set("Authorization", "Bearer "+bearer)
 		}

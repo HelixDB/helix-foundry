@@ -282,6 +282,34 @@ func TestCreateOntologyOnANewDatabaseIsUserOnly(t *testing.T) {
 	assert.Equal(t, 1, directory.authorized)
 }
 
+type tenantDirectory struct {
+	Directory
+	err error
+}
+
+func (d tenantDirectory) TenantWorkspace(context.Context, string) (string, error) { return "", d.err }
+
+// Told a database doesn't exist, an agent may make another, so a failed lookup must not say so.
+func TestCreateOntologyTellsAMissingDatabaseFromAFailedLookup(t *testing.T) {
+	input := FoundryOperationInput{Operation: "create_ontology", Target: "tenant:tenant-1", Payload: map[string]any{"name": "Ontology"}}
+	identity := &Identity{User: true, HasPermission: func(Permission) bool { return true }}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want error
+	}{
+		{"it doesn't exist", status.Error(codes.NotFound, "database not found"), errCodeNotFound},
+		{"the store failed", errors.New("connection reset"), errCodeBackendUnavailable},
+		{"the host's backend is down", status.Error(codes.Unavailable, "down"), errCodeBackendUnavailable},
+		{"the call was cut", context.DeadlineExceeded, errCodeBackendUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (&Service{Directory: tenantDirectory{err: tc.err}}).ValidateFoundryOperation(context.Background(), identity, input)
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 // ontologyBackend answers get_ontology's reads once all of them are in flight, so a test fails
 // unless they run at once.
 type ontologyBackend struct {

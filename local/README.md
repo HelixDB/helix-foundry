@@ -90,7 +90,7 @@ docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait
 
 This restarts the containers and keeps the data. To keep it on, set `COMPOSE_FILE=compose.yaml:compose.mcp.yaml` in `local/.env` and run Compose from `local/`. If `127.0.0.1:8081` is taken, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
 
-The local MCP is `http://localhost:8081/mcp`. It supports the Foundry workflow: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
+The local MCP is `http://localhost:8081/mcp`. It and HTTP Ask answer only for `localhost`, `127.0.0.1`, `::1`, `host.docker.internal` and the host of `HELIX_LOCAL__SITE_ORIGIN`. It supports the Foundry workflow: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
 
 Use the install’s existing owner token as a bearer. From the repository root, load it into the environment without printing it:
 

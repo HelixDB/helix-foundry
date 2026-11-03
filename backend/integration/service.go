@@ -53,6 +53,8 @@ type Directory interface {
 	// refused every caller but a user. A host whose new databases need a subscription refuses
 	// one that lapsed here too (FoundryNoHelixSubscription), before a confirmation is spent.
 	AuthorizeCreate(ctx context.Context, workspaceID, projectID string) error
+	// TenantWorkspace reports a database that doesn't exist with codes.NotFound; any other error
+	// is a lookup that failed, which says nothing of the database.
 	TenantWorkspace(ctx context.Context, tenantID string) (string, error)
 	CreateProject(ctx context.Context, workspaceID, slug, name string) (string, error)
 	CreateDatabase(ctx context.Context, projectID, name, slug string) (string, error)

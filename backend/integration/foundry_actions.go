@@ -328,8 +328,15 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 			return nil, malformed
 		}
 		workspaceID, err := s.Directory.TenantWorkspace(ctx, tenantID)
-		if err != nil {
+		if status.Code(err) == codes.NotFound {
 			return nil, errCodeNotFound
+		}
+		if err != nil {
+			// Not not_found: an agent told the database doesn't exist may make another.
+			if s.Logger != nil {
+				s.Logger.Error("Foundry database lookup failed", "error_code", "tenant_lookup_failed", "error", err)
+			}
+			return nil, errCodeBackendUnavailable
 		}
 		req := &foundryv1.CreateFoundryOntologyRequest{WorkspaceId: workspaceID, TenantId: tenantID, Name: payload.Name}
 		if err := s.AuthorizeFoundry(ctx, identity, req, foundryUserOnly, "CreateFoundryOntology"); err != nil {

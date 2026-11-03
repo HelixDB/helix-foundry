@@ -175,9 +175,16 @@ func TestFrontAgentIntegration(t *testing.T) {
 		defer resp.Body.Close()
 		return resp.StatusCode
 	}
-	for _, path := range []string{"/mcp", "/v1/whoami", "/v1/ontologies/unknown/questions/unknown"} {
+	for _, path := range []string{"/mcp", "/v1/ontologies/unknown/questions/unknown"} {
 		assert.Equal(t, 403, host(path, "attacker.example"), path)
+		assert.Equal(t, 403, host(path, "pod:8081"), path)
+		assert.NotEqual(t, 403, host(path, "localhost:8081"), path)
 	}
-	assert.Equal(t, 200, host("/v1/whoami", "pod:8081"))
-	assert.Equal(t, 200, host("/v1/whoami", "localhost:8081"))
+	// Over this test's loopback connection the MCP SDK's own rebinding check refuses any other name, so
+	// only HTTP Ask shows the list here. A published port's traffic doesn't arrive on loopback.
+	assert.NotEqual(t, 403, host("/v1/ontologies/unknown/questions/unknown", "host.docker.internal:8081"))
+	// The site's routes are limited by the token alone, whatever name it reaches them by.
+	for _, name := range []string{"pod:8081", "localhost:8081", "foundry.internal:8081"} {
+		assert.Equal(t, 200, host("/v1/whoami", name), name)
+	}
 }
