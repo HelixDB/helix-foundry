@@ -1245,9 +1245,9 @@ type Roles struct {
 	Read, Events bool
 	// The workers, by their tasks: foundry-sync-worker,
 	// foundry-document-worker, foundry-ontology-worker, foundry-graph-worker,
-	// foundry-ask-worker, foundry-enrichment-worker and
-	// foundry-notify-worker.
-	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker bool
+	// foundry-ask-worker, foundry-enrichment-worker,
+	// foundry-notify-worker and foundry-heal-worker.
+	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker, HealWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
@@ -1344,6 +1344,17 @@ func (c *Config) validateRoles(roles Roles) error {
 	if roles.NotifyWorker {
 		if err := f.Notify.Validate(); err != nil {
 			return err
+		}
+	}
+	if roles.HealWorker && f.Heal.Enabled {
+		g := f.Graph
+		switch err := f.Heal.Validate(); {
+		case err != nil:
+			return err
+		case g.Agent.Addr == "" || !loopback(g.Agent.Addr):
+			return fmt.Errorf("foundry.graph.agent.addr must be a loopback address when 'foundry-heal-worker' is in tasks: it audits on the graph worker's sidecar")
+		case g.HelixTimeoutSecs < 1:
+			return fmt.Errorf("foundry.graph.helix_timeout_secs must be positive when 'foundry-heal-worker' is in tasks")
 		}
 	}
 	if roles.SyncWorker {
