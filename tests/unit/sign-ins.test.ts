@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Connector, ConnectorAccount } from "@/shared/wfe";
 import { ApiError } from "@/web/api";
+import { formatDate } from "@/web/kit/util";
 import { paths } from "@/web/paths";
 import { connectorBadge } from "@/web/areas/data/model";
 import {
@@ -475,6 +476,24 @@ describe("an account", () => {
       title: "3 connections stopped syncing",
       text: "Acme GitHub, Linear and Docs need signing in again. Their data is frozen as of their last syncs.",
     });
+  });
+
+  it("dates frozen data by its last sync, not by the break", () => {
+    const c = {
+      ...github(broken("CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED")),
+      tables: [
+        { name: "issues", syncedAt: "2026-11-01T09:00:00Z" },
+        { name: "projects", syncedAt: "2026-11-02T08:30:00Z" },
+      ],
+    };
+    const { text } = brokenNotice([c]);
+    expect(text).toContain(
+      `frozen as of ${formatDate("2026-11-02T08:30:00Z")}.`,
+    );
+    expect(text).not.toContain(formatDate("2026-11-02T14:05:00Z"));
+    expect(
+      brokenNotice([github(broken("CONNECTOR_ACCOUNT_BROKEN_EXPIRED"))]).text,
+    ).toMatch(/frozen as of its last sync\.$/);
   });
 
   it("breaks anew each time it breaks", () => {

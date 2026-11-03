@@ -125,7 +125,7 @@ export function connectorBadge(
 }
 
 /** When the connector's tables were last refreshed: its newest table snapshot. */
-export function lastSyncedAt(c: Connector): string | undefined {
+export function lastSyncedAt(c: Pick<Connector, "tables">): string | undefined {
   return (c.tables || [])
     .map((t) => t.syncedAt || "")
     .filter(Boolean)

@@ -8,6 +8,7 @@ import type {
 import { parseReturnPath } from "../../../shared/return-path";
 import { ApiError } from "../../api";
 import { formatDate } from "../../kit/util";
+import { lastSyncedAt } from "./model";
 
 // Connecting a source by signing in at its provider: which kinds may, and
 // what each says in place of its credential; what this tab
@@ -548,16 +549,20 @@ export function brokenWhy(c: Pick<Connector, "kind" | "account">) {
 
 /**
  * What the shell's dialog and banner say of the connectors that need
- * signing in again: one by name, with why and since when; several as a
- * count and their names, which Data lists.
+ * signing in again: one by name, with why and when its data was last
+ * synced (`lastSyncedAt`, not when it broke); several as a count and
+ * their names, which Data lists.
  */
 export function brokenNotice(
-  broken: readonly Pick<Connector, "id" | "kind" | "name" | "account">[],
+  broken: readonly Pick<
+    Connector,
+    "id" | "kind" | "name" | "account" | "tables"
+  >[],
 ) {
   const name = (c: (typeof broken)[number]) => c.name || providerName(c.kind);
   if (broken.length === 1) {
     const c = broken[0]!,
-      at = c.account?.brokenAt;
+      at = lastSyncedAt(c);
     return {
       title: `${name(c)} stopped syncing`,
       text: `${brokenWhy(c)} Its data is frozen as of ${at ? formatDate(at) : "its last sync"}.`,
