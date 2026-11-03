@@ -14,7 +14,7 @@ import "@/web/shell/shell.css";
 export const metadata: Metadata = {
   title: "Helix Foundry",
   description:
-    "Turn company data into a working intelligence workspace. Powered by HelixDB.",
+    "Connect your data, explore relationships and get answers with sources. Powered by HelixDB.",
   robots: { index: false, follow: false },
 };
 

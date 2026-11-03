@@ -2448,7 +2448,7 @@ export const STEP_COPY: Record<
       ? "What Foundry’s agent drafts from: synced tables, table files, and folders of contracts, notes and other text. Any will do."
       : "What Foundry’s agent drafts from: synced tables, pieces your agents send, table files, and folders of contracts, notes and other text. Any will do.",
   },
-  goal: { title: "Goal", text: "What it should serve, in your words." },
+  goal: { title: "Goal", text: "Describe the questions you want to answer." },
   review: {
     title: "Review and create",
     text: "Foundry creates it, then its agent drafts a first version.",

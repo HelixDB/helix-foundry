@@ -147,7 +147,7 @@ export function describeFailure(
     case "starting":
       return {
         title: "Your new database is starting",
-        hint: "Helix is still getting it ready, which can take a few minutes after it’s created. Try again shortly.",
+        hint: "This may take a few minutes. Try again shortly.",
         tone: "neutral",
       };
     case "aborted":

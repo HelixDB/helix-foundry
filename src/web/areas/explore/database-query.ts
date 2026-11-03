@@ -290,7 +290,7 @@ const MESSAGES = {
   databaseInternal:
     "The database hit an internal error. Try again, and contact support if it keeps happening.",
   starting:
-    "Helix is still starting this new database, which can take a few minutes. Try again shortly.",
+    "Your new database is starting, which may take a few minutes. Try again shortly.",
 } as const;
 
 function failure(

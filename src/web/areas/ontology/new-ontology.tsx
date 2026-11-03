@@ -602,8 +602,8 @@ export function NewOntologyPage() {
         title={title}
         subtitle={
           first
-            ? "Choose what it’s drawn from and what it should serve. Foundry’s agent drafts it, loads it into a new Helix database and emails you when it’s ready to ask."
-            : "An ontology keeps its types, documents and data in one Helix database. Choose what it is drawn from, and Foundry’s agent drafts it."
+            ? "Choose your sources and describe the questions you want to answer. Foundry’s agent drafts the ontology, loads it into a new Helix database and emails you when it’s ready to ask."
+            : "An ontology defines the types, links and rules in your data. Choose your sources and Foundry will draft one for you."
         }
       />
       {adding !== null && (
