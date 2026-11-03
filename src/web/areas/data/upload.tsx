@@ -21,10 +21,11 @@ import { canManage } from "./model";
 // chooser, or by dropping files on a set or anywhere else on the surface.
 // Files go into the set chosen, else the default one (General, created on
 // the first upload of a workspace with no set). A connector's sets take no
-// uploads: none is a target, and a workspace with only those uploads as one
-// with no set (defaultSetId). Each surface lists the
-// uploads it started. Members upload nothing, and a surface takes no drop
-// from them. `onUpload` hears which set each batch went into.
+// uploads: none is a target, and a workspace with only those, or the sample
+// company's, which takes only what is sent to it from its own row, uploads as
+// one with no set (defaultSetId). Each surface lists the uploads it started.
+// Members upload nothing, and a surface takes no drop from them. `onUpload`
+// hears which set each batch went into.
 
 /** Whether a drag carries files (not text or a link). */
 export const carriesFiles = (e: DragEvent) =>

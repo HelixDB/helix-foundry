@@ -17,6 +17,11 @@ const sdk = vi.hoisted(() => ({
     anonId: string | null;
     sessionId: string | null;
   },
+  profile: null as string | null,
+  getProfileId: vi.fn((): string | null => sdk.profile),
+  identify: vi.fn(),
+  clearProfile: vi.fn(),
+  trackError: vi.fn(),
   setGlobalProperties: vi.fn(),
 }));
 vi.mock("@databuddy/sdk", () => sdk);
@@ -62,6 +67,9 @@ beforeEach(() => {
   sdk.isTrackerAvailable.mockReset().mockReturnValue(true);
   sdk.ids = { anonId: "anon_1", sessionId: "sess_1" };
   sdk.setGlobalProperties.mockReset();
+  sdk.identify.mockClear();
+  sdk.clearProfile.mockClear();
+  sdk.trackError.mockClear();
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -89,7 +97,7 @@ describe("trackEvent", () => {
       tier: "pro",
       from: "free",
     });
-    a.jobStarted("load", "load_1");
+    a.jobStarted({ job: "load" }, "load_1");
     expect(sent()).toEqual([]);
     expect(sdk.isTrackerAvailable).not.toHaveBeenCalled();
     expect(local.values.size + session.values.size).toBe(0);
@@ -120,6 +128,70 @@ describe("sign-in", () => {
     await a.signInStarted("microsoft");
     a.signedIn("workspace");
     expect(sent()).toEqual([["sign_in_started", { method: "microsoft" }]]);
+  });
+});
+
+describe("the signed-in user", () => {
+  it("is identified by the backend's id with their email and name, and forgotten after signing out", async () => {
+    const a = await load();
+    vi.stubGlobal("navigator", { sendBeacon: () => true });
+    a.identifyUser("user_1", { email: "ada@example.com", name: "Ada" });
+    // Details it lacks stay off the profile.
+    a.identifyUser("user_1", { email: "", name: undefined });
+    a.identifyUser("user_1");
+    a.identifyUser("", { email: "ada@example.com" });
+    expect(sdk.identify.mock.calls).toEqual([
+      ["user_1", { email: "ada@example.com", name: "Ada" }],
+      ["user_1", {}],
+      ["user_1", {}],
+    ]);
+    await a.signedOut();
+    expect(sdk.clearProfile).toHaveBeenCalledOnce();
+  });
+
+  it("tags every event with the workspace open, and drops it at sign-out", async () => {
+    const a = await load();
+    vi.stubGlobal("navigator", { sendBeacon: () => true });
+    a.workspaceOpened("ws_1", "Acme");
+    a.workspaceOpened("ws_2", "Globex");
+    expect(sdk.setGlobalProperties.mock.calls).toEqual([
+      [{ workspace_id: "ws_1", workspace_name: "Acme" }],
+      [{ workspace_id: "ws_2", workspace_name: "Globex" }],
+    ]);
+    await a.signedOut();
+    expect(sdk.setGlobalProperties).toHaveBeenLastCalledWith({
+      workspace_id: undefined,
+      workspace_name: undefined,
+    });
+  });
+
+  it("is neither identified nor forgotten without a client id", async () => {
+    const a = await load("");
+    a.identifyUser("user_1");
+    a.workspaceOpened("ws_1", "Acme");
+    await a.signedOut();
+    expect(sdk.identify).not.toHaveBeenCalled();
+    expect(sdk.clearProfile).not.toHaveBeenCalled();
+    expect(sdk.setGlobalProperties).not.toHaveBeenCalled();
+  });
+});
+
+describe("pageCrashed", () => {
+  it("reports the crash and its error, or nothing without a client id", async () => {
+    const error = new TypeError("x is undefined");
+    (await load("")).pageCrashed(error, false);
+    expect(sent()).toEqual([]);
+    const a = await load();
+    a.pageCrashed(error, false);
+    a.pageCrashed(new Error("ChunkLoadError"), true);
+    expect(sent()).toEqual([
+      ["page_crashed", { cause: "error" }],
+      ["page_crashed", { cause: "stale_build" }],
+    ]);
+    expect(sdk.trackError).toHaveBeenCalledWith("x is undefined", {
+      error_type: "TypeError",
+      stack: error.stack,
+    });
   });
 });
 
@@ -156,6 +228,28 @@ describe("trackBeforeLeaving", () => {
       path: "https://foundry.helix-db.com/login",
       source: "browser",
       websiteId: "client-test",
+    });
+  });
+
+  it("beacons as the signed-in user, in the workspace open", async () => {
+    const a = await load();
+    const beacons = beacon();
+    sdk.profile = "user_1";
+    a.workspaceOpened("ws_1", "Acme");
+    await a.trackBeforeLeaving("upgrade_clicked", {
+      tier: "pro",
+      from: "free",
+    });
+    sdk.profile = null;
+    expect(JSON.parse(await beacons[0].body.text())).toMatchObject({
+      name: "upgrade_clicked",
+      properties: {
+        workspace_id: "ws_1",
+        workspace_name: "Acme",
+        tier: "pro",
+        from: "free",
+      },
+      profileId: "user_1",
     });
   });
 
@@ -231,9 +325,9 @@ describe("trackBeforeLeaving", () => {
 describe("jobs", () => {
   it("reports a generation's start once and its end with its source", async () => {
     const a = await load();
-    a.jobStarted("generation", "gen_1", "sample");
-    a.jobStarted("generation", "gen_1", "sample");
-    a.jobStarted("generation", "gen_2", "ai");
+    a.jobStarted({ job: "generation", source: "sample" }, "gen_1");
+    a.jobStarted({ job: "generation", source: "sample" }, "gen_1");
+    a.jobStarted({ job: "generation", source: "ai" }, "gen_2");
     a.jobSeen("generation", [
       { id: "gen_1", status: "ONTOLOGY_GENERATION_STATUS_RUNNING" },
       { id: "gen_2", status: "ONTOLOGY_GENERATION_STATUS_FAILED" },
@@ -253,9 +347,9 @@ describe("jobs", () => {
 
   it("reports a revision's start and end with its mode, apart from generations", async () => {
     const a = await load();
-    a.jobStarted("revision", "rev_1", "preview");
-    a.jobStarted("revision", "rev_2", "save");
-    a.jobStarted("revision", "rev_3", "save");
+    a.jobStarted({ job: "revision", mode: "preview" }, "rev_1");
+    a.jobStarted({ job: "revision", mode: "save" }, "rev_2");
+    a.jobStarted({ job: "revision", mode: "save" }, "rev_3");
     // Revisions are generations: a read of them sees both kinds.
     const seen = [
       { id: "rev_1", status: "ONTOLOGY_GENERATION_STATUS_SUCCEEDED" },
@@ -276,44 +370,135 @@ describe("jobs", () => {
     expect(local.values.has(PENDING)).toBe(false);
   });
 
-  it("reports a ready or partial load, and forgets a failed one", async () => {
+  it("reports a ready or partial load, and a failed one with why", async () => {
     const a = await load();
-    for (const id of ["load_1", "load_2", "load_3"]) a.jobStarted("load", id);
+    const ids = ["load_1", "load_2", "load_3", "load_4", "load_5"];
+    for (const id of ids) a.jobStarted({ job: "load" }, id);
     a.jobSeen("load", [
       { id: "load_1", status: "ready" },
       { id: "load_2", status: "partial" },
-      { id: "load_3", status: "failed" },
+      { id: "load_3", status: "failed", jobs: [{ status: "failed" }] },
+      // Its newest job says why.
+      {
+        id: "load_4",
+        status: "failed",
+        jobs: [{ status: "budget_exhausted" }, { status: "succeeded" }],
+      },
+      {
+        id: "load_5",
+        status: "failed",
+        jobs: [
+          {
+            status: "failed",
+            error: "its tables were synced again while this load was written",
+          },
+        ],
+      },
     ]);
-    expect(sent()).toEqual([
-      ["load_started", undefined],
-      ["load_started", undefined],
-      ["load_started", undefined],
+    expect(sent().slice(ids.length)).toEqual([
       ["load_ready", { status: "ready" }],
       ["load_ready", { status: "partial" }],
+      ["load_failed", { reason: "error" }],
+      ["load_failed", { reason: "budget" }],
+      ["load_failed", { reason: "sources_changed" }],
     ]);
     a.jobSeen("load", [{ id: "load_3", status: "ready" }]);
-    expect(sent()).toHaveLength(5);
+    expect(sent()).toHaveLength(ids.length + 5);
   });
 
   it("reports an answered question, and nothing for one that wasn't", async () => {
     const a = await load();
-    a.jobStarted("question", "q_1");
-    a.jobStarted("question", "q_2");
+    a.jobStarted({ job: "question" }, "q_1");
+    a.jobStarted({ job: "question" }, "q_2");
     a.jobSeen("question", [
       { id: "q_1", status: "queued" },
       { id: "q_2", status: "cannot_answer" },
     ]);
     a.jobSeen("question", [{ id: "q_1", status: "answered" }]);
-    expect(sent().map(([name]) => name)).toEqual([
-      "question_asked",
-      "question_asked",
-      "question_answered",
+    a.jobStarted({ job: "question" }, "q_3");
+    a.jobStarted({ job: "question" }, "q_4");
+    a.jobSeen("question", [
+      { id: "q_3", status: "failed" },
+      { id: "q_4", status: "cancelled" },
     ]);
+    expect(sent()).toEqual([
+      ["question_asked", undefined],
+      ["question_asked", undefined],
+      ["question_unanswered", { status: "cannot_answer" }],
+      ["question_answered", undefined],
+      ["question_asked", undefined],
+      ["question_asked", undefined],
+      ["question_unanswered", { status: "failed" }],
+    ]);
+  });
+
+  it("reports a sync's start, and its end with the connector's kind", async () => {
+    const a = await load();
+    a.jobStarted({ job: "sync", from: "tree" }, "sync_1");
+    a.jobStarted({ job: "sync", from: "created" }, "sync_2");
+    a.jobSeen("sync", [
+      { id: "sync_1", status: "CONNECTOR_SYNC_STATUS_RUNNING", kind: "stripe" },
+      { id: "sync_2", status: "CONNECTOR_SYNC_STATUS_FAILED", kind: "other" },
+    ]);
+    a.jobSeen("sync", [
+      null,
+      {
+        id: "sync_1",
+        status: "CONNECTOR_SYNC_STATUS_SUCCEEDED",
+        kind: "stripe",
+      },
+    ]);
+    expect(sent()).toEqual([
+      ["connector_sync_started", { from: "tree" }],
+      ["connector_sync_started", { from: "created" }],
+      ["connector_sync_failed", { kind: "other" }],
+      ["connector_synced", { kind: "stripe" }],
+    ]);
+  });
+
+  it("reports a file read that failed, with its format and why", async () => {
+    const a = await load();
+    for (const id of ["d_1", "d_2", "d_3", "d_4"])
+      a.jobStarted({ job: "read" }, id);
+    a.jobSeen("read", [
+      {
+        id: "d_1",
+        status: "FOUNDRY_FILE_READ_STATE_READY",
+        format: "text/csv",
+      },
+      {
+        id: "d_2",
+        status: "FOUNDRY_FILE_READ_STATE_FAILED",
+        format: "application/pdf",
+        code: "unsupported",
+      },
+      {
+        id: "d_3",
+        status: "FOUNDRY_FILE_READ_STATE_FAILED",
+        code: "too_large",
+      },
+      {
+        id: "d_4",
+        status: "FOUNDRY_FILE_READ_STATE_FAILED",
+        format: "text/csv",
+        code: "storage",
+      },
+    ]);
+    // A read's start is its upload's event.
+    expect(sent()).toEqual([
+      [
+        "document_read_failed",
+        { format: "application/pdf", reason: "unsupported" },
+      ],
+      ["document_read_failed", { reason: "too_large" }],
+      ["document_read_failed", { format: "text/csv", reason: "error" }],
+    ]);
+    expect(local.values.has(PENDING)).toBe(false);
   });
 
   it("reports only jobs started here, as the job they were started as", async () => {
     const a = await load();
-    a.jobStarted("load", "x_1");
+    a.jobStarted({ job: "load" }, "x_1");
     a.jobSeen("question", [{ id: "x_1", status: "answered" }]);
     a.jobSeen("load", [
       { id: "someone_elses", status: "ready" },
@@ -329,13 +514,13 @@ describe("jobs", () => {
 
   it("ignores a job without an id", async () => {
     const a = await load();
-    a.jobStarted("load", undefined);
+    a.jobStarted({ job: "load" }, undefined);
     expect(sent()).toEqual([]);
   });
 
   it("reports a job that ends after a reload", async () => {
     const first = await load();
-    first.jobStarted("generation", "gen_1", "ai");
+    first.jobStarted({ job: "generation", source: "ai" }, "gen_1");
     const kept = local.values.get(PENDING)!;
     const second = await load();
     local.values.set(PENDING, kept);
@@ -348,9 +533,9 @@ describe("jobs", () => {
   it("drops jobs a week old unreported", async () => {
     vi.useFakeTimers();
     const a = await load();
-    a.jobStarted("load", "old");
+    a.jobStarted({ job: "load" }, "old");
     vi.advanceTimersByTime(8 * 24 * 60 * 60 * 1000);
-    a.jobStarted("load", "new");
+    a.jobStarted({ job: "load" }, "new");
     expect(Object.keys(JSON.parse(local.values.get(PENDING)!))).toEqual([
       "new",
     ]);
@@ -361,14 +546,14 @@ describe("jobs", () => {
     local.values.set(PENDING, "not json");
     a.jobSeen("load", [{ id: "load_1", status: "ready" }]);
     local.values.set(PENDING, "null");
-    a.jobStarted("load", "load_1");
+    a.jobStarted({ job: "load" }, "load_1");
     // Entries that aren't jobs are dropped, never read.
     local.values.set(
       PENDING,
       JSON.stringify({ a: null, b: 5, c: { job: "load" }, d: [] }),
     );
     a.jobSeen("load", [{ id: "a", status: "ready" }]);
-    a.jobStarted("load", "load_2");
+    a.jobStarted({ job: "load" }, "load_2");
     expect(Object.keys(JSON.parse(local.values.get(PENDING)!))).toEqual([
       "load_2",
     ]);
@@ -397,7 +582,7 @@ describe("jobs", () => {
 
   it("still reports the start when storage is blocked", async () => {
     const a = await load("client-test", true);
-    a.jobStarted("question", "q_1");
+    a.jobStarted({ job: "question" }, "q_1");
     a.jobSeen("question", [{ id: "q_1", status: "answered" }]);
     expect(sent()).toEqual([["question_asked", undefined]]);
   });

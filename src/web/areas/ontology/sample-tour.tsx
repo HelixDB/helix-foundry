@@ -50,7 +50,7 @@ import {
   questionQueries,
   setCurrentVersion,
 } from "./queries";
-import { SAMPLE, sampleDatabaseConfig } from "./sample";
+import { SAMPLE, isSampleSet, sampleDatabaseConfig } from "./sample";
 import { InOntology } from "./scope";
 import { OntologySchema } from "./suggested-ontology";
 import { useSampleOntology } from "./use-sample-ontology";
@@ -98,8 +98,7 @@ export async function addSampleFiles(
     staleTime: 0,
   });
   const set =
-    sets.find((s) => !s.connector && s.name === SAMPLE.set.name) ??
-    (await createDocumentSet(ws, SAMPLE.set)).set;
+    sets.find(isSampleSet) ?? (await createDocumentSet(ws, SAMPLE.set)).set;
   let done = 0;
   const ends = await Promise.all(
     names.map(async (name) => {
@@ -475,29 +474,34 @@ export function SampleTour() {
     if (answered) trackEvent("sample_answered");
   }, [answered]);
   // The banner's link opens this page on its last step. What sits above that
-  // grows as its reads end (the schema, the answer), so the page stays on it
-  // for a while, until the reader moves.
+  // arrives when it arrives (the steps as the walk reads them, then an answer's
+  // charts and names, read once near the view), so the page stays on it until
+  // the reader moves: a click, a key or scrolling up, as a resting finger on a
+  // trackpad sends tiny wheel events.
   const toOwnData = useLocation().hash === "#own-data";
   useEffect(() => {
-    const step = document.getElementById("own-data");
-    if (!toOwnData || !answered || !step) return;
-    const stay = () => step.scrollIntoView({ block: "end" });
-    stay();
-    const growing = new ResizeObserver(stay);
-    growing.observe(step.parentElement!);
-    const moved = new AbortController();
+    if (!toOwnData) return;
+    const growing = new ResizeObserver(() =>
+      document.getElementById("own-data")?.scrollIntoView({ block: "end" }),
+    );
+    growing.observe(document.body);
+    const moved = new AbortController(),
+      { signal } = moved;
     const stop = () => {
       growing.disconnect();
       moved.abort();
     };
-    for (const input of ["wheel", "touchstart", "keydown"])
-      window.addEventListener(input, stop, { signal: moved.signal });
-    const timer = setTimeout(stop, 5000);
-    return () => {
-      clearTimeout(timer);
-      stop();
-    };
-  }, [toOwnData, answered]);
+    window.addEventListener(
+      "wheel",
+      (e) => {
+        if (e.deltaY < -4) stop();
+      },
+      { signal },
+    );
+    for (const input of ["pointerdown", "keydown"])
+      window.addEventListener(input, stop, { signal });
+    return stop;
+  }, [toOwnData]);
   // What the load made of each document: read, or failed and why.
   const extractions = (
     useQuery({ ...documentQueries.list(id, o), enabled: loaded }).data

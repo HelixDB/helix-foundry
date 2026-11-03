@@ -1,10 +1,14 @@
 import type { Page } from "@playwright/test";
 import {
+  createdOntology,
   expect,
   explorer,
+  file,
   mock,
   signInToNewWorkspace,
   test,
+  uploadCard,
+  uploadInData,
 } from "./support/mock";
 
 // A new workspace's onboarding offers the sample company. This build is the
@@ -15,7 +19,8 @@ import {
 // it, then offers its other questions and the user's own data. A reload
 // carries on with what it made, and nothing is made or asked twice. Once the
 // sample exists a banner says so, and links back to that page: to its last
-// step, the user's own data, once its question has ended.
+// step, the user's own data, once its question has ended. Its data is its own
+// ontology's alone: making or drafting one of the user's own never offers it.
 
 /** A new workspace, on the plan the mock sells databases with, on the sample's page. */
 async function openSample(page: Page) {
@@ -219,4 +224,185 @@ test("links back to the tour until its question has ended, then to the user's ow
   await expect(connect).toBeInViewport({ timeout: 30_000 });
   await page.reload();
   await expect(connect).toBeInViewport({ timeout: 30_000 });
+});
+
+test("stays on the tour's last step however long the steps above take to read, until the reader moves", async ({
+  page,
+}) => {
+  test.slow();
+  await openSample(page);
+  await expect(
+    page.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible({ timeout: 60_000 });
+  // As a browser without scroll anchoring (Safari) has it, which keeps nothing
+  // in view by itself.
+  await page.addInitScript(() =>
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = "* { overflow-anchor: none }";
+      document.head.append(style);
+    }),
+  );
+  await page.goto("/data");
+  await page
+    .getByRole("region", { name: "Sample data" })
+    .getByRole("link", { name: "Get started with your own data" })
+    .click({ timeout: 30_000 });
+  const connect = page.getByRole("link", { name: "Connect your own data" });
+  await expect(connect).toBeInViewport({ timeout: 30_000 });
+
+  // What sits above it arrives when it arrives: a real answer's charts and
+  // names are read once they are near the view.
+  const arrive = () =>
+    page.evaluate(() => {
+      const late = document.createElement("div");
+      late.style.height = "800px";
+      document.getElementById("own-data")!.before(late);
+    });
+  await page.waitForTimeout(6_000);
+  await arrive();
+  await expect(connect).toBeInViewport();
+
+  // A resting finger on a trackpad isn't the reader moving.
+  await page.mouse.wheel(0, -1);
+  await arrive();
+  await expect(connect).toBeInViewport();
+
+  // Scrolling up is, and what arrives then no longer moves the page.
+  await page.mouse.wheel(0, -300);
+  await arrive();
+  await expect(connect).not.toBeInViewport();
+});
+
+test("keeps the sample's data out of an ontology of the user's own", async ({
+  page,
+  context,
+}) => {
+  test.slow();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  await openSample(page);
+  await expect(
+    page.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible({ timeout: 60_000 });
+
+  // The tour's way on to the user's own data: an agent told to set one up
+  // hears nothing of the sample's.
+  await page.getByRole("button", { name: "Set up with your agent" }).click();
+  await expect.poll(clipboard).toContain("# Set up Helix Foundry with me");
+  expect(await clipboard()).not.toContain("Acme Corp");
+
+  // The sample's own ontology keeps them, chosen as its version reads them, so
+  // it can be drafted again.
+  await page.goto("/ontology");
+  await expect(page).toHaveURL(/\/ontology\/ont_\w+$/);
+  const sample = new URL(page.url()).pathname,
+    ws: string = (await (await page.request.get("/papi/v1/workspaces")).json())
+      .workspaces[0].id,
+    read = async (list: string) =>
+      (
+        await page.request.get(`/papi/v1/workspaces/${ws}/foundry/${list}`)
+      ).json(),
+    connectorId: string = (await read("connectors")).connectors[0].id,
+    setId: string = (await read("document-sets")).sets[0].id;
+  await page.goto(`${sample}/generate`);
+  const connectors = page.getByRole("list", { name: "Connectors" }),
+    sets = page.getByRole("list", { name: "Document sets" });
+  await expect(
+    connectors.getByRole("checkbox", { name: /Acme Corp/ }),
+  ).toBeChecked();
+  await expect(
+    sets.getByRole("checkbox", { name: /Acme Corp sample/ }),
+  ).toBeChecked();
+
+  // Making one of the user's own offers neither, with what it would have
+  // chosen left to the pickers' empty states.
+  await page.goto("/ontology/new");
+  const noConnectors = page.getByRole("heading", { name: "No connectors yet" }),
+    noDocuments = page.getByRole("heading", { name: "No documents yet" }),
+    steps = page.getByRole("list", { name: "Steps" }),
+    onward = page.getByRole("button", { name: "Continue" });
+  await expect(noConnectors).toBeVisible();
+  await expect(noDocuments).toBeVisible();
+  await expect(steps).not.toContainText("Acme Corp");
+  await expect(steps).toContainText(
+    "Connect your data or upload documents to continue.",
+  );
+  await expect(onward).toBeDisabled();
+
+  // Nor do choices this tab kept that name them.
+  await page.evaluate(
+    ([connector, set]) => {
+      const key = Object.keys(sessionStorage).find((k) =>
+        k.startsWith("foundry.new-ontology.v1:"),
+      )!;
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          ...JSON.parse(sessionStorage.getItem(key)!),
+          connectorIds: [connector],
+          setIds: [set],
+        }),
+      );
+    },
+    [connectorId, setId],
+  );
+  await page.reload();
+  await expect(noConnectors).toBeVisible();
+  await expect(noDocuments).toBeVisible();
+  await expect(onward).toBeDisabled();
+
+  // An upload makes General rather than joining the sample's set, which is
+  // then all that is chosen.
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Upload documents" }).click();
+  await (await chooser).setFiles([file("ours.md", "# Ours\n\nOur own.\n")]);
+  await expect(uploadCard(page, "ours.md")).toContainText(
+    "Uploaded into General",
+  );
+  await expect(sets.getByRole("checkbox", { name: /General/ })).toBeChecked();
+  await expect(sets).not.toContainText("Acme Corp");
+
+  // Its goal's prompt tells of what is chosen and offered, not the sample's.
+  await onward.click();
+  await expect(steps).toContainText("General: 1 document");
+  await page
+    .getByRole("button", { name: "Copy prompt for your agent" })
+    .click();
+  await expect.poll(clipboard).toContain("General");
+  expect(await clipboard()).not.toContain("Acme Corp");
+
+  // Nothing of the sample's goes out: no connector, never an empty list.
+  await page.getByRole("button", { name: "Skip" }).click();
+  const generating = page.waitForRequest((r) => r.url().endsWith(":generate"));
+  await page.getByRole("button", { name: "Create and generate" }).click();
+  const asked = (await generating).postDataJSON();
+  expect(asked.noConnectors).toBe(true);
+  expect(asked.connectorIds).toBeUndefined();
+  expect(asked.documentSetIds).toHaveLength(1);
+  expect(asked.documentSetIds).not.toContain(setId);
+  const own = await createdOntology(page);
+
+  // Drafting it again, a link that names them is no way in either.
+  await page.goto(`${own}/generate?connectors=${connectorId}&sets=${setId}`);
+  await expect(noConnectors).toBeVisible();
+  await expect(sets.getByRole("checkbox", { name: /General/ })).toBeVisible();
+  await expect(
+    sets.getByRole("checkbox", { name: /General/ }),
+  ).not.toBeChecked();
+  await expect(sets).not.toContainText("Acme Corp");
+  await expect(
+    page.getByRole("button", { name: "Generate", exact: true }),
+  ).toBeDisabled();
+
+  // Data still lists them as any other, and the sample's set still takes an
+  // upload sent to it from its own row.
+  await page.goto("/data");
+  await expect(
+    explorer(page).getByText("Acme Corp", { exact: true }),
+  ).toHaveCount(1);
+  await uploadInData(page, [file("extra.md", "# Extra\n")], "Acme Corp sample");
+  await expect(uploadCard(page, "extra.md")).toContainText(
+    "Uploaded into Acme Corp sample",
+  );
 });

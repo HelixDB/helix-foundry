@@ -1,7 +1,10 @@
 import { expect, it, vi } from "vitest";
 import { api } from "@/web/api";
 import { reviseOntologyVersion } from "@/web/areas/ontology/queries";
-vi.mock("@/web/api", () => ({ api: vi.fn() }));
+vi.mock("@/web/api", async (actual) => ({
+  ...(await actual<typeof import("@/web/api")>()),
+  api: vi.fn(),
+}));
 it("encodes each revision path segment, sends only scoped edits, and propagates failure", async () => {
   const body = {
     edits: [{ remove: { itemId: "rule.flag" } }],
