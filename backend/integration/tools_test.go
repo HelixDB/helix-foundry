@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -429,4 +430,181 @@ func TestAddReadToolRunsUnderRun(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.NotContains(t, result.Content[0].(*mcp.TextContent).Text, "private")
 	assert.Contains(t, logs.String(), "error_code=internal_error")
+}
+
+// grantBackend answers as Foundry does for a key its own permissions refuse: one list for what
+// it may read through its own grants, another for what source grants give it.
+type grantBackend struct {
+	FoundryBackendAPI
+	granted      []*foundryv1.FoundryOntology
+	grantedErr   error
+	currentErr   error
+	loadRequests int
+}
+
+type grantCtx struct{}
+
+func (b *grantBackend) ListFoundryOntologies(ctx context.Context, _ *foundryv1.ListFoundryOntologiesRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryOntologiesResponse, error) {
+	if ctx.Value(grantCtx{}) == nil {
+		return &foundryv1.ListFoundryOntologiesResponse{Ontologies: []*foundryv1.FoundryOntology{{Id: "01JZZZZZZZZZZZZZZZZZZZZZZA", ProjectId: "own"}}}, nil
+	}
+	return &foundryv1.ListFoundryOntologiesResponse{Ontologies: b.granted}, b.grantedErr
+}
+
+func (b *grantBackend) GetFoundryOntology(context.Context, *foundryv1.GetFoundryOntologyRequest, ...grpc.CallOption) (*foundryv1.FoundryOntologyResponse, error) {
+	return &foundryv1.FoundryOntologyResponse{Ontology: &foundryv1.FoundryOntology{PartialAccess: true, CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: "load"}}}, nil
+}
+
+func (b *grantBackend) GetFoundryLoad(context.Context, *foundryv1.GetFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
+	b.loadRequests++
+	return &foundryv1.FoundryLoadResponse{Load: &foundryv1.FoundryLoad{Id: "load", VersionId: "version"}}, nil
+}
+
+func (b *grantBackend) GetOntologyVersion(context.Context, *foundryv1.GetOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyVersionResponse, error) {
+	return &foundryv1.OntologyVersionResponse{Version: &foundryv1.OntologyVersion{Id: "version"}}, nil
+}
+
+func (b *grantBackend) GetCurrentOntologyVersion(context.Context, *foundryv1.GetCurrentOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyVersionResponse, error) {
+	return nil, b.currentErr
+}
+
+func (b *grantBackend) ListOntologyVersions(context.Context, *foundryv1.ListOntologyVersionsRequest, ...grpc.CallOption) (*foundryv1.ListOntologyVersionsResponse, error) {
+	return &foundryv1.ListOntologyVersionsResponse{}, nil
+}
+
+func (b *grantBackend) ListFoundryLoads(context.Context, *foundryv1.ListFoundryLoadsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryLoadsResponse, error) {
+	return &foundryv1.ListFoundryLoadsResponse{}, nil
+}
+
+func (b *grantBackend) ListOntologyGenerations(context.Context, *foundryv1.ListOntologyGenerationsRequest, ...grpc.CallOption) (*foundryv1.ListOntologyGenerationsResponse, error) {
+	return &foundryv1.ListOntologyGenerationsResponse{}, nil
+}
+
+func (b *grantBackend) ListFoundryDocumentSets(context.Context, *foundryv1.ListFoundryDocumentSetsRequest, ...grpc.CallOption) (*foundryv1.ListFoundryDocumentSetsResponse, error) {
+	return &foundryv1.ListFoundryDocumentSetsResponse{}, nil
+}
+
+// grantKey is a key with no permissions of its own, on a host with grants.
+func grantKey(permissions ...Permission) *Identity {
+	return &Identity{
+		ServiceKey: true, WorkspaceID: "01JZZZZZZZZZZZZZZZZZZZZZZW",
+		HasPermission: func(p Permission) bool { return slices.Contains(permissions, p) },
+		Allows:        func(_, project string, _ Grant) bool { return project == "own" },
+		AsGrantee:     func(ctx context.Context) context.Context { return context.WithValue(ctx, grantCtx{}, true) },
+		IsGrantee:     func(context.Context) bool { return true },
+		Authorize:     func(context.Context, any, Grant, ...string) error { return nil },
+	}
+}
+
+// Grants stand in for database.query.read in what a key discovers, and nothing else.
+func TestSourceGrantsListTheReadToolsOnly(t *testing.T) {
+	tools := func(identity *Identity) []string {
+		listed, err := connect(t, &Service{}, identity).ListTools(context.Background(), nil)
+		require.NoError(t, err)
+		names := make([]string, 0, len(listed.Tools))
+		for _, tool := range listed.Tools {
+			names = append(names, tool.Name)
+		}
+		return names
+	}
+	bare := grantKey()
+	assert.NotContains(t, tools(bare), toolFoundryListOntologies)
+	assert.NotContains(t, tools(bare), toolFoundryReadGraph)
+	granted := grantKey()
+	granted.FoundryGrants = true
+	names := tools(granted)
+	assert.Contains(t, names, toolFoundryListOntologies)
+	assert.Contains(t, names, toolFoundryReadGraph)
+	assert.Contains(t, names, toolFoundryAsk)
+	assert.NotContains(t, names, toolFoundryConnectorLink)
+}
+
+func TestAKeyListsWhatSourceGrantsGiveIt(t *testing.T) {
+	workspace := "01JZZZZZZZZZZZZZZZZZZZZZZW"
+	own, other := "01JZZZZZZZZZZZZZZZZZZZZZZA", "01JZZZZZZZZZZZZZZZZZZZZZZB"
+	ids := func(out ListFoundryOntologiesOutput) []string {
+		got := make([]string, 0, len(out.Ontologies))
+		for _, o := range out.Ontologies {
+			got = append(got, o.ID)
+		}
+		return got
+	}
+	list := func(b *grantBackend, identity *Identity, page string) (ListFoundryOntologiesOutput, error) {
+		out, _, err := (&Service{Foundry: b}).ListFoundryOntologies(context.Background(), identity, &Call{},
+			ListFoundryOntologiesInput{WorkspaceID: workspace, PageToken: page})
+		return out, err
+	}
+	b := &grantBackend{granted: []*foundryv1.FoundryOntology{{Id: own, PartialAccess: true}, {Id: other, PartialAccess: true}}}
+	out, err := list(b, grantKey(), "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{own, other}, ids(out), "what it holds both ways shows once")
+	assert.False(t, out.Ontologies[0].PartialAccess)
+	assert.True(t, out.Ontologies[1].PartialAccess)
+	out, err = list(b, grantKey(), "next")
+	require.NoError(t, err)
+	assert.Equal(t, []string{own}, ids(out), "grants list on the first page only")
+
+	// Foundry can't say what grants give: a key with its own grant keeps its list, and one
+	// reading only through grants gets the failure.
+	failing := &grantBackend{grantedErr: status.Error(codes.Unavailable, "down")}
+	out, err = list(failing, grantKey(PermissionDatabaseQueryRead), "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{own}, ids(out))
+	_, err = list(failing, grantKey(), "")
+	require.Error(t, err)
+
+	// A host without grants lists as it did.
+	plain := grantKey()
+	plain.AsGrantee = nil
+	out, err = list(b, plain, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{own}, ids(out))
+}
+
+func TestAGranteeGetsTheOntologyItsGrantsCover(t *testing.T) {
+	input := OntologyInput{WorkspaceID: "01JZZZZZZZZZZZZZZZZZZZZZZW", OntologyID: "01JZZZZZZZZZZZZZZZZZZZZZZA"}
+	get := func(b *grantBackend, identity *Identity) (GetFoundryOntologyOutput, error) {
+		out, _, err := (&Service{Foundry: b}).GetFoundryOntology(context.Background(), identity, &Call{}, input)
+		return out, err
+	}
+	denied := errors.New("denied")
+	// Refused the owner's reads, admitted to the grantee's: only the load it holds, and its version.
+	onlyGrantee := func(_ context.Context, _ any, _ Grant, methods ...string) error {
+		if slices.Contains(methods, "ListOntologyVersions") {
+			return denied
+		}
+		return nil
+	}
+	key := grantKey()
+	key.Authorize = onlyGrantee
+	b := &grantBackend{}
+	out, err := get(b, key)
+	require.NoError(t, err)
+	assert.True(t, out.Ontology.PartialAccess)
+	require.Len(t, out.Loads, 1)
+	assert.Equal(t, "load", out.Loads[0].ID)
+	require.NotNil(t, out.CurrentVersion)
+	assert.Empty(t, out.Versions)
+	assert.Empty(t, out.Generations)
+	assert.Equal(t, 1, b.loadRequests)
+
+	// Someone neither admits: the first refusal stands.
+	key.IsGrantee = func(context.Context) bool { return false }
+	_, err = get(&grantBackend{}, key)
+	require.ErrorIs(t, err, denied)
+	key.IsGrantee = nil
+	_, err = get(&grantBackend{}, key)
+	require.ErrorIs(t, err, denied)
+
+	// A restricted member passes the host's checks; Foundry refuses what grants don't reach.
+	restricted := grantKey()
+	out, err = get(&grantBackend{currentErr: status.Error(codes.PermissionDenied, "no")}, restricted)
+	require.NoError(t, err)
+	assert.Len(t, out.Loads, 1)
+
+	// Only a host with grants reads that refusal so.
+	plain := grantKey()
+	plain.IsGrantee = nil
+	_, err = get(&grantBackend{currentErr: status.Error(codes.PermissionDenied, "no")}, plain)
+	require.Error(t, err)
 }

@@ -42,6 +42,13 @@ type Identity struct {
 	Allows                  func(workspaceID, projectID string, grant Grant) bool
 	Authorize               func(context.Context, any, Grant, ...string) error
 	WithScope               func(context.Context, string, bool) context.Context
+	// FoundryGrants says source grants give it something, though it reads no database: it
+	// discovers the read tools, and each call is decided as it is made.
+	FoundryGrants bool
+	// AsGrantee is ctx for a call made as a grantee of source grants, and IsGrantee whether Authorize
+	// admitted ctx as one. Nil on a host without grants.
+	AsGrantee func(context.Context) context.Context
+	IsGrantee func(context.Context) bool
 }
 
 type EventSourceIdentity struct{ WorkspaceID, ConnectorID string }
