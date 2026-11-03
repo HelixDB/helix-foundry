@@ -291,8 +291,8 @@ export function StartingState({
         </button>
       }
     >
-      Helix is still getting {databaseName} ready, which can take a few minutes
-      after it’s created. The explorer reads it again by itself.
+      Starting the {databaseName} database may take a few minutes. The page
+      updates automatically.
     </StateCard>
   );
 }

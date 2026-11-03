@@ -441,7 +441,7 @@ export function LiveLoad() {
       }
       text={
         starting
-          ? `The database is still starting. The ${job.kind === "extract" ? "reading" : "load"} tries again by itself once it takes writes.`
+          ? `Your new database is starting. The ${job.kind === "extract" ? "reading" : "load"} tries again automatically once it’s ready.`
           : p.documentsTotal
             ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
             : "What it writes shows in the Explorer as it goes."
@@ -548,7 +548,7 @@ function CountCell({
     return (
       <span
         className="on-muted"
-        title="The new database is still starting; this reads it again by itself."
+        title="Your new database is starting. The page updates automatically."
       >
         …
       </span>
@@ -1146,8 +1146,8 @@ export function LoadPage({ loadId }: { loadId: string }) {
           <Callout
             icon={LoaderCircle}
             live
-            title="The new database is still starting"
-            text={`${ontology.databaseName || "The database"} doesn’t take writes yet, which can last a few minutes after it’s created. The load tries again by itself once it does.`}
+            title="Your new database is starting"
+            text={`Starting ${ontology.databaseName ? `the ${ontology.databaseName} database` : "the database"} may take a few minutes. The load tries again automatically once it’s ready.`}
           />
         )}
         {retry?.kind === "failed" && (
@@ -1330,7 +1330,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
                   loadRetry(x, ontology.createdAt, now)?.kind === "starting" ? (
                     <span
                       className="on-muted on-cell-text"
-                      title="The new database is still starting; the load tries again by itself once it takes writes."
+                      title="Your new database is starting. The load tries again automatically once it’s ready."
                     >
                       Database starting
                     </span>

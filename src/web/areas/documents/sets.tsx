@@ -63,9 +63,7 @@ export function SetDialog({
     <Dialog
       title={set ? `Edit ${set.name}` : "New document set"}
       description={
-        set
-          ? undefined
-          : "A folder of documents read together. A generation reads the sets you pick, and its routes say what each one’s documents fill."
+        set ? undefined : "Group documents to use together in an ontology."
       }
       size="sm"
       onClose={onClose}
@@ -109,7 +107,7 @@ export function SetDialog({
           <textarea
             rows={3}
             maxLength={1000}
-            placeholder="Optional. What its documents are, for the agent that drafts the next version."
+            placeholder="Optional. Describe these documents to help Foundry draft the ontology."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />

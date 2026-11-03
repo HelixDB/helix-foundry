@@ -803,7 +803,7 @@ export function NewFolderDialog({
   return (
     <Dialog
       title="New folder"
-      description="A folder of connections, shared with the workspace. Drag connections into it, or move them from their menus."
+      description="Organise connections in a folder shared with your workspace."
       size="sm"
       onClose={onClose}
     >

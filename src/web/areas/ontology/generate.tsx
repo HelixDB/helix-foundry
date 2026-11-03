@@ -38,7 +38,7 @@ import { ontologyName, useOntology } from "./scope";
 import { useSampleOntology } from "./use-sample-ontology";
 
 // /ontology/:ontologyId/generate: a new version of an ontology, drafted from
-// what it should serve and what it reads, in one step as the new-ontology
+// the questions to answer and sources to read, in one step as the new-ontology
 // wizard's: the connectors whose synced tables to draft from, the API
 // sources and the document sets (./generate-parts.tsx, shared with the
 // wizard, which connects and uploads in place). Any will do: someone with
