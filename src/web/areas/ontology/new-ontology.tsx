@@ -88,8 +88,8 @@ import {
 // shell offers (main.tsx): it has no way back to Ontologies, and first asks
 // how to start: the sample company (./try-sample.tsx, its own page), else
 // one section toggling Set up with your agent (the default) and the user's
-// own data (the wizard). A local build has no Helix MCP, so no agent and
-// nothing to toggle: only the user's own data.
+// own data (the wizard). A local build starts on the user's own data, and its
+// agent setup goes through the install's own MCP.
 // A workspace's first ontology of its own (the sample's doesn't count) asks
 // only what to draft from and the goal (firstOntologyWizard): it is named
 // from its sources, goes on a new database, and its first draft is made
@@ -548,25 +548,22 @@ export function NewOntologyPage() {
         <TrySample />
         <h2 className="on-start-or">Or start with your own</h2>
         <div className="on-card">
-          {!LOCAL && (
-            <div className="on-start-toggle">
-              <Segmented
-                label="Start with your own"
-                value={start}
-                onChange={setStart}
-                options={[
-                  { value: "agent", label: "Set up with your agent" },
-                  { value: "own", label: "Use my own data" },
-                ]}
-              />
-            </div>
-          )}
+          <div className="on-start-toggle">
+            <Segmented
+              label="Start with your own"
+              value={start}
+              onChange={setStart}
+              options={[
+                { value: "agent", label: "Set up with your agent" },
+                { value: "own", label: "Use my own data" },
+              ]}
+            />
+          </div>
           {start === "agent" ? (
             <AgentSetup />
           ) : (
             <>
               <div className="on-card-text">
-                {LOCAL && <strong>Use my own data</strong>}
                 <p>
                   Connect a database or app, or upload documents, and Foundry
                   does the rest.

@@ -59,9 +59,11 @@ const nextConfig: NextConfig = {
         : "https://dev.app.helix-db.com",
     // The Helix MCP, which "Set up with your agent"'s prompt has agents add.
     NEXT_PUBLIC_HELIX_MCP_URL:
-      appEnv === "prod"
-        ? "https://mcp.helix-db.com/mcp"
-        : "https://mcp.dev.helix-db.com/mcp",
+      mode === "local"
+        ? "http://localhost:8081/mcp"
+        : appEnv === "prod"
+          ? "https://mcp.helix-db.com/mcp"
+          : "https://mcp.dev.helix-db.com/mcp",
     // Acme Corp's PostgreSQL database, which "Use the sample" connects
     // (src/web/areas/ontology/sample.ts): the local stack's acme-db, or
     // the stamp's own (helix-hyperscale backend/infra/sample-db).

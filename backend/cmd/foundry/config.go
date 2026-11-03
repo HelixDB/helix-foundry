@@ -69,9 +69,12 @@ type AWSConfig struct {
 
 // LocalConfig is what the install is made of.
 type LocalConfig struct {
-	// SiteToken is the bearer the Foundry site sends for the owner: at least
-	// 32 bytes, shared with the site and nothing else.
+	// SiteToken is the bearer the Foundry site and the owner's agents send for
+	// the owner: at least 32 bytes.
 	SiteToken string `koanf:"site_token"`
+	// SiteOrigin is where the browser reaches the Foundry site, the site's
+	// FOUNDRY_ORIGIN: the links agents are given start here.
+	SiteOrigin string `koanf:"site_origin"`
 	// HelixURL is the HelixDB every database is queried at, an origin such
 	// as http://helix:8080. It keeps no databases apart: every ontology's
 	// loads share it.
@@ -87,8 +90,8 @@ type LocalConfig struct {
 	SecretsDir string `koanf:"secrets_dir"`
 }
 
-// ListenConfig is the install's listeners: the site calls REST, and gRPC
-// and health stay on loopback.
+// ListenConfig is the install's listeners: the site and the owner's agents
+// call REST, and gRPC and health stay on loopback.
 type ListenConfig struct {
 	REST   string `koanf:"rest"`
 	GRPC   string `koanf:"grpc"`
@@ -107,7 +110,7 @@ func defaults() Config {
 		Foundry: f.Foundry,
 		Backend: BackendConfig{FoundryRead: f.Read},
 		AWS:     AWSConfig{Region: "us-east-1"},
-		Local:   LocalConfig{Listen: ListenConfig{REST: ":8081", GRPC: "127.0.0.1:50061", Health: "127.0.0.1:8083"}},
+		Local:   LocalConfig{SiteOrigin: "http://localhost:3000", Listen: ListenConfig{REST: ":8081", GRPC: "127.0.0.1:50061", Health: "127.0.0.1:8083"}},
 		Log:     LogConfig{Format: "json", Level: "info"},
 	}
 	c.Billing.Autumn.Foundry = f.Billing
@@ -198,6 +201,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("local.site_token must be at least %d bytes", local.MinSiteToken)
 	}
 	for _, endpoint := range []struct{ name, raw string }{
+		{"local.site_origin", c.Local.SiteOrigin},
 		{"local.helix_url", c.Local.HelixURL},
 		{"local.s3.endpoint", c.Local.S3.Endpoint},
 	} {

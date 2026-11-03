@@ -131,7 +131,7 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
     page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
 
-  // No Helix MCP here, so no Getting into production.
+  // The hosted Getting into production card is not offered locally.
   const production = page.getByRole("region", {
     name: "Getting into production",
   });
@@ -150,7 +150,9 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
 
 test("opens a new install in its workspace's onboarding, never the workspace picker", async ({
   page,
+  context,
 }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await configure({ freshInstall: true });
   await page.goto("/");
   await expect(page).toHaveURL(/\/ontology\/new$/);
@@ -163,12 +165,18 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await expect(
     page.getByRole("heading", { name: "Create your first workspace" }),
   ).toHaveCount(0);
-  // No Helix MCP here, so no agent to set it up and nothing to toggle.
-  await expect(page.getByText("Use my own data")).toBeVisible();
-  await expect(page.getByRole("radio")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Copy prompt" })).toHaveCount(
-    0,
-  );
+  // Local setup keeps the own-data default and also offers its local MCP.
+  await expect(
+    page.getByRole("radio", { name: "Use my own data" }),
+  ).toBeChecked();
+  await page.getByRole("radio", { name: "Set up with your agent" }).click();
+  await page.getByRole("button", { name: "Copy prompt", exact: true }).click();
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  expect(prompt).toContain("http://localhost:8081/mcp");
+  expect(prompt).toContain("FOUNDRY_LOCAL_TOKEN");
+  expect(prompt).toContain("My workspace");
+  expect(prompt).not.toContain("mcp.helix-db.com");
+  expect(prompt).not.toContain("helix_signup");
 
   // Another workspace is still made from the switcher, and opens on its own
   // onboarding.
@@ -343,7 +351,7 @@ test("offers every connector to a new workspace", async ({ page }) => {
     await expect(
       picker.getByRole("button", { name, exact: true }),
     ).not.toHaveAccessibleDescription(/Foundry Pro/);
-  // No API source: its senders need the Helix MCP, which runs only hosted.
+  // Local MCP supports connectors and documents; API sources remain hosted-only.
   await expect(picker.getByText("From your agent")).toHaveCount(0);
   await expect(
     picker.getByRole("button", { name: "API source", exact: true }),

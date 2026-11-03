@@ -196,8 +196,8 @@ func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 }
 
 // front is the install's front end: one gRPC server with the directory and
-// FoundryService behind the site token, and their REST gateway, which is
-// all the site calls.
+// FoundryService behind the site token, their REST gateway, which is all the
+// site calls, and the MCP and HTTP Ask the owner's agents call beside it.
 type front struct {
 	ep  *endpoint.Endpoint
 	api *api.Service
@@ -230,6 +230,9 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		Name: "foundry", Logger: logger.With("service", "foundry"), Health: probes,
 		GRPC: endpoint.GRPC{Listen: cfg.Local.Listen.GRPC, MaxRecvMsgMB: 16}, HTTP: endpoint.HTTP{Listen: cfg.Local.Listen.REST},
 		Interceptor: auth, BuildGateway: true,
+		// local/compose.mcp.yaml publishes REST on the host for agents; the probes
+		// stay on the health listener (serve), which isn't.
+		NoProbes: true,
 	})
 	if err != nil {
 		_ = foundrySvc.Close()
@@ -246,6 +249,9 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 			return nil, err
 		}
 	}
+	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin, logger.With("component", "integration"))
+	ep.RegisterHTTPHandler("/mcp", integrations)
+	ep.RegisterHTTPHandler("/v1/ontologies/", integrations)
 	return f, nil
 }
 

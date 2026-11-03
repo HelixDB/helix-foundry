@@ -1,3 +1,4 @@
+import { localOnboardingPrompt } from "./local-onboarding-prompt";
 import type { FoundryOntology } from "../../../shared/wfe";
 import { paths } from "../../paths";
 import {
@@ -56,6 +57,7 @@ export type OnboardingWorkspace = {
 };
 
 export type OnboardingPromptInput = {
+  local?: boolean;
   // Foundry's origin: "https://foundry.helix-db.com".
   origin: string;
   // The Helix MCP's URL, for the commands that add it.
@@ -145,6 +147,7 @@ function standing(o: OnboardingOntology): string {
  * ontology, else from its setup's step on.
  */
 export function onboardingPrompt(input: OnboardingPromptInput): string {
+  if (input.local) return localOnboardingPrompt(input);
   const known = input.workspace !== null ? input : null,
     ws = known?.workspace.id ?? "<workspace id>",
     o = known?.ontology ?? null,
@@ -432,7 +435,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
       : [
           "## Run it on my computer",
           "",
-          "Only if I asked for it. Foundry then runs in Docker here, for me alone: no sign-in, no Helix MCP and none of the steps above. You install and start it; I make the ontology in its pages, and you help me there.",
+          "Only if I asked for it. Foundry then runs in Docker here, for me alone: no sign-in. You install and start it.",
           "",
           `1. Check that Docker runs with Compose v2 (\`docker compose version\`), and that ports 3000 and 8333 are free: the site answers only at ${LOCAL_ORIGIN}.`,
           `2. Ask me where to put it, then \`git clone ${LOCAL_SOURCE}\`.`,
@@ -441,8 +444,11 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           "   - for Ollama in Docker, `docker compose --profile ollama up -d --wait`, with at least 10 GB of memory for Docker.",
           `   For Claude, OpenAI or another provider’s key, I enter it myself once it runs, in its Settings › AI models (${LOCAL_ORIGIN}/settings/ai): never in the chat, a file or your shell. For Ollama or LM Studio on this computer, \`local/README.md\` says how.`,
           "   The first start pulls its images, writes the install’s secrets into a Docker volume and makes my workspace. Never delete its volumes: no `docker compose down -v`, `docker volume rm` or `docker system prune --volumes`.",
-          `4. Open ${LOCAL_ORIGIN} for me. Its Use the sample (Acme Corp, a made-up company) shows it working in one click. For my own data, I connect sources and upload documents there (a database on this computer is \`host.docker.internal\`; \`local/README.md\` says more). At the goal, I press Copy prompt for your agent and paste it to you: it lists the data I chose, so write the goal with me from it, as “Write the goal” says. Then I generate a draft, review it, make it current, load it, and explore it or ask it questions.`,
-          "5. If something fails, `docker compose ps` and `docker compose logs <service>` say why, and `local/README.md` says what each service does.",
+          `4. Open ${LOCAL_ORIGIN} for me. Its Use the sample (Acme Corp, a made-up company) shows it working in one click. In either case below, I enter credentials in Foundry’s pages (a database on this computer is \`host.docker.internal\`; \`local/README.md\` says more).`,
+          "5. For my own data, see whether this release has a local MCP: in `helix-foundry`, `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 if it does, and 404 if not.",
+          "   - If it does: publish it, in `helix-foundry/local`, with `docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait`, which restarts Foundry’s containers and keeps its data (if port 8081 is taken here, first set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, and use it wherever 8081 appears). Then connect to it with the existing owner token, as “Connect your agent” in `local/README.md` says. In Foundry I choose Set up with your agent, press Copy prompt and paste it to you. That prompt then takes over from here, through the local tools, and you do the rest of the setup with me.",
+          "   - If not: I do the setup in Foundry’s pages. I connect sources and upload documents there. At the goal, I press Copy prompt for your agent and paste it to you: it lists the data I chose, so write the goal with me from it, as “Write the goal” says. Then I generate a draft, review it, make it current, load it, and explore it or ask it questions.",
+          "6. If something fails, `docker compose ps` and `docker compose logs <service>` say why, and `local/README.md` says what each service does.",
           "",
         ]),
   ].join("\n");
