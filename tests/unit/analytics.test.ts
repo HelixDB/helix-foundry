@@ -599,22 +599,15 @@ describe("withoutTitle", () => {
   });
 });
 
-describe("Telemetry", () => {
-  it("mounts no tracker without a client id", async () => {
-    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "");
-    vi.resetModules();
-    const { Telemetry } = await import("@/web/telemetry");
-    expect(Telemetry()).toBeNull();
-  });
-
+describe("TRACKER", () => {
   it("records everything, replays with the tracker's path masks", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-test");
     vi.resetModules();
-    const { MASK_PATTERNS, Telemetry, withoutTitle } = await import(
+    const { MASK_PATTERNS, TRACKER, withoutTitle } = await import(
       "@/web/telemetry"
     );
     // replay.js masks the URLs it records with the tracker's maskPatterns.
-    expect(Telemetry()?.props).toEqual({
+    expect(TRACKER).toEqual({
       clientId: "client-test",
       maskPatterns: MASK_PATTERNS,
       filter: withoutTitle,
@@ -624,5 +617,39 @@ describe("Telemetry", () => {
       trackInteractions: true,
       replay: true,
     });
+  });
+});
+
+describe("Helix's own people", () => {
+  it("are never identified, and their browser stops sending", async () => {
+    const a = await load();
+    const optOut = vi.fn();
+    vi.stubGlobal("window", { databuddyOptOut: optOut });
+    a.identifyUser("user_1", { email: "Ada@Helix-DB.com", name: "Ada" });
+    expect(sdk.identify).not.toHaveBeenCalled();
+    expect(optOut).toHaveBeenCalledOnce();
+    expect(a.trackingAllowed("")).toBe(false);
+    // A customer on a look-alike domain is identified.
+    a.identifyUser("user_2", { email: "bo@nothelix-db.com" });
+    expect(sdk.identify).toHaveBeenCalledWith("user_2", {
+      email: "bo@nothelix-db.com",
+    });
+  });
+
+  it("are marked by ?internal=1 on any page, and unmarked by ?internal=0", async () => {
+    const a = await load();
+    expect(a.trackingAllowed("")).toBe(true);
+    expect(a.trackingAllowed("?internal=1")).toBe(false);
+    expect(a.trackingAllowed("?workspace=ws_1")).toBe(false);
+    local.values.set("databuddy_opt_out", "true");
+    expect(a.trackingAllowed("?internal=0")).toBe(true);
+    // Unmarking undoes the tracker's own opt-out, which marking set.
+    expect(local.values.has("databuddy_opt_out")).toBe(false);
+    expect(a.trackingAllowed("")).toBe(true);
+  });
+
+  it("can't be told apart with storage blocked: the browser is tracked", async () => {
+    const a = await load("client-test", true);
+    expect(a.trackingAllowed("?internal=1")).toBe(true);
   });
 });

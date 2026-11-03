@@ -1,8 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { setGlobalProperties } from "@databuddy/sdk";
 import dynamic from "next/dynamic";
-import { DATABUDDY_CLIENT_ID } from "./analytics";
+import { DATABUDDY_CLIENT_ID, trackingAllowed } from "./analytics";
 
 // Databuddy's tracker, on the hosted site's pages: the landing page, sign-in
 // and the app (both root layouts mount it). Without a client id (a local
@@ -70,18 +71,25 @@ export function withoutTitle(event: { title?: unknown }): boolean {
  * or hash, paths masked by MASK_PATTERNS. What shows a person's account,
  * the members or a payment form is also `data-replay-block`: left out whole.
  */
+export const TRACKER = {
+  clientId: DATABUDDY_CLIENT_ID,
+  maskPatterns: MASK_PATTERNS,
+  filter: withoutTitle,
+  trackWebVitals: true,
+  trackErrors: true,
+  trackOutgoingLinks: true,
+  trackInteractions: true,
+  replay: true,
+};
+
+/**
+ * The tracker, once the page knows this browser may load it: not one of
+ * Helix's own (analytics.ts trackingAllowed, which reads the URL and
+ * storage, so only after the first render).
+ */
 export function Telemetry() {
-  if (!Databuddy) return null;
-  return (
-    <Databuddy
-      clientId={DATABUDDY_CLIENT_ID}
-      maskPatterns={MASK_PATTERNS}
-      filter={withoutTitle}
-      trackWebVitals
-      trackErrors
-      trackOutgoingLinks
-      trackInteractions
-      replay
-    />
-  );
+  const [allowed, setAllowed] = useState(false);
+  useEffect(() => setAllowed(trackingAllowed(location.search)), []);
+  if (!Databuddy || !allowed) return null;
+  return <Databuddy {...TRACKER} />;
 }

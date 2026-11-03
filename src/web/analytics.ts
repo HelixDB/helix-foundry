@@ -269,18 +269,59 @@ export function signedIn(
   trackEvent("login_completed", { destination });
 }
 
+// Helix's own people: a browser signed in with a company email, or marked
+// by opening any page with ?internal=1 (?internal=0 undoes it), sends
+// nothing, so funnels, replays and reports count customers only.
+const INTERNAL = "foundry.analytics.internal";
+const INTERNAL_DOMAINS = ["helix-db.com"];
+
+/**
+ * Whether this browser may load the tracker (./telemetry.tsx): not one of
+ * Helix's own. Keeps a ?internal= mark first; undoing one also undoes the
+ * tracker's own opt-out, which marking it set (markInternal).
+ *
+ * @example
+ * trackingAllowed("?internal=1"); // false, and on every later page
+ * trackingAllowed("?internal=0"); // true
+ */
+export function trackingAllowed(search: string): boolean {
+  const mark = new URLSearchParams(search).get("internal");
+  try {
+    if (mark === "1") localStorage.setItem(INTERNAL, "1");
+    if (mark === "0")
+      for (const key of [INTERNAL, "databuddy_opt_out", "databuddy_disabled"])
+        localStorage.removeItem(key);
+    return localStorage.getItem(INTERNAL) !== "1";
+  } catch {
+    return true;
+  }
+}
+
+/** Marks this browser as Helix's own, and stops the tracker and replay running now. */
+function markInternal() {
+  try {
+    localStorage.setItem(INTERNAL, "1");
+  } catch {
+    // Storage blocked: the next page loads the tracker, and is marked again.
+  }
+  window.databuddyOptOut?.();
+}
+
 /**
  * The signed-in user, by the backend's user id, with their email and name on
  * the profile (Databuddy's own fields, so replays and profiles can be found
  * by email): every event and replay from here on, in any session of this
  * browser, is theirs. Safe on every page load; with details, the tracker
- * sends it on each.
+ * sends it on each. One of Helix's own is never identified: their browser
+ * is marked and stops sending.
  */
 export function identifyUser(
   id: string,
   { email, name }: { email?: string; name?: string } = {},
 ) {
   if (!DATABUDDY_CLIENT_ID || !id) return;
+  const domain = email?.split("@").pop()?.toLowerCase();
+  if (domain && INTERNAL_DOMAINS.includes(domain)) return markInternal();
   identify(id, { ...(email && { email }), ...(name && { name }) });
 }
 
