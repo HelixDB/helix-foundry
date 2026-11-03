@@ -939,14 +939,20 @@ test("labels a P3 gap and keeps its reason and draft action", async ({
   });
   await page.route(
     (url) =>
-      /\/ontologies\/ont_acme_contracts\/questions\/[^/:]+$/.test(url.pathname),
+      /\/ontologies\/ont_acme_contracts\/questions(?:\/[^/:]+)?$/.test(
+        url.pathname,
+      ),
     async (route) => {
       const response = await route.fetch();
       const body = await response.json();
-      if (body.question?.resultJson) {
-        const result = JSON.parse(body.question.resultJson);
+      // Declines render from the thread list; answered questions also read
+      // their full result from GET of one question.
+      for (const question of body.questions ??
+        (body.question ? [body.question] : [])) {
+        if (!question.resultJson) continue;
+        const result = JSON.parse(question.resultJson);
         if (result.status === "cannot_answer") result.kind = "uncovered";
-        body.question.resultJson = JSON.stringify(result);
+        question.resultJson = JSON.stringify(result);
       }
       await route.fulfill({ response, json: body });
     },
