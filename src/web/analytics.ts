@@ -22,6 +22,7 @@ import type {
 import type { WizardStepId } from "./areas/ontology/model";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
+import type { ShellWorkspace, WorkspaceRole } from "./ui";
 
 // The hosted site's product analytics, in Databuddy (./telemetry.tsx loads
 // its tracker). next.config.ts sets the stamp's client id only in a build
@@ -62,7 +63,7 @@ export type Refusal = "rate_limit" | "refused" | "error";
  * event names only, so every step of the funnel is an event of its own.
  * Properties are a fixed vocabulary: never a person's or resource's name or
  * id, an email, a question, a goal or a file name. Every event also carries
- * the workspace open (workspaceOpened).
+ * the workspace open and the signed-in user's email (`globals`).
  */
 export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
@@ -210,9 +211,9 @@ export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
     event = {
       eventId: crypto.randomUUID(),
       name,
-      // The tracker merges its global properties (the workspace) into its
-      // own events' properties; a beacon has to.
-      properties: { ...workspace, ...properties[0] },
+      // The tracker merges its global properties (the workspace and the
+      // user) into its own events' properties; a beacon has to.
+      properties: { ...globals, ...properties[0] },
       anonymousId,
       sessionId: ids?.sessionId,
       // As the tracker's own events: the signed-in user (identifyUser).
@@ -269,34 +270,105 @@ export function signedIn(
   trackEvent("login_completed", { destination });
 }
 
+// Helix's own people: a browser signed in with a company email, or marked
+// by opening any page with ?internal=1 (?internal=0 undoes it), sends
+// nothing, so funnels, replays and reports count customers only.
+const INTERNAL = "foundry.analytics.internal";
+const INTERNAL_DOMAINS = ["helix-db.com"];
+
+/**
+ * Whether this browser may load the tracker (./telemetry.tsx): not one of
+ * Helix's own. Keeps a ?internal= mark first; undoing one also undoes the
+ * tracker's own opt-out, which marking it set (markInternal).
+ *
+ * @example
+ * trackingAllowed("?internal=1"); // false, and on every later page
+ * trackingAllowed("?internal=0"); // true
+ */
+export function trackingAllowed(search: string): boolean {
+  const mark = new URLSearchParams(search).get("internal");
+  try {
+    if (mark === "1") localStorage.setItem(INTERNAL, "1");
+    if (mark === "0")
+      for (const key of [INTERNAL, "databuddy_opt_out", "databuddy_disabled"])
+        localStorage.removeItem(key);
+    return localStorage.getItem(INTERNAL) !== "1";
+  } catch {
+    return true;
+  }
+}
+
+/** Marks this browser as Helix's own, and stops the tracker and replay running now. */
+function markInternal() {
+  try {
+    localStorage.setItem(INTERNAL, "1");
+  } catch {
+    // Storage blocked: the next page loads the tracker, and is marked again.
+  }
+  window.databuddyOptOut?.();
+}
+
 /**
  * The signed-in user, by the backend's user id, with their email and name on
  * the profile (Databuddy's own fields, so replays and profiles can be found
  * by email): every event and replay from here on, in any session of this
  * browser, is theirs. Safe on every page load; with details, the tracker
- * sends it on each.
+ * sends it on each. One of Helix's own is never identified: their browser
+ * is marked and stops sending.
  */
 export function identifyUser(
   id: string,
   { email, name }: { email?: string; name?: string } = {},
 ) {
   if (!DATABUDDY_CLIENT_ID || !id) return;
+  const domain = email?.split("@").pop()?.toLowerCase();
+  if (domain && INTERNAL_DOMAINS.includes(domain)) return markInternal();
   identify(id, { ...(email && { email }), ...(name && { name }) });
+  // Databuddy's queries don't read a profile's email: events carry it, so
+  // the team's dashboard can say who did what.
+  if (email) setGlobals({ user_email: email });
 }
 
-/** The workspace open, as every event and page view carries it. */
-let workspace: { workspace_id: string; workspace_name: string } | undefined;
+/**
+ * What every event and page view carries besides its own properties (the
+ * tracker's global properties): the workspace open and the signed-in user's
+ * email.
+ */
+let globals: {
+  workspace_id?: string;
+  workspace_slug?: string;
+  workspace_name?: string;
+  workspace_role?: WorkspaceRole;
+  // "<slug> <email>" while the open workspace's owner is the one signed in:
+  // Databuddy's queries can't pair two properties, so the team's dashboard
+  // reads each workspace's owner from this one.
+  workspace_owner?: string;
+  user_email?: string;
+} = {};
+const setGlobals = (more: Omit<typeof globals, "workspace_owner">) => {
+  const next = { ...globals, ...more };
+  next.workspace_owner =
+    next.workspace_role === "owner" && next.workspace_slug && next.user_email
+      ? `${next.workspace_slug} ${next.user_email}`
+      : undefined;
+  globals = next;
+  setGlobalProperties({ ...more, workspace_owner: next.workspace_owner });
+};
 
 /**
  * The workspace open (and again on a switch): every event and page view
- * from here on carries its id and name (the tracker's global properties),
- * so each is the workspace's, and per-account retention counts workspaces
- * (`workspace_id`).
+ * from here on carries its id, slug, name and the user's role in it (the
+ * tracker's global properties), so each is the workspace's, and
+ * per-account retention counts workspaces (`workspace_id`).
  */
-export function workspaceOpened(id: string, name: string) {
+export function workspaceOpened({ id, slug, name, role }: ShellWorkspace) {
   if (!DATABUDDY_CLIENT_ID) return;
-  workspace = { workspace_id: id, workspace_name: name };
-  setGlobalProperties(workspace);
+  setGlobals({
+    workspace_id: id,
+    workspace_slug: slug,
+    workspace_name: name,
+    workspace_role: role,
+  });
 }
 
 /** Sign-out, before the page leaves: reports it as the user, then forgets them and their workspace. */
@@ -304,8 +376,15 @@ export async function signedOut(): Promise<void> {
   if (!DATABUDDY_CLIENT_ID) return;
   await trackBeforeLeaving("signed_out");
   clearProfile();
-  workspace = undefined;
-  setGlobalProperties({ workspace_id: undefined, workspace_name: undefined });
+  globals = {};
+  setGlobalProperties({
+    workspace_id: undefined,
+    workspace_slug: undefined,
+    workspace_name: undefined,
+    workspace_role: undefined,
+    workspace_owner: undefined,
+    user_email: undefined,
+  });
 }
 
 /**

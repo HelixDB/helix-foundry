@@ -121,7 +121,7 @@ export function DeleteOntology() {
       {confirming && (
         <ConfirmDialog
           title={`Delete ${ontologyName(ontology)}?`}
-          description={`Foundry forgets this ontology: its versions, generations and loads, and deletes what its loads wrote from ${ontology.databaseName || "its database"}, with any edges added to those nodes. The database stays in Helix with your own data, and your documents stay in Connectors.`}
+          description={`Deletes this ontology, its versions, generations and loads, and the data its loads wrote to ${ontology.databaseName || "its database"}. Edges attached to those nodes are also deleted. The database, your other data and documents in Connectors are kept.`}
           confirmLabel="Delete ontology"
           tone="danger"
           pending={pending}

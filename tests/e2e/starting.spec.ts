@@ -80,7 +80,7 @@ test("says a new database is starting, and shows what it holds once it answers",
     .getByRole("status")
     .filter({ hasText: "Your new database is starting" });
   await expect(starting).toBeVisible();
-  await expect(starting).toContainText("reads it again by itself");
+  await expect(starting).toContainText("The page updates automatically.");
   // Retry reads now: refused again, the card stays, not an error.
   await starting.getByRole("button", { name: "Retry" }).click();
   await expect
@@ -143,9 +143,9 @@ test("says a load waits for a new database to start, then reads its records once
   // overview's list of loads has read the new load's counts already.
   await mock.configure({ startingQueries: { sandbox: 1 } });
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "The new database is still starting" }),
+    page.getByRole("status").filter({
+      hasText: "The load tries again automatically once it’s ready.",
+    }),
   ).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(/refused a write/)).toHaveCount(0);
   // So do the overview and the Loads page's Jobs column, while it waits.
@@ -155,7 +155,7 @@ test("says a load waits for a new database to start, then reads its records once
     page
       .getByRole("status")
       .filter({ hasText: "A load is waiting for the new database" }),
-  ).toContainText("The load tries again by itself once it takes writes.");
+  ).toContainText("The load tries again automatically once it’s ready.");
   await expect(
     page
       .getByRole("grid", { name: "Loads" })
@@ -170,7 +170,7 @@ test("says a load waits for a new database to start, then reads its records once
     page.getByRole("status").filter({ hasText: "Loaded" }).first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
-    page.getByText("The new database is still starting"),
+    page.getByText("The load tries again automatically once it’s ready."),
   ).toHaveCount(0);
 
   // Records of a database refusing its first reads say it is starting.
@@ -232,7 +232,7 @@ test("says the Loads page's counts and a compare wait for a new database, then s
   const first = await loadVersion1(page, overview);
   const second = await loadVersion1(page, overview);
   const STARTING =
-    "The new database is still starting; this reads it again by itself.";
+    "Your new database is starting. The page updates automatically.";
   const waiting = page.getByRole("status").filter({ hasText: STARTING });
 
   // The Loads page's counts: each load's is refused once, says the database

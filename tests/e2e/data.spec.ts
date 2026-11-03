@@ -514,7 +514,7 @@ test("offers databases once the workspace upgrades to Foundry Pro", async ({
   await page.getByRole("button", { name: "Upgrade", exact: true }).click();
   await page
     .getByRole("dialog", { name: "Upgrade Foundry" })
-    .getByRole("button", { name: "Continue to payment" })
+    .getByRole("button", { name: "Upgrade to Pro" })
     .click();
   await page.getByRole("button", { name: "Pay and subscribe" }).click();
   await expect(page).toHaveURL(/\/settings\/billing$/);
@@ -546,7 +546,7 @@ test("offers databases on Foundry Max, as on Pro", async ({ page }) => {
   await page.getByRole("button", { name: "Upgrade", exact: true }).click();
   const upgrade = page.getByRole("dialog", { name: "Upgrade Foundry" });
   await upgrade.getByRole("radio", { name: "Max" }).check();
-  await upgrade.getByRole("button", { name: "Continue to payment" }).click();
+  await upgrade.getByRole("button", { name: "Upgrade to Max" }).click();
   await expect(
     page.getByRole("heading", { name: /Foundry Max/ }),
   ).toContainText("Active", { timeout: 15_000 });

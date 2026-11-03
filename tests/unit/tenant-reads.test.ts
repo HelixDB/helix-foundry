@@ -93,7 +93,7 @@ describe("tenant reads", () => {
       kind: "starting",
       status: 503,
       code: "rate_limit_unavailable",
-      message: "Helix is still starting this new database.",
+      message: "Your new database is starting.",
       retryInMs: 5_000,
       elapsedMs: 0,
     };

@@ -123,7 +123,7 @@ describe("startingOr", () => {
     expect(f).toEqual({
       ...RATE_LIMIT,
       kind: "starting",
-      message: expect.stringMatching(/still starting/),
+      message: expect.stringMatching(/is starting/),
       retryInMs: 10_000,
     });
   });
@@ -148,8 +148,10 @@ describe("describeFailure", () => {
       tone: "neutral",
     });
     // Its words also reach one-off actions, which nothing reads again.
-    expect(f.message).not.toMatch(/by itself/);
-    expect(describeFailure(f, "read").hint).not.toMatch(/by itself/);
+    expect(f.message).not.toMatch(/by itself|automatically/);
+    expect(describeFailure(f, "read").hint).not.toMatch(
+      /by itself|automatically/,
+    );
     // The gateway refuses before it forwards anything.
     expect(isWriteOutcomeUnknown(f)).toBe(false);
     expect(describeFailure(RATE_LIMIT, "read").title).toBe(
