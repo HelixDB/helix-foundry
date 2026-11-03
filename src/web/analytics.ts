@@ -62,7 +62,7 @@ export type Refusal = "rate_limit" | "refused" | "error";
  * event names only, so every step of the funnel is an event of its own.
  * Properties are a fixed vocabulary: never a person's or resource's name or
  * id, an email, a question, a goal or a file name. Every event also carries
- * the workspace open (workspaceOpened).
+ * the workspace open and the signed-in user's email (`globals`).
  */
 export type AnalyticsEvents = {
   // Sign-in (src/web/sign-in.tsx, main.tsx).
@@ -210,9 +210,9 @@ export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
     event = {
       eventId: crypto.randomUUID(),
       name,
-      // The tracker merges its global properties (the workspace) into its
-      // own events' properties; a beacon has to.
-      properties: { ...workspace, ...properties[0] },
+      // The tracker merges its global properties (the workspace and the
+      // user) into its own events' properties; a beacon has to.
+      properties: { ...globals, ...properties[0] },
       anonymousId,
       sessionId: ids?.sessionId,
       // As the tracker's own events: the signed-in user (identifyUser).
@@ -323,10 +323,25 @@ export function identifyUser(
   const domain = email?.split("@").pop()?.toLowerCase();
   if (domain && INTERNAL_DOMAINS.includes(domain)) return markInternal();
   identify(id, { ...(email && { email }), ...(name && { name }) });
+  // Databuddy's queries don't read a profile's email: events carry it, so
+  // the team's dashboard can say who did what.
+  if (email) setGlobals({ user_email: email });
 }
 
-/** The workspace open, as every event and page view carries it. */
-let workspace: { workspace_id: string; workspace_name: string } | undefined;
+/**
+ * What every event and page view carries besides its own properties (the
+ * tracker's global properties): the workspace open and the signed-in user's
+ * email.
+ */
+let globals: {
+  workspace_id?: string;
+  workspace_name?: string;
+  user_email?: string;
+} = {};
+const setGlobals = (more: typeof globals) => {
+  globals = { ...globals, ...more };
+  setGlobalProperties(more);
+};
 
 /**
  * The workspace open (and again on a switch): every event and page view
@@ -336,8 +351,7 @@ let workspace: { workspace_id: string; workspace_name: string } | undefined;
  */
 export function workspaceOpened(id: string, name: string) {
   if (!DATABUDDY_CLIENT_ID) return;
-  workspace = { workspace_id: id, workspace_name: name };
-  setGlobalProperties(workspace);
+  setGlobals({ workspace_id: id, workspace_name: name });
 }
 
 /** Sign-out, before the page leaves: reports it as the user, then forgets them and their workspace. */
@@ -345,8 +359,12 @@ export async function signedOut(): Promise<void> {
   if (!DATABUDDY_CLIENT_ID) return;
   await trackBeforeLeaving("signed_out");
   clearProfile();
-  workspace = undefined;
-  setGlobalProperties({ workspace_id: undefined, workspace_name: undefined });
+  globals = {};
+  setGlobalProperties({
+    workspace_id: undefined,
+    workspace_name: undefined,
+    user_email: undefined,
+  });
 }
 
 /**
