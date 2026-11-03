@@ -829,4 +829,31 @@ describe("local onboarding through MCP", () => {
     expect(text).not.toContain("helix_get_started");
     expect(text).not.toContain("sign in as me");
   });
+  it("says what the local tools answer and where a moved MCP is", () => {
+    expect(text).toContain("FOUNDRY_MCP_PORT");
+    expect(text).toContain("helix_foundry_list_connectors");
+    expect(text).toContain(
+      "fails with failed_precondition: prepare it again with the same operation, target and payload",
+    );
+  });
+});
+
+describe("the landing prompt's Run it on my computer", () => {
+  const text = onboardingPrompt({
+    origin: "https://foundry.helix-db.com",
+    mcpUrl: "https://mcp.helix-db.com/mcp",
+    workspace: null,
+  });
+  const section = text.slice(text.indexOf("## Run it on my computer"));
+  it("takes the local MCP only where the release serves it", () => {
+    // The pinned images have none until a release moves them.
+    expect(section).toContain(
+      "curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/mcp",
+    );
+    expect(section).toContain("If it does: connect to it");
+    expect(section).toContain("If not: I do the setup in Foundry’s pages");
+  });
+  it("says what to do when the MCP's port is taken", () => {
+    expect(section).toContain("FOUNDRY_MCP_PORT");
+  });
 });

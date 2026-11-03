@@ -307,12 +307,12 @@ func EventSourceReads(gen *foundryv1.OntologyGeneration, sources EventSourceRefs
 // no connectors. Each is read only when it could matter: the connectors (listing them reads each
 // one's tables and the Workspace's plan) when a generation has a table named events, as an event
 // source's is, and the sets when a generation reads one. listed is the Workspace's sets when the
-// caller has read them already, and nil otherwise.
+// caller has read them already, and nil otherwise. A host without API sources has none to tell.
 func (s *Service) EventSourceIDs(
 	ctx context.Context, identity *Identity, workspaceID string, listed *foundryv1.ListFoundryDocumentSetsResponse, generations ...*foundryv1.OntologyGeneration,
 ) (EventSourceRefs, error) {
 	sources := EventSourceRefs{connectors: map[string]bool{}, sets: map[string]string{}}
-	if identity.ServiceKey {
+	if identity.ServiceKey || !s.Events {
 		return sources, nil
 	}
 	if slices.ContainsFunc(generations, func(gen *foundryv1.OntologyGeneration) bool {

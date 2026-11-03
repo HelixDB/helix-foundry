@@ -75,10 +75,14 @@ Foundry connects from inside Docker: a database on this machine is `host.docker.
 
 The site must stay on `http://localhost:3000` and the store on `http://localhost:8333`: the site refuses any other host, and documents upload to the address Foundry signs. To move them, edit `local/compose.yaml`:
 
-- **The site:** the host side of its port, `FOUNDRY_ORIGIN`, and the store's `-s3.allowedOrigins`, which lets the site's page upload.
+- **The site:** the host side of its port, `FOUNDRY_ORIGIN`, `HELIX_LOCAL__SITE_ORIGIN` under foundry's `environment` (the links agents are given start there), and the store's `-s3.allowedOrigins`, which lets the site's page upload.
 - **The store:** the `pod`'s port, the store's `-s3.port` and its health check's `nc -z 127.0.0.1 <port>`, and `HELIX_LOCAL__S3__ENDPOINT: http://localhost:<port>` under foundry's `environment` (its config is in the image; `HELIX_*` variables override it).
 
+**MCP and HTTP Ask** are on `127.0.0.1:8081`, which every start needs free. If it is taken, set `FOUNDRY_MCP_PORT` in `local/.env` to a free port, and use that port wherever an agent's setup or this page says 8081: the site's prompt names 8081, fixed when its image is built, and says this too.
+
 ## Connect your agent
+
+These need images newer than the ones `docker compose up` pulls today (`foundry` 0.1.1 and `foundry-site` 0.1.2, which have no MCP and no **Set up with your agent**). Until a release moves those, run both built from this checkout, as [Images](#images) says. `curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't.
 
 The local MCP is `http://localhost:8081/mcp`. It supports the Foundry workflow: discovery, connectors, documents, ontology generation and revision, loading, graph reads and Ask. API sources and cloud administration are unavailable locally. The site’s **Set up with your agent** prompt carries your workspace and current setup into the agent.
 
@@ -90,12 +94,12 @@ export FOUNDRY_LOCAL_TOKEN="$(docker compose exec -T foundry cat /secrets/site-t
 
 Configure the MCP client to read `FOUNDRY_LOCAL_TOKEN` and send `Authorization: Bearer <token>`. The token acts as the owner of every local workspace. Keep it in the client’s environment, out of prompts and browser code. No OAuth sign-in is required. The API port is published only on loopback; tools run on this computer.
 
-Changes use `helix_prepare_foundry_operation` followed by `helix_execute_foundry_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
+Changes use `helix_prepare_foundry_operation` followed by `helix_execute_foundry_operation` after confirmation. The confirmation lasts five minutes, binds the exact operation and payload, and can be consumed once: one that has expired or doesn't match fails with `failed_precondition`, so prepare it again. After a lost response or an already-consumed confirmation, read the current state before retrying: token consumption does not prove the operation finished.
 
 ## Ask over HTTP
 
-Use `POST http://localhost:8081/v1/ontologies/<ontology-id>/ask` with the same bearer, `Content-Type: application/json`, an `Idempotency-Key` of at most 64 bytes, and `{"question":"What is in the data?"}`. The ontology must have a ready or partial current load and an AI provider configured.
+Use `POST http://localhost:8081/v1/ontologies/<ontology-id>/ask` with the same bearer, `Content-Type: application/json`, an `Idempotency-Key` of at most 64 bytes of UTF-8, and `{"question":"What is in the data?"}`. The ontology must have a ready or partial current load and an AI provider configured.
 
 A request waits up to 25 seconds. A terminal question returns 200; a pending question returns 202 and a relative `Location`. GET that location with the same bearer until `done` is true. Inspect `status`, including `cannot_answer`, `failed` and `cancelled`. Reuse the idempotency key after a lost POST response; it returns the original question and load. Disconnecting stops the wait, not the durable question.
 
-Answers and citations use the same compact result as MCP, without query output rows. See [the HTTP contract](../contract/foundry-integration.openapi.json) and [the Python tool example](../examples/ask_tool.py). The hosted API uses the same routes on `https://mcp.helix-db.com`, with an existing service credential granted query-read access to the ontology’s project.
+Answers and citations use the same compact result as MCP, without query output rows. See [the HTTP contract](../contract/foundry-integration.openapi.json) and [the Python tool example](../examples/ask_tool.py). Hosted, only the development stamp serves these routes for now, on `https://mcp.dev.helix-db.com`, with an existing service credential granted query-read access to the ontology’s project; `https://mcp.helix-db.com` doesn't serve them yet.

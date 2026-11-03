@@ -33,7 +33,8 @@ var healthMethods = map[string]bool{
 func foundry(name string) string { return "/helix.foundry.v1.FoundryService/" + name }
 
 // methods are the methods a standalone install serves, with what is checked
-// of each: the directory, and what the Foundry site calls of Foundry's API.
+// of each: the directory, and what the Foundry site and the agents' tools
+// (package integration) call of Foundry's API.
 // The rest need what an install has not, so they are refused before a
 // handler runs (unsupported): plans and checkout, People enrichment's
 // lookups, and event sources' send tokens and batches, whose senders reach a

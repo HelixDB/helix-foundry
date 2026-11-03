@@ -12,7 +12,11 @@
 # 127.0.0.1 addresses.
 
 local:
-  # Only REST listens beyond this namespace: the site calls it with the site
+  # Where the browser reaches the site, its FOUNDRY_ORIGIN: the links agents
+  # are given start here.
+  site_origin: "http://localhost:3000"
+  # Only REST listens beyond this namespace: the site and the owner's agents
+  # (MCP and HTTP Ask, published on the host's loopback) call it with the site
   # token. gRPC and health stay on loopback.
   listen:
     rest: ":8081"

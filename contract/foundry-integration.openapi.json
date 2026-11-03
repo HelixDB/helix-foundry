@@ -7,13 +7,12 @@
   },
   "servers": [
     {
-      "url": "https://mcp.helix-db.com"
+      "url": "https://mcp.dev.helix-db.com",
+      "description": "Hosted development stamp. Production does not serve these routes yet."
     },
     {
-      "url": "https://mcp.dev.helix-db.com"
-    },
-    {
-      "url": "http://localhost:8081"
+      "url": "http://localhost:8081",
+      "description": "A local install. FOUNDRY_MCP_PORT moves the port."
     }
   ],
   "security": [
@@ -39,7 +38,7 @@
             "name": "Idempotency-Key",
             "in": "header",
             "required": true,
-            "description": "Unique value of at most 64 bytes. Reuse with the same question when retrying.",
+            "description": "Unique value of at most 64 bytes of UTF-8. Reuse with the same question when retrying.",
             "schema": {
               "type": "string",
               "minLength": 1,

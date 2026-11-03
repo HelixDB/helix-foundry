@@ -133,7 +133,8 @@ func TestHTTPValidationAndIsolation(t *testing.T) {
 		w := httpCall(h, "POST", "/v1/ontologies/ontology-1/ask", body, "key")
 		assert.Equal(t, 400, w.Code, w.Body.String())
 	}
-	for _, key := range []string{"", strings.Repeat("x", 65)} {
+	// Bytes that aren't UTF-8 can't reach gRPC, and would fail there for good as a 500.
+	for _, key := range []string{"", strings.Repeat("x", 65), "\xff"} {
 		assert.Equal(t, 400, httpCall(h, "POST", "/v1/ontologies/ontology-1/ask", `{"question":"q"}`, key).Code)
 	}
 	assert.Equal(t, 403, httpCall(h, "POST", "/v1/ontologies/ontology-other/ask", `{"question":"q"}`, "key").Code)
@@ -145,6 +146,19 @@ func TestHTTPValidationAndIsolation(t *testing.T) {
 	assert.Equal(t, 0, b.queued)
 	assert.Equal(t, 404, httpCall(h, "GET", "/metrics", "", "").Code)
 	assert.Equal(t, 405, httpCall(h, "DELETE", "/v1/ontologies/ontology-1/ask", "", "").Code)
+}
+
+// HEAD matches the GET route, but reads nothing, so it must not look pending.
+func TestHTTPHeadIsRefused(t *testing.T) {
+	h, b := httpFixture(t, "queued")
+	for _, ontology := range []string{"ontology-1", "ontology-other"} {
+		w := httpCall(h, "HEAD", "/v1/ontologies/"+ontology+"/questions/question-1", "", "")
+		assert.Equal(t, 405, w.Code)
+		assert.Equal(t, "GET", w.Header().Get("Allow"))
+		assert.Empty(t, w.Header().Get("Location"))
+		assert.Empty(t, w.Header().Get("Retry-After"))
+	}
+	assert.Equal(t, 0, b.queued)
 }
 
 func TestHTTPBackendErrors(t *testing.T) {

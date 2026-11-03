@@ -19,6 +19,9 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
       await request.get(`${base}/v1/ontologies/missing/questions/missing`)
     ).status(),
   ).toBe(401);
+  // Published on the host, this listener serves no probes.
+  for (const path of ["/healthz", "/readyz", "/metrics"])
+    expect((await request.get(`${base}${path}`)).status()).toBe(404);
 
   const rpc = async (method: string, params: object) => {
     const response = await request.post(`${base}/mcp`, {
@@ -33,6 +36,10 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
   const tool = async (name: string, args: object) => {
     const result = await rpc("tools/call", { name, arguments: args });
     expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+    // A client that reads only content gets the same data.
+    expect(JSON.parse(result.content.at(-1).text)).toEqual(
+      result.structuredContent,
+    );
     return result.structuredContent;
   };
 
@@ -55,6 +62,14 @@ test("local agents discover, create and read through MCP and reach HTTP Ask", as
   expect(kinds.kinds.some((k: { kind: string }) => k.kind === "events")).toBe(
     false,
   );
+  // connector_link's next step, and the only tool that names a new connector.
+  expect(
+    (
+      await tool("helix_foundry_list_connectors", {
+        workspace_id: workspace.id,
+      })
+    ).connectors,
+  ).toBeInstanceOf(Array);
 
   const operation = {
     operation: "create_ontology",

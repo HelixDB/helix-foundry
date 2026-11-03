@@ -454,8 +454,13 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
       "ANTHROPIC_API_KEY",
       "HELIX_DB_DSN",
       "HELIX_LOCAL__SECRETS_DIR",
+      "HELIX_LOCAL__SITE_ORIGIN",
       "OPENAI_API_KEY",
     ]);
+    // Agents' links go where the site answers: moving one means moving both.
+    expect(environment.HELIX_LOCAL__SITE_ORIGIN).toBe(
+      services.site.environment.FOUNDRY_ORIGIN,
+    );
     expect(environment).toMatchObject({
       // No password: foundry reads it from the directory.
       HELIX_DB_DSN:
@@ -471,6 +476,25 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     ]);
     expect(services.site.depends_on.foundry.condition).toBe("service_healthy");
     expect(services.site.environment.HELIX_WFE_ORIGIN).toBe("http://pod:8081");
+  });
+
+  it("publishes MCP and HTTP Ask on loopback, on FOUNDRY_MCP_PORT when set", () => {
+    const published = (vars: Record<string, string>) =>
+      (
+        composed(vars).services.pod.ports as {
+          host_ip: string;
+          target: number;
+          published: string;
+        }[]
+      ).find((port) => port.target === 8081);
+    expect(published({})).toMatchObject({
+      host_ip: "127.0.0.1",
+      published: "8081",
+    });
+    expect(published({ FOUNDRY_MCP_PORT: "9081" })).toMatchObject({
+      host_ip: "127.0.0.1",
+      published: "9081",
+    });
   });
 });
 

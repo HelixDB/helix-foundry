@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+	"unicode/utf8"
 
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"google.golang.org/grpc/codes"
@@ -31,6 +32,12 @@ func HTTPRequestID(ctx context.Context) string {
 func NewHTTPHandler(resolve ResolveHTTP) http.Handler {
 	mux := http.NewServeMux()
 	serve := func(w http.ResponseWriter, r *http.Request) {
+		// The GET route also matches HEAD, which would read no question and look pending.
+		if r.Method == http.MethodHead {
+			w.Header().Set("Allow", http.MethodGet)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		requestID := id.New()
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
@@ -67,9 +74,10 @@ func NewHTTPHandler(resolve ResolveHTTP) http.Handler {
 				WriteHTTPError(w, status.Error(codes.InvalidArgument, "expected exactly one JSON object"), requestID)
 				return
 			}
+			// gRPC can't marshal a string that isn't UTF-8, and headers may hold any byte above 0x7f.
 			key := r.Header.Get("Idempotency-Key")
-			if key == "" || len(key) > 64 {
-				WriteHTTPError(w, status.Error(codes.InvalidArgument, "Idempotency-Key is required, at most 64 bytes"), requestID)
+			if key == "" || len(key) > 64 || !utf8.ValidString(key) {
+				WriteHTTPError(w, status.Error(codes.InvalidArgument, "Idempotency-Key is required, at most 64 bytes of UTF-8"), requestID)
 				return
 			}
 			out, _, err = service.AskFoundryQuestion(ctx, identity, call, AskFoundryInput{

@@ -20,6 +20,11 @@ import (
 // Confirmations persists local MCP confirmations, separately from hosted migrations.
 type Confirmations struct{ Store *Store }
 
+// errConfirmationMismatch is a confirmation that isn't the one this call needs: FailedPrecondition,
+// as hosted answers, so the agent keeps its message and prepares again. PermissionDenied or
+// NotFound would reach it as a bare not_found, which reads as a wrong ontology or workspace id.
+var errConfirmationMismatch = status.Error(codes.FailedPrecondition, "confirmation does not match; prepare it again with the same operation, target and payload")
+
 func confirmationOwner(ctx context.Context) (string, error) {
 	a, ok := ports.ActorFrom(ctx)
 	if !ok || a.UserID == "" {
@@ -69,14 +74,14 @@ func (c Confirmations) Consume(ctx context.Context, b integration.ConfirmationBi
 	err = tx.QueryRowContext(ctx, `SELECT token_hash, owner_id, operation, target, audience, payload_hash, expires_at, consumed_at
  FROM foundry_local_mcp_confirmations WHERE id = ? FOR UPDATE`, b.ID).Scan(&hash, &boundOwner, &operation, &target, &audience, &payload, &expires, &consumed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return status.Error(codes.NotFound, "confirmation not found")
+		return errConfirmationMismatch
 	}
 	if err != nil {
 		return err
 	}
 	got := sha256.Sum256([]byte(b.Token))
 	if subtle.ConstantTimeCompare([]byte(hash), []byte(hex.EncodeToString(got[:]))) != 1 || boundOwner != owner || operation != b.Operation || target != b.Target || audience != b.Audience || payload != b.PayloadHash {
-		return status.Error(codes.PermissionDenied, "confirmation does not match")
+		return errConfirmationMismatch
 	}
 	if consumed.Valid {
 		return status.Error(codes.AlreadyExists, "confirmation is already consumed; read the operation's state before trying again")

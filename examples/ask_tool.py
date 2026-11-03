@@ -9,20 +9,25 @@ import json
 import os
 import time
 import uuid
-from urllib.error import HTTPError, URLError
+from http.client import HTTPException
+from typing import Optional
+from urllib.error import HTTPError
 from urllib.parse import quote, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 
-def ask_foundry(question: str, *, timeout: float = 120) -> dict:
+def ask_foundry(question: str, *, idempotency_key: Optional[str] = None, timeout: float = 120) -> dict:
     """Return the question and cited answer, or its pending state at the deadline.
 
     A pending response includes poll_url; resume with authenticated GETs. Failed,
     cancelled and cannot_answer are terminal statuses, not reasons to ask again.
+
+    idempotency_key is for the application, not the model: pass the key a TimeoutError
+    named to recover a question whose response never arrived, rather than ask again.
     """
     base = os.environ["FOUNDRY_API_URL"].rstrip("/")
     ontology = quote(os.environ["FOUNDRY_ONTOLOGY_ID"], safe="")
-    key = str(uuid.uuid4())
+    key = idempotency_key or str(uuid.uuid4())
     headers = {
         "Authorization": "Bearer " + os.environ["FOUNDRY_API_TOKEN"],
         "Content-Type": "application/json",
@@ -53,10 +58,13 @@ def ask_foundry(question: str, *, timeout: float = 120) -> dict:
             if error.code not in (500, 502, 503, 504):
                 raise RuntimeError(f"Foundry HTTP {error.code}: {error.read().decode()}") from error
             delay = 1
-        except (URLError, TimeoutError):
+        except (OSError, HTTPException, ValueError):
+            # A lost response can surface at any step: refused or reset connections and
+            # timeouts are OSError (URLError among them), a dropped response or a cut-off
+            # body HTTPException, and a body that parses as nothing ValueError.
             delay = 1
         time.sleep(min(delay, max(0, deadline - time.monotonic())))
     if pending is not None:
         return pending
     # The caller can recover a POST whose response never arrived with this key.
-    raise TimeoutError(f"Foundry deadline exceeded; retry the same question with Idempotency-Key {key}")
+    raise TimeoutError(f"Foundry deadline exceeded; call ask_foundry again with idempotency_key={key!r}")

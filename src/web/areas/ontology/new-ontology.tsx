@@ -86,8 +86,8 @@ import {
 // shell offers (main.tsx): it has no way back to Ontologies, and first asks
 // how to start: the sample company (./try-sample.tsx, its own page), else
 // one section toggling Set up with your agent (the default) and the user's
-// own data (the wizard). A local build has no Helix MCP, so no agent and
-// nothing to toggle: only the user's own data.
+// own data (the wizard). A local build starts on the user's own data, and its
+// agent setup goes through the install's own MCP.
 // A workspace's first ontology of its own (the sample's doesn't count) asks
 // only what to draft from and the goal (firstOntologyWizard): it is named
 // from its sources, goes on a new database, and its first draft is made

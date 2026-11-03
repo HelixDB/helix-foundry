@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/url"
 	"time"
@@ -112,7 +113,16 @@ func (s *Service) Run(ctx context.Context, name string, invoke Invocation) (*mcp
 	if err != nil {
 		return nil, nil, ToolError(err)
 	}
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: untrustedContentNotice}}}, out, nil
+	// The SDK sets structuredContent from out, but adds its JSON to content only when content is
+	// empty. A client that reads only content needs it after the notice, as the spec suggests.
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return nil, nil, ToolError(errCodeInternal)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{
+		&mcp.TextContent{Text: untrustedContentNotice},
+		&mcp.TextContent{Text: string(encoded)},
+	}}, out, nil
 }
 
 type ConfirmationOutput = confirmationOutput

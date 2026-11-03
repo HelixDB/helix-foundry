@@ -27,10 +27,15 @@ func TestConfirmationsBoundDurableAndSingleUse(t *testing.T) {
 	for _, change := range []func(*integration.ConfirmationBinding){func(x *integration.ConfirmationBinding) { x.Token = "wrong" }, func(x *integration.ConfirmationBinding) { x.Target = "ontology:ws/other" }, func(x *integration.ConfirmationBinding) { x.Audience = "elsewhere" }, func(x *integration.ConfirmationBinding) { x.PayloadHash = "other" }, func(x *integration.ConfirmationBinding) { x.Operation = "foundry:other" }} {
 		other := b
 		change(&other)
-		require.Equal(t, codes.PermissionDenied, status.Code(c.Consume(ctx, other)))
+		require.Equal(t, codes.FailedPrecondition, status.Code(c.Consume(ctx, other)))
 	}
+	unknown := b
+	unknown.ID = "no-such-confirmation"
+	require.Equal(t, codes.FailedPrecondition, status.Code(c.Consume(ctx, unknown)))
 	otherOwner := ports.WithActor(context.Background(), ports.Actor{UserID: "another-owner"})
-	require.Equal(t, codes.PermissionDenied, status.Code(c.Consume(otherOwner, b)))
+	mismatch := c.Consume(otherOwner, b)
+	require.Equal(t, codes.FailedPrecondition, status.Code(mismatch))
+	require.Contains(t, status.Convert(mismatch).Message(), "prepare it again")
 	// A new store/adapter models restarting the server; persistence must still enforce replay protection.
 	c = directory.Confirmations{Store: directory.NewStore(testDB)}
 	var successes atomic.Int32
