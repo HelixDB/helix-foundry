@@ -25,11 +25,13 @@ import (
 
 type httpBackend struct {
 	foundryv1.FoundryServiceClient
-	mu           sync.Mutex
-	question     *foundryv1.FoundryQuestion
-	queued       int
-	queuedSignal chan struct{}
-	err          error
+	// panicOnGet crashes the nth GetFoundryQuestion; 0 never does.
+	panicOnGet, gets int
+	mu               sync.Mutex
+	question         *foundryv1.FoundryQuestion
+	queued           int
+	queuedSignal     chan struct{}
+	err              error
 }
 
 func (b *httpBackend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoundryQuestionRequest, _ ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
@@ -53,6 +55,9 @@ func (b *httpBackend) AskFoundryQuestion(_ context.Context, r *foundryv1.AskFoun
 func (b *httpBackend) GetFoundryQuestion(_ context.Context, r *foundryv1.GetFoundryQuestionRequest, _ ...grpc.CallOption) (*foundryv1.FoundryQuestionResponse, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.gets++; b.gets == b.panicOnGet {
+		panic("a bug on the way to the backend")
+	}
 	if r.Id != b.question.Id {
 		return nil, status.Error(codes.NotFound, "question not found")
 	}
@@ -354,6 +359,37 @@ func TestHTTPHangUpDuringTheWaitKeepsTheQuestionID(t *testing.T) {
 			got := o.outcome(t)
 			assert.Equal(t, HTTPClientDisconnected, got.Code)
 			assert.Equal(t, "question-1", got.QuestionID)
+		})
+	}
+}
+
+// A crash during the wait leaves a question running and spending, as a hang-up does, so its ID must
+// reach the host's audit too. net/http recovers the panic and drops the connection, so a host's Done
+// is the only record of it.
+func TestHTTPPanicKeepsTheQuestionID(t *testing.T) {
+	ask := func() *http.Request {
+		return httpObservedRequest(context.Background(), "POST", httpAskPath, `{"question":"q"}`)
+	}
+	get := func() *http.Request { return httpObservedRequest(context.Background(), "GET", httpQuestionPath, "") }
+	for _, tc := range []struct {
+		name       string
+		request    func() *http.Request
+		panicOnGet int
+		question   string
+	}{
+		{name: "the wait after asking", request: ask, panicOnGet: 1, question: "question-1"},
+		{name: "the wait after reading", request: get, panicOnGet: 2, question: "question-1"},
+		{name: "the first read, before any question is known", request: get, panicOnGet: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := httpObservedFixture(t, "running", httpBodyTimeout)
+			o.service.Wait = time.Hour
+			o.backend.panicOnGet = tc.panicOnGet
+			assert.Panics(t, func() { o.handler.ServeHTTP(httptest.NewRecorder(), tc.request()) })
+			got := o.outcome(t)
+			assert.Zero(t, got.Status, "a host tells a panic by this")
+			assert.Empty(t, got.Code)
+			assert.Equal(t, tc.question, got.QuestionID)
 		})
 	}
 }

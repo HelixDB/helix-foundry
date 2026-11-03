@@ -50,11 +50,13 @@ type HTTPCall struct {
 // bearer.
 type HTTPOutcome struct {
 	Tool, RequestID string
-	// Status is the status sent, and Code the stable error code, empty below 400.
+	// Status is the status sent, and Code the stable error code, empty below 400. A Status of 0
+	// means the handler panicked before it answered, with no Code.
 	Status int
 	Code   string
 	// QuestionID is the question the request asked or read. It is set even when the request then
-	// failed: a client that hung up during the wait leaves a question running and spending.
+	// failed or panicked: a client that hung up during the wait leaves a question running and
+	// spending, and so does a crash.
 	QuestionID string
 }
 
@@ -109,9 +111,14 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve Reso
 		WriteHTTPError(w, status.Error(codes.InvalidArgument, "invalid ontology or question id"), requestID)
 		return
 	}
+	call := &Call{}
 	resolved, err := resolve(r, r.PathValue("ontologyId"))
 	if resolved.Done != nil {
-		defer func() { resolved.Done(outcome) }()
+		// A panic skips everything between here and the end, so the ID is read as this runs.
+		defer func() {
+			outcome.QuestionID = call.QuestionID
+			resolved.Done(outcome)
+		}()
 	}
 	if err != nil {
 		outcome.Status, outcome.Code = writeHTTPError(w, err, requestID, client)
@@ -119,7 +126,6 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve Reso
 	}
 	started := time.Now()
 	var out FoundryQuestionOutput
-	call := &Call{}
 	if tool == HTTPAskTool {
 		out, err = askHTTP(w, r, resolved, call, bodyTimeout)
 	} else {
@@ -127,7 +133,6 @@ func serveHTTP(w http.ResponseWriter, r *http.Request, tool string, resolve Reso
 			OntologyInput: OntologyInput{WorkspaceID: resolved.WorkspaceID, OntologyID: r.PathValue("ontologyId")}, QuestionID: r.PathValue("questionId"),
 		})
 	}
-	outcome.QuestionID = call.QuestionID
 	if err != nil {
 		outcome.Status, outcome.Code = writeHTTPError(w, err, requestID, client)
 	} else if out.Done {
