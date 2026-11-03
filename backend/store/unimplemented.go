@@ -800,3 +800,51 @@ func (u Unimplemented) FinishFoundryNotification(context.Context, string, string
 	u.unimplemented("FinishFoundryNotification")
 	return nil
 }
+func (u Unimplemented) ListFoundryHealFindings(context.Context, string) ([]*model.FoundryHealFinding, error) {
+	u.unimplemented("ListFoundryHealFindings")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryHealFinding(context.Context, string, string) (*model.FoundryHealFinding, error) {
+	u.unimplemented("GetFoundryHealFinding")
+	return nil, nil
+}
+func (u Unimplemented) GetLatestFoundryHealRun(context.Context, string) (*model.FoundryHealRun, error) {
+	u.unimplemented("GetLatestFoundryHealRun")
+	return nil, nil
+}
+func (u Unimplemented) GetLatestCompleteFoundryHealRun(context.Context, string) (*model.FoundryHealRun, error) {
+	u.unimplemented("GetLatestCompleteFoundryHealRun")
+	return nil, nil
+}
+func (u Unimplemented) FoundryHealLoadChanged(context.Context, string, string, string) (bool, error) {
+	u.unimplemented("FoundryHealLoadChanged")
+	return false, nil
+}
+func (u Unimplemented) ListFoundryHealDocuments(context.Context, string, string, int) ([]string, error) {
+	u.unimplemented("ListFoundryHealDocuments")
+	return nil, nil
+}
+func (u Unimplemented) DismissFoundryHealFinding(context.Context, string, string, string) error {
+	u.unimplemented("DismissFoundryHealFinding")
+	return nil
+}
+func (u Unimplemented) DueFoundryHealOntologies(context.Context, time.Duration, time.Duration, int) ([]model.FoundryHealDue, error) {
+	u.unimplemented("DueFoundryHealOntologies")
+	return nil, nil
+}
+func (u Unimplemented) StartFoundryHealRun(context.Context, *model.FoundryHealRun, time.Duration) error {
+	u.unimplemented("StartFoundryHealRun")
+	return nil
+}
+func (u Unimplemented) RenewFoundryHealRun(context.Context, string, time.Duration) error {
+	u.unimplemented("RenewFoundryHealRun")
+	return nil
+}
+func (u Unimplemented) FinishFoundryHealRun(context.Context, string, model.FoundryHealRunStatus, int, int) error {
+	u.unimplemented("FinishFoundryHealRun")
+	return nil
+}
+func (u Unimplemented) PublishFoundryHealRun(context.Context, model.FoundryHealPublish) error {
+	u.unimplemented("PublishFoundryHealRun")
+	return nil
+}

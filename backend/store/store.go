@@ -167,6 +167,15 @@ type ReadStore interface {
 	// Foundry model providers: the workspace's setting and its configs
 	GetFoundryAIView(ctx context.Context, workspaceID string) (model.FoundryAIView, error)
 	GetActiveFoundryAIConfig(ctx context.Context, workspaceID string) (*model.FoundryAIConfig, error)
+
+	// Foundry self-healing: an ontology's findings and the audits that
+	// found them (foundry_heal.go)
+	ListFoundryHealFindings(ctx context.Context, ontologyID string) ([]*model.FoundryHealFinding, error)
+	GetFoundryHealFinding(ctx context.Context, ontologyID, fingerprint string) (*model.FoundryHealFinding, error)
+	GetLatestFoundryHealRun(ctx context.Context, ontologyID string) (*model.FoundryHealRun, error)
+	GetLatestCompleteFoundryHealRun(ctx context.Context, ontologyID string) (*model.FoundryHealRun, error)
+	FoundryHealLoadChanged(ctx context.Context, runID, ontologyID, loadID string) (bool, error)
+	ListFoundryHealDocuments(ctx context.Context, loadID, after string, limit int) ([]string, error)
 }
 
 // Store is ReadStore plus every write.
@@ -285,6 +294,15 @@ type Store interface {
 	DiscoverFoundrySampleFollowUps(ctx context.Context, from, to time.Time, limit int, newID func() string) (int, error)
 	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
 	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
+
+	// Foundry self-healing: a person's dismissals, and the
+	// foundry-heal-worker's runs (foundry_heal.go)
+	DismissFoundryHealFinding(ctx context.Context, ontologyID, fingerprint, userID string) error
+	DueFoundryHealOntologies(ctx context.Context, every, retryAfter time.Duration, limit int) ([]model.FoundryHealDue, error)
+	StartFoundryHealRun(ctx context.Context, run *model.FoundryHealRun, lease time.Duration) error
+	RenewFoundryHealRun(ctx context.Context, id string, lease time.Duration) error
+	FinishFoundryHealRun(ctx context.Context, id string, status model.FoundryHealRunStatus, pages, cuts int) error
+	PublishFoundryHealRun(ctx context.Context, p model.FoundryHealPublish) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

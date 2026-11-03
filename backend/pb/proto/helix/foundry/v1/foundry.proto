@@ -213,6 +213,19 @@ service FoundryService {
   rpc DeleteFoundryReviewDecision(DeleteFoundryReviewDecisionRequest) returns (DeleteFoundryReviewDecisionResponse) {
     option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-decisions/{id}"};
   }
+  // Self-healing suggestions: what audits of the ontology's current load
+  // found its ontology and mappings lack, the top open ones by support.
+  rpc ListFoundryHealFindings(ListFoundryHealFindingsRequest) returns (ListFoundryHealFindingsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/heal-findings" };
+  }
+  // Hides an open finding until audits find it with twice the support it
+  // has now, or under a spelling it doesn't hold.
+  rpc DismissFoundryHealFinding(DismissFoundryHealFindingRequest) returns (FoundryHealFindingResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/heal-findings/{fingerprint}:dismiss"
+      body: "*"
+    };
+  }
   // An ontology's documents, read only: what its current load holds and
   // what its reading version's scope holds, each with its extraction there.
   rpc ListFoundryOntologyDocuments(ListFoundryOntologyDocumentsRequest) returns (ListFoundryDocumentsResponse) {
@@ -1087,3 +1100,35 @@ message DeleteFoundryReviewDecisionRequest {
   string id = 3;
 }
 message DeleteFoundryReviewDecisionResponse {}
+
+// ListFoundryHealFindingsRequest lists an ontology's self-healing findings:
+// up to 20 open ones, by support, of those backed by two documents or more
+// and every row finding. NOT_FOUND for an ontology of another workspace or
+// one deleted.
+message ListFoundryHealFindingsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+}
+message ListFoundryHealFindingsResponse {
+  repeated FoundryHealFinding findings = 1;
+  // The ontology's latest audit, if it has had one.
+  optional FoundryHealRun last_run = 2;
+  // Its newest complete audit, of whichever load: whether the current load
+  // was audited whole, though a later run of it is running or failed.
+  optional FoundryHealRun last_complete_run = 4;
+  // Whether this deployment audits loads (foundry.heal.enabled). Off, no
+  // audit runs: findings and last_run stay as they were.
+  bool enabled = 3;
+}
+// DismissFoundryHealFindingRequest dismisses an open finding by its
+// fingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has
+// no finding of; FAILED_PRECONDITION for one superseded. One already
+// dismissed is returned as it is.
+message DismissFoundryHealFindingRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string fingerprint  = 3;
+}
+message FoundryHealFindingResponse {
+  FoundryHealFinding finding = 1;
+}
