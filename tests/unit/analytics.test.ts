@@ -147,30 +147,73 @@ describe("the signed-in user", () => {
     ]);
     // Events carry the email too, for the team's dashboard.
     expect(sdk.setGlobalProperties.mock.calls).toEqual([
-      [{ user_email: "ada@example.com" }],
+      [{ user_email: "ada@example.com", workspace_owner: undefined }],
     ]);
     await a.signedOut();
     expect(sdk.clearProfile).toHaveBeenCalledOnce();
     expect(sdk.setGlobalProperties).toHaveBeenLastCalledWith({
       workspace_id: undefined,
+      workspace_slug: undefined,
       workspace_name: undefined,
+      workspace_role: undefined,
+      workspace_owner: undefined,
       user_email: undefined,
     });
   });
 
-  it("tags every event with the workspace open, and drops it at sign-out", async () => {
+  it("tags every event with the workspace open, its owner while it's them, and drops both at sign-out", async () => {
     const a = await load();
     vi.stubGlobal("navigator", { sendBeacon: () => true });
-    a.workspaceOpened("ws_1", "Acme");
-    a.workspaceOpened("ws_2", "Globex");
+    const acme = {
+      id: "ws_1",
+      slug: "acme",
+      name: "Acme",
+      role: "owner",
+    } as const;
+    const globex = {
+      id: "ws_2",
+      slug: "globex",
+      name: "Globex",
+      role: "member",
+    } as const;
+    // The workspace may open before the user is identified (child effects
+    // run first): the owner follows whichever comes last.
+    a.workspaceOpened(acme);
+    a.identifyUser("user_1", { email: "ada@example.com" });
+    a.workspaceOpened(globex);
     expect(sdk.setGlobalProperties.mock.calls).toEqual([
-      [{ workspace_id: "ws_1", workspace_name: "Acme" }],
-      [{ workspace_id: "ws_2", workspace_name: "Globex" }],
+      [
+        {
+          workspace_id: "ws_1",
+          workspace_slug: "acme",
+          workspace_name: "Acme",
+          workspace_role: "owner",
+          workspace_owner: undefined,
+        },
+      ],
+      [
+        {
+          user_email: "ada@example.com",
+          workspace_owner: "acme ada@example.com",
+        },
+      ],
+      [
+        {
+          workspace_id: "ws_2",
+          workspace_slug: "globex",
+          workspace_name: "Globex",
+          workspace_role: "member",
+          workspace_owner: undefined,
+        },
+      ],
     ]);
     await a.signedOut();
     expect(sdk.setGlobalProperties).toHaveBeenLastCalledWith({
       workspace_id: undefined,
+      workspace_slug: undefined,
       workspace_name: undefined,
+      workspace_role: undefined,
+      workspace_owner: undefined,
       user_email: undefined,
     });
   });
@@ -178,7 +221,12 @@ describe("the signed-in user", () => {
   it("is neither identified nor forgotten without a client id", async () => {
     const a = await load("");
     a.identifyUser("user_1");
-    a.workspaceOpened("ws_1", "Acme");
+    a.workspaceOpened({
+      id: "ws_1",
+      slug: "acme",
+      name: "Acme",
+      role: "owner",
+    });
     await a.signedOut();
     expect(sdk.identify).not.toHaveBeenCalled();
     expect(sdk.clearProfile).not.toHaveBeenCalled();
@@ -246,7 +294,12 @@ describe("trackBeforeLeaving", () => {
     const beacons = beacon();
     sdk.profile = "user_1";
     a.identifyUser("user_1", { email: "ada@example.com" });
-    a.workspaceOpened("ws_1", "Acme");
+    a.workspaceOpened({
+      id: "ws_1",
+      slug: "acme",
+      name: "Acme",
+      role: "owner",
+    });
     await a.trackBeforeLeaving("upgrade_clicked", {
       tier: "pro",
       from: "free",
@@ -257,7 +310,10 @@ describe("trackBeforeLeaving", () => {
       properties: {
         user_email: "ada@example.com",
         workspace_id: "ws_1",
+        workspace_slug: "acme",
         workspace_name: "Acme",
+        workspace_role: "owner",
+        workspace_owner: "acme ada@example.com",
         tier: "pro",
         from: "free",
       },

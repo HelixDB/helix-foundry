@@ -22,6 +22,7 @@ import type {
 import type { WizardStepId } from "./areas/ontology/model";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
+import type { ShellWorkspace, WorkspaceRole } from "./ui";
 
 // The hosted site's product analytics, in Databuddy (./telemetry.tsx loads
 // its tracker). next.config.ts sets the stamp's client id only in a build
@@ -335,23 +336,39 @@ export function identifyUser(
  */
 let globals: {
   workspace_id?: string;
+  workspace_slug?: string;
   workspace_name?: string;
+  workspace_role?: WorkspaceRole;
+  // "<slug> <email>" while the open workspace's owner is the one signed in:
+  // Databuddy's queries can't pair two properties, so the team's dashboard
+  // reads each workspace's owner from this one.
+  workspace_owner?: string;
   user_email?: string;
 } = {};
-const setGlobals = (more: typeof globals) => {
-  globals = { ...globals, ...more };
-  setGlobalProperties(more);
+const setGlobals = (more: Omit<typeof globals, "workspace_owner">) => {
+  const next = { ...globals, ...more };
+  next.workspace_owner =
+    next.workspace_role === "owner" && next.workspace_slug && next.user_email
+      ? `${next.workspace_slug} ${next.user_email}`
+      : undefined;
+  globals = next;
+  setGlobalProperties({ ...more, workspace_owner: next.workspace_owner });
 };
 
 /**
  * The workspace open (and again on a switch): every event and page view
- * from here on carries its id and name (the tracker's global properties),
- * so each is the workspace's, and per-account retention counts workspaces
- * (`workspace_id`).
+ * from here on carries its id, slug, name and the user's role in it (the
+ * tracker's global properties), so each is the workspace's, and
+ * per-account retention counts workspaces (`workspace_id`).
  */
-export function workspaceOpened(id: string, name: string) {
+export function workspaceOpened({ id, slug, name, role }: ShellWorkspace) {
   if (!DATABUDDY_CLIENT_ID) return;
-  setGlobals({ workspace_id: id, workspace_name: name });
+  setGlobals({
+    workspace_id: id,
+    workspace_slug: slug,
+    workspace_name: name,
+    workspace_role: role,
+  });
 }
 
 /** Sign-out, before the page leaves: reports it as the user, then forgets them and their workspace. */
@@ -362,7 +379,10 @@ export async function signedOut(): Promise<void> {
   globals = {};
   setGlobalProperties({
     workspace_id: undefined,
+    workspace_slug: undefined,
     workspace_name: undefined,
+    workspace_role: undefined,
+    workspace_owner: undefined,
     user_email: undefined,
   });
 }
