@@ -162,13 +162,13 @@ func TestGrantsPart(t *testing.T) {
 	}
 	part := access.NewGrants([]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("general")}).Part(holdings)
 	want := access.Part{
-		Tables: []access.TableRef{stripe}, Files: []string{"f1"}, Documents: []string{"d1", "d3"}, Sets: []access.SetRef{general},
+		Tables: []access.TableRef{stripe}, Files: []string{"f1"}, Documents: []string{"d1", "d3"}, Sets: []access.SetRef{general}, DecisionSets: []access.SetRef{general},
 		Withheld: []access.PropRef{{Type: "A", Prop: "other"}, {Type: "B", Prop: "unrecorded"}},
 	}
 	if fmt.Sprintf("%+v", part) != fmt.Sprintf("%+v", want) {
 		t.Fatalf("%+v, want %+v", part, want)
 	}
-	if got := part.Inputs(); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", access.Inputs{Tables: []access.TableRef{stripe}, Sets: []access.SetRef{general}}) {
+	if got := part.Inputs(); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", access.Inputs{Tables: []access.TableRef{stripe}, Sets: []access.SetRef{general}, DecisionSets: []access.SetRef{general}}) {
 		t.Fatalf("%+v", got)
 	}
 	all := access.NewGrants([]access.Target{access.ConnectorTarget("stripe"), access.DocumentSetTarget("general"), access.DocumentSetTarget("hr"), access.EnrichmentTarget()}).Part(holdings)

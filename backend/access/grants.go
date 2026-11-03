@@ -236,6 +236,9 @@ type Part struct {
 	AllDocuments bool
 	Documents    []string
 	Sets         []SetRef
+	// DecisionSets are the sets of the documents the decisions it reads came
+	// from: its answers carry those values, so grants must keep covering them.
+	DecisionSets []SetRef
 	Enrichment   bool
 	// Withheld are the properties decided from documents it doesn't hold.
 	Withheld []PropRef
@@ -272,11 +275,17 @@ func (g Grants) Part(h Holdings) Part {
 		}
 	}
 	for _, d := range h.Decisions {
-		if !d.Recorded || !g.Covers(Inputs{Sets: d.Sets}) {
-			prop := PropRef{Type: d.Type, Prop: d.Prop}
-			if !slices.Contains(out.Withheld, prop) {
-				out.Withheld = append(out.Withheld, prop)
+		if d.Recorded && g.Covers(Inputs{Sets: d.Sets}) {
+			for _, s := range d.Sets {
+				if !slices.Contains(out.DecisionSets, s) {
+					out.DecisionSets = append(out.DecisionSets, s)
+				}
 			}
+			continue
+		}
+		prop := PropRef{Type: d.Type, Prop: d.Prop}
+		if !slices.Contains(out.Withheld, prop) {
+			out.Withheld = append(out.Withheld, prop)
 		}
 	}
 	return out
@@ -298,7 +307,7 @@ func (p Part) Holds(before Part) bool {
 
 // Inputs is what p reads, for telling later whether grants still hold it.
 func (p Part) Inputs() Inputs {
-	return Inputs{Tables: p.Tables, Sets: p.Sets, Enrichment: p.Enrichment}
+	return Inputs{Tables: p.Tables, Sets: p.Sets, DecisionSets: p.DecisionSets, Enrichment: p.Enrichment}
 }
 
 // Union is what in and other hold between them.

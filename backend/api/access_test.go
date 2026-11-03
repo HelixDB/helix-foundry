@@ -970,9 +970,9 @@ func TestPreviewFoundryAccessChange(t *testing.T) {
 		losses []string
 	}{
 		"a version reading a table the agent lacks": {&foundryv1.FoundryAccessChange{Change: &foundryv1.FoundryAccessChange_LoadVersion_{
-			LoadVersion: &foundryv1.FoundryAccessChange_LoadVersion{OntologyId: "ont-1", VersionId: "ver-2"}}}, []string{"cred-1 ont-1"}},
+			LoadVersion: &foundryv1.FoundryAccessChange_LoadVersion{OntologyId: "ont-1", VersionId: "ver-2"}}}, []string{"cred-1 ont-1", "user-9 ont-1"}},
 		"a version that enriches people": {&foundryv1.FoundryAccessChange{Change: &foundryv1.FoundryAccessChange_LoadVersion_{
-			LoadVersion: &foundryv1.FoundryAccessChange_LoadVersion{OntologyId: "ont-1", VersionId: "ver-1b"}}}, []string{"cred-1 ont-1"}},
+			LoadVersion: &foundryv1.FoundryAccessChange_LoadVersion{OntologyId: "ont-1", VersionId: "ver-1b"}}}, []string{"cred-1 ont-1", "user-9 ont-1"}},
 		"deleting the connector the agent holds": {&foundryv1.FoundryAccessChange{Change: &foundryv1.FoundryAccessChange_DeleteConnector{
 			DeleteConnector: "conn-1"}}, []string{"cred-1 ont-1"}},
 		"moving a document of Billing's into a set it lacks": {&foundryv1.FoundryAccessChange{Change: &foundryv1.FoundryAccessChange_MoveDocument_{
@@ -997,6 +997,24 @@ func TestPreviewFoundryAccessChange(t *testing.T) {
 		if _, err := preview(change); err == nil {
 			t.Errorf("%s: no error", name)
 		}
+	}
+	// A partial reader left with nothing is a loss that keeps no part; one left with some isn't.
+	store.grants = append(store.grants, foundrymodel.FoundryAccessGrant{ID: "g5", WorkspaceID: "ws-1",
+		Principal: access.Principal{Kind: access.PrincipalUser, ID: "user-part"}, Target: access.ConnectorTarget("conn-1")})
+	lost, err := s.PreviewFoundryAccessChange(ctx, &foundryv1.PreviewFoundryAccessChangeRequest{WorkspaceId: "ws-1",
+		Change: &foundryv1.FoundryAccessChange{Change: &foundryv1.FoundryAccessChange_DeleteConnector{DeleteConnector: "conn-1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := map[string]bool{}
+	for _, l := range lost.GetLosses() {
+		parts[l.GetPrincipal().GetId()] = l.GetKeepsPart()
+	}
+	if keeps, listed := parts["user-part"]; !listed || keeps {
+		t.Fatalf("a partial reader left with nothing: %v", parts)
+	}
+	if _, listed := parts["user-9"]; listed {
+		t.Fatalf("a partial reader who keeps its part: %v", parts)
 	}
 	store.grants = nil
 	if got, err := preview(&foundryv1.FoundryAccessChange{}); err != nil || got != nil {

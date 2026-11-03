@@ -516,9 +516,11 @@ func (s *Service) PreviewFoundryAccessChange(ctx context.Context, req *foundryv1
 	for _, ontologyID := range slices.Sorted(maps.Keys(after)) {
 		was, ok := before[ontologyID]
 		for _, p := range principals {
-			if ok && access.NewGrants(held[p]).Covers(was) && !access.NewGrants(heldAfter[p]).Covers(after[ontologyID]) {
+			// Whoever read it whole and no longer would, and whoever read part of it and would read none.
+			then, next, now := access.NewGrants(held[p]), access.NewGrants(heldAfter[p]), after[ontologyID]
+			if ok && (then.Covers(was) && !next.Covers(now) || then.Reaches(was) && !next.Reaches(now)) {
 				resp.Losses = append(resp.Losses, &foundryv1.FoundryAccessLoss{Principal: principalToProto(p), OntologyId: ontologyID,
-					KeepsPart: access.NewGrants(heldAfter[p]).Reaches(after[ontologyID])})
+					KeepsPart: next.Reaches(now)})
 			}
 		}
 	}
