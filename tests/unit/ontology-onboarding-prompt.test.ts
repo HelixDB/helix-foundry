@@ -831,6 +831,9 @@ describe("local onboarding through MCP", () => {
   });
   it("says what the local tools answer and where a moved MCP is", () => {
     expect(text).toContain("FOUNDRY_MCP_PORT");
+    expect(text).toContain(
+      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
+    );
     expect(text).toContain("helix_foundry_list_connectors");
     expect(text).toContain(
       "fails with failed_precondition: prepare it again with the same operation, target and payload",
@@ -847,13 +850,20 @@ describe("the landing prompt's Run it on my computer", () => {
   const section = text.slice(text.indexOf("## Run it on my computer"));
   it("takes the local MCP only where the release serves it", () => {
     // The pinned images have none until a release moves them.
+    // Asked inside the container, so an image without one never shows its
+    // probes on the host.
     expect(section).toContain(
-      "curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/mcp",
+      "docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp",
     );
-    expect(section).toContain("If it does: connect to it");
+    expect(section).toContain("If it does: publish it");
+    expect(section).toContain(
+      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
+    );
+    expect(section).toContain("connect to it");
     expect(section).toContain("If not: I do the setup in Foundry’s pages");
   });
-  it("says what to do when the MCP's port is taken", () => {
+  it("says what to do when the MCP's port is taken, which only it needs", () => {
     expect(section).toContain("FOUNDRY_MCP_PORT");
+    expect(section).toContain("ports 3000 and 8333 are free");
   });
 });

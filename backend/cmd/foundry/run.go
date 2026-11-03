@@ -230,9 +230,9 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		Name: "foundry", Logger: logger.With("service", "foundry"), Health: probes,
 		GRPC: endpoint.GRPC{Listen: cfg.Local.Listen.GRPC, MaxRecvMsgMB: 16}, HTTP: endpoint.HTTP{Listen: cfg.Local.Listen.REST},
 		Interceptor: auth, BuildGateway: true,
-		// REST is published on the host for agents; the probes stay on the health
-		// listener (serve), which isn't.
-		NoProbes: true,
+		// local/compose.mcp.yaml publishes REST on the host for agents; the probes
+		// stay on the health listener (serve), which isn't.
+		NoProbes: true, HTTPMiddleware: local.GuardListener,
 	})
 	if err != nil {
 		_ = foundrySvc.Close()

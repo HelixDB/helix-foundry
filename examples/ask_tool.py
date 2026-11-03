@@ -55,7 +55,7 @@ def ask_foundry(question: str, *, idempotency_key: Optional[str] = None, timeout
                 url, payload = location, None
                 delay = min(5, max(1, int(response.headers.get("Retry-After", "1"))))
         except HTTPError as error:
-            if error.code not in (500, 502, 503, 504):
+            if error.code not in (408, 500, 502, 503, 504):
                 raise RuntimeError(f"Foundry HTTP {error.code}: {error.read().decode()}") from error
             delay = 1
         except (OSError, HTTPException, ValueError):

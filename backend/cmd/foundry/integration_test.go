@@ -46,6 +46,9 @@ func localMCPCall(t *testing.T, base, method string, params any) (map[string]any
 	var text map[string]any
 	blocks := envelope.Result["content"].([]any)
 	require.NoError(t, json.Unmarshal([]byte(blocks[len(blocks)-1].(map[string]any)["text"].(string)), &text), string(raw))
+	// Every tool says what it returns is untrusted, the install's own discovery tools too.
+	require.Len(t, blocks, 2, string(raw))
+	require.Contains(t, blocks[0].(map[string]any)["text"], "untrusted data")
 	require.Equal(t, result, text)
 	return result, false
 }
@@ -79,7 +82,7 @@ func TestFrontAgentIntegration(t *testing.T) {
 	// No tool sends an agent to what this install refuses.
 	described, err := json.Marshal(listed["tools"])
 	require.NoError(t, err)
-	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces"} {
+	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces", "Helix subscription", "shared cluster"} {
 		assert.NotContains(t, string(described), word)
 	}
 	tool := func(name string, args map[string]any) (map[string]any, bool) {
@@ -159,14 +162,22 @@ func TestFrontAgentIntegration(t *testing.T) {
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Less(t, resp.StatusCode, 500)
-	// The new interfaces reject DNS-rebinding hosts even with a valid token.
-	req, err = http.NewRequest("GET", rest+"/mcp", nil)
-	require.NoError(t, err)
-	req.Host = "attacker.example"
-	req.Header.Set("Authorization", "Bearer "+siteToken)
-	resp, err = http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, 403, resp.StatusCode)
+	assert.Equal(t, 400, resp.StatusCode)
+	// Every route of the published listener rejects a DNS-rebinding host, even with a valid
+	// token, and takes the name the site calls it by.
+	host := func(path, name string) int {
+		req, err := http.NewRequest("GET", rest+path, nil)
+		require.NoError(t, err)
+		req.Host = name
+		req.Header.Set("Authorization", "Bearer "+siteToken)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, path := range []string{"/mcp", "/v1/whoami", "/v1/ontologies/unknown/questions/unknown"} {
+		assert.Equal(t, 403, host(path, "attacker.example"), path)
+	}
+	assert.Equal(t, 200, host("/v1/whoami", "pod:8081"))
+	assert.Equal(t, 200, host("/v1/whoami", "localhost:8081"))
 }

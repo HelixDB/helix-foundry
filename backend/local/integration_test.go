@@ -2,13 +2,18 @@ package local
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
+	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/integration"
 	"github.com/helixdb/helix-foundry/backend/local/directory"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
@@ -97,4 +102,84 @@ func TestAuthorizeToolChecksEachDistinctCheckOnce(t *testing.T) {
 	err = authorize(ctx, read, integration.QueryRead, "ListConnectors", "ListFoundryEventBatches")
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	assert.Contains(t, status.Convert(err).Message(), "ListFoundryEventBatches")
+}
+
+func TestGuardListenerAnswersOnlyThisInstallsHosts(t *testing.T) {
+	served := 0
+	guard := GuardListener(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served++ }))
+	for host, allowed := range map[string]bool{
+		"localhost": true, "localhost:8081": true, "127.0.0.1": true, "127.0.0.1:8081": true, "[::1]": true, "[::1]:8081": true,
+		// The site's name for this listener on Docker's network.
+		"pod:8081": true, "foundry:8081": true,
+		"attacker.example": false, "attacker.example:8081": false, "localhost.attacker.example": false, "127.0.0.1.nip.io:8081": false,
+		"192.168.1.20:8081": false, "[fe80::1]:8081": false, "": false,
+	} {
+		t.Run(host, func(t *testing.T) {
+			served = 0
+			r := httptest.NewRequest("GET", "/v1/whoami", nil)
+			r.Host = host
+			w := httptest.NewRecorder()
+			guard.ServeHTTP(w, r)
+			if allowed {
+				assert.Equal(t, 1, served)
+				return
+			}
+			assert.Zero(t, served)
+			assertRefusal(t, w, http.StatusForbidden, "permission_denied")
+			assert.Contains(t, w.Body.String(), "invalid host")
+		})
+	}
+}
+
+// assertRefusal checks a refusal is the contract's error, with the request ID it gives in its header.
+func assertRefusal(t *testing.T, w *httptest.ResponseRecorder, wantStatus int, wantCode string) {
+	t.Helper()
+	assert.Equal(t, wantStatus, w.Code, w.Body.String())
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+	var body struct {
+		Error struct {
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			RequestID string `json:"request_id"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+	assert.Equal(t, wantCode, body.Error.Code)
+	assert.NotEmpty(t, body.Error.Message)
+	assert.NotEmpty(t, body.Error.RequestID)
+	assert.Equal(t, body.Error.RequestID, w.Header().Get("X-Request-ID"))
+}
+
+// Every refusal in front of the tools and HTTP Ask is the contract's error. No directory or
+// connection stands behind this handler, so a malformed id can only be refused before a lookup.
+func TestIntegrationHandlerRefusalsAreTheContractsError(t *testing.T) {
+	token := strings.Repeat("t", MinSiteToken)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	owner := &directory.User{ID: "owner"}
+	auth, err := NewAuthenticator(token, &fakeDirectory{owner: owner}, fakeOntologies{}, logger)
+	require.NoError(t, err)
+	handler := IntegrationHandler(auth, nil, nil, config.DocumentsConfig{}, "http://localhost:3000", logger)
+	call := func(method, path, bearer string, headers map[string]string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, nil)
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		for key, value := range headers {
+			r.Header.Set(key, value)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+
+	w := call("GET", "/v1/ontologies/ontology-1/questions/question-1", "wrong", nil)
+	assertRefusal(t, w, http.StatusUnauthorized, "unauthenticated")
+	assert.Equal(t, "Bearer", w.Header().Get("WWW-Authenticate"))
+	assertRefusal(t, call("POST", "/mcp", "", nil), http.StatusUnauthorized, "unauthenticated")
+
+	w = call("POST", "/v1/ontologies/ontology-1/ask", token, map[string]string{"Sec-Fetch-Site": "cross-site"})
+	assertRefusal(t, w, http.StatusForbidden, "permission_denied")
+	assert.Contains(t, w.Body.String(), "cross-origin")
+
+	assertRefusal(t, call("GET", "/v1/ontologies/bad!id/questions/question-1", token, nil), http.StatusBadRequest, "invalid_arguments")
 }

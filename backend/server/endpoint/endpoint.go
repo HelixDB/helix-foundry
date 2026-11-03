@@ -69,6 +69,9 @@ type Options struct {
 	// off the HTTP listener: for one published to callers those aren't for, with
 	// the probes served on a listener of their own.
 	NoProbes bool
+	// HTTPMiddleware, when set, wraps every route of the HTTP listener, for a check
+	// of a listener published to callers beyond the service's own.
+	HTTPMiddleware func(http.Handler) http.Handler
 }
 
 // Endpoint owns the gRPC + HTTP servers for one service. Callers
@@ -181,8 +184,12 @@ func New(opts Options) (*Endpoint, error) {
 		return nil, fmt.Errorf("endpoint %s: http listen %s: %w", opts.Name, opts.HTTP.Listen, err)
 	}
 	ep.httpLn = httpLn
+	var handler http.Handler = httpMux
+	if opts.HTTPMiddleware != nil {
+		handler = opts.HTTPMiddleware(handler)
+	}
 	ep.httpSrv = &http.Server{
-		Handler:           httpMux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

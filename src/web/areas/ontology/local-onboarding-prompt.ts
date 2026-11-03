@@ -16,7 +16,7 @@ export function localOnboardingPrompt(input: OnboardingPromptInput): string {
   return [
     "# Set up my local Foundry with me",
     "",
-    `My Foundry runs at ${input.origin}. Connect to its MCP at ${input.mcpUrl}. If local/.env sets FOUNDRY_MCP_PORT, use that port instead.`,
+    `My Foundry runs at ${input.origin}. Connect to its MCP at ${input.mcpUrl}. If local/.env sets FOUNDRY_MCP_PORT, use that port instead. If nothing answers there, it isn't published yet: in the checkout's local/ directory, run docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait, which restarts Foundry's containers and keeps its data (if the port is taken, set FOUNDRY_MCP_PORT in local/.env to a free port first).`,
     "Configure the MCP client's Authorization header from the FOUNDRY_LOCAL_TOKEN environment variable as Bearer <token>. local/README.md explains how to read this install's existing owner token into the environment. Never print the token, put it in this conversation, or copy it into the prompt. This local MCP acts as the install's owner and needs no sign-in.",
     `Call helix_list_workspaces and select ${known ? `“${known.workspace.name}” (${workspace})` : "my workspace"}.`,
     ...(known?.ontology

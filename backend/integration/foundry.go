@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	protoschemas "github.com/helixdb/helix-foundry/backend/pb/proto"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 )
@@ -63,6 +65,9 @@ const (
 	// the get tools asked to wait for a generation, load or sync, from the call's start: well
 	// inside the clients' tool-call timeouts.
 	defaultFoundryWait = 25 * time.Second
+	// waitDeadlineMargin ends a wait this long before a deadline the caller's context has, leaving
+	// time to answer with what the wait last read.
+	waitDeadlineMargin = 2 * time.Second
 	// maxFoundryDefinitionBytes is the largest definition get_version returns. The backend
 	// keeps up to 3 MiB, which would crowd out an agent's whole context.
 	maxFoundryDefinitionBytes = 256 << 10
@@ -271,7 +276,8 @@ type FoundryVersionOutput struct {
 	// (get_version, get_ontology's current_version, set_current_version's result): a listed
 	// version has none whether it would load or not.
 	LoadRefusal string `json:"load_refusal,omitempty"`
-	// See gatewayQueryOutput.Response: the description keeps the schema an object.
+	// The description keeps this schema an object: an any's schema without one marshals as true,
+	// which some clients refuse.
 	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names."`
 	// definitionBytes is the size of Definition encoded, for get_version's cap.
 	definitionBytes int
@@ -361,7 +367,7 @@ type FoundryGenerationOutput struct {
 type FoundryRevisionOutput struct {
 	ParentVersionID string `json:"parent_version_id"`
 	DryRun          bool   `json:"dry_run"`
-	// See gatewayQueryOutput.Response: the description keeps the schema an object.
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
 	Result any `json:"result,omitempty" jsonschema:"Untrusted engine result once the revision ended: its status, findings and cards. Only helix_foundry_get_generation returns it."`
 	// ResultWithheld replaces the result for a caller who can't query the ontology's database:
 	// the result measures its load.
@@ -453,7 +459,7 @@ type ListFoundryQuestionsOutput struct {
 
 type FoundryQuestionEventOutput struct {
 	Seq int32 `json:"seq"`
-	// See gatewayQueryOutput.Response: the description keeps the schema an object.
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
 	Event     any    `json:"event" jsonschema:"Untrusted agent event: started, tool_call, tool_result or finished."`
 	CreatedAt string `json:"created_at"`
 }
@@ -599,7 +605,7 @@ type FoundryReadGuideOutput struct {
 	ReadKinds []string `json:"read_kinds"`
 	MaxReads  int      `json:"max_reads"`
 	Notes     string   `json:"notes"`
-	// See gatewayQueryOutput.Response: the description keeps the schema an object.
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
 	Schema any `json:"schema" jsonschema:"JSON Schema of one read: ReadItem and the definitions it uses."`
 }
 
@@ -607,8 +613,8 @@ type ReadFoundryGraphOutput struct {
 	ContentTrust string `json:"content_trust"`
 	OntologyID   string `json:"ontology_id"`
 	LoadID       string `json:"load_id"`
-	// See gatewayQueryOutput.Response: the description keeps the schema an object.
-	Result any `json:"result" jsonschema:"Untrusted read result: one entry per read, in order."`
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
+	Result any `json:"result" jsonschema:"Untrusted read result: one entry per read, in order. An integer past 2^53 comes as a string of its digits, which JSON numbers would round."`
 }
 
 type FoundryQuestionOutput struct {
@@ -622,8 +628,8 @@ type FoundryQuestionOutput struct {
 	// it will not change, otherwise call helix_foundry_get_question again.
 	Status string `json:"status"`
 	Done   bool   `json:"done"`
-	// See gatewayQueryOutput.Response: the description keeps the schema an object.
-	Result     any    `json:"result,omitempty" jsonschema:"Untrusted answer: the ontology agent's AskResult, set once answered or cannot_answer. Its queries come without their outputs: to see the rows one of the answer's visuals shows, read its query (queries[].query) again with helix_foundry_read_graph, as a query read on the question's load_id."`
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
+	Result     any    `json:"result,omitempty" jsonschema:"Untrusted answer: the ontology agent's AskResult, set once answered or cannot_answer. An integer past 2^53 comes as a string of its digits, which JSON numbers would round. Its queries come without their outputs: to see the rows one of the answer's visuals shows, read its query (queries[].query) again with helix_foundry_read_graph, as a query read on the question's load_id."`
 	Error      string `json:"error,omitempty"`
 	Attempts   int32  `json:"attempts"`
 	USDMicros  int64  `json:"usd_micros"`
@@ -727,7 +733,10 @@ func addFoundryTool[In, Out any](
 	if !s.Events {
 		t.OutputSchema = withoutEventSources(schemaFor[Out]())
 	}
-	mcp.AddTool(server, t, func(ctx context.Context, _ *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
+	mcp.AddTool(server, t, func(ctx context.Context, req *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
+		// The SDK checked the arguments and read them through float64s, which round a large integer
+		// (in a read's filter, say). Read them again, each number as written.
+		_ = decodeExact(req.Params.Arguments, &input)
 		if in, ok := any(&input).(KeyWorkspaceInput); ok && identity.ServiceKey && *in.Workspace() == "" {
 			*in.Workspace() = identity.WorkspaceID
 		}
@@ -830,29 +839,42 @@ func (s *Service) GetFoundryOntology(
 		"ListOntologyGenerations", "ListFoundryDocumentSets", "ListConnectors"); err != nil {
 		return GetFoundryOntologyOutput{}, 0, err
 	}
+	// The ontology first, so one that isn't there costs one read. The rest don't depend on each
+	// other, and an agent calls this repeatedly as it sets up, so they run at once.
 	ontology, err := s.Foundry.GetFoundryOntology(ctx, req)
 	if err != nil {
 		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
 	}
-	current, err := s.Foundry.GetCurrentOntologyVersion(ctx, &foundryv1.GetCurrentOntologyVersionRequest{WorkspaceId: ws, OntologyId: id})
-	if err != nil {
-		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
-	}
-	versions, err := s.Foundry.ListOntologyVersions(ctx, &foundryv1.ListOntologyVersionsRequest{WorkspaceId: ws, OntologyId: id, Limit: foundryListLimit})
-	if err != nil {
-		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
-	}
-	loads, err := s.Foundry.ListFoundryLoads(ctx, &foundryv1.ListFoundryLoadsRequest{WorkspaceId: ws, OntologyId: id})
-	if err != nil {
-		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
-	}
-	generations, err := s.Foundry.ListOntologyGenerations(ctx, &foundryv1.ListOntologyGenerationsRequest{WorkspaceId: ws, OntologyId: id, Limit: foundryListLimit})
-	if err != nil {
-		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
-	}
+	var (
+		current     *foundryv1.OntologyVersionResponse
+		versions    *foundryv1.ListOntologyVersionsResponse
+		loads       *foundryv1.ListFoundryLoadsResponse
+		generations *foundryv1.ListOntologyGenerationsResponse
+		sets        *foundryv1.ListFoundryDocumentSetsResponse
+	)
+	reads, readCtx := errgroup.WithContext(ctx)
+	reads.Go(func() (err error) {
+		current, err = s.Foundry.GetCurrentOntologyVersion(readCtx, &foundryv1.GetCurrentOntologyVersionRequest{WorkspaceId: ws, OntologyId: id})
+		return err
+	})
+	reads.Go(func() (err error) {
+		versions, err = s.Foundry.ListOntologyVersions(readCtx, &foundryv1.ListOntologyVersionsRequest{WorkspaceId: ws, OntologyId: id, Limit: foundryListLimit})
+		return err
+	})
+	reads.Go(func() (err error) {
+		loads, err = s.Foundry.ListFoundryLoads(readCtx, &foundryv1.ListFoundryLoadsRequest{WorkspaceId: ws, OntologyId: id})
+		return err
+	})
+	reads.Go(func() (err error) {
+		generations, err = s.Foundry.ListOntologyGenerations(readCtx, &foundryv1.ListOntologyGenerationsRequest{WorkspaceId: ws, OntologyId: id, Limit: foundryListLimit})
+		return err
+	})
 	// Sets are the Workspace's; the ontology's are those its current version reads.
-	sets, err := s.Foundry.ListFoundryDocumentSets(ctx, &foundryv1.ListFoundryDocumentSetsRequest{WorkspaceId: ws})
-	if err != nil {
+	reads.Go(func() (err error) {
+		sets, err = s.Foundry.ListFoundryDocumentSets(readCtx, &foundryv1.ListFoundryDocumentSetsRequest{WorkspaceId: ws})
+		return err
+	})
+	if err := reads.Wait(); err != nil {
 		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
 	}
 	out := GetFoundryOntologyOutput{
@@ -1062,6 +1084,7 @@ func (s *Service) AskFoundryQuestion(
 	if err != nil {
 		return FoundryQuestionOutput{}, 0, FoundryError(err)
 	}
+	call.QuestionID = asked.GetQuestion().GetId()
 	question, err := s.WaitForQuestion(ctx, started, &foundryv1.GetFoundryQuestionRequest{
 		WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, Id: asked.GetQuestion().GetId(),
 	}, asked.GetQuestion())
@@ -1088,6 +1111,7 @@ func (s *Service) GetFoundryQuestion(
 	if err != nil {
 		return FoundryQuestionOutput{}, 0, FoundryError(err)
 	}
+	call.QuestionID = response.GetQuestion().GetId()
 	question, err := s.WaitForQuestion(ctx, started, req, response.GetQuestion())
 	if err != nil {
 		return FoundryQuestionOutput{}, 0, FoundryError(err)
@@ -1108,9 +1132,11 @@ func (s *Service) WaitForQuestion(ctx context.Context, started time.Time, req *f
 // turn (the last repeating), and returns it as it last stood once live no longer holds or
 // s.Wait has passed since started, the call's start. That bound is hard: the looks run
 // under its deadline, so one in flight at it is cut. A look that fails, cut or not, leaves the
-// last one read, which the agent reads again by calling again; only the call's own end is an
-// error. Ask and get_question always wait; the get tools of a generation, load or sync when
-// asked to.
+// last one read, which the agent reads again by calling again. A deadline on ctx ends the wait
+// too, waitDeadlineMargin early so there is time to answer with what was read; only the caller
+// hanging up is an error, since it is the deadline's error that would lose a running question's
+// ID. Ask and get_question always wait; the get tools of a generation, load or sync when asked
+// to.
 func waitWhile[T any](ctx context.Context, s *Service, started time.Time, current T, live func(T) bool, get func(context.Context) (T, error)) (T, error) {
 	duration, polls := s.Wait, s.Polls
 	if duration == 0 {
@@ -1119,21 +1145,25 @@ func waitWhile[T any](ctx context.Context, s *Service, started time.Time, curren
 	if len(polls) == 0 {
 		polls = defaultFoundryPolls
 	}
-	wait, cancel := context.WithDeadline(ctx, started.Add(duration))
+	end := started.Add(duration)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Add(-waitDeadlineMargin).Before(end) {
+		end = deadline.Add(-waitDeadlineMargin)
+	}
+	wait, cancel := context.WithDeadline(ctx, end)
 	defer cancel()
 	var zero T
 	for look := 0; live(current); look++ {
 		select {
 		case <-wait.Done():
-			if err := ctx.Err(); err != nil {
+			if err := ctx.Err(); errors.Is(err, context.Canceled) {
 				return zero, err
 			}
 			return current, nil
 		case <-time.After(polls[min(look, len(polls)-1)]):
 		}
 		next, err := get(wait)
-		if ctx.Err() != nil {
-			return zero, ctx.Err()
+		if err := ctx.Err(); errors.Is(err, context.Canceled) {
+			return zero, err
 		}
 		if err != nil {
 			return current, nil
@@ -1232,12 +1262,9 @@ func (s *Service) GetFoundryLoad(
 	return out, 1, nil
 }
 
-// queryScope is the projects whose databases the caller may query with permission (a key:
-// grant): a user's as the WFE resolves them, a key's from its grants. Sent as the call's
-// Actor's scope (backendclient.WithFoundryScopes): with read, Foundry returns what a revision
-// measured on an ontology's load only when the scope covers the ontology's project, as reading
-// the load needs; with write, a document's upload or move is read only by the ontologies the
-// scope covers.
+// ListFoundryDocuments lists what the ontology reads, or one document set of the Workspace. Each
+// passes the check of the call it makes. A set is the Workspace's, as on the website, for a user;
+// a key's grant is on the ontology's project, so it reaches only a set that ontology reads.
 func (s *Service) ListFoundryDocuments(
 	ctx context.Context, identity *Identity, call *Call, input ListFoundryDocumentsInput,
 ) (ListFoundryDocumentsOutput, int, error) {
@@ -1245,10 +1272,12 @@ func (s *Service) ListFoundryDocuments(
 	if !ValidIDs([]string{input.WorkspaceID, input.OntologyID}, input.SetID) || len(input.PageToken) > 1024 {
 		return ListFoundryDocumentsOutput{}, 0, errCodeInvalidArguments
 	}
-	// Authorized as the ontology's read either way: a key's grant is on the ontology's project.
 	req := &foundryv1.ListFoundryOntologyDocumentsRequest{WorkspaceId: input.WorkspaceID, OntologyId: input.OntologyID, PageToken: input.PageToken}
-	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,
-		"ListFoundryOntologyDocuments"); err != nil {
+	methods := []string{"ListFoundryOntologyDocuments"}
+	if input.SetID != "" {
+		methods = []string{"ListFoundryOntologyDocuments", "ListFoundryDocuments", "ListFoundryDocumentSets"}
+	}
+	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead, methods...); err != nil {
 		return ListFoundryDocumentsOutput{}, 0, err
 	}
 	var response *foundryv1.ListFoundryDocumentsResponse
@@ -1256,6 +1285,11 @@ func (s *Service) ListFoundryDocuments(
 	if input.SetID == "" {
 		response, err = s.Foundry.ListFoundryOntologyDocuments(ctx, req)
 	} else {
+		if identity.ServiceKey {
+			if err := s.requireSetReadBy(ctx, input.WorkspaceID, input.SetID, input.OntologyID); err != nil {
+				return ListFoundryDocumentsOutput{}, 0, err
+			}
+		}
 		response, err = s.Foundry.ListFoundryDocuments(ctx, &foundryv1.ListFoundryDocumentsRequest{
 			WorkspaceId: input.WorkspaceID, SetId: input.SetID, PageToken: input.PageToken,
 		})
@@ -1270,6 +1304,20 @@ func (s *Service) ListFoundryDocuments(
 		out.Documents = append(out.Documents, FoundryDocument(doc))
 	}
 	return out, len(out.Documents), nil
+}
+
+// requireSetReadBy refuses a set the ontology doesn't read as not_found, as every denial is.
+func (s *Service) requireSetReadBy(ctx context.Context, workspaceID, setID, ontologyID string) error {
+	sets, err := s.Foundry.ListFoundryDocumentSets(ctx, &foundryv1.ListFoundryDocumentSetsRequest{WorkspaceId: workspaceID})
+	if err != nil {
+		return FoundryError(err)
+	}
+	for _, set := range sets.GetSets() {
+		if set.GetId() == setID && slices.ContainsFunc(set.GetReadBy(), func(r *foundryv1.FoundryDocumentSetReader) bool { return r.GetOntologyId() == ontologyID }) {
+			return nil
+		}
+	}
+	return errCodeNotFound
 }
 
 func (s *Service) ListFoundryQuestions(
@@ -1719,13 +1767,13 @@ func FoundryQuestion(q *foundryv1.FoundryQuestion) FoundryQuestionOutput {
 }
 
 // UntrustedJSON decodes a JSON document the backend relayed, keeping one that doesn't decode as
-// an opaque string.
+// an opaque string, and a number no JSON reader would keep exact as a string of it (exactNumbers).
 func UntrustedJSON(raw string) any {
 	var value any
-	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+	if err := decodeExact([]byte(raw), &value); err != nil {
 		return map[string]string{"opaque_response": raw}
 	}
-	return value
+	return exactNumbers(value)
 }
 
 func EnumName(value, prefix string) string {

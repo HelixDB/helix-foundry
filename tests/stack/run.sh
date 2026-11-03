@@ -34,7 +34,7 @@ if [ -z "${FOUNDRY_IMAGE:-}" ]; then
   export FOUNDRY_IMAGE=helix-foundry/foundry:local
   docker build -t "$FOUNDRY_IMAGE" backend
 fi
-compose="docker compose -p helix-foundry-stack -f local/compose.yaml -f tests/stack/compose.yaml"
+compose="docker compose -p helix-foundry-stack -f local/compose.yaml -f local/compose.mcp.yaml -f tests/stack/compose.yaml"
 # Ollama's profile, overriding local/.env's.
 export COMPOSE_PROFILES=
 if [ -n "${FOUNDRY_STACK_OLLAMA:-}" ]; then

@@ -12,7 +12,7 @@
     },
     {
       "url": "http://localhost:8081",
-      "description": "A local install. FOUNDRY_MCP_PORT moves the port."
+      "description": "A local install, once local/compose.mcp.yaml publishes it. FOUNDRY_MCP_PORT moves the port."
     }
   ],
   "security": [
@@ -38,7 +38,7 @@
             "name": "Idempotency-Key",
             "in": "header",
             "required": true,
-            "description": "Unique value of at most 64 bytes of UTF-8. Reuse with the same question when retrying.",
+            "description": "Unique value of at most 64 bytes of UTF-8, compared exactly. Reuse with the same question when retrying.",
             "schema": {
               "type": "string",
               "minLength": 1,
@@ -105,7 +105,7 @@
             }
           },
           "403": {
-            "description": "Insufficient permission.",
+            "description": "Insufficient permission, or a host or cross-origin request a local install refuses.",
             "content": {
               "application/json": {
                 "schema": {
@@ -116,6 +116,26 @@
           },
           "404": {
             "description": "Resource not found or inaccessible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "The request body was not received within 10 seconds (code request_timeout). Nothing was asked; retry with the same Idempotency-Key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with something that already exists.",
             "content": {
               "application/json": {
                 "schema": {
@@ -206,7 +226,8 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
             }
           }
         ],
@@ -249,7 +270,7 @@
             }
           },
           "400": {
-            "description": "Invalid request or idempotency key reused for another question.",
+            "description": "Malformed ontology or question id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -269,7 +290,7 @@
             }
           },
           "403": {
-            "description": "Insufficient permission.",
+            "description": "Insufficient permission, or a host or cross-origin request a local install refuses.",
             "content": {
               "application/json": {
                 "schema": {
@@ -280,6 +301,16 @@
           },
           "404": {
             "description": "Resource not found or inaccessible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with something that already exists.",
             "content": {
               "application/json": {
                 "schema": {
@@ -404,7 +435,7 @@
           "result": {
             "type": "object",
             "additionalProperties": true,
-            "description": "The ontology agent AskResult (contract/ontology_agent/ask_result.json), with queries[].output omitted, as on MCP. Includes answer, citations, queries and usage when available."
+            "description": "The ontology agent AskResult (contract/ontology_agent/ask_result.json), with queries[].output omitted, as on MCP. Includes answer, citations, queries and usage when available. An integer past 2^53 comes as a string of its digits, which JSON numbers would round."
           }
         }
       },

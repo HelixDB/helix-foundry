@@ -9,13 +9,17 @@ import (
 // What helix_prepare_foundry_operation's fields say of each operation. An
 // API source's parts are said only where the host has them (Service.Events):
 // an agent reading them elsewhere would be sent to an operation that is
-// refused.
+// refused. Those are Helix's hosts, the only ones with a shared cluster and its
+// subscription, so a new database's words for them go with them.
 const (
 	operationsRest          = "sync_connector, generate_ontology, set_current_version, create_load, set_current_load, revise_version, upload_document, create_document_set, update_document_set, move_document or settle_review."
 	targetOntology          = "create_ontology: tenant:<database id> for an existing database, or workspace:<workspace_id> for a new one."
 	targetEventSource       = " create_event_source: workspace:<workspace_id>."
 	targetRest              = " sync_connector: connector:<workspace_id>/<connector_id>. The rest: ontology:<workspace_id>/<ontology_id>."
-	payloadOntology         = "create_ontology: {name} on tenant:<id>; on workspace:<id>, {name, database: {name, slug, project_id or project_name}}, which makes a database on the shared cluster in that project or in a new project of that name first (names of 1 to 120 characters, a slug of lowercase letters, digits and single dashes, at most 63, with a short random suffix if another database has it) and never returns the database's key; it needs a Helix subscription."
+	payloadOntologyStart    = "create_ontology: {name} on tenant:<id>; on workspace:<id>, {name, database: {name, slug, project_id or project_name}}, which makes a database "
+	payloadOntologyEnd      = "in that project or in a new project of that name first (names of 1 to 120 characters, a slug of lowercase letters, digits and single dashes, at most 63, with a short random suffix if another database has it) and never returns the database's key"
+	payloadOntology         = payloadOntologyStart + payloadOntologyEnd + "."
+	payloadOntologyHosted   = payloadOntologyStart + "on the shared cluster " + payloadOntologyEnd + "; it needs a Helix subscription."
 	payloadEventSource      = " create_event_source: {name, description, text_field}: an API source (connector kind events) that people and agents send pieces of JSON data to with helix_foundry_send_pieces, a name of 1 to 120 characters no other API source of the workspace has, a description of at most 1000 characters of what each piece is, and optionally text_field, the top-level field holding each piece's text (1 to 64 bytes, not id, received_at or occurred_at), which it locks as a string so every piece must send it as one, for entity extraction to read; it returns the source, its token_url (where a person makes a send token: no tool returns one) and the send tool."
 	payloadSync             = " sync_connector: {}; an API source syncs when pieces arrive, so it needs none."
 	payloadSyncNoEvents     = " sync_connector: {}."
@@ -37,7 +41,7 @@ func foundryOperationSchema(events bool) *jsonschema.Schema {
 	if events {
 		operation, target, payload = "One of 13 operations: create_ontology, create_event_source, "+operationsRest,
 			targetOntology+targetEventSource+targetRest,
-			payloadOntology+payloadEventSource+payloadSync+payloadGenerate+payloadRest
+			payloadOntologyHosted+payloadEventSource+payloadSync+payloadGenerate+payloadRest
 	}
 	schema.Properties["operation"].Description = operation
 	schema.Properties["target"].Description = target

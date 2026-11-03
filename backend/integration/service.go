@@ -47,6 +47,11 @@ type Identity struct {
 type EventSourceIdentity struct{ WorkspaceID, ConnectorID string }
 
 type Directory interface {
+	// AuthorizeCreate refuses a create_ontology on a new database, at prepare, unless the caller
+	// ctx carries may make every call the website's wizard makes: CreateProject when projectID
+	// is empty, CreateTenant and CreateFoundryOntology. ValidateFoundryOperation has already
+	// refused every caller but a user. A host whose new databases need a subscription refuses
+	// one that lapsed here too (FoundryNoHelixSubscription), before a confirmation is spent.
 	AuthorizeCreate(ctx context.Context, workspaceID, projectID string) error
 	TenantWorkspace(ctx context.Context, tenantID string) (string, error)
 	CreateProject(ctx context.Context, workspaceID, slug, name string) (string, error)
@@ -69,7 +74,9 @@ type Confirmations interface {
 	Consume(context.Context, ConfirmationBinding) error
 }
 
-type Call struct{ ResourceKind, ResourceID string }
+// Call is what a tool tells its host's audit of itself. QuestionID is set as soon as a question is
+// known to exist, so it survives the call failing afterwards.
+type Call struct{ ResourceKind, ResourceID, QuestionID string }
 type Invocation func(context.Context, *Call) (any, int, error)
 type Runner func(context.Context, string, Invocation) (*mcp.CallToolResult, any, error)
 
@@ -93,6 +100,15 @@ func (s *Service) AddTools(server *mcp.Server, identity *Identity) {
 }
 func (s *Service) AddSendTool(server *mcp.Server, identity *Identity) {
 	s.AddFoundrySendTool(server, identity)
+}
+
+// AddReadTool registers a host's own read-only tool, run as Foundry's tools are: under Run, so it
+// logs its call, and its content starts with the notice that what it returns is untrusted.
+func AddReadTool[In, Out any](
+	s *Service, server *mcp.Server, identity *Identity, name, description string,
+	handle func(context.Context, *Identity, *Call, In) (Out, int, error),
+) {
+	addFoundryTool(s, server, identity, tool(name, description), handle)
 }
 
 func (s *Service) Run(ctx context.Context, name string, invoke Invocation) (*mcp.CallToolResult, any, error) {

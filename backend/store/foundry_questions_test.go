@@ -111,6 +111,25 @@ func TestFoundryQuestionCreate(t *testing.T) {
 		assert.ErrorIs(t, f.tryAsk(1, "", f.limits()), store.ErrConflict, "the same client token is the same question")
 	})
 
+	// HTTP Ask's Idempotency-Key is the caller's own: only the same bytes are the same question.
+	t.Run("compares a client token exactly", func(t *testing.T) {
+		f := newQuestionFixture(t, "CT")
+		ask := func(n int, token string) error {
+			id := f.id(n)
+			return f.db.CreateFoundryQuestion(ctx, &model.FoundryQuestion{
+				ID: id, WorkspaceID: f.workspaceID, OntologyID: f.ontologyID, LoadID: id26("FL-" + f.tag), VersionID: id26("FV-" + f.tag),
+				ThreadID: id, Question: "a question?", ClientToken: &token, MaxUSDMicros: questionCap,
+			}, f.limits())
+		}
+		for n, token := range []string{"Order-1", "order-1", "Órder-1"} {
+			require.NoError(t, ask(n+1, token), token)
+			got, err := f.db.GetFoundryQuestionByClientToken(ctx, f.ontologyID, token)
+			require.NoError(t, err)
+			assert.Equal(t, f.id(n+1), got.ID, token)
+		}
+		assert.ErrorIs(t, ask(4, "order-1"), store.ErrConflict, "the same bytes are the same question")
+	})
+
 	t.Run("refuses past the hour's count", func(t *testing.T) {
 		f := newQuestionFixture(t, "C2")
 		limits := f.limits()

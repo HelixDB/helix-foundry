@@ -1,0 +1,11 @@
+# Foundry's MCP and HTTP Ask on this machine's loopback, for your own agents:
+# 127.0.0.1:8081, or FOUNDRY_MCP_PORT from local/.env. An install runs without
+# it, so a port taken here never stops the app. From local/:
+#   docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait
+# or COMPOSE_FILE=compose.yaml:compose.mcp.yaml in local/.env, read when
+# Compose runs from local/. Only with a foundry image that serves the MCP:
+# older ones serve their probes and metrics on this port instead, without a
+# token (local/README.md, Connect your agent, says how to check).
+services:
+  pod:
+    ports: ["127.0.0.1:${FOUNDRY_MCP_PORT:-8081}:8081"]

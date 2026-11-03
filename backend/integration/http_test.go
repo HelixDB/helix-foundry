@@ -1,8 +1,12 @@
 package integration
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,14 +74,74 @@ func httpFixture(t *testing.T, state string) (http.Handler, *httpBackend) {
 		}
 		return nil
 	}}
-	h := NewHTTPHandler(func(r *http.Request, _ string) (context.Context, *Service, *Identity, string, error) {
+	h := NewHTTPHandler(func(r *http.Request, _ string) (HTTPCall, error) {
 		if r.Header.Get("Authorization") != "Bearer fixture" {
-			return r.Context(), nil, nil, "", status.Error(codes.Unauthenticated, "secret reason")
+			return HTTPCall{}, status.Error(codes.Unauthenticated, "secret reason")
 		}
-		return r.Context(), s, i, "workspace-2", nil
+		return HTTPCall{Context: r.Context(), Service: s, Identity: i, WorkspaceID: "workspace-2"}, nil
 	})
 	return h, b
 }
+
+// httpObserved is the fixture with what its host's Done was told, and a short body timeout.
+type httpObserved struct {
+	handler http.Handler
+	backend *httpBackend
+	service *Service
+	mu      sync.Mutex
+	seen    []HTTPOutcome
+}
+
+func httpObservedFixture(t *testing.T, state string, bodyTimeout time.Duration) *httpObserved {
+	t.Helper()
+	o := &httpObserved{backend: &httpBackend{question: &foundryv1.FoundryQuestion{Id: "question-1", Status: state}}}
+	o.service = &Service{Foundry: o.backend, Wait: 5 * time.Millisecond, Polls: []time.Duration{time.Millisecond}}
+	identity := &Identity{Authorize: func(_ context.Context, r any, _ Grant, _ ...string) error {
+		if r.(interface{ GetOntologyId() string }).GetOntologyId() != "ontology-1" {
+			return status.Error(codes.PermissionDenied, "refused")
+		}
+		return nil
+	}}
+	done := func(outcome HTTPOutcome) {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		o.seen = append(o.seen, outcome)
+	}
+	o.handler = newHTTPHandler(func(r *http.Request, _ string) (HTTPCall, error) {
+		if r.Header.Get("Authorization") != "Bearer fixture" {
+			return HTTPCall{Done: done}, status.Error(codes.Unauthenticated, "secret reason")
+		}
+		return HTTPCall{Context: r.Context(), Service: o.service, Identity: identity, WorkspaceID: "workspace-2", Done: done}, nil
+	}, bodyTimeout)
+	return o
+}
+
+// outcome waits for the request's one outcome: Done runs once the response is written.
+func (o *httpObserved) outcome(t *testing.T) HTTPOutcome {
+	t.Helper()
+	var seen []HTTPOutcome
+	require.Eventually(t, func() bool {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		seen = append(seen[:0], o.seen...)
+		return len(seen) > 0
+	}, 5*time.Second, time.Millisecond)
+	require.Len(t, seen, 1)
+	return seen[0]
+}
+
+func httpObservedRequest(ctx context.Context, method, path, body string) *http.Request {
+	r := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer fixture")
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "key")
+	return r
+}
+
+const (
+	httpAskPath      = "/v1/ontologies/ontology-1/ask"
+	httpQuestionPath = "/v1/ontologies/ontology-1/questions/question-1"
+)
 
 func httpCall(h http.Handler, method, path, body, key string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -162,7 +226,7 @@ func TestHTTPHeadIsRefused(t *testing.T) {
 }
 
 func TestHTTPBackendErrors(t *testing.T) {
-	for code, want := range map[codes.Code]int{codes.FailedPrecondition: 412, codes.ResourceExhausted: 429, codes.Unavailable: 503, codes.Internal: 500} {
+	for code, want := range map[codes.Code]int{codes.AlreadyExists: 409, codes.FailedPrecondition: 412, codes.ResourceExhausted: 429, codes.Unavailable: 503, codes.Internal: 500} {
 		t.Run(code.String(), func(t *testing.T) {
 			h, b := httpFixture(t, "answered")
 			b.err = status.Error(code, "private backend detail")
@@ -222,4 +286,328 @@ func TestHTTPDisconnectKeepsQueuedQuestion(t *testing.T) {
 	require.Equal(t, 200, w.Code)
 	assert.Equal(t, 1, b.queued)
 	assert.Contains(t, w.Body.String(), `"done":true`)
+}
+
+// A host learns how each request ended from its Done, with nothing to parse.
+func TestHTTPOutcome(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, state, method, path string
+		backendErr                error
+		want                      HTTPOutcome
+	}{
+		{name: "asked and answered", state: "answered", method: "POST", path: httpAskPath, want: HTTPOutcome{Tool: HTTPAskTool, Status: 200, QuestionID: "question-1"}},
+		{name: "asked and running", state: "queued", method: "POST", path: httpAskPath, want: HTTPOutcome{Tool: HTTPAskTool, Status: 202, QuestionID: "question-1"}},
+		{name: "a question that failed is a request that succeeded", state: "failed", method: "GET", path: httpQuestionPath, want: HTTPOutcome{Tool: HTTPGetQuestionTool, Status: 200, QuestionID: "question-1"}},
+		{name: "a question read", state: "answered", method: "GET", path: httpQuestionPath, want: HTTPOutcome{Tool: HTTPGetQuestionTool, Status: 200, QuestionID: "question-1"}},
+		{name: "a question no one has", state: "answered", method: "GET", path: "/v1/ontologies/ontology-1/questions/question-2", want: HTTPOutcome{Tool: HTTPGetQuestionTool, Status: 404, Code: "not_found"}},
+		{name: "refused", state: "answered", method: "POST", path: "/v1/ontologies/ontology-2/ask", want: HTTPOutcome{Tool: HTTPAskTool, Status: 403, Code: "permission_denied"}},
+		{name: "a spent budget", state: "answered", method: "POST", path: httpAskPath, backendErr: status.Error(codes.FailedPrecondition, "spent"), want: HTTPOutcome{Tool: HTTPAskTool, Status: 412, Code: "failed_precondition"}},
+		{name: "an outage", state: "answered", method: "POST", path: httpAskPath, backendErr: status.Error(codes.Unavailable, "private"), want: HTTPOutcome{Tool: HTTPAskTool, Status: 503, Code: "backend_unavailable"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := httpObservedFixture(t, tc.state, httpBodyTimeout)
+			o.backend.err = tc.backendErr
+			w := httptest.NewRecorder()
+			o.handler.ServeHTTP(w, httpObservedRequest(ctx, tc.method, tc.path, `{"question":"q"}`))
+			got := o.outcome(t)
+			assert.Equal(t, w.Code, got.Status)
+			assert.Equal(t, w.Header().Get("X-Request-ID"), got.RequestID)
+			got.RequestID = ""
+			assert.Equal(t, tc.want, got)
+		})
+	}
+	t.Run("a refusal in resolving, for a host that audits it", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", httpBodyTimeout)
+		r := httpObservedRequest(ctx, "POST", httpAskPath, `{"question":"q"}`)
+		r.Header.Del("Authorization")
+		o.handler.ServeHTTP(httptest.NewRecorder(), r)
+		got := o.outcome(t)
+		assert.Equal(t, 401, got.Status)
+		assert.Equal(t, "unauthenticated", got.Code)
+	})
+	t.Run("HEAD is refused before anything is resolved, so it has no outcome", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", httpBodyTimeout)
+		w := httptest.NewRecorder()
+		o.handler.ServeHTTP(w, httpObservedRequest(ctx, "HEAD", httpQuestionPath, ""))
+		assert.Equal(t, 405, w.Code)
+		assert.Empty(t, o.seen)
+	})
+}
+
+// A client that hangs up during the wait leaves a question running and spending, so the question's
+// ID must reach the host's audit.
+func TestHTTPHangUpDuringTheWaitKeepsTheQuestionID(t *testing.T) {
+	for name, request := range map[string]func(context.Context) *http.Request{
+		"ask": func(ctx context.Context) *http.Request {
+			return httpObservedRequest(ctx, "POST", httpAskPath, `{"question":"q"}`)
+		},
+		"get": func(ctx context.Context) *http.Request { return httpObservedRequest(ctx, "GET", httpQuestionPath, "") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := httpObservedFixture(t, "running", httpBodyTimeout)
+			o.service.Wait = time.Hour
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			time.AfterFunc(20*time.Millisecond, cancel)
+			o.handler.ServeHTTP(httptest.NewRecorder(), request(ctx))
+			got := o.outcome(t)
+			assert.Equal(t, HTTPClientDisconnected, got.Code)
+			assert.Equal(t, "question-1", got.QuestionID)
+		})
+	}
+}
+
+// A hang-up names only what it caused: a refusal the server made stays that refusal in the audit.
+func TestHTTPHangUpDoesNotHideARefusal(t *testing.T) {
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name, path string
+		backendErr error
+		anonymous  bool
+		want       string
+	}{
+		{name: "no credential", path: httpAskPath, anonymous: true, want: "unauthenticated"},
+		{name: "no access", path: "/v1/ontologies/ontology-2/ask", want: "permission_denied"},
+		{name: "a limit", path: httpAskPath, backendErr: status.Error(codes.ResourceExhausted, "limit"), want: "resource_exhausted"},
+		{name: "a precondition", path: httpAskPath, backendErr: status.Error(codes.FailedPrecondition, "spent"), want: "failed_precondition"},
+		{name: "a call the hang-up cut", path: httpAskPath, backendErr: status.Error(codes.Canceled, "cancelled"), want: HTTPClientDisconnected},
+		{name: "an outage seen by no one", path: httpAskPath, backendErr: status.Error(codes.Unavailable, "down"), want: HTTPClientDisconnected},
+		{name: "an internal error seen by no one", path: httpAskPath, backendErr: status.Error(codes.Internal, "boom"), want: HTTPClientDisconnected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := httpObservedFixture(t, "answered", httpBodyTimeout)
+			o.backend.err = tc.backendErr
+			r := httpObservedRequest(gone, "POST", tc.path, `{"question":"q"}`)
+			if tc.anonymous {
+				r.Header.Del("Authorization")
+			}
+			o.handler.ServeHTTP(httptest.NewRecorder(), r)
+			assert.Equal(t, tc.want, o.outcome(t).Code)
+		})
+	}
+}
+
+// A question still running when the request's time runs out keeps its ID: 202, not the deadline's
+// error, however little of the deadline was left and with any host's Wait.
+func TestHTTPWaitEndsBeforeTheDeadline(t *testing.T) {
+	for name, left := range map[string]time.Duration{
+		"time to wait":              waitDeadlineMargin + 100*time.Millisecond,
+		"less than the margin left": waitDeadlineMargin / 2,
+		"no time left":              0,
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := httpObservedFixture(t, "running", httpBodyTimeout)
+			o.service.Wait = time.Hour
+			ctx, cancel := context.WithTimeout(context.Background(), left)
+			defer cancel()
+			started := time.Now()
+			w := httptest.NewRecorder()
+			o.handler.ServeHTTP(w, httpObservedRequest(ctx, "POST", httpAskPath, `{"question":"q"}`))
+			assert.Equal(t, 202, w.Code, w.Body.String())
+			assert.Equal(t, httpQuestionPath, w.Header().Get("Location"))
+			assert.Less(t, time.Since(started), max(left-waitDeadlineMargin, 0)+time.Second)
+			assert.Equal(t, "question-1", o.outcome(t).QuestionID)
+		})
+	}
+}
+
+// httpServed starts the fixture on a real listener: a recorder has no read deadline, and only
+// net/http's own connection shows how those end.
+func httpServed(t *testing.T, o *httpObserved) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(o.handler)
+	t.Cleanup(server.Close)
+	return server
+}
+
+const httpGoodHeaders = "Authorization: Bearer fixture\r\nContent-Type: application/json\r\nIdempotency-Key: key\r\n"
+
+// httpRaw sends head and what there is of the body, declaring contentLength, and holds the
+// connection open.
+func httpRaw(t *testing.T, server *httptest.Server, headers string, contentLength int, body string) net.Conn {
+	t.Helper()
+	conn, err := net.Dial("tcp", server.Listener.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	require.NoError(t, conn.SetDeadline(time.Now().Add(10*time.Second)))
+	httpRawSend(t, conn, headers, contentLength, body)
+	return conn
+}
+
+func httpRawSend(t *testing.T, conn net.Conn, headers string, contentLength int, body string) {
+	t.Helper()
+	_, err := fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: test\r\n%sContent-Length: %d\r\n\r\n%s", httpAskPath, headers, contentLength, body)
+	require.NoError(t, err)
+}
+
+// A context doesn't bound reading a body, so a client trickling or stalling one is what the read
+// deadline is for. It is told so, and nothing blames the backend.
+func TestHTTPBodyDeadline(t *testing.T) {
+	const timeout = 100 * time.Millisecond
+	for name, body := range map[string]string{
+		"a body stalled partway":                  `{"question":`,
+		"a whole object, then a body that stalls": `{"question":"q"} `,
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := httpObservedFixture(t, "answered", timeout)
+			conn := httpRaw(t, httpServed(t, o), httpGoodHeaders, 100, body)
+			response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			require.NoError(t, err)
+			defer response.Body.Close()
+			read, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusRequestTimeout, response.StatusCode, string(read))
+			assert.Contains(t, string(read), "request_timeout")
+			got := o.outcome(t)
+			assert.Equal(t, "request_timeout", got.Code)
+			assert.Equal(t, 408, got.Status)
+			assert.Equal(t, 0, o.backend.queued, "nothing is asked for a body that never came")
+		})
+	}
+	t.Run("a client that hangs up partway through its body", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", httpBodyTimeout)
+		conn := httpRaw(t, httpServed(t, o), httpGoodHeaders, 100, `{"question":`)
+		require.NoError(t, conn.Close())
+		assert.Equal(t, HTTPClientDisconnected, o.outcome(t).Code)
+		assert.Equal(t, 0, o.backend.queued)
+	})
+	// net/http watches for a hang-up with a read of its own once the body ends, clearing the
+	// deadline first. Should it ever not, that read would fail at the deadline and cancel the
+	// request during the wait: this holds the assumption readHTTPQuestion rests on.
+	t.Run("the deadline ends with the body, so the wait can outlast it", func(t *testing.T) {
+		o := httpObservedFixture(t, "running", 20*time.Millisecond)
+		o.service.Wait = 300 * time.Millisecond
+		const body = `{"question":"q"}`
+		started := time.Now()
+		conn := httpRaw(t, httpServed(t, o), httpGoodHeaders, len(body), body)
+		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		assert.Equal(t, http.StatusAccepted, response.StatusCode)
+		assert.GreaterOrEqual(t, time.Since(started), o.service.Wait)
+		got := o.outcome(t)
+		assert.Empty(t, got.Code)
+		assert.Equal(t, "question-1", got.QuestionID)
+	})
+	// net/http reads what a handler left of a body before it writes the response, so a refusal
+	// that reads none of it must be answered all the same when the client stalls.
+	for name, tc := range map[string]struct {
+		headers, body string
+		status        int
+	}{
+		"refused before the body":         {"Content-Type: application/json\r\n", `{"question":`, 401},
+		"the wrong content type":          {"Authorization: Bearer fixture\r\nContent-Type: text/plain\r\n", `{"question":`, 400},
+		"a body already seen to be wrong": {httpGoodHeaders, `not json `, 400},
+	} {
+		t.Run(name+", then a stalled body", func(t *testing.T) {
+			o := httpObservedFixture(t, "answered", timeout)
+			conn := httpRaw(t, httpServed(t, o), tc.headers, 100, tc.body)
+			response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			require.NoError(t, err)
+			defer response.Body.Close()
+			assert.Equal(t, tc.status, response.StatusCode)
+			assert.True(t, response.Close, "what is left of the body must not be read as another request")
+			assert.Equal(t, tc.status, o.outcome(t).Status)
+		})
+	}
+	// Nor does an id that can't be one wait on the body, with no route to its request's Done.
+	t.Run("a malformed id, then a stalled body", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", timeout)
+		conn, err := net.Dial("tcp", httpServed(t, o).Listener.Addr().String())
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+		require.NoError(t, conn.SetDeadline(time.Now().Add(10*time.Second)))
+		_, err = fmt.Fprintf(conn, "POST /v1/ontologies/bad!id/ask HTTP/1.1\r\nHost: test\r\n%sContent-Length: 100\r\n\r\n{", httpGoodHeaders)
+		require.NoError(t, err)
+		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, response.StatusCode)
+		assert.True(t, response.Close)
+		assert.Empty(t, o.seen)
+	})
+	// A deadline or its failed read must not outlive the request on a connection that goes on.
+	t.Run("a connection serves its next request", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", 20*time.Millisecond)
+		const body = `{"question":"q"}`
+		conn := httpRaw(t, httpServed(t, o), httpGoodHeaders, len(body), body)
+		reader := bufio.NewReader(conn)
+		for i := range 3 {
+			response, err := http.ReadResponse(reader, nil)
+			require.NoError(t, err, i)
+			_, err = io.Copy(io.Discard, response.Body)
+			require.NoError(t, err, i)
+			require.NoError(t, response.Body.Close())
+			assert.Equal(t, http.StatusOK, response.StatusCode, i)
+			assert.False(t, response.Close, i)
+			time.Sleep(40 * time.Millisecond) // past the deadline each body had
+			httpRawSend(t, conn, httpGoodHeaders, len(body), body)
+		}
+	})
+	t.Run("a refused body already here keeps the connection", func(t *testing.T) {
+		o := httpObservedFixture(t, "answered", timeout)
+		const body = `{"question":"q"}`
+		conn := httpRaw(t, httpServed(t, o), "Content-Type: application/json\r\n", len(body), body)
+		reader := bufio.NewReader(conn)
+		response, err := http.ReadResponse(reader, nil)
+		require.NoError(t, err)
+		_, err = io.Copy(io.Discard, response.Body)
+		require.NoError(t, err)
+		assert.Equal(t, 401, response.StatusCode)
+		assert.False(t, response.Close)
+		httpRawSend(t, conn, httpGoodHeaders, len(body), body)
+		response, err = http.ReadResponse(reader, nil)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		assert.Equal(t, http.StatusOK, response.StatusCode)
+	})
+}
+
+// A plain context error is the contract's 503, as the same RPC's status would be: a stalled
+// lookup in a host's resolver returns one.
+func TestHTTPContextErrorsAreUnavailable(t *testing.T) {
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled, fmt.Errorf("read: %w", context.DeadlineExceeded)} {
+		h := NewHTTPHandler(func(*http.Request, string) (HTTPCall, error) { return HTTPCall{}, cause })
+		w := httpCall(h, "GET", "/v1/ontologies/ontology-1/questions/question-1", "", "")
+		assert.Equal(t, 503, w.Code, cause)
+		assert.Contains(t, w.Body.String(), "backend_unavailable")
+		assert.Equal(t, errCodeBackendUnavailable, stableErrorCode(cause), "audit logs read the same")
+	}
+}
+
+// An id that can't be one is refused before anything looks it up.
+func TestHTTPMalformedIDsReachNoLookup(t *testing.T) {
+	resolved := 0
+	h := NewHTTPHandler(func(*http.Request, string) (HTTPCall, error) {
+		resolved++
+		return HTTPCall{}, status.Error(codes.NotFound, "not found")
+	})
+	for _, target := range []struct{ method, path string }{
+		{"POST", "/v1/ontologies/bad!id/ask"},
+		{"GET", "/v1/ontologies/bad!id/questions/question-1"},
+		{"GET", "/v1/ontologies/ontology-1/questions/bad!id"},
+		{"GET", "/v1/ontologies/%ff/questions/question-1"},
+	} {
+		w := httpCall(h, target.method, target.path, `{"question":"q"}`, "key")
+		assert.Equal(t, 400, w.Code, target.path)
+		var body struct {
+			Error struct{ Code, RequestID string }
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, "invalid_arguments", body.Error.Code)
+		assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
+	}
+	assert.Zero(t, resolved)
+}
+
+// A large integer stays exact whichever JSON reader the client has.
+func TestHTTPResultKeepsLargeIntegersExact(t *testing.T) {
+	h, b := httpFixture(t, "answered")
+	b.question.ResultJson = `{"status":"answered","count":9007199254740993,"small":7}`
+	w := httpCall(h, "GET", "/v1/ontologies/ontology-1/questions/question-1", "", "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"count":"9007199254740993"`)
+	assert.Contains(t, w.Body.String(), `"small":7`)
 }

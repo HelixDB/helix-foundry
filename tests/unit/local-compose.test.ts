@@ -478,23 +478,28 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     expect(services.site.environment.HELIX_WFE_ORIGIN).toBe("http://pod:8081");
   });
 
-  it("publishes MCP and HTTP Ask on loopback, on FOUNDRY_MCP_PORT when set", () => {
-    const published = (vars: Record<string, string>) =>
-      (
-        composed(vars).services.pod.ports as {
-          host_ip: string;
-          target: number;
-          published: string;
-        }[]
-      ).find((port) => port.target === 8081);
-    expect(published({})).toMatchObject({
+  // Publishing them is asked for, so a port taken here never stops the app,
+  // and an image from before the MCP never shows its probes on the host.
+  it("publishes MCP and HTTP Ask on loopback only with compose.mcp.yaml", () => {
+    type Port = { host_ip: string; target: number; published: string };
+    const published = (vars: Record<string, string>, files?: string[]) =>
+      (composed(vars, files).services.pod.ports as Port[]).find(
+        (port) => port.target === 8081,
+      );
+    const withMcp = ["local/compose.yaml", "local/compose.mcp.yaml"];
+    expect(published({})).toBeUndefined();
+    expect(published({ FOUNDRY_MCP_PORT: "9081" })).toBeUndefined();
+    expect(published({}, withMcp)).toMatchObject({
       host_ip: "127.0.0.1",
       published: "8081",
     });
-    expect(published({ FOUNDRY_MCP_PORT: "9081" })).toMatchObject({
+    expect(published({ FOUNDRY_MCP_PORT: "9081" }, withMcp)).toMatchObject({
       host_ip: "127.0.0.1",
       published: "9081",
     });
+    // The store stays published with it, as uploads need.
+    const ports = composed({}, withMcp).services.pod.ports as Port[];
+    expect(ports.map((port) => port.target).sort()).toEqual([8081, 8333]);
   });
 });
 

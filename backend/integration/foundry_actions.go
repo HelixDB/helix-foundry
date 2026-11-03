@@ -64,8 +64,8 @@ const (
 )
 
 // FoundryNoHelixSubscription refuses create_ontology's new database in a Workspace whose Helix
-// subscription the backend's gate refuses: at prepare, at Execute, and from CreateTenant should
-// it lapse in between. lapse is model.WorkspaceSubscription.Lapse's word for why ("" when the
+// subscription the backend's gate refuses: at prepare, from the host's Directory.AuthorizeCreate,
+// and at Execute, from CreateTenant, should it lapse in between. lapse is model.WorkspaceSubscription.Lapse's word for why ("" when the
 // backend didn't say). Only a Workspace with none may get one from Foundry, whose wizard gives
 // a Foundry Workspace its free plan; one that lapsed is settled in the Helix dashboard.
 func FoundryNoHelixSubscription(lapse string) string {
@@ -142,7 +142,7 @@ type FoundryOperationOutput struct {
 	ContentTrust string `json:"content_trust"`
 	Operation    string `json:"operation"`
 	Target       string `json:"target"`
-	// See gatewayQueryOutput.Response: the description keeps the schema an object.
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
 	Result any `json:"result" jsonschema:"Untrusted result: the ontology, sync, generation, version, load, document, document set or review decision the operation made or changed."`
 }
 
@@ -312,6 +312,11 @@ func (s *Service) ValidateFoundryOperation(ctx context.Context, identity *Identi
 				(database.ProjectID == "") == (database.ProjectName == "") || !ValidIDs(nil, database.ProjectID) ||
 				(database.ProjectName != "" && !ValidFoundryName(database.ProjectName)) {
 				return nil, malformed
+			}
+			// As foundryUserOnly on tenant:<id>. Its other calls are the directory's, which the
+			// host checks; this holds whatever the host's check reads.
+			if !identity.User || identity.ServiceKey || identity.Agent || !identity.HasPermission(PermissionWorkspaceOntologyManage) {
+				return nil, errCodeNotFound
 			}
 			if err := s.Directory.AuthorizeCreate(ctx, workspaceID, database.ProjectID); err != nil {
 				return nil, err
@@ -1014,7 +1019,7 @@ type MoveDocumentPayload struct {
 type MoveDocumentOperation struct {
 	payload MoveDocumentPayload
 	req     *foundryv1.MoveFoundryOntologyDocumentRequest
-	// write is the projects whose databases the caller may write, resolved when prepared.
+	// workspaceID scopes the move to the ontologies the caller may write (Identity.WithScope).
 	workspaceID string
 }
 
