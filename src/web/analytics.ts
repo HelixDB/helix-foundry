@@ -21,18 +21,31 @@ import type {
   QuestionStatus,
 } from "../shared/wfe";
 import { cannotAnswerKind } from "../shared/foundry-ask";
+import { LOCAL } from "../shared/deployment";
 import type { WizardStepId } from "./areas/ontology/model";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
 import type { SignInFailureCode } from "./areas/data/sign-ins";
 
-// The hosted site's product analytics, in Databuddy (./telemetry.tsx loads
-// its tracker). next.config.ts sets the stamp's client id only in a build
-// for the stamp's own origin, so a local build, the mock, e2e and `pnpm dev`
-// have none: they load no tracker, and nothing here sends.
+// Product analytics, in Databuddy (./telemetry.tsx loads its tracker).
+// next.config.ts sets the client id only in a build for a stamp's own origin
+// (the hosted site), or a local install's image ("Foundry Local"), so the
+// mock, e2e and `pnpm dev` have none: they load no tracker, and nothing here
+// sends.
 export const DATABUDDY_CLIENT_ID =
   process.env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID || "";
+
+// Set once ./telemetry.tsx finds this browser won't load the tracker (one of
+// Helix's own, or a local install whose owner turned it off): nothing is sent
+// or kept from then on. Until it knows, calls wait in the SDK's queue.
+let stopped = false;
+const sending = () => !!DATABUDDY_CLIENT_ID && !stopped;
+
+/** This browser loads no tracker: stop sending (./telemetry.tsx). */
+export function stopSending() {
+  stopped = true;
+}
 
 /** Where a generation's draft comes from: the ontology agent, or the sample's ready-made one. */
 export type GenerationSource = "ai" | "sample";
@@ -191,7 +204,7 @@ export function trackEvent<Name extends AnalyticsEventName>(
 ): void {
   // Without a client id the tracker never loads, and queued calls would only
   // expire into console warnings.
-  if (!DATABUDDY_CLIENT_ID) return;
+  if (!sending()) return;
   track(name, properties);
 }
 
@@ -236,7 +249,7 @@ export async function trackBeforeLeavingAt<Name extends AnalyticsEventName>(
   name: Name,
   ...properties: EventArgs<Name>
 ): Promise<void> {
-  if (!DATABUDDY_CLIENT_ID) return;
+  if (!sending()) return;
   for (
     const end = Date.now() + LEAVE_WAIT_MS;
     !isTrackerAvailable() && Date.now() < end;
@@ -285,7 +298,7 @@ const SIGNING_IN = "foundry.analytics.signing-in";
 export async function signInStarted(
   method: AnalyticsEvents["sign_in_started"]["method"],
 ): Promise<void> {
-  if (!DATABUDDY_CLIENT_ID) return;
+  if (!sending()) return;
   try {
     sessionStorage.setItem(SIGNING_IN, "1");
   } catch {
@@ -357,7 +370,8 @@ export function identifyUser(
   id: string,
   { email, name }: { email?: string; name?: string } = {},
 ) {
-  if (!DATABUDDY_CLIENT_ID || !id) return;
+  // A local install's owner stays anonymous.
+  if (!sending() || !id || LOCAL) return;
   const domain = email?.split("@").pop()?.toLowerCase();
   if (domain && INTERNAL_DOMAINS.includes(domain)) return markInternal();
   identify(id, { ...(email && { email }), ...(name && { name }) });
@@ -399,18 +413,23 @@ const setGlobals = (more: Omit<typeof globals, "workspace_owner">) => {
  * per-account retention counts workspaces (`workspace_id`).
  */
 export function workspaceOpened({ id, slug, name, role }: ShellWorkspace) {
-  if (!DATABUDDY_CLIENT_ID) return;
-  setGlobals({
-    workspace_id: id,
-    workspace_slug: slug,
-    workspace_name: name,
-    workspace_role: role,
-  });
+  if (!sending()) return;
+  // A local install's workspace is its owner's: its id only.
+  setGlobals(
+    LOCAL
+      ? { workspace_id: id }
+      : {
+          workspace_id: id,
+          workspace_slug: slug,
+          workspace_name: name,
+          workspace_role: role,
+        },
+  );
 }
 
 /** Sign-out, before the page leaves: reports it as the user, then forgets them and their workspace. */
 export async function signedOut(): Promise<void> {
-  if (!DATABUDDY_CLIENT_ID) return;
+  if (!sending()) return;
   await trackBeforeLeaving("signed_out");
   clearProfile();
   globals = {};
@@ -429,7 +448,7 @@ export async function signedOut(): Promise<void> {
  * uncaught errors itself, but not those a boundary catches.
  */
 export function pageCrashed(error: Error, staleBuild: boolean) {
-  if (!DATABUDDY_CLIENT_ID) return;
+  if (!sending()) return;
   trackEvent("page_crashed", { cause: staleBuild ? "stale_build" : "error" });
   trackError(error.message, { error_type: error.name, stack: error.stack });
 }
@@ -619,7 +638,7 @@ function writePending(pending: Record<string, Pending>) {
  * is kept without a client id.
  */
 export function jobStarted(started: Started, id: string | undefined) {
-  if (!DATABUDDY_CLIENT_ID || !id) return;
+  if (!sending() || !id) return;
   const pending = readPending();
   if (pending[id]) return;
   writePending({ ...pending, [id]: { ...started, at: Date.now() } });
@@ -634,7 +653,7 @@ export function jobSeen<J extends Job>(
   job: J,
   seen: readonly (Seen[J] | null | undefined)[],
 ): void {
-  if (!DATABUDDY_CLIENT_ID) return;
+  if (!sending()) return;
   const pending = readPending();
   const ends = ENDS[job] as Partial<
     Record<Status[J], ((p: Pending, seen: Seen[J]) => void) | null>

@@ -10,12 +10,15 @@ if (mode && mode !== "local")
     `NEXT_PUBLIC_FOUNDRY_MODE must be unset or "local", not "${mode}"`,
   );
 
-// Databuddy, the hosted site's product analytics (src/web/analytics.ts): each
-// stamp's site by its client id, which is public, and only in a build for
-// the stamp's own origin (its WorkOS redirect URI's), so its values built
+// Databuddy, Foundry's product analytics (src/web/analytics.ts), each site
+// by its client id, which is public. A stamp's only in a build for the
+// stamp's own origin (its WorkOS redirect URI's), so its values built
 // anywhere else (pnpm docs:media builds prod's against the mock, pnpm dev
-// dev's) load no tracker. A local build, the mock and e2e have none.
+// dev's) load no tracker. A local install's image (the Dockerfile's build)
+// has "Foundry Local"'s, which its owner may turn off at run time
+// (src/server/telemetry.ts); a local build against the mock has none.
 const DATABUDDY = {
+  local: { clientId: "" },
   dev: {
     origin: "https://dev.foundry.helix-db.com",
     clientId: "a4288db1-0535-4fdd-8cae-bc525f19a172",
@@ -83,9 +86,13 @@ const nextConfig: NextConfig = {
           ? "https://ingest.helix-db.com"
           : "https://ingest.dev.helix-db.com",
     NEXT_PUBLIC_DATABUDDY_CLIENT_ID:
-      mode !== "local" && databuddy && databuddy.origin === origin
-        ? databuddy.clientId
-        : "",
+      mode === "local"
+        ? appEnv === "mock"
+          ? ""
+          : DATABUDDY.local.clientId
+        : databuddy && databuddy.origin === origin
+          ? databuddy.clientId
+          : "",
   },
   async headers() {
     return [
