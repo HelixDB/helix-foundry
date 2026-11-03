@@ -404,11 +404,14 @@ describe.skipIf(!compose)("local/compose.yaml's secrets", () => {
         ) ?? false,
         name,
       ).toBe(false);
-    // Not from the .env: an old one's values reach the volume alone.
+    // No secret from the .env: an old one's values reach the volume alone.
+    // The .env may turn usage analytics off (local/README.md).
     expect(services.site.environment).toEqual({
       HELIX_WFE_ORIGIN: "http://pod:8081",
       FOUNDRY_ORIGIN: "http://localhost:3000",
       FOUNDRY_LOCAL_TOKEN_FILE: "/secrets/site-token",
+      FOUNDRY_TELEMETRY: "",
+      DO_NOT_TRACK: "",
     });
     expect(services.mysql.environment).toEqual({
       MYSQL_RANDOM_ROOT_PASSWORD: "yes",

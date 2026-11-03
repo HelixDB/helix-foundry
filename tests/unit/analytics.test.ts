@@ -817,3 +817,53 @@ describe("Helix's own people", () => {
     expect(a.trackingAllowed("?internal=1")).toBe(true);
   });
 });
+
+describe("a local install", () => {
+  /** analytics.ts in a local install's image. */
+  const loadLocal = async () => {
+    vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", "local");
+    return load();
+  };
+
+  it("identifies no one, and tags events with the workspace's id alone", async () => {
+    const a = await loadLocal();
+    a.identifyUser("user_1", { email: "ada@example.com", name: "Ada" });
+    a.workspaceOpened("ws_1", "Acme");
+    expect(sdk.identify).not.toHaveBeenCalled();
+    expect(sdk.setGlobalProperties).toHaveBeenCalledWith({
+      workspace_id: "ws_1",
+      workspace_name: undefined,
+    });
+  });
+
+  it("loads a tracker that records page views and events only", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-local");
+    vi.resetModules();
+    const { LOCAL_TRACKER, MASK_PATTERNS, withoutTitle } = await import(
+      "@/web/telemetry"
+    );
+    expect(LOCAL_TRACKER).toEqual({
+      clientId: "client-local",
+      maskPatterns: MASK_PATTERNS,
+      filter: withoutTitle,
+      trackInteractions: false,
+    });
+  });
+});
+
+describe("stopSending", () => {
+  it("sends and keeps nothing once the browser won't load the tracker", async () => {
+    const a = await load();
+    a.stopSending();
+    a.trackEvent("onboarding_shown");
+    a.jobStarted({ job: "load" }, "load_1");
+    a.identifyUser("user_1", { email: "ada@example.com" });
+    a.workspaceOpened("ws_1", "Acme");
+    await a.signInStarted("github");
+    expect(sent()).toEqual([]);
+    expect(sdk.identify).not.toHaveBeenCalled();
+    expect(sdk.setGlobalProperties).not.toHaveBeenCalled();
+    expect(local.values.size).toBe(0);
+    expect(session.values.size).toBe(0);
+  });
+});
