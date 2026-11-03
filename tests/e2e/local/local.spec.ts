@@ -201,7 +201,8 @@ test("walks a new install through the sample company, from its database to Ask",
   page.on("response", async (response) => {
     if (response.request().resourceType() !== "script") return;
     const text = await response.text().catch(() => "");
-    if (text.includes("cdn.databuddy.cc")) tracked.push(response.url());
+    if (text.includes("Databuddy: No client ID found"))
+      tracked.push(response.url());
   });
   await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
