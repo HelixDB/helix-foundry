@@ -67,6 +67,12 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 
 `docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
 
+## Usage analytics
+
+The site tells Helix, anonymously, how Foundry is used, so we know what to fix: which pages are opened (their paths, with every id taken out) and the steps people take, such as an ontology generated, a load ready, a question answered, or why one failed, as fixed words. It sends nothing of what Foundry holds: no data, documents, questions, answers, names or emails, and no recording of the screen. It goes to Databuddy (databuddy.cc), from your browser.
+
+To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing either way.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.
