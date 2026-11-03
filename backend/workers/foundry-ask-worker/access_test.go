@@ -237,6 +237,7 @@ func TestGranteeQuestions(t *testing.T) {
 	t.Run("what its earlier turns read stays with the question", func(t *testing.T) {
 		old := access.TableRef{ConnectorID: "conn-gone", Table: "old"}
 		h, q := partHarness(t)
+		h.store.grants = append(h.store.grants, model.FoundryAccessGrant{WorkspaceID: "ws-1", Principal: *q.Grantee, Target: access.TableTarget(old.ConnectorID, old.Table)})
 		read := access.Inputs{Tables: []access.TableRef{old}}
 		h.store.history = []*model.FoundryQuestion{{Question: "earlier", LoadID: "load-1", Seen: &read, Result: json.RawMessage(answeredResult)}}
 		h.run(t, q)
