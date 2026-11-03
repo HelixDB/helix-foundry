@@ -63,18 +63,12 @@ var refused = map[string]string{
 	foundry("UpdateFoundryTeam"):          noGrantees,
 	foundry("DeleteFoundryTeam"):          noGrantees,
 
-	foundry("CreateOntologyVersion"):     notCalled,
-	foundry("GetCurrentOntologyVersion"): notCalled,
-	foundry("UpdateFoundryOntology"):     notCalled,
+	foundry("CreateOntologyVersion"): notCalled,
+	foundry("UpdateFoundryOntology"): notCalled,
 
-	foundry("CreateFoundryOntologyDocument"):         noOntologySets,
-	foundry("CompleteFoundryOntologyDocumentUpload"): noOntologySets,
-	foundry("DeleteFoundryOntologyDocument"):         noOntologySets,
-	foundry("MoveFoundryOntologyDocument"):           noOntologySets,
-	foundry("CreateFoundryOntologyDocumentSet"):      noOntologySets,
-	foundry("ListFoundryOntologyDocumentSets"):       noOntologySets,
-	foundry("UpdateFoundryOntologyDocumentSet"):      noOntologySets,
-	foundry("DeleteFoundryOntologyDocumentSet"):      noOntologySets,
+	foundry("DeleteFoundryOntologyDocument"):    noOntologySets,
+	foundry("ListFoundryOntologyDocumentSets"):  noOntologySets,
+	foundry("DeleteFoundryOntologyDocumentSet"): noOntologySets,
 }
 
 const (

@@ -19,6 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -106,6 +107,7 @@ type FoundryBackendAPI interface {
 	GetConnectorSync(context.Context, *foundryv1.GetConnectorSyncRequest, ...grpc.CallOption) (*foundryv1.ConnectorSyncResponse, error)
 	ListConnectorKinds(context.Context, *foundryv1.ListConnectorKindsRequest, ...grpc.CallOption) (*foundryv1.ListConnectorKindsResponse, error)
 	ListFoundryEventBatches(context.Context, *foundryv1.ListFoundryEventBatchesRequest, ...grpc.CallOption) (*foundryv1.ListFoundryEventBatchesResponse, error)
+	GetMyFoundryAccess(context.Context, *foundryv1.GetMyFoundryAccessRequest, ...grpc.CallOption) (*foundryv1.GetMyFoundryAccessResponse, error)
 }
 
 type ListFoundryOntologiesInput struct {
@@ -242,15 +244,18 @@ type FoundryOntologyOutput struct {
 	AskURL     string `json:"ask_url,omitempty"`
 	// Database is the tenant:<id> reference helix_execute_read_query takes; it, the
 	// project and the database name are empty for a caller who can't read the project.
-	Database         string                  `json:"database,omitempty"`
-	DatabaseName     string                  `json:"database_name,omitempty"`
-	ProjectID        string                  `json:"project_id,omitempty"`
-	CurrentVersionID string                  `json:"current_version_id,omitempty"`
-	CurrentLoad      *FoundryLoadRefOutput   `json:"current_load,omitempty"`
-	LastLoad         *FoundryLastLoadOutput  `json:"last_load,omitempty"`
-	ActiveJob        *FoundryActiveJobOutput `json:"active_job,omitempty"`
-	Documents        int32                   `json:"documents"`
-	CreatedAt        string                  `json:"created_at"`
+	Database         string `json:"database,omitempty"`
+	DatabaseName     string `json:"database_name,omitempty"`
+	ProjectID        string `json:"project_id,omitempty"`
+	CurrentVersionID string `json:"current_version_id,omitempty"`
+	// PartialAccess: source grants give the caller only some of what the current load holds. Its
+	// reads see that part, and refuse to filter, order, group or count by the rest.
+	PartialAccess bool                    `json:"partial_access,omitempty"`
+	CurrentLoad   *FoundryLoadRefOutput   `json:"current_load,omitempty"`
+	LastLoad      *FoundryLastLoadOutput  `json:"last_load,omitempty"`
+	ActiveJob     *FoundryActiveJobOutput `json:"active_job,omitempty"`
+	Documents     int32                   `json:"documents"`
+	CreatedAt     string                  `json:"created_at"`
 }
 
 type ListFoundryOntologiesOutput struct {
@@ -639,13 +644,15 @@ type FoundryQuestionOutput struct {
 
 // AddFoundryTools registers the Foundry tools the identity may discover. A user browses with
 // Workspace.read and reads graphs and asks with database.query.read; a service key needs
-// database.query.read on some project for both. Agent sandbox registrations get none.
+// database.query.read on some project for both. Source grants, for whoever holds any
+// (Identity.FoundryGrants), stand in for database.query.read here; what they admit is decided call
+// by call (Identity.Authorize). Agent sandbox registrations get none.
 func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 	if identity.Agent {
 		return
 	}
 	user := !identity.ServiceKey
-	reads := identity.HasPermission(PermissionDatabaseQueryRead)
+	reads := identity.HasPermission(PermissionDatabaseQueryRead) || identity.FoundryGrants
 	browse := reads
 	if user {
 		browse = identity.HasPermission(PermissionWorkspaceRead)
@@ -822,6 +829,22 @@ func (s *Service) ListFoundryOntologies(
 		}
 		out.Ontologies = append(out.Ontologies, s.FoundryOntology(identity, input.WorkspaceID, o))
 	}
+	// A key also lists, on the first page, what source grants give it.
+	if identity.ServiceKey && identity.AsGrantee != nil && input.PageToken == "" {
+		granted, err := s.Foundry.ListFoundryOntologies(identity.AsGrantee(ctx), &foundryv1.ListFoundryOntologiesRequest{WorkspaceId: input.WorkspaceID})
+		switch {
+		// A key that lists through its own grant still does, as it did before source grants.
+		case err != nil && identity.HasPermission(PermissionDatabaseQueryRead):
+			return out, len(out.Ontologies), nil
+		case err != nil:
+			return ListFoundryOntologiesOutput{}, 0, FoundryError(err)
+		}
+		for _, o := range granted.GetOntologies() {
+			if !slices.ContainsFunc(out.Ontologies, func(listed FoundryOntologyOutput) bool { return listed.ID == o.GetId() }) {
+				out.Ontologies = append(out.Ontologies, s.FoundryOntology(identity, input.WorkspaceID, o))
+			}
+		}
+	}
 	return out, len(out.Ontologies), nil
 }
 
@@ -837,7 +860,12 @@ func (s *Service) GetFoundryOntology(
 	if err := s.AuthorizeFoundry(ctx, identity, req, QueryRead,
 		"GetFoundryOntology", "GetCurrentOntologyVersion", "ListOntologyVersions", "ListFoundryLoads",
 		"ListOntologyGenerations", "ListFoundryDocumentSets", "ListConnectors"); err != nil {
-		return GetFoundryOntologyOutput{}, 0, err
+		// A grantee gets the ontology and the load its grants cover, with that load's version.
+		if identity.IsGrantee == nil || s.AuthorizeFoundry(ctx, identity, req, QueryRead,
+			"GetFoundryOntology", "GetFoundryLoad", "GetOntologyVersion") != nil || !identity.IsGrantee(ctx) {
+			return GetFoundryOntologyOutput{}, 0, err
+		}
+		return s.granteeFoundryOntology(ctx, identity, req)
 	}
 	// The ontology first, so one that isn't there costs one read. The rest don't depend on each
 	// other, and an agent calls this repeatedly as it sets up, so they run at once.
@@ -875,6 +903,10 @@ func (s *Service) GetFoundryOntology(
 		return err
 	})
 	if err := reads.Wait(); err != nil {
+		// A member restricted to source grants, whom Foundry serves as a grantee.
+		if identity.IsGrantee != nil && status.Code(err) == codes.PermissionDenied {
+			return s.granteeFoundryOntology(ctx, identity, req)
+		}
 		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
 	}
 	out := GetFoundryOntologyOutput{
@@ -909,6 +941,39 @@ func (s *Service) GetFoundryOntology(
 		}
 		out.DocumentSets = append(out.DocumentSets, FoundryDocumentSet(set))
 	}
+	return out, 1, nil
+}
+
+// granteeFoundryOntology is the ontology as a grantee reads it: the load its grants cover and
+// that load's version, projected to what they hold, with none of its other versions, loads or
+// generations.
+func (s *Service) granteeFoundryOntology(ctx context.Context, identity *Identity, req *foundryv1.GetFoundryOntologyRequest) (
+	GetFoundryOntologyOutput, int, error) {
+	ws, id := req.GetWorkspaceId(), req.GetOntologyId()
+	ontology, err := s.Foundry.GetFoundryOntology(ctx, req)
+	if err != nil {
+		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
+	}
+	out := GetFoundryOntologyOutput{
+		ContentTrust: contentTrustUntrusted, Ontology: s.FoundryOntology(identity, ws, ontology.GetOntology()),
+		Versions: []FoundryVersionOutput{}, Loads: []FoundryLoadOutput{}, Generations: []FoundryGenerationOutput{},
+		DocumentSets: []FoundryDocumentSetOutput{}, OtherDocumentSets: []FoundryDocumentSetOutput{},
+	}
+	loadID := ontology.GetOntology().GetCurrentLoad().GetId()
+	if loadID == "" {
+		return out, 1, nil
+	}
+	load, err := s.Foundry.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: ws, OntologyId: id, Id: loadID})
+	if err != nil {
+		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
+	}
+	out.Loads = append(out.Loads, s.FoundryLoad(ws, id, load.GetLoad()))
+	version, err := s.Foundry.GetOntologyVersion(ctx, &foundryv1.GetOntologyVersionRequest{WorkspaceId: ws, OntologyId: id, Id: load.GetLoad().GetVersionId()})
+	if err != nil {
+		return GetFoundryOntologyOutput{}, 0, FoundryError(err)
+	}
+	current := s.FoundryVersion(ws, id, version.GetVersion(), false)
+	out.CurrentVersion = &current
 	return out, 1, nil
 }
 
@@ -1580,7 +1645,7 @@ func (s *Service) FoundryOntology(identity *Identity, workspaceID string, o *fou
 		ID: o.GetId(), WorkspaceID: workspaceID, Name: o.GetName(), CurrentVersionID: o.GetCurrentVersionId(),
 		URL: s.FoundryLink(workspaceID, "ontology", o.GetId()), ExploreURL: s.FoundryLink(workspaceID, "explore", o.GetId()),
 		AskURL:    s.FoundryLink(workspaceID, "ask", o.GetId()),
-		Documents: o.GetCounts().GetDocuments(), CreatedAt: protoTimestamp(o.GetCreatedAt()),
+		Documents: o.GetCounts().GetDocuments(), CreatedAt: protoTimestamp(o.GetCreatedAt()), PartialAccess: o.GetPartialAccess(),
 	}
 	visible := identity.Allows(workspaceID, o.GetProjectId(), ProjectRead)
 	if visible && o.GetTenantId() != "" {
