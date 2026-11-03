@@ -145,8 +145,17 @@ describe("the signed-in user", () => {
       ["user_1", {}],
       ["user_1", {}],
     ]);
+    // Events carry the email too, for the team's dashboard.
+    expect(sdk.setGlobalProperties.mock.calls).toEqual([
+      [{ user_email: "ada@example.com" }],
+    ]);
     await a.signedOut();
     expect(sdk.clearProfile).toHaveBeenCalledOnce();
+    expect(sdk.setGlobalProperties).toHaveBeenLastCalledWith({
+      workspace_id: undefined,
+      workspace_name: undefined,
+      user_email: undefined,
+    });
   });
 
   it("tags every event with the workspace open, and drops it at sign-out", async () => {
@@ -162,6 +171,7 @@ describe("the signed-in user", () => {
     expect(sdk.setGlobalProperties).toHaveBeenLastCalledWith({
       workspace_id: undefined,
       workspace_name: undefined,
+      user_email: undefined,
     });
   });
 
@@ -235,6 +245,7 @@ describe("trackBeforeLeaving", () => {
     const a = await load();
     const beacons = beacon();
     sdk.profile = "user_1";
+    a.identifyUser("user_1", { email: "ada@example.com" });
     a.workspaceOpened("ws_1", "Acme");
     await a.trackBeforeLeaving("upgrade_clicked", {
       tier: "pro",
@@ -244,6 +255,7 @@ describe("trackBeforeLeaving", () => {
     expect(JSON.parse(await beacons[0].body.text())).toMatchObject({
       name: "upgrade_clicked",
       properties: {
+        user_email: "ada@example.com",
         workspace_id: "ws_1",
         workspace_name: "Acme",
         tier: "pro",
