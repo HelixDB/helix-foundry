@@ -138,6 +138,12 @@ Every volume goes back under its own name before the stack first starts, so on a
 
 **Upgrades.** Back up before you upgrade (a new release, or another `FOUNDRY_*IMAGE`): its first start migrates the store, and migrations only go forward, so the release before must not run on it again. Restore a backup only onto the images it lists, then upgrade again if you need to.
 
+## Usage analytics
+
+The site tells Helix, anonymously, how Foundry is used, so we know what to fix: which pages are opened (their paths, with every id taken out) and the steps people take, such as an ontology generated, a load ready, a question answered, or why one failed, as fixed words. It sends nothing of what Foundry holds: no data, documents, questions, answers, names or emails, and no recording of the screen. It goes to Databuddy (databuddy.cc), from your browser.
+
+To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing either way.
+
 ## Connecting databases
 
 Foundry connects from inside Docker: a database on this machine is `host.docker.internal`. Private addresses are allowed.

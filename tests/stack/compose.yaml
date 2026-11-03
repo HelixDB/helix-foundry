@@ -3,6 +3,10 @@
 # Paths are relative to local/, the first file's directory:
 #   docker compose -f local/compose.yaml -f tests/stack/compose.yaml up -d
 services:
+  # The stack is Helix's own test: it reports no usage.
+  site:
+    environment:
+      FOUNDRY_TELEMETRY: "off"
   sample-db:
     image: postgres:16
     environment:
