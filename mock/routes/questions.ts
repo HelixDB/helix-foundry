@@ -26,10 +26,21 @@ import {
 import { ENRICHMENT_SOURCE } from "../../src/web/areas/ontology/enrichment-fields";
 import { contractErrors } from "../agent-contract";
 import { LoadGraph, type MockNode } from "../graph/store";
-import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
+import { compile, evaluate, answer as readAnswer } from "../graph/rules";
+import { viewOf, type View } from "../graph/view";
+import {
+  fail,
+  id,
+  now,
+  ok,
+  type MockReply,
+  type MockRoute,
+  type MockSeen,
+} from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
 import { tenantGraph } from "./databases";
 import { currentLoadId, ontologyLoad } from "./loads";
+import { ontologyVersion } from "./ontology";
 import { aiModel, aiProvider, aiRefusal } from "./ai";
 import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 
@@ -42,7 +53,10 @@ import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 // question's status and last seq), and ends with the engine's result, its
 // spend settled. Ask is refused past 30 questions an hour per workspace
 // (RESOURCE_EXHAUSTED), and once what the month spent plus a question's cap
-// passes the budget (FAILED_PRECONDITION), with the WFE's messages.
+// passes the budget (FAILED_PRECONDITION), with the WFE's messages. A grantee
+// also has limits of its own (`GRANTEE_LIMITS`, its live questions counting at
+// their caps), which the list's budget gives instead of the workspace's, and
+// its refusals don't tell it what the workspace asked or spent.
 //
 // The mock's agent answers from what the load wrote, in the engine's
 // shapes exactly (contract/ontology_agent/ask_event.json and
@@ -84,9 +98,12 @@ type Knobs = {
   askMarkup?: boolean;
   askVisuals?: boolean;
   askSpentUsdMicros?: number;
+  askGranteeSpentUsdMicros?: number;
 };
 const knobs = config as typeof config & Knobs;
 
+// foundry.ask's grantee_monthly_usd and grantee_per_hour.
+const GRANTEE_LIMITS = { monthlyUsdMicros: 10_000_000, hourly: 10 };
 // foundry.ask: the workspace's month (dev's $30, or prod's $15 with
 // MOCK_STAMP=prod) and a question's caps, the same on both.
 export const ASK_LIMITS = {
@@ -123,6 +140,12 @@ type StoredQuestion = {
   focusJson: string;
   clientToken: string;
   askedByUserId: string;
+  // The principal a grantee asked as (./access.ts); unset for anyone else.
+  // A grantee sees only its own questions, as the backend's samePrincipal.
+  grantee?: string;
+  // What that grantee held of the load, when it wasn't all of it: its answer
+  // reads while its grants still hold that.
+  seen?: MockSeen;
   createdAt: string;
   status: QuestionStatus;
   attempts: number;
@@ -149,6 +172,7 @@ onReset(() => {
   delete knobs.askMarkup;
   delete knobs.askVisuals;
   delete knobs.askSpentUsdMicros;
+  delete knobs.askGranteeSpentUsdMicros;
 });
 
 const live = (q: StoredQuestion) =>
@@ -157,31 +181,84 @@ const month = () => new Date().toISOString().slice(0, 7);
 const ofWorkspace = (workspaceId: string) =>
   state.questions.filter((q) => q.workspaceId === workspaceId);
 
-/** The month's spend and the claims held back, in millionths of a dollar. */
-export function spend(workspaceId: string) {
-  const mine = ofWorkspace(workspaceId).filter((q) =>
-    q.createdAt.startsWith(month()),
+/**
+ * The month's spend and the claims held back, in millionths of a dollar: the
+ * workspace's, or one grantee's.
+ */
+export function spend(workspaceId: string, grantee?: string) {
+  const mine = ofWorkspace(workspaceId).filter(
+    (q) =>
+      q.createdAt.startsWith(month()) && (!grantee || q.grantee === grantee),
   );
   return {
     spent:
-      (knobs.askSpentUsdMicros || 0) +
+      (grantee
+        ? knobs.askGranteeSpentUsdMicros || 0
+        : knobs.askSpentUsdMicros || 0) +
       mine.reduce((n, q) => n + q.usdMicros, 0),
     reserved: mine.reduce((n, q) => n + q.reservedMicros, 0),
   };
 }
 
-function budget(workspaceId: string): QuestionBudget {
-  const { spent, reserved } = spend(workspaceId);
+/** What the list says of the budget: a grantee's own, or the workspace's. */
+function budget(workspaceId: string, grantee?: string): QuestionBudget {
+  const { spent, reserved } = spend(workspaceId, grantee);
   return {
-    monthlyUsdMicros: String(ASK_LIMITS.monthlyUsdMicros),
+    monthlyUsdMicros: String(
+      grantee ? GRANTEE_LIMITS.monthlyUsdMicros : ASK_LIMITS.monthlyUsdMicros,
+    ),
     spentUsdMicros: String(spent),
     reservedUsdMicros: String(reserved),
     questionUsdMicros: String(ASK_LIMITS.questionUsdMicros),
     maxSteps: ASK_LIMITS.maxSteps,
     maxWallSecs: ASK_LIMITS.maxWallSecs,
     concurrentLimit: ASK_LIMITS.concurrent,
-    hourlyLimit: ASK_LIMITS.hourly,
+    hourlyLimit: grantee ? GRANTEE_LIMITS.hourly : ASK_LIMITS.hourly,
   };
+}
+
+/** Why the workspace and, for a grantee, its own limits refuse a new question. */
+function askRefusal(workspaceId: string, grantee?: string) {
+  const hourAgo = Date.now() - 3_600_000,
+    asked = ofWorkspace(workspaceId).filter(
+      (q) => Date.parse(q.createdAt) >= hourAgo,
+    ),
+    fits = (spent: number, cap: number) =>
+      spent + ASK_LIMITS.questionUsdMicros <= cap;
+  if (asked.length >= ASK_LIMITS.hourly)
+    return fail(
+      "RESOURCE_EXHAUSTED",
+      grantee
+        ? "too many questions have been asked here in the last hour; try again later"
+        : `the workspace has asked ${asked.length} questions in the last hour; try again later`,
+    );
+  if (!fits(spend(workspaceId).spent, ASK_LIMITS.monthlyUsdMicros))
+    return fail(
+      "FAILED_PRECONDITION",
+      grantee
+        ? "this workspace's questions are used up for the month"
+        : SPENT_MONTH,
+    );
+  if (!grantee) return undefined;
+  const ownHour = asked.filter((q) => q.grantee === grantee).length;
+  if (ownHour >= GRANTEE_LIMITS.hourly)
+    return fail(
+      "RESOURCE_EXHAUSTED",
+      `you have asked ${ownHour} questions in the last hour; try again later`,
+    );
+  // Its live questions count at their caps.
+  const liveCaps =
+    ofWorkspace(workspaceId).filter((q) => q.grantee === grantee && live(q))
+      .length * ASK_LIMITS.questionUsdMicros;
+  return fits(
+    spend(workspaceId, grantee).spent + liveCaps,
+    GRANTEE_LIMITS.monthlyUsdMicros,
+  )
+    ? undefined
+    : fail(
+        "FAILED_PRECONDITION",
+        `you have spent this month's $${(GRANTEE_LIMITS.monthlyUsdMicros / 1e6).toFixed(2)} of questions`,
+      );
 }
 
 // ---------------------------------------------------------------- the agent
@@ -885,6 +962,174 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
   };
 }
 
+/**
+ * What the agent does for an asker who holds only some of the load's sources:
+ * it reads what the load holds of those, and lists the first type it may read
+ * through the same typed read a page makes. It has no `helix_query`, history
+ * or changes, and is told nothing else.
+ */
+function partAnswer(
+  o: StoredOntology,
+  loadId: string,
+  view: View,
+  outcome: Outcome,
+): Script {
+  const g = new LoadGraph(tenantGraph(o.tenantId), loadId);
+  const started: AskEvent = {
+    event: "started",
+    model: aiModel(o.workspaceId, "ask") || MODEL,
+    provider: aiProvider(o.workspaceId),
+  };
+  const profiled: AskEvent[] = [
+    started,
+    {
+      event: "tool_call",
+      call_id: "load_profile",
+      tool: "load_profile",
+      input: {},
+    },
+    {
+      event: "tool_result",
+      call_id: "load_profile",
+      summary: `load_profile: ${view.types.size} of ${view.types.size} reads`,
+      evidence_id: "e1",
+    },
+  ];
+  const types = [...view.types.keys()].sort();
+  if (outcome === "failed" || !types.length)
+    return {
+      events: [...profiled, { event: "finished" }],
+      status: "failed",
+      result: {
+        status: "failed",
+        reason: "model_failed",
+        queries: [],
+        usage: usage({ input: 4_100, output: 0, usd: 0.0042 }),
+      },
+      error: "the model could not be reached; ask again",
+      usdMicros: 4_200,
+    };
+  // The first type it can see anything of: what it can say.
+  const model = evaluate(g, compile(view.ontologyToml));
+  const readOf = (type: string) => {
+    const query: OntologyQuery = {
+      start: { type },
+      return: { rows: { columns: [{ at: 0 }], limit: 100 } },
+    };
+    const read = readAnswer(model, { query }, { view });
+    return {
+      type,
+      query,
+      rows:
+        "ok" in read
+          ? (read.ok.result as { rows: { cells: unknown[] }[] }).rows
+          : [],
+    };
+  };
+  const reads = types.map(readOf),
+    { type, query, rows } = reads.find((r) => r.rows.length) || reads[0]!;
+  const reason =
+    "The sources shared with the person asking hold nothing about this.";
+  const gap = "Sources shared with them that state it.";
+  if (!rows.length || outcome === "cannot_answer")
+    return {
+      events: [
+        ...profiled,
+        {
+          event: "tool_call",
+          call_id: "toolu_01",
+          tool: "cannot_answer",
+          input: { reason, gap },
+        },
+        {
+          event: "tool_result",
+          call_id: "toolu_01",
+          summary: "cannot_answer: ended the question",
+        },
+        { event: "finished" },
+      ],
+      status: "cannot_answer",
+      result: {
+        status: "cannot_answer",
+        reason,
+        gap,
+        queries: [],
+        usage: usage({ input: 3_100, output: 120, usd: 0.0112 }),
+      },
+      error: "",
+      usdMicros: 11_200,
+    };
+  const output: QueryOutput = {
+    kind: "rows",
+    rows: rows.map((r) => ({ cells: r.cells, edges: [] })),
+    total: rows.length,
+  };
+  const blocks = [
+    {
+      para: `Of what the sources shared with you hold, these are the first ${type} records [c1].`,
+    },
+  ];
+  const citations: AskCitation[] = [
+    {
+      marker: "c1",
+      evidence_id: "e2",
+      target: { result: { evidence_id: "e2" } },
+    },
+  ];
+  return {
+    events: [
+      ...profiled,
+      { event: "tool_call", call_id: "toolu_01", tool: "query", input: query },
+      {
+        event: "tool_result",
+        call_id: "toolu_01",
+        summary: `query: ${rows.length} rows`,
+        evidence_id: "e2",
+      },
+      {
+        event: "tool_call",
+        call_id: "toolu_02",
+        tool: "answer",
+        input: { blocks, citations },
+      },
+      {
+        event: "tool_result",
+        call_id: "toolu_02",
+        summary: "answer: ended the question",
+      },
+      { event: "finished" },
+    ],
+    status: "answered",
+    result: {
+      status: "answered",
+      answer: { blocks },
+      citations,
+      queries: [
+        {
+          evidence_id: "e2",
+          // As the engine records it, every field written out.
+          query: {
+            start: { type, where: [], ids: null, text: null },
+            steps: [],
+            filters: [],
+            return: {
+              rows: {
+                columns: [{ at: 0, prop: null }],
+                order_by: null,
+                limit: 100,
+              },
+            },
+          },
+          output,
+        },
+      ],
+      usage: usage({ input: 5_200, output: 240, usd: 0.0212 }),
+    },
+    error: "",
+    usdMicros: 21_200,
+  };
+}
+
 // ---------------------------------------------------------------- the worker
 
 const SPENT_MONTH = `the workspace has spent this month's $${(ASK_LIMITS.monthlyUsdMicros / 1e6).toFixed(2)} of questions`;
@@ -989,11 +1234,21 @@ function scope(req: Parameters<MockRoute["handle"]>[0]) {
   const s = ontologyOf(req);
   if (
     isScope(s) &&
+    !req.grantee &&
     (config as { ontologyDatabaseHidden?: boolean }).ontologyDatabaseHidden
   )
     return fail("PERMISSION_DENIED", "permission denied");
   return s;
 }
+
+/**
+ * Whether a question is one the caller may see: any, but a grantee's own only,
+ * and only while its grants hold what it read (readableQuestions).
+ */
+const visible = (req: Parameters<MockRoute["handle"]>[0], q: StoredQuestion) =>
+  !req.grantee ||
+  (q.grantee === req.grantee.principal &&
+    (!q.seen || req.grantee.stillSees(q.seen)));
 
 function question(
   req: Parameters<MockRoute["handle"]>[0],
@@ -1002,7 +1257,7 @@ function question(
   if (!isScope(s)) return s;
   advanceAll(s.m.workspaceId);
   const q = state.questions.find(
-    (x) => x.id === req.params.id && x.ontologyId === s.o.id,
+    (x) => x.id === req.params.id && x.ontologyId === s.o.id && visible(req, x),
   );
   return q || fail("NOT_FOUND", "question not found");
 }
@@ -1067,13 +1322,17 @@ export const questionRoutes: MockRoute[] = [
         (q) => q.ontologyId === s.o.id && q.clientToken === clientToken,
       );
       if (again)
-        return again.question === text
+        return again.question === text && visible(req, again)
           ? ok({ question: toQuestion(again) } satisfies QuestionResponse)
           : fail(
               "INVALID_ARGUMENT",
               "client_token was already used for another question",
             );
-      const loadId = body.loadId || currentLoadId(s.o.id);
+      // A grantee asks only the load its grants were checked against.
+      const granted = req.grantee?.load?.loadId;
+      if (granted && body.loadId && body.loadId !== granted)
+        return fail("NOT_FOUND", "load not found");
+      const loadId = granted || body.loadId || currentLoadId(s.o.id);
       if (!loadId)
         return fail(
           "FAILED_PRECONDITION",
@@ -1093,25 +1352,24 @@ export const questionRoutes: MockRoute[] = [
           (q) =>
             q.ontologyId === s.o.id &&
             q.id === body.threadId &&
-            q.threadId === q.id,
+            q.threadId === q.id &&
+            visible(req, q),
         )
       )
         return fail("NOT_FOUND", "thread not found");
-      const hourAgo = Date.now() - 3_600_000;
-      const lastHour = ofWorkspace(s.m.workspaceId).filter(
-        (q) => Date.parse(q.createdAt) >= hourAgo,
-      ).length;
-      if (lastHour >= ASK_LIMITS.hourly)
-        return fail(
-          "RESOURCE_EXHAUSTED",
-          `the workspace has asked ${lastHour} questions in the last hour; try again later`,
-        );
-      if (
-        spend(s.m.workspaceId).spent + ASK_LIMITS.questionUsdMicros >
-        ASK_LIMITS.monthlyUsdMicros
-      )
-        return fail("FAILED_PRECONDITION", SPENT_MONTH);
+      const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
+      if (refusal) return refusal;
       const qid = id("q");
+      // Of a load it holds only some of, the agent is told what it holds.
+      const def = (ontologyVersion(s.o.id, load.versionId)?.definition ||
+        {}) as { ontology_toml?: unknown; mappings_toml?: unknown };
+      const view = req.grantee?.load?.partial
+        ? viewOf(
+            req.grantee.visibility(s.o.id),
+            String(def.ontology_toml || ""),
+            String(def.mappings_toml || ""),
+          )
+        : undefined;
       const q: StoredQuestion = {
         id: qid,
         workspaceId: s.m.workspaceId,
@@ -1123,13 +1381,17 @@ export const questionRoutes: MockRoute[] = [
         focusJson,
         clientToken,
         askedByUserId: req.principal.user.id,
+        ...(req.grantee ? { grantee: req.grantee.principal } : {}),
+        ...(view && req.grantee ? { seen: req.grantee.seen(s.o.id) } : {}),
         createdAt: now(),
         status: "queued",
         attempts: 0,
         claimedAt: 0,
         heldAt: 0,
         stepMs: knobs.askStepMs ?? STEP_MS,
-        script: answer(s.o, load.id, knobs.askOutcome || "answered"),
+        script: view
+          ? partAnswer(s.o, load.id, view, knobs.askOutcome || "answered")
+          : answer(s.o, load.id, knobs.askOutcome || "answered"),
         events: [],
         resultJson: "",
         error: "",
@@ -1151,13 +1413,16 @@ export const questionRoutes: MockRoute[] = [
       advanceAll(s.m.workspaceId);
       const thread = req.query.get("threadId") || "";
       const all = state.questions.filter(
-        (q) => q.ontologyId === s.o.id && (!thread || q.threadId === thread),
+        (q) =>
+          q.ontologyId === s.o.id &&
+          (!thread || q.threadId === thread) &&
+          visible(req, q),
       );
       const from = Number(req.query.get("pageToken") || 0) || 0;
       return ok({
         questions: all.slice(from, from + PAGE).map((q) => toQuestion(q, true)),
         nextPageToken: from + PAGE < all.length ? String(from + PAGE) : "",
-        budget: budget(s.m.workspaceId),
+        budget: budget(s.m.workspaceId, req.grantee?.principal),
       } satisfies ListQuestionsResponse);
     },
   },

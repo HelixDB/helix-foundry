@@ -428,6 +428,13 @@ hr {
 .sidebar-bottom {
   margin-top: auto;
 }
+/* An ontology its reader holds only part of says so, quietly (PartNote). */
+.hf-part-note {
+  margin: 0 0 var(--hf-space-2);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+
 .local-note {
   display: flex;
   align-items: center;

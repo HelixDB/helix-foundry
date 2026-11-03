@@ -648,6 +648,9 @@ message FoundryOntology {
   google.protobuf.Timestamp refresh_due_at = 13;
   // Why an owed refresh waits: busy (a job is live); empty otherwise.
   string refresh_waiting = 14;
+  // The caller holds only some of what its current load holds, and reads that
+  // part: set only for a caller who reads through source grants.
+  bool partial_access = 15;
 }
 
 message FoundryOntologyLastLoad {
@@ -1514,3 +1517,103 @@ message FoundryOllamaModel {
   // Ollama); empty when it can, or when the server can't say.
   string unusable = 4;
 }
+
+// FoundryPrincipal is who a source grant is for.
+message FoundryPrincipal {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // A workspace member.
+    KIND_USER = 1;
+    // A workspace service credential: an agent's key.
+    KIND_SERVICE_CREDENTIAL = 2;
+    // A workspace team: its members hold its grants.
+    KIND_TEAM = 3;
+  }
+  Kind   kind = 1;
+  string id   = 2;
+}
+
+// FoundryAccessTarget is the source one grant gives. Each kind names what it
+// needs and leaves the rest empty.
+message FoundryAccessTarget {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // A connector: every table it syncs, now and later, and every document
+    // set it owns. connector_id.
+    KIND_CONNECTOR = 1;
+    // One table of a connector. connector_id and table.
+    KIND_TABLE = 2;
+    // One document set. document_set_id.
+    KIND_DOCUMENT_SET = 3;
+    // The People enrichment profiles a load applies. Nothing else.
+    KIND_ENRICHMENT = 4;
+  }
+  Kind   kind            = 1;
+  string connector_id    = 2;
+  string table           = 3;
+  string document_set_id = 4;
+}
+
+// FoundryAccessGrant is one source an owner or admin granted a principal.
+message FoundryAccessGrant {
+  string                    id                 = 1;
+  FoundryPrincipal          principal          = 2;
+  FoundryAccessTarget       target             = 3;
+  string                    created_by_user_id = 4;
+  google.protobuf.Timestamp created_at         = 5;
+}
+
+// FoundryLoadAccessInputs is what a load holds, as far as grants go: a
+// grantee reads it only when its grants cover all of it.
+message FoundryLoadAccessInputs {
+  message Table {
+    string connector_id = 1;
+    string table        = 2;
+  }
+  // A set its documents, table files or review decisions' documents are in
+  // now, with the connector that owns it, if one does; an empty
+  // document_set_id is a document in no set, which nothing covers.
+  message DocumentSet {
+    string document_set_id = 1;
+    string connector_id    = 2;
+  }
+  repeated Table       tables        = 1;
+  repeated DocumentSet document_sets = 2;
+  // It applied People enrichment's profiles.
+  bool enrichment = 3;
+  // It holds what no grant covers: it was made before grants, or applies a
+  // review decision whose documents weren't recorded. Loading again makes
+  // it shareable.
+  bool uncoverable = 4;
+}
+
+// FoundryOntologyAccess is an ontology's current load as grants see it.
+message FoundryOntologyAccess {
+  string                  ontology_id = 1;
+  string                  load_id     = 2;
+  FoundryLoadAccessInputs inputs      = 3;
+  // The principals whose own grants cover it.
+  repeated FoundryPrincipal readers = 4;
+  // The principals whose own grants hold only some of it, who read that part.
+  repeated FoundryPrincipal partial_readers = 5;
+}
+
+// FoundryAccessLoss is a principal that would stop reading an ontology
+// through grants.
+message FoundryAccessLoss {
+  FoundryPrincipal principal   = 1;
+  string           ontology_id = 2;
+  // It would still read the part its grants hold.
+  bool keeps_part = 3;
+}
+
+// FoundryTeam is a team of the workspace's members: each holds the team's
+// grants.
+message FoundryTeam {
+  string                    id                 = 1;
+  string                    name               = 2;
+  repeated string           member_user_ids    = 3;
+  string                    created_by_user_id = 4;
+  google.protobuf.Timestamp created_at         = 5;
+}
+

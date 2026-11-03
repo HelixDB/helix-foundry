@@ -33,7 +33,7 @@ import { handleWorkos } from "./workos";
 // enrichmentOutcome, documentsPerStream, eventSyncMs, eventCaps,
 // eventSetAllowanceSpent, aiProbeMs, aiProbeOutcome, aiDefault,
 // aiDefaultKind, aiDefaultNamed, aiDetect, ollamaBundled, aiKinds,
-// freshInstall }.
+// memberQueryRead, invoiceOnlyCustomers, freshInstall }.
 //
 // POST /__mock/event-sources/{connectorId}/pieces sends pieces to an API
 // source, as an agent does through the Helix MCP: { clientToken?, pieces:

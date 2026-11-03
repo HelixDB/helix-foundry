@@ -317,7 +317,7 @@ test.describe("with models", () => {
       .or(page.getByText("Failed", { exact: true }))
       .first();
 
-  test("drafts the ontology with the agent and makes it current", async ({
+  test("drafts the ontology with the agent, which starts its load", async ({
     page,
   }) => {
     test.setTimeout((onOllama ? 50 : 30) * 60_000);
@@ -327,27 +327,17 @@ test.describe("with models", () => {
       timeout: (onOllama ? 45 : 25) * 60_000,
     });
     await expect(done(page, "Succeeded")).toHaveText("Succeeded");
-    await page.getByRole("link", { name: /^Review version \d+$/ }).click();
-    await page.getByRole("button", { name: "Make current" }).click();
-    await page
-      .getByRole("dialog", { name: /^Make version \d+ current\?$/ })
-      .getByRole("button", { name: "Make current" })
-      .click();
-    await expect(
-      page.getByText(/^Version \d+ is now current\.$/),
-    ).toBeVisible();
+    // A first ontology's draft is made current and its load started.
+    await page.getByRole("link", { name: /^Open / }).click();
+    await expect(page).toHaveURL(ontologyPath);
   });
 
   test("loads it into HelixDB, the document included", async ({ page }) => {
-    await page.goto(ontologyPath);
+    await page.goto(`${ontologyPath}#loads`);
     await page
-      .getByRole("status")
-      .filter({ hasText: /isn’t loaded yet/ })
-      .getByRole("button", { name: "Load data" })
-      .click();
-    await page
-      .getByRole("dialog", { name: /^Load version \d+ into / })
-      .getByRole("button", { name: "Load" })
+      .getByRole("grid", { name: "Loads" })
+      .getByRole("row")
+      .nth(1)
       .click();
     await expect(page).toHaveURL(/\/loads\/[0-9A-Z]{26}$/);
     const loaded = page

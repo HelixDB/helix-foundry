@@ -62,6 +62,11 @@ export const mock = {
     // The database with that slug refuses its next n requests with the
     // gateway's 503 rate_limit_unavailable, as a new database does.
     startingQueries?: Record<string, number>;
+    // How many customers only Stripe's invoices table states, in a load
+    // written from now on: Customer then has two sources.
+    invoiceOnlyCustomers?: number;
+    readsBusy?: number;
+    readsPaused?: string;
     // A load's reads with rules: parts that fail in entity reads, by pred
     // ("derived:x", or "violations") and code (budget, hub or invalid).
     readErrors?: Record<string, "budget" | "hub" | "invalid">;
@@ -79,6 +84,8 @@ export const mock = {
     dataLayoutConflicts?: number;
     // Alan's role in Acme (a member by default).
     alanRole?: "WORKSPACE_ROLE_ADMIN" | "WORKSPACE_ROLE_MEMBER";
+    // Alan can't query databases: he reads through source grants.
+    memberQueryRead?: boolean;
     // People enrichment: a batch of lookups (and the wait for a slot), and
     // how the lookups stop: the credit cap, context.dev, the time limit, or
     // no free slot.

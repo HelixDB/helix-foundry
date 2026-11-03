@@ -124,12 +124,12 @@ func New(d Deps) (*Service, error) {
 	return s, nil
 }
 
-// Register serves FoundryService and FoundryEventsService on srv. Install
-// ActorInterceptor on srv, and keep srv off any public network: every call
-// is trusted as its Actor.
+// Register serves FoundryService and FoundryEventsService on srv, every call
+// through the access check (authorize). Install ActorInterceptor on srv, and
+// keep srv off any public network: every call is trusted as its Actor.
 func (s *Service) Register(srv *grpc.Server) {
-	foundryv1.RegisterFoundryServiceServer(srv, s)
-	foundryv1.RegisterFoundryEventsServiceServer(srv, s)
+	srv.RegisterService(guarded(&foundryv1.FoundryService_ServiceDesc, s.authorize), s)
+	srv.RegisterService(guarded(&foundryv1.FoundryEventsService_ServiceDesc, s.authorize), s)
 }
 
 // Close closes the foundry-read connection.

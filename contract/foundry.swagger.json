@@ -173,6 +173,312 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/access": {
+      "get": {
+        "summary": "Helix Foundry source grants. An owner or admin grants a principal (a\nuser, a team, or a service credential: an agent's key) the workspace's\nsources; a principal the front end's own permissions don't admit reads an\nontology's current load, and asks it questions, only while every source\nthat load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants\nonly add: a workspace that grants nothing behaves as it did without them.",
+        "description": "Every grant, and what each ontology's current load holds and who may\nread it through grants.",
+        "operationId": "FoundryService_ListFoundryAccess",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAccessResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/grants": {
+      "put": {
+        "summary": "Replaces one principal's grants.",
+        "operationId": "FoundryService_SetFoundryAccessGrants",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetFoundryAccessGrantsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSetFoundryAccessGrantsBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/me": {
+      "get": {
+        "summary": "What the caller reads through grants: whether it came as a grantee, and\nthe ontologies its grants cover.",
+        "operationId": "FoundryService_GetMyFoundryAccess",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetMyFoundryAccessResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/members/{userId}": {
+      "put": {
+        "summary": "Restricts a member to what grants give, or lifts it. A restricted\nmember is a grantee on every Foundry call while their role is member:\nthey see only the ontologies their grants cover, and change nothing.\nOnly a plain member holding no project write or query scope can be\nrestricted (FAILED_PRECONDITION otherwise): either reads the database\noutside Foundry.",
+        "operationId": "FoundryService_SetFoundryMemberRestricted",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetFoundryMemberRestrictedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSetFoundryMemberRestrictedBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/teams": {
+      "post": {
+        "summary": "Teams of the workspace's members, which hold grants for them.",
+        "operationId": "FoundryService_CreateFoundryTeam",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryTeamResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryTeamBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/teams/{teamId}": {
+      "delete": {
+        "summary": "Deletes a team with its grants.",
+        "operationId": "FoundryService_DeleteFoundryTeam",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "put": {
+        "summary": "Renames a team and replaces its members.",
+        "operationId": "FoundryService_UpdateFoundryTeam",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryTeamResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryTeamBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access:preview": {
+      "post": {
+        "summary": "Who would stop reading which ontologies through grants after a change:\nloading or making current a version, deleting a connector, or moving a\ndocument to another set. The site asks before it makes one.",
+        "operationId": "FoundryService_PreviewFoundryAccessChange",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PreviewFoundryAccessChangeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePreviewFoundryAccessChangeBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ai": {
       "get": {
         "summary": "Helix Foundry model providers",
@@ -3229,6 +3535,53 @@
     }
   },
   "definitions": {
+    "FoundryAccessChangeLoadVersion": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "versionId": {
+          "type": "string"
+        }
+      },
+      "description": "A load of an ontology's version, or making it current."
+    },
+    "FoundryAccessChangeMoveDocument": {
+      "type": "object",
+      "properties": {
+        "documentId": {
+          "type": "string"
+        },
+        "documentSetId": {
+          "type": "string"
+        }
+      },
+      "description": "A document moved to another set."
+    },
+    "FoundryLoadAccessInputsDocumentSet": {
+      "type": "object",
+      "properties": {
+        "documentSetId": {
+          "type": "string"
+        },
+        "connectorId": {
+          "type": "string"
+        }
+      },
+      "description": "A set its documents, table files or review decisions' documents are in\nnow, with the connector that owns it, if one does; an empty\ndocument_set_id is a document in no set, which nothing covers."
+    },
+    "FoundryLoadAccessInputsTable": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        }
+      }
+    },
     "FoundryServiceAskFoundryQuestionBody": {
       "type": "object",
       "properties": {
@@ -3384,6 +3737,21 @@
         }
       }
     },
+    "FoundryServiceCreateFoundryTeamBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "memberUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "CreateFoundryTeamRequest makes a team of members. Names are unique in the\nworkspace (ALREADY_EXISTS otherwise), 1 to 120 characters."
+    },
     "FoundryServiceCreateOntologyVersionBody": {
       "type": "object",
       "properties": {
@@ -3456,6 +3824,15 @@
         }
       }
     },
+    "FoundryServicePreviewFoundryAccessChangeBody": {
+      "type": "object",
+      "properties": {
+        "change": {
+          "$ref": "#/definitions/v1FoundryAccessChange"
+        }
+      },
+      "description": "PreviewFoundryAccessChangeRequest asks what a change would take away."
+    },
     "FoundryServicePutFoundryDataLayoutBody": {
       "type": "object",
       "properties": {
@@ -3513,6 +3890,31 @@
           "description": "The version the caller saw as current; empty for none. A mismatch is FailedPrecondition."
         }
       }
+    },
+    "FoundryServiceSetFoundryAccessGrantsBody": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessTarget"
+          }
+        }
+      },
+      "description": "SetFoundryAccessGrantsRequest replaces a principal's grants with targets,\nnone to take them all away. Every target must be of a live connector or\nset of the workspace (NOT_FOUND otherwise)."
+    },
+    "FoundryServiceSetFoundryMemberRestrictedBody": {
+      "type": "object",
+      "properties": {
+        "restricted": {
+          "type": "boolean"
+        }
+      },
+      "description": "SetFoundryMemberRestrictedRequest restricts user_id, or lifts it."
     },
     "FoundryServiceSettleFoundryReviewBody": {
       "type": "object",
@@ -3639,6 +4041,20 @@
         },
         "description": {
           "type": "string"
+        }
+      }
+    },
+    "FoundryServiceUpdateFoundryTeamBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "memberUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -4650,6 +5066,89 @@
         }
       }
     },
+    "v1FoundryAccessChange": {
+      "type": "object",
+      "properties": {
+        "loadVersion": {
+          "$ref": "#/definitions/FoundryAccessChangeLoadVersion"
+        },
+        "deleteConnector": {
+          "type": "string"
+        },
+        "moveDocument": {
+          "$ref": "#/definitions/FoundryAccessChangeMoveDocument"
+        }
+      },
+      "description": "FoundryAccessChange is one change the site warns about."
+    },
+    "v1FoundryAccessGrant": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "target": {
+          "$ref": "#/definitions/v1FoundryAccessTarget"
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAccessGrant is one source an owner or admin granted a principal."
+    },
+    "v1FoundryAccessLoss": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "ontologyId": {
+          "type": "string"
+        },
+        "keepsPart": {
+          "type": "boolean",
+          "description": "It would still read the part its grants hold."
+        }
+      },
+      "description": "FoundryAccessLoss is a principal that would stop reading an ontology\nthrough grants."
+    },
+    "v1FoundryAccessTarget": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/v1FoundryAccessTargetKind"
+        },
+        "connectorId": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "documentSetId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryAccessTarget is the source one grant gives. Each kind names what it\nneeds and leaves the rest empty."
+    },
+    "v1FoundryAccessTargetKind": {
+      "type": "string",
+      "enum": [
+        "KIND_UNSPECIFIED",
+        "KIND_CONNECTOR",
+        "KIND_TABLE",
+        "KIND_DOCUMENT_SET",
+        "KIND_ENRICHMENT"
+      ],
+      "default": "KIND_UNSPECIFIED",
+      "description": " - KIND_CONNECTOR: A connector: every table it syncs, now and later, and every document\nset it owns. connector_id.\n - KIND_TABLE: One table of a connector. connector_id and table.\n - KIND_DOCUMENT_SET: One document set. document_set_id.\n - KIND_ENRICHMENT: The People enrichment profiles a load applies. Nothing else."
+    },
     "v1FoundryCatalogPlan": {
       "type": "object",
       "properties": {
@@ -5440,6 +5939,34 @@
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
     },
+    "v1FoundryLoadAccessInputs": {
+      "type": "object",
+      "properties": {
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FoundryLoadAccessInputsTable"
+          }
+        },
+        "documentSets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FoundryLoadAccessInputsDocumentSet"
+          }
+        },
+        "enrichment": {
+          "type": "boolean",
+          "description": "It applied People enrichment's profiles."
+        },
+        "uncoverable": {
+          "type": "boolean",
+          "description": "It holds what no grant covers: it was made before grants, or applies a\nreview decision whose documents weren't recorded. Loading again makes\nit shareable."
+        }
+      },
+      "description": "FoundryLoadAccessInputs is what a load holds, as far as grants go: a\ngrantee reads it only when its grants cover all of it."
+    },
     "v1FoundryLoadEnrichment": {
       "type": "object",
       "properties": {
@@ -5655,9 +6182,44 @@
         "refreshWaiting": {
           "type": "string",
           "description": "Why an owed refresh waits: busy (a job is live); empty otherwise."
+        },
+        "partialAccess": {
+          "type": "boolean",
+          "description": "The caller holds only some of what its current load holds, and reads that\npart: set only for a caller who reads through source grants."
         }
       },
       "description": "FoundryOntology is a workspace's ontology, bound to one Helix database: a\ntenant of one of the workspace's projects. Statuses are the lowercase names\nthe Foundry contract fixes."
+    },
+    "v1FoundryOntologyAccess": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "loadId": {
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/definitions/v1FoundryLoadAccessInputs"
+        },
+        "readers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryPrincipal"
+          },
+          "description": "The principals whose own grants cover it."
+        },
+        "partialReaders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryPrincipal"
+          },
+          "description": "The principals whose own grants hold only some of it, who read that part."
+        }
+      },
+      "description": "FoundryOntologyAccess is an ontology's current load as grants see it."
     },
     "v1FoundryOntologyActiveJob": {
       "type": "object",
@@ -5768,6 +6330,29 @@
           "$ref": "#/definitions/v1FoundryPlan"
         }
       }
+    },
+    "v1FoundryPrincipal": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/v1FoundryPrincipalKind"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryPrincipal is who a source grant is for."
+    },
+    "v1FoundryPrincipalKind": {
+      "type": "string",
+      "enum": [
+        "KIND_UNSPECIFIED",
+        "KIND_USER",
+        "KIND_SERVICE_CREDENTIAL",
+        "KIND_TEAM"
+      ],
+      "default": "KIND_UNSPECIFIED",
+      "description": " - KIND_USER: A workspace member.\n - KIND_SERVICE_CREDENTIAL: A workspace service credential: an agent's key.\n - KIND_TEAM: A workspace team: its members hold its grants."
     },
     "v1FoundryPropValue": {
       "type": "object",
@@ -6049,6 +6634,39 @@
       },
       "description": "FoundrySyncRules is how often a plan syncs connectors and refreshes graphs."
     },
+    "v1FoundryTeam": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "memberUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryTeam is a team of the workspace's members: each holds the team's\ngrants."
+    },
+    "v1FoundryTeamResponse": {
+      "type": "object",
+      "properties": {
+        "team": {
+          "$ref": "#/definitions/v1FoundryTeam"
+        }
+      }
+    },
     "v1FoundryTier": {
       "type": "string",
       "enum": [
@@ -6155,6 +6773,33 @@
         }
       }
     },
+    "v1GetMyFoundryAccessResponse": {
+      "type": "object",
+      "properties": {
+        "grantee": {
+          "type": "boolean",
+          "description": "The call came as a grantee: the caller reads only through grants."
+        },
+        "hasGrants": {
+          "type": "boolean",
+          "description": "The caller holds grants, through itself or its teams."
+        },
+        "ontologyIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The live ontologies whose current loads its grants hold any of."
+        },
+        "partialOntologyIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Those of them it holds only some of."
+        }
+      }
+    },
     "v1GitHubConnectorConfig": {
       "type": "object",
       "properties": {
@@ -6250,6 +6895,42 @@
             "type": "object",
             "$ref": "#/definitions/v1Connector"
           }
+        }
+      }
+    },
+    "v1ListFoundryAccessResponse": {
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessGrant"
+          },
+          "description": "Every grant, oldest first."
+        },
+        "ontologies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryOntologyAccess"
+          },
+          "description": "Each live ontology with a current load: what it holds, and who reads it\nthrough grants."
+        },
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryTeam"
+          },
+          "description": "The workspace's teams, by name."
+        },
+        "restrictedUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The members restricted to what grants give."
         }
       }
     },
@@ -6767,6 +7448,19 @@
         }
       }
     },
+    "v1PreviewFoundryAccessChangeResponse": {
+      "type": "object",
+      "properties": {
+        "losses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessLoss"
+          },
+          "description": "Each principal that reads an ontology through grants now and wouldn't\nafter the change."
+        }
+      }
+    },
     "v1ReadFoundryGraphResponse": {
       "type": "object",
       "properties": {
@@ -6849,6 +7543,27 @@
       "properties": {
         "roleArn": {
           "type": "string"
+        }
+      }
+    },
+    "v1SetFoundryAccessGrantsResponse": {
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessGrant"
+          },
+          "description": "The principal's grants now."
+        }
+      }
+    },
+    "v1SetFoundryMemberRestrictedResponse": {
+      "type": "object",
+      "properties": {
+        "restricted": {
+          "type": "boolean"
         }
       }
     },

@@ -185,6 +185,10 @@ func (s *mysqlDB) deleteConnector(ctx context.Context, workspaceID, id string) (
 WHERE connector_id=? AND workspace_id=? AND revoked_at IS NULL`, id, workspaceID); err != nil {
 		return nil, nil, fmt.Errorf("revoke connector %s send tokens: %w", id, err)
 	}
+	// Its grants, and its tables', go with it; its sets' go below.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND connector_id=?`, workspaceID, id); err != nil {
+		return nil, nil, fmt.Errorf("delete connector %s grants: %w", id, err)
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM foundry_document_sets
 WHERE connector_id=? AND workspace_id=? AND live_key=1 ORDER BY id FOR UPDATE`, id, workspaceID)
 	if err != nil {
@@ -206,6 +210,10 @@ WHERE set_id IN (`+in+`) AND status='uploaded'`, toAnySlice(sets)...); err != ni
 		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_document_sets SET deleted_at=NOW(6), live_key=NULL WHERE id IN (`+in+`)`,
 			toAnySlice(sets)...); err != nil {
 			return nil, nil, fmt.Errorf("delete connector %s sets: %w", id, err)
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND document_set_id IN (`+in+`)`,
+			append([]any{workspaceID}, toAnySlice(sets)...)...); err != nil {
+			return nil, nil, fmt.Errorf("delete connector %s sets' grants: %w", id, err)
 		}
 	}
 	rows, err = s.db.QueryContext(ctx, `SELECT table_name, s3_key FROM connector_tables

@@ -39,7 +39,7 @@ import type { Scope } from "../explore/load-scope";
 import type { Naming } from "../explore/naming";
 import { readQueries, startingOf } from "../explore/reads";
 import { DatabaseStarting } from "../explore/starting";
-import { useTenantReads } from "../explore/tenant-reads";
+import { useGraphReader } from "../explore/graph-reader";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
 import { useOntology } from "../ontology/scope";
 import { useSources } from "../ontology/sources";
@@ -49,7 +49,8 @@ import { detailProps, fieldName } from "./model";
 // properties, its links out and in by link name with the other ends'
 // readable names, and where it comes from (the table rows that state it,
 // the documents that name it, and the rows and quotes behind each link).
-// It reads the entity page's reads (../explore/reads.ts), so the two agree.
+// It reads the entity page's reads (../explore/reads.ts), so the two agree:
+// through source grants, typed reads, without mentions or the graph.
 
 // The quotes shown per document; its page lists the rest.
 const QUOTES = 3;
@@ -75,12 +76,14 @@ export function RecordDetail({
     { id: o, ontology } = useOntology(),
     navigate = useNavigate();
   const identity = parseEntityId(entityId);
-  const tenant = ontology.tenantId || "";
-  const { read } = useTenantReads();
+  const { access, reader } = useGraphReader(),
+    shared = access === "grants";
+  // Through grants the WFE reads the load; else the user's own database.
+  const tenant = shared ? o : ontology.tenantId || "";
   const entityRead = readQueries.entity(
     ws,
     o,
-    read,
+    reader,
     scope,
     identity || { type: "", key: "" },
     naming,
@@ -93,7 +96,7 @@ export function RecordDetail({
   const evidenceRead = readQueries.evidence(
     ws,
     o,
-    read,
+    reader,
     scope,
     identity || { type: "", key: "" },
     page?.facts,
@@ -220,12 +223,15 @@ export function RecordDetail({
       ) : (
         <div className="rx-detail-body">
           <div className="rx-detail-actions">
-            <Button
-              icon={Network}
-              onClick={() => navigate(link(paths.explore(o, e.dbId)))}
-            >
-              Open in graph
-            </Button>
+            {/* Through grants there is no graph: its page has the rest. */}
+            {!shared && (
+              <Button
+                icon={Network}
+                onClick={() => navigate(link(paths.explore(o, e.dbId)))}
+              >
+                Open in graph
+              </Button>
+            )}
             <ButtonLink
               variant="ghost"
               icon={ExternalLink}
@@ -349,7 +355,9 @@ export function RecordDetail({
             <h3>Where it comes from</h3>
             {!page.rows.length && !page.mentions.length ? (
               <p className="on-muted">
-                No table row or document states it: a link made it.
+                {shared
+                  ? "No table row states it. Where documents name it isn’t shared with you."
+                  : "No table row or document states it: a link made it."}
               </p>
             ) : (
               <ul className="ex-evidence-list">

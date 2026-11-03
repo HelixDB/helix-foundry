@@ -63,6 +63,7 @@ import {
   sourceSummary,
   syncBadge,
 } from "./model";
+import { useAccessCheck } from "../workspace/access-guard";
 
 const crumbs = [{ label: "Connectors", to: paths.data() }];
 // The kit's grid widens every column to its widest one, so the sync history
@@ -236,9 +237,13 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
   }, [polledStatus]);
   const [editing, setEditing] = useState(false),
     [deleting, setDeleting] = useState<"confirm" | "pending" | null>(null);
+  // Who would stop reading through source grants, asked before it goes.
+  const access = useAccessCheck();
   // Leaves the page before the deleted connection is refetched as missing.
   const remove = async () => {
     setDeleting("pending");
+    if (!(await access.check({ deleteConnector: connectorId })))
+      return setDeleting("confirm");
     try {
       await deleteConnector(id, connectorId);
       navigate(paths.data());
@@ -561,6 +566,7 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
           onConfirm={remove}
         />
       )}
+      {access.dialog}
     </Page>
   );
 }

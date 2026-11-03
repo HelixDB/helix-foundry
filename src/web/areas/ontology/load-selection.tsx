@@ -1,11 +1,18 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { DatabaseZap, History, ListChecks, LoaderCircle } from "lucide-react";
+import {
+  DatabaseZap,
+  History,
+  ListChecks,
+  LoaderCircle,
+  Lock,
+} from "lucide-react";
 import type { FoundryLoad } from "../../../shared/wfe";
 import { Button, ButtonLink, EmptyState, FilterSelect } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
+import { useReadAccess } from "../explore/graph-reader";
 import type { Scope } from "../explore/load-scope";
 import {
   chooseLoad,
@@ -25,6 +32,8 @@ import { ontologyName, useOntology } from "./scope";
 // for the Explorer's second side. Everything those pages read is scoped to
 // it (../explore/load-scope.ts), and the links between them carry it. An
 // ontology with no load at all reads nothing: the pages show NothingLoaded.
+// A user reading through source grants reads the current load only, which
+// their grants cover: `?load=` is ignored, and there is no picker.
 
 export type LoadSelection = {
   /** Every load not deleted, newest first; empty until read. */
@@ -51,6 +60,8 @@ export type LoadSelection = {
   setCompare: (id: string | null) => void;
   /** A path with the page's `?load=` carried over. */
   link: (path: string) => string;
+  /** Read through source grants: the current load only, with no picker. */
+  shared: boolean;
 };
 
 export function useLoadSelection(): LoadSelection {
@@ -61,7 +72,8 @@ export function useLoadSelection(): LoadSelection {
   const loads = useMemo(() => query.data?.loads ?? [], [query.data]);
   const pending =
     query.isPending && !!(ontology.currentLoad || ontology.lastLoad);
-  const param = params.get("load");
+  const shared = useReadAccess() === "grants";
+  const param = shared ? null : params.get("load");
   // The list says which load is current, in step with the loads it lists.
   const currentId =
     loads.find((l) => l.current)?.id ?? ontology.currentLoad?.id;
@@ -124,6 +136,7 @@ export function useLoadSelection(): LoadSelection {
     select,
     setCompare,
     link,
+    shared,
   };
 }
 
@@ -140,7 +153,7 @@ export function LoadPicker({
   label?: string;
 }) {
   const { loads, choice } = selection;
-  if (!loads.length) return null;
+  if (!loads.length || selection.shared) return null;
   return (
     <FilterSelect
       label={label}
@@ -168,7 +181,7 @@ export function ComparePicker({ selection }: { selection: LoadSelection }) {
   const { loads, choice, compare } = selection;
   const shown = choice.kind === "load" ? choice.load.id : "";
   const others = loads.filter((l) => l.id !== shown && isPickable(l));
-  if (choice.kind !== "load" || !others.length) return null;
+  if (choice.kind !== "load" || !others.length || selection.shared) return null;
   return (
     <FilterSelect
       label="Compare with"
@@ -254,6 +267,21 @@ export function LoadNotice({ selection }: { selection: LoadSelection }) {
  * overview); members are told who does it. `purpose` ends the sentence:
  * "explore its entities and facts".
  */
+/**
+ * In place of a page of an ontology the user reads only through source
+ * grants (../explore/graph-reader.ts) when those don't cover its current
+ * load.
+ */
+export function NotShared() {
+  return (
+    <EmptyState
+      icon={Lock}
+      title="Not shared with you"
+      text="You read this ontology through the sources an owner or admin shares with you, and they don’t cover all of its current load. Ask an owner or admin of this workspace to share them."
+    />
+  );
+}
+
 export function NothingLoaded({ purpose }: { purpose: string }) {
   const { role } = useWorkspace(),
     { id: o, ontology } = useOntology();

@@ -3,6 +3,7 @@ import type {
   InviteWorkspaceMemberRequest,
   ListWorkspaceMembersResponse,
   ListWorkspacesResponse,
+  ProjectAccess,
   Workspace,
   WorkspaceMember,
   WorkspaceRole,
@@ -30,15 +31,26 @@ export const invitations: {
   invitedBy: string;
 }[] = [];
 
-// Alan is a plain member of Acme: he can read it but not manage it.
-// `POST /__mock/config {"alanRole": "WORKSPACE_ROLE_ADMIN"}` makes him an
-// admin until the next reset, for what admins (not owners) see: role changes
-// stay in the dashboard, so the mock has no route for one.
-export const MEMBER_EMAIL = "alan@example.com";
-const knobs = config as typeof config & { alanRole?: WorkspaceRole };
+// Alan is a plain member of Acme: he can read it but not manage it, and
+// queries its databases. `POST /__mock/config {"alanRole":
+// "WORKSPACE_ROLE_ADMIN"}` makes him an admin until the next reset, for what
+// admins (not owners) see: role changes stay in the dashboard, so the mock
+// has no route for one. `{"memberQueryRead": false}` takes his query access
+// away: the WFE then sends his Ask and graph reads as a grantee
+// (./access.ts), and refuses his query-read.
+//
+// Eve is a plain member of Acme without query access, restricted to what
+// source grants give her (./access.ts seeds her grant: the General set).
+export const MEMBER_EMAIL = "alan@example.com",
+  RESTRICTED_EMAIL = "eve@example.com";
+const knobs = config as typeof config & {
+  alanRole?: WorkspaceRole;
+  memberQueryRead?: boolean;
+};
 onReset(() => {
   invitations.length = 0;
   delete knobs.alanRole;
+  delete knobs.memberQueryRead;
   const at = "2026-10-02T09:00:00.000Z";
   db.users.set("usr_alan", {
     id: "usr_alan",
@@ -57,11 +69,66 @@ onReset(() => {
     },
     createdAt: at,
   });
+  const eveAt = "2026-10-03T09:00:00.000Z";
+  db.users.set("usr_eve", {
+    id: "usr_eve",
+    workosId: "user_01EVE",
+    email: RESTRICTED_EMAIL,
+    firstName: "Eve",
+    lastName: "Adler",
+    createdAt: eveAt,
+  });
+  db.memberships.push({
+    id: "mem_eve_acme",
+    workspaceId: "ws_acme",
+    userId: "usr_eve",
+    role: "WORKSPACE_ROLE_MEMBER",
+    createdAt: eveAt,
+  });
 });
 
 /** Owners and admins hold workspace.members.manage and workspace.billing.manage. */
 export const manages = (m: Membership) =>
   m.role === "WORKSPACE_ROLE_OWNER" || m.role === "WORKSPACE_ROLE_ADMIN";
+
+/**
+ * Whether a member may query the workspace's databases: owners and admins,
+ * and members unless they hold no query access (Eve; Alan with
+ * `memberQueryRead: false`).
+ */
+export const queryReads = (m: Membership) =>
+  manages(m) ||
+  (m.userId !== "usr_eve" &&
+    !(m.userId === "usr_alan" && knobs.memberQueryRead === false));
+
+const ALL = { mode: "all" },
+  NONE = { mode: "none" };
+/**
+ * A member's effective project policy, as the WFE resolves it: owners and
+ * admins reach every project; a member reads them all, writes none, and
+ * queries their databases while queryReads says so.
+ */
+export function projectAccess(m: Membership): ProjectAccess {
+  const query = queryReads(m) ? ALL : NONE;
+  return manages(m)
+    ? { version: "2", read: ALL, write: ALL, queryRead: ALL, queryWrite: ALL }
+    : {
+        version: "2",
+        read: ALL,
+        write: NONE,
+        queryRead: query,
+        queryWrite: NONE,
+      };
+}
+/**
+ * The WFE's RawAccess: the member may write a project or query its
+ * databases outside Foundry, so grants can't restrict what they read.
+ */
+export const rawAccess = (m: Membership) => {
+  const a = projectAccess(m),
+    reaches = (s?: { mode?: string }) => !!s?.mode && s.mode !== "none";
+  return reaches(a.write) || reaches(a.queryRead) || reaches(a.queryWrite);
+};
 
 const ROLES = new Set<WorkspaceRole>([
   "WORKSPACE_ROLE_OWNER",
@@ -83,6 +150,7 @@ function member(m: Membership): WorkspaceMember {
       timestamps: { createdAt: user.createdAt, updatedAt: user.createdAt },
     },
     timestamps: { createdAt: m.createdAt, updatedAt: m.createdAt },
+    projectAccess: projectAccess(m),
   };
 }
 

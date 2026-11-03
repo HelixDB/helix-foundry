@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
@@ -39,7 +41,8 @@ const (
 //  2. The load (the current one when unset) must be ready or partial, and
 //     the thread, when set, one of the ontology's.
 //  3. The workspace's limits must allow it: questions asked in the last
-//     hour, and what the month's questions settled plus this one's cap.
+//     hour, and what the month's questions settled plus this one's cap; and,
+//     for a grantee, the same limits of its own.
 //
 // A local install with no AI provider refuses it (FOUNDRY_AI_NOT_CONFIGURED).
 func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoundryQuestionRequest) (*foundryv1.FoundryQuestionResponse, error) {
@@ -69,16 +72,24 @@ func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 		return nil, err
 	}
 	token := req.GetClientToken()
+	asker := questionsOf(ctx)
 	existing, err := s.deps.DB.GetFoundryQuestionByClientToken(ctx, o.ID, token)
 	switch {
-	case err == nil && existing.Question != question:
+	case err == nil && (existing.Question != question || !samePrincipal(asker, existing.Grantee)):
 		return nil, status.Error(codes.InvalidArgument, "client_token was already used for another question")
 	case err == nil:
-		return &foundryv1.FoundryQuestionResponse{Question: foundryQuestionToProto(existing)}, nil
+		return s.foundryQuestionResponse(ctx, o.ID, existing.ID)
 	case !errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Errorf(codes.Internal, "look up question: %v", err)
 	}
 	loadID := req.GetLoadId()
+	if granted, ok := granteeLoad(ctx); ok {
+		// A grantee asks only the load its grants were checked against.
+		if loadID != "" && loadID != granted.LoadID {
+			return nil, status.Error(codes.NotFound, "load not found")
+		}
+		loadID = granted.LoadID
+	}
 	if loadID == "" {
 		if o.CurrentLoadID == nil {
 			return nil, status.Error(codes.FailedPrecondition, "the ontology has no load to ask yet; load a version first")
@@ -102,7 +113,7 @@ func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	if thread := req.GetThreadId(); thread != "" {
 		first, err := s.deps.DB.GetFoundryQuestion(ctx, o.ID, thread)
 		switch {
-		case errors.Is(err, foundrystore.ErrNotFound) || err == nil && first.ThreadID != first.ID:
+		case errors.Is(err, foundrystore.ErrNotFound) || err == nil && (first.ThreadID != first.ID || !samePrincipal(asker, first.Grantee)):
 			return nil, status.Error(codes.NotFound, "thread not found")
 		case err != nil:
 			return nil, status.Errorf(codes.Internal, "get thread: %v", err)
@@ -111,6 +122,18 @@ func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	}
 	if userID := actor(ctx).UserID; userID != "" {
 		q.AskedByUserID = &userID
+	}
+	q.Grantee = asker
+	// Of a load it holds only some of, what it holds now is what its answer can
+	// say: the question reads only while its grants hold that.
+	if granted, ok := granteeLoad(ctx); ok && granted.Partial {
+		g, _ := access.GranteeFrom(ctx)
+		part, err := s.granteePart(ctx, g, load.ID)
+		if err != nil {
+			return nil, err
+		}
+		seen := part.Inputs()
+		q.Seen = &seen
 	}
 	var refusal foundrymodel.FoundryQuestionRefusal
 	switch err := s.deps.DB.CreateFoundryQuestion(ctx, q, s.foundryQuestionLimits()); {
@@ -121,7 +144,7 @@ func (s *Service) AskFoundryQuestion(ctx context.Context, req *foundryv1.AskFoun
 	case errors.Is(err, foundrystore.ErrConflict):
 		// The same click again won the race.
 		raced, lookupErr := s.deps.DB.GetFoundryQuestionByClientToken(ctx, o.ID, token)
-		if lookupErr != nil || raced.Question != question {
+		if lookupErr != nil || raced.Question != question || !samePrincipal(asker, raced.Grantee) {
 			return nil, status.Error(codes.InvalidArgument, "client_token was already used for another question")
 		}
 		return &foundryv1.FoundryQuestionResponse{Question: foundryQuestionToProto(raced)}, nil
@@ -139,7 +162,7 @@ func (s *Service) foundryQuestionLimits() foundrymodel.FoundryQuestionLimits {
 	now := time.Now().UTC()
 	return foundrymodel.FoundryQuestionLimits{
 		Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), CapMicros: a.MonthlyMicros(),
-		PerHour: a.PerHour, Running: a.MaxRunning,
+		PerHour: a.PerHour, Running: a.MaxRunning, GranteePerHour: a.GranteePerHour, GranteeCapMicros: a.GranteeMonthlyMicros(),
 	}
 }
 
@@ -161,7 +184,7 @@ func (s *Service) ListFoundryQuestions(ctx context.Context, req *foundryv1.ListF
 	if err != nil {
 		return nil, err
 	}
-	questions, next, err := s.deps.DB.ListFoundryQuestions(ctx, o.ID, req.GetThreadId(), req.GetPageToken(), foundryQuestionPageSize)
+	questions, next, err := s.deps.DB.ListFoundryQuestions(ctx, o.ID, req.GetThreadId(), req.GetPageToken(), foundryQuestionPageSize, questionsOf(ctx))
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
@@ -169,15 +192,26 @@ func (s *Service) ListFoundryQuestions(ctx context.Context, req *foundryv1.ListF
 		return nil, status.Errorf(codes.Internal, "list questions: %v", err)
 	}
 	limits := s.foundryQuestionLimits()
-	spend, err := s.deps.DB.SumFoundryQuestionSpend(ctx, o.WorkspaceID, limits.Since)
+	budget, hourly := limits.CapMicros, limits.PerHour
+	var spend foundrymodel.FoundryQuestionSpend
+	if asker := questionsOf(ctx); asker != nil {
+		// A grantee's budget is its own; what the workspace spends isn't its to see.
+		budget, hourly = limits.GranteeCapMicros, limits.GranteePerHour
+		spend, err = s.deps.DB.SumFoundryGranteeQuestionSpend(ctx, o.WorkspaceID, *asker, limits.Since)
+		if err == nil {
+			questions, err = s.readableQuestions(ctx, questions)
+		}
+	} else {
+		spend, err = s.deps.DB.SumFoundryQuestionSpend(ctx, o.WorkspaceID, limits.Since)
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "sum questions spend: %v", err)
 	}
 	a := s.deps.Cfg.Foundry.Ask
 	resp := &foundryv1.ListFoundryQuestionsResponse{NextPageToken: next, Budget: &foundryv1.FoundryQuestionBudget{
-		MonthlyUsdMicros: limits.CapMicros, SpentUsdMicros: spend.SpentMicros, ReservedUsdMicros: spend.ReservedMicros,
+		MonthlyUsdMicros: budget, SpentUsdMicros: spend.SpentMicros, ReservedUsdMicros: spend.ReservedMicros,
 		QuestionUsdMicros: a.MaxMicros(), MaxSteps: int32(a.MaxSteps), MaxWallSecs: int32(a.MaxWallSecs),
-		ConcurrentLimit: int32(limits.Running), HourlyLimit: int32(limits.PerHour),
+		ConcurrentLimit: int32(limits.Running), HourlyLimit: int32(hourly),
 	}}
 	for _, q := range questions {
 		listed := *q
@@ -222,6 +256,11 @@ func (s *Service) CancelFoundryQuestion(ctx context.Context, req *foundryv1.Canc
 	if err != nil {
 		return nil, err
 	}
+	if questionsOf(ctx) != nil {
+		if _, err := s.foundryQuestion(ctx, o.ID, req.GetId()); err != nil {
+			return nil, err
+		}
+	}
 	if req.GetId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
@@ -243,12 +282,70 @@ func (s *Service) foundryQuestion(ctx context.Context, ontologyID, id string) (*
 	}
 	q, err := s.deps.DB.GetFoundryQuestion(ctx, ontologyID, id)
 	switch {
-	case errors.Is(err, foundrystore.ErrNotFound):
+	case errors.Is(err, foundrystore.ErrNotFound) || err == nil && !samePrincipal(questionsOf(ctx), q.Grantee):
 		return nil, status.Error(codes.NotFound, "question not found")
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "get question: %v", err)
 	}
+	readable, err := s.readableQuestions(ctx, []*foundrymodel.FoundryQuestion{q})
+	switch {
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "read the question's load: %v", err)
+	case len(readable) == 0:
+		return nil, status.Error(codes.NotFound, "question not found")
+	}
 	return q, nil
+}
+
+// readableQuestions keeps, for a grantee, the questions on loads its grants
+// cover now: an answer says what its load held, so it reads only while that
+// load does, whichever load is current. The host's caller keeps them all.
+func (s *Service) readableQuestions(ctx context.Context, questions []*foundrymodel.FoundryQuestion) ([]*foundrymodel.FoundryQuestion, error) {
+	g, ok := access.GranteeFrom(ctx)
+	if !ok || len(questions) == 0 {
+		return questions, nil
+	}
+	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	if err != nil {
+		return nil, err
+	}
+	loadIDs := make([]string, len(questions))
+	for i, q := range questions {
+		loadIDs[i] = q.LoadID
+	}
+	slices.Sort(loadIDs)
+	loads, err := s.deps.DB.ListFoundryLoadInputs(ctx, g.WorkspaceID, slices.Compact(loadIDs))
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(slices.Clone(questions), func(q *foundrymodel.FoundryQuestion) bool {
+		l, held := loads[q.LoadID]
+		switch {
+		case !held:
+			return true
+		case q.Seen != nil:
+			// It read only part of the load: that part is what it says.
+			return !grants.Covers(*q.Seen)
+		default:
+			return !grants.Covers(l.Inputs)
+		}
+	}), nil
+}
+
+// questionsOf is whose questions the call may see and add to: a grantee's
+// own only, or, for the host's caller (nil), every question.
+func questionsOf(ctx context.Context) *access.Principal {
+	g, ok := access.GranteeFrom(ctx)
+	if !ok {
+		return nil
+	}
+	return &g.Principal
+}
+
+// samePrincipal reports whether a question asked by asked is one the caller
+// whose questions are those of mine may see: any, for the host's caller.
+func samePrincipal(mine, asked *access.Principal) bool {
+	return mine == nil || asked != nil && *asked == *mine
 }
 
 func (s *Service) foundryQuestionResponse(ctx context.Context, ontologyID, id string) (*foundryv1.FoundryQuestionResponse, error) {

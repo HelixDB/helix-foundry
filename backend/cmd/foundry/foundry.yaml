@@ -101,3 +101,5 @@ foundry:
     monthly_usd: 30
     max_running: 2
     per_hour: 30
+    grantee_monthly_usd: 10
+    grantee_per_hour: 10

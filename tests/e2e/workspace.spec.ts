@@ -12,7 +12,7 @@ import {
 
 // The workspace area: settings (general, members and invitations, plan and
 // billing) and the account menu. Ada owns Acme, which is on Foundry
-// Pro; Alan is a member of it. Upgrades start from a new, Free workspace;
+// Pro; Alan and Eve are members of it. Upgrades start from a new, Free workspace;
 // switches between Pro and Max start from Acme.
 
 // The shell's toast with this text (other status regions may be on screen).
@@ -124,7 +124,7 @@ test("lists members and invites people by email", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Members" }).click();
   await expect(page).toHaveURL(/\/settings\/members$/);
   const members = page.getByRole("list", { name: "Members" });
-  await expect(members.getByRole("listitem")).toHaveCount(2);
+  await expect(members.getByRole("listitem")).toHaveCount(3);
   // Owners first; the signed-in user is marked.
   await expect(members.getByRole("listitem").first()).toContainText(
     "Ada LovelaceYou",
@@ -137,6 +137,7 @@ test("lists members and invites people by email", async ({ page }) => {
     "alan@example.com",
   );
   await expect(members.getByRole("listitem").nth(1)).toContainText("Member");
+  await expect(members.getByRole("listitem").nth(2)).toContainText("Eve Adler");
 
   await page.getByRole("button", { name: "Invite people" }).click();
   let dialog = page.getByRole("dialog", { name: "Invite to Acme" });

@@ -413,7 +413,7 @@ func (s *foundryStore) ListFoundryDocumentsByID(_ context.Context, workspaceID s
 
 // ListFoundryOntologyDocuments keeps the provider's rule: the load's
 // members and the scope's uploaded documents; filters are the MySQL tests'.
-func (s *foundryStore) ListFoundryOntologyDocuments(_ context.Context, workspaceID, loadID string, scope []string, _ foundrymodel.FoundryDocumentFilter,
+func (s *foundryStore) ListFoundryOntologyDocuments(_ context.Context, workspaceID, loadID string, scope []string, _ *[]string, _ foundrymodel.FoundryDocumentFilter,
 	pageToken string, _ int) ([]*foundrymodel.FoundryDocument, string, error) {
 	if err := s.listPage(pageToken); err != nil {
 		return nil, "", err

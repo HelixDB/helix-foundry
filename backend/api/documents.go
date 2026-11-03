@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/document"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
@@ -270,6 +271,10 @@ func (s *Service) ListFoundryDocuments(ctx context.Context, req *foundryv1.ListF
 	if req.GetWorkspaceId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
+	g, grantee := access.GranteeFrom(ctx)
+	if grantee && len(req.GetIds()) == 0 {
+		return nil, status.Error(codes.PermissionDenied, "source grants let a grantee name documents only by id")
+	}
 	if ids := req.GetIds(); len(ids) > 0 {
 		switch {
 		case len(ids) > maxFoundryDocumentIDs:
@@ -280,6 +285,13 @@ func (s *Service) ListFoundryDocuments(ctx context.Context, req *foundryv1.ListF
 		byID, err := s.deps.DB.ListFoundryDocumentsByID(ctx, req.GetWorkspaceId(), ids)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "list documents: %v", err)
+		}
+		if grantee {
+			// A grantee names only documents in sets it holds: those its loads'
+			// citations name.
+			if err := s.granteeDocuments(ctx, g, byID); err != nil {
+				return nil, err
+			}
 		}
 		resp := &foundryv1.ListFoundryDocumentsResponse{}
 		for _, id := range ids {
@@ -303,6 +315,31 @@ func (s *Service) ListFoundryDocuments(ctx context.Context, req *foundryv1.ListF
 		resp.Documents = append(resp.Documents, foundryDocumentProto(d, nil))
 	}
 	return resp, nil
+}
+
+// granteeDocuments takes out of byID every document in a set g's grants
+// don't cover.
+func (s *Service) granteeDocuments(ctx context.Context, g access.Grantee, byID map[string]*foundrymodel.FoundryDocument) error {
+	grants, err := s.grantsOf(ctx, g.WorkspaceID, g.Principals())
+	if err != nil {
+		return err
+	}
+	sets, err := s.deps.DB.ListFoundryDocumentSets(ctx, g.WorkspaceID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "list sets: %v", err)
+	}
+	owner := map[string]string{}
+	for _, set := range sets {
+		if set.Owner != nil {
+			owner[set.ID] = set.Owner.ConnectorID
+		}
+	}
+	for id, d := range byID {
+		if !grants.CoversSet(access.SetRef{SetID: d.SetID, ConnectorID: owner[d.SetID]}) {
+			delete(byID, id)
+		}
+	}
+	return nil
 }
 
 // GetFoundryDocument returns a document of the workspace with the
@@ -421,6 +458,24 @@ func (s *Service) GetFoundryDocumentContent(ctx context.Context, req *foundryv1.
 	if err != nil {
 		return nil, err
 	}
+	if g, ok := access.GranteeFrom(ctx); ok {
+		// A grantee reads the text of a document a load its grants cover holds.
+		loads, err := s.granteeLoads(ctx, g, nil)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.heldBy(ctx, doc, func(ontologyID string) bool { _, ok := loads[ontologyID]; return ok }); err != nil {
+			return nil, err
+		}
+		// Of a load it holds only some of, only what its grants cover.
+		byID := map[string]*foundrymodel.FoundryDocument{doc.ID: doc}
+		if err := s.granteeDocuments(ctx, g, byID); err != nil {
+			return nil, err
+		}
+		if byID[doc.ID] == nil {
+			return nil, status.Error(codes.NotFound, "document not found")
+		}
+	}
 	var text []byte
 	switch {
 	case doc.MediaType.ReadKind() == foundrymodel.FoundryReadPDF:
@@ -538,7 +593,22 @@ func (s *Service) ListFoundryOntologyDocuments(ctx context.Context, req *foundry
 	if o.CurrentLoadID != nil {
 		currentLoad = *o.CurrentLoadID
 	}
-	docs, next, err := s.deps.DB.ListFoundryOntologyDocuments(ctx, o.WorkspaceID, currentLoad, reader.scope, filter, req.GetPageToken(), foundryPageSize)
+	// A grantee lists the documents of the load its grants cover, and no
+	// others of the scope; of a load it holds only some of, only those of the
+	// sets it holds.
+	var heldSets *[]string
+	if granted, ok := granteeLoad(ctx); ok {
+		currentLoad, reader.scope = granted.LoadID, []string{}
+		if granted.Partial {
+			g, _ := access.GranteeFrom(ctx)
+			held, err := s.granteeSets(ctx, g)
+			if err != nil {
+				return nil, err
+			}
+			heldSets = &held
+		}
+	}
+	docs, next, err := s.deps.DB.ListFoundryOntologyDocuments(ctx, o.WorkspaceID, currentLoad, reader.scope, heldSets, filter, req.GetPageToken(), foundryPageSize)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
 		return nil, status.Error(codes.InvalidArgument, "page_token is not one this list returned")
@@ -557,9 +627,19 @@ func (s *Service) ListFoundryOntologyDocuments(ctx context.Context, req *foundry
 	}
 	resp := &foundryv1.ListFoundryDocumentsResponse{NextPageToken: next}
 	for _, d := range docs {
-		resp.Documents = append(resp.Documents, foundryDocumentProto(d, extractions[d.ID]))
+		resp.Documents = append(resp.Documents, ontologyDocumentProto(ctx, d, extractions[d.ID]))
 	}
 	return resp, nil
+}
+
+// ontologyDocumentProto is a document as the caller may see it: which other
+// document it duplicates may be one a grantee doesn't hold.
+func ontologyDocumentProto(ctx context.Context, d *foundrymodel.FoundryDocument, e *foundrymodel.FoundryDocumentExtraction) *foundryv1.FoundryDocument {
+	out := foundryDocumentProto(d, e)
+	if _, grantee := access.GranteeFrom(ctx); grantee && out.GetExtraction() != nil {
+		out.Extraction.DuplicateOf = nil
+	}
+	return out
 }
 
 // GetFoundryOntologyDocument returns any document of the workspace (NotFound
@@ -575,6 +655,23 @@ func (s *Service) GetFoundryOntologyDocument(ctx context.Context, req *foundryv1
 	if err != nil {
 		return nil, err
 	}
+	if granted, ok := granteeLoad(ctx); ok {
+		// A grantee gets a document the load its grants cover holds.
+		if err := s.heldBy(ctx, doc, func(ontologyID string) bool { return ontologyID == o.ID }); err != nil {
+			return nil, err
+		}
+		if granted.Partial {
+			g, _ := access.GranteeFrom(ctx)
+			byID := map[string]*foundrymodel.FoundryDocument{doc.ID: doc}
+			if err := s.granteeDocuments(ctx, g, byID); err != nil {
+				return nil, err
+			}
+			if byID[doc.ID] == nil {
+				return nil, status.Error(codes.NotFound, "document not found")
+			}
+		}
+		o.CurrentLoadID = &granted.LoadID
+	}
 	if o.CurrentLoadID == nil {
 		return &foundryv1.FoundryDocumentResponse{Document: foundryDocumentProto(doc, nil)}, nil
 	}
@@ -582,7 +679,20 @@ func (s *Service) GetFoundryOntologyDocument(ctx context.Context, req *foundryv1
 	if err != nil {
 		return nil, err
 	}
-	return &foundryv1.FoundryDocumentResponse{Document: foundryDocumentProto(doc, extraction)}, nil
+	return &foundryv1.FoundryDocumentResponse{Document: ontologyDocumentProto(ctx, doc, extraction)}, nil
+}
+
+// heldBy is NotFound unless a live ontology whose current load holds doc is
+// one of mine: as a document, a table file, or what a prop decision came from.
+func (s *Service) heldBy(ctx context.Context, doc *foundrymodel.FoundryDocument, mine func(ontologyID string) bool) error {
+	holding, err := s.deps.DB.ListFoundryOntologiesHoldingDocument(ctx, doc.WorkspaceID, doc.ID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "find the loads holding the document: %v", err)
+	}
+	if !slices.ContainsFunc(holding, mine) {
+		return status.Error(codes.NotFound, "document not found")
+	}
+	return nil
 }
 
 // foundryDocument is a document of the workspace.

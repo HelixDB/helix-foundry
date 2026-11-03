@@ -15,6 +15,7 @@ import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import {
   activeSection,
   childActive,
+  granteeNav,
   onboardingNav,
   primaryNav,
   sectionSidebars,
@@ -211,7 +212,8 @@ function SectionSplit({
 // workspace, the sections with their names, what the open section shows
 // under them (Ask's threads), then the account and settings. While the
 // workspace is onboarding it holds only the mark, the workspace, the way
-// back to the onboarding and the account.
+// back to the onboarding and the account; for a grantee, no search or
+// settings, and only Analyst, Ontologies and the Explorer.
 export function Sidebar({
   workspaces,
   current,
@@ -227,7 +229,7 @@ export function Sidebar({
   onSwitch: (id: string) => void;
 }) {
   const shell = useShell(),
-    { onboarding } = useWorkspace(),
+    { onboarding, grantee } = useWorkspace(),
     section = activeSection(useLocation().pathname),
     extra = onboarding ? undefined : section && sectionSidebars[section];
   return (
@@ -238,7 +240,7 @@ export function Sidebar({
             helix<span>foundry</span>
           </span>
         </Link>
-        {!onboarding && (
+        {!onboarding && !grantee && (
           <button
             type="button"
             className="hf-btn hf-btn--ghost hf-btn--sm hf-btn--icon hf-search-button"
@@ -273,7 +275,7 @@ export function Sidebar({
         className={cx("hf-nav", extra && "has-section")}
       >
         <NavLinks
-          items={onboarding ? onboardingNav : primaryNav}
+          items={onboarding ? onboardingNav : grantee ? granteeNav : primaryNav}
           label="Workspace"
           onNavigate={onClose}
         />
@@ -303,7 +305,7 @@ export function Sidebar({
       )}
       <div className="hf-sidebar-foot">
         <AccountMenu user={user} current={current} collapsed={false} />
-        {!onboarding && <SettingsLink />}
+        {!onboarding && !grantee && <SettingsLink />}
       </div>
     </div>
   );

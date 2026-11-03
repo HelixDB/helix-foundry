@@ -41,6 +41,7 @@ func (f questionFixture) limits() model.FoundryQuestionLimits {
 	now := time.Now().UTC()
 	return model.FoundryQuestionLimits{
 		Since: time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), CapMicros: 1_000_000, PerHour: 30, Running: 5,
+		GranteePerHour: 30, GranteeCapMicros: 1_000_000_000,
 	}
 }
 
@@ -647,7 +648,7 @@ func TestFoundryQuestionResults(t *testing.T) {
 	})
 
 	t.Run("lists them without their outputs", func(t *testing.T) {
-		page, _, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, thread, "", 10)
+		page, _, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, thread, "", 10, nil)
 		require.NoError(t, err)
 		require.Len(t, page, 3)
 		want := strings.NewReplacer(`,"output":`+rows, "", `,"output":`+groups, "").Replace(visuals)
@@ -689,22 +690,22 @@ func TestFoundryQuestionLists(t *testing.T) {
 	}))
 
 	t.Run("lists newest first, a page at a time", func(t *testing.T) {
-		page, next, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, "", "", 3)
+		page, next, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, "", "", 3, nil)
 		require.NoError(t, err)
 		require.Len(t, page, 3)
 		assert.Equal(t, f.id(4), page[0].ID)
 		require.NotEmpty(t, next)
-		rest, next, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, "", next, 3)
+		rest, next, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, "", next, 3, nil)
 		require.NoError(t, err)
 		require.Len(t, rest, 1)
 		assert.Equal(t, f.id(1), rest[0].ID)
 		assert.Empty(t, next)
-		_, _, err = f.db.ListFoundryQuestions(ctx, f.ontologyID, "", "not-a-token", 3)
+		_, _, err = f.db.ListFoundryQuestions(ctx, f.ontologyID, "", "not-a-token", 3, nil)
 		assert.ErrorIs(t, err, store.ErrInvalidPageToken)
 	})
 
 	t.Run("lists one thread", func(t *testing.T) {
-		page, _, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, thread, "", 10)
+		page, _, err := f.db.ListFoundryQuestions(ctx, f.ontologyID, thread, "", 10, nil)
 		require.NoError(t, err)
 		ids := make([]string, 0, len(page))
 		for _, q := range page {

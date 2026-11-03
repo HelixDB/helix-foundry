@@ -66,6 +66,8 @@ type AskRequest struct {
 	History []AskTurn `json:"history"`
 	// Helix is the question's read-only proxy.
 	Helix HelixTarget `json:"helix"`
+	// Visibility is what the asker holds of the load, when it isn't everything.
+	Visibility *Visibility `json:"visibility,omitempty"`
 	// AsOf is when the question was asked (RFC 3339), the `today` its rules see.
 	AsOf   string `json:"as_of"`
 	Limits Limits `json:"limits"`

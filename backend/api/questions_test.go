@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"reflect"
 	"strings"
 	"testing"
@@ -73,13 +74,18 @@ func (s *questionStore) GetFoundryQuestionByClientToken(_ context.Context, ontol
 	return nil, foundrystore.ErrNotFound
 }
 
-func (s *questionStore) ListFoundryQuestions(_ context.Context, ontologyID, threadID, pageToken string, limit int) ([]*foundrymodel.FoundryQuestion, string, error) {
+func (s *questionStore) ListFoundryQuestions(_ context.Context, ontologyID, threadID, pageToken string, limit int,
+	grantee *access.Principal) ([]*foundrymodel.FoundryQuestion, string, error) {
 	if err := s.listPage(pageToken); err != nil {
 		return nil, "", err
 	}
 	var out []*foundrymodel.FoundryQuestion
 	for i := len(s.questions) - 1; i >= 0; i-- {
-		if q := s.questions[i]; q.OntologyID == ontologyID && (threadID == "" || q.ThreadID == threadID) && len(out) < limit {
+		q := s.questions[i]
+		if grantee != nil && (q.Grantee == nil || *q.Grantee != *grantee) {
+			continue
+		}
+		if q.OntologyID == ontologyID && (threadID == "" || q.ThreadID == threadID) && len(out) < limit {
 			out = append(out, q)
 		}
 	}

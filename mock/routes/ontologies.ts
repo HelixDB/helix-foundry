@@ -146,6 +146,21 @@ const toOntology = (o: StoredOntology): FoundryOntology => ({
   counts: { documents: documentCount(o.workspaceId, o.id) },
 });
 
+/**
+ * An ontology as a grantee sees it (./access.ts): its name and the load its
+ * grants hold, without its database, versions, jobs or counts.
+ */
+const granteeOntology = (
+  o: StoredOntology,
+  partial: boolean | undefined,
+): FoundryOntology => ({
+  id: o.id,
+  name: o.name,
+  createdAt: o.createdAt,
+  currentLoad: ontologyLoads(o.id).currentLoad,
+  ...(partial ? { partialAccess: true } : {}),
+});
+
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies" as const;
 const PAGE = 50;
 
@@ -153,9 +168,17 @@ export const ontologiesRoutes: MockRoute[] = [
   {
     method: "GET",
     path: BASE,
-    handle: ({ params, query, principal: { user } }) => {
+    handle: ({ params, query, principal: { user }, grantee }) => {
       const m = membership(params.workspaceId!, user.id);
       if (isReply(m)) return m;
+      // A grantee's: those its grants cover, all on one page.
+      if (grantee)
+        return ok({
+          ontologies: workspaceOntologies(m.workspaceId)
+            .filter((o) => grantee.covered.has(o.id))
+            .map((o) => granteeOntology(o, grantee.covered.get(o.id)?.partial)),
+          nextPageToken: "",
+        } satisfies ListOntologiesResponse);
       const all = workspaceOntologies(m.workspaceId);
       const from = Number(query.get("pageToken") || 0) || 0;
       return ok({
@@ -215,9 +238,12 @@ export const ontologiesRoutes: MockRoute[] = [
     path: `${BASE}/{ontologyId}`,
     handle: (req) => {
       const s = ontologyOf(req);
-      return isScope(s)
-        ? ok({ ontology: toOntology(s.o) } satisfies OntologyResponse)
-        : s;
+      if (!isScope(s)) return s;
+      return ok({
+        ontology: req.grantee
+          ? granteeOntology(s.o, req.grantee.load?.partial)
+          : toOntology(s.o),
+      } satisfies OntologyResponse);
     },
   },
   {

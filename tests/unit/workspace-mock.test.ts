@@ -107,7 +107,7 @@ describe("members", () => {
     expect(body(first).members.map((m: any) => m.user.email)).toEqual([
       "ada@example.com",
       "alan@example.com",
-      "u1@example.com",
+      "eve@example.com",
     ]);
     expect(body(first).nextPageToken).toBe("3");
     const rest = await call(
@@ -115,12 +115,13 @@ describe("members", () => {
       "/v1/workspaces/ws_acme/members?page.size=3&page.token=3",
       "usr_ada",
     );
-    expect(body(rest).members).toHaveLength(2);
+    expect(body(rest).members).toHaveLength(3);
     expect(body(rest).nextPageToken).toBeUndefined();
-    expect(body(rest).members[0]).toMatchObject({
+    expect(body(rest).members[1]).toMatchObject({
       workspaceId: "ws_acme",
       role: "WORKSPACE_ROLE_MEMBER",
       user: { id: "u2", displayName: "User2" },
+      projectAccess: { queryRead: { mode: "all" }, write: { mode: "none" } },
     });
   });
 
@@ -134,8 +135,12 @@ describe("members", () => {
   });
 
   it("refuses a workspace the caller is not in", async () => {
-    db.users.set("usr_eve", { ...user("usr_ada"), id: "usr_eve" });
-    const r = await call("GET", "/v1/workspaces/ws_acme/members", "usr_eve");
+    db.users.set("usr_mallory", { ...user("usr_ada"), id: "usr_mallory" });
+    const r = await call(
+      "GET",
+      "/v1/workspaces/ws_acme/members",
+      "usr_mallory",
+    );
     expect(r.status).toBe(403);
   });
 

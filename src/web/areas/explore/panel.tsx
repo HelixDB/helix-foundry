@@ -13,6 +13,7 @@ import { useWorkspace } from "../../ui";
 import { chooseLoad, loadOptionLabel, withLoad } from "../ontology/model";
 import { ontologyQueries } from "../ontology/queries";
 import { ontologyName } from "../ontology/scope";
+import { readAccess } from "../workspace/access-model";
 
 // The Explorer section's panel while its page puts nothing there: the page
 // loading, a compare (each side keeps its labels), an entity's page, or a
@@ -20,6 +21,8 @@ import { ontologyName } from "../ontology/scope";
 // Explorer reads, and opens its views. The shell renders it outside the
 // ontology's scope, so it reads the ontology from the path and the rest
 // from the query cache the pages share; its links keep the page's `?load=`.
+// Read through source grants, the Explorer is Records alone, on the
+// current load.
 
 export function ExplorerContext({ onNavigate }: { onNavigate?: () => void }) {
   const { pathname } = useLocation();
@@ -49,9 +52,11 @@ function Context({
   view: "graph" | "records" | "other";
   onNavigate?: () => void;
 }) {
-  const { id: ws } = useWorkspace(),
+  const me = useWorkspace(),
+    { id: ws } = me,
     [params] = useSearchParams();
   const ontology = useQuery(ontologyQueries.ontology(ws, o)).data?.ontology;
+  const shared = !!ontology && readAccess(me, ontology) === "grants";
   const loads = useQuery(ontologyQueries.loads(ws, o)),
     list = loads.data?.loads ?? [];
   const param = params.get("load"),
@@ -62,7 +67,16 @@ function Context({
     ),
     compare = list.find((l) => l.id === params.get("compare"));
   const views = [
-    { id: "graph", label: "Graph", icon: Network, to: paths.explore(o) },
+    ...(shared
+      ? []
+      : [
+          {
+            id: "graph",
+            label: "Graph",
+            icon: Network,
+            to: paths.explore(o),
+          } as const,
+        ]),
     { id: "records", label: "Records", icon: Table2, to: paths.records(o) },
   ] as const;
   return (
@@ -104,14 +118,16 @@ function Context({
           </p>
         )}
         {compare && <p>Compared with {loadOptionLabel(compare)}</p>}
-        <Link
-          to={paths.loads(o)}
-          onClick={onNavigate}
-          className="ex-context-link"
-        >
-          <History size={16} aria-hidden />
-          Data loads
-        </Link>
+        {!shared && (
+          <Link
+            to={paths.loads(o)}
+            onClick={onNavigate}
+            className="ex-context-link"
+          >
+            <History size={16} aria-hidden />
+            Data loads
+          </Link>
+        )}
       </section>
     </div>
   );

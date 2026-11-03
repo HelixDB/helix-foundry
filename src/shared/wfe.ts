@@ -118,13 +118,33 @@ export type WorkspaceRole =
   | "WORKSPACE_ROLE_MEMBER"
   | "WORKSPACE_ROLE_OWNER";
 
-/** v1WorkspaceMember. `projectAccess` is left out: Foundry does not use it. */
+/**
+ * v1ResourceScope: which projects a scope reaches. `mode` is "all", "none"
+ * or "selected" (then `projectIds` names them); unset reads as none.
+ */
+export type ResourceScope = { mode?: string; projectIds?: string[] };
+
+/**
+ * v1ProjectAccess: a member's effective project policy. `write`, `queryRead`
+ * or `queryWrite` reaching any project lets them read databases outside
+ * Foundry, so they can't be restricted to source grants.
+ */
+export type ProjectAccess = {
+  version?: string;
+  read?: ResourceScope;
+  write?: ResourceScope;
+  queryRead?: ResourceScope;
+  queryWrite?: ResourceScope;
+};
+
+/** v1WorkspaceMember */
 export type WorkspaceMember = {
   id?: string;
   workspaceId: string;
   user?: User;
   role?: WorkspaceRole;
   timestamps?: Timestamps;
+  projectAccess?: ProjectAccess;
 };
 
 /** v1WhoamiResponse: GET /v1/whoami. `workspaces` are the user's memberships. */
@@ -1166,6 +1186,9 @@ export type FoundryOntology = {
   // Whether a changed table it reads loads its current version again by
   // itself (a load of origin refresh), at most once per the plan's interval.
   autoRefresh?: boolean;
+  // A caller who reads through source grants holds only some of what its
+  // current load holds, and reads that part.
+  partialAccess?: boolean;
   // With autoRefresh: when the refresh it owes may start, since a table its
   // current load reads changed or a connector's document it read was
   // replaced or removed; unset when it owes none.
@@ -1972,6 +1995,8 @@ export type OntologyQuery = {
           columns: { at: number; prop?: string | null }[];
           order_by?: { at: number; prop: string; desc?: boolean } | null;
           limit?: number;
+          // Rows, in order, to pass over first; at most 10,000.
+          offset?: number;
         };
       }
     // The last position when `distinct_at` is null or left out.
@@ -2773,3 +2798,234 @@ export type AgentProviderKind =
   | "bedrock"
   | "ollama"
   | "openai_compatible";
+
+// ---------------------------------------------------------------- Access
+// Routes under /v1/workspaces/{workspaceId}/foundry/access... (Foundry's
+// source grants) and /v1/workspaces/{workspaceId}/service-credentials (the
+// WFE's agents' keys). Owners and admins grant a principal (a member, a team
+// or an agent's key) sources: a connector (its tables now and later, and the
+// document sets it owns), one table, a document set, or People enrichment. A
+// grantee reads the part of an ontology's current load its sources hold (all
+// of it while every source that load holds is granted to it), and changes
+// nothing: a restricted member (on every
+// Foundry call while their role is member), a member without database query
+// access on Ask's and the graph's reads, or an agent's key with grants.
+// Grants only add: a workspace that grants nothing behaves as before.
+
+/** v1FoundryPrincipalKind */
+export type FoundryPrincipalKind =
+  | "KIND_UNSPECIFIED"
+  | "KIND_USER"
+  | "KIND_SERVICE_CREDENTIAL"
+  | "KIND_TEAM";
+
+/** v1FoundryPrincipal: who a grant is for. `id` is a user's, a key's or a team's. */
+export type FoundryPrincipal = { kind?: FoundryPrincipalKind; id?: string };
+
+/** v1FoundryAccessTargetKind */
+export type FoundryAccessTargetKind =
+  | "KIND_UNSPECIFIED"
+  | "KIND_CONNECTOR"
+  | "KIND_TABLE"
+  | "KIND_DOCUMENT_SET"
+  | "KIND_ENRICHMENT";
+
+/**
+ * v1FoundryAccessTarget: what one grant gives. A connector names
+ * `connectorId`, a table `connectorId` and `table`, a set `documentSetId`,
+ * and People enrichment nothing.
+ */
+export type FoundryAccessTarget = {
+  kind?: FoundryAccessTargetKind;
+  connectorId?: string;
+  table?: string;
+  documentSetId?: string;
+};
+
+/** v1FoundryAccessGrant */
+export type FoundryAccessGrant = {
+  id?: string;
+  principal?: FoundryPrincipal;
+  target?: FoundryAccessTarget;
+  createdByUserId?: string;
+  createdAt?: string;
+};
+
+/** FoundryLoadAccessInputsTable */
+export type FoundryLoadAccessTable = { connectorId?: string; table?: string };
+/**
+ * FoundryLoadAccessInputsDocumentSet: a set the load's documents, table
+ * files or review decisions' documents are in now, with the connector that
+ * owns it, if one does. An empty `documentSetId` is a document in no set,
+ * which nothing covers.
+ */
+export type FoundryLoadAccessSet = {
+  documentSetId?: string;
+  connectorId?: string;
+};
+
+/**
+ * v1FoundryLoadAccessInputs: what a load holds, as far as grants go.
+ * `uncoverable`: it was made before grants, or applies a review decision
+ * whose documents weren't recorded; loading again makes it shareable.
+ */
+export type FoundryLoadAccessInputs = {
+  tables?: FoundryLoadAccessTable[];
+  documentSets?: FoundryLoadAccessSet[];
+  enrichment?: boolean;
+  uncoverable?: boolean;
+};
+
+/**
+ * v1FoundryOntologyAccess: a live ontology's current load as grants see it,
+ * and the principals whose own grants cover it (a team's members read it
+ * through the team; they aren't listed).
+ */
+export type FoundryOntologyAccess = {
+  ontologyId?: string;
+  loadId?: string;
+  inputs?: FoundryLoadAccessInputs;
+  readers?: FoundryPrincipal[];
+  // Those whose own grants hold only some of it, who read that part.
+  partialReaders?: FoundryPrincipal[];
+};
+
+/** v1FoundryTeam: members hold the team's grants. Names are unique, 1 to 120 characters. */
+export type FoundryTeam = {
+  id?: string;
+  name?: string;
+  memberUserIds?: string[];
+  createdByUserId?: string;
+  createdAt?: string;
+};
+
+/**
+ * v1ListFoundryAccessResponse: GET .../foundry/access, owners and admins.
+ * Grants oldest first; ontologies those with a current load; teams by name.
+ */
+export type ListFoundryAccessResponse = {
+  grants?: FoundryAccessGrant[];
+  ontologies?: FoundryOntologyAccess[];
+  teams?: FoundryTeam[];
+  restrictedUserIds?: string[];
+};
+
+/**
+ * FoundryServiceSetFoundryAccessGrantsBody: PUT .../foundry/access/grants
+ * replaces the principal's grants (none takes them all away); a connector or
+ * set not in the workspace is NOT_FOUND. Answers the principal's grants now.
+ */
+export type SetFoundryAccessGrantsRequest = {
+  principal: FoundryPrincipal;
+  targets: FoundryAccessTarget[];
+};
+/** v1SetFoundryAccessGrantsResponse */
+export type SetFoundryAccessGrantsResponse = { grants?: FoundryAccessGrant[] };
+
+/**
+ * v1FoundryAccessChange: one change the site warns about, exactly one of a
+ * load of a version (or making it current), deleting a connector, or moving
+ * a document to another set.
+ */
+export type FoundryAccessChange =
+  | { loadVersion: { ontologyId: string; versionId: string } }
+  | { deleteConnector: string }
+  | { moveDocument: { documentId: string; documentSetId: string } };
+
+/** FoundryServicePreviewFoundryAccessChangeBody: POST .../foundry/access:preview */
+export type PreviewFoundryAccessChangeRequest = { change: FoundryAccessChange };
+/** v1FoundryAccessLoss: a principal that would stop reading an ontology through grants. */
+export type FoundryAccessLoss = {
+  principal?: FoundryPrincipal;
+  ontologyId?: string;
+  // It would still read the part its grants hold.
+  keepsPart?: boolean;
+};
+/** v1PreviewFoundryAccessChangeResponse */
+export type PreviewFoundryAccessChangeResponse = {
+  losses?: FoundryAccessLoss[];
+};
+
+/**
+ * v1GetMyFoundryAccessResponse: GET .../foundry/access/me, any member.
+ * `grantee`: this caller reads only through grants (a restricted member);
+ * `ontologyIds`: the live ontologies whose current loads its grants hold any
+ * of, `partialOntologyIds` those of them it holds only some of.
+ */
+export type GetMyFoundryAccessResponse = {
+  grantee?: boolean;
+  hasGrants?: boolean;
+  ontologyIds?: string[];
+  partialOntologyIds?: string[];
+};
+
+/**
+ * FoundryServiceSetFoundryMemberRestrictedBody: PUT
+ * .../foundry/access/members/{userId}. Only a plain member without project
+ * write or query access can be restricted (FAILED_PRECONDITION otherwise).
+ */
+export type SetFoundryMemberRestrictedRequest = { restricted: boolean };
+/** v1SetFoundryMemberRestrictedResponse */
+export type SetFoundryMemberRestrictedResponse = { restricted?: boolean };
+
+/**
+ * FoundryServiceCreateFoundryTeamBody and FoundryServiceUpdateFoundryTeamBody:
+ * POST .../foundry/access/teams, PUT .../teams/{teamId} (renames and
+ * replaces its members). A taken name is ALREADY_EXISTS; at most 100 teams
+ * and 1,000 members a team.
+ */
+export type FoundryTeamRequest = { name: string; memberUserIds: string[] };
+/** v1FoundryTeamResponse */
+export type FoundryTeamResponse = { team?: FoundryTeam };
+
+/** v1ServiceCredentialPermission: a key's project grant. */
+export type ServiceCredentialPermission =
+  | "SERVICE_CREDENTIAL_PERMISSION_UNSPECIFIED"
+  | "SERVICE_CREDENTIAL_PERMISSION_PROJECT_READ"
+  | "SERVICE_CREDENTIAL_PERMISSION_PROJECT_WRITE"
+  | "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_READ"
+  | "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_WRITE";
+
+/** v1ServiceCredentialGrant: what a key may do in one project. */
+export type ServiceCredentialGrant = {
+  projectId?: string;
+  permissions?: ServiceCredentialPermission[];
+};
+
+/**
+ * v1ServiceCredential: a workspace's key, an agent's. Its token is shown
+ * once, when it is made; `tokenPrefix` names it after. `legacyReportOwner`
+ * is left out: Foundry lists workspace keys only.
+ */
+export type ServiceCredential = {
+  id: string;
+  name?: string;
+  tokenPrefix?: string;
+  workspaceOwner?: { workspaceId?: string };
+  grants?: ServiceCredentialGrant[];
+  createdBy?: string;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+  lastUsedAt?: string | null;
+  timestamps?: Timestamps;
+};
+
+/** helixwfev1ListServiceCredentialsResponse: GET /v1/workspaces/{workspaceId}/service-credentials */
+export type ListServiceCredentialsResponse = {
+  credentials?: ServiceCredential[];
+};
+
+/**
+ * v1WfeServiceCreateServiceCredentialBody: POST
+ * /v1/workspaces/{workspaceId}/service-credentials. Foundry makes keys with
+ * no project grants: they reach Foundry only through source grants.
+ */
+export type CreateServiceCredentialRequest = {
+  name: string;
+  grants?: ServiceCredentialGrant[];
+};
+/** helixwfev1CreateServiceCredentialResponse: `token` is shown once. */
+export type CreateServiceCredentialResponse = {
+  credential?: ServiceCredential;
+  token?: string;
+};

@@ -57,11 +57,26 @@ describe("papi allowlist", () => {
     for (const r of papiRoutes) {
       expect(r.path).not.toMatch(/^\/v1\/auth\//);
       expect(r.path).not.toMatch(/\/sso/);
-      expect(r.path).not.toMatch(/\/service-credentials|\/report-keys/);
+      expect(r.path).not.toMatch(/\/report-keys/);
       expect(`${r.method} ${r.path}`).not.toMatch(
         /^(PATCH|DELETE) .*\/members\//,
       );
     }
+  });
+
+  // Agents' keys are listed, made and revoked to grant them sources; their
+  // project grants (read by id, changed) stay in the dashboard.
+  it("reaches service credentials only to list, make and revoke them", () => {
+    expect(
+      papiRoutes
+        .filter((r) => r.path.includes("/service-credentials"))
+        .map((r) => `${r.method} ${r.path}`)
+        .sort(),
+    ).toEqual([
+      "DELETE /v1/workspaces/{workspaceId}/service-credentials/{id}",
+      "GET /v1/workspaces/{workspaceId}/service-credentials",
+      "POST /v1/workspaces/{workspaceId}/service-credentials",
+    ]);
   });
 
   it("matches one segment per parameter and nothing else", () => {

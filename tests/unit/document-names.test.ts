@@ -11,6 +11,8 @@ const react = vi.hoisted(() => ({
   next: { state: 0, ref: 0 },
   queries: [] as { queryKey: readonly unknown[]; enabled?: boolean }[],
   cache: new Map<string, unknown>(),
+  // useWorkspace()'s: a grantee lists no documents.
+  grantee: false,
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
@@ -22,6 +24,7 @@ vi.mock("react", async (original) => ({
   useRef: (initial: unknown) =>
     (react.refs[react.next.ref++] ??= { current: initial }),
   useEffect: (effect: () => void) => react.effects.push(effect),
+  useContext: () => ({ grantee: react.grantee }),
 }));
 vi.mock("@tanstack/react-query", async (original) => ({
   ...(await original<typeof import("@tanstack/react-query")>()),
@@ -60,6 +63,7 @@ describe("useDocumentNames", () => {
     react.state = [];
     react.refs = [];
     react.cache.clear();
+    react.grantee = false;
   });
 
   it("names uploads from their list and reads any other by id", () => {
@@ -89,6 +93,20 @@ describe("useDocumentNames", () => {
       "contract.md",
       "Weekly pipeline review",
     ]);
+  });
+
+  it("reads a grantee's by id alone: it lists no documents", () => {
+    react.grantee = true;
+    render(["d_up"]);
+    const uploads = react.queries.find(
+      (q) => JSON.stringify(q.queryKey) === '["ws_1","documents"]',
+    );
+    expect(uploads?.enabled).toBe(false);
+    render(["d_up"]);
+    expect(byIds()).toMatchObject({
+      queryKey: ["ws_1", "documents", { ids: ["d_up"] }],
+      enabled: true,
+    });
   });
 
   it("asks for an id once, and keeps what it has read", () => {

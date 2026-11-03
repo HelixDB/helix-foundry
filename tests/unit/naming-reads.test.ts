@@ -8,7 +8,7 @@ import { MockGraph } from "../../mock/graph/store";
 import { documentRequest, entityRequest } from "@/web/areas/explore/model";
 import type { QueryExecutor } from "@/web/areas/explore/database-query";
 import type { Scope } from "@/web/areas/explore/load-scope";
-import { readQueries } from "@/web/areas/explore/reads";
+import { readQueries, type GraphReader } from "@/web/areas/explore/reads";
 import { NO_NAMING, namingKeys, namingOf } from "@/web/areas/explore/naming";
 import { refKey } from "@/web/areas/explore/rule-breaks";
 
@@ -42,6 +42,7 @@ const read: QueryExecutor = async (request) => {
         elapsedMs: 0,
       };
 };
+const db: GraphReader = { kind: "database", read };
 
 const naming = namingOf({
   id: "ver_3",
@@ -140,7 +141,7 @@ describe("the reads' names", () => {
     const q = readQueries.entity(
       "ws",
       "o",
-      read,
+      db,
       SCOPE,
       { type: "Customer", key: "cus_GLOBEX01" },
       naming,
@@ -161,7 +162,7 @@ describe("the reads' names", () => {
 
   it("keep the stored names without a version", async () => {
     const page = await readQueries
-      .entity("ws", "o", read, SCOPE, { type: "Customer", key: "cus_GLOBEX01" })
+      .entity("ws", "o", db, SCOPE, { type: "Customer", key: "cus_GLOBEX01" })
       .queryFn({});
     expect(page.entity?.name).toBe("GLOBEX CORP (old)");
     expect(page.facts.find((f) => f.link === "billed_to")?.other?.name).toBe(
@@ -207,7 +208,7 @@ describe("the names of entities a page knows by type and id", () => {
     const q = readQueries.names(
       "ws",
       "o",
-      read,
+      db,
       LOAD,
       [globex, msa, invoice, partner, missing, globex],
       naming,
@@ -223,6 +224,7 @@ describe("the names of entities a page knows by type and id", () => {
       "names",
       [msa, globex, missing, invoice, partner].map(refKey),
       "ver_3",
+      "database",
     ]);
     const names = await q.queryFn({});
     // A names prop over the stored name, a named type's stored name, a
@@ -238,7 +240,7 @@ describe("the names of entities a page knows by type and id", () => {
       .entity(
         "ws",
         "o",
-        read,
+        db,
         SCOPE,
         { type: "Customer", key: globex.id },
         naming,
@@ -249,7 +251,7 @@ describe("the names of entities a page knows by type and id", () => {
 
   it("reads nothing without a load, or with no entity of the version's types", () => {
     const names = (loadId: string, refs = [globex], n = naming) =>
-      readQueries.names("ws", "o", read, loadId, refs, n).enabled;
+      readQueries.names("ws", "o", db, loadId, refs, n).enabled;
     expect(names(LOAD)).toBe(true);
     expect(names("")).toBe(false);
     expect(names(LOAD, [])).toBe(false);
