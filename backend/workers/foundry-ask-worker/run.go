@@ -359,32 +359,12 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 	if grants != nil {
 		req.Visibility = &held.visibility
 	}
-	switch {
-	case held.part != nil:
-		// What it reads of the load is what its answer can say; the answer reads
-		// only while its grants hold that, with what an earlier attempt's events
-		// show, all of the load if it ran whole.
-		seen := held.part.Inputs()
-		if q.Attempts > 1 {
-			earlier := held.inputs
-			if q.Seen != nil {
-				earlier = *q.Seen
-			}
-			seen = seen.Union(earlier)
-		}
-		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen); err != nil {
-			return nil, retry("could not record your access; Helix will retry", err)
-		}
-	case q.Seen != nil:
-		// It holds all of the load now: the answer reads only while it does.
-		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, nil); err != nil {
-			return nil, retry("could not record your access; Helix will retry", err)
-		}
-	}
 	history, err := r.db.ListFoundryQuestionHistory(ctx, q, ontologyagent.MaxAskHistory)
 	if err != nil {
 		return nil, retry("could not read the thread; Helix will retry", err)
 	}
+	// What the turns it's told of read: its answer can repeat them.
+	var told access.Inputs
 	if grants != nil && len(history) > 0 {
 		// A grantee is told only what it said of loads its grants cover now, or
 		// of the part of one they still hold.
@@ -399,15 +379,44 @@ func (r *runner) request(ctx context.Context, q *model.FoundryQuestion, held hel
 		}
 		history = slices.DeleteFunc(history, func(h *model.FoundryQuestion) bool {
 			l, ok := loads[h.LoadID]
-			switch {
-			case !ok:
-				return true
-			case h.Seen != nil:
-				return !grants.Covers(*h.Seen)
-			default:
-				return !grants.Covers(l.Inputs)
+			read := l.Inputs
+			if h.Seen != nil {
+				read = *h.Seen
 			}
+			if !ok || !grants.Covers(read) {
+				return true
+			}
+			told = told.Union(read)
+			return false
 		})
+	}
+	switch {
+	case held.part != nil:
+		// What it reads of the load is what its answer can say; the answer reads
+		// only while its grants hold that, with what an earlier attempt's events
+		// show, all of the load if it ran whole.
+		seen := held.part.Inputs().Union(told)
+		if q.Attempts > 1 {
+			earlier := held.inputs
+			if q.Seen != nil {
+				earlier = *q.Seen
+			}
+			seen = seen.Union(earlier)
+		}
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen); err != nil {
+			return nil, retry("could not record your access; Helix will retry", err)
+		}
+	case grants != nil && slices.ContainsFunc(history, func(h *model.FoundryQuestion) bool { return h.LoadID != q.LoadID }):
+		// All of this load, and a turn of another that may hold what this one doesn't.
+		seen := held.inputs.Union(told)
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, &seen); err != nil {
+			return nil, retry("could not record your access; Helix will retry", err)
+		}
+	case q.Seen != nil:
+		// It holds all of the load now: the answer reads only while it does.
+		if err := r.db.SetFoundryQuestionSeen(ctx, q.ID, nil); err != nil {
+			return nil, retry("could not record your access; Helix will retry", err)
+		}
 	}
 	for _, h := range history {
 		req.History = append(req.History, ontologyagent.AskTurn{Question: h.Question, Answer: ontologyagent.AnswerText(h.Result)})

@@ -232,6 +232,33 @@ func TestGranteeQuestions(t *testing.T) {
 			t.Fatalf("told %+v", req.History)
 		}
 	})
+	// Its answer can repeat a turn it's told of, so it reads only while grants
+	// hold what that turn read, also when this load holds none of it.
+	t.Run("what its earlier turns read stays with the question", func(t *testing.T) {
+		old := access.TableRef{ConnectorID: "conn-gone", Table: "old"}
+		h, q := partHarness(t)
+		read := access.Inputs{Tables: []access.TableRef{old}}
+		h.store.history = []*model.FoundryQuestion{{Question: "earlier", LoadID: "load-1", Seen: &read, Result: json.RawMessage(answeredResult)}}
+		h.run(t, q)
+		if got := h.store.seen[q.ID]; got == nil || !slices.Contains(got.Tables, old) {
+			t.Fatalf("a part: seen %+v", got)
+		}
+		h, q = granteeHarness(t)
+		h.store.olderLoads = map[string]model.FoundryLoadInputs{"load-0": {LoadID: "load-0", Inputs: read}}
+		h.store.history = []*model.FoundryQuestion{{Question: "earlier", LoadID: "load-0", Result: json.RawMessage(answeredResult)}}
+		h.run(t, q)
+		got := h.store.seen[q.ID]
+		if got == nil || !slices.Contains(got.Tables, old) || !slices.Contains(got.Tables, access.TableRef{ConnectorID: "conn-1", Table: "customers"}) {
+			t.Fatalf("whole, after another load: seen %+v", got)
+		}
+		// A whole reader's turn of this same load holds nothing it doesn't.
+		h, q = granteeHarness(t)
+		h.store.history = []*model.FoundryQuestion{{Question: "earlier", LoadID: "load-1", Result: json.RawMessage(answeredResult)}}
+		h.run(t, q)
+		if got, ok := h.store.seen[q.ID]; ok {
+			t.Fatalf("whole, on this load: seen %+v", got)
+		}
+	})
 	// Grants taken away before it runs, or another load made current, and it
 	// fails for good without asking.
 	for name, change := range map[string]func(*harness){
