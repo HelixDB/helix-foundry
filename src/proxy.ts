@@ -1,5 +1,6 @@
 import { trackAgents } from "@databuddy/sdk/agents";
 import type { NextFetchEvent, NextRequest } from "next/server";
+import { LOCAL } from "@/shared/deployment";
 
 // The stamp's Databuddy site (next.config.ts); a local build, the mock and
 // e2e have none, so this reports nothing.
@@ -14,7 +15,8 @@ const websiteId = process.env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID;
  * and the response is never changed.
  */
 export function proxy(request: NextRequest, event: NextFetchEvent) {
-  if (websiteId) event.waitUntil(trackAgents(request, { websiteId }));
+  // A local install serves no crawler.
+  if (websiteId && !LOCAL) event.waitUntil(trackAgents(request, { websiteId }));
 }
 
 // The landing page and sign-in: the rest of the site is the signed-in app.
