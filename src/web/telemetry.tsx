@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import { setGlobalProperties } from "@databuddy/sdk";
 import dynamic from "next/dynamic";
-import { DATABUDDY_CLIENT_ID, trackingAllowed } from "./analytics";
+import { LOCAL } from "../shared/deployment";
+import { DATABUDDY_CLIENT_ID, stopSending, trackingAllowed } from "./analytics";
 
-// Databuddy's tracker, on the hosted site's pages: the landing page, sign-in
-// and the app (both root layouts mount it). Without a client id (a local
-// build, the mock, e2e) the import below is dropped from the build.
+// Databuddy's tracker, on every page: the hosted site's landing page,
+// sign-in and app (both root layouts mount it), and a local install's app.
+// Without a client id (the mock, e2e, `pnpm dev`) the import below is
+// dropped from the build.
 const Databuddy = DATABUDDY_CLIENT_ID
   ? dynamic(
       () => import("@databuddy/sdk/react").then((module) => module.Databuddy),
@@ -83,13 +85,46 @@ export const TRACKER = {
 };
 
 /**
- * The tracker, once the page knows this browser may load it: not one of
- * Helix's own (analytics.ts trackingAllowed, which reads the URL and
- * storage, so only after the first render).
+ * A local install's tracker ("Foundry Local"): how the app is used and
+ * nothing of what it holds, so page views (paths masked, no title) and the
+ * custom events only. No web vitals or errors (their paths are unmasked,
+ * and an error may quote data), no outgoing links (a document's source),
+ * no interactions (they name what was clicked) and no replay.
+ */
+export const LOCAL_TRACKER = {
+  clientId: DATABUDDY_CLIENT_ID,
+  maskPatterns: MASK_PATTERNS,
+  filter: withoutTitle,
+  trackInteractions: false,
+};
+
+/**
+ * The tracker, once the page knows this browser may load it (after the
+ * first render: it reads the URL and storage): not one of Helix's own
+ * (analytics.ts trackingAllowed) and, on a local install, not turned off by
+ * its owner (/telemetry). Otherwise nothing is sent from this page on.
  */
 export function Telemetry() {
   const [allowed, setAllowed] = useState(false);
-  useEffect(() => setAllowed(trackingAllowed(location.search)), []);
+  useEffect(() => {
+    if (!Databuddy) return;
+    if (!trackingAllowed(location.search)) return stopSending();
+    if (!LOCAL) return setAllowed(true);
+    let live = true;
+    fetch("/telemetry", { cache: "no-store" })
+      .then((r) => r.json())
+      .then(
+        (t: { enabled?: unknown }) => t.enabled === true,
+        () => false,
+      )
+      .then((enabled) => {
+        if (!enabled) stopSending();
+        else if (live) setAllowed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
   if (!Databuddy || !allowed) return null;
-  return <Databuddy {...TRACKER} />;
+  return <Databuddy {...(LOCAL ? LOCAL_TRACKER : TRACKER)} />;
 }
