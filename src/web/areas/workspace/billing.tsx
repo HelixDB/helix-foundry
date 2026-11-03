@@ -37,7 +37,7 @@ import {
 } from "./plan";
 
 // Settings → Plan & billing: the workspace's Foundry plan (Free, Pro or Max)
-// as Autumn reports it, buying Pro or Max through Stripe Checkout, switching
+// as Autumn reports it, buying Pro or Max (on Stripe Checkout, or at once with a card on file), switching
 // between them, cancelling and resuming at the period end, and the hosted
 // billing portal. Checkout returns here (the WFE's return URL is
 // /settings/billing), and the page keeps reading the plan until the plan it
@@ -135,7 +135,7 @@ function PlanTag({ s }: { s: PlanSummary }) {
 }
 
 // From Free: pick Pro or Max (helix-foundry's ChoiceCard radios), add a
-// promotion code, and pay on Stripe Checkout.
+// promotion code, and pay on Stripe Checkout, or at once with a card on file.
 function UpgradeDialog({
   initial,
   onClose,
