@@ -686,6 +686,30 @@ describe("TRACKER", () => {
       replay: true,
     });
   });
+
+  it("loads the SDK's own tracker and recorder, checked by SRI", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-test");
+    vi.resetModules();
+    const { TRACKER } = await import("@/web/telemetry");
+    const { createScript, createReplayScript } =
+      await vi.importActual<typeof import("@databuddy/sdk")>("@databuddy/sdk");
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", {
+      querySelector: () => null,
+      createElement: () => ({ setAttribute: () => {} }),
+    });
+    // Each SDK release pins its scripts' date-versioned URLs and SHA-384
+    // hashes, so a change on Databuddy's CDN can't run here; a `scriptUrl`
+    // in TRACKER would load bytes nothing checks.
+    for (const script of [createScript(TRACKER), createReplayScript(TRACKER)])
+      expect(script).toMatchObject({
+        src: expect.stringMatching(
+          /^https:\/\/cdn\.databuddy\.cc\/(databuddy|replay)\.\d{4}-\d{2}-\d{2}\.\d+\.js$/,
+        ),
+        integrity: expect.stringMatching(/^sha384-[A-Za-z0-9+/]{64}$/),
+        crossOrigin: "anonymous",
+      });
+  });
 });
 
 describe("Helix's own people", () => {
