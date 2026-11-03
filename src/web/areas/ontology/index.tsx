@@ -18,8 +18,8 @@ import { VersionPage } from "./version";
 
 export { OntologyHome };
 
-// An ontology's documents, its database's explorer and its records are
-// areas of their own, loaded when first opened (the explorer's canvas is
+// An ontology's documents, its suggestions, its database's explorer and its
+// records are areas of their own, loaded when first opened (the explorer's canvas is
 // large). The Explorer and Ask are sections of their own too (ExploreRoutes,
 // AskRoutes), still under the ontology's scope.
 const DocumentsPage = lazy(() =>
@@ -36,6 +36,9 @@ const DocumentsPage = lazy(() =>
   ),
   RecordsPage = lazy(() =>
     import("../records").then((m) => ({ default: m.RecordsPage })),
+  ),
+  SuggestionsPage = lazy(() =>
+    import("../suggestions").then((m) => ({ default: m.SuggestionsPage })),
   );
 
 // /ontology/:ontologyId/versions/:versionId
@@ -87,6 +90,7 @@ export function OntologyRoutes() {
         />
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="documents/:documentId" element={<DocumentPage />} />
+        <Route path="suggestions" element={<SuggestionsPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route path="*" element={<NotFound />} />

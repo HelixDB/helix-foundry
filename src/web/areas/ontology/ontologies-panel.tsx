@@ -18,6 +18,7 @@ import { childActive } from "../../shell/nav";
 import type { NavChild } from "../../shell/types";
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { OntologyDocumentsTree } from "../documents/explorer";
+import { suggestionQueries } from "../suggestions/api";
 import { canManage, lastLoadBadge } from "./parts";
 import { ontologyQueries } from "./queries";
 import { ontologyName } from "./scope";
@@ -56,6 +57,11 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       ...ontologyQueries.ontology(ws, open),
       enabled: !!open,
     }).data?.ontology;
+  // Suggestions are the open ontology's page only where audits run.
+  const heal = useQuery({
+    ...suggestionQueries.list(ws, open),
+    enabled: !!open,
+  });
   // The open ontology's row, until the list names it (made in another tab).
   const listed = list.data?.ontologies || [],
     ontologies =
@@ -71,8 +77,10 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
   // Overview, which lists its schema versions and data loads (their pages,
   // and generating, are its own), then Documents: what it reads of the
   // workspace's documents (the Connectors area's), counted once the ontology
-  // is read, the list's page, with the documents as a file system under it.
-  // The Explorer and Ask, which read a load, are sections of their own.
+  // is read, the list's page, with the documents as a file system under it;
+  // then Suggestions, what audits of its current load found it lacks, where
+  // this Foundry audits loads. The Explorer and Ask, which read a load, are
+  // sections of their own.
   const overview: NavChild = {
     to: paths.ontology(open),
     label: "Overview",
@@ -85,7 +93,8 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     // Marked on its documents pages; current on the list (on a document's
     // page, the document's row is).
     onDocuments = !!documents && open !== "",
-    onDocumentsList = onDocuments && !documentId;
+    onDocumentsList = onDocuments && !documentId,
+    onSuggestions = open !== "" && pathname === paths.suggestions(open);
   return (
     <div className="on-panel">
       <div className="on-panel-head">
@@ -186,6 +195,21 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                         onNavigate={onNavigate}
                       />
                     </li>
+                    {heal.data?.enabled && (
+                      <li>
+                        <Link
+                          to={paths.suggestions(open)}
+                          onClick={onNavigate}
+                          className={cx(
+                            "hf-subnav-link",
+                            onSuggestions && "is-active",
+                          )}
+                          aria-current={onSuggestions ? "page" : undefined}
+                        >
+                          <span>Suggestions</span>
+                        </Link>
+                      </li>
+                    )}
                   </ul>
                 )}
               </li>

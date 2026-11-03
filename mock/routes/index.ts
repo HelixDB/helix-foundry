@@ -13,6 +13,7 @@ import { loadRoutes } from "./loads";
 import { ontologiesRoutes } from "./ontologies";
 import { ontologyRoutes } from "./ontology";
 import { questionRoutes } from "./questions";
+import { suggestionRoutes } from "./suggestions";
 import { usageRoutes } from "./usage";
 import { workspaceRoutes } from "./workspaces";
 
@@ -31,6 +32,7 @@ export const routes: MockRoute[] = [
   ...ontologyRoutes,
   ...documentRoutes,
   ...reviewRoutes,
+  ...suggestionRoutes,
   ...loadRoutes,
   ...enrichmentRoutes,
   ...aiRoutes,
