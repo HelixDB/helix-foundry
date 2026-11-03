@@ -62,6 +62,7 @@ import {
   useAiConfigured,
 } from "../workspace/ai-gate";
 import {
+  CANNOT_ANSWER_LABELS,
   EMPTY_STREAM,
   MAX_QUESTION,
   answerView,
@@ -1135,7 +1136,11 @@ function Outcome({
         <Callout
           icon={FileQuestion}
           tone="muted"
-          title="This ontology can’t answer that"
+          title={
+            view.result.kind
+              ? CANNOT_ANSWER_LABELS[view.result.kind]
+              : "This ontology can’t answer that"
+          }
           text={
             <>
               {view.result.reason || "What it holds doesn’t say."}
