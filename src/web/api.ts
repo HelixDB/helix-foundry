@@ -7,7 +7,7 @@ import {
 import { LOCAL } from "../shared/deployment";
 import { signInPath } from "../shared/return-path";
 import { SESSION_EXPIRES_HEADER } from "../shared/session-contract";
-import { trackBeforeLeaving } from "./analytics";
+import { signedOut, type Refusal } from "./analytics";
 
 // Every WFE call goes through the same-origin /papi BFF, which adds the
 // session's bearer token: `api("/v1/whoami")` reaches the WFE's /v1/whoami.
@@ -28,6 +28,22 @@ export class ApiError extends Error {
     super(message);
   }
 }
+
+/**
+ * How a call failed, in a word for analytics: too many (429), refused as
+ * asked (any other 4xx), or an error (5xx, the network).
+ *
+ * @example
+ * refusalOf(new ApiError("slow down", 429)); // "rate_limit"
+ * refusalOf(new ApiError("over budget", 400)); // "refused"
+ * refusalOf(new TypeError("Failed to fetch")); // "error"
+ */
+export const refusalOf = (e: unknown): Refusal =>
+  !(e instanceof ApiError) || e.status >= 500
+    ? "error"
+    : e.status === 429
+      ? "rate_limit"
+      : "refused";
 
 // When the session's access token is out, or nearly, or not known yet, calls
 // take turns under a Web Lock (shared by this origin's tabs) until one reports
@@ -217,6 +233,6 @@ export async function signOut() {
     // Without a session there is nothing to end: go to sign-in anyway.
   }
   clearCsrfToken();
-  await trackBeforeLeaving("signed_out");
+  await signedOut();
   window.location.assign(target);
 }

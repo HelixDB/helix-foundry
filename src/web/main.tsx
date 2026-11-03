@@ -25,7 +25,12 @@ import { X } from "lucide-react";
 import { LOCAL } from "../shared/deployment";
 import type { WhoamiResponse } from "../shared/wfe";
 import { signInPath } from "../shared/return-path";
-import { signedIn, trackEvent } from "./analytics";
+import {
+  identifyUser,
+  signedIn,
+  trackEvent,
+  workspaceOpened,
+} from "./analytics";
 import { ApiError } from "./api";
 import { Button, SkeletonText } from "./kit";
 import { paths } from "./paths";
@@ -194,6 +199,10 @@ function WorkspaceApp({
     access = useQuery({ ...myAccessQuery(current.id), enabled: !LOCAL });
   const grantee = !LOCAL && !!access.data?.grantee,
     onboarding = !grantee && !!list.data && !list.data.ontologies?.length;
+  useEffect(
+    () => workspaceOpened(current),
+    [current.id, current.slug, current.name, current.role],
+  );
   useEffect(() => {
     if (onboarding) trackEvent("onboarding_shown");
   }, [onboarding, current.id]);
@@ -258,6 +267,14 @@ function SignedIn({ me }: { me: WhoamiResponse }) {
   useEffect(() => {
     if (signedInTo) signedIn(signedInTo);
   }, [signedInTo]);
+  useEffect(
+    () =>
+      identifyUser(me.user.id, {
+        email: me.user.email,
+        name: me.user.displayName,
+      }),
+    [me.user.id, me.user.email, me.user.displayName],
+  );
   useEffect(() => {
     if (!linked || !list.data) return;
     if (

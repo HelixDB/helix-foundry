@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { Compass, RefreshCw, TriangleAlert } from "lucide-react";
+import { pageCrashed } from "../analytics";
 import { Button, ButtonLink, EmptyState, Page } from "../kit";
 import { useShell } from "./context";
 
@@ -24,6 +25,7 @@ export class RouteErrorBoundary extends Component<
   }
   componentDidCatch(error: Error) {
     console.error(error);
+    pageCrashed(error, staleChunk(error));
   }
   render() {
     const { error } = this.state;

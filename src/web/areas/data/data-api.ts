@@ -20,9 +20,14 @@ import type {
   TestConnectorResponse,
   UpdateConnectorRequest,
 } from "../../../shared/wfe";
-import { trackEvent, type SyncFrom } from "../../analytics";
+import { jobSeen, jobStarted, type SyncFrom } from "../../analytics";
 import { api } from "../../api";
-import { eventSourceWaiting, isEventSource, isLiveSync } from "./model";
+import {
+  eventSourceWaiting,
+  isEventSource,
+  isKnownKind,
+  isLiveSync,
+} from "./model";
 
 // The Data area's WFE calls: query options for TanStack Query and the
 // changes. Keys start with the workspace, and every connector query sits
@@ -64,8 +69,22 @@ export const connectorKindsQuery = (workspaceId: string) => ({
  */
 export const connectorsQuery = (workspaceId: string, waiting = false) => ({
   queryKey: [workspaceId, "connectors"],
-  queryFn: () =>
-    api<ListConnectorsResponse>(`${foundry(workspaceId)}/connectors`),
+  queryFn: async () => {
+    const r = await api<ListConnectorsResponse>(
+      `${foundry(workspaceId)}/connectors`,
+    );
+    jobSeen(
+      "sync",
+      (r.connectors || []).map(
+        (c) =>
+          c.lastSync && {
+            ...c.lastSync,
+            kind: isKnownKind(c.kind) ? c.kind : ("other" as const),
+          },
+      ),
+    );
+    return r;
+  },
   refetchInterval: (q: { state: { data?: ListConnectorsResponse } }) =>
     q.state.data?.connectors?.some((c) => isLiveSync(c.lastSync))
       ? SYNC_POLL_MS
@@ -184,7 +203,7 @@ export const syncConnector = async (
     `${connectorPath(workspaceId, connectorId)}:sync`,
     {},
   );
-  trackEvent("connector_sync_started", { from });
+  jobStarted({ job: "sync", from }, r.sync.id);
   return r;
 };
 

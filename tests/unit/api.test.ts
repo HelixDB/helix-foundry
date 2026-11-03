@@ -8,8 +8,7 @@ let calls: Call[], replies: Response[], assigned: string[];
 
 // Sign-out's event, in the order the page leaves after it.
 vi.mock("@/web/analytics", () => ({
-  trackBeforeLeaving: async (name: string) =>
-    void assigned.push(`event ${name}`),
+  signedOut: async () => void assigned.push("signed out"),
 }));
 
 const json = (status: number, body: unknown) =>
@@ -300,17 +299,25 @@ describe("signOut()", () => {
     await signOut();
     expect(calls[1]!.url).toBe("/auth/logout");
     expect(header(calls[1]!, "x-helix-csrf")).toBe("t");
-    expect(assigned).toEqual([
-      "event signed_out",
-      "https://api.workos.test/logout",
-    ]);
+    expect(assigned).toEqual(["signed out", "https://api.workos.test/logout"]);
   });
 
   it("still lands on sign-in without a session", async () => {
     const { signOut } = await load();
     replies.push(json(401, { code: "UNAUTHENTICATED" }));
     await signOut();
-    expect(assigned).toEqual(["event signed_out", "/login"]);
+    expect(assigned).toEqual(["signed out", "/login"]);
+  });
+});
+
+describe("refusalOf()", () => {
+  it("says how a call failed in a word", async () => {
+    const { ApiError, refusalOf } = await load();
+    expect(refusalOf(new ApiError("slow down", 429))).toBe("rate_limit");
+    expect(refusalOf(new ApiError("over budget", 400, 9))).toBe("refused");
+    expect(refusalOf(new ApiError("gone", 404))).toBe("refused");
+    expect(refusalOf(new ApiError("unavailable", 503))).toBe("error");
+    expect(refusalOf(new TypeError("Failed to fetch"))).toBe("error");
   });
 });
 

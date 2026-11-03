@@ -782,7 +782,10 @@ export function start(canvas: HTMLCanvasElement) {
       : Infinity;
 
   function frame(now: number) {
-    const dt = Math.min(64, now - last);
+    // A frame's time is when the frame began, which can be before `last`
+    // was read at setup: never step back, or the demo's tour index goes
+    // negative and selects no record.
+    const dt = Math.max(0, Math.min(64, now - last));
     last = now;
     const time = calm ? 0 : now;
     const sy = window.scrollY;

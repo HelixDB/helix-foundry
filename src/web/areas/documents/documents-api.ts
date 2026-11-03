@@ -25,7 +25,7 @@ import {
   useQuery,
   type QueryClient,
 } from "@tanstack/react-query";
-import { trackEvent } from "../../analytics";
+import { jobSeen, trackEvent } from "../../analytics";
 import { api, ApiError } from "../../api";
 import { useWorkspace } from "../../ui";
 import { POLL_MS } from "../ontology/queries";
@@ -33,6 +33,7 @@ import {
   base64Bytes,
   fileProblem,
   fileRead,
+  formatOf,
   formatOfName,
   hex,
   putFailure,
@@ -84,6 +85,18 @@ async function every(path: string): Promise<FoundryDocument[]> {
 
 const reading = (d?: FoundryDocument) => !!d && fileRead(d).state === "reading";
 
+// The end of the reads an upload here started (analytics.ts jobSeen).
+const readsSeen = (documents: readonly FoundryDocument[]) =>
+  jobSeen(
+    "read",
+    documents.map((d) => ({
+      id: d.id,
+      status: d.read?.state,
+      format: formatOf(d.mediaType)?.mediaType,
+      code: d.read?.error?.code,
+    })),
+  );
+
 /** A page of the workspace's documents list: one set's, or these. */
 const listed = (ws: string, query: ListDocumentsQuery) =>
   api<ListDocumentsResponse>(
@@ -103,7 +116,11 @@ export const documentQueries = {
    */
   workspace: (ws: string) => ({
     queryKey: [ws, "documents"],
-    queryFn: () => every(docs(ws)),
+    queryFn: async () => {
+      const documents = await every(docs(ws));
+      readsSeen(documents);
+      return documents;
+    },
     refetchInterval: (q: { state: { data?: FoundryDocument[] } }) =>
       q.state.data?.some(reading) ? POLL_MS : false,
   }),
@@ -147,7 +164,11 @@ export const documentQueries = {
   /** One document of the workspace, with the ontologies associated with it. */
   workspaceDocument: (ws: string, id: string) => ({
     queryKey: [ws, "documents", id],
-    queryFn: () => api<DocumentResponse>(doc(ws, id)),
+    queryFn: async () => {
+      const r = await api<DocumentResponse>(doc(ws, id));
+      readsSeen([r.document]);
+      return r;
+    },
     refetchInterval: (q: { state: { data?: DocumentResponse } }) =>
       reading(q.state.data?.document) ? POLL_MS : false,
   }),
