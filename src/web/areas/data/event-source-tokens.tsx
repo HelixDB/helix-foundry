@@ -268,7 +268,7 @@ export function EventSourceTokens({
       {revoking && (
         <ConfirmDialog
           title={`Revoke ${revoking.prefix}…?`}
-          description="This token stops working immediately and can’t be restored. Create a new token to resume sending."
+          description="Anything using this token is refused immediately. This can’t be undone."
           confirmLabel="Revoke token"
           tone="danger"
           pending={revokePending}

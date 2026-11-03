@@ -115,7 +115,7 @@ export function DocumentsPage() {
           { label: ontologyName(ontology), to: paths.ontology(o) },
         ]}
         title="Documents"
-        subtitle="Documents from this ontology’s selected sets and its current load. Upload and organise documents in Connectors."
+        subtitle="Documents from the sets this ontology’s version reads and its current load. Upload and organise documents in Connectors."
         actions={openInData}
       />
       <div className="on-stack">

@@ -200,14 +200,14 @@ export function GoalPanel({
       )
       .then(() =>
         notify(
-          "Prompt copied. Paste it into your AI agent, then paste the suggested goal here.",
+          "Copied the prompt: paste it into your agent, then paste its goal here.",
         ),
       )
       .catch(() => notify("Couldn’t copy the prompt.", true));
   return (
     <Panel
       title="What do you want to understand?"
-      subtitle="Describe the questions you want to answer. For help, copy the prompt into your AI agent."
+      subtitle="For help, copy the prompt into your AI agent."
       actions={
         <Button
           size="sm"

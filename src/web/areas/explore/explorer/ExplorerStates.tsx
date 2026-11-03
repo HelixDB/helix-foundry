@@ -291,8 +291,8 @@ export function StartingState({
         </button>
       }
     >
-      Starting {databaseName} may take a few minutes. The page updates
-      automatically.
+      Starting the {databaseName} database may take a few minutes. The page
+      updates automatically.
     </StateCard>
   );
 }

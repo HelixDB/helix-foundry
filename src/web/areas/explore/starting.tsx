@@ -25,7 +25,9 @@ export function DatabaseStarting({
 }) {
   const { ontology } = useOntology();
   const client = useQueryClient();
-  const name = ontology.databaseName || "the database";
+  const name = ontology.databaseName
+    ? `the ${ontology.databaseName} database`
+    : "the database";
   // The query is waiting to retry: a refetch would only join that wait, so
   // Retry starts it over and it reads now.
   const retry = (
@@ -40,7 +42,7 @@ export function DatabaseStarting({
   if (inline)
     return (
       <p role="status" className="on-muted">
-        Your database is starting. The page updates automatically. {retry}
+        Your new database is starting. The page updates automatically. {retry}
       </p>
     );
   return (

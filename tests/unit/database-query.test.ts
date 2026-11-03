@@ -237,7 +237,7 @@ describe("executeDatabaseQuery", () => {
       status: 503,
       code: "rate_limit_unavailable",
       retryInMs: 5_000,
-      message: expect.stringMatching(/still starting/),
+      message: expect.stringMatching(/is starting/),
     });
     // The shared cluster out is not the database's age.
     replies.push(answer(503, '{"error":"backend_unavailable"}'));
