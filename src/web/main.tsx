@@ -183,8 +183,8 @@ function WorkspaceApp({
   const list = useQuery(ontologyQueries.list(current.id));
   const onboarding = !!list.data && !list.data.ontologies?.length;
   useEffect(
-    () => workspaceOpened(current.id, current.name),
-    [current.id, current.name],
+    () => workspaceOpened(current),
+    [current.id, current.slug, current.name, current.role],
   );
   useEffect(() => {
     if (onboarding) trackEvent("onboarding_shown");
