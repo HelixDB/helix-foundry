@@ -27,7 +27,7 @@ export type Suggestion = {
   documents: number;
   // Reviews' quotes, or a row finding's row errors (docId "").
   examples: SuggestionExample[];
-  // The forms a relationship's reports took (contract 4.7.0's spellings):
+  // The forms a relationship's reports took (contract 4.8.0's spellings):
   // shown beside the quotes when there are more than one, since only a
   // person's reading tells whether they belong together.
   spellings: string[];

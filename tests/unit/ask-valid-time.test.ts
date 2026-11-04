@@ -14,7 +14,7 @@ import { contractErrors } from "../../mock/agent-contract";
 import schema from "./fixtures/ask-result-4.7.0.schema.json";
 
 // P3 prework: schema copied verbatim with `git show rb/top:proto/ontology_agent/v1/schema/ask_result.json`
-// at 9bb335b23013e0b5bc1b81a9e8c674573ec9f2ff. The deployed 4.4.0 mock stays on its own schema.
+// at 9bb335b23013e0b5bc1b81a9e8c674573ec9f2ff. The deployed 4.6.0 mock stays on its own schema.
 const validate = new Ajv2020({
   allErrors: true,
   validateFormats: false,

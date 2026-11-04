@@ -169,7 +169,7 @@ func TestFoundryHealDismissal(t *testing.T) {
 
 // A dismissal is kept with the spellings it was dismissed with: a gathered
 // finding that later holds another spelling is shown again, whatever its
-// support (the re-keying rule of contract 4.7.0's Audit).
+// support (the re-keying rule of contract 4.8.0's Audit).
 func TestFoundryHealDismissalSpellings(t *testing.T) {
 	ctx := context.Background()
 	f := newFoundryFixture(t, "HSPL")

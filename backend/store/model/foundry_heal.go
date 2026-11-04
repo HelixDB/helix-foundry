@@ -122,7 +122,7 @@ func (stored *FoundryHealFinding) Next(seen FoundryHealSeen, loadID, versionID s
 
 // FoundryHealSpellings are the forms a finding's reports took, canonical,
 // as its Finding JSON says: a gathered relationship's `spellings` (contract
-// 4.7.0), or else the one canonical name it is named by. None for a signal
+// 4.8.0), or else the one canonical name it is named by. None for a signal
 // that names no relationship, or JSON that isn't a finding.
 func FoundryHealSpellings(finding json.RawMessage) []string {
 	var f struct {

@@ -121,7 +121,7 @@ const (
 )
 
 // AuditResult is one page's audit (schema/audit_result.json), read
-// leniently: a later contract adds fields (contract 4.7.0's spellings,
+// leniently: a later contract adds fields (contract 4.8.0's spellings,
 // Route.gathered and Draft.origin) and kinds, which are kept as sent.
 type AuditResult struct {
 	Outcome AuditOutcome

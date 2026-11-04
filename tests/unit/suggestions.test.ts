@@ -208,7 +208,7 @@ describe("a suggestion's words", () => {
   });
 
   it("reads a later contract's fields and kinds as what they are", () => {
-    // 4.7.0: a gathered finding's spellings, and a route's gathered flag.
+    // 4.8.0: a gathered finding's spellings, and a route's gathered flag.
     const gathered = suggestion(
       stored({
         signal: {

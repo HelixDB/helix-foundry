@@ -100,7 +100,7 @@ func TestDecodeAuditResult(t *testing.T) {
 		t.Fatalf("unmeasured = %+v, %v", r, err)
 	}
 
-	// A later contract's fields and kinds are kept, not refused: 4.7.0's
+	// A later contract's fields and kinds are kept, not refused: 4.8.0's
 	// spellings, a route's gathered and a draft's origin, and a kind this
 	// contract lacks.
 	later := done(complete,
