@@ -1,11 +1,15 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -60,6 +64,7 @@ func TestValidateRoles(t *testing.T) {
 		"the API's generation cap":    {func(c *Config) { c.Foundry.Ontology.PerHour = 0 }, Roles{API: true}, "foundry.ontology.per_hour"},
 		"the hosted default's key":    {func(c *Config) { c.Foundry.AI.Default.APIKey = "" }, Roles{GraphWorker: true}, "api_key must be set"},
 		"the graph worker's rate":     {func(c *Config) { c.Foundry.Graph.LoadRateLimit.Burst = 5 }, Roles{GraphWorker: true}, "load_rate_limit"},
+		"the ask worker's read caps":  {func(c *Config) { c.Foundry.Ask.ReadScanEntities = 0 }, Roles{AskWorker: true}, "read_scan_entities"},
 		"the enrichment worker's key": {func(c *Config) { c.Foundry.Enrichment.Provider = EnrichmentContextDev }, Roles{EnrichmentWorker: true}, "api_key"},
 		"the shared plan catalog":     {func(c *Config) { c.Billing.Plans = nil }, Roles{}, "at least the Free plan"},
 		"a stream's extracts":         {func(c *Config) { c.Foundry.Events.MaxExtracted = c.Foundry.Documents.MaxPerStream + 1 }, Roles{}, "max_extracted"},
@@ -310,6 +315,64 @@ func TestFoundryAskDefaults(t *testing.T) {
 		if got, wallCap := a.AttemptTimeout(), time.Duration(wall)*time.Second; got != AskReadyWait+wallCap+AskAttemptMargin || got <= wallCap {
 			t.Fatalf("attempt timeout at %ds = %s", wall, got)
 		}
+	}
+}
+
+// Each read of a question is held to the agent's own defaults unless a
+// deployment raises them, so a hosted question reads as it did before the
+// setting: the agent's schema says what it reads in their place.
+func TestFoundryAskReadDefaults(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(contracttest.Dir(t), "ask_request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Defs struct {
+			AskReadLimits struct {
+				Properties struct {
+					WallMS       struct{ Default int } `json:"wall_ms"`
+					ScanEntities struct{ Default int } `json:"scan_entities"`
+				} `json:"properties"`
+			} `json:"AskReadLimits"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	a, agent := Defaults().Foundry.Ask, schema.Defs.AskReadLimits.Properties
+	if a.ReadWallMS != 5000 || a.ReadScanEntities != 20000 || a.ReadWallMS != agent.WallMS.Default || a.ReadScanEntities != agent.ScanEntities.Default {
+		t.Fatalf("foundry.ask read_wall_ms %d and read_scan_entities %d, the agent's defaults %d and %d",
+			a.ReadWallMS, a.ReadScanEntities, agent.WallMS.Default, agent.ScanEntities.Default)
+	}
+}
+
+// A read's caps are positive, and its wall time fits its question's, which
+// the agent checks too; a read may take the whole question's time.
+func TestFoundryAskReadLimits(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate func(*AskConfig)
+		want   string
+	}{
+		"the defaults":                {func(*AskConfig) {}, ""},
+		"no wall time":                {func(a *AskConfig) { a.ReadWallMS = 0 }, "read_wall_ms and read_scan_entities must be positive"},
+		"a negative wall time":        {func(a *AskConfig) { a.ReadWallMS = -1 }, "read_wall_ms and read_scan_entities must be positive"},
+		"no matches":                  {func(a *AskConfig) { a.ReadScanEntities = 0 }, "read_wall_ms and read_scan_entities must be positive"},
+		"the question's whole time":   {func(a *AskConfig) { a.ReadWallMS = a.MaxWallSecs * 1000 }, ""},
+		"past the question's time":    {func(a *AskConfig) { a.ReadWallMS = a.MaxWallSecs*1000 + 1 }, "foundry.ask.read_wall_ms (240001) must be at most max_wall_secs (240s)"},
+		"one ms in a one-second call": {func(a *AskConfig) { a.MaxWallSecs, a.ReadWallMS = 1, 1 }, ""},
+		"a local install's caps": {func(a *AskConfig) {
+			a.MaxWallSecs, a.ReadWallMS, a.ReadScanEntities = AskWallSecsLimit-1, 30_000, 100_000
+		},
+			""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := Defaults().Foundry.Ask
+			tc.mutate(&a)
+			err := a.validate()
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("validate = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

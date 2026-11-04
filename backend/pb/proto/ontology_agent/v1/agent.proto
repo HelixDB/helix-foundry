@@ -221,15 +221,19 @@ service Agent {
   //
   // The errors come before any event. INVALID_ARGUMENT: `request_json` is not an AskRequest
   // (the message has the JSON error), or it can't run (the message says why: an empty
-  // question, more than 5 earlier turns, an `as_of` that isn't a date, an ontology that
-  // doesn't compile, a `helix.url` that isn't one), or its models or key don't fit (see
-  // above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
+  // question, more than 5 earlier turns, an `as_of` that isn't a date, a `limits.read.wall_ms`
+  // past `limits.max_wall_secs`, an ontology that doesn't compile, a `helix.url` that isn't
+  // one), or its models or key don't fit (see above). FAILED_PRECONDITION: the provider or model (see above). RESOURCE_EXHAUSTED: the
   // server runs as many questions as it allows at once. UNAVAILABLE: the server is shutting
   // down. ABORTED doesn't apply: Ask takes no write lock.
   //
   // Cancelling the call, or dropping the connection, stops the question before its next
   // model call. A retry of the same request replays the model calls the server already
   // recorded, at no cost, when it runs with a response store.
+  //
+  // Since 4.5.0 `limits.read` sets what each read may spend (`wall_ms`, `scan_entities`; the
+  // Read call's defaults, 5,000 ms and 20,000 matches, when left out), and a read stopped at
+  // one, or at `helix.timeout_secs`, says which in its `tool_result`'s error, with its value.
   rpc Ask(AskRequest) returns (stream AskEvent);
 }
 

@@ -674,7 +674,7 @@ func TestAnswer(t *testing.T) {
 			t.Fatalf("question = %+v", req)
 		case len(req.History) != 1 || req.History[0] != (ontologyagent.AskTurn{Question: "Who are our customers?", Answer: "Acme signed [c1].\n\n- Globex [c2]"}):
 			t.Fatalf("history = %+v", req.History)
-		case req.Limits != (ontologyagent.Limits{MaxUSD: 0.5, MaxSteps: 20, MaxWallSecs: 240}):
+		case req.Limits != (ontologyagent.AskLimits{MaxUSD: 0.5, MaxSteps: 20, MaxWallSecs: 240, Read: ontologyagent.AskReadLimits{WallMS: 5000, ScanEntities: 20000}}):
 			t.Fatalf("limits = %+v", req.Limits)
 		case !strings.HasPrefix(req.Helix.URL, "http://127.0.0.1:") || req.Helix.Token == "" || req.Helix.TimeoutSecs != 30:
 			t.Fatalf("helix = %+v", req.Helix)
@@ -705,6 +705,24 @@ func TestAnswer(t *testing.T) {
 			if got := <-left; got < want || got > bound {
 				t.Fatalf("info after %s: the agent's call had %s left, want at least %s and at most %s", delay, got, want, bound)
 			}
+		}
+	})
+
+	// Each read of the question runs under the deployment's caps, not the
+	// agent's own: a local install raises them for reads over a month of
+	// rows, and a question set past them reads within them all the same.
+	t.Run("sends the configured caps of each read", func(t *testing.T) {
+		h := newHarness(t)
+		h.task.runner.cfg.Foundry.Ask.ReadWallMS, h.task.runner.cfg.Foundry.Ask.ReadScanEntities = 30_000, 100_000
+		if settled := h.run(t, question(1)); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		raw := h.agent.calls()[0]
+		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_request.json"), []byte(raw)); err != nil {
+			t.Fatalf("the request does not match ask_request.json: %v", err)
+		}
+		if req, _ := decodeAsk(t, raw); req.Limits.Read != (ontologyagent.AskReadLimits{WallMS: 30_000, ScanEntities: 100_000}) {
+			t.Fatalf("read caps = %+v", req.Limits.Read)
 		}
 	})
 
