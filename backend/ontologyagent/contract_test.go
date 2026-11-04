@@ -31,7 +31,7 @@ func testResult(status string, rev uint64) string {
 
 // testEvents are a turn's events from start to finish.
 var testEvents = []string{
-	`{"event":"turn_started","contract_version":"4.4.0","model":{"provider":"anthropic","name":"claude-opus-5-5"}}`,
+	`{"event":"turn_started","contract_version":"4.4.1","model":{"provider":"anthropic","name":"claude-opus-5-5"}}`,
 	`{"event":"progress","text":"reading the sources"}`,
 	`{"event":"tool_call","name":"profile","args_summary":"src_1"}`,
 	`{"event":"usage","usage":{"input":10,"cache_read":0,"cache_write":0,"output":5,"usd":0.5}}`,

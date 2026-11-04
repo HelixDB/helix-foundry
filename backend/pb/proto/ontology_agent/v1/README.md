@@ -1,6 +1,6 @@
 # Vendored ontology agent contract
 
-These files are copied unchanged from the ontology agent's source, `proto/ontology_agent/v1/`, at commit `ce679badc3475f5c1f723c5a90e8e5b01472a98e` (contract 4.4.0: adds Audit and Check, and an optional Revise origin). Its `schema/catalog.json` prices OpenAI's and Amazon Bedrock's models as well as Anthropic's; Azure deployments are priced from OpenAI's rows, and a Bedrock inference profile with no row of its own as the model it runs. The `ontology-agent` image Foundry runs beside its workers must be built from a commit that serves this contract.
+These files are copied unchanged from the ontology agent's source, `proto/ontology_agent/v1/`, at commit `a48d3a0b82ea5086c65f7760cef4ffc82084a293` (contract 4.4.1: 4.4.0, plus `Read` and `Ask` taking `visibility`, what a reader holds of a load, the `view` read and the `not_visible` failure, and a query's rows taking `offset`, which a reader of part of a load can't use, all additive. 4.4.0 added Audit and Check, and an optional Revise origin). Its `schema/catalog.json` prices OpenAI's and Amazon Bedrock's models as well as Anthropic's; Azure deployments are priced from OpenAI's rows, and a Bedrock inference profile with no row of its own as the model it runs. The `ontology-agent` image Foundry runs beside its workers must be built from a commit that serves this contract.
 
 | File | What it is |
 |---|---|
@@ -10,11 +10,11 @@ These files are copied unchanged from the ontology agent's source, `proto/ontolo
 | `schema/extract_request.json`, `schema/extract_event.json`, `schema/extract_result.json` | the same for `Extract` |
 | `schema/delete_load_request.json`, `schema/delete_load_event.json`, `schema/delete_load_result.json` | the same for `DeleteLoad` |
 | `schema/clues_request.json`, `schema/clues_event.json` | People enrichment's `Clues`: the people a load could look up, streamed as events with no separate result |
-| `schema/read_request.json`, `schema/read_result.json` | a `Read`'s request and result |
+| `schema/read_request.json`, `schema/read_result.json` | a `Read`'s request and result; a request's `visibility` is what a reader holds of the load, and `view` reads the version as it sees it |
 | `schema/compare_request.json`, `schema/compare_result.json` | a `Compare`'s request and result |
 | `schema/audit_request.json`, `schema/audit_result.json` | an `Audit`'s request and findings |
 | `schema/check_request.json`, `schema/check_result.json` | a `Check`'s request and draft gate result |
-| `schema/ask_request.json`, `schema/ask_event.json`, `schema/ask_result.json` | the same as `Ingest`'s for `Ask` |
+| `schema/ask_request.json`, `schema/ask_event.json`, `schema/ask_result.json` | the same as `Ingest`'s for `Ask`, whose request takes `visibility` as `Read`'s does |
 | `schema/revise_request.json`, `schema/revise_result.json` | a `Revise`'s request and result |
 | `schema/title_request.json`, `schema/title_result.json` | a `Title`'s request and result |
 | `schema/probe_request.json`, `schema/probe_result.json` | a `Probe`'s request and result |
