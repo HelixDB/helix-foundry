@@ -1,0 +1,5 @@
+# Crucible (https://crucibl.sh) settings for this repo, read from the default branch.
+
+[checks]
+# PR CI runs as GitHub Actions on Crucible runners; Crucible runs are for agents (CLI / MCP).
+pull_requests = false
