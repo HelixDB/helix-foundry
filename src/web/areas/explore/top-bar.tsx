@@ -34,7 +34,8 @@ export function ExplorerTop({
     <header className="ex-top">
       <div className="ex-top-lead">
         <h1 className="hf-sr-only">Explorer</h1>
-        {selection && (
+        {/* Through source grants there is no graph: Records is the Explorer. */}
+        {selection && !selection.shared && (
           <Segmented
             label="View"
             value={view}

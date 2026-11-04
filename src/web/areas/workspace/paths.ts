@@ -3,7 +3,12 @@
 
 // /settings is General; the other tabs are pages of their own, because the
 // WFE's Foundry billing return URL is https://<host>/settings/billing.
-export type SettingsTab = "ai" | "members" | "billing" | "enrichment";
+export type SettingsTab =
+  | "ai"
+  | "members"
+  | "access"
+  | "billing"
+  | "enrichment";
 
 export const workspacePaths = {
   settings: (tab?: SettingsTab) => "/settings" + (tab ? "/" + tab : ""),

@@ -28,8 +28,14 @@ import (
 var _ PassKind = (*slackKind)(nil)
 
 // slackTokenRE is a bot token. A user token (xoxp-) reads as its person,
-// their direct messages included, so Foundry takes none.
+// their direct messages included, so Foundry takes none, pasted or vended.
 var slackTokenRE = regexp.MustCompile(`^xoxb-[A-Za-z0-9-]+$`)
+
+// slackBotPrefixes are the bot tokens a broker may vend: a bot's token, or
+// the rotating token Slack's token rotation gives a bot.
+var slackBotPrefixes = []string{"xoxb-", "xoxe.xoxb-"}
+
+var _ Identifier = (*slackKind)(nil)
 
 const (
 	defaultSlackHistoryDays = 90
@@ -150,8 +156,13 @@ func slackHistoryScope(private bool) string {
 // and the token's scopes.
 type slackAuth struct {
 	team, bot string
-	scopes    slackScopes
+	// botID is the bot's id; empty when the token isn't a bot's.
+	botID  string
+	scopes slackScopes
 }
+
+// errNotSlackBot is a signed-in token auth.test says is no bot's.
+var errNotSlackBot = invalid("Slack signed in as a person, not the app's bot: sign it in again, installing the app's bot")
 
 // slackConversations is the channel_days table's stream: each channel day's messages.
 var slackConversations = Stream{Name: "conversations", Table: "channel_days", Title: "Conversations", Format: Markdown,
@@ -176,8 +187,17 @@ type SlackSettings struct {
 	HistoryDays int `json:"history_days"`
 }
 
+// Prepare checks a key's format. A token the broker vended must be a bot's
+// too (slackBotPrefixes), or none yet at Start: a user token reads as its
+// person, direct messages included, so signing in must install the bot.
+// auth.test says whose a token is (botID), which Discover and Identity
+// check of a signed-in source.
 func (k *slackKind) Prepare(src Source) (json.RawMessage, error) {
-	if !slackTokenRE.MatchString(strings.TrimSpace(src.Secret)) {
+	secret := strings.TrimSpace(src.Secret)
+	switch {
+	case src.SignIn && secret != "" && !slices.ContainsFunc(slackBotPrefixes, func(p string) bool { return strings.HasPrefix(secret, p) }):
+		return nil, invalid("Slack gave a token that is no bot's, which reads as its person, direct messages included: sign in with the bot instead")
+	case !src.SignIn && !slackTokenRE.MatchString(secret):
 		return nil, invalid("enter a Slack bot token (xoxb-…)")
 	}
 	var s SlackSettings
@@ -214,6 +234,9 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 	auth, err := c.auth(ctx)
 	if err != nil {
 		return Discovery{}, err
+	}
+	if src.SignIn && auth.botID == "" {
+		return Discovery{}, errNotSlackBot
 	}
 	var (
 		mu      sync.Mutex
@@ -325,6 +348,35 @@ func (k *slackKind) Discover(ctx context.Context, src Source) (Discovery, error)
 		}
 	}
 	return d, nil
+}
+
+// Identity is the bot user's name and its workspace's, from auth.test; its
+// id is the workspace's and the bot's (else the user's).
+func (k *slackKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	fields, _, err := k.client(src.Secret).call(ctx, "auth.test", nil)
+	if err != nil {
+		return "", "", err
+	}
+	var user, team, teamID, userID, botID string
+	for field, into := range map[string]*string{"user": &user, "team": &team, "team_id": &teamID, "user_id": &userID, "bot_id": &botID} {
+		_ = json.Unmarshal(fields[field], into) // missing ones name less
+	}
+	if src.SignIn && botID == "" {
+		return "", "", errNotSlackBot
+	}
+	id := ""
+	if who := cmp.Or(botID, userID); teamID != "" && who != "" {
+		id = teamID + "/" + who
+	}
+	switch {
+	case user == "" && team == "":
+		return "", "", errors.New("slack auth.test names no user or team")
+	case team == "":
+		return user, id, nil
+	case user == "":
+		return team, id, nil
+	}
+	return user + " in " + team, id, nil
 }
 
 func (k *slackKind) Hint(secret string) string {
@@ -1277,7 +1329,7 @@ func (c *slackClient) call(ctx context.Context, method string, query url.Values)
 	case answer.OK:
 		return fields, header, nil
 	case slackRejected[answer.Error]:
-		return nil, nil, refused(nil, "Slack rejected this token; check it and enter it again")
+		return nil, nil, rejectedCredential("Slack", nil, "Slack rejected this token; check it and enter it again")
 	case answer.Error == "missing_scope":
 		return nil, nil, refused(errMissingScope, "add the %s scope to the app and reinstall it", cmp.Or(answer.Needed, "missing"))
 	case slackGone[answer.Error] != nil:
@@ -1295,6 +1347,7 @@ func (c *slackClient) auth(ctx context.Context) (slackAuth, error) {
 	var a slackAuth
 	_ = json.Unmarshal(fields["team_id"], &a.team) // for the documents' links
 	_ = json.Unmarshal(fields["user"], &a.bot)     // for the invite warning
+	_ = json.Unmarshal(fields["bot_id"], &a.botID) // a bot's token has one
 	if listed, ok := header[http.CanonicalHeaderKey("X-OAuth-Scopes")]; ok {
 		a.scopes = slackScopes{}
 		for scope := range strings.SplitSeq(strings.Join(listed, ","), ",") {

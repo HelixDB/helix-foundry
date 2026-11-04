@@ -9,6 +9,7 @@ import {
   signInToNewWorkspace,
   startFirstOntology,
   test,
+  chooseKeyForm,
 } from "./support/mock";
 
 // The Data area: connecting each kind of source with its credential form,
@@ -69,6 +70,7 @@ test("connects Stripe, syncs it and opens its tables and keys", async ({
   await dialog(page)
     .getByRole("button", { name: "Stripe", exact: true })
     .click();
+  await chooseKeyForm(dialog(page));
   // The numbered steps end "paste it below": they sit above the key field.
   const guide = dialog(page).locator(".connection-guide");
   await expect(guide).toContainText("paste it below");
@@ -169,6 +171,7 @@ test("connects Cal.com, syncs it and edits it keeping the stored key", async ({
     .getByRole("button", { name: "Cal.com", exact: true })
     .click();
   await expect(dialog(page)).toHaveAttribute("aria-label", "Cal.com");
+  await chooseKeyForm(dialog(page));
   const guide = dialog(page).locator(".connection-guide");
   await expect(
     guide.getByRole("link", { name: "Settings → Developer → API keys" }),
@@ -386,6 +389,7 @@ test("shows the WFE's reasons for bad credentials and unreachable hosts", async 
   await dialog(page)
     .getByRole("button", { name: "Stripe", exact: true })
     .click();
+  await chooseKeyForm(dialog(page));
   await dialog(page)
     .getByLabel("Restricted API key")
     .fill("pk_test_publishable");
@@ -518,7 +522,7 @@ test("offers databases once the workspace upgrades to Foundry Pro", async ({
   await page.getByRole("button", { name: "Upgrade", exact: true }).click();
   await page
     .getByRole("dialog", { name: "Upgrade Foundry" })
-    .getByRole("button", { name: "Continue to payment" })
+    .getByRole("button", { name: "Upgrade to Pro" })
     .click();
   await page.getByRole("button", { name: "Pay and subscribe" }).click();
   await expect(page).toHaveURL(/\/settings\/billing$/);
@@ -550,7 +554,7 @@ test("offers databases on Foundry Max, as on Pro", async ({ page }) => {
   await page.getByRole("button", { name: "Upgrade", exact: true }).click();
   const upgrade = page.getByRole("dialog", { name: "Upgrade Foundry" });
   await upgrade.getByRole("radio", { name: "Max" }).check();
-  await upgrade.getByRole("button", { name: "Continue to payment" }).click();
+  await upgrade.getByRole("button", { name: "Upgrade to Max" }).click();
   await expect(
     page.getByRole("heading", { name: /Foundry Max/ }),
   ).toContainText("Active", { timeout: 15_000 });
@@ -608,6 +612,7 @@ test("shows a failed sync, refuses a second live sync and deletes the connection
     .getByRole("button", { name: "PostHog", exact: true })
     .click();
   const form = dialog(page);
+  await chooseKeyForm(form);
   await form.getByLabel("Personal API key").fill("phx_e2eKey123");
   await form.getByLabel("Event history (days)").fill("120");
   await form.getByRole("button", { name: "Test connection" }).click();

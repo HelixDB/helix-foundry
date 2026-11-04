@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 )
@@ -316,4 +317,98 @@ func TestClientRead(t *testing.T) {
 			t.Fatalf("a refused read: %v", err)
 		}
 	})
+}
+
+// What a reader holds of a load reaches the agent as read_request.json's and
+// ask_request.json's visibility, and its view read as the answer it decodes.
+func TestVisibility(t *testing.T) {
+	part := access.Part{
+		Tables: []access.TableRef{{ConnectorID: "c", Table: "t"}}, Files: []string{"file"}, Documents: []string{"d"},
+		Sets: []access.SetRef{{SetID: "s", ConnectorID: "c"}}, Enrichment: true, Withheld: []access.PropRef{{Type: "A", Prop: "p"}},
+	}
+	got := VisibilityOf(part)
+	want := Visibility{
+		Sources: []string{TableSourceID("c", "t"), "file"}, Documents: VisibleDocuments{Only: []string{"d"}}, Sets: []string{"s"}, Enrichment: true,
+		Withheld: []WithheldProp{{Type: "A", Prop: "p"}},
+	}
+	if fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+		t.Fatalf("%+v", got)
+	}
+	reads, err := ParseReads(`[{"view":{}}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := contracttest.Schema(t, "read_request.json")
+	for name, visibility := range map[string]Visibility{
+		"some":    got,
+		"all":     VisibilityOf(access.Part{AllDocuments: true}),
+		"nothing": VisibilityOf(access.Part{}),
+	} {
+		body, err := json.Marshal(ReadRequest{
+			RequestID: "r", Database: "d", Load: "l", OntologyTOML: "o", OntologyVersion: "v", AsOf: "2026-10-30", Budget: DefaultReadBudget, Reads: reads,
+			Helix: HelixTarget{URL: "http://x", Token: "t", MaxRequestBytes: 1, TimeoutSecs: 1}, Visibility: &visibility, MappingsTOML: "m",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := contracttest.Validate(t, schema, body); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, body)
+		}
+		var back Visibility
+		if err := json.Unmarshal(mustField(t, body, "visibility"), &back); err != nil {
+			t.Fatal(err)
+		}
+		if back.Documents.All != visibility.Documents.All {
+			t.Fatalf("%s: %+v", name, back)
+		}
+	}
+	for _, bad := range []string{`"some"`, `{"only":"x"}`} {
+		var d VisibleDocuments
+		if err := json.Unmarshal([]byte(bad), &d); err == nil {
+			t.Fatalf("%s read as %+v", bad, d)
+		}
+	}
+}
+
+func mustField(t *testing.T, body []byte, field string) json.RawMessage {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields[field]
+}
+
+func TestParseReadView(t *testing.T) {
+	raw := `{"as_of":"2026-10-30","stats":{"instances":0,"wall_ms":1},"results":[{"ok":{"kind":"view","ontology_toml":"o","mappings_toml":"m","partial":["A"]}}]}`
+	if err := contracttest.Validate(t, contracttest.Schema(t, "read_result.json"), []byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseReadView(raw)
+	if err != nil || got.OntologyTOML != "o" || got.MappingsTOML != "m" || len(got.Partial) != 1 {
+		t.Fatalf("%+v, %v", got, err)
+	}
+	for _, bad := range []string{`not json`, `{"results":[]}`, `{"results":[{"error":{"code":"invalid","message":"x"}}]}`, `{"results":[{"ok":{"kind":"query"}}]}`} {
+		if _, err := ParseReadView(bad); err == nil {
+			t.Fatalf("%s read", bad)
+		}
+	}
+}
+
+// A read refused for what a reader sees only some of is an answer, not a broken
+// result, and a view read is answered by a view.
+func TestCheckReadResultOfPart(t *testing.T) {
+	reads, err := ParseReads(`[{"query":{"start":{"type":"A"},"return":{"count":{}}}},{"view":{}}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"as_of":"2026-10-30","stats":{"instances":0,"wall_ms":1},"results":[
+		{"error":{"code":"not_visible","message":"/start/type: A is only partly held","pointer":"/start/type"}},
+		{"ok":{"kind":"view","ontology_toml":"o","mappings_toml":"m","partial":["A"]}}]}`
+	if err := contracttest.Validate(t, contracttest.Schema(t, "read_result.json"), []byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckReadResult([]byte(raw), reads); err != nil {
+		t.Fatal(err)
+	}
 }

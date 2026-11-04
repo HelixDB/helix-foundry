@@ -21,6 +21,7 @@ import {
   readsText,
   setNameProblem,
 } from "./model";
+import { useAccessCheck } from "../workspace/access-guard";
 
 // Document sets are the workspace's folders of documents: each document is
 // in one, a version reads the sets of its scope (picked when it was
@@ -62,9 +63,7 @@ export function SetDialog({
     <Dialog
       title={set ? `Edit ${set.name}` : "New document set"}
       description={
-        set
-          ? undefined
-          : "A folder of documents read together. A generation reads the sets you pick, and its routes say what each one’s documents fill."
+        set ? undefined : "Group documents to use together in an ontology."
       }
       size="sm"
       onClose={onClose}
@@ -108,7 +107,7 @@ export function SetDialog({
           <textarea
             rows={3}
             maxLength={1000}
-            placeholder="Optional. What its documents are, for the agent that drafts the next version."
+            placeholder="Optional. Describe these documents to help Foundry draft the ontology."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -158,6 +157,8 @@ export function MoveDialog({
   const [to, setTo] = useState(""),
     [error, setError] = useState(""),
     [pending, setPending] = useState(false);
+  // Who would stop reading through source grants, asked before it moves.
+  const access = useAccessCheck();
   const target = others.find((s) => s.id === to) || others[0];
   // The versions mapping it that don't read the set it would move to.
   const breaks = useFileMappings(d).filter(
@@ -179,6 +180,12 @@ export function MoveDialog({
           if (!target) return;
           setPending(true);
           setError("");
+          if (
+            !(await access.check({
+              moveDocument: { documentId: d.id, documentSetId: target.id },
+            }))
+          )
+            return setPending(false);
           try {
             const moved = await moveDocument(id, d.id, target.id);
             await documentsChanged(qc, id);
@@ -250,6 +257,7 @@ export function MoveDialog({
           </Button>
         </div>
       </form>
+      {access.dialog}
     </Dialog>
   );
 }

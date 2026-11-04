@@ -225,6 +225,10 @@ test("every main page in both themes", async ({ page }, info) => {
 
   await visit("settings", "/settings");
   await visit("members", "/settings/members");
+  await visit("access", "/settings/access?tab=people");
+  await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
+  await shoot("access-sources");
+  await page.keyboard.press("Escape");
   await visit("billing", "/settings/billing");
   await page.getByRole("button", { name: "Switch to Max" }).click();
   await shoot("billing-switch");

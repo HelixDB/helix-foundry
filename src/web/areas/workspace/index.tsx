@@ -18,12 +18,14 @@ import {
 import { paths } from "../../paths";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { useWorkspace } from "../../ui";
+import { AccessTab } from "./access";
 import { AiTab } from "./ai";
 import { BillingTab } from "./billing";
 import { EnrichmentTab } from "./enrichment";
 import { DASHBOARD_URL, MembersTab } from "./members";
 import type { SettingsTab } from "./paths";
 import { roleLabel } from "./people";
+import { canManage } from "./plan";
 
 // /settings: the workspace itself, read-only. Renaming and deleting stay in
 // the Helix dashboard.
@@ -80,20 +82,25 @@ type Tab = "general" | SettingsTab;
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI models" },
-  // A local build has no team, billing or People enrichment (its lookups are
-  // a hosted service's).
+  // A local build has no team, access, billing or People enrichment (its
+  // lookups are a hosted service's).
   ...(LOCAL
     ? []
     : [
         { id: "members" as const, label: "Members" },
+        { id: "access" as const, label: "Access" },
         { id: "billing" as const, label: "Plan & billing" },
         { id: "enrichment" as const, label: "People enrichment" },
       ]),
 ];
 
 function SettingsPage({ tab }: { tab: Tab }) {
-  const { name } = useWorkspace(),
+  const { name, role } = useWorkspace(),
     navigate = useNavigate();
+  // Access is owners' and admins'.
+  const shown = tabs.filter(
+    (t) => t.id !== "access" || canManage(role) || tab === "access",
+  );
   return (
     <Page>
       <PageHeader
@@ -104,7 +111,7 @@ function SettingsPage({ tab }: { tab: Tab }) {
           <Tabs
             label="Settings"
             idPrefix="settings"
-            items={tabs}
+            items={shown}
             value={tab}
             onChange={(t) =>
               navigate(
@@ -128,6 +135,8 @@ function SettingsPage({ tab }: { tab: Tab }) {
           <AiTab />
         ) : tab === "members" ? (
           <MembersTab />
+        ) : tab === "access" ? (
+          <AccessTab />
         ) : tab === "billing" ? (
           <BillingTab />
         ) : (
@@ -138,9 +147,9 @@ function SettingsPage({ tab }: { tab: Tab }) {
   );
 }
 
-// /settings, /settings/ai, /settings/members, /settings/billing (where
-// Stripe Checkout returns) and /settings/enrichment; only /settings and
-// /settings/ai in a local build.
+// /settings, /settings/ai, /settings/members, /settings/access,
+// /settings/billing (where Stripe Checkout returns) and
+// /settings/enrichment; only /settings and /settings/ai in a local build.
 export function SettingsRoutes() {
   return (
     <Routes>
@@ -149,6 +158,7 @@ export function SettingsRoutes() {
       {!LOCAL && (
         <>
           <Route path="members" element={<SettingsPage tab="members" />} />
+          <Route path="access" element={<SettingsPage tab="access" />} />
           <Route path="billing" element={<SettingsPage tab="billing" />} />
           <Route
             path="enrichment"

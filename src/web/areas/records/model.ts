@@ -109,7 +109,7 @@ const total = (v: unknown) =>
  * (the agent refuses such names).
  *
  * @example
- * recordTypes({ version: null, types: new Map(), links: new Set() }); // []
+ * recordTypes(NO_NAMING); // []
  */
 export function recordTypes(naming: Naming): TypeNaming[] {
   return [...naming.types.values()]
@@ -546,6 +546,11 @@ export type RecordsPage = {
   more: boolean;
   // A search's or filter's matches: `capped` when there are more than countCap.
   matched: { count: number; capped: boolean } | null;
+  // Through source grants that hold only part of it: the view's filter or
+  // search can't be run, and why; or its sort wasn't, and these rows are in
+  // the entities' order.
+  refused?: string;
+  notice?: string;
 };
 
 /** Reads pageRead's answer. */
@@ -606,8 +611,9 @@ export function pageSpan(
   capped: boolean,
   more = false,
 ) {
-  const first = shown ? page * RECORDS_LIMITS.page + 1 : 0,
-    last = page * RECORDS_LIMITS.page + shown;
+  const size = RECORDS_LIMITS.page;
+  const first = shown ? page * size + 1 : 0,
+    last = page * size + shown;
   const of =
     total === null
       ? ""
@@ -619,9 +625,9 @@ export function pageSpan(
     // An empty page past the last still says how many there are.
     text: shown ? `${n(first)}–${n(last)}${of}` : total ? `0${of}` : "",
     prev: page > 0,
-    next: more && page < MAX_PAGE,
+    next: more && (page + 1) * size <= RECORDS_LIMITS.maxOffset,
     // More rows than paging reaches: a search or a filter gets to the rest.
-    deep: more && page >= MAX_PAGE,
+    deep: more && (page + 1) * size > RECORDS_LIMITS.maxOffset,
   };
 }
 

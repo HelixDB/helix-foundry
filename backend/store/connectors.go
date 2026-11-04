@@ -21,16 +21,28 @@ func utcPtr(t *time.Time) any {
 }
 
 const connectorColumns = `id, workspace_id, kind, name, config, secret_ciphertext, secret_key_id,
-       secret_hint, created_by_user_id, created_at, updated_at, sync_every_seconds, next_sync_at, schedule_paused, change_cursor`
+       secret_hint, created_by_user_id, created_at, updated_at, sync_every_seconds, next_sync_at, schedule_paused, change_cursor,
+       account_id, account_user_id, account_label, account_generation, account_broken, account_broken_at, account_checked_at,
+       account_connected_at, account_identity`
 
+// CreateConnector stores a new connector. One with an Account is a signed-in
+// connector's first sign-in: generation 1, connected and vended for now.
 func (s *mysqlDB) CreateConnector(ctx context.Context, c *model.Connector) error {
+	var accountID, accountUser, accountLabel, accountIdentity any
+	generation, connected := 0, "NULL"
+	if a := c.Account; a != nil {
+		accountID, accountUser, accountLabel, accountIdentity, generation, connected = a.ID, a.UserID, a.Label, nullString(a.Identity), 1,
+			"NOW(6)"
+	}
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO connectors
   (id, workspace_id, kind, name, config, secret_ciphertext, secret_key_id, secret_hint, created_by_user_id,
-   sync_every_seconds, next_sync_at)
-VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)`,
+   sync_every_seconds, next_sync_at, account_id, account_user_id, account_label, account_identity, account_generation,
+   account_checked_at, account_connected_at)
+VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+connected+`, `+connected+`)`,
 		c.ID, c.WorkspaceID, c.Kind, c.Name, string(c.Config), c.SecretCiphertext, c.SecretKeyID,
-		c.SecretHint, c.CreatedByUserID, c.SyncEverySeconds, utcPtr(c.NextSyncAt),
+		c.SecretHint, c.CreatedByUserID, c.SyncEverySeconds, utcPtr(c.NextSyncAt), accountID, accountUser, accountLabel, accountIdentity,
+		generation,
 	)
 	return err
 }
@@ -175,15 +187,33 @@ func (s *mysqlDB) DeleteWorkspaceConnectors(ctx context.Context, workspaceID str
 //   - its change batches go at the sweep's next tick (ListExpiredChangeBatches);
 //   - an event source's live send tokens are revoked, so none outlives it,
 //     and its batches wait for the sync worker's purge of deleted sources
-//     (ListFoundryEventBatchPurges). No other kind has either.
+//     (ListFoundryEventBatchPurges). No other kind has either;
+//   - a signed-in connector's account waits for the sync worker's purge,
+//     which deletes it from the broker (ListConnectorAccountPurges), unless
+//     another live connector reads with it.
 func (s *mysqlDB) deleteConnector(ctx context.Context, workspaceID, id string) (tables, sets []string, err error) {
+	var kind string
+	var accountID, accountUser sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT kind, account_id, account_user_id FROM connectors WHERE id=?`, id).Scan(
+		&kind, &accountID, &accountUser); err != nil {
+		return nil, nil, fmt.Errorf("read connector %s account: %w", id, err)
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE connectors SET deleted_at=NOW(6), updated_at=NOW(6), next_sync_at=NULL WHERE id=?`,
 		id); err != nil {
 		return nil, nil, fmt.Errorf("delete connector %s: %w", id, err)
 	}
+	if accountID.Valid {
+		if err := s.purgeUnusedAccount(ctx, workspaceID, kind, accountID.String, accountUser.String); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_event_source_tokens SET revoked_at=NOW(6)
 WHERE connector_id=? AND workspace_id=? AND revoked_at IS NULL`, id, workspaceID); err != nil {
 		return nil, nil, fmt.Errorf("revoke connector %s send tokens: %w", id, err)
+	}
+	// Its grants, and its tables', go with it; its sets' go below.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND connector_id=?`, workspaceID, id); err != nil {
+		return nil, nil, fmt.Errorf("delete connector %s grants: %w", id, err)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM foundry_document_sets
 WHERE connector_id=? AND workspace_id=? AND live_key=1 ORDER BY id FOR UPDATE`, id, workspaceID)
@@ -206,6 +236,10 @@ WHERE set_id IN (`+in+`) AND status='uploaded'`, toAnySlice(sets)...); err != ni
 		if _, err := s.db.ExecContext(ctx, `UPDATE foundry_document_sets SET deleted_at=NOW(6), live_key=NULL WHERE id IN (`+in+`)`,
 			toAnySlice(sets)...); err != nil {
 			return nil, nil, fmt.Errorf("delete connector %s sets: %w", id, err)
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND document_set_id IN (`+in+`)`,
+			append([]any{workspaceID}, toAnySlice(sets)...)...); err != nil {
+			return nil, nil, fmt.Errorf("delete connector %s sets' grants: %w", id, err)
 		}
 	}
 	rows, err = s.db.QueryContext(ctx, `SELECT table_name, s3_key FROM connector_tables
@@ -240,7 +274,9 @@ WHERE connector_id=? AND workspace_id=? ORDER BY table_name FOR UPDATE`, id, wor
 // QueueDueConnectorSyncs queues a schedule sync for each connector whose
 // next_sync_at has come, at most limit, and returns how many it queued. The
 // rows are locked SKIP LOCKED, so two schedulers ticking at once share them;
-// a connector with a live sync keeps it and is unscheduled until it ends.
+// a connector with a live sync keeps it and is unscheduled until it ends. A
+// connector whose account needs signing in again is never due: signing it in
+// again schedules it.
 //
 // An event source's sync is queued with origin events. One with a live sync
 // is due again eventsAfter from now instead: the pieces that made it due may
@@ -260,7 +296,7 @@ func (s *mysqlDB) QueueDueConnectorSyncs(ctx context.Context, limit int, eventsA
 		}
 	}()
 	rows, err := tx.QueryContext(ctx, `SELECT id, workspace_id, kind FROM connectors
-WHERE next_sync_at <= NOW(6) AND deleted_at IS NULL
+WHERE next_sync_at <= NOW(6) AND deleted_at IS NULL AND account_broken IS NULL
 ORDER BY next_sync_at, id LIMIT ? FOR UPDATE SKIP LOCKED`, limit)
 	if err != nil {
 		return 0, fmt.Errorf("select due connectors: %w", err)
@@ -311,14 +347,19 @@ VALUES (?, ?, ?, 'queued', 1, ?, 'changes')`, id.New(), c.id, c.workspaceID, str
 }
 
 // UpdateConnectorCursor stores where the connector's next change read starts,
-// only while workerID still holds syncID's lease.
-func (s *mysqlDB) UpdateConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage, syncID, workerID string) error {
+// only while workerID still holds syncID's lease. A sync that read with an
+// account generation (0 for a key) the connector has since moved past, by
+// being signed in again, stores nothing: its cursor is the old account's,
+// and signing in again left the cursor the new one needs (none, read in
+// full, when the identity changed).
+func (s *mysqlDB) UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error {
 	return s.withConnectorSyncLease(ctx, syncID, workerID, func(tx *sql.Tx) error {
 		var value any
 		if cursor != nil {
 			value = string(cursor)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE connectors SET change_cursor=CAST(? AS JSON) WHERE id=?`, value, connectorID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE connectors SET change_cursor=CAST(? AS JSON) WHERE id=? AND account_generation=?`,
+			value, connectorID, generation); err != nil {
 			return fmt.Errorf("update connector %s cursor: %w", connectorID, err)
 		}
 		return nil
@@ -380,9 +421,13 @@ func scanConnector(scanner rowScanner) (*model.Connector, error) {
 	var createdBy, paused, cursor sql.NullString
 	var every sql.NullInt64
 	var next sql.NullTime
+	var accountID, accountUser, accountLabel, accountIdentity, broken sql.NullString
+	var generation int
+	var brokenAt, checkedAt, connectedAt sql.NullTime
 	if err := scanner.Scan(
 		&c.ID, &c.WorkspaceID, &c.Kind, &c.Name, &config, &c.SecretCiphertext, &c.SecretKeyID,
 		&c.SecretHint, &createdBy, &c.CreatedAt, &c.UpdatedAt, &every, &next, &paused, &cursor,
+		&accountID, &accountUser, &accountLabel, &generation, &broken, &brokenAt, &checkedAt, &connectedAt, &accountIdentity,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
@@ -405,6 +450,12 @@ func scanConnector(scanner rowScanner) (*model.Connector, error) {
 	}
 	if cursor.Valid {
 		c.ChangeCursor = json.RawMessage(cursor.String)
+	}
+	if accountID.Valid {
+		c.Account = &model.ConnectorAccount{ID: accountID.String, UserID: accountUser.String, Label: accountLabel.String,
+			Identity:   accountIdentity.String,
+			Generation: generation, Broken: stringPtr(broken), BrokenAt: timePtr(brokenAt), CheckedAt: timePtr(checkedAt),
+			ConnectedAt: timePtr(connectedAt)}
 	}
 	return &c, nil
 }

@@ -2,13 +2,17 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { LOCAL } from "../../../shared/deployment";
 import type {
+  AuthorizeConnectorSignInRequest,
+  AuthorizeConnectorSignInResponse,
   Connector,
   ConnectorConfig,
   ConnectorResponse,
+  ConnectorSignInResponse,
   ConnectorSyncResponse,
   CreateConnectorRequest,
   CreateFoundryEventSourceTokenResponse,
   DataLayoutResponse,
+  FinishConnectorSignInRequest,
   FoundryEventSourceTokenResponse,
   ListConnectorKindsResponse,
   ListConnectorSyncsResponse,
@@ -16,13 +20,19 @@ import type {
   ListFoundryEventBatchesResponse,
   ListFoundryEventSourceTokensResponse,
   PutDataLayoutRequest,
+  StartConnectorSignInRequest,
   TestConnectorRequest,
   TestConnectorResponse,
   UpdateConnectorRequest,
 } from "../../../shared/wfe";
-import { trackEvent, type SyncFrom } from "../../analytics";
+import { jobSeen, jobStarted, type SyncFrom } from "../../analytics";
 import { api } from "../../api";
-import { eventSourceWaiting, isEventSource, isLiveSync } from "./model";
+import {
+  eventSourceWaiting,
+  isEventSource,
+  isKnownKind,
+  isLiveSync,
+} from "./model";
 
 // The Data area's WFE calls: query options for TanStack Query and the
 // changes. Keys start with the workspace, and every connector query sits
@@ -64,12 +74,45 @@ export const connectorKindsQuery = (workspaceId: string) => ({
  */
 export const connectorsQuery = (workspaceId: string, waiting = false) => ({
   queryKey: [workspaceId, "connectors"],
-  queryFn: () =>
-    api<ListConnectorsResponse>(`${foundry(workspaceId)}/connectors`),
+  queryFn: async () => {
+    const r = await api<ListConnectorsResponse>(
+      `${foundry(workspaceId)}/connectors`,
+    );
+    jobSeen(
+      "sync",
+      (r.connectors || []).map(
+        (c) =>
+          c.lastSync && {
+            ...c.lastSync,
+            kind: isKnownKind(c.kind) ? c.kind : ("other" as const),
+          },
+      ),
+    );
+    return r;
+  },
   refetchInterval: (q: { state: { data?: ListConnectorsResponse } }) =>
     q.state.data?.connectors?.some((c) => isLiveSync(c.lastSync))
       ? SYNC_POLL_MS
       : waiting && EVENT_POLL_MS,
+});
+
+// How long the shell's read of the connectors that need signing in again
+// stays fresh: a break is rare, and any change to the connectors (a
+// sign-in, a sync's end) reads it again.
+const NEEDS_SIGN_IN_STALE_MS = 5 * 60_000;
+
+/**
+ * The connectors whose account needs signing in again, without their
+ * tables or syncs: the cheap read behind the shell's dialog and banner.
+ * Under the connectors' key, so whatever refreshes them refreshes it.
+ */
+export const needsSignInQuery = (workspaceId: string) => ({
+  queryKey: [workspaceId, "connectors", "needs-sign-in"],
+  queryFn: () =>
+    api<ListConnectorsResponse>(
+      `${foundry(workspaceId)}/connectors?needsSignIn=true`,
+    ),
+  staleTime: NEEDS_SIGN_IN_STALE_MS,
 });
 
 /**
@@ -184,9 +227,65 @@ export const syncConnector = async (
     `${connectorPath(workspaceId, connectorId)}:sync`,
     {},
   );
-  trackEvent("connector_sync_started", { from });
+  jobStarted({ job: "sync", from }, r.sync.id);
   return r;
 };
+
+// Connecting by signing in at the provider (GitHub, Linear): a sign-in is
+// started with the connector's settings, authorized in this browser (the
+// provider's page, which returns to /connect/callback), then finished by the
+// callback. Only its starter may authorize or finish it.
+
+const signInPath = (workspaceId: string, signInId: string) =>
+  `${foundry(workspaceId)}/sign-ins/${enc(signInId)}`;
+
+/**
+ * Starts a sign-in for a new connector of `kind`, or for `connectorId`
+ * again. The same client token returns the sign-in it started.
+ */
+export const startSignIn = (
+  workspaceId: string,
+  body: StartConnectorSignInRequest,
+) => api<ConnectorSignInResponse>(`${foundry(workspaceId)}/sign-ins`, body);
+
+/** A sign-in as it stands; past its expiry it reads EXPIRED. */
+export const getSignIn = (workspaceId: string, signInId: string) =>
+  api<ConnectorSignInResponse>(signInPath(workspaceId, signInId));
+
+/** One sign-in (an agent's link names it), for its form. */
+export const signInQuery = (workspaceId: string, signInId: string) => ({
+  queryKey: [workspaceId, "sign-ins", signInId],
+  queryFn: () => getSignIn(workspaceId, signInId),
+});
+
+/**
+ * The provider's page to authorize the sign-in at, returning to
+ * `returnTo`, the site's callback. Again after a decline or a failure: the
+ * same sign-in, so an agent waiting on it follows the retry.
+ */
+export const authorizeSignIn = (
+  workspaceId: string,
+  signInId: string,
+  returnTo: string,
+) =>
+  api<AuthorizeConnectorSignInResponse>(
+    `${signInPath(workspaceId, signInId)}:authorize`,
+    { returnTo } satisfies AuthorizeConnectorSignInRequest,
+  );
+
+/**
+ * Finishes the sign-in with what the provider sent the callback. A repeat
+ * returns it as it stands, and spends no second code.
+ */
+export const finishSignIn = (
+  workspaceId: string,
+  signInId: string,
+  body: FinishConnectorSignInRequest,
+) =>
+  api<ConnectorSignInResponse>(
+    `${signInPath(workspaceId, signInId)}:finish`,
+    body,
+  );
 
 /**
  * An API source's send tokens: newest first, revoked ones too, at most 50.

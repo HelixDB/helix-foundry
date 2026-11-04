@@ -36,7 +36,7 @@ async function openSample(page: Page) {
   await page.getByRole("button", { name: "Upgrade", exact: true }).click();
   await page
     .getByRole("dialog", { name: "Upgrade Foundry" })
-    .getByRole("button", { name: "Continue to payment" })
+    .getByRole("button", { name: "Upgrade to Pro" })
     .click();
   await expect(
     page.getByRole("heading", { name: /Foundry Pro/ }),
@@ -224,6 +224,54 @@ test("links back to the tour until its question has ended, then to the user's ow
   await expect(connect).toBeInViewport({ timeout: 30_000 });
   await page.reload();
   await expect(connect).toBeInViewport({ timeout: 30_000 });
+});
+
+test("stays on the tour's last step however long the steps above take to read, until the reader moves", async ({
+  page,
+}) => {
+  test.slow();
+  await openSample(page);
+  await expect(
+    page.getByRole("group", { name: "Suggested questions" }),
+  ).toBeVisible({ timeout: 60_000 });
+  // As a browser without scroll anchoring (Safari) has it, which keeps nothing
+  // in view by itself.
+  await page.addInitScript(() =>
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = "* { overflow-anchor: none }";
+      document.head.append(style);
+    }),
+  );
+  await page.goto("/data");
+  await page
+    .getByRole("region", { name: "Sample data" })
+    .getByRole("link", { name: "Get started with your own data" })
+    .click({ timeout: 30_000 });
+  const connect = page.getByRole("link", { name: "Connect your own data" });
+  await expect(connect).toBeInViewport({ timeout: 30_000 });
+
+  // What sits above it arrives when it arrives: a real answer's charts and
+  // names are read once they are near the view.
+  const arrive = () =>
+    page.evaluate(() => {
+      const late = document.createElement("div");
+      late.style.height = "800px";
+      document.getElementById("own-data")!.before(late);
+    });
+  await page.waitForTimeout(6_000);
+  await arrive();
+  await expect(connect).toBeInViewport();
+
+  // A resting finger on a trackpad isn't the reader moving.
+  await page.mouse.wheel(0, -1);
+  await arrive();
+  await expect(connect).toBeInViewport();
+
+  // Scrolling up is, and what arrives then no longer moves the page.
+  await page.mouse.wheel(0, -300);
+  await arrive();
+  await expect(connect).not.toBeInViewport();
 });
 
 test("keeps the sample's data out of an ontology of the user's own", async ({

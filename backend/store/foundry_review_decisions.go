@@ -65,10 +65,24 @@ JOIN foundry_ontology_versions v ON v.id = l.version_id WHERE l.id=?`, *o.Curren
 		stored, err := scanFoundryReviewDecision(tx.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionColumns+`
  FROM foundry_review_decisions WHERE ontology_id=? AND kind=? AND type=? AND doc_id <=> ? AND norm_name <=> ?
  AND prop <=> ? AND (kind='resolve' OR entity_key <=> ?)`, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.Prop, d.EntityKey))
-		if err == nil {
-			*d = *stored
+		if err != nil {
+			return err
 		}
-		return err
+		// Added to, never replaced: a load made before this settle copied the
+		// decision's earlier value, which came from the earlier documents.
+		if len(d.DocumentIDs) > 0 {
+			rows := strings.Repeat("(?, ?), ", len(d.DocumentIDs))
+			args := make([]any, 0, 2*len(d.DocumentIDs))
+			for _, doc := range d.DocumentIDs {
+				args = append(args, stored.ID, doc)
+			}
+			if _, err := tx.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_review_decision_documents (decision_id, document_id) VALUES `+
+				rows[:len(rows)-2], args...); err != nil {
+				return err
+			}
+		}
+		*d = *stored
+		return nil
 	})
 }
 

@@ -101,6 +101,13 @@ func (s *Service) ListFoundryLoads(ctx context.Context, req *foundryv1.ListFound
 	if err != nil {
 		return nil, err
 	}
+	if granted, ok := granteeLoad(ctx); ok {
+		load, err := s.granteeFoundryLoad(ctx, o, granted.LoadID)
+		if err != nil {
+			return nil, err
+		}
+		return &foundryv1.ListFoundryLoadsResponse{Loads: []*foundryv1.FoundryLoad{load}}, nil
+	}
 	loads, err := s.deps.DB.ListFoundryLoads(ctx, o.ID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list loads: %v", err)
@@ -137,7 +144,41 @@ func (s *Service) GetFoundryLoad(ctx context.Context, req *foundryv1.GetFoundryL
 	if req.GetId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
+	if granted, ok := granteeLoad(ctx); ok {
+		if req.GetId() != granted.LoadID {
+			return nil, status.Error(codes.NotFound, "load not found")
+		}
+		load, err := s.granteeFoundryLoad(ctx, o, granted.LoadID)
+		if err != nil {
+			return nil, err
+		}
+		return &foundryv1.FoundryLoadResponse{Load: load}, nil
+	}
 	return s.foundryLoadResponse(ctx, o, req.GetId())
+}
+
+// granteeFoundryLoad is the load a grantee reads, as it may see it: which
+// version it holds and when it was written, without its jobs, their spend,
+// its tables' syncs or its People enrichment step.
+func (s *Service) granteeFoundryLoad(ctx context.Context, o *foundrymodel.FoundryOntology, loadID string) (*foundryv1.FoundryLoad, error) {
+	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, loadID)
+	if errors.Is(err, foundrystore.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "load not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get load: %v", err)
+	}
+	out := &foundryv1.FoundryLoad{
+		Id: load.ID, VersionId: load.VersionID, Version: load.OntologyVersion(), Status: string(load.Status), Current: true,
+		CreatedAt: timestamppb.New(load.CreatedAt), Origin: string(load.Origin),
+	}
+	if load.FinishedAt != nil {
+		out.FinishedAt = timestamppb.New(*load.FinishedAt)
+	}
+	if load.AppliedAt != nil {
+		out.AppliedAt = timestamppb.New(*load.AppliedAt)
+	}
+	return out, nil
 }
 
 // SetCurrentFoundryLoad points the ontology's reads and uploads at a ready or

@@ -57,18 +57,24 @@ export function shellWorkspaces(
   me: WhoamiResponse,
   list: Workspace[],
 ): ShellWorkspace[] {
-  const role = new Map(
-    (me.workspaces || []).map((m) => [m.workspaceId, m.role]),
+  const memberships = new Map(
+    (me.workspaces || []).map((m) => [m.workspaceId, m]),
   );
   return list
     .filter((w) => w.status !== "RESOURCE_STATUS_DELETED")
-    .map((w) => ({
-      id: w.id,
-      slug: w.slug || w.id,
-      name: w.displayName || w.slug || w.id,
-      role:
-        shellRoles[role.get(w.id) || "WORKSPACE_ROLE_UNSPECIFIED"] ?? "member",
-    }));
+    .map((w) => {
+      const m = memberships.get(w.id),
+        role = shellRoles[m?.role || "WORKSPACE_ROLE_UNSPECIFIED"] ?? "member";
+      // A member's query access, when the WFE says it; unset reads as none.
+      const access = role === "member" ? m?.projectAccess : undefined;
+      return {
+        id: w.id,
+        slug: w.slug || w.id,
+        name: w.displayName || w.slug || w.id,
+        role,
+        ...(access ? { queryRead: access.queryRead || {} } : {}),
+      };
+    });
 }
 
 export const chosenWorkspace = () => readStorage(KEY);

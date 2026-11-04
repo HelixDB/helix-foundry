@@ -33,12 +33,12 @@ var healthMethods = map[string]bool{
 func foundry(name string) string { return "/helix.foundry.v1.FoundryService/" + name }
 
 // methods are the methods a standalone install serves, with what is checked
-// of each: the directory, and what the Foundry site calls of Foundry's API.
+// of each: the directory, and what the Foundry site and the agents' tools
+// (package integration) call of Foundry's API.
 // The rest need what an install has not, so they are refused before a
-// handler runs (unsupported): plans and checkout, People enrichment's
-// lookups, and event sources' send tokens and batches, whose senders reach a
-// source through a door an install does not run (FoundryEventsService
-// included). It fails closed: a new method is refused until it is listed.
+// handler runs (unsupported); a test holds every method of every service to
+// being listed here or refused for a reason. It fails closed: a new method is
+// refused until it is listed.
 var methods = map[string]check{
 	directoryv1.DirectoryService_Whoami_FullMethodName:                   checkHandler,
 	directoryv1.DirectoryService_ListWorkspaces_FullMethodName:           checkHandler,
@@ -61,17 +61,28 @@ var methods = map[string]check{
 	foundry("ListConnectorSyncs"): checkWorkspace,
 	foundry("GetConnectorSync"):   checkWorkspace,
 
-	foundry("ListFoundryOntologies"):     checkWorkspace,
-	foundry("CreateFoundryOntology"):     checkTenant,
-	foundry("GetFoundryOntology"):        checkWorkspace,
-	foundry("DeleteFoundryOntology"):     checkOntology,
-	foundry("ListOntologyVersions"):      checkWorkspace,
-	foundry("GetOntologyVersion"):        checkWorkspace,
-	foundry("SetCurrentOntologyVersion"): checkWorkspace,
-	foundry("ReviseOntologyVersion"):     checkWorkspace,
-	foundry("GenerateOntology"):          checkWorkspace,
-	foundry("ListOntologyGenerations"):   checkWorkspace,
-	foundry("GetOntologyGeneration"):     checkWorkspace,
+	foundry("StartConnectorSignIn"):     checkWorkspace,
+	foundry("GetConnectorSignIn"):       checkWorkspace,
+	foundry("AuthorizeConnectorSignIn"): checkWorkspace,
+	foundry("FinishConnectorSignIn"):    checkWorkspace,
+
+	foundry("ListFoundryOntologies"):                 checkWorkspace,
+	foundry("CreateFoundryOntology"):                 checkTenant,
+	foundry("GetFoundryOntology"):                    checkWorkspace,
+	foundry("DeleteFoundryOntology"):                 checkOntology,
+	foundry("ListOntologyVersions"):                  checkWorkspace,
+	foundry("GetCurrentOntologyVersion"):             checkWorkspace,
+	foundry("CreateFoundryOntologyDocument"):         checkOntology,
+	foundry("CompleteFoundryOntologyDocumentUpload"): checkOntology,
+	foundry("CreateFoundryOntologyDocumentSet"):      checkOntology,
+	foundry("UpdateFoundryOntologyDocumentSet"):      checkOntology,
+	foundry("MoveFoundryOntologyDocument"):           checkOntology,
+	foundry("GetOntologyVersion"):                    checkWorkspace,
+	foundry("SetCurrentOntologyVersion"):             checkWorkspace,
+	foundry("ReviseOntologyVersion"):                 checkWorkspace,
+	foundry("GenerateOntology"):                      checkWorkspace,
+	foundry("ListOntologyGenerations"):               checkWorkspace,
+	foundry("GetOntologyGeneration"):                 checkWorkspace,
 
 	foundry("ListFoundryDocuments"):          checkWorkspace,
 	foundry("CreateFoundryDocument"):         checkWorkspace,

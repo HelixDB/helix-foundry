@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@databuddy/sdk':
-        specifier: 3.3.0
-        version: 3.3.0(react@19.3.0)
+        specifier: 3.4.5
+        version: 3.4.5(react@19.3.0)
       '@dnd-kit/core':
         specifier: 6.3.1
         version: 6.3.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -178,8 +178,8 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@databuddy/sdk@3.3.0':
-    resolution: {integrity: sha512-nsKdw2jEUUkjWjUBFW/obg3tUJkJP3OagqYFwWxrMwCuEnsRtLHdhXGxb7TQiMwxVQSC2RgILooXaGUAXarMLw==}
+  '@databuddy/sdk@3.4.5':
+    resolution: {integrity: sha512-CpfOBWlrJebSd7rCbr0VwrJwtoP32CGJvweOitl09lLU23zyZ6kdDMiUh0pxTiS6n6eVV0GFSuTFJB9SrABzqA==}
     peerDependencies:
       react: '>=18'
       vue: '>=3'
@@ -2615,7 +2615,7 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@databuddy/sdk@3.3.0(react@19.3.0)':
+  '@databuddy/sdk@3.4.5(react@19.3.0)':
     optionalDependencies:
       react: 19.3.0
 

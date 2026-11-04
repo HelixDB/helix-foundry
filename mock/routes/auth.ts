@@ -9,6 +9,7 @@ import { FOUNDRY_APPLICATION } from "../../src/shared/wfe";
 import { fail, now, ok, type MockRoute } from "../http";
 import { config, db, displayName, stats } from "../state";
 import { randomToken, startSession } from "../tokens";
+import { projectAccess } from "./workspaces";
 
 // Sign-in as the WFE brokers it: login:start returns an authorize URL (the
 // mock's own sign-in page, mock/workos.ts) and exchange trades the code for
@@ -106,6 +107,7 @@ export const authRoutes: MockRoute[] = [
             workspaceId: m.workspaceId,
             role: m.role,
             timestamps: { createdAt: m.createdAt, updatedAt: now() },
+            projectAccess: projectAccess(m),
           })),
       } satisfies WhoamiResponse),
   },

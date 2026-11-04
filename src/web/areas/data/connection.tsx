@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Cable,
   Folder,
+  KeyRound,
   MoreHorizontal,
   Pencil,
   RefreshCw,
@@ -55,6 +56,7 @@ import {
 } from "./data-api";
 import {
   canManage,
+  connectorBadge,
   isEventSource,
   isKnownKind,
   isLiveSync,
@@ -63,6 +65,13 @@ import {
   sourceSummary,
   syncBadge,
 } from "./model";
+import { useAccessCheck } from "../workspace/access-guard";
+import {
+  AccountNotices,
+  useSignInStart,
+  type SignedInArrival,
+} from "./sign-in";
+import { accountLine, needsSignIn } from "./sign-ins";
 
 const crumbs = [{ label: "Connectors", to: paths.data() }];
 // The kit's grid widens every column to its widest one, so the sync history
@@ -82,13 +91,31 @@ function duration(s: ConnectorSync) {
       : `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
-// What a connector's settings say, never its credential.
-function details(c: Connector): KeyValueItem[] {
+// What a connector's settings say, never its credential: one connected by
+// signing in says whose access it reads with instead, and for GitHub where
+// Helix Foundry reads (`installUrl`, the app's install page).
+function details(c: Connector, installUrl?: string): KeyValueItem[] {
   const config = c.config,
     items: KeyValueItem[] = [
       { label: "Connector", value: connectorLabel(c.kind) },
-      { label: "Credential", value: c.secretHint, mono: true },
+      c.account
+        ? { label: "Access", value: accountLine(c) }
+        : { label: "Credential", value: c.secretHint, mono: true },
     ];
+  if (c.account && c.kind === "github")
+    items.push({
+      label: "GitHub App",
+      value: installUrl ? (
+        <>
+          Reads where Helix Foundry is installed.{" "}
+          <a href={installUrl} target="_blank" rel="noopener noreferrer">
+            Install it on an organization
+          </a>
+        </>
+      ) : (
+        "Reads where Helix Foundry is installed"
+      ),
+    });
   if (config && "posthog" in config) {
     const p = config.posthog;
     items.push(
@@ -117,7 +144,10 @@ function details(c: Connector): KeyValueItem[] {
     });
   if (config && "google" in config)
     items.push(
-      { label: "Acts as", value: config.google.subject, mono: true },
+      // Signed in, it reads as the person who signed in (Access).
+      ...(c.account
+        ? []
+        : [{ label: "Acts as", value: config.google.subject, mono: true }]),
       {
         label: "Event history",
         value: plural(config.google.eventDays || 90, "day"),
@@ -130,7 +160,9 @@ function details(c: Connector): KeyValueItem[] {
         label: "Repositories",
         value: g.repos?.length
           ? g.repos.join(", ")
-          : "Every repository the token reads",
+          : c.account
+            ? "Every repository Helix Foundry is installed on that it can see"
+            : "Every repository the token reads",
       },
       { label: "Review history", value: plural(g.reviewDays || 90, "day") },
     );
@@ -206,6 +238,8 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
     action = useAction(),
     qc = useQueryClient(),
     navigate = useNavigate(),
+    arrival = (useLocation().state || {}) as SignedInArrival,
+    signIn = useSignInStart(),
     manage = canManage(role);
   const connector = useQuery(connectorQuery(id, connectorId)),
     syncs = useQuery(connectorSyncsQuery(id, connectorId)),
@@ -236,9 +270,16 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
   }, [polledStatus]);
   const [editing, setEditing] = useState(false),
     [deleting, setDeleting] = useState<"confirm" | "pending" | null>(null);
+  // Who would stop reading through source grants, asked before it goes.
+  const access = useAccessCheck();
+  useEffect(() => {
+    if (signIn.error) notify(signIn.error.message, true);
+  }, [signIn.error]);
   // Leaves the page before the deleted connection is refetched as missing.
   const remove = async () => {
     setDeleting("pending");
+    if (!(await access.check({ deleteConnector: connectorId })))
+      return setDeleting("confirm");
     try {
       await deleteConnector(id, connectorId);
       navigate(paths.data());
@@ -288,7 +329,9 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
   const c = connector.data.connector;
   if (isEventSource(c.kind)) return <EventSourcePage source={c} />;
   const name = c.name || connectorLabel(c.kind),
-    badge = syncBadge(current),
+    // Nothing syncs while its account needs signing in again.
+    broken = needsSignIn(c),
+    badge = broken ? connectorBadge(c) : syncBadge(current),
     refreshed = lastSyncedAt(c),
     tables = c.tables || [],
     own = (sets.data || []).filter((s) => s.connector?.connectorId === c.id),
@@ -321,7 +364,7 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
               <Button
                 icon={RefreshCw}
                 pending={action.pending}
-                disabled={live || gated}
+                disabled={live || gated || broken}
                 onClick={() =>
                   action.run(
                     () => syncConnector(id, c.id, "connection"),
@@ -341,6 +384,19 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
                     Edit connection
                   </MenuItem>
                 )}
+                {/* Signed in: anyone who manages it may sign it in again
+                    as themselves. */}
+                {c.account && (
+                  <MenuItem
+                    icon={KeyRound}
+                    disabled={signIn.pending}
+                    onSelect={() =>
+                      void signIn.go({ kind: c.kind, connectorId: c.id })
+                    }
+                  >
+                    Sign in again
+                  </MenuItem>
+                )}
                 <MenuItem
                   icon={Trash2}
                   danger
@@ -354,17 +410,24 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
         }
       />
       <RefreshFailed query={connector} />
+      <AccountNotices
+        connector={c}
+        arrival={arrival}
+        installUrl={kind?.github?.installUrl}
+      />
       {gated && (
         <ProGate
           feature={`${connectorLabel(c.kind)} connections`}
           className="dc-pro-gate"
         />
       )}
-      {current?.status === "CONNECTOR_SYNC_STATUS_FAILED" && current.error && (
-        <p role="alert" className="error-box dc-sync-error">
-          <strong>The last sync failed.</strong> {current.error}
-        </p>
-      )}
+      {current?.status === "CONNECTOR_SYNC_STATUS_FAILED" &&
+        current.error &&
+        !broken && (
+          <p role="alert" className="error-box dc-sync-error">
+            <strong>The last sync failed.</strong> {current.error}
+          </p>
+        )}
       <div className="dc-connection-grid">
         <Panel title="Recent syncs" padded={false}>
           <DataGrid
@@ -434,7 +497,7 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
           />
         </Panel>
         <Panel title="Details">
-          <KeyValue items={details(c)} />
+          <KeyValue items={details(c, kind?.github?.installUrl)} />
         </Panel>
       </div>
       <Section
@@ -561,6 +624,7 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
           onConfirm={remove}
         />
       )}
+      {access.dialog}
     </Page>
   );
 }

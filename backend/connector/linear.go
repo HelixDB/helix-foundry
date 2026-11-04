@@ -79,11 +79,14 @@ type linearKind struct {
 	http *http.Client
 }
 
+var _ Identifier = (*linearKind)(nil)
+
 func (k *linearKind) Name() string        { return "linear" }
 func (k *linearKind) DisplayName() string { return "Linear" }
 
 func (k *linearKind) Prepare(src Source) (json.RawMessage, error) {
-	if !linearKeyRE.MatchString(strings.TrimSpace(src.Secret)) {
+	// A token the broker vended has no format of ours to check.
+	if !src.SignIn && !linearKeyRE.MatchString(strings.TrimSpace(src.Secret)) {
 		return nil, invalid("enter a Linear personal API key (lin_api_…)")
 	}
 	if err := emptySettings(src.Settings); err != nil {
@@ -93,30 +96,58 @@ func (k *linearKind) Prepare(src Source) (json.RawMessage, error) {
 }
 
 // Discover proves the key; a personal key reads everything its user can, so
-// every object is readable once the key works.
+// every object is readable once the key works. A signed-in connector's
+// token reads with the read scope, which covers them all too.
 func (k *linearKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	var viewer struct {
 		Viewer struct {
 			ID string `json:"id"`
 		} `json:"viewer"`
 	}
-	if err := k.query(ctx, src.Secret, `query { viewer { id } }`, nil, &viewer); err != nil {
+	if err := k.query(ctx, src, `query { viewer { id } }`, nil, &viewer); err != nil {
 		return Discovery{}, err
 	}
 	return saasDiscovery(linearObjects, func(string) bool { return true }, linearForeignKeys), nil
+}
+
+// Identity is the name of the Linear user the credential reads as, and of
+// their workspace; its id is the workspace's and the user's.
+func (k *linearKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	var viewer struct {
+		Viewer struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			Organization struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"organization"`
+		} `json:"viewer"`
+	}
+	if err := k.query(ctx, src, `query { viewer { id name organization { id name } } }`, nil, &viewer); err != nil {
+		return "", "", err
+	}
+	v := viewer.Viewer
+	id := ""
+	if v.ID != "" && v.Organization.ID != "" {
+		id = v.Organization.ID + "/" + v.ID
+	}
+	if v.Organization.Name == "" {
+		return v.Name, id, nil
+	}
+	return v.Name + " in " + v.Organization.Name, id, nil
 }
 
 func (k *linearKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 2) }
 
 // Sync pages a table's root connection in creation order, archived rows included.
 func (k *linearKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {
-	return table, k.read(ctx, src.Secret, table.Name, nil, w.Write)
+	return table, k.read(ctx, src, table.Name, nil, w.Write)
 }
 
 // read pages table's root connection, archived rows included, and writes each
 // node normalized: every node in creation order, or with since set only those
 // updated after it, in update order.
-func (k *linearKind) read(ctx context.Context, key, table string, since *time.Time, write func(map[string]any) error) error {
+func (k *linearKind) read(ctx context.Context, src Source, table string, since *time.Time, write func(map[string]any) error) error {
 	q, ok := linearQueries[table]
 	if !ok {
 		return invalid("Linear has no object %q", table)
@@ -148,7 +179,7 @@ func (k *linearKind) read(ctx context.Context, key, table string, since *time.Ti
 			} `json:"pageInfo"`
 		}
 		variables["after"] = after
-		if err := k.query(ctx, key, query, variables, &data); err != nil {
+		if err := k.query(ctx, src, query, variables, &data); err != nil {
 			return err
 		}
 		// An incomplete page fails the attempt; ending early would publish a partial table.
@@ -171,9 +202,21 @@ func (k *linearKind) read(ctx context.Context, key, table string, since *time.Ti
 	}
 }
 
+// linearAuthorization is the Authorization header that carries src's
+// credential: a personal API key as it is, and a token a signed-in
+// connector's broker vended as the Bearer token it is, whatever it looks
+// like (Linear's OAuth tokens may carry no lin_oauth_ prefix).
+func linearAuthorization(src Source) string {
+	secret := strings.TrimSpace(src.Secret)
+	if src.SignIn {
+		return "Bearer " + secret
+	}
+	return secret
+}
+
 // query posts one GraphQL request and decodes its data into out. Linear
 // reports a bad key and a spent rate limit as GraphQL errors.
-func (k *linearKind) query(ctx context.Context, key, query string, variables map[string]any, out any) error {
+func (k *linearKind) query(ctx context.Context, src Source, query string, variables map[string]any, out any) error {
 	payload, err := json.Marshal(map[string]any{"query": query, "variables": variables})
 	if err != nil {
 		return err
@@ -181,7 +224,7 @@ func (k *linearKind) query(ctx context.Context, key, query string, variables map
 	status, body, err := fetch(ctx, k.http, func() (*http.Request, error) {
 		req, err := http.NewRequest(http.MethodPost, k.base+"/graphql", bytes.NewReader(payload))
 		if err == nil {
-			req.Header = http.Header{"Authorization": {strings.TrimSpace(key)}, "Content-Type": {"application/json"}}
+			req.Header = http.Header{"Authorization": {linearAuthorization(src)}, "Content-Type": {"application/json"}}
 		}
 		return req, err
 	})
@@ -198,17 +241,27 @@ func (k *linearKind) query(ctx context.Context, key, query string, variables map
 		} `json:"errors"`
 	}
 	_ = json.Unmarshal(body, &resp) // a body that is not GraphQL is judged by its status below
+	credential := "key"
+	rejected := refused(&AuthError{Provider: "Linear"}, "Linear rejected this key; check it and enter it again")
+	if src.SignIn {
+		credential = "sign-in"
+		rejected = refused(&AuthError{Provider: "Linear"}, "Linear rejected the access this connector signed in with; sign it in again")
+	}
 	for _, e := range resp.Errors {
 		switch e.Extensions.Code {
 		case "AUTHENTICATION_ERROR":
-			return refused(nil, "Linear rejected this key; check it and enter it again")
+			return rejected
 		case "RATELIMITED":
-			return refused(nil, "this key has used up its Linear rate limit; try again later")
+			return refused(nil, "this %s has used up its Linear rate limit; try again later", credential)
 		}
 	}
 	switch {
 	case status == http.StatusUnauthorized:
-		return refused(nil, "Linear rejected this key; check it and enter it again")
+		return rejected
+	case len(resp.Errors) > 0 && src.SignIn:
+		// A signed-in connector's messages reach its sign-in and agents:
+		// they carry Foundry's words only, and Linear's go to the log.
+		return refused(fmt.Errorf("linear: %s", resp.Errors[0].Message), "Linear refused the request; try again")
 	case len(resp.Errors) > 0:
 		message := resp.Errors[0].Message
 		if len(message) > 200 {

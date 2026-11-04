@@ -194,6 +194,9 @@ WHERE workspace_id=? AND set_id=? AND status<>'deleted' FOR UPDATE`, workspaceID
 		if n > 0 {
 			return ErrNotEmpty
 		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND document_set_id=?`, workspaceID, id); err != nil {
+			return err
+		}
 		_, err := tx.db.ExecContext(ctx, `UPDATE foundry_document_sets SET deleted_at=NOW(6), live_key=NULL WHERE id=?`, id)
 		return err
 	})

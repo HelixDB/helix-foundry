@@ -529,6 +529,9 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_sources WHERE load_id=?`, job.LoadID); err != nil {
 			return err
 		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_access WHERE load_id=?`, job.LoadID); err != nil {
+			return err
+		}
 		_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_extractions WHERE load_id=?`, job.LoadID)
 		return err
 	}

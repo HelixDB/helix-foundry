@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
@@ -28,6 +29,12 @@ import (
 
 const maxConnectorNameLength = 120
 
+// ListConnectorKinds lists the kinds a workspace can connect, each with the
+// lowest plan that includes it, whether the caller can connect it by
+// signing in (ProviderAccounts.Kinds; never where there is no broker), and
+// what a customer sets up for it: an S3 role's trust, or, where signed-in
+// GitHub connectors read through Helix Foundry's GitHub App, its install
+// link.
 func (s *Service) ListConnectorKinds(ctx context.Context, req *foundryv1.ListConnectorKindsRequest) (*foundryv1.ListConnectorKindsResponse, error) {
 	catalog, _, err := s.connectors(req.GetWorkspaceId())
 	if err != nil {
@@ -38,9 +45,12 @@ func (s *Service) ListConnectorKinds(ctx context.Context, req *foundryv1.ListCon
 		return nil, err
 	}
 	plans := s.foundryCatalog()
+	signIn := s.signInKinds(ctx, req.GetWorkspaceId(), actor(ctx).UserID)
+	install := s.connectorsConfig().GitHubAppInstallURL
 	resp := &foundryv1.ListConnectorKindsResponse{}
 	for _, k := range catalog.Kinds() {
-		kind := &foundryv1.ConnectorKind{Kind: k.Name(), DisplayName: k.DisplayName(), Available: plan.Includes(k.Name())}
+		kind := &foundryv1.ConnectorKind{Kind: k.Name(), DisplayName: k.DisplayName(), Available: plan.Includes(k.Name()),
+			SignIn: slices.Contains(signIn, k.Name())}
 		if lowest := plans.LowestWith(k.Name()); lowest != nil {
 			kind.PlanCode, kind.RequiresPro = lowest.Code, lowest != plans.Free()
 		}
@@ -48,6 +58,9 @@ func (s *Service) ListConnectorKinds(ctx context.Context, req *foundryv1.ListCon
 			if principal, externalID, on := rs.Setup(req.GetWorkspaceId()); on {
 				kind.Setup = &foundryv1.ConnectorKind_S3{S3: &foundryv1.S3ConnectorSetup{PrincipalArn: principal, ExternalId: externalID}}
 			}
+		}
+		if k.Name() == "github" && install != "" && s.deps.Accounts != nil {
+			kind.Setup = &foundryv1.ConnectorKind_Github{Github: &foundryv1.GitHubConnectorSetup{InstallUrl: install}}
 		}
 		resp.Kinds = append(resp.Kinds, kind)
 	}
@@ -128,6 +141,9 @@ func (s *Service) CreateConnector(ctx context.Context, req *foundryv1.CreateConn
 	return s.connectorResponse(ctx, stored, &discovery)
 }
 
+// ListConnectors lists the workspace's connectors. needs_sign_in lists only
+// those whose account needs signing in again, without their schedules,
+// tables or syncs: the site's banner reads it on every page.
 func (s *Service) ListConnectors(ctx context.Context, req *foundryv1.ListConnectorsRequest) (*foundryv1.ListConnectorsResponse, error) {
 	if req.GetWorkspaceId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
@@ -138,6 +154,16 @@ func (s *Service) ListConnectors(ctx context.Context, req *foundryv1.ListConnect
 	}
 	resp := &foundryv1.ListConnectorsResponse{}
 	for _, c := range list {
+		if req.GetNeedsSignIn() {
+			if c.Account != nil && c.Account.Broken != nil {
+				pc, err := s.connectorBase(ctx, c)
+				if err != nil {
+					return nil, err
+				}
+				resp.Connectors = append(resp.Connectors, pc)
+			}
+			continue
+		}
 		pc, err := s.connectorToProto(ctx, c)
 		if err != nil {
 			return nil, err
@@ -159,6 +185,12 @@ func (s *Service) GetConnector(ctx context.Context, req *foundryv1.GetConnectorR
 // are tested before saving; a blank credential keeps the stored one. Settings
 // that point elsewhere queue a sync, which replaces the old source's tables.
 // An event source takes a path of its own (updateEventSource).
+//
+// A signed-in connector takes no credential: it is signed in again instead.
+// Its settings are tested with a token its broker vends, and it still seals
+// nothing, so the token is never stored. Only the member whose access it
+// reads with widens what it reads (ACCOUNT_OWNER_ONLY, widening); others
+// may narrow it.
 func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConnectorRequest) (*foundryv1.ConnectorResponse, error) {
 	catalog, keyring, err := s.connectors(req.GetWorkspaceId())
 	if err != nil {
@@ -189,10 +221,21 @@ func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConn
 		if kind.Name() != current.Kind {
 			return nil, status.Error(codes.InvalidArgument, "a connector's kind cannot change; create a new connector")
 		}
+		kept := false
+		switch {
+		case current.Account != nil:
+			if err := s.signedInSettings(ctx, kind, current, src); err != nil {
+				return nil, err
+			}
+			signed, err := s.credentials().Source(ctx, current)
+			if err != nil {
+				return nil, accountError(current, kind, err)
+			}
+			src.Secret, src.SignIn = signed.Secret, true
 		// A blank credential keeps the stored one, unless the access needs
 		// none: then the old one is sealed over with nothing.
-		kept := !secretless && src.Secret == ""
-		if kept {
+		case !secretless && src.Secret == "":
+			kept = true
 			secret, err := keyring.Open(current.SecretCiphertext, current.SecretKeyID, connector.SecretContext(current.ID))
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "open connector %s credential: %v", current.ID, err)
@@ -229,8 +272,13 @@ func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConn
 				return nil, err
 			}
 		}
-		update.Config, update.SecretHint = settings, kind.Hint(src.Secret)
-		update.SecretCiphertext, update.SecretKeyID, err = keyring.Seal([]byte(src.Secret), connector.SecretContext(current.ID))
+		// A vended token is never stored, nor hinted at.
+		secret, hint := src.Secret, kind.Hint(src.Secret)
+		if src.SignIn {
+			secret, hint = "", ""
+		}
+		update.Config, update.SecretHint = settings, hint
+		update.SecretCiphertext, update.SecretKeyID, err = keyring.Seal([]byte(secret), connector.SecretContext(current.ID))
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "seal connector credential: %v", err)
 		}
@@ -277,6 +325,68 @@ func (s *Service) UpdateConnector(ctx context.Context, req *foundryv1.UpdateConn
 		}
 	}
 	return s.connectorResponse(ctx, stored, discovery)
+}
+
+// signedInSettings refuses what a signed-in connector's new settings may not
+// do: carry a credential, or, for anyone but the member whose access it
+// reads with, widen what it reads (widening). That access may reach what
+// other companies let the member see, such as repositories they installed
+// Helix Foundry's GitHub App on, so another owner or admin narrows it only.
+func (s *Service) signedInSettings(ctx context.Context, kind connector.Kind, current *foundrymodel.Connector, src connector.Source) error {
+	if src.Secret != "" {
+		return status.Errorf(codes.FailedPrecondition, "%s signs in with %s: sign it in again instead of entering a key",
+			current.Name, kind.DisplayName())
+	}
+	settings, err := kind.Prepare(connector.Source{Settings: src.Settings, SignIn: true})
+	if err != nil {
+		return connectorError(ctx, err)
+	}
+	if widens := widening(kind.Name(), current.Config, settings); widens != "" && actor(ctx).UserID != current.Account.UserID {
+		msg := fmt.Sprintf("Only %s can %s: %s reads with their %s access", s.connectedBy(ctx, current.Account), widens, current.Name,
+			kind.DisplayName())
+		if kind.Name() == "github" {
+			msg += ". You can narrow them"
+		}
+		return foundryPrecondition(current.WorkspaceID, "ACCOUNT_OWNER_ONLY", msg)
+	}
+	return nil
+}
+
+// widening says, in a refusal's words, how settings would let a signed-in
+// connector of kind read more than current does; "" when they don't:
+//   - GitHub: a repository current doesn't name, or none named (every one
+//     it can reach) where current names some;
+//   - PostHog: another project of what the member can see (signed in, it
+//     reads one region only).
+//
+// Every other kind reads all its account can, whatever its settings.
+func widening(kind string, current, settings json.RawMessage) string {
+	switch kind {
+	case "github":
+		const widens = "add repositories, or read every one"
+		var was, now connector.GitHubSettings
+		if json.Unmarshal(current, &was) != nil || json.Unmarshal(settings, &now) != nil {
+			return widens
+		}
+		switch {
+		case len(now.Repos) == 0 && len(was.Repos) > 0:
+			return widens
+		case len(now.Repos) == 0, len(was.Repos) == 0:
+			return ""
+		}
+		for _, repo := range now.Repos {
+			if !slices.ContainsFunc(was.Repos, func(w string) bool { return strings.EqualFold(w, repo) }) {
+				return widens
+			}
+		}
+	case "posthog":
+		const widens = "change the PostHog project it reads"
+		var was, now connector.PostHogSettings
+		if json.Unmarshal(current, &was) != nil || json.Unmarshal(settings, &now) != nil || was.ProjectID != now.ProjectID {
+			return widens
+		}
+	}
+	return ""
 }
 
 // sameJSON compares stored settings by value, since MySQL rewrites JSON on the way in.
@@ -347,6 +457,14 @@ func (s *Service) releaseOld(ctx context.Context, kind connector.Kind, keyring *
 	return nil
 }
 
+// connectorsConfig is foundry.connectors; empty without a configuration.
+func (s *Service) connectorsConfig() config.ConnectorsConfig {
+	if s.deps.Cfg == nil {
+		return config.ConnectorsConfig{}
+	}
+	return s.deps.Cfg.Foundry.Connectors
+}
+
 func (s *Service) connectors(workspaceID string) (*connector.Catalog, *secretbox.Keyring, error) {
 	if workspaceID == "" {
 		return nil, nil, status.Error(codes.InvalidArgument, "workspace_id is required")
@@ -372,7 +490,9 @@ func (s *Service) loadConnector(ctx context.Context, workspaceID, connectorID st
 }
 
 // testSource gates kinds by plan, checks the settings and proves the credential.
-// It returns the settings to store, which discovery may have completed.
+// It returns the settings to store, which discovery may have completed. A
+// signed-in connector's token the provider rejects asks for signing in again
+// (ACCOUNT_NEEDS_SIGN_IN).
 func (s *Service) testSource(ctx context.Context, workspaceID string, kind connector.Kind, src connector.Source) (
 	json.RawMessage, connector.Discovery, error) {
 	if err := s.requireKind(ctx, workspaceID, kind); err != nil {
@@ -385,7 +505,13 @@ func (s *Service) testSource(ctx context.Context, workspaceID string, kind conne
 	if err := s.requireLogCapture(ctx, workspaceID, settings); err != nil {
 		return nil, connector.Discovery{}, err
 	}
-	discovery, err := kind.Discover(ctx, connector.Source{Settings: settings, Secret: src.Secret, WorkspaceID: workspaceID})
+	discovery, err := kind.Discover(ctx, connector.Source{Settings: settings, Secret: src.Secret, WorkspaceID: workspaceID, SignIn: src.SignIn})
+	var rejected *connector.AuthError
+	if src.SignIn && errors.As(err, &rejected) {
+		log.From(ctx).Info("a signed-in connector's token was rejected", "err", err)
+		return nil, connector.Discovery{}, foundryPrecondition(workspaceID, "ACCOUNT_NEEDS_SIGN_IN",
+			fmt.Sprintf("%s rejected the access this connector signed in with: sign it in again", kind.DisplayName()))
+	}
 	if err != nil {
 		return nil, connector.Discovery{}, connectorError(ctx, err)
 	}
@@ -604,13 +730,26 @@ func configToProto(kind string, settings json.RawMessage) (*foundryv1.ConnectorC
 	return nil, fmt.Errorf("unknown connector kind %q", kind)
 }
 
-// connectorToProto adds the connector's synced tables and newest sync. A
-// pushed kind's table (an event source's) is followed on every plan, and it
-// syncs when rows arrive rather than on an interval.
-func (s *Service) connectorToProto(ctx context.Context, c *foundrymodel.Connector) (*foundryv1.Connector, error) {
+// connectorBase is a connector as stored, with its account: no schedule,
+// tables or syncs, so it reads no plan.
+func (s *Service) connectorBase(ctx context.Context, c *foundrymodel.Connector) (*foundryv1.Connector, error) {
 	cfg, err := configToProto(c.Kind, c.Config)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read connector %s settings: %v", c.ID, err)
+	}
+	return &foundryv1.Connector{
+		Id: c.ID, WorkspaceId: c.WorkspaceID, Kind: c.Kind, Name: c.Name, Config: cfg, SecretHint: c.SecretHint,
+		CreatedAt: timestamppb.New(c.CreatedAt), UpdatedAt: timestamppb.New(c.UpdatedAt), Account: s.accountToProto(ctx, c),
+	}, nil
+}
+
+// connectorToProto adds the connector's schedule, synced tables and newest
+// sync. A pushed kind's table (an event source's) is followed on every plan,
+// and it syncs when rows arrive rather than on an interval.
+func (s *Service) connectorToProto(ctx context.Context, c *foundrymodel.Connector) (*foundryv1.Connector, error) {
+	out, err := s.connectorBase(ctx, c)
+	if err != nil {
+		return nil, err
 	}
 	plan := s.planOrFree(ctx, c.WorkspaceID)
 	src := connector.Source{Settings: c.Config, WorkspaceID: c.WorkspaceID, ConnectorID: c.ID}
@@ -626,11 +765,7 @@ func (s *Service) connectorToProto(ctx context.Context, c *foundrymodel.Connecto
 			}
 		}
 	}
-	out := &foundryv1.Connector{
-		Id: c.ID, WorkspaceId: c.WorkspaceID, Kind: c.Kind, Name: c.Name, Config: cfg, SecretHint: c.SecretHint,
-		CreatedAt: timestamppb.New(c.CreatedAt), UpdatedAt: timestamppb.New(c.UpdatedAt),
-		Schedule: scheduleToProto(c, plan, floor), CdcStatus: cdcStatusToProto(c.ChangeCursor),
-	}
+	out.Schedule, out.CdcStatus = scheduleToProto(c, plan, floor), cdcStatusToProto(c.ChangeCursor)
 	if pushed {
 		out.Schedule.EverySeconds, out.Schedule.EffectiveEverySeconds = 0, 0
 	}

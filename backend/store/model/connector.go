@@ -29,7 +29,48 @@ type Connector struct {
 	SchedulePaused *string
 	// ChangeCursor is where the next change read starts, in the kind's own JSON.
 	ChangeCursor json.RawMessage
+	// Account is the provider account a connector connected by signing in
+	// reads with, in place of a key: its sealed secret is empty. Nil for a
+	// connector that holds a key.
+	Account *ConnectorAccount
 }
+
+// ConnectorAccount is the provider account a signed-in connector reads
+// with, which its host's broker (hosted: WorkOS Pipes) keeps: the connector
+// asks the broker for a token each time it reads.
+type ConnectorAccount struct {
+	// ID is the broker's id for the account.
+	ID string
+	// UserID is the member it acts as: the one the broker says made it.
+	UserID string
+	// Label is who the provider says signed in: a GitHub login; a Linear
+	// user and workspace. For people only: labels repeat.
+	Label string
+	// Identity is who signed in as the provider knows them, stably (a
+	// GitHub user's number): it tells whether signing in again changed who
+	// the connector reads as. Empty is unknown.
+	Identity string
+	// Generation counts the connector's sign-ins. A sync breaks the account
+	// only while it holds the generation it asked with, so a late failure
+	// never breaks one signed in again since.
+	Generation int
+	// Broken is why it needs signing in again, one of ConnectorAccountReasons;
+	// nil while connected. Nothing syncs it until someone signs it in again.
+	Broken   *string
+	BrokenAt *time.Time
+	// CheckedAt is when the broker last vended a token for it, or, after a
+	// weekly check that got none, a time moved on so the next check comes
+	// later (DeferConnectorAccountCheck).
+	CheckedAt *time.Time
+	// ConnectedAt is when it was last signed in.
+	ConnectedAt *time.Time
+}
+
+// ConnectorAccountReasons are why an account needs signing in again: the
+// member it acts as left the workspace, the provider rejected or revoked
+// its access, its access lapsed and couldn't be renewed, or the broker no
+// longer has it (ports.Account*).
+var ConnectorAccountReasons = []string{"member_left", "access_revoked", "expired", "account_missing"}
 
 // ConnectorUpdate changes a connector. A nil Config leaves config and
 // credentials alone; a non-nil one replaces both, since they are tested together.
@@ -124,6 +165,11 @@ type ConnectorScheduleOutcome struct {
 	// Every is the connector's sync_every_seconds the outcome was worked out
 	// from; a schedule the owner changed during the sync stays as they set it.
 	Every *int
+	// Generation is the account generation the sync read with (0 for a
+	// connector with a key); nil when it never read the connector. A
+	// connector signed in again since is no longer this outcome's: its pause
+	// stays as it is, and it syncs now, with its new account.
+	Generation *int
 	// Pushed, for a pushed kind's connector (an event source), is its next
 	// sync in place of NextSyncAt and Every, which must then be nil: it has
 	// no interval, and a send may have scheduled a sync while this one ran.
@@ -228,3 +274,13 @@ type FoundryLoadSource struct {
 //
 //	ConnectorPartName("Granola", "Notes") // "Granola / Notes"
 func ConnectorPartName(connectorName, name string) string { return connectorName + " / " + name }
+
+// ConnectorAccountRef is a signed-in connector's provider account.
+type ConnectorAccountRef struct {
+	ConnectorID string
+	WorkspaceID string
+	Kind        string
+	AccountID   string
+	// UserID is the member the account acts as.
+	UserID string
+}

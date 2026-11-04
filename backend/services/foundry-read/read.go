@@ -112,6 +112,13 @@ func (r *reader) Read(ctx context.Context, req *foundryreadv1.ReadRequest) (*fou
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "register read: %v", err)
 	}
+	var visibility *ontologyagent.Visibility
+	if raw := req.GetVisibilityJson(); raw != "" {
+		visibility = &ontologyagent.Visibility{}
+		if err := json.Unmarshal([]byte(raw), visibility); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "visibility_json: %v", err)
+		}
+	}
 	body, err := json.Marshal(ontologyagent.ReadRequest{
 		RequestID: id.New(), Database: binding.TenantID, Load: req.GetLoadId(), OntologyTOML: req.GetOntologyToml(),
 		OntologyVersion: req.GetOntologyVersion(),
@@ -119,6 +126,7 @@ func (r *reader) Read(ctx context.Context, req *foundryreadv1.ReadRequest) (*fou
 			URL: r.proxy.URL(), Token: token, MaxRequestBytes: graphproxy.MaxRequestBytes, TimeoutSecs: helixTimeoutSecs,
 		},
 		AsOf: r.now().UTC().Format(time.DateOnly), Budget: budget, Reads: reads,
+		Visibility: visibility, MappingsTOML: req.GetMappingsToml(),
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "encode read: %v", err)

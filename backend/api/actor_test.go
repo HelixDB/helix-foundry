@@ -36,6 +36,9 @@ func TestActorRoundTrip(t *testing.T) {
 		"a user":       {Source: ports.SourceUser, UserID: "user-1", WorkspaceID: "ws-1", QueryRead: ports.AllProjects(), QueryWrite: ports.SelectedProjects([]string{"p-1", "p-2"})},
 		"an MCP agent": {Source: ports.SourceMCP, WorkspaceID: "ws-1", QueryRead: ports.SelectedProjects([]string{"p-1"})},
 		"a send token": {Source: ports.SourceEventSource, EventSourceTokenID: "tok-1", WorkspaceID: "ws-1"},
+		"an agent's key": {Source: ports.SourceMCP, ServiceCredentialID: "cred-1", WorkspaceID: "ws-1",
+			QueryRead: ports.SelectedProjects([]string{"p-1"})},
+		"a grantee": {Source: ports.SourceGrantee, ServiceCredentialID: "cred-1", WorkspaceID: "ws-1"},
 	} {
 		got, ok, err := arrive(AttachActor(context.Background(), a), foundryv1.FoundryService_GetFoundryAI_FullMethodName)
 		if err != nil || !ok {
@@ -44,6 +47,7 @@ func TestActorRoundTrip(t *testing.T) {
 		gotRead, gotWrite := got.Scope("ws-1")
 		wantRead, wantWrite := a.Scope("ws-1")
 		if got.Source != a.Source || got.UserID != a.UserID || got.EventSourceTokenID != a.EventSourceTokenID || got.WorkspaceID != a.WorkspaceID ||
+			got.ServiceCredentialID != a.ServiceCredentialID ||
 			gotRead.All() != wantRead.All() || !slices.Equal(gotRead.Projects(), wantRead.Projects()) ||
 			gotWrite.All() != wantWrite.All() || !slices.Equal(gotWrite.Projects(), wantWrite.Projects()) {
 			t.Fatalf("%s: sent %+v, got %+v", name, a, got)

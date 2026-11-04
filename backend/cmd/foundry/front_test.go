@@ -358,16 +358,16 @@ func TestFrontFindsAnAIDefault(t *testing.T) {
 	}
 }
 
-// The health service answers without the token, on gRPC and on the REST
-// listener's /readyz, which is ready once everything has started.
+// The health service answers without the token on gRPC. The REST listener is
+// published on the host, so it serves no probes: they are the health
+// listener's, which stays on loopback (TestServe).
 func TestFrontHealth(t *testing.T) {
 	rest, grpcAddr, probes, _ := startFront(t, "http://helix:8080")
-	if code := call(t, "GET", rest+"/readyz", "", nil, nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("readyz before start: %d", code)
-	}
 	probes.markReady()
-	if code := call(t, "GET", rest+"/readyz", "", nil, nil); code != http.StatusOK {
-		t.Fatalf("readyz: %d", code)
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		if code := call(t, "GET", rest+path, "", nil, nil); code != http.StatusNotFound {
+			t.Fatalf("%s on the REST listener: %d", path, code)
+		}
 	}
 	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

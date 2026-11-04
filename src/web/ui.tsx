@@ -2,6 +2,7 @@ import "./ui.css";
 import { createContext, useContext, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, LoaderCircle } from "lucide-react";
+import type { ResourceScope } from "../shared/wfe";
 import { Button } from "./kit";
 
 // The open workspace and the signed-in user, for every page in the shell.
@@ -11,19 +12,43 @@ export type ShellWorkspace = {
   slug: string;
   name: string;
   role: WorkspaceRole;
+  // A member's query access to the workspace's projects (whoami's
+  // projectAccess.queryRead; unset reads as none), undefined when it isn't
+  // known: owners and admins, or a WFE that doesn't say.
+  queryRead?: ResourceScope;
 };
 export type ShellUser = { id: string; name: string; email: string };
 
-export const WorkspaceContext = createContext({
+/** The open workspace as every page reads it (useWorkspace). */
+export type WorkspaceValue = ShellWorkspace & {
+  user: ShellUser;
+  // The workspace has no ontology yet: the shell offers nothing but the
+  // onboarding (main.tsx's OnboardingRoutes).
+  onboarding: boolean;
+  // The user reads only through source grants (a member an owner or admin
+  // restricted, GET .../foundry/access/me): the shell offers Analyst and
+  // the ontologies those grants cover, read only, and nothing else.
+  grantee: boolean;
+  // The ontologies whose current loads the user's source grants hold any of:
+  // what a grantee, or a member who can't query an ontology's database,
+  // reads (../areas/workspace/access-model.ts readAccess).
+  granted: readonly string[];
+  // Those of them the grants hold only some of (readsPart).
+  partial: readonly string[];
+  notify: (text: string, error?: boolean) => void;
+};
+
+export const WorkspaceContext = createContext<WorkspaceValue>({
   id: "",
   slug: "",
   name: "",
-  role: "member" as WorkspaceRole,
-  user: { id: "", name: "", email: "" } as ShellUser,
-  // The workspace has no ontology yet: the shell offers nothing but the
-  // onboarding (main.tsx's OnboardingRoutes).
+  role: "member",
+  user: { id: "", name: "", email: "" },
   onboarding: false,
-  notify: (_text: string, _error?: boolean) => {},
+  grantee: false,
+  granted: [],
+  partial: [],
+  notify: () => {},
 });
 export const useWorkspace = () => useContext(WorkspaceContext);
 

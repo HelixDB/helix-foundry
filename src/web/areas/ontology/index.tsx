@@ -102,7 +102,7 @@ export function ExploreRoutes() {
     <Routes>
       <Route
         index
-        element={<OpenOntology title="Explorer" to={paths.explore} />}
+        element={<OpenOntology title="Explorer" to={paths.explore} reads />}
       />
       <Route path=":ontologyId" element={<OntologyScope explores />}>
         <Route index element={<ExplorerPage />} />
@@ -120,7 +120,10 @@ export function ExploreRoutes() {
 export function AskRoutes() {
   return (
     <Routes>
-      <Route index element={<OpenOntology title="Analyst" to={paths.ask} />} />
+      <Route
+        index
+        element={<OpenOntology title="Analyst" to={paths.ask} reads />}
+      />
       <Route path=":ontologyId" element={<OntologyScope explores />}>
         <Route index element={<AskPage />} />
         <Route path="*" element={<NotFound />} />

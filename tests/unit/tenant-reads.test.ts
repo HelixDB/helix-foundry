@@ -93,7 +93,7 @@ describe("tenant reads", () => {
       kind: "starting",
       status: 503,
       code: "rate_limit_unavailable",
-      message: "Helix is still starting this new database.",
+      message: "Your new database is starting.",
       retryInMs: 5_000,
       elapsedMs: 0,
     };
@@ -110,7 +110,7 @@ describe("tenant reads", () => {
     const entity = readQueries.entity(
       "ws",
       "o",
-      reads.read,
+      { kind: "database", read: reads.read },
       { id: "load_1" },
       { type: "Customer", key: "c" },
     );

@@ -1,8 +1,8 @@
 import "./sign-in.css";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { signInStarted } from "./analytics";
+import { signInStarted, trackEvent } from "./analytics";
 import { signOut } from "./api";
 import { Button, useTitle } from "./kit";
 import { whoamiQuery } from "./workspaces";
@@ -20,7 +20,7 @@ const providers: Provider[] = [
   { id: "microsoft", label: "Microsoft" },
 ];
 
-const errors: Record<string, { title: string; text: string }> = {
+const errors = {
   request: {
     title: "Sign-in couldn’t start.",
     text: "Choose a provider below to try again.",
@@ -45,7 +45,12 @@ const errors: Record<string, { title: string; text: string }> = {
     title: "Your company signs in with single sign-on.",
     text: "Single sign-on isn’t available on Helix Foundry yet. Sign in to the Helix dashboard instead.",
   },
-};
+} satisfies Record<string, { title: string; text: string }>;
+
+/** Why sign-in came back here: /login/callback's ?error=. */
+export type SignInError = keyof typeof errors;
+const isSignInError = (code: string | null): code is SignInError =>
+  !!code && Object.hasOwn(errors, code);
 
 function ProviderLogo({ id }: { id: Provider["id"] }) {
   if (id === "github")
@@ -157,8 +162,12 @@ export function GatePage({
 export function SignInPage() {
   const [params] = useSearchParams(),
     [pending, setPending] = useState<Provider["id"] | null>(null);
-  const error = errors[params.get("error") || ""],
+  const code = params.get("error"),
+    error = isSignInError(code) ? errors[code] : undefined,
     returnTo = parseReturnPath(params.get("return_to"));
+  useEffect(() => {
+    if (isSignInError(code)) trackEvent("sign_in_failed", { reason: code });
+  }, [code]);
   // Already signed in: go straight on.
   const me = useQuery(whoamiQuery);
   if (me.data) return <Navigate to={returnTo || "/"} replace />;
@@ -172,7 +181,7 @@ export function SignInPage() {
   return (
     <GatePage
       title="Sign in to Helix Foundry"
-      lede="Use the account you use for Helix. Your workspaces come with it."
+      lede="Use your Helix account, or continue to create one."
     >
       {error && (
         <div role="alert" className="hf-gate-alert">

@@ -9,8 +9,8 @@ import { dataTree, expect, signIn, test } from "./support/mock";
 
 /**
  * Every request this page makes to Databuddy from now on, and every script
- * it loads that holds the SDK's tracker loader (a build without a client id
- * still has its chunk, which nothing may fetch).
+ * it loads that holds the SDK's tracker component (its core, which the events
+ * use, holds the CDN's address and the loader, which nothing here calls).
  */
 function databuddyRequests(page: Page) {
   const urls: string[] = [];
@@ -21,7 +21,8 @@ function databuddyRequests(page: Page) {
   page.on("response", async (response) => {
     if (response.request().resourceType() !== "script") return;
     const text = await response.text().catch(() => "");
-    if (text.includes("cdn.databuddy.cc")) urls.push(response.url());
+    if (text.includes("Databuddy: No client ID found"))
+      urls.push(response.url());
   });
   return urls;
 }

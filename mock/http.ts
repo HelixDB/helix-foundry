@@ -1,4 +1,5 @@
 import type { HttpMethod, RouteTemplate } from "../src/shared/route-template";
+import type { Visibility } from "./graph/view";
 import type { MockUser } from "./state";
 
 // What a mock WFE route sees and returns. Routes are registered in
@@ -16,6 +17,47 @@ export type MockRequest = {
   body: any;
   // The signed-in caller. Always set unless the route is `public`.
   principal: Principal;
+  // Set when the caller reads only through source grants (./routes/access.ts
+  // admitted it, as the backend's access check does): handlers answer only
+  // what its grants cover.
+  grantee?: MockGrantee;
+};
+
+/** A current load a grantee's grants hold: `partial` when only some of it. */
+export type MockGranteeLoad = {
+  loadId: string;
+  versionId: string;
+  partial: boolean;
+};
+
+/**
+ * A caller admitted only through source grants, as the backend's
+ * access.Grantee: who it is (a principal key, "KIND_USER:usr_eve"), the
+ * current loads its grants hold any of by ontology, the one an ontology's
+ * route was admitted on, whether its grants cover a document set, whether a
+ * load they hold holds a document in a set they cover (of `ontologyId`'s, or
+ * any), what they hold of an ontology's current load, for the agent, and
+ * whether they still hold what an answer read.
+ */
+export type MockGrantee = {
+  principal: string;
+  covered: Map<string, MockGranteeLoad>;
+  load?: MockGranteeLoad;
+  coversSet: (setId: string) => boolean;
+  holds: (documentId: string, ontologyId?: string) => boolean;
+  visibility: (ontologyId: string) => Visibility;
+  // The part of the admitted ontology's load it holds, to keep with a
+  // question; whether its grants still hold such a part.
+  seen: (ontologyId: string) => MockSeen;
+  stillSees: (seen: MockSeen) => boolean;
+};
+
+/** What a grantee held of a load when it read it (access.Inputs). */
+export type MockSeen = {
+  tables: { connectorId: string; table: string }[];
+  sets: { setId: string; connectorId: string }[];
+  enrichment: boolean;
+  uncoverable: boolean;
 };
 
 export type MockReply = {

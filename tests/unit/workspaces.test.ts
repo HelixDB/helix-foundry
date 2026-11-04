@@ -48,6 +48,43 @@ describe("workspaces", () => {
     ]);
   });
 
+  it("keeps a member's query access, when the WFE says it", () => {
+    const access = (queryRead?: { mode: string }) => ({
+      version: "2",
+      read: { mode: "all" },
+      ...(queryRead ? { queryRead } : {}),
+    });
+    const said: WhoamiResponse = {
+      user: me.user,
+      workspaces: [
+        {
+          workspaceId: "w1",
+          role: "WORKSPACE_ROLE_MEMBER",
+          projectAccess: access({ mode: "none" }),
+        },
+        {
+          workspaceId: "w2",
+          role: "WORKSPACE_ROLE_MEMBER",
+          projectAccess: access(),
+        },
+        {
+          workspaceId: "w3",
+          role: "WORKSPACE_ROLE_OWNER",
+          projectAccess: access({ mode: "all" }),
+        },
+        { workspaceId: "w4", role: "WORKSPACE_ROLE_MEMBER" },
+      ],
+    };
+    expect(
+      shellWorkspaces(said, [
+        { id: "w1" },
+        { id: "w2" },
+        { id: "w3" },
+        { id: "w4" },
+      ]).map((w) => w.queryRead),
+    ).toEqual([{ mode: "none" }, {}, undefined, undefined]);
+  });
+
   it("names the user", () => {
     expect(shellUser(me)).toEqual({
       id: "u1",

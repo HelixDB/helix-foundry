@@ -191,7 +191,7 @@ function Status({ ai }: { ai: FoundryAi }) {
   return (
     <Panel
       title="AI models"
-      subtitle="Where drafts, document reads and questions run."
+      subtitle="The AI provider used to draft ontologies, read documents and answer questions."
     >
       <p className="wk-note">{AI.statusText(ai, LOCAL)}</p>
       {AI.paused(ai) && (

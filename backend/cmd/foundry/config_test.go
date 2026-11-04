@@ -188,6 +188,8 @@ func TestValidate(t *testing.T) {
 		"a helix query":      {func(c *Config) { c.Local.HelixURL = "http://helix:8080?x=1" }, "local.helix_url must be"},
 		"a helix user":       {func(c *Config) { c.Local.HelixURL = "http://u:p@helix:8080" }, "local.helix_url must be"},
 		"a helix fragment":   {func(c *Config) { c.Local.HelixURL = "http://helix:8080#x" }, "local.helix_url must be"},
+		"no site origin":     {func(c *Config) { c.Local.SiteOrigin = "" }, "local.site_origin must be"},
+		"a site path":        {func(c *Config) { c.Local.SiteOrigin = "http://localhost:3000/app" }, "local.site_origin must be"},
 		"another scheme":     {func(c *Config) { c.Local.HelixURL = "ftp://helix" }, "local.helix_url must be"},
 		"no store":           {func(c *Config) { c.Local.S3.Endpoint = "localhost:8333" }, "local.s3.endpoint must be"},
 		"no store key":       {func(c *Config) { c.Local.S3.AccessKeyID = "" }, "local.s3.access_key_id and"},

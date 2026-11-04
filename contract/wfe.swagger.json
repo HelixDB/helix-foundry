@@ -530,6 +530,109 @@
           "WfeService"
         ]
       }
+    },
+    "/v1/workspaces/{workspaceId}/service-credentials": {
+      "get": {
+        "operationId": "WfeService_ListServiceCredentials",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1ListServiceCredentialsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      },
+      "post": {
+        "operationId": "WfeService_CreateServiceCredential",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/helixwfev1CreateServiceCredentialResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1WfeServiceCreateServiceCredentialBody"
+            }
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/service-credentials/{id}": {
+      "delete": {
+        "operationId": "WfeService_RevokeServiceCredential",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WfeService"
+        ]
+      }
     }
   },
   "definitions": {
@@ -554,6 +657,17 @@
           "type": "string"
         },
         "displayName": {
+          "type": "string"
+        }
+      }
+    },
+    "helixwfev1CreateServiceCredentialResponse": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "$ref": "#/definitions/v1ServiceCredential"
+        },
+        "token": {
           "type": "string"
         }
       }
@@ -652,6 +766,18 @@
         },
         "nextPageToken": {
           "type": "string"
+        }
+      }
+    },
+    "helixwfev1ListServiceCredentialsResponse": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ServiceCredential"
+          }
         }
       }
     },
@@ -899,6 +1025,22 @@
         }
       }
     },
+    "v1LegacyReportServiceCredentialOwner": {
+      "type": "object",
+      "properties": {
+        "createdBy": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ReportKeyScope"
+          }
+        }
+      },
+      "description": "LegacyReportServiceCredentialOwner describes old multi-workspace report\ntokens. No API may mint this owner variant or expand its read-only scopes."
+    },
     "v1Project": {
       "type": "object",
       "properties": {
@@ -944,6 +1086,18 @@
       },
       "description": "ProjectAccess is the canonical workspace-member project policy persisted as\nprotobuf JSON. Version 2 keeps resource management and database query scopes\nindependent so project visibility never implies database-data access."
     },
+    "v1ReportKeyScope": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "description": "ReportKeyScope is one grant on a report API key. An empty project_id\nmeans every project in the workspace."
+    },
     "v1ResourceScope": {
       "type": "object",
       "properties": {
@@ -971,6 +1125,76 @@
         "RESOURCE_STATUS_FAILED"
       ],
       "default": "RESOURCE_STATUS_UNSPECIFIED"
+    },
+    "v1ServiceCredential": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tokenPrefix": {
+          "type": "string"
+        },
+        "workspaceOwner": {
+          "$ref": "#/definitions/v1WorkspaceServiceCredentialOwner"
+        },
+        "legacyReportOwner": {
+          "$ref": "#/definitions/v1LegacyReportServiceCredentialOwner"
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ServiceCredentialGrant"
+          }
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "revokedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastUsedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "timestamps": {
+          "$ref": "#/definitions/v1Timestamps"
+        }
+      }
+    },
+    "v1ServiceCredentialGrant": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1ServiceCredentialPermission"
+          }
+        }
+      }
+    },
+    "v1ServiceCredentialPermission": {
+      "type": "string",
+      "enum": [
+        "SERVICE_CREDENTIAL_PERMISSION_UNSPECIFIED",
+        "SERVICE_CREDENTIAL_PERMISSION_PROJECT_READ",
+        "SERVICE_CREDENTIAL_PERMISSION_PROJECT_WRITE",
+        "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_READ",
+        "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_WRITE"
+      ],
+      "default": "SERVICE_CREDENTIAL_PERMISSION_UNSPECIFIED"
     },
     "v1StartLoginRequest": {
       "type": "object",
@@ -1100,6 +1324,25 @@
         }
       }
     },
+    "v1WfeServiceCreateServiceCredentialBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ServiceCredentialGrant"
+          }
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "v1WhoamiResponse": {
       "type": "object",
       "properties": {
@@ -1214,6 +1457,14 @@
         "WORKSPACE_ROLE_OWNER"
       ],
       "default": "WORKSPACE_ROLE_UNSPECIFIED"
+    },
+    "v1WorkspaceServiceCredentialOwner": {
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string"
+        }
+      }
     },
     "v1WorkspaceSettings": {
       "type": "object",

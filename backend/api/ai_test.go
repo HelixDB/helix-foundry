@@ -96,6 +96,10 @@ func (aiPeople) MayManageAI(_ context.Context, ws, userID string) bool {
 
 func (aiPeople) DisplayName(context.Context, string) (string, error) { return "Ada Lovelace", nil }
 
+func (aiPeople) Member(context.Context, string, string) (ports.Member, error) {
+	return ports.Member{}, nil
+}
+
 func (s *aiStore) GetFoundryAIView(context.Context, string) (foundrymodel.FoundryAIView, error) {
 	return s.view, nil
 }

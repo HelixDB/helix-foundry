@@ -12,7 +12,7 @@ import {
 
 // The workspace area: settings (general, members and invitations, plan and
 // billing) and the account menu. Ada owns Acme, which is on Foundry
-// Pro; Alan is a member of it. Upgrades start from a new, Free workspace;
+// Pro; Alan and Eve are members of it. Upgrades start from a new, Free workspace;
 // switches between Pro and Max start from Acme.
 
 // The shell's toast with this text (other status regions may be on screen).
@@ -124,7 +124,7 @@ test("lists members and invites people by email", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Members" }).click();
   await expect(page).toHaveURL(/\/settings\/members$/);
   const members = page.getByRole("list", { name: "Members" });
-  await expect(members.getByRole("listitem")).toHaveCount(2);
+  await expect(members.getByRole("listitem")).toHaveCount(3);
   // Owners first; the signed-in user is marked.
   await expect(members.getByRole("listitem").first()).toContainText(
     "Ada LovelaceYou",
@@ -137,6 +137,7 @@ test("lists members and invites people by email", async ({ page }) => {
     "alan@example.com",
   );
   await expect(members.getByRole("listitem").nth(1)).toContainText("Member");
+  await expect(members.getByRole("listitem").nth(2)).toContainText("Eve Adler");
 
   await page.getByRole("button", { name: "Invite people" }).click();
   let dialog = page.getByRole("dialog", { name: "Invite to Acme" });
@@ -241,6 +242,9 @@ test("upgrades to Pro through checkout, cancels and resumes", async ({
   const dialog = page.getByRole("dialog", { name: "Upgrade Foundry" });
   // Pro is picked first; Max is a click away.
   await expect(dialog.getByRole("radio", { name: "Pro" })).toBeChecked();
+  await expect(dialog).toContainText(
+    "A saved payment method may be charged immediately. Otherwise, you’ll complete payment on Stripe.",
+  );
   await expect(
     dialog.getByRole("radio", { name: "Pro" }),
   ).toHaveAccessibleDescription("$100 a month");
@@ -248,12 +252,12 @@ test("upgrades to Pro through checkout, cancels and resumes", async ({
     dialog.getByRole("radio", { name: "Max" }),
   ).toHaveAccessibleDescription("$500 a month");
   await dialog.getByLabel("Promotion code").fill("NOPE");
-  await dialog.getByRole("button", { name: "Continue to payment" }).click();
+  await dialog.getByRole("button", { name: "Upgrade to Pro" }).click();
   await expect(dialog.getByRole("alert")).toContainText(
     "promotion code is invalid",
   );
   await dialog.getByLabel("Promotion code").fill("FOUNDRYTEST50");
-  await dialog.getByRole("button", { name: "Continue to payment" }).click();
+  await dialog.getByRole("button", { name: "Upgrade to Pro" }).click();
 
   // Stripe Checkout (the mock's), then back to /settings/billing.
   await expect(
@@ -312,7 +316,7 @@ test("buys Max through checkout and shows it wherever the plan shows", async ({
   await expect(dialog).toContainText("Max adds more soon.");
   await expect(dialog).toContainText("Syncs every 15 minutes");
   await dialog.getByLabel("Promotion code").fill("FOUNDRYTEST50");
-  await dialog.getByRole("button", { name: "Continue to payment" }).click();
+  await dialog.getByRole("button", { name: "Upgrade to Max" }).click();
 
   await expect(
     page.getByRole("heading", { name: "Foundry Max" }),
@@ -421,7 +425,7 @@ test("waits for Pro when a card on file is charged", async ({ page }) => {
   await page.getByRole("button", { name: "Upgrade", exact: true }).click();
   await page
     .getByRole("dialog", { name: "Upgrade Foundry" })
-    .getByRole("button", { name: "Continue to payment" })
+    .getByRole("button", { name: "Upgrade to Pro" })
     .click();
   // The charge answers Free for a moment; the page keeps reading the plan.
   await expect(page).toHaveURL(/\/settings\/billing$/);

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { LOCAL } from "../../../shared/deployment";
 import type { FoundryEventSourceMode } from "../../../shared/wfe";
-import { ApiError } from "../../api";
+import { ApiError, refusalOf } from "../../api";
 import {
   Button,
   ButtonLink,
@@ -28,6 +28,7 @@ import { paths } from "../../paths";
 import { trackEvent } from "../../analytics";
 import { useWorkspace } from "../../ui";
 import { ConnectData } from "../data/connect-data";
+import { SignInReturn } from "../data/sign-in";
 import { connectorsQuery } from "../data/data-api";
 import { EventSourceSendDialog } from "../data/event-source-send";
 import {
@@ -88,14 +89,17 @@ import {
 // shell offers (main.tsx): it has no way back to Ontologies, and first asks
 // how to start: the sample company (./try-sample.tsx, its own page), else
 // one section toggling Set up with your agent (the default) and the user's
-// own data (the wizard). A local build has no Helix MCP, so no agent and
-// nothing to toggle: only the user's own data.
+// own data (the wizard). A local build starts on the user's own data, and its
+// agent setup goes through the install's own MCP.
 // A workspace's first ontology of its own (the sample's doesn't count) asks
 // only what to draft from and the goal (firstOntologyWizard): it is named
 // from its sources, goes on a new database, and its first draft is made
 // current and loaded as soon as it is stored, with an email to say so
 // (GenerateOntologyRequest's loadWhenReady). A connector link sent here (?add=<kind>) opens its
-// form over the wizard once, and the new connection stays here. An API
+// form over the wizard once, and the new connection stays here; with an
+// agent's sign-in (&sign_in=<id>) the form is bound to it. A sign-in's
+// callback comes back to the sources step with the connector it made
+// (?step=sources&connected=<id>), chosen as one connected here is. An API
 // source's token link (?event_source=<id>&token=new, forwarded from its
 // Data page by main.tsx) opens its send panel over the wizard once, at
 // whatever step it is on: a link from an agent opens a new tab, whose
@@ -123,6 +127,9 @@ type Saved = {
   ontologyId?: string;
 };
 const savedKey = (ws: string) => "foundry.new-ontology.v1:" + ws;
+// Where a sign-in started here returns: the sources step, its choices kept
+// in this tab.
+const BACK = { path: paths.newOntology() + "?step=sources" };
 /** This tab's new-ontology choices in `ws`, if it kept any. */
 export function readNewOntology(ws: string): Saved | null {
   try {
@@ -189,16 +196,26 @@ export function NewOntologyPage() {
   // Onboarding asks how to start until the user picks their own data, or a
   // link (a step, a connector's form, an API source's token) says so.
   const [own, setOwn] = useState(() =>
-      ["step", "add", "event_source"].some((k) => params.has(k)),
+      ["step", "add", "event_source", "sign_in", "connected"].some((k) =>
+        params.has(k),
+      ),
     ),
     [start, setStart] = useState(LOCAL ? "own" : "agent"),
     [adding, setAdding] = useState(() => params.get("add")),
+    // The sign-in an agent's link names, for its form.
+    [signIn] = useState(() => params.get("sign_in")),
     // The API source a token link opens the send panel of.
     [sending, setSending] = useState(() =>
       params.get("token") === "new" ? params.get("event_source") : null,
     );
   useEffect(() => {
-    const read = ["add", "event_source", "token"].filter((k) => params.has(k));
+    const read = [
+      "add",
+      "event_source",
+      "token",
+      "sign_in",
+      "connected",
+    ].filter((k) => params.has(k));
     if (!read.length) return;
     setParams(
       (p) => {
@@ -239,9 +256,15 @@ export function NewOntologyPage() {
   });
   const [name, setName] = useState(saved.name),
     [database, setDatabase] = useState(saved.database),
-    [chosen, setChosen] = useState<Set<string> | null>(
-      saved.connectorIds && new Set(saved.connectorIds),
-    ),
+    // A connector a sign-in just made joins those chosen, as one connected
+    // here does (every synced one, when none was chosen, includes it).
+    [chosen, setChosen] = useState<Set<string> | null>(() => {
+      const connected = params.get("connected");
+      return (
+        saved.connectorIds &&
+        new Set([...saved.connectorIds, ...(connected ? [connected] : [])])
+      );
+    }),
     [chosenEvents, setChosenEvents] = useState<EventChoices | null>(
       () => new Map(saved.eventSources),
     ),
@@ -301,6 +324,16 @@ export function NewOntologyPage() {
   const at = wizard.steps.findIndex((s) => s.id === wizard.current),
     step = wizard.steps[at]!;
   const choosing = onboarding && !own;
+  // The step shown, for where the wizard is left (Databuddy drops ?step=),
+  // once `first` is known.
+  const shown =
+    !choosing &&
+    canManage(role) &&
+    (onboarding || !!ontologies.data) &&
+    step.id;
+  useEffect(() => {
+    if (shown) trackEvent("ontology_step_shown", { step: shown, first });
+  }, [shown, first]);
   const crumbs = onboarding
       ? undefined
       : [{ label: "Ontologies", to: paths.ontologies() }],
@@ -441,6 +474,9 @@ export function NewOntologyPage() {
         void qc.invalidateQueries({ queryKey: [id, key] });
     } catch (e) {
       setError(e);
+      trackEvent("ontology_create_failed", {
+        reason: isNoSubscription(e) ? "no_subscription" : refusalOf(e),
+      });
       void qc.invalidateQueries({ queryKey: [id, "databases"] });
     } finally {
       setPending(false);
@@ -527,15 +563,15 @@ export function NewOntologyPage() {
   const message = error instanceof Error ? error.message : "";
   if (choosing)
     return (
-      <Page width="narrow">
-        <PageHeader
-          title={title}
-          subtitle="Foundry turns your data into an ontology: a graph you can ask questions of."
-        />
-        <TrySample />
-        <h2 className="on-start-or">Or start with your own</h2>
-        <div className="on-card">
-          {!LOCAL && (
+      <SignInReturn.Provider value={BACK}>
+        <Page width="narrow">
+          <PageHeader
+            title={title}
+            subtitle="Foundry turns your data into an ontology: a graph you can ask questions of."
+          />
+          <TrySample />
+          <h2 className="on-start-or">Or start with your own</h2>
+          <div className="on-card">
             <div className="on-start-toggle">
               <Segmented
                 label="Start with your own"
@@ -547,179 +583,183 @@ export function NewOntologyPage() {
                 ]}
               />
             </div>
+            {start === "agent" ? (
+              <AgentSetup />
+            ) : (
+              <>
+                <div className="on-card-text">
+                  <p>
+                    Connect a database or app, or upload documents, and Foundry
+                    does the rest.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  iconRight={ArrowRight}
+                  onClick={() => {
+                    trackEvent("onboarding_own_data_clicked");
+                    setOwn(true);
+                    go(wizard.steps[0]!.id);
+                  }}
+                >
+                  Continue
+                </Button>
+              </>
+            )}
+          </div>
+          {adding !== null && (
+            <ConnectData
+              initialKind={adding}
+              signIn={signIn}
+              onConnected={() => {}}
+              onClose={() => setAdding(null)}
+            />
           )}
-          {start === "agent" ? (
-            <AgentSetup />
-          ) : (
-            <>
-              <div className="on-card-text">
-                {LOCAL && <strong>Use my own data</strong>}
-                <p>
-                  Connect a database or app, or upload documents, and Foundry
-                  does the rest.
-                </p>
-              </div>
-              <Button
-                size="sm"
-                iconRight={ArrowRight}
-                onClick={() => {
-                  trackEvent("onboarding_own_data_clicked");
-                  setOwn(true);
-                  go(wizard.steps[0]!.id);
-                }}
-              >
-                Continue
-              </Button>
-            </>
-          )}
-        </div>
+        </Page>
+      </SignInReturn.Provider>
+    );
+  return (
+    <SignInReturn.Provider value={BACK}>
+      <Page width="narrow">
+        <PageHeader
+          breadcrumbs={crumbs}
+          title={title}
+          subtitle={
+            first
+              ? "Choose your sources and describe the questions you want to answer. Foundry’s agent drafts the ontology, loads it into a new Helix database and emails you when it’s ready to ask."
+              : "An ontology defines the types, links and rules in your data. Choose your sources and Foundry will draft one for you."
+          }
+        />
         {adding !== null && (
           <ConnectData
             initialKind={adding}
+            signIn={signIn}
             onConnected={() => {}}
             onClose={() => setAdding(null)}
           />
         )}
-      </Page>
-    );
-  return (
-    <Page width="narrow">
-      <PageHeader
-        breadcrumbs={crumbs}
-        title={title}
-        subtitle={
-          first
-            ? "Choose what it’s drawn from and what it should serve. Foundry’s agent drafts it, loads it into a new Helix database and emails you when it’s ready to ask."
-            : "An ontology keeps its types, documents and data in one Helix database. Choose what it is drawn from, and Foundry’s agent drafts it."
-        }
-      />
-      {adding !== null && (
-        <ConnectData
-          initialKind={adding}
-          onConnected={() => {}}
-          onClose={() => setAdding(null)}
-        />
-      )}
-      {sending && (
-        <EventSourceSendDialog
-          connectorId={sending}
-          onClose={() => setSending(null)}
-        />
-      )}
-      <ol className="on-wizard" aria-label="Steps">
-        {wizard.steps.map((s, i) => {
-          const copy = STEP_COPY[s.id];
-          return (
-            <FlowStep
-              key={s.id}
-              number={i + 1}
-              title={copy.title}
-              text={copy.text}
-              optional={s.optional}
-              state={i === at ? "current" : i < at ? "done" : "upcoming"}
-              summary={stepSummary(s.state)}
-              onEdit={() => go(s.id)}
-            >
-              {i === at && body()}
-              <div className="on-generate-foot">
-                {s.state.kind === "blocked" && (
-                  <p className="on-muted" role="status">
-                    {s.state.reason}
-                  </p>
-                )}
-                {s.state.kind === "ready" && s.state.note && (
-                  <p className="on-muted" role="status">
-                    {s.state.note}
-                  </p>
-                )}
-                {s.id === "review" && aiReady === false && (
-                  <AiGate action="Its first draft" />
-                )}
-                {s.id === "review" &&
-                  error !== null &&
-                  (isNoSubscription(error) ? (
-                    <Callout
-                      icon={CreditCard}
-                      tone="danger"
-                      title="A new database needs a Helix plan"
-                      text="This workspace has no active Helix subscription, which a database on the shared cluster needs. Choose a plan in the Helix dashboard, or use a database you already have."
-                      action={
-                        <span className="on-card-actions">
-                          <a
-                            className="hf-btn hf-btn--secondary hf-btn--sm"
-                            href={`${DASHBOARD_URL}/${encodeURIComponent(slug)}/billing`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Open Helix billing
-                          </a>
-                          {!first && choices?.some((c) => !c.usedBy) && (
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                setDatabase(null);
-                                go("database");
-                              }}
-                            >
-                              Use an existing one
-                            </Button>
-                          )}
-                        </span>
-                      }
-                    />
-                  ) : (
-                    <p className="hf-form-error" role="alert">
-                      {message
-                        ? message.charAt(0).toUpperCase() +
-                          message.slice(1) +
-                          "."
-                        : "Couldn’t create the ontology."}
+        {sending && (
+          <EventSourceSendDialog
+            connectorId={sending}
+            onClose={() => setSending(null)}
+          />
+        )}
+        <ol className="on-wizard" aria-label="Steps">
+          {wizard.steps.map((s, i) => {
+            const copy = STEP_COPY[s.id];
+            return (
+              <FlowStep
+                key={s.id}
+                number={i + 1}
+                title={copy.title}
+                text={copy.text}
+                optional={s.optional}
+                state={i === at ? "current" : i < at ? "done" : "upcoming"}
+                summary={stepSummary(s.state)}
+                onEdit={() => go(s.id)}
+              >
+                {i === at && body()}
+                <div className="on-generate-foot">
+                  {s.state.kind === "blocked" && (
+                    <p className="on-muted" role="status">
+                      {s.state.reason}
                     </p>
-                  ))}
-                <div className="hf-form-actions">
-                  {wizard.back ? (
-                    <Button onClick={() => go(wizard.back!)}>Back</Button>
-                  ) : onboarding ? (
-                    <Button
-                      onClick={() => {
-                        setOwn(false);
-                        setParams({});
-                      }}
-                    >
-                      Back
-                    </Button>
-                  ) : (
-                    <Button onClick={cancel}>Cancel</Button>
                   )}
-                  {wizard.next ? (
-                    <Button
-                      variant="primary"
-                      iconRight={ArrowRight}
-                      disabled={
-                        s.state.kind === "blocked" || s.state.kind === "loading"
-                      }
-                      onClick={() => go(wizard.next!)}
-                    >
-                      {s.state.kind === "skipped" ? "Skip" : "Continue"}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="primary"
-                      icon={Sparkles}
-                      pending={pending}
-                      disabled={!wizard.request}
-                      onClick={() => void create()}
-                    >
-                      {aiReady === false ? "Create" : "Create and generate"}
-                    </Button>
+                  {s.state.kind === "ready" && s.state.note && (
+                    <p className="on-muted" role="status">
+                      {s.state.note}
+                    </p>
                   )}
+                  {s.id === "review" && aiReady === false && (
+                    <AiGate action="Its first draft" />
+                  )}
+                  {s.id === "review" &&
+                    error !== null &&
+                    (isNoSubscription(error) ? (
+                      <Callout
+                        icon={CreditCard}
+                        tone="danger"
+                        title="A new database needs a Helix plan"
+                        text="This workspace has no active Helix subscription, which a database on the shared cluster needs. Choose a plan in the Helix dashboard, or use a database you already have."
+                        action={
+                          <span className="on-card-actions">
+                            <a
+                              className="hf-btn hf-btn--secondary hf-btn--sm"
+                              href={`${DASHBOARD_URL}/${encodeURIComponent(slug)}/billing`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open Helix billing
+                            </a>
+                            {!first && choices?.some((c) => !c.usedBy) && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setDatabase(null);
+                                  go("database");
+                                }}
+                              >
+                                Use an existing one
+                              </Button>
+                            )}
+                          </span>
+                        }
+                      />
+                    ) : (
+                      <p className="hf-form-error" role="alert">
+                        {message
+                          ? message.charAt(0).toUpperCase() +
+                            message.slice(1) +
+                            "."
+                          : "Couldn’t create the ontology."}
+                      </p>
+                    ))}
+                  <div className="hf-form-actions">
+                    {wizard.back ? (
+                      <Button onClick={() => go(wizard.back!)}>Back</Button>
+                    ) : onboarding ? (
+                      <Button
+                        onClick={() => {
+                          setOwn(false);
+                          setParams({});
+                        }}
+                      >
+                        Back
+                      </Button>
+                    ) : (
+                      <Button onClick={cancel}>Cancel</Button>
+                    )}
+                    {wizard.next ? (
+                      <Button
+                        variant="primary"
+                        iconRight={ArrowRight}
+                        disabled={
+                          s.state.kind === "blocked" ||
+                          s.state.kind === "loading"
+                        }
+                        onClick={() => go(wizard.next!)}
+                      >
+                        {s.state.kind === "skipped" ? "Skip" : "Continue"}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="primary"
+                        icon={Sparkles}
+                        pending={pending}
+                        disabled={!wizard.request}
+                        onClick={() => void create()}
+                      >
+                        {aiReady === false ? "Create" : "Create and generate"}
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </FlowStep>
-          );
-        })}
-      </ol>
-    </Page>
+              </FlowStep>
+            );
+          })}
+        </ol>
+      </Page>
+    </SignInReturn.Provider>
   );
 }
 

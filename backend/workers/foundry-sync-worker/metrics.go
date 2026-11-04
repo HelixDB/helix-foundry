@@ -57,6 +57,26 @@ var (
 		Name: "helix_foundry_cursor_releases_total",
 		Help: "Releases of what deleted and paused connectors held on their sources, such as replication slots, by outcome: released or failed.",
 	}, []string{"outcome"})
+	signInsDeleted = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "helix_foundry_connector_sign_ins_deleted_total",
+		Help: "Connector sign-ins deleted a day after they ended.",
+	})
+	accountPurges = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "helix_foundry_connector_account_purges_total",
+		Help: "Attempts to delete a provider account from the broker, by outcome: deleted, or failed and retried later.",
+	}, []string{"outcome"})
+	accountPurgeBacklog = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "helix_foundry_connector_account_purge_backlog",
+		Help: "Provider accounts waiting to be deleted from the broker.",
+	})
+	accountPurgeOldest = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "helix_foundry_connector_account_purge_oldest_seconds",
+		Help: "How long the oldest provider account waiting to be deleted from the broker has waited; 0 with none. Over a day is a stuck purge.",
+	})
+	accountChecks = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "helix_foundry_connector_account_checks_total",
+		Help: "Weekly checks of signed-in connectors' accounts, by outcome: vended, broken, unavailable or failed.",
+	}, []string{"outcome"})
 	syncLag = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "helix_foundry_sync_lag_seconds",
 		Help:    "How long a scheduled sync waited between being queued and its first claim; growth means connectors fall behind their interval.",

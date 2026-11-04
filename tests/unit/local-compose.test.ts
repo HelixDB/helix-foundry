@@ -454,8 +454,13 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
       "ANTHROPIC_API_KEY",
       "HELIX_DB_DSN",
       "HELIX_LOCAL__SECRETS_DIR",
+      "HELIX_LOCAL__SITE_ORIGIN",
       "OPENAI_API_KEY",
     ]);
+    // Agents' links go where the site answers: moving one means moving both.
+    expect(environment.HELIX_LOCAL__SITE_ORIGIN).toBe(
+      services.site.environment.FOUNDRY_ORIGIN,
+    );
     expect(environment).toMatchObject({
       // No password: foundry reads it from the directory.
       HELIX_DB_DSN:
@@ -471,6 +476,30 @@ describe.skipIf(!compose)("local/compose.yaml's foundry", () => {
     ]);
     expect(services.site.depends_on.foundry.condition).toBe("service_healthy");
     expect(services.site.environment.HELIX_WFE_ORIGIN).toBe("http://pod:8081");
+  });
+
+  // Publishing them is asked for, so a port taken here never stops the app,
+  // and an image from before the MCP never shows its probes on the host.
+  it("publishes MCP and HTTP Ask on loopback only with compose.mcp.yaml", () => {
+    type Port = { host_ip: string; target: number; published: string };
+    const published = (vars: Record<string, string>, files?: string[]) =>
+      (composed(vars, files).services.pod.ports as Port[]).find(
+        (port) => port.target === 8081,
+      );
+    const withMcp = ["local/compose.yaml", "local/compose.mcp.yaml"];
+    expect(published({})).toBeUndefined();
+    expect(published({ FOUNDRY_MCP_PORT: "9081" })).toBeUndefined();
+    expect(published({}, withMcp)).toMatchObject({
+      host_ip: "127.0.0.1",
+      published: "8081",
+    });
+    expect(published({ FOUNDRY_MCP_PORT: "9081" }, withMcp)).toMatchObject({
+      host_ip: "127.0.0.1",
+      published: "9081",
+    });
+    // The store stays published with it, as uploads need.
+    const ports = composed({}, withMcp).services.pod.ports as Port[];
+    expect(ports.map((port) => port.target).sort()).toEqual([8081, 8333]);
   });
 });
 

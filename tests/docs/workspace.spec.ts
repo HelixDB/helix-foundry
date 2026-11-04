@@ -197,7 +197,10 @@ test("workspace: video", async ({ browser }) => {
   await click(page.getByRole("tab", { name: "Plan & billing" }));
   await page.waitForTimeout(1800);
   await click(page.getByRole("button", { name: "Upgrade", exact: true }));
-  await caption(page, "Choose Pro or Max, then pay with Stripe Checkout");
+  await caption(
+    page,
+    "Choose Pro or Max, then pay with a saved card or on Stripe",
+  );
   await page.waitForTimeout(1500);
   await poster(page, "workspace", "set-up-a-workspace");
   await page.waitForTimeout(1500);

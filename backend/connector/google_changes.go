@@ -357,7 +357,7 @@ func (c *googleClient) driveFeed(ctx context.Context, drive, token string, each 
 		}
 		if err := c.status(status, body, googleDrive, target); err != nil {
 			if page > 0 && errors.Is(err, errNoAccess) {
-				return "", refused(nil, "Google stopped listing %s as %s part way through; try again", path, c.settings.Subject)
+				return "", refused(nil, "Google stopped listing %s as %s part way through; try again", path, c.who())
 			}
 			return "", err
 		}
