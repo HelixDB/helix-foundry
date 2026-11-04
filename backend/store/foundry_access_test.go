@@ -76,7 +76,14 @@ func TestFoundryAccessGrants(t *testing.T) {
 	t.Run("deleting a connector deletes its grants", func(t *testing.T) {
 		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, agent, []access.Target{access.ConnectorTarget(pg), access.TableTarget(pg, "people"),
 			access.ConnectorTarget(stripe)}, nil))
+		// What a source's going takes away widens nothing.
+		held := id26("U-ACG-HELD")
+		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, access.Principal{Kind: access.PrincipalUser, ID: held}, []access.Target{access.ConnectorTarget(pg)}, &by))
 		require.NoError(t, f.db.DeleteConnector(ctx, ws, pg))
+		restricted, err := f.db.IsFoundryMemberRestricted(ctx, ws, held)
+		require.NoError(t, err)
+		assert.True(t, restricted, "its connector deleted, they stay restricted")
+		require.NoError(t, f.db.SetFoundryMemberRestricted(ctx, ws, held, false, &by), "holding nothing now, it can be lifted")
 		assert.Equal(t, []access.Target{access.ConnectorTarget(stripe)}, targetsOf(t, f.db, ws, agent))
 		assert.Empty(t, targetsOf(t, f.db, ws, team))
 	})
@@ -540,6 +547,50 @@ func TestFoundryTeamsAndRestrictedMembers(t *testing.T) {
 
 	teamPrincipal := access.Principal{Kind: access.PrincipalTeam, ID: team.ID}
 	adaPrincipal := access.Principal{Kind: access.PrincipalUser, ID: ada}
+	isRestricted := func(userID string) bool {
+		r, err := f.db.IsFoundryMemberRestricted(ctx, ws, userID)
+		require.NoError(t, err)
+		return r
+	}
+	t.Run("grants restrict whoever they reach, and taking them away widens nothing", func(t *testing.T) {
+		alone, joined, added := id26("U-ATM-ALONE"), id26("U-ATM-JOINED"), id26("U-ATM-ADDED")
+		enrichment := []access.Target{access.EnrichmentTarget()}
+		// Holding nothing restricts no one.
+		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, access.Principal{Kind: access.PrincipalUser, ID: alone}, nil, &by))
+		assert.False(t, isRestricted(alone))
+		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, access.Principal{Kind: access.PrincipalUser, ID: alone}, enrichment, &by))
+		assert.True(t, isRestricted(alone))
+		assert.ErrorIs(t, f.db.SetFoundryMemberRestricted(ctx, ws, alone, false, &by), store.ErrConflict, "holding sources, it can't be lifted")
+		assert.True(t, isRestricted(alone))
+		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, access.Principal{Kind: access.PrincipalUser, ID: alone}, nil, &by))
+		assert.True(t, isRestricted(alone), "its last grant taken away, it reads nothing, not everything")
+
+		// A team of no grants restricts no one who joins it.
+		crew := &model.FoundryTeam{ID: id26("TEAM-ATM-CREW"), WorkspaceID: ws, Name: "Crew", MemberUserIDs: []string{joined}}
+		require.NoError(t, f.db.CreateFoundryTeam(ctx, crew))
+		assert.False(t, isRestricted(joined))
+		crewPrincipal := access.Principal{Kind: access.PrincipalTeam, ID: crew.ID}
+		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, crewPrincipal, enrichment, &by))
+		assert.True(t, isRestricted(joined), "a team given sources restricts its members")
+		assert.ErrorIs(t, f.db.SetFoundryMemberRestricted(ctx, ws, joined, false, &by), store.ErrConflict, "nor while on a team holding some")
+		require.NoError(t, f.db.UpdateFoundryTeam(ctx, ws, crew.ID, "Crew", []string{added}))
+		assert.True(t, isRestricted(added), "whoever joins a team that holds some")
+		assert.True(t, isRestricted(joined), "whoever leaves stays")
+		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, crewPrincipal, nil, &by))
+		other := id26("U-ATM-LATER")
+		require.NoError(t, f.db.UpdateFoundryTeam(ctx, ws, crew.ID, "Crew", []string{added, other}))
+		assert.False(t, isRestricted(other), "a team that holds none any more restricts no one new")
+		require.NoError(t, f.db.DeleteFoundryTeam(ctx, ws, crew.ID))
+		assert.True(t, isRestricted(added), "nor does deleting the team lift it")
+		// A team with no members restricts no one, and its grants still save.
+		empty := &model.FoundryTeam{ID: id26("TEAM-ATM-EMPTY"), WorkspaceID: ws, Name: "Empty"}
+		require.NoError(t, f.db.CreateFoundryTeam(ctx, empty))
+		require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, access.Principal{Kind: access.PrincipalTeam, ID: empty.ID}, enrichment, &by))
+		require.NoError(t, f.db.DeleteFoundryTeam(ctx, ws, empty.ID))
+		for _, userID := range []string{alone, joined, added} {
+			require.NoError(t, f.db.SetFoundryMemberRestricted(ctx, ws, userID, false, &by))
+		}
+	})
 	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, teamPrincipal, []access.Target{access.EnrichmentTarget()}, nil))
 	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, adaPrincipal, []access.Target{access.EnrichmentTarget()}, nil))
 	require.NoError(t, f.db.UpdateFoundryTeam(ctx, ws, team.ID, "Billing", []string{ada, grace}))

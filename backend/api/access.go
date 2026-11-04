@@ -329,7 +329,15 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 			targets = append(targets, target)
 		}
 	}
-	if len(targets) > 0 {
+	// Only what's new has to confine them: taking some away is always allowed,
+	// also from someone given raw access since.
+	held, err := s.deps.DB.ListFoundryAccessGrants(ctx, req.GetWorkspaceId(), []access.Principal{principal})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read grants: %v", err)
+	}
+	if slices.ContainsFunc(targets, func(t access.Target) bool {
+		return !slices.ContainsFunc(held, func(g foundrymodel.FoundryAccessGrant) bool { return g.Target == t })
+	}) {
 		if err := s.checkGrantee(ctx, req.GetWorkspaceId(), principal); err != nil {
 			return nil, err
 		}
@@ -361,21 +369,17 @@ func (s *Service) checkGrantee(ctx context.Context, workspaceID string, principa
 		if s.deps.People == nil {
 			return nil
 		}
-		m, err := s.deps.People.Member(ctx, workspaceID, principal.ID)
-		if err != nil {
-			return status.Errorf(codes.Internal, "read the member: %v", err)
-		}
-		if m.Role == ports.RoleNone {
-			return status.Error(codes.NotFound, "the workspace has no such member")
-		}
+		return s.restrictable(ctx, workspaceID, principal.ID)
 	case access.PrincipalTeam:
 		teams, err := s.deps.DB.ListFoundryTeams(ctx, workspaceID)
 		if err != nil {
 			return status.Errorf(codes.Internal, "read teams: %v", err)
 		}
-		if !slices.ContainsFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == principal.ID }) {
+		i := slices.IndexFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == principal.ID })
+		if i < 0 {
 			return status.Error(codes.NotFound, "the workspace has no such team")
 		}
+		return s.teamRestrictable(ctx, workspaceID, teams[i].MemberUserIDs)
 	}
 	return nil
 }

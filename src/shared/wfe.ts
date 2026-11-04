@@ -2810,7 +2810,9 @@ export type AgentProviderKind =
 // nothing: a restricted member (on every
 // Foundry call while their role is member), a member without database query
 // access on Ask's and the graph's reads, or an agent's key with grants.
-// Grants only add: a workspace that grants nothing behaves as before.
+// A workspace that grants nothing behaves as before. A member given sources,
+// or on a team given any, is restricted to them, and stays so once they're
+// taken away, until someone lifts it.
 
 /** v1FoundryPrincipalKind */
 export type FoundryPrincipalKind =
