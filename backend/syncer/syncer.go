@@ -580,8 +580,9 @@ func (r *run) result(res Result) Result {
 // done reports a table this sync already wrote on an earlier attempt, which
 // is not read again. A followed table is always read again: this attempt's
 // cursor is later than the one the earlier attempt read up to, so skipping
-// it would lose the changes in between. So is every table of a read at one
-// snapshot of its source (readTables).
+// it would lose the changes in between. A table of a read at one snapshot
+// of its source is kept too, though it shows the earlier attempt's moment
+// rather than the rest's (readTables).
 func (r *run) done(table string, followed bool) bool {
 	if p := r.previous[table]; !followed && p != nil && p.SyncID == r.sync.ID {
 		r.keep(p)
