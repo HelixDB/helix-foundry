@@ -2,9 +2,13 @@ name: CI
 on: [push, pull_request]
 permissions:
   contents: read
+# A newer push to the same pull request cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: crucible-4vcpu-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -36,8 +40,16 @@ jobs:
       # One worker per vCPU: Vitest's default leaves one idle, which is half
       # of a 2-vCPU runner.
       - run: pnpm test --maxWorkers=100%
-  e2e:
-    runs-on: ubuntu-latest
+  # The suite runs serially within one server set (playwright.config.ts: the
+  # mock WFE holds one shared state), so it is split across machines instead:
+  # each shard starts its own mock and app servers.
+  e2e-shard:
+    name: e2e (shard ${{ matrix.shard }}/4)
+    runs-on: crucible-4vcpu-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -47,13 +59,29 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+      # Next.js's build cache for the two e2e builds (their NEXT_DIST_DIR in
+      # playwright.config.ts), kept from the last run on the same lockfile.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .next-e2e/cache
+            .next-e2e-local/cache
+          key: next-e2e-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: next-e2e-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}-
       # Builds the app against the mock WFE: no secrets needed.
-      - run: pnpm e2e
+      - run: pnpm e2e --shard=${{ matrix.shard }}/4
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report
             test-results
           retention-days: 7
+  # The required `e2e` check: green only when every shard is.
+  e2e:
+    needs: e2e-shard
+    if: always()
+    runs-on: crucible-2vcpu-arm
+    steps:
+      - run: test "${{ needs.e2e-shard.result }}" = success
