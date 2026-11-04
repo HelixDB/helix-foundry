@@ -124,6 +124,13 @@ SET status='failed', error='the ontology was deleted', active_key=NULL, lease_ow
 WHERE ontology_id=? AND active_key=1`, id); err != nil {
 			return err
 		}
+		// Its self-healing findings quote its documents: they go with it,
+		// and its runs. A run in flight loses its lease at its next renewal.
+		for _, table := range []string{"foundry_heal_findings", "foundry_heal_runs"} {
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE ontology_id=?`, id); err != nil {
+				return fmt.Errorf("delete the ontology's %s: %w", table, err)
+			}
+		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_loads SET status='deleting', finished_at=COALESCE(finished_at, NOW(6))
 WHERE ontology_id=? AND status NOT IN ('deleting', 'deleted')`, id); err != nil {
 			return err

@@ -1,0 +1,1222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditResult",
+  "description": "What an audit found, or why it read nothing.",
+  "oneOf": [
+    {
+      "description": "The page's findings, by kind and target, and whether every kind was read.",
+      "type": "object",
+      "properties": {
+        "documents": {
+          "description": "Of the ids asked for, the documents the load holds.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "findings": {
+          "description": "Each signal the page's reviews give, by kind then target, with what it proposes.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Finding"
+          }
+        },
+        "mined": {
+          "description": "Whether every kind was read, or which the wall cut short.",
+          "$ref": "#/$defs/Mined"
+        },
+        "new_link_support": {
+          "description": "What a relationship no link covers needs, summed over the load's pages, before a\nperson may have a new link drafted for it: a thinner one stays a finding. The\ncaller sums backing across pages, so it compares; this is the engine's number, not\nthe caller's to fix.",
+          "$ref": "#/$defs/Support"
+        },
+        "outcome": {
+          "type": "string",
+          "const": "done"
+        },
+        "rows": {
+          "description": "Whether the load's rows were measured.",
+          "$ref": "#/$defs/Rows"
+        },
+        "unread": {
+          "description": "Reviews skipped: of a reason this version doesn't write, such as a later version's.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "outcome",
+        "findings",
+        "mined",
+        "rows",
+        "documents",
+        "unread",
+        "new_link_support"
+      ]
+    },
+    {
+      "description": "The graph holds no such load, or it is being deleted.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "const": "load_unknown"
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    },
+    {
+      "description": "The load was created with another version.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "const": "load_mismatch"
+        },
+        "stored_version": {
+          "description": "The version its marker records.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "stored_version"
+      ]
+    }
+  ],
+  "$defs": {
+    "AtLeastTwo_EntityKey": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EntityKey"
+      },
+      "minItems": 2,
+      "uniqueItems": true
+    },
+    "Backing": {
+      "description": "The reviews behind a signal: how many, from how many documents, and up to\n[`Backing::MAX_EXAMPLES`] of them, in order, whatever order they came in.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "The reviews.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "examples": {
+          "description": "Up to 20 of them, by document and quote.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Example"
+          }
+        },
+        "sources": {
+          "description": "The documents they are of, at most `count`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "count",
+        "sources",
+        "examples"
+      ]
+    },
+    "Brief": {
+      "description": "What a drafting turn is asked to change ([`Brief::goals`]), and so what its draft may\nchange ([`crate::allowed`]).",
+      "oneOf": [
+        {
+          "description": "Documents state a relationship no link covers, which a person asked to have: add a\nlink for it, or route or describe an existing one so documents state it.",
+          "type": "object",
+          "properties": {
+            "brief": {
+              "type": "string",
+              "const": "link"
+            },
+            "demand": {
+              "description": "Who asked.",
+              "$ref": "#/$defs/Demand"
+            },
+            "names": {
+              "description": "What the documents' extractor called it.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Canonical"
+              },
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "brief",
+            "names",
+            "demand"
+          ]
+        },
+        {
+          "description": "A mapping's rows don't compile, or its source changed: map its fields again.",
+          "type": "object",
+          "properties": {
+            "brief": {
+              "type": "string",
+              "const": "mapping"
+            },
+            "mapping": {
+              "description": "The mapping.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "brief",
+            "mapping"
+          ]
+        },
+        {
+          "description": "Documents state a relationship their routes let them, yet the extractor didn't use the\nlink: describe it so it does (P5.0's lever).",
+          "type": "object",
+          "properties": {
+            "brief": {
+              "type": "string",
+              "const": "description"
+            },
+            "link": {
+              "description": "The link.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "brief",
+            "link"
+          ]
+        }
+      ]
+    },
+    "Canonical": {
+      "description": "A suggested link's canonical form (P5 D11): lowercased, each run of characters other than\nletters and digits one `_`, none at either end. Never empty.",
+      "type": "string"
+    },
+    "Clash": {
+      "description": "Entities that clash: what neither documents nor the graph can tell apart. Shown, never\nmerged (P5 D9).",
+      "oneOf": [
+        {
+          "description": "A name these stored entities share: a document naming it can't say which it means.",
+          "type": "object",
+          "properties": {
+            "clash": {
+              "type": "string",
+              "const": "ambiguous"
+            },
+            "entities": {
+              "description": "The entities, at least two.",
+              "$ref": "#/$defs/AtLeastTwo_EntityKey"
+            }
+          },
+          "required": [
+            "clash",
+            "entities"
+          ]
+        },
+        {
+          "description": "Identifiers a document gives one entity, each identifying one of these.",
+          "type": "object",
+          "properties": {
+            "clash": {
+              "type": "string",
+              "const": "identifier_conflict"
+            },
+            "entities": {
+              "description": "The entities, at least two.",
+              "$ref": "#/$defs/AtLeastTwo_EntityKey"
+            }
+          },
+          "required": [
+            "clash",
+            "entities"
+          ]
+        },
+        {
+          "description": "Two entities a document names resolve to this one.",
+          "type": "object",
+          "properties": {
+            "clash": {
+              "type": "string",
+              "const": "collision"
+            },
+            "entity": {
+              "description": "The stored entity.",
+              "$ref": "#/$defs/EntityKey"
+            }
+          },
+          "required": [
+            "clash",
+            "entity"
+          ]
+        }
+      ]
+    },
+    "Count": {
+      "description": "One count of an arm's.",
+      "oneOf": [
+        {
+          "description": "Document reviews of a reason, but `unresolved` and `unmatched`, which count alone: this\ncount of either is 0.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "review"
+            },
+            "reason": {
+              "description": "The reason.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "reason"
+          ]
+        },
+        {
+          "description": "Reviews of names no rung of resolution resolved, of a type.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "unresolved"
+            },
+            "type": {
+              "description": "The type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "type"
+          ]
+        },
+        {
+          "description": "Relationships no link covered, of any of these suggested links.",
+          "type": "object",
+          "properties": {
+            "canonicals": {
+              "description": "Their canonical forms.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Canonical"
+              },
+              "minItems": 1
+            },
+            "count": {
+              "type": "string",
+              "const": "unmatched"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "canonicals"
+          ]
+        },
+        {
+          "description": "A link's facts.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "facts"
+            },
+            "link": {
+              "description": "The link.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "link"
+          ]
+        },
+        {
+          "description": "The facts with an end of a type.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "touching"
+            },
+            "type": {
+              "description": "The type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "type"
+          ]
+        },
+        {
+          "description": "The quotes documents gave of a link's facts.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "quoted"
+            },
+            "link": {
+              "description": "The link.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "link"
+          ]
+        },
+        {
+          "description": "The document reviews of a link's facts.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "reviewed"
+            },
+            "link": {
+              "description": "The link.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "link"
+          ]
+        },
+        {
+          "description": "A mapping's row errors.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "row_errors"
+            },
+            "mapping": {
+              "description": "The mapping.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "mapping"
+          ]
+        },
+        {
+          "description": "What a mapping's rows state.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "stated"
+            },
+            "mapping": {
+              "description": "The mapping.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "mapping"
+          ]
+        },
+        {
+          "description": "The rows that create an entity of a type.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "rows"
+            },
+            "type": {
+              "description": "The type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "type"
+          ]
+        },
+        {
+          "description": "The entities rows created of a type.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "entities"
+            },
+            "type": {
+              "description": "The type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "type"
+          ]
+        },
+        {
+          "description": "The different values a type's entities hold of a property, not a key's.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "prop_values"
+            },
+            "prop": {
+              "description": "The property.",
+              "type": "string"
+            },
+            "type": {
+              "description": "The type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "type",
+            "prop"
+          ]
+        },
+        {
+          "description": "Entity properties a later row of a mapping gave another value.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "conflicts"
+            },
+            "mapping": {
+              "description": "The mapping.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "mapping"
+          ]
+        },
+        {
+          "description": "Open violations.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "string",
+              "const": "violations"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count"
+          ]
+        }
+      ]
+    },
+    "Demand": {
+      "description": "Who asked for a new link: the only kind of brief no signal makes alone (P5 D11).\nP5.11b adds Ask's typed schema gaps.",
+      "oneOf": [
+        {
+          "description": "A person asked to draft a fix of the finding.",
+          "type": "object",
+          "properties": {
+            "demand": {
+              "type": "string",
+              "const": "user"
+            },
+            "user_id": {
+              "description": "Who.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "demand",
+            "user_id"
+          ]
+        }
+      ]
+    },
+    "Drift": {
+      "description": "How a mapping's source changed under it since the load's version was written, as Foundry\nsaw it: the fields it gained and lost, at least one of either.",
+      "type": "object",
+      "properties": {
+        "added": {
+          "description": "Fields the source has that it didn't, in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "removed": {
+          "description": "Fields it no longer has, in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "added",
+        "removed"
+      ]
+    },
+    "EntityKey": {
+      "description": "An entity: its type and its identity within the type, a named type's normalized name (`norm_name`) or a keyed type's key encoding (`key`).",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "norm_name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "norm_name"
+          ]
+        },
+        {
+          "required": [
+            "key"
+          ]
+        }
+      ],
+      "required": [
+        "type"
+      ]
+    },
+    "Example": {
+      "description": "One review behind a signal, to show: its document and the text it is about.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "The document that wrote the review.",
+          "type": "string"
+        },
+        "quote": {
+          "description": "The section text the review is about.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_id",
+        "quote"
+      ]
+    },
+    "Finding": {
+      "description": "A signal, what it proposes for the bundle, and its fingerprint: both of which follow from\nthe signal, so a finding can't hold another's.",
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "$ref": "#/$defs/Fingerprint"
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Proposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signal": {
+          "$ref": "#/$defs/Signal"
+        }
+      },
+      "required": [
+        "fingerprint",
+        "signal",
+        "proposal"
+      ]
+    },
+    "Fingerprint": {
+      "description": "A finding's name: the SHA-256 of its signal's kind and target, as lowercase hex. The same\nwhatever its backing, version, load, page or review order (P5 D10): a relationship's by its\nset and canonical link, a name's by its type and normalized name, a clash's by its kind and\nits entities, row errors' and drift's by their mapping.",
+      "type": "string"
+    },
+    "Mined": {
+      "description": "Whether an audit read every kind of signal of its page, or was cut short before some\n(P5 D13): those kinds' findings are missing or partly backed, and the page must be audited\nagain before the load's counts hold.",
+      "oneOf": [
+        {
+          "description": "Every kind was read.",
+          "type": "object",
+          "properties": {
+            "mined": {
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "required": [
+            "mined"
+          ]
+        },
+        {
+          "description": "The wall came before these kinds were read whole.",
+          "type": "object",
+          "properties": {
+            "kinds": {
+              "description": "The kinds read in part, or not at all.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SignalKind"
+              }
+            },
+            "mined": {
+              "type": "string",
+              "const": "cut"
+            }
+          },
+          "required": [
+            "mined",
+            "kinds"
+          ]
+        }
+      ]
+    },
+    "Proposal": {
+      "description": "A change to the bundle a finding proposes, only ever an addition (P5 D4): route links, or a\ndraft of a [`Brief`]; or the question a change only a person may make becomes.",
+      "oneOf": [
+        {
+          "description": "Add `links` to what the routes covering `set` let its documents state.",
+          "type": "object",
+          "properties": {
+            "links": {
+              "description": "The links to add, each one the ontology declares and the set's routes lack.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "proposal": {
+              "type": "string",
+              "const": "route"
+            },
+            "set": {
+              "description": "The document set whose documents state the relationship.",
+              "$ref": "#/$defs/SetId"
+            },
+            "target": {
+              "description": "The count `Check` holds it to.",
+              "$ref": "#/$defs/Count"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "proposal",
+            "set",
+            "links",
+            "target"
+          ]
+        },
+        {
+          "description": "Draft a change of the bundle to `brief`, by a revision turn, to be checked\n([`crate::allowed`], then `Check` and [`crate::gate()`]) before a person approves it.",
+          "type": "object",
+          "properties": {
+            "brief": {
+              "description": "What the draft is to fix.",
+              "$ref": "#/$defs/Brief"
+            },
+            "proposal": {
+              "type": "string",
+              "const": "draft"
+            },
+            "target": {
+              "description": "The count `Check` holds it to.",
+              "$ref": "#/$defs/Count"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "proposal",
+            "brief",
+            "target"
+          ]
+        },
+        {
+          "description": "Ask a person what only they may decide: what a draft that would loosen or tighten the\nbundle becomes ([`crate::Disallowed::Asks`]).",
+          "type": "object",
+          "properties": {
+            "proposal": {
+              "type": "string",
+              "const": "ask"
+            },
+            "question": {
+              "description": "The question.",
+              "$ref": "#/$defs/Question"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "proposal",
+            "question"
+          ]
+        }
+      ]
+    },
+    "Question": {
+      "description": "A change only a person may make: what a draft that loosens or tightens the bundle's\nguarantees becomes instead of a change (P5 D4), a question on the card.",
+      "oneOf": [
+        {
+          "description": "Should the link hold one object per subject, or many?",
+          "type": "object",
+          "properties": {
+            "link": {
+              "description": "The link.",
+              "type": "string"
+            },
+            "question": {
+              "type": "string",
+              "const": "cardinality"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "question",
+            "link"
+          ]
+        },
+        {
+          "description": "Must every subject have the link?",
+          "type": "object",
+          "properties": {
+            "link": {
+              "description": "The link.",
+              "type": "string"
+            },
+            "question": {
+              "type": "string",
+              "const": "required"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "question",
+            "link"
+          ]
+        },
+        {
+          "description": "Should the constraint check what it checks, at its severity?",
+          "type": "object",
+          "properties": {
+            "constraint": {
+              "description": "The constraint.",
+              "type": "string"
+            },
+            "question": {
+              "type": "string",
+              "const": "constraint"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "question",
+            "constraint"
+          ]
+        },
+        {
+          "description": "Is the type identified as it is?",
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "const": "identity"
+            },
+            "type": {
+              "description": "The type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "question",
+            "type"
+          ]
+        },
+        {
+          "description": "May the route's documents create entities of the type?",
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "const": "route_creates"
+            },
+            "route": {
+              "description": "The route, by its `[extractions.<name>]`.",
+              "type": "string"
+            },
+            "type": {
+              "description": "The type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "question",
+            "route",
+            "type"
+          ]
+        },
+        {
+          "description": "Should the rule derive what it derives? Drafts write no rules (P5 D8).",
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "const": "rule"
+            },
+            "rule": {
+              "description": "The rule.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "question",
+            "rule"
+          ]
+        },
+        {
+          "description": "Should the mapping read, bind or let through what the draft says: another table, a\nbinding made optional, a report made a create? Each can stop the row errors a draft was\nasked to fix.",
+          "type": "object",
+          "properties": {
+            "item": {
+              "description": "What changes in it: `table`, `bind.person.optional`.",
+              "type": "string"
+            },
+            "mapping": {
+              "description": "The mapping.",
+              "type": "string"
+            },
+            "question": {
+              "type": "string",
+              "const": "mapping"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "question",
+            "mapping",
+            "item"
+          ]
+        }
+      ]
+    },
+    "Reported": {
+      "description": "What a load's ingest report gave as one mapping's row errors: how many rows, or parts of\nrows, compiled to nothing, and up to [`Backing::MAX_EXAMPLES`] of their texts, in order.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Rows, or parts of rows, the report counts.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "examples": {
+          "description": "Up to 20 of their texts, each once, in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "count",
+        "examples"
+      ]
+    },
+    "Resolves": {
+      "description": "What a name resolves to in the load now: nothing, one entity, or several.",
+      "oneOf": [
+        {
+          "description": "No stored entity has the name.",
+          "type": "object",
+          "properties": {
+            "resolves": {
+              "type": "string",
+              "const": "none"
+            }
+          },
+          "required": [
+            "resolves"
+          ]
+        },
+        {
+          "description": "One does.",
+          "type": "object",
+          "properties": {
+            "entity": {
+              "description": "That entity.",
+              "$ref": "#/$defs/EntityKey"
+            },
+            "resolves": {
+              "type": "string",
+              "const": "one"
+            }
+          },
+          "required": [
+            "resolves",
+            "entity"
+          ]
+        },
+        {
+          "description": "Several do, up to as many as resolution lists as candidates.",
+          "type": "object",
+          "properties": {
+            "entities": {
+              "description": "Those entities.",
+              "$ref": "#/$defs/AtLeastTwo_EntityKey"
+            },
+            "resolves": {
+              "type": "string",
+              "const": "many"
+            }
+          },
+          "required": [
+            "resolves",
+            "entities"
+          ]
+        }
+      ]
+    },
+    "Rows": {
+      "description": "Whether an audit measured the load's rows: whether its request sent their report.",
+      "oneOf": [
+        {
+          "description": "The request sent the rows' report: its row errors and drift are among the findings.",
+          "type": "string",
+          "const": "measured"
+        },
+        {
+          "description": "It sent none: the row kinds weren't measured, which is no sign they are clean.",
+          "type": "string",
+          "const": "unmeasured"
+        }
+      ]
+    },
+    "SetId": {
+      "description": "The id of a document set, such as `set_01JDX4K2`: 1 to 64 ASCII letters, digits, `_` or `-`.",
+      "type": "string",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "Signal": {
+      "description": "What a page's reviews signal, each backed by the reviews behind it, and what a load's rows\nsignal (layer 2): its ingest report's row errors and its sources' drift, which the caller\nsends ([`SignalKind`] names its kind).",
+      "oneOf": [
+        {
+          "description": "Documents of `set` state a relationship no link of their routes covers, which their\nextractor suggested as a link named `canonical`.",
+          "type": "object",
+          "properties": {
+            "backing": {
+              "description": "The reviews behind it.",
+              "$ref": "#/$defs/Backing"
+            },
+            "canonical": {
+              "description": "The suggested link's canonical form.",
+              "$ref": "#/$defs/Canonical"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unmatched"
+            },
+            "set": {
+              "description": "The documents' set.",
+              "$ref": "#/$defs/SetId"
+            }
+          },
+          "required": [
+            "kind",
+            "canonical",
+            "set",
+            "backing"
+          ]
+        },
+        {
+          "description": "Documents name a `ty` entity `norm_name` that no rung of resolution resolved; `now` is\nwhat the name resolves to in the load today.",
+          "type": "object",
+          "properties": {
+            "backing": {
+              "description": "The reviews behind it.",
+              "$ref": "#/$defs/Backing"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unresolved"
+            },
+            "norm_name": {
+              "description": "The name, normalized.",
+              "type": "string"
+            },
+            "now": {
+              "description": "What it resolves to in the load now.",
+              "$ref": "#/$defs/Resolves"
+            },
+            "type": {
+              "description": "The type documents named it as.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "type",
+            "norm_name",
+            "now",
+            "backing"
+          ]
+        },
+        {
+          "description": "Documents name entities that clash.",
+          "type": "object",
+          "properties": {
+            "backing": {
+              "description": "The reviews behind it.",
+              "$ref": "#/$defs/Backing"
+            },
+            "clash": {
+              "description": "The entities that clash, and how.",
+              "$ref": "#/$defs/Clash"
+            },
+            "kind": {
+              "type": "string",
+              "const": "clash"
+            }
+          },
+          "required": [
+            "kind",
+            "clash",
+            "backing"
+          ]
+        },
+        {
+          "description": "The load's ingest report gave rows of `mapping` that compiled to nothing.",
+          "type": "object",
+          "properties": {
+            "errors": {
+              "description": "The errors the report gave.",
+              "$ref": "#/$defs/Reported"
+            },
+            "kind": {
+              "type": "string",
+              "const": "row_errors"
+            },
+            "mapping": {
+              "description": "The mapping, as its version names it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "mapping",
+            "errors"
+          ]
+        },
+        {
+          "description": "The source `mapping` reads gained or lost fields since the load's version was written.",
+          "type": "object",
+          "properties": {
+            "drift": {
+              "description": "The fields gained and lost.",
+              "$ref": "#/$defs/Drift"
+            },
+            "kind": {
+              "type": "string",
+              "const": "source_drift"
+            },
+            "mapping": {
+              "description": "The mapping, as its version names it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "mapping",
+            "drift"
+          ]
+        }
+      ]
+    },
+    "SignalKind": {
+      "description": "A signal's kind: what an audit cut short names of the kinds it didn't finish.",
+      "oneOf": [
+        {
+          "description": "Documents of `set` state a relationship no link of their routes covers, which their\nextractor suggested as a link named `canonical`.",
+          "type": "string",
+          "const": "unmatched"
+        },
+        {
+          "description": "Documents name a `ty` entity `norm_name` that no rung of resolution resolved; `now` is\nwhat the name resolves to in the load today.",
+          "type": "string",
+          "const": "unresolved"
+        },
+        {
+          "description": "Documents name entities that clash.",
+          "type": "string",
+          "const": "clash"
+        },
+        {
+          "description": "The load's ingest report gave rows of `mapping` that compiled to nothing.",
+          "type": "string",
+          "const": "row_errors"
+        },
+        {
+          "description": "The source `mapping` reads gained or lost fields since the load's version was written.",
+          "type": "string",
+          "const": "source_drift"
+        }
+      ]
+    },
+    "Support": {
+      "description": "How much a relationship no link covers must be backed before a person may have a new link\ndrafted for it ([`Brief::Link`]): at least `docs` documents and `quotes` reviews, each\nreview one quote. A thinner one stays a finding, shown but never briefed: on real data most\nsuch relationships are relations the gold never labels, and a link drafted for them states\nnothing a person asked for (P5.14).\n\nA person's [`Brief::Link`] is offered only for a finding [`Support::NEW_LINK`] admits, and\nits draft is only ever queued for a person to approve ([`crate::Tier::Queue`]), never\napplied alone. Every finding has two documents (P5 D10), and a document gives a\nrelationship one review at least, so a support asks no fewer of either: [`Support::new`]\nrefuses one that would admit what no finding is.",
+      "type": "object",
+      "properties": {
+        "docs": {
+          "description": "The documents it needs.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "quotes": {
+          "description": "The reviews it needs, each one quote.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "docs",
+        "quotes"
+      ]
+    }
+  }
+}

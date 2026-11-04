@@ -119,10 +119,11 @@ test("creates an ontology on an existing database and explores what it holds", a
     "true",
   );
   // Its Overview, then Documents, what it reads of the workspace's, with
-  // its count.
+  // its count, then Suggestions.
   await expect(list.locator(".hf-subnav-link")).toHaveText([
     "Overview",
     /^Documents\d*$/,
+    "Suggestions",
   ]);
   await nav.getByRole("link", { name: "Explorer" }).click();
   await expect(
@@ -166,10 +167,11 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
     "aria-label",
     /^(Loaded|Not loaded|Failed|Loading|Queued)$/,
   );
-  // Only the open one's pages show, the page open marked: its Overview and
-  // Documents, with its documents as a file system under it (none yet).
+  // Only the open one's pages show, the page open marked: its Overview,
+  // Documents, with its documents as a file system under it (none yet), and
+  // Suggestions.
   const pages = list.locator(".hf-subnav-link");
-  await expect(pages).toHaveText(["Overview", /^Documents\d*$/]);
+  await expect(pages).toHaveText(["Overview", /^Documents\d*$/, "Suggestions"]);
   await expect(list).toContainText("No documents yet");
   const current = list.locator('.hf-subnav-link[aria-current="page"]');
   await expect(current).toHaveText("Overview");
@@ -196,7 +198,7 @@ test("lists the ontologies beside the sidebar, with the open one's pages", async
     page.getByRole("heading", { level: 1, name: "Renewals" }),
   ).toBeVisible();
   await expect(renewals).toHaveAttribute("aria-current", "true");
-  await expect(pages).toHaveText(["Overview", /^Documents\d*$/]);
+  await expect(pages).toHaveText(["Overview", /^Documents\d*$/, "Suggestions"]);
   await expect(current).toHaveText("Overview");
   // Nothing toggles the panel: it always shows.
   await expect(

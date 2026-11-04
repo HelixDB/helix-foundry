@@ -25,6 +25,11 @@
           "type": "null"
         }
       ]
+    },
+    "origin": {
+      "description": "Whose revision it is: the user's (the default), or a self-healing finding's fix a\nperson approved, whose fingerprint and approver become the changed items' rationale.",
+      "$ref": "#/$defs/Origin",
+      "default": "user"
     }
   },
   "additionalProperties": false,
@@ -195,6 +200,45 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^[!-~]+$"
+    },
+    "Origin": {
+      "description": "Whose revision it is: a person's own edits, or a self-healing finding's fix a person approved\n(P5.12). It changes only the rationale of the items the edits change; each keeps the status\n`user_edited` and, rewritten, the basis `process`, so a version a heal wrote has the shape\nof any other and an older engine reads it.",
+      "oneOf": [
+        {
+          "description": "The user's own edits.",
+          "type": "string",
+          "const": "user"
+        },
+        {
+          "description": "A self-healing finding's proposal, approved.",
+          "type": "object",
+          "properties": {
+            "heal": {
+              "type": "object",
+              "properties": {
+                "approved_by": {
+                  "description": "Who approved it.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fingerprint": {
+                  "description": "The finding's fingerprint.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "fingerprint",
+                "approved_by"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "heal"
+          ]
+        }
+      ]
     }
   }
 }

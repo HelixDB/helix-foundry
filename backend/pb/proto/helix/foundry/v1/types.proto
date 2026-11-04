@@ -1730,3 +1730,55 @@ message FoundryTeam {
   google.protobuf.Timestamp created_at         = 5;
 }
 
+// Helix Foundry self-healing findings: what the ontology
+// agent's Audit of a load found in its documents' reviews and its rows,
+// summed over the load's pages by the foundry-heal-worker.
+
+// FoundryHealFinding is one finding, named by its fingerprint, which the
+// engine keeps the same across versions, loads and pages.
+message FoundryHealFinding {
+  string fingerprint = 1;
+  // The signal's kind, as the engine names it: unmatched, unresolved,
+  // clash, row_errors or source_drift; a later contract may add others.
+  // Foundry sends the engine no source fields yet, so no audit checks
+  // source_drift and none is found: an empty list says nothing of it.
+  string kind = 2;
+  // open, dismissed or superseded.
+  string status = 3;
+  // The reviews behind it, summed over the load's pages; a row finding's
+  // rows.
+  int64 support = 4;
+  // The documents behind it; 0 for a row finding.
+  int64 sources = 5;
+  // The load the support was counted over, and its version.
+  string load_id         = 6;
+  string base_version_id = 7;
+  // The engine's Finding (audit_result.json, $defs/Finding) as JSON, its
+  // backing summed over the load's pages: signal, proposal and fingerprint.
+  // Parse it without trust, as the agent's other JSON.
+  string finding_json = 8;
+  // Who dismissed it, and its support then; set while dismissed.
+  optional string dismissed_by_user_id = 9;
+  optional int64  support_at_dismissal = 10;
+}
+
+// FoundryHealRun is one audit of an ontology's load.
+message FoundryHealRun {
+  string id      = 1;
+  string load_id = 2;
+  // running, complete, incomplete (even a page of one document was cut
+  // short, the run ran out of time, or a graph job changed the load under
+  // it: nothing was stored, and a later run audits the load again) or
+  // failed.
+  string status = 3;
+  // The Audit calls it made, and how many of them were cut short; a page
+  // cut short is audited again in smaller pages.
+  int32 pages = 4;
+  int32 cuts  = 5;
+  google.protobuf.Timestamp started_at  = 6;
+  google.protobuf.Timestamp finished_at = 7;
+  // Whether it audited the load's rows: a complete run does when the
+  // load's report holds them. False, no row finding of this load can be
+  // told apart from none.
+  bool rows_measured = 8;
+}

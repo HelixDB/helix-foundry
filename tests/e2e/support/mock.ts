@@ -120,6 +120,13 @@ export const mock = {
       string,
       "member_left" | "access_revoked" | "expired" | "account_missing"
     >;
+    // Suggestions: foundry.heal.enabled off; the current load's audit not
+    // complete; an audit superseding a finding as it is dismissed.
+    healEnabled?: boolean;
+    healRun?: "running" | "failed" | "incomplete" | null;
+    healDismiss?: "superseded" | "fails";
+    // The current load's complete audit didn't check its rows.
+    healRowsMeasured?: boolean;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",

@@ -447,6 +447,18 @@ export const papiRoutes = [
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/review-decisions/{id}",
   },
 
+  // Ontology: suggestions, what audits of the current load found it lacks.
+  {
+    area: "ontology",
+    method: "GET",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings",
+  },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings/{fingerprint}:dismiss",
+  },
+
   // Databases: the workspace's projects and their databases (tenants), and
   // creating either, as helix-website does, to bind an ontology to one. The
   // WFE puts a new database on the shared cluster; Foundry never offers

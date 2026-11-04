@@ -55,6 +55,11 @@ var rules = map[string]Rule{
 	foundryv1.FoundryService_DeleteFoundryLoad_FullMethodName:         Deny,
 	foundryv1.FoundryService_StopFoundryLoadEnrichment_FullMethodName: Deny,
 
+	// Self-healing findings: drawn from the whole load, never narrowed to
+	// what a grantee holds, and dismissing one changes them.
+	foundryv1.FoundryService_ListFoundryHealFindings_FullMethodName:   Deny,
+	foundryv1.FoundryService_DismissFoundryHealFinding_FullMethodName: Deny,
+
 	// Reading a load and asking it questions.
 	foundryv1.FoundryService_ReadFoundryGraph_FullMethodName:          Ontology,
 	foundryv1.FoundryService_AskFoundryQuestion_FullMethodName:        Ontology,
