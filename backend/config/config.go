@@ -393,12 +393,25 @@ type AskConfig struct {
 	Defer time.Duration `koanf:"defer"`
 	// Agent is the sidecar's gRPC address.
 	Agent AskAgentConfig `koanf:"agent"`
-	// HelixTimeoutSecs is how long the agent waits for one Helix read.
+	// HelixTimeoutSecs is how long the agent waits for one Helix request
+	// (the agent's helix.timeout_secs). A read of the graph may make several.
 	HelixTimeoutSecs int `koanf:"helix_timeout_secs"`
 	// MaxUSD, MaxSteps and MaxWallSecs cap one question.
 	MaxUSD      float64 `koanf:"max_usd"`
 	MaxSteps    int     `koanf:"max_steps"`
 	MaxWallSecs int     `koanf:"max_wall_secs"`
+	// ReadWallMS and ReadScanEntities cap each read of the graph a question
+	// makes (the agent's limits.read: wall_ms and scan_entities): its wall
+	// time, in milliseconds, at most MaxWallSecs; and the matches a query may
+	// read into memory before it is too broad. A read stopped at one fails
+	// its step with an error naming the field and its value, and the agent
+	// reads narrower or says it can't answer. The defaults are the agent's
+	// own, 5,000 ms and 20,000 matches. Each Helix request of a read still
+	// ends at HelixTimeoutSecs, so a wall time past it helps only reads of
+	// several requests. A helix_query read runs inside Helix, past both: only
+	// HelixTimeoutSecs and MaxWallSecs bound it.
+	ReadWallMS       int `koanf:"read_wall_ms"`
+	ReadScanEntities int `koanf:"read_scan_entities"`
 	// MonthlyUSD is a workspace's monthly budget for questions, separate
 	// from foundry.graph.monthly_usd; MaxRunning and PerHour bound its
 	// questions at once and asked in an hour.
@@ -457,6 +470,11 @@ func (a AskConfig) validate() error {
 		return fmt.Errorf("foundry.ask max_usd, max_steps and max_wall_secs must be positive")
 	case a.MaxWallSecs >= AskWallSecsLimit:
 		return fmt.Errorf("foundry.ask.max_wall_secs must be under %d, which the agent refuses", AskWallSecsLimit)
+	case a.ReadWallMS < 1 || a.ReadScanEntities < 1:
+		return fmt.Errorf("foundry.ask read_wall_ms and read_scan_entities must be positive")
+	case a.ReadWallMS > a.MaxWallSecs*1000:
+		return fmt.Errorf("foundry.ask.read_wall_ms (%d) must be at most max_wall_secs (%ds) in milliseconds: the agent refuses a read that may outlast its question",
+			a.ReadWallMS, a.MaxWallSecs)
 	case a.MonthlyUSD < a.MaxUSD:
 		return fmt.Errorf("foundry.ask.monthly_usd must be at least max_usd")
 	case a.MaxRunning < 1 || a.PerHour < 1:
@@ -1613,6 +1631,8 @@ func Defaults() Config {
 		MaxUSD:           0.5,
 		MaxSteps:         20,
 		MaxWallSecs:      240,
+		ReadWallMS:       5000,
+		ReadScanEntities: 20000,
 		MonthlyUSD:       30,
 		MaxRunning:       2,
 		PerHour:          30,
