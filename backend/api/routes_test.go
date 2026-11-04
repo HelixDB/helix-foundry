@@ -230,6 +230,16 @@ func (r *routeRecorder) DeleteFoundryReviewDecision(_ context.Context, req *foun
 	return &foundryv1.DeleteFoundryReviewDecisionResponse{}, nil
 }
 
+func (r *routeRecorder) ListFoundryHealFindings(_ context.Context, req *foundryv1.ListFoundryHealFindingsRequest) (*foundryv1.ListFoundryHealFindingsResponse, error) {
+	r.hit("ListFoundryHealFindings", req, "")
+	return &foundryv1.ListFoundryHealFindingsResponse{}, nil
+}
+
+func (r *routeRecorder) DismissFoundryHealFinding(_ context.Context, req *foundryv1.DismissFoundryHealFindingRequest) (*foundryv1.FoundryHealFindingResponse, error) {
+	r.hit("DismissFoundryHealFinding", req, req.GetFingerprint())
+	return &foundryv1.FoundryHealFindingResponse{}, nil
+}
+
 func (r *routeRecorder) CreateFoundryLoad(_ context.Context, req *foundryv1.CreateFoundryLoadRequest) (*foundryv1.FoundryLoadResponse, error) {
 	r.hit("CreateFoundryLoad", req, req.GetVersionId())
 	return &foundryv1.FoundryLoadResponse{}, nil
@@ -394,6 +404,8 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodPost, o + "/ont-1/reviews/r-1:settle", `{"decision":{"resolve":{"notInData":true}}}`, "SettleFoundryReview ws-1 ont-1 r-1"},
 		{http.MethodGet, o + "/ont-1/review-decisions?pageToken=d-1", "", "ListFoundryReviewDecisions ws-1 ont-1 d-1"},
 		{http.MethodDelete, o + "/ont-1/review-decisions/d-1", "", "DeleteFoundryReviewDecision ws-1 ont-1 d-1"},
+		{http.MethodGet, o + "/ont-1/heal-findings", "", "ListFoundryHealFindings ws-1 ont-1 "},
+		{http.MethodPost, o + "/ont-1/heal-findings/ab12:dismiss", "{}", "DismissFoundryHealFinding ws-1 ont-1 ab12"},
 		{http.MethodPost, w + "/documents", `{"name":"a.md","setId":"s-1"}`, "CreateFoundryDocument ws-1 - a.md in s-1"},
 		{http.MethodGet, w + "/documents?setId=s-1&pageToken=p", "", "ListFoundryDocuments ws-1 - s-1/p/"},
 		{http.MethodGet, w + "/documents?ids=d-2&ids=d-1", "", "ListFoundryDocuments ws-1 - //d-2,d-1"},

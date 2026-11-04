@@ -517,6 +517,61 @@ describe("jobs", () => {
     ]);
   });
 
+  it.each([
+    "uncovered",
+    "after_as_of",
+    "undeclared_relation",
+    "undeclared_property",
+    "absent",
+  ])("reports only the known gap kind %s", async (kind) => {
+    const a = await load();
+    a.jobStarted({ job: "question" }, "q_kind");
+    a.jobSeen("question", [
+      {
+        id: "q_kind",
+        status: "cannot_answer",
+        resultJson: JSON.stringify({
+          status: "cannot_answer",
+          kind,
+          reason: "private text",
+          gap: "private gap",
+        }),
+      },
+    ]);
+    expect(sent().at(-1)).toEqual([
+      "question_unanswered",
+      { status: "cannot_answer", kind },
+    ]);
+    a.jobSeen("question", [
+      {
+        id: "q_kind",
+        status: "cannot_answer",
+        resultJson: JSON.stringify({ status: "cannot_answer", kind }),
+      },
+    ]);
+    expect(sent()).toHaveLength(2);
+  });
+
+  it.each([
+    "",
+    "broken",
+    "null",
+    "[]",
+    '{"status":"cannot_answer","kind":"private text"}',
+    '{"status":"answered","kind":"absent"}',
+    '{"status":"cannot_answer","kind":null}',
+  ])("does not send untrusted gap text (%s)", async (resultJson) => {
+    const a = await load();
+    a.jobStarted({ job: "question" }, "q_unknown");
+    a.jobSeen("question", [
+      { id: "q_unknown", status: "cannot_answer", resultJson },
+    ]);
+    expect(sent().at(-1)).toEqual([
+      "question_unanswered",
+      { status: "cannot_answer" },
+    ]);
+  });
+
   it("reports a sync's start, and its end with the connector's kind", async () => {
     const a = await load();
     a.jobStarted({ job: "sync", from: "tree" }, "sync_1");

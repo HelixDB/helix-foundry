@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -40,6 +41,7 @@ import (
 	foundryaskworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ask-worker"
 	foundrydocumentworker "github.com/helixdb/helix-foundry/backend/workers/foundry-document-worker"
 	foundrygraphworker "github.com/helixdb/helix-foundry/backend/workers/foundry-graph-worker"
+	foundryhealworker "github.com/helixdb/helix-foundry/backend/workers/foundry-heal-worker"
 	foundryontologyworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ontology-worker"
 	foundrysyncworker "github.com/helixdb/helix-foundry/backend/workers/foundry-sync-worker"
 )
@@ -67,6 +69,10 @@ var workers = []any{
 	foundrygraphworker.New,
 	foundryaskworker.New,
 }
+
+// healWorker audits loads for self-healing's findings, beside the graph
+// worker on its sidecar, only with foundry.heal.enabled (off by default).
+var healWorker = foundryhealworker.New
 
 // run starts the install and blocks until ctx is cancelled, SIGINT or
 // SIGTERM arrives, or a part exits, returning the first error.
@@ -283,7 +289,11 @@ func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes
 			return nil, err
 		}
 	}
-	for _, constructor := range workers {
+	constructors := workers
+	if cfg.Foundry.Heal.Enabled {
+		constructors = append(slices.Clip(workers), healWorker)
+	}
+	for _, constructor := range constructors {
 		if err := c.Provide(constructor, dig.Group("components"), dig.As(new(component))); err != nil {
 			return nil, err
 		}

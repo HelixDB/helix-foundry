@@ -100,6 +100,44 @@ type Foundry struct {
 	Enrichment EnrichmentConfig `koanf:"enrichment"`
 	Events     EventsConfig     `koanf:"events"`
 	Notify     NotifyConfig     `koanf:"notify"`
+	Heal       HealConfig       `koanf:"heal"`
+}
+
+// HealConfig drives the foundry-heal-worker, which audits each ontology's
+// current load with the ontology agent's Audit and stores what it finds
+// for people to see (foundry_heal_findings), and the API, which says
+// whether audits run at all. The worker runs beside the
+// foundry-graph-worker, on its sidecar (foundry.graph.agent), reading
+// through a read-only proxy of its own. Its settings are checked where it
+// runs (Validate).
+type HealConfig struct {
+	// Enabled is the deployment's switch, off by default: off, no audit
+	// runs and no finding is stored, even where the worker is a task.
+	Enabled bool `koanf:"enabled"`
+	// PollInterval is how often the worker looks for loads due an audit.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	// Every is how long after a load's last complete audit started it is
+	// audited again (nightly); a load is audited as it becomes current, too.
+	Every time.Duration `koanf:"every"`
+	// RetryAfter is how long after an incomplete or failed audit, or one
+	// whose worker's lease ran out, the load is audited again.
+	RetryAfter time.Duration `koanf:"retry_after"`
+	// Lease is how long a run holds its ontology without a renewal: a
+	// worker that dies holds it no longer.
+	Lease time.Duration `koanf:"lease"`
+}
+
+// Validate checks the worker's settings where it runs, once Enabled; the
+// foundry-heal-worker checks them as it starts, too.
+func (h HealConfig) Validate() error {
+	switch {
+	case h.PollInterval <= 0 || h.Every <= 0 || h.RetryAfter <= 0:
+		return fmt.Errorf("foundry.heal poll_interval, every and retry_after must be positive")
+	case h.Lease < 30*time.Second:
+		// Renewed every third of it; shorter would lapse on a slow renewal.
+		return fmt.Errorf("foundry.heal.lease must be at least 30s")
+	}
+	return nil
 }
 
 // NotifyConfig drives the foundry-notify-worker, which emails people
@@ -1261,9 +1299,9 @@ type Roles struct {
 	Read, Events bool
 	// The workers, by their tasks: foundry-sync-worker,
 	// foundry-document-worker, foundry-ontology-worker, foundry-graph-worker,
-	// foundry-ask-worker, foundry-enrichment-worker and
-	// foundry-notify-worker.
-	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker bool
+	// foundry-ask-worker, foundry-enrichment-worker,
+	// foundry-notify-worker and foundry-heal-worker.
+	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker, HealWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
@@ -1360,6 +1398,17 @@ func (c *Config) validateRoles(roles Roles) error {
 	if roles.NotifyWorker {
 		if err := f.Notify.Validate(); err != nil {
 			return err
+		}
+	}
+	if roles.HealWorker && f.Heal.Enabled {
+		g := f.Graph
+		switch err := f.Heal.Validate(); {
+		case err != nil:
+			return err
+		case g.Agent.Addr == "" || !loopback(g.Agent.Addr):
+			return fmt.Errorf("foundry.graph.agent.addr must be a loopback address when 'foundry-heal-worker' is in tasks: it audits on the graph worker's sidecar")
+		case g.HelixTimeoutSecs < 1:
+			return fmt.Errorf("foundry.graph.helix_timeout_secs must be positive when 'foundry-heal-worker' is in tasks")
 		}
 	}
 	if roles.SyncWorker {
@@ -1662,6 +1711,11 @@ func Defaults() Config {
 		FollowUpAfter:  24 * time.Hour,
 		FollowUpWindow: 72 * time.Hour,
 		MaxAttempts:    5,
+	}, Heal: HealConfig{
+		PollInterval: time.Minute,
+		Every:        24 * time.Hour,
+		RetryAfter:   15 * time.Minute,
+		Lease:        2 * time.Minute,
 	}},
 		Billing: Billing{Plans: DefaultPlans()},
 	}

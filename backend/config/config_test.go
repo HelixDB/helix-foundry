@@ -24,7 +24,7 @@ func helixClaude() AIDefault {
 // every runs each of Foundry's roles but foundry-notify-worker, which needs
 // the site's origin (TestFoundryNotifyValidate).
 var every = Roles{API: true, Read: true, Events: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true,
-	AskWorker: true, EnrichmentWorker: true}
+	AskWorker: true, EnrichmentWorker: true, HealWorker: true}
 
 // The defaults, with a model provider and the connectors' key, serve every
 // role; each role's own settings are checked only where it runs.
@@ -38,6 +38,20 @@ func TestValidateRoles(t *testing.T) {
 	}
 	if c := valid(); c.Validate(every) != nil {
 		t.Fatalf("defaults for every role: %v", c.Validate(every))
+	}
+	// Off, the heal worker's settings aren't read; on, the defaults serve.
+	if c := valid(); c.Foundry.Heal.Enabled {
+		t.Fatal("heal is on by default")
+	}
+	off := valid()
+	off.Foundry.Heal.Lease = 0
+	if err := off.Validate(Roles{HealWorker: true}); err != nil {
+		t.Fatalf("an off heal worker's settings were checked: %v", err)
+	}
+	on := valid()
+	on.Foundry.Heal.Enabled = true
+	if err := on.Validate(every); err != nil {
+		t.Fatalf("heal on, the defaults: %v", err)
 	}
 	for name, tc := range map[string]struct {
 		mutate func(*Config)
@@ -54,6 +68,12 @@ func TestValidateRoles(t *testing.T) {
 		"the enrichment worker's key": {func(c *Config) { c.Foundry.Enrichment.Provider = EnrichmentContextDev }, Roles{EnrichmentWorker: true}, "api_key"},
 		"the shared plan catalog":     {func(c *Config) { c.Billing.Plans = nil }, Roles{}, "at least the Free plan"},
 		"a stream's extracts":         {func(c *Config) { c.Foundry.Events.MaxExtracted = c.Foundry.Documents.MaxPerStream + 1 }, Roles{}, "max_extracted"},
+		"the heal worker's lease":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Lease = true, time.Second }, Roles{HealWorker: true}, "foundry.heal.lease"},
+		"the heal worker's every":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
+		"the heal worker's sidecar": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.Agent.Addr = true, "agent:50051" }, Roles{HealWorker: true},
+			"foundry.graph.agent.addr"},
+		"the heal worker's timeout": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.HelixTimeoutSecs = true, 0 }, Roles{HealWorker: true},
+			"helix_timeout_secs"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := valid()

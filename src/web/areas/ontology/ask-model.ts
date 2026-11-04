@@ -5,6 +5,7 @@ import type {
   AskFailure,
   AskResult,
   AskVisual,
+  CannotAnswerKind,
   CitationTarget,
   FoundryQuestion,
   ListQuestionEventsResponse,
@@ -17,6 +18,7 @@ import type {
   VersionOf,
   VisualKind,
 } from "../../../shared/wfe";
+import { cannotAnswerKind } from "../../../shared/foundry-ask";
 import { entityRef, type EntityRef } from "../../../shared/foundry-read";
 import { formatDate, plural } from "../../kit/util";
 import { sentence } from "../../api";
@@ -121,12 +123,31 @@ export function parseTarget(x: unknown): CitationTarget | undefined {
       const tx = str(v.tx),
         at = str(v.at),
         of = parseVersionOf(v.of);
+      let valid: { from: string; to?: string } | undefined;
+      if (v.valid !== undefined && v.valid !== null) {
+        if (!isObj(v.valid)) return undefined;
+        const from = str(v.valid.from),
+          to = v.valid.to;
+        if (
+          !from ||
+          !RFC_3339.test(from) ||
+          Number.isNaN(Date.parse(from)) ||
+          (to !== undefined &&
+            to !== null &&
+            (typeof to !== "string" ||
+              !RFC_3339.test(to) ||
+              Number.isNaN(Date.parse(to)) ||
+              Date.parse(to) <= Date.parse(from)))
+        )
+          return undefined;
+        valid = { from, ...(typeof to === "string" ? { to } : {}) };
+      }
       return tx &&
         at &&
         RFC_3339.test(at) &&
         !Number.isNaN(Date.parse(at)) &&
         of
-        ? { version: { tx, at, of } }
+        ? { version: { tx, at, of, ...(valid ? { valid } : {}) } }
         : undefined;
     }
     default:
@@ -615,13 +636,16 @@ export function parseAskResult(resultJson: string): AskResult | undefined {
         ...common,
       };
     }
-    case "cannot_answer":
+    case "cannot_answer": {
+      const kind = cannotAnswerKind(x.kind);
       return {
         status: "cannot_answer",
+        ...(kind ? { kind } : {}),
         reason: str(x.reason) || "",
         gap: str(x.gap) || "",
         ...common,
       };
+    }
     case "budget_exhausted":
       return { status: "budget_exhausted", ...common };
     case "failed":
@@ -632,6 +656,15 @@ export function parseAskResult(resultJson: string): AskResult | undefined {
       return undefined;
   }
 }
+
+/** Plain labels for the engine's known reasons; reason and gap remain beside them. */
+export const CANNOT_ANSWER_LABELS: Record<CannotAnswerKind, string> = {
+  uncovered: "No recorded state covers that time",
+  after_as_of: "After this question’s time",
+  undeclared_relation: "Relationship not defined",
+  undeclared_property: "Property not defined",
+  absent: "Entity not found in the sources",
+};
 
 const UNREACHED = "The model couldn’t be reached, after retries.";
 
@@ -1519,7 +1552,11 @@ export function citationText(t: CitationTarget, ctx: CitationContext): string {
         : "record" in of
           ? `a break of ${of.record.constraint}`
           : citationText(of, ctx);
-    return `As recorded ${formatDate(t.version.at)}: ${subject}`;
+    const valid = t.version.valid;
+    const when = valid
+      ? ` · Valid from ${formatDate(valid.from)}${valid.to ? ` until ${formatDate(valid.to)}` : ""}`
+      : "";
+    return `As recorded ${formatDate(t.version.at)}${when}: ${subject}`;
   }
   return ctx.result(t.result.evidence_id);
 }

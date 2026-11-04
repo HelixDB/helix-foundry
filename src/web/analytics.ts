@@ -9,6 +9,7 @@ import {
   trackError,
 } from "@databuddy/sdk";
 import type {
+  CannotAnswerKind,
   ConnectorKindName,
   ConnectorSyncStatus,
   DocumentMediaType,
@@ -19,6 +20,7 @@ import type {
   OntologyGenerationStatus,
   QuestionStatus,
 } from "../shared/wfe";
+import { cannotAnswerKind } from "../shared/foundry-ask";
 import type { WizardStepId } from "./areas/ontology/model";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
@@ -135,7 +137,10 @@ export type AnalyticsEvents = {
   load_refused: { reason: Refusal };
   question_asked: undefined;
   question_answered: undefined;
-  question_unanswered: { status: "cannot_answer" | "failed" };
+  question_unanswered: {
+    status: "cannot_answer" | "failed";
+    kind?: CannotAnswerKind;
+  };
   question_refused: { reason: Refusal };
   question_cancelled: undefined;
   revision_started: { mode: RevisionMode };
@@ -462,7 +467,7 @@ type Seen = {
     status?: LoadStatus;
     jobs?: readonly { status?: JobStatus; error?: string }[];
   };
-  question: { id?: string; status?: QuestionStatus };
+  question: { id?: string; status?: QuestionStatus; resultJson?: string };
 };
 type Status = { [J in Job]: NonNullable<Seen[J]["status"]> };
 
@@ -548,8 +553,26 @@ const ENDS: {
   },
   question: {
     answered: () => trackEvent("question_answered"),
-    cannot_answer: () =>
-      trackEvent("question_unanswered", { status: "cannot_answer" }),
+    cannot_answer: (_, q) => {
+      let kind: CannotAnswerKind | undefined;
+      try {
+        const result: unknown = JSON.parse(q.resultJson || "");
+        if (
+          result &&
+          typeof result === "object" &&
+          "status" in result &&
+          result.status === "cannot_answer" &&
+          "kind" in result
+        )
+          kind = cannotAnswerKind(result.kind);
+      } catch {
+        // Older or unreadable results carry no classification.
+      }
+      trackEvent("question_unanswered", {
+        status: "cannot_answer",
+        ...(kind ? { kind } : {}),
+      });
+    },
     failed: () => trackEvent("question_unanswered", { status: "failed" }),
     cancelled: null,
   },

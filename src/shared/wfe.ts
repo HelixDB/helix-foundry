@@ -2217,7 +2217,15 @@ export type CitationTarget =
   | { result: { evidence_id: string } }
   // A past state the load recorded: its transaction (an opaque ULID), when
   // it committed (RFC 3339), and what it is a state of.
-  | { version: { tx: string; at: string; of: VersionOf } };
+  | {
+      version: {
+        tx: string;
+        at: string;
+        of: VersionOf;
+        // Contract 4.7.0: when the state held in the world, distinct from at.
+        valid?: { from: string; to?: string };
+      };
+    };
 
 /** A citation: its marker ("c1" for [c1]), the tool result it came from, and its target. */
 export type AskCitation = {
@@ -2312,6 +2320,14 @@ export type AskUsage = {
   usd: number;
 };
 
+/** Contract 4.7.0's classification of why a question cannot be answered. */
+export type CannotAnswerKind =
+  | "uncovered"
+  | "after_as_of"
+  | "undeclared_relation"
+  | "undeclared_property"
+  | "absent";
+
 /**
  * The end of an Ask (ask_result.json), by `status`: an answer with its
  * citations; why the ontology can't answer and what it lacks (`gap`); a
@@ -2325,7 +2341,12 @@ export type AskResult = (
       answer: { blocks: AskBlock[]; visuals?: AskVisual[] };
       citations: AskCitation[];
     }
-  | { status: "cannot_answer"; reason: string; gap: string }
+  | {
+      status: "cannot_answer";
+      reason: string;
+      gap: string;
+      kind?: CannotAnswerKind;
+    }
   | { status: "budget_exhausted" }
   | { status: "failed"; reason: AskFailure }
 ) & {
@@ -2508,6 +2529,62 @@ export type ListReviewDecisionsResponse = {
   nextPageToken?: string;
 };
 export type DeleteReviewDecisionResponse = Record<string, never>;
+
+// ---------------------------------------------------------------- Ontology: suggestions
+// GET .../ontologies/{ontologyId}/heal-findings and POST
+// .../heal-findings/{fingerprint}:dismiss: what audits of the ontology's
+// current load found its ontology and mappings lack (self-healing), as the
+// backend's foundry-heal-worker stored them. The list is the top 20 open
+// ones by support; a dismissal holds until an audit finds twice the support,
+// or a spelling it wasn't dismissed with.
+
+/**
+ * v1FoundryHealFinding. `findingJson` is the ontology agent's Finding
+ * (audit_result.json `$defs/Finding`), its backing summed over the load:
+ * parse it without trust (areas/suggestions/model.ts). `kind` and `status`
+ * are the engine's and the backend's words; a later contract adds kinds.
+ */
+export type FoundryHealFinding = {
+  fingerprint: string;
+  // unmatched, unresolved, clash, row_errors, source_drift, or a later kind.
+  kind: string;
+  // open, dismissed or superseded.
+  status: string;
+  // int64 as strings: reviews (a row finding's rows), and documents.
+  support?: string;
+  sources?: string;
+  loadId?: string;
+  baseVersionId?: string;
+  findingJson: string;
+  dismissedByUserId?: string;
+  supportAtDismissal?: string;
+};
+/** v1FoundryHealRun: one audit of a load. */
+export type FoundryHealRun = {
+  id: string;
+  loadId?: string;
+  // running, complete, incomplete (even a page of one document ran out of
+  // time, the run did, or a graph job changed the load: nothing was stored,
+  // and a later run audits again) or failed.
+  status: string;
+  pages?: number;
+  cuts?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  // Whether it audited the load's rows: a complete run does when the load's
+  // report holds them.
+  rowsMeasured?: boolean;
+};
+export type ListHealFindingsResponse = {
+  findings?: FoundryHealFinding[];
+  lastRun?: FoundryHealRun;
+  // The newest complete audit, of whichever load.
+  lastCompleteRun?: FoundryHealRun;
+  // Whether this Foundry audits loads (foundry.heal.enabled); false or unset,
+  // no audit runs.
+  enabled?: boolean;
+};
+export type HealFindingResponse = { finding: FoundryHealFinding };
 
 // ---------------------------------------------------------------- People enrichment
 // GET and PATCH /v1/workspaces/{workspaceId}/foundry/enrichment and POST

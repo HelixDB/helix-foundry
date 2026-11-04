@@ -877,3 +877,92 @@ test("on a phone, says why the threads couldn't be read, where they would show",
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Threads" })).toHaveCount(0);
 });
+
+// Inject P3 fixtures at the browser boundary; the 4.4.0 mock stays unchanged.
+test("shows valid time beside a citation's recording time", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200, askStepMs: 100 });
+  await page.route(
+    (url) =>
+      /\/ontologies\/ont_acme_contracts\/questions\/[^/:]+$/.test(url.pathname),
+    async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      if (body.question?.resultJson) {
+        const result = JSON.parse(body.question.resultJson);
+        if (result.status === "answered") {
+          result.citations = [
+            {
+              marker: "c1",
+              evidence_id: "e1",
+              target: {
+                version: {
+                  tx: "opaque-tx",
+                  at: "2026-10-03T09:00:00Z",
+                  of: { record: { constraint: "required", key: "record" } },
+                  valid: {
+                    from: "2026-10-01T00:00:00Z",
+                    to: "2026-10-02T00:00:00Z",
+                  },
+                },
+              },
+            },
+          ];
+          result.answer = { blocks: [{ para: "The recorded state [c1]" }] };
+          body.question.resultJson = JSON.stringify(result);
+        }
+      }
+      await route.fulfill({ response, json: body });
+    },
+  );
+  await signIn(page);
+  await loadContract(page);
+  const question = await ask(page, "What state was recorded?");
+  await expect(question.getByRole("list", { name: "Sources" })).toContainText(
+    /As recorded .* · Valid from .* until .*: a break of required/,
+  );
+  await expect(
+    question.getByRole("button", {
+      name: /Source 1: As recorded .* · Valid from .* until/,
+    }),
+  ).toBeVisible();
+});
+
+test("labels a P3 gap and keeps its reason and draft action", async ({
+  page,
+}) => {
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    askOutcome: "cannot_answer",
+  });
+  await page.route(
+    (url) =>
+      /\/ontologies\/ont_acme_contracts\/questions(?:\/[^/:]+)?$/.test(
+        url.pathname,
+      ),
+    async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      // Declines render from the thread list; answered questions also read
+      // their full result from GET of one question.
+      for (const question of body.questions ??
+        (body.question ? [body.question] : [])) {
+        if (!question.resultJson) continue;
+        const result = JSON.parse(question.resultJson);
+        if (result.status === "cannot_answer") result.kind = "uncovered";
+        question.resultJson = JSON.stringify(result);
+      }
+      await route.fulfill({ response, json: body });
+    },
+  );
+  await signIn(page);
+  await loadContract(page);
+  const question = await ask(page, "What was true before this was recorded?");
+  await expect(question).toContainText("No recorded state covers that time");
+  await expect(question).toContainText("It lacks: A signed_by link");
+  await expect(
+    question.getByRole("link", { name: "Draft a new version with this" }),
+  ).toBeVisible();
+});

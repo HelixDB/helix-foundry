@@ -10,6 +10,7 @@ import (
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
+	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -57,17 +58,35 @@ func partHarness(t *testing.T) (*harness, *model.FoundryQuestion) {
 	return h, q
 }
 
+// askedWithin checks the agent's first request against ask_request.json and
+// that its reads carry the caps the deployment configured, set here apart
+// from the defaults.
+func askedWithin(t *testing.T, h *harness) ontologyagent.AskRequest {
+	t.Helper()
+	raw := h.agent.calls()[0]
+	if err := contracttest.Validate(t, contracttest.Schema(t, "ask_request.json"), []byte(raw)); err != nil {
+		t.Fatalf("the request does not match ask_request.json: %v", err)
+	}
+	req, _ := decodeAsk(t, raw)
+	ask := h.task.runner.cfg.Foundry.Ask
+	if want := (ontologyagent.AskReadLimits{WallMS: uint64(ask.ReadWallMS), ScanEntities: uint64(ask.ReadScanEntities)}); req.Limits.Read != want {
+		t.Fatalf("read caps = %+v, want %+v", req.Limits.Read, want)
+	}
+	return req
+}
+
 func TestGranteeQuestions(t *testing.T) {
 	// It is asked without the goal the ontology was drafted from, and its
 	// catalog names only the sets it holds; the tables and files of a load it
 	// covers are all its.
 	t.Run("asked as the grantee", func(t *testing.T) {
 		h, q := granteeHarness(t)
+		h.task.runner.cfg.Foundry.Ask.ReadWallMS, h.task.runner.cfg.Foundry.Ask.ReadScanEntities = 12_000, 34_000
 		settled := h.run(t, q)
 		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
 			t.Fatalf("settled %+v", settled)
 		}
-		req, _ := decodeAsk(t, h.agent.calls()[0])
+		req := askedWithin(t, h)
 		catalog := []ontologyagent.CatalogEntry{
 			{ID: ontologyagent.TableSourceID("conn-1", "customers"), Kind: ontologyagent.CatalogTable, Name: "Stripe / customers"},
 			{ID: ontologyagent.TableSourceID("conn-gone", "deals"), Kind: ontologyagent.CatalogTable, Name: "conn-gone / deals"},
@@ -121,11 +140,12 @@ func TestGranteeQuestions(t *testing.T) {
 	// told only of that, and what it read is kept with its answer.
 	t.Run("asked of the part it holds", func(t *testing.T) {
 		h, q := partHarness(t)
+		h.task.runner.cfg.Foundry.Ask.ReadWallMS, h.task.runner.cfg.Foundry.Ask.ReadScanEntities = 12_000, 34_000
 		settled := h.run(t, q)
 		if len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
 			t.Fatalf("settled %+v", settled)
 		}
-		req, _ := decodeAsk(t, h.agent.calls()[0])
+		req := askedWithin(t, h)
 		catalog := []ontologyagent.CatalogEntry{
 			{ID: ontologyagent.TableSourceID("conn-1", "customers"), Kind: ontologyagent.CatalogTable, Name: "Stripe / customers"},
 			{ID: "set-1", Kind: ontologyagent.CatalogDocumentSet, Name: "Contracts"},

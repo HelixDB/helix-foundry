@@ -83,6 +83,8 @@ const (
 	FoundryService_SettleFoundryReview_FullMethodName                   = "/helix.foundry.v1.FoundryService/SettleFoundryReview"
 	FoundryService_ListFoundryReviewDecisions_FullMethodName            = "/helix.foundry.v1.FoundryService/ListFoundryReviewDecisions"
 	FoundryService_DeleteFoundryReviewDecision_FullMethodName           = "/helix.foundry.v1.FoundryService/DeleteFoundryReviewDecision"
+	FoundryService_ListFoundryHealFindings_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryHealFindings"
+	FoundryService_DismissFoundryHealFinding_FullMethodName             = "/helix.foundry.v1.FoundryService/DismissFoundryHealFinding"
 	FoundryService_ListFoundryOntologyDocuments_FullMethodName          = "/helix.foundry.v1.FoundryService/ListFoundryOntologyDocuments"
 	FoundryService_GetFoundryOntologyDocument_FullMethodName            = "/helix.foundry.v1.FoundryService/GetFoundryOntologyDocument"
 	FoundryService_CreateFoundryLoad_FullMethodName                     = "/helix.foundry.v1.FoundryService/CreateFoundryLoad"
@@ -203,6 +205,12 @@ type FoundryServiceClient interface {
 	SettleFoundryReview(ctx context.Context, in *SettleFoundryReviewRequest, opts ...grpc.CallOption) (*FoundryReviewDecisionResponse, error)
 	ListFoundryReviewDecisions(ctx context.Context, in *ListFoundryReviewDecisionsRequest, opts ...grpc.CallOption) (*ListFoundryReviewDecisionsResponse, error)
 	DeleteFoundryReviewDecision(ctx context.Context, in *DeleteFoundryReviewDecisionRequest, opts ...grpc.CallOption) (*DeleteFoundryReviewDecisionResponse, error)
+	// Self-healing suggestions: what audits of the ontology's current load
+	// found its ontology and mappings lack, the top open ones by support.
+	ListFoundryHealFindings(ctx context.Context, in *ListFoundryHealFindingsRequest, opts ...grpc.CallOption) (*ListFoundryHealFindingsResponse, error)
+	// Hides an open finding until audits find it with twice the support it
+	// has now, or under a spelling it doesn't hold.
+	DismissFoundryHealFinding(ctx context.Context, in *DismissFoundryHealFindingRequest, opts ...grpc.CallOption) (*FoundryHealFindingResponse, error)
 	// An ontology's documents, read only: what its current load holds and
 	// what its reading version's scope holds, each with its extraction there.
 	ListFoundryOntologyDocuments(ctx context.Context, in *ListFoundryOntologyDocumentsRequest, opts ...grpc.CallOption) (*ListFoundryDocumentsResponse, error)
@@ -919,6 +927,26 @@ func (c *foundryServiceClient) DeleteFoundryReviewDecision(ctx context.Context, 
 	return out, nil
 }
 
+func (c *foundryServiceClient) ListFoundryHealFindings(ctx context.Context, in *ListFoundryHealFindingsRequest, opts ...grpc.CallOption) (*ListFoundryHealFindingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFoundryHealFindingsResponse)
+	err := c.cc.Invoke(ctx, FoundryService_ListFoundryHealFindings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryServiceClient) DismissFoundryHealFinding(ctx context.Context, in *DismissFoundryHealFindingRequest, opts ...grpc.CallOption) (*FoundryHealFindingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryHealFindingResponse)
+	err := c.cc.Invoke(ctx, FoundryService_DismissFoundryHealFinding_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) ListFoundryOntologyDocuments(ctx context.Context, in *ListFoundryOntologyDocumentsRequest, opts ...grpc.CallOption) (*ListFoundryDocumentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryDocumentsResponse)
@@ -1298,6 +1326,12 @@ type FoundryServiceServer interface {
 	SettleFoundryReview(context.Context, *SettleFoundryReviewRequest) (*FoundryReviewDecisionResponse, error)
 	ListFoundryReviewDecisions(context.Context, *ListFoundryReviewDecisionsRequest) (*ListFoundryReviewDecisionsResponse, error)
 	DeleteFoundryReviewDecision(context.Context, *DeleteFoundryReviewDecisionRequest) (*DeleteFoundryReviewDecisionResponse, error)
+	// Self-healing suggestions: what audits of the ontology's current load
+	// found its ontology and mappings lack, the top open ones by support.
+	ListFoundryHealFindings(context.Context, *ListFoundryHealFindingsRequest) (*ListFoundryHealFindingsResponse, error)
+	// Hides an open finding until audits find it with twice the support it
+	// has now, or under a spelling it doesn't hold.
+	DismissFoundryHealFinding(context.Context, *DismissFoundryHealFindingRequest) (*FoundryHealFindingResponse, error)
 	// An ontology's documents, read only: what its current load holds and
 	// what its reading version's scope holds, each with its extraction there.
 	ListFoundryOntologyDocuments(context.Context, *ListFoundryOntologyDocumentsRequest) (*ListFoundryDocumentsResponse, error)
@@ -1571,6 +1605,12 @@ func (UnimplementedFoundryServiceServer) ListFoundryReviewDecisions(context.Cont
 }
 func (UnimplementedFoundryServiceServer) DeleteFoundryReviewDecision(context.Context, *DeleteFoundryReviewDecisionRequest) (*DeleteFoundryReviewDecisionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteFoundryReviewDecision not implemented")
+}
+func (UnimplementedFoundryServiceServer) ListFoundryHealFindings(context.Context, *ListFoundryHealFindingsRequest) (*ListFoundryHealFindingsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryHealFindings not implemented")
+}
+func (UnimplementedFoundryServiceServer) DismissFoundryHealFinding(context.Context, *DismissFoundryHealFindingRequest) (*FoundryHealFindingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DismissFoundryHealFinding not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryOntologyDocuments(context.Context, *ListFoundryOntologyDocumentsRequest) (*ListFoundryDocumentsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryOntologyDocuments not implemented")
@@ -2813,6 +2853,42 @@ func _FoundryService_DeleteFoundryReviewDecision_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_ListFoundryHealFindings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFoundryHealFindingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).ListFoundryHealFindings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_ListFoundryHealFindings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).ListFoundryHealFindings(ctx, req.(*ListFoundryHealFindingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryService_DismissFoundryHealFinding_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DismissFoundryHealFindingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).DismissFoundryHealFinding(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_DismissFoundryHealFinding_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).DismissFoundryHealFinding(ctx, req.(*DismissFoundryHealFindingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_ListFoundryOntologyDocuments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFoundryOntologyDocumentsRequest)
 	if err := dec(in); err != nil {
@@ -3593,6 +3669,14 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteFoundryReviewDecision",
 			Handler:    _FoundryService_DeleteFoundryReviewDecision_Handler,
+		},
+		{
+			MethodName: "ListFoundryHealFindings",
+			Handler:    _FoundryService_ListFoundryHealFindings_Handler,
+		},
+		{
+			MethodName: "DismissFoundryHealFinding",
+			Handler:    _FoundryService_DismissFoundryHealFinding_Handler,
 		},
 		{
 			MethodName: "ListFoundryOntologyDocuments",

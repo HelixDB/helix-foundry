@@ -130,4 +130,7 @@ var methods = map[string]check{
 	foundry("SettleFoundryReview"):         checkWorkspace,
 	foundry("ListFoundryReviewDecisions"):  checkOntology,
 	foundry("DeleteFoundryReviewDecision"): checkWorkspace,
+
+	foundry("ListFoundryHealFindings"):   checkOntology,
+	foundry("DismissFoundryHealFinding"): checkWorkspace,
 }

@@ -2565,6 +2565,94 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings": {
+      "get": {
+        "summary": "Self-healing suggestions: what audits of the ontology's current load\nfound its ontology and mappings lack, the top open ones by support.",
+        "operationId": "FoundryService_ListFoundryHealFindings",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryHealFindingsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings/{fingerprint}:dismiss": {
+      "post": {
+        "summary": "Hides an open finding until audits find it with twice the support it\nhas now, or under a spelling it doesn't hold.",
+        "operationId": "FoundryService_DismissFoundryHealFinding",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryHealFindingResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDismissFoundryHealFindingBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/loads": {
       "get": {
         "operationId": "FoundryService_ListFoundryLoads",
@@ -3942,6 +4030,10 @@
     "FoundryServiceDetectFoundryAIDefaultBody": {
       "type": "object",
       "description": "DetectFoundryAIDefaultRequest looks again for a local install's default;\nit answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION\nwhere the install names its default (FOUNDRY_AI_PROVIDER)."
+    },
+    "FoundryServiceDismissFoundryHealFindingBody": {
+      "type": "object",
+      "description": "DismissFoundryHealFindingRequest dismisses an open finding by its\nfingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has\nno finding of; FAILED_PRECONDITION for one superseded. One already\ndismissed is returned as it is."
     },
     "FoundryServiceFinishConnectorSignInBody": {
       "type": "object",
@@ -6238,6 +6330,97 @@
         }
       }
     },
+    "v1FoundryHealFinding": {
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "The signal's kind, as the engine names it: unmatched, unresolved,\nclash, row_errors or source_drift; a later contract may add others.\nFoundry sends the engine no source fields yet, so no audit checks\nsource_drift and none is found: an empty list says nothing of it."
+        },
+        "status": {
+          "type": "string",
+          "description": "open, dismissed or superseded."
+        },
+        "support": {
+          "type": "string",
+          "format": "int64",
+          "description": "The reviews behind it, summed over the load's pages; a row finding's\nrows."
+        },
+        "sources": {
+          "type": "string",
+          "format": "int64",
+          "description": "The documents behind it; 0 for a row finding."
+        },
+        "loadId": {
+          "type": "string",
+          "description": "The load the support was counted over, and its version."
+        },
+        "baseVersionId": {
+          "type": "string"
+        },
+        "findingJson": {
+          "type": "string",
+          "description": "The engine's Finding (audit_result.json, $defs/Finding) as JSON, its\nbacking summed over the load's pages: signal, proposal and fingerprint.\nParse it without trust, as the agent's other JSON."
+        },
+        "dismissedByUserId": {
+          "type": "string",
+          "description": "Who dismissed it, and its support then; set while dismissed."
+        },
+        "supportAtDismissal": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "FoundryHealFinding is one finding, named by its fingerprint, which the\nengine keeps the same across versions, loads and pages."
+    },
+    "v1FoundryHealFindingResponse": {
+      "type": "object",
+      "properties": {
+        "finding": {
+          "$ref": "#/definitions/v1FoundryHealFinding"
+        }
+      }
+    },
+    "v1FoundryHealRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "loadId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "running, complete, incomplete (even a page of one document was cut\nshort, the run ran out of time, or a graph job changed the load under\nit: nothing was stored, and a later run audits the load again) or\nfailed."
+        },
+        "pages": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The Audit calls it made, and how many of them were cut short; a page\ncut short is audited again in smaller pages."
+        },
+        "cuts": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "rowsMeasured": {
+          "type": "boolean",
+          "description": "Whether it audited the load's rows: a complete run does when the\nload's report holds them. False, no row finding of this load can be\ntold apart from none."
+        }
+      },
+      "description": "FoundryHealRun is one audit of an ontology's load."
+    },
     "v1FoundryLoad": {
       "type": "object",
       "properties": {
@@ -7380,6 +7563,30 @@
         }
       },
       "description": "Newest first, revoked ones included, at most 50."
+    },
+    "v1ListFoundryHealFindingsResponse": {
+      "type": "object",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryHealFinding"
+          }
+        },
+        "lastRun": {
+          "$ref": "#/definitions/v1FoundryHealRun",
+          "description": "The ontology's latest audit, if it has had one."
+        },
+        "lastCompleteRun": {
+          "$ref": "#/definitions/v1FoundryHealRun",
+          "description": "Its newest complete audit, of whichever load: whether the current load\nwas audited whole, though a later run of it is running or failed."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this deployment audits loads (foundry.heal.enabled). Off, no\naudit runs: findings and last_run stay as they were."
+        }
+      }
     },
     "v1ListFoundryLoadsResponse": {
       "type": "object",

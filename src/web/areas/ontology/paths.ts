@@ -111,6 +111,8 @@ export const ontologyPaths = {
     enc(id) +
     (tab ? "?tab=" + enc(tab) : "") +
     (span ? `#s${span.section}-${span.start}-${span.end}` : ""),
+  // What audits of its current load found its ontology and mappings lack.
+  suggestions: (ontologyId: string) => at(ontologyId) + "/suggestions",
   // The database's graph explorer, selecting a node by its database id.
   explore: (ontologyId: string, node?: number) =>
     explorer(ontologyId) + (node === undefined ? "" : "?node=" + node),
