@@ -196,8 +196,9 @@ func TestProxy(t *testing.T) {
 	})
 
 	// A caller that stops waiting cancels its query: that is no failure of
-	// the gateway's, so it is logged at debug, never as a warning.
-	t.Run("logs a query its caller dropped at debug", func(t *testing.T) {
+	// the gateway's, so it is logged at info with the time waited, never as
+	// a warning.
+	t.Run("logs a query its caller dropped at info", func(t *testing.T) {
 		logged := &logs{}
 		g := &blockingGateway{started: make(chan struct{}), cancelled: make(chan struct{})}
 		p, err := Serve(log.Into(context.Background(), logged.logger()), Binding{OntologyID: "ont-1", TenantID: "tenant-1", Endpoint: "https://gw.example/v2/query"},

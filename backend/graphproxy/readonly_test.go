@@ -239,9 +239,9 @@ func TestReadProxy(t *testing.T) {
 	})
 
 	// The agent drops a read that passed its wall time: the gateway didn't
-	// fail, so the read is logged at debug, while a gateway that did fail
-	// is still a warning.
-	t.Run("logs a read its caller dropped at debug", func(t *testing.T) {
+	// fail, so the read is logged at info with the time waited, while a
+	// gateway that did fail is still a warning.
+	t.Run("logs a read its caller dropped at info", func(t *testing.T) {
 		logged := &logs{}
 		previous := slog.Default()
 		slog.SetDefault(logged.logger())
