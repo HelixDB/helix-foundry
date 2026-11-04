@@ -74,6 +74,7 @@ async function shareWithEve(page: Page) {
   ).toBeChecked();
   await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
   await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
   await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
     "Customer contracts",
   );
@@ -170,12 +171,8 @@ test("a restricted member sees only what their sources cover", async ({
   await expect(
     page.getByRole("switch", { name: "Restrict Ada Lovelace" }),
   ).toHaveCount(0);
-  // Lifted and put back.
-  await eve.uncheck();
-  await expect(page.getByRole("listitem", { name: "Eve Adler" })).toContainText(
-    "Sees everything",
-  );
-  await eve.check();
+  // Holding sources is what restricts her, so it can't be lifted.
+  await expect(eve).toBeDisabled();
   // Her General is part of what the load holds.
   await expect(page.getByRole("listitem", { name: "Eve Adler" })).toContainText(
     "Reads part of Customer contracts",
@@ -345,6 +342,10 @@ test("a member who can't query reads only what their sources cover", async ({
   await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
   await sources.getByRole("checkbox", { name: /^General/ }).check();
   await sources.getByRole("button", { name: "Save" }).click();
+  await page
+    .getByRole("dialog", { name: "Restrict Alan Turing?" })
+    .getByRole("button", { name: "Save and restrict" })
+    .click();
   await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
     "Customer contracts",
   );
@@ -356,11 +357,11 @@ test("a member who can't query reads only what their sources cover", async ({
   });
   const as = await context.newPage();
   await signIn(as, "alan@example.com");
-  // Not restricted: every section. Analyst opens the one ontology he reads,
-  // and offers no other.
+  // Given sources, he is restricted: no Connectors. Analyst opens the one
+  // ontology he reads, and offers no other.
   await expect(
     as.getByRole("list", { name: "Workspace" }).getByRole("link"),
-  ).toHaveText(["Analyst", "Ontologies", "Explorer", "Connectors"]);
+  ).toHaveText(["Analyst", "Ontologies", "Explorer"]);
   await as.goto("/ask");
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
   await as.getByRole("combobox", { name: "Ontology" }).click();
@@ -371,17 +372,10 @@ test("a member who can't query reads only what their sources cover", async ({
   await expect(
     as.getByRole("combobox", { name: "Load", exact: true }),
   ).toHaveCount(0);
-  // One he doesn't read says so, and reads nothing.
+  // One he doesn't read isn't there for him.
   await as.goto("/ask/ont_acme_sales");
   await expect(
-    as.getByRole("heading", { name: "Not shared with you" }),
-  ).toBeVisible();
-  await expect(as.getByRole("navigation", { name: "Threads" })).toContainText(
-    "Not shared with you.",
-  );
-  await as.goto("/explore/ont_acme_sales/records");
-  await expect(
-    as.getByRole("heading", { name: "Not shared with you" }),
+    as.getByRole("heading", { name: "This ontology doesn’t exist" }),
   ).toBeVisible();
   // The one he reads: Records through typed reads.
   await as.goto("/explore/ont_acme_contracts");
@@ -392,8 +386,13 @@ test("a member who can't query reads only what their sources cover", async ({
     .click();
   await expect(as.getByText("1–50 of 65")).toBeVisible();
 
+  // Nothing refused but the ontology he was sent to that isn't there for him.
   const requests = (await mock.stats()).requests.slice(before);
-  expect(requests.filter((r) => / 40[34]$/.test(r))).toEqual([]);
+  expect(
+    requests.filter(
+      (r) => / 40[34]$/.test(r) && !r.includes("/ont_acme_sales"),
+    ),
+  ).toEqual([]);
   expect(requests.filter((r) => r.includes("databases:query-read"))).toEqual(
     [],
   );
@@ -412,6 +411,10 @@ test("a member who can't query names only what their sources fill", async ({
     .getByRole("checkbox", { name: "customers", exact: true })
     .check();
   await sources.getByRole("button", { name: "Save" }).click();
+  await page
+    .getByRole("dialog", { name: "Restrict Alan Turing?" })
+    .getByRole("button", { name: "Save and restrict" })
+    .click();
   await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
     "Part of it",
   );
@@ -451,6 +454,7 @@ test("taking every source away takes the ontology away", async ({
   await sources.getByRole("checkbox", { name: /^Stripe/ }).uncheck();
   await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
   await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
   await expect(
     sources.getByRole("list", { name: "Can’t read yet" }),
   ).toContainText("Stripe › customers");
@@ -489,6 +493,7 @@ test("someone whose sources hold part of an ontology reads that part", async ({
     .getByRole("checkbox", { name: "customers", exact: true })
     .check();
   await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
   const reads = sources.getByRole("list", { name: "Can read" });
   await expect(reads).toContainText("Customer contracts");
   await expect(reads).toContainText("Part of it: not Stripe › invoices");
@@ -640,6 +645,7 @@ test("someone who holds a type whole pages it, beside one they hold part of", as
   await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
   await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
   await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
   await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
     "Part of it",
   );
@@ -705,6 +711,7 @@ test("access changed elsewhere shows on coming back to the tab", async ({
   await sources.getByRole("checkbox", { name: /^Stripe/ }).uncheck();
   await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
   await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
   await expect(
     sources.getByRole("list", { name: "Can’t read yet" }),
   ).toContainText("Stripe › customers");
@@ -765,6 +772,10 @@ test("a member reading through grants isn't sent to query the database", async (
   await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
   await sources.getByRole("checkbox", { name: /^General/ }).check();
   await sources.getByRole("button", { name: "Save" }).click();
+  await page
+    .getByRole("dialog", { name: "Restrict Alan Turing?" })
+    .getByRole("button", { name: "Save and restrict" })
+    .click();
   await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
     "Customer contracts",
   );
@@ -780,12 +791,13 @@ test("a member reading through grants isn't sent to query the database", async (
   await expect(
     as.getByRole("region", { name: "Getting into production" }),
   ).toHaveCount(0);
-  // Given it back, he sees the card as any member does.
+  // Given it back he stays restricted, so he still reads through grants.
   await mock.configure({ memberQueryRead: true });
   await as.reload();
+  await expect(as.getByRole("form", { name: "Ask a question" })).toBeVisible();
   await expect(
     as.getByRole("region", { name: "Getting into production" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
 });
 
 test("the threads say why they can't be read, with a retry", async ({
@@ -836,6 +848,213 @@ test("flags a restricted member who holds raw access again", async ({
   await expect(
     page.getByRole("switch", { name: "Restrict Alan Turing" }),
   ).toBeEnabled();
+});
+
+test("giving a member sources restricts them, and taking them away widens nothing", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200, memberQueryRead: false });
+  await signIn(page);
+  await loadContract(page);
+  await page.goto("/settings/access?tab=people");
+  const row = page.getByRole("listitem", { name: "Alan Turing" }),
+    alan = page.getByRole("switch", { name: "Restrict Alan Turing" });
+  await expect(row).toContainText("Sees everything");
+  await expect(alan).not.toBeChecked();
+
+  // It says what they'll lose first, and backing out changes nothing.
+  await page.getByRole("button", { name: "Sources for Alan Turing" }).click();
+  const sources = page.getByRole("dialog", {
+    name: "Sources for Alan Turing",
+  });
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  const confirm = page.getByRole("dialog", { name: "Restrict Alan Turing?" });
+  await expect(confirm).toContainText("see only what these sources hold");
+  await expect(confirm).toContainText("other documents");
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirm).toHaveCount(0);
+  await sources.getByRole("button", { name: "Save" }).click();
+  await confirm.getByRole("button", { name: "Save and restrict" }).click();
+  await expect(
+    page.getByText("Saved what Alan Turing can read."),
+  ).toBeVisible();
+
+  // Now restricted, it asks no more, and holding sources can't be lifted.
+  await sources.getByRole("checkbox", { name: /^General/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(sources.getByRole("list", { name: "Can read" })).toContainText(
+    "Customer contracts",
+  );
+  await sources.getByRole("button", { name: "Close" }).first().click();
+  await expect(alan).toBeChecked();
+  await expect(alan).toBeDisabled();
+  await expect(alan).toHaveAttribute(
+    "aria-description",
+    /Take those away first/,
+  );
+
+  // He sees only what they hold: no Connectors, and no other document's text.
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const as = await context.newPage();
+  await signIn(as, "alan@example.com");
+  await expect(
+    as.getByRole("list", { name: "Workspace" }).getByRole("link"),
+  ).toHaveText(["Analyst", "Ontologies", "Explorer"]);
+
+  // His last source taken away, he reads nothing, not everything.
+  const again = await openSources(page, "people", "Alan Turing");
+  await again.getByRole("checkbox", { name: /^Stripe/ }).uncheck();
+  await again.getByRole("checkbox", { name: /^General/ }).uncheck();
+  await again.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("dialog", { name: /^Restrict/ })).toHaveCount(0);
+  await again.getByRole("button", { name: "Close" }).first().click();
+  await expect(alan).toBeChecked();
+  await as.goto("/ask");
+  await as.reload();
+  await expect(
+    as.getByRole("heading", { name: "Nothing shared with you yet" }),
+  ).toBeVisible();
+
+  // Only lifting it, with none left, gives him the workspace back.
+  await expect(alan).toBeEnabled();
+  await alan.uncheck();
+  await expect(row).toContainText("Sees everything");
+  await as.goto("/data");
+  await expect(
+    as.getByRole("list", { name: "Workspace" }).getByRole("link"),
+  ).toHaveText(["Analyst", "Ontologies", "Explorer", "Connectors"]);
+});
+
+test("a member who reads databases is given no sources, on their own or by a team", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/settings/access?tab=people");
+  const button = page.getByRole("button", { name: "Sources for Alan Turing" });
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute("title", /outside Foundry/);
+  // Through a team: the grant is refused, with why.
+  await page.goto("/settings/access?tab=teams");
+  await page.getByRole("button", { name: "New team" }).click();
+  const make = page.getByRole("dialog", { name: "New team" });
+  await make.getByRole("textbox", { name: "Name" }).fill("Finance");
+  await make.getByRole("checkbox", { name: "Alan Turing" }).check();
+  await make.getByRole("button", { name: "Create team" }).click();
+  await page.getByRole("button", { name: "Sources for Finance" }).click();
+  const sources = page.getByRole("dialog", { name: "Sources for Finance" });
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await page
+    .getByRole("dialog", { name: "Restrict 1 member of Finance?" })
+    .getByRole("button", { name: "Save and restrict" })
+    .click();
+  await expect(sources.getByRole("alert")).toContainText(
+    "a member of this team can write a project",
+  );
+});
+
+test("a team's sources restrict its members, and whoever joins it", async ({
+  page,
+}) => {
+  await signIn(page);
+  await mock.configure({ memberQueryRead: false });
+  await page.goto("/settings/access?tab=teams");
+  await page.getByRole("button", { name: "New team" }).click();
+  const make = page.getByRole("dialog", { name: "New team" });
+  await make.getByRole("textbox", { name: "Name" }).fill("Finance");
+  await make.getByRole("checkbox", { name: "Alan Turing" }).check();
+  // An owner may sit on a team; it changes nothing for them.
+  await make.getByRole("checkbox", { name: "Ada Lovelace" }).check();
+  await make.getByRole("button", { name: "Create team" }).click();
+
+  await page.getByRole("button", { name: "Sources for Finance" }).click();
+  const sources = page.getByRole("dialog", { name: "Sources for Finance" });
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  const confirm = page.getByRole("dialog", {
+    name: "Restrict 1 member of Finance?",
+  });
+  await expect(confirm).toContainText("Alan Turing");
+  await expect(confirm).not.toContainText("Ada Lovelace");
+  await confirm.getByRole("button", { name: "Save and restrict" }).click();
+  await expect(page.getByText("Saved what Finance can read.")).toBeVisible();
+
+  await page.goto("/settings/access?tab=people");
+  const alan = page.getByRole("switch", { name: "Restrict Alan Turing" });
+  await expect(alan).toBeChecked();
+  await expect(alan).toBeDisabled();
+  await expect(
+    page.getByRole("listitem", { name: "Ada Lovelace" }),
+  ).not.toContainText("Raw access");
+});
+
+test("joining a team that holds sources asks first, and restricts", async ({
+  page,
+}) => {
+  await signIn(page);
+  await mock.configure({ memberQueryRead: false });
+  await page.goto("/settings/access?tab=teams");
+  await page.getByRole("button", { name: "New team" }).click();
+  const make = page.getByRole("dialog", { name: "New team" });
+  await make.getByRole("textbox", { name: "Name" }).fill("Finance");
+  await make.getByRole("checkbox", { name: "Ada Lovelace" }).check();
+  await make.getByRole("button", { name: "Create team" }).click();
+  // Only an owner on it: no one to restrict, so nothing to ask.
+  await page.getByRole("button", { name: "Sources for Finance" }).click();
+  const sources = page.getByRole("dialog", { name: "Sources for Finance" });
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Finance can read.")).toBeVisible();
+  await sources.getByRole("button", { name: "Close" }).first().click();
+
+  await page.getByRole("button", { name: "Edit Finance" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit Finance" });
+  await edit.getByRole("checkbox", { name: "Alan Turing" }).check();
+  await edit.getByRole("button", { name: "Save" }).click();
+  const confirm = page.getByRole("dialog", { name: "Restrict Alan Turing?" });
+  await expect(confirm).toContainText("what Finance’s sources hold");
+  // Backing out changes nothing.
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await edit.getByRole("button", { name: "Save" }).click();
+  await confirm.getByRole("button", { name: "Save and restrict" }).click();
+  await expect(page.getByText("Saved Finance.")).toBeVisible();
+
+  await page.goto("/settings/access?tab=people");
+  const alan = page.getByRole("switch", { name: "Restrict Alan Turing" });
+  await expect(alan).toBeChecked();
+  await expect(alan).toBeDisabled();
+});
+
+test("a team's confirmation still asks when its members can't be read", async ({
+  page,
+}) => {
+  await signIn(page);
+  await mock.configure({ memberQueryRead: false });
+  await page.goto("/settings/access?tab=teams");
+  await page.getByRole("button", { name: "New team" }).click();
+  const make = page.getByRole("dialog", { name: "New team" });
+  await make.getByRole("textbox", { name: "Name" }).fill("Finance");
+  await make.getByRole("checkbox", { name: "Alan Turing" }).check();
+  await make.getByRole("button", { name: "Create team" }).click();
+  await page.route("**/papi/v1/workspaces/*/members*", (route) =>
+    route.fulfill({
+      status: 500,
+      json: { code: 13, message: "members couldn't be read" },
+    }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Sources for Finance" }).click();
+  const sources = page.getByRole("dialog", { name: "Sources for Finance" });
+  await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Restrict the members of Finance?" }),
+  ).toContainText("Its members will see only");
 });
 
 test("nothing changes for anyone with no grants", async ({ page, browser }) => {

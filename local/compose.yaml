@@ -191,6 +191,11 @@ services:
         -s3.allowedOrigins=http://localhost:3000
         -master.volumeSizeLimitMB=1024 -volume.max=0
     volumes: ["storage:/data", "secrets:/secrets:ro"]
+    # It takes about 20 s to stop (its filer waits up to 10 s for its gRPC
+    # streams first), past Compose's default 10 s: time to shut down rather
+    # than be killed, so `docker compose down` leaves a store a backup can
+    # copy.
+    stop_grace_period: 1m
     depends_on: *secrets-first
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "8333"]

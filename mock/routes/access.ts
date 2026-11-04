@@ -79,6 +79,12 @@ import { manages, queryReads, rawAccess } from "./workspaces";
 // bytes). The mock's agents' keys authenticate nothing, so no call comes as
 // one.
 //
+// Sources are the limit (the store and SetFoundryAccessGrants): a member given
+// any, or on a team given any, is restricted to them and stays so once they
+// go, until someone lifts it, which holding any refuses. An owner, an admin or
+// a member with raw access is given none, nor can one with raw access join a
+// team holding some.
+//
 // Acme starts with Eve restricted, holding the General set, and one agent's
 // key holding nothing. A key's token is shown once, when it is made, and
 // accepted nowhere; revoking a key deletes its grants, deleting a team its
@@ -118,6 +124,36 @@ const state = {
   credentials: [] as StoredCredential[],
 };
 const restrictedKey = (ws: string, userId: string) => `${ws}\u001f${userId}`;
+const restrict = (ws: string, userIds: string[]) =>
+  userIds.forEach((u) => state.restricted.add(restrictedKey(ws, u)));
+const RAW_ACCESS =
+  "this member can write a project or query its databases outside Foundry; take that access away in the Helix dashboard first";
+const TEAM_RAW_ACCESS =
+  "a member of this team can write a project or query its databases outside Foundry; take that access away in the Helix dashboard, or take them off the team, first";
+/** A member's refusal to be confined to grants (restrictable), if any. */
+const unconfinable = (ws: string, userId: string) => {
+  const member = db.memberships.find(
+    (x) => x.workspaceId === ws && x.userId === userId,
+  );
+  if (!member) return fail("NOT_FOUND", "member not found");
+  if (member.role !== "WORKSPACE_ROLE_MEMBER")
+    return fail(
+      "FAILED_PRECONDITION",
+      "only a member can be restricted: owners and admins see everything",
+    );
+  return rawAccess(member)
+    ? fail("FAILED_PRECONDITION", RAW_ACCESS)
+    : undefined;
+};
+/** Whether any of these team members has raw access (teamRestrictable). */
+const anyRaw = (ws: string, userIds: string[]) =>
+  db.memberships.some(
+    (x) =>
+      x.workspaceId === ws &&
+      userIds.includes(x.userId) &&
+      x.role === "WORKSPACE_ROLE_MEMBER" &&
+      rawAccess(x),
+  );
 export const ACME_AGENT_KEY = "sc_acme_support";
 onReset(() => {
   const at = "2026-10-03T10:00:00.000Z";
@@ -733,6 +769,34 @@ export const accessRoutes: MockRoute[] = [
         if (!targets.some((x) => targetKey(x) === targetKey(parsed)))
           targets.push(parsed);
       }
+      // Sources restrict whoever they reach, so they go only to whom they can confine.
+      const team =
+        principal.kind === "KIND_TEAM"
+          ? state.teams.find(
+              (t) => t.workspaceId === m.workspaceId && t.id === principal.id,
+            )
+          : undefined;
+      // Only what's new has to confine them: taking some away is always allowed.
+      const holding = state.grants.filter(
+        (g) =>
+          g.workspaceId === m.workspaceId &&
+          principalKey(g.principal) === principalKey(principal),
+      );
+      if (
+        targets.some(
+          (t) => !holding.some((g) => targetKey(g.target) === targetKey(t)),
+        )
+      ) {
+        if (principal.kind === "KIND_USER") {
+          const refused = unconfinable(m.workspaceId, principal.id);
+          if (refused) return refused;
+        }
+        if (principal.kind === "KIND_TEAM") {
+          if (!team) return fail("NOT_FOUND", "the workspace has no such team");
+          if (anyRaw(m.workspaceId, team.memberUserIds))
+            return fail("FAILED_PRECONDITION", TEAM_RAW_ACCESS);
+        }
+      }
       const connectors = new Set(
           workspaceConnectors(m.workspaceId).map((c) => c.id),
         ),
@@ -772,6 +836,11 @@ export const accessRoutes: MockRoute[] = [
         ...state.grants.filter((g) => !mine(g) || kept.includes(g)),
         ...added,
       ];
+      if (targets.length > 0) {
+        if (principal.kind === "KIND_USER")
+          restrict(m.workspaceId, [principal.id]);
+        if (team) restrict(m.workspaceId, team.memberUserIds);
+      }
       return ok({
         grants: grantsOf(m.workspaceId).filter(mine).map(grantOut),
       } satisfies SetFoundryAccessGrantsResponse);
@@ -888,22 +957,33 @@ export const accessRoutes: MockRoute[] = [
       const restricted = !!req.body?.restricted,
         userId = req.params.userId!;
       if (restricted) {
-        const member = db.memberships.find(
-          (x) => x.workspaceId === m.workspaceId && x.userId === userId,
-        );
-        if (!member) return fail("NOT_FOUND", "member not found");
-        if (member.role !== "WORKSPACE_ROLE_MEMBER")
-          return fail(
-            "FAILED_PRECONDITION",
-            "only a member can be restricted: owners and admins see everything",
-          );
-        if (rawAccess(member))
-          return fail(
-            "FAILED_PRECONDITION",
-            "this member can write a project or query its databases outside Foundry; take that access away in the Helix dashboard first",
-          );
+        const refused = unconfinable(m.workspaceId, userId);
+        if (refused) return refused;
         state.restricted.add(restrictedKey(m.workspaceId, userId));
-      } else state.restricted.delete(restrictedKey(m.workspaceId, userId));
+      } else {
+        const principals = new Set([
+          principalKey({ kind: "KIND_USER", id: userId }),
+          ...state.teams
+            .filter(
+              (t) =>
+                t.workspaceId === m.workspaceId &&
+                t.memberUserIds.includes(userId),
+            )
+            .map((t) => principalKey({ kind: "KIND_TEAM", id: t.id })),
+        ]);
+        if (
+          state.grants.some(
+            (g) =>
+              g.workspaceId === m.workspaceId &&
+              principals.has(principalKey(g.principal)),
+          )
+        )
+          return fail(
+            "FAILED_PRECONDITION",
+            "this member holds sources, their own or a team's; take those away first",
+          );
+        state.restricted.delete(restrictedKey(m.workspaceId, userId));
+      }
       return ok({ restricted } satisfies SetFoundryMemberRestrictedResponse);
     },
   },
@@ -951,7 +1031,20 @@ export const accessRoutes: MockRoute[] = [
       if (!t) return fail("NOT_FOUND", "team not found");
       if (nameTaken(m.workspaceId, team.name, t.id))
         return fail("ALREADY_EXISTS", "the workspace has a team of that name");
+      const holds = state.grants.some(
+        (g) => g.principal.kind === "KIND_TEAM" && g.principal.id === t.id,
+      );
+      // Only who joins: someone given raw access since doesn't stop a rename.
+      if (
+        holds &&
+        anyRaw(
+          m.workspaceId,
+          team.members.filter((u) => !t.memberUserIds.includes(u)),
+        )
+      )
+        return fail("FAILED_PRECONDITION", TEAM_RAW_ACCESS);
       Object.assign(t, { name: team.name, memberUserIds: team.members });
+      if (holds) restrict(m.workspaceId, t.memberUserIds);
       return ok({ team: teamOut(t) } satisfies FoundryTeamResponse);
     },
   },

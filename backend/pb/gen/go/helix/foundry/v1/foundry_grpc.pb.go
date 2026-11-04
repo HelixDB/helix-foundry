@@ -251,13 +251,18 @@ type FoundryServiceClient interface {
 	// user, a team, or a service credential: an agent's key) the workspace's
 	// sources; a principal the front end's own permissions don't admit reads an
 	// ontology's current load, and asks it questions, only while every source
-	// that load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants
-	// only add: a workspace that grants nothing behaves as it did without them.
+	// that load holds is granted to it (SOURCE_GRANTEE, actor.proto). A
+	// workspace that grants nothing behaves as it did without them. A member
+	// given any, or on a team given any, is restricted to them, and stays so
+	// once they're taken away, until someone lifts it.
 	//
 	// Every grant, and what each ontology's current load holds and who may
 	// read it through grants.
 	ListFoundryAccess(ctx context.Context, in *ListFoundryAccessRequest, opts ...grpc.CallOption) (*ListFoundryAccessResponse, error)
-	// Replaces one principal's grants.
+	// Replaces one principal's grants. Giving a member or a team any restricts
+	// that member or the team's members: FAILED_PRECONDITION for an owner or
+	// admin, or a member (of the team too) holding project write or query scope,
+	// which reads the database outside Foundry.
 	SetFoundryAccessGrants(ctx context.Context, in *SetFoundryAccessGrantsRequest, opts ...grpc.CallOption) (*SetFoundryAccessGrantsResponse, error)
 	// Who would stop reading which ontologies through grants after a change:
 	// loading or making current a version, deleting a connector, or moving a
@@ -271,11 +276,14 @@ type FoundryServiceClient interface {
 	// they see only the ontologies their grants cover, and change nothing.
 	// Only a plain member holding no project write or query scope can be
 	// restricted (FAILED_PRECONDITION otherwise): either reads the database
-	// outside Foundry.
+	// outside Foundry. Holding sources, their own or a team's, is what restricts
+	// a member, so it can't be lifted until those are gone (FAILED_PRECONDITION).
 	SetFoundryMemberRestricted(ctx context.Context, in *SetFoundryMemberRestrictedRequest, opts ...grpc.CallOption) (*SetFoundryMemberRestrictedResponse, error)
 	// Teams of the workspace's members, which hold grants for them.
 	CreateFoundryTeam(ctx context.Context, in *CreateFoundryTeamRequest, opts ...grpc.CallOption) (*FoundryTeamResponse, error)
-	// Renames a team and replaces its members.
+	// Renames a team and replaces its members. Whoever joins a team holding
+	// grants is restricted to them (FAILED_PRECONDITION for one holding project
+	// write or query scope), and whoever leaves stays restricted.
 	UpdateFoundryTeam(ctx context.Context, in *UpdateFoundryTeamRequest, opts ...grpc.CallOption) (*FoundryTeamResponse, error)
 	// Deletes a team with its grants.
 	DeleteFoundryTeam(ctx context.Context, in *DeleteFoundryTeamRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -1364,13 +1372,18 @@ type FoundryServiceServer interface {
 	// user, a team, or a service credential: an agent's key) the workspace's
 	// sources; a principal the front end's own permissions don't admit reads an
 	// ontology's current load, and asks it questions, only while every source
-	// that load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants
-	// only add: a workspace that grants nothing behaves as it did without them.
+	// that load holds is granted to it (SOURCE_GRANTEE, actor.proto). A
+	// workspace that grants nothing behaves as it did without them. A member
+	// given any, or on a team given any, is restricted to them, and stays so
+	// once they're taken away, until someone lifts it.
 	//
 	// Every grant, and what each ontology's current load holds and who may
 	// read it through grants.
 	ListFoundryAccess(context.Context, *ListFoundryAccessRequest) (*ListFoundryAccessResponse, error)
-	// Replaces one principal's grants.
+	// Replaces one principal's grants. Giving a member or a team any restricts
+	// that member or the team's members: FAILED_PRECONDITION for an owner or
+	// admin, or a member (of the team too) holding project write or query scope,
+	// which reads the database outside Foundry.
 	SetFoundryAccessGrants(context.Context, *SetFoundryAccessGrantsRequest) (*SetFoundryAccessGrantsResponse, error)
 	// Who would stop reading which ontologies through grants after a change:
 	// loading or making current a version, deleting a connector, or moving a
@@ -1384,11 +1397,14 @@ type FoundryServiceServer interface {
 	// they see only the ontologies their grants cover, and change nothing.
 	// Only a plain member holding no project write or query scope can be
 	// restricted (FAILED_PRECONDITION otherwise): either reads the database
-	// outside Foundry.
+	// outside Foundry. Holding sources, their own or a team's, is what restricts
+	// a member, so it can't be lifted until those are gone (FAILED_PRECONDITION).
 	SetFoundryMemberRestricted(context.Context, *SetFoundryMemberRestrictedRequest) (*SetFoundryMemberRestrictedResponse, error)
 	// Teams of the workspace's members, which hold grants for them.
 	CreateFoundryTeam(context.Context, *CreateFoundryTeamRequest) (*FoundryTeamResponse, error)
-	// Renames a team and replaces its members.
+	// Renames a team and replaces its members. Whoever joins a team holding
+	// grants is restricted to them (FAILED_PRECONDITION for one holding project
+	// write or query scope), and whoever leaves stays restricted.
 	UpdateFoundryTeam(context.Context, *UpdateFoundryTeamRequest) (*FoundryTeamResponse, error)
 	// Deletes a team with its grants.
 	DeleteFoundryTeam(context.Context, *DeleteFoundryTeamRequest) (*emptypb.Empty, error)

@@ -11,11 +11,30 @@ import (
 )
 
 // SetFoundryMemberRestricted restricts the member to what grants give, or
-// lifts it; either is a no-op when it already holds.
+// lifts it; either is a no-op when it already holds. ErrConflict means they
+// hold grants, their own or a team's, which keep them restricted: the
+// workspace's lock, which grants and team changes take too, keeps a grant from
+// arriving between that check and the lift.
 func (s *mysqlDB) SetFoundryMemberRestricted(ctx context.Context, workspaceID, userID string, restricted bool, byUserID *string) error {
 	if !restricted {
-		_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_restricted_members WHERE workspace_id=? AND user_id=?`, workspaceID, userID)
-		return err
+		return s.WithTx(ctx, func(txDB Store) error {
+			tx := txDB.(*mysqlDB)
+			if err := tx.workspaces.Lock(ctx, tx.db, workspaceID); err != nil {
+				return err
+			}
+			var holds bool
+			if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_access_grants WHERE workspace_id=? AND (
+ (principal_kind=? AND principal_id=?) OR
+ (principal_kind=? AND principal_id IN (SELECT team_id FROM foundry_team_members WHERE workspace_id=? AND user_id=?))))`,
+				workspaceID, access.PrincipalUser.String(), userID, access.PrincipalTeam.String(), workspaceID, userID).Scan(&holds); err != nil {
+				return err
+			}
+			if holds {
+				return ErrConflict
+			}
+			_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_restricted_members WHERE workspace_id=? AND user_id=?`, workspaceID, userID)
+			return err
+		})
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_restricted_members (workspace_id, user_id, created_by_user_id) VALUES (?, ?, ?)`,
 		workspaceID, userID, byUserID)
@@ -61,6 +80,9 @@ func (s *mysqlDB) CreateFoundryTeam(ctx context.Context, team *model.FoundryTeam
 func (s *mysqlDB) UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
+		if err := tx.workspaces.Lock(ctx, tx.db, workspaceID); err != nil {
+			return err
+		}
 		var id string
 		err := tx.db.QueryRowContext(ctx, `SELECT id FROM foundry_teams WHERE id=? AND workspace_id=? FOR UPDATE`, teamID, workspaceID).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -75,8 +97,40 @@ func (s *mysqlDB) UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, na
 			}
 			return err
 		}
-		return tx.setFoundryTeamMembers(ctx, workspaceID, teamID, memberUserIDs)
+		if err := tx.setFoundryTeamMembers(ctx, workspaceID, teamID, memberUserIDs); err != nil {
+			return err
+		}
+		var holds bool
+		if err := tx.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM foundry_access_grants WHERE workspace_id=? AND principal_kind=? AND principal_id=?)`,
+			workspaceID, access.PrincipalTeam.String(), teamID).Scan(&holds); err != nil {
+			return err
+		}
+		if !holds {
+			return nil
+		}
+		return tx.restrictFoundryTeamMembers(ctx, workspaceID, teamID, nil)
 	})
+}
+
+// restrictFoundryTeamMembers restricts a team's members, its grants being all
+// they read. A restriction applies only while its holder's role is member, so
+// an owner or admin on the team is confined only if they stop being one.
+func (s *mysqlDB) restrictFoundryTeamMembers(ctx context.Context, workspaceID, teamID string, byUserID *string) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id FROM foundry_team_members WHERE team_id=? AND workspace_id=?`, teamID, workspaceID)
+	if err != nil {
+		return err
+	}
+	members, err := scanStrings(rows)
+	if err != nil || len(members) == 0 {
+		return err
+	}
+	args := make([]any, 0, 3*len(members))
+	for _, userID := range members {
+		args = append(args, workspaceID, userID, byUserID)
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_restricted_members (workspace_id, user_id, created_by_user_id) VALUES `+
+		strings.TrimSuffix(strings.Repeat("(?, ?, ?), ", len(members)), ", "), args...)
+	return err
 }
 
 // setFoundryTeamMembers replaces a team's members.

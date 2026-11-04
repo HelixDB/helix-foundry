@@ -54,6 +54,7 @@ import {
   readings,
   readsText,
   holdsRawAccess,
+  newlyRestricted,
   restrictable,
   setOwners,
   sourceState,
@@ -74,8 +75,11 @@ import { canManage } from "./plan";
 // ontology's current load those sources hold, and asks it questions, all of it
 // once the load reads nothing else. Agents' keys reach Foundry only that way;
 // a member restricted here sees only those ontologies, in Analyst, Ontologies
-// and Records; a team's members hold its grants. Grants only add: everyone else
-// sees what they saw before. Ontologies says who each is shared with.
+// and Records; a team's members hold its grants. Sources are the limit: giving
+// a member or a team any restricts them, taking them away leaves them restricted
+// (it never gives anyone more), and only lifting it, with none left, undoes it.
+// Everyone else sees what they saw before. Ontologies says who each is shared
+// with.
 
 type Tab = "agents" | "people" | "teams" | "ontologies";
 const TABS: { id: Tab; label: string }[] = [
@@ -151,6 +155,10 @@ function readsLine(data: AccessData, principal: Principal) {
   );
 }
 
+// What being restricted takes, said wherever saving restricts someone.
+const restrictionCost =
+  "They lose the rest of each ontology’s schema, other connections and other documents, and taking these sources away later doesn’t bring those back: that takes lifting the restriction under People.";
+
 /** One source of the editor: its box, and what it is. */
 function SourceCheck({
   state,
@@ -202,6 +210,7 @@ function GrantsDialog({
     saved = grantsOf(access.grants || [], principal);
   const [chosen, setChosen] = useState<Grant[]>(saved),
     [pending, setPending] = useState(false),
+    [confirming, setConfirming] = useState(false),
     [error, setError] = useState("");
   const tree = sourceTree(
       data.connectors.data?.connectors || [],
@@ -235,180 +244,220 @@ function GrantsDialog({
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      setConfirming(false);
       setPending(false);
     }
   };
+  // Sources are the limit: giving them restricts whoever isn't yet, so say so first.
+  const restricting =
+      chosen.length > 0 ? newlyRestricted(access, data.people, principal) : [],
+    // A team's members not read yet: it can't name them, but still asks.
+    unnamed =
+      chosen.length > 0 &&
+      principal.kind === "KIND_TEAM" &&
+      (data.members.isPending ||
+        !!data.members.error ||
+        data.members.hasNextPage);
   return (
-    <Dialog
-      title={`Sources for ${name}`}
-      description="What these sources hold of an ontology’s current load is shared; all of it, once everything it reads is chosen here."
-      size="lg"
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>Close</Button>
-          <Button
-            variant="primary"
-            pending={pending}
-            disabled={!dirty}
-            onClick={() => void save()}
-          >
-            Save
-          </Button>
-        </>
-      }
-    >
-      <div className="wk-access-grants" data-replay-block>
-        <fieldset className="wk-access-sources">
-          <legend>Sources</legend>
-          {tree.connections.length > 0 && (
-            <ul aria-label="Connections">
-              {tree.connections.map((c) => {
-                const connection: Grant = {
-                  kind: "connector",
-                  connectorId: c.id,
-                };
-                return (
-                  <li key={c.id}>
-                    <SourceCheck
-                      state={state(connection)}
-                      onToggle={() => flip(connection)}
-                    >
-                      <span aria-hidden>
-                        <SourceLogo source={c.kind} size={18} />
-                      </span>
-                      <span>
-                        {c.name}
-                        <small> · all of it, now and later</small>
-                      </span>
-                    </SourceCheck>
-                    {(c.tables.length > 0 || c.sets.length > 0) && (
-                      <ul
-                        className="wk-access-nested"
-                        aria-label={`${c.name} tables and sets`}
+    <>
+      {confirming && (
+        <ConfirmDialog
+          title={
+            principal.kind !== "KIND_TEAM"
+              ? `Restrict ${name}?`
+              : unnamed
+                ? `Restrict the members of ${name}?`
+                : `Restrict ${plural(restricting.length, "member")} of ${name}?`
+          }
+          description={
+            principal.kind !== "KIND_TEAM"
+              ? `They’ll see only what these sources hold. ${restrictionCost}`
+              : `${unnamed ? "Its members" : restricting.map(nameOf).join(", ")} will see only what the team’s sources hold. ${restrictionCost}`
+          }
+          confirmLabel="Save and restrict"
+          pending={pending}
+          onConfirm={() => void save()}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
+      <Dialog
+        title={`Sources for ${name}`}
+        description="What these sources hold of an ontology’s current load is shared; all of it, once everything it reads is chosen here."
+        size="lg"
+        onClose={onClose}
+        footer={
+          <>
+            <Button onClick={onClose}>Close</Button>
+            <Button
+              variant="primary"
+              pending={pending}
+              disabled={!dirty}
+              onClick={() =>
+                restricting.length > 0 || unnamed
+                  ? setConfirming(true)
+                  : void save()
+              }
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <div className="wk-access-grants" data-replay-block>
+          <fieldset className="wk-access-sources">
+            <legend>Sources</legend>
+            {tree.connections.length > 0 && (
+              <ul aria-label="Connections">
+                {tree.connections.map((c) => {
+                  const connection: Grant = {
+                    kind: "connector",
+                    connectorId: c.id,
+                  };
+                  return (
+                    <li key={c.id}>
+                      <SourceCheck
+                        state={state(connection)}
+                        onToggle={() => flip(connection)}
                       >
-                        {c.tables.map((t) => {
-                          const table: Grant = {
-                            kind: "table",
-                            connectorId: c.id,
-                            table: t,
-                          };
-                          return (
-                            <li key={grantKey(table)}>
-                              <SourceCheck
-                                state={state(table)}
-                                coveredBy={c.name}
-                                onToggle={() => flip(table)}
-                              >
-                                <span className="hf-mono">{t}</span>
-                              </SourceCheck>
-                            </li>
-                          );
-                        })}
-                        {c.sets.map((s) => {
-                          const set: Grant = { kind: "set", setId: s.id };
-                          return (
-                            <li key={s.id}>
-                              <SourceCheck
-                                state={state(set, c.id)}
-                                coveredBy={c.name}
-                                onToggle={() => flip(set)}
-                              >
-                                {c.name} / {s.name}
-                              </SourceCheck>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
+                        <span aria-hidden>
+                          <SourceLogo source={c.kind} size={18} />
+                        </span>
+                        <span>
+                          {c.name}
+                          <small> · all of it, now and later</small>
+                        </span>
+                      </SourceCheck>
+                      {(c.tables.length > 0 || c.sets.length > 0) && (
+                        <ul
+                          className="wk-access-nested"
+                          aria-label={`${c.name} tables and sets`}
+                        >
+                          {c.tables.map((t) => {
+                            const table: Grant = {
+                              kind: "table",
+                              connectorId: c.id,
+                              table: t,
+                            };
+                            return (
+                              <li key={grantKey(table)}>
+                                <SourceCheck
+                                  state={state(table)}
+                                  coveredBy={c.name}
+                                  onToggle={() => flip(table)}
+                                >
+                                  <span className="hf-mono">{t}</span>
+                                </SourceCheck>
+                              </li>
+                            );
+                          })}
+                          {c.sets.map((s) => {
+                            const set: Grant = { kind: "set", setId: s.id };
+                            return (
+                              <li key={s.id}>
+                                <SourceCheck
+                                  state={state(set, c.id)}
+                                  coveredBy={c.name}
+                                  onToggle={() => flip(set)}
+                                >
+                                  {c.name} / {s.name}
+                                </SourceCheck>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {tree.sets.length > 0 && (
+              <ul aria-label="Document sets">
+                {tree.sets.map((s) => {
+                  const set: Grant = { kind: "set", setId: s.id };
+                  return (
+                    <li key={s.id}>
+                      <SourceCheck
+                        state={state(set)}
+                        onToggle={() => flip(set)}
+                      >
+                        {s.name}
+                        <small> · documents</small>
+                      </SourceCheck>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <ul aria-label="Other sources">
+              <li>
+                <SourceCheck
+                  state={state({ kind: "enrichment" })}
+                  onToggle={() => flip({ kind: "enrichment" })}
+                >
+                  People enrichment
+                  <small> · profiles a load looked up</small>
+                </SourceCheck>
+              </li>
             </ul>
-          )}
-          {tree.sets.length > 0 && (
-            <ul aria-label="Document sets">
-              {tree.sets.map((s) => {
-                const set: Grant = { kind: "set", setId: s.id };
-                return (
-                  <li key={s.id}>
-                    <SourceCheck state={state(set)} onToggle={() => flip(set)}>
-                      {s.name}
-                      <small> · documents</small>
-                    </SourceCheck>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          <ul aria-label="Other sources">
-            <li>
-              <SourceCheck
-                state={state({ kind: "enrichment" })}
-                onToggle={() => flip({ kind: "enrichment" })}
-              >
-                People enrichment
-                <small> · profiles a load looked up</small>
-              </SourceCheck>
-            </li>
-          </ul>
-        </fieldset>
-        <section className="wk-access-reads" aria-labelledby="access-reads">
-          <h4 id="access-reads">Can read</h4>
-          {reads.length ? (
-            <ul aria-labelledby="access-reads" className="wk-access-lacks">
-              {reads.map((r) => (
-                <li key={r.ontologyId}>
-                  {r.reach === "all" ? (
-                    data.names.ontology(r.ontologyId)
-                  ) : (
-                    <>
-                      <strong>{data.names.ontology(r.ontologyId)}</strong>
-                      <small>
-                        Part of it: not{" "}
-                        {missingText(r.missing, data.names).join(", ")}
-                      </small>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="wk-note">
-              Nothing yet: no ontology’s current load reads any of what is
-              saved.
-            </p>
-          )}
-          {lacks.length > 0 && (
-            <>
-              <h4 id="access-lacks">Can’t read yet</h4>
-              <ul aria-labelledby="access-lacks" className="wk-access-lacks">
-                {lacks.map((r) => (
+          </fieldset>
+          <section className="wk-access-reads" aria-labelledby="access-reads">
+            <h4 id="access-reads">Can read</h4>
+            {reads.length ? (
+              <ul aria-labelledby="access-reads" className="wk-access-lacks">
+                {reads.map((r) => (
                   <li key={r.ontologyId}>
-                    <strong>{data.names.ontology(r.ontologyId)}</strong>
-                    <small>
-                      {r.missing.uncoverable
-                        ? "Load again to share"
-                        : `Reads ${missingText(r.missing, data.names).join(", ")}`}
-                    </small>
+                    {r.reach === "all" ? (
+                      data.names.ontology(r.ontologyId)
+                    ) : (
+                      <>
+                        <strong>{data.names.ontology(r.ontologyId)}</strong>
+                        <small>
+                          Part of it: not{" "}
+                          {missingText(r.missing, data.names).join(", ")}
+                        </small>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
-            </>
-          )}
-          <p className="wk-note">
-            Ontologies show here once they’re loaded.
-            {teams.length > 0 &&
-              ` Also holds what ${teams.map((t) => t.name).join(", ")} ${teams.length > 1 ? "are" : "is"} given.`}
+            ) : (
+              <p className="wk-note">
+                Nothing yet: no ontology’s current load reads any of what is
+                saved.
+              </p>
+            )}
+            {lacks.length > 0 && (
+              <>
+                <h4 id="access-lacks">Can’t read yet</h4>
+                <ul aria-labelledby="access-lacks" className="wk-access-lacks">
+                  {lacks.map((r) => (
+                    <li key={r.ontologyId}>
+                      <strong>{data.names.ontology(r.ontologyId)}</strong>
+                      <small>
+                        {r.missing.uncoverable
+                          ? "Load again to share"
+                          : `Reads ${missingText(r.missing, data.names).join(", ")}`}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <p className="wk-note">
+              Ontologies show here once they’re loaded.
+              {teams.length > 0 &&
+                ` Also holds what ${teams.map((t) => t.name).join(", ")} ${teams.length > 1 ? "are" : "is"} given.`}
+            </p>
+          </section>
+        </div>
+        {error && (
+          <p role="alert" className="hf-form-error">
+            {error}
           </p>
-        </section>
-      </div>
-      {error && (
-        <p role="alert" className="hf-form-error">
-          {error}
-        </p>
-      )}
-    </Dialog>
+        )}
+      </Dialog>
+    </>
   );
 }
 
@@ -696,9 +745,12 @@ const nameOf = (m: WorkspaceMember) =>
 function RestrictSwitch({
   member,
   restricted,
+  holdsSources,
 }: {
   member: WorkspaceMember;
   restricted: boolean;
+  // Holding sources is what restricts them, so it can't be lifted until they go.
+  holdsSources: boolean;
 }) {
   const { id, notify } = useWorkspace(),
     qc = useQueryClient(),
@@ -708,6 +760,12 @@ function RestrictSwitch({
   useEffect(() => setShown(restricted), [restricted]);
   const can = restrictable(member);
   const name = nameOf(member);
+  const held = restricted && holdsSources,
+    why = held
+      ? "Holds sources, their own or a team’s. Take those away first."
+      : can.ok
+        ? undefined
+        : can.why;
   const flip = async (on: boolean) => {
     setPending(true);
     setShown(on);
@@ -727,18 +785,15 @@ function RestrictSwitch({
     }
   };
   return (
-    <label
-      className="checkbox wk-access-switch"
-      title={can.ok ? undefined : can.why}
-    >
+    <label className="checkbox wk-access-switch" title={why}>
       <input
         type="checkbox"
         role="switch"
         data-track="access-restrict"
         aria-label={`Restrict ${name}`}
-        aria-description={can.ok ? undefined : can.why}
+        aria-description={why}
         checked={shown}
-        disabled={pending || (!can.ok && !restricted)}
+        disabled={pending || held || (!can.ok && !restricted)}
         onChange={(e) => void flip(e.target.checked)}
       />
       Restricted
@@ -762,7 +817,7 @@ function PeoplePanel({ data }: { data: AccessData }) {
     <>
       <Panel
         title="People"
-        subtitle="Restrict a member to see only the ontologies their sources cover, in Analyst, Ontologies and Records. Members who aren’t restricted see everything."
+        subtitle="Giving a member sources restricts them to what those hold, in Analyst, Ontologies and Records, and hides everything else. Members who aren’t restricted see everything."
         padded={false}
       >
         {data.members.isPending ? (
@@ -783,7 +838,10 @@ function PeoplePanel({ data }: { data: AccessData }) {
             {list.map((m, i) => {
               const role = roleOf(m),
                 can = restrictable(m),
-                isRestricted = restricted.has(m.user?.id || "");
+                // A restriction applies only while their role is member.
+                isRestricted =
+                  role === "member" && restricted.has(m.user?.id || ""),
+                held = heldGrants(data.access.data || {}, principal(m));
               return (
                 <Row
                   key={m.id || m.user?.id || i}
@@ -816,11 +874,18 @@ function PeoplePanel({ data }: { data: AccessData }) {
                   actions={
                     role === "member" && (
                       <>
-                        <RestrictSwitch member={m} restricted={isRestricted} />
+                        <RestrictSwitch
+                          member={m}
+                          restricted={isRestricted}
+                          holdsSources={held.length > 0}
+                        />
                         <Button
                           size="sm"
                           data-track="access-sources"
                           aria-label={`Sources for ${nameOf(m)}`}
+                          // One who can't be confined is given none, but can lose what they hold.
+                          disabled={!can.ok && held.length === 0}
+                          title={can.ok ? undefined : can.why}
                           onClick={() => setEditing(m)}
                         >
                           Sources
@@ -863,92 +928,132 @@ function TeamDialog({
   const [name, setName] = useState(team?.name || ""),
     [members, setMembers] = useState(new Set(team?.memberUserIds || [])),
     [pending, setPending] = useState(false),
+    [confirming, setConfirming] = useState(false),
     [error, setError] = useState("");
   const people = [...data.people].sort((a, b) =>
     nameOf(a).localeCompare(nameOf(b)),
   );
+  // Joining a team that holds sources restricts whoever isn't yet.
+  const access = data.access.data || {},
+    joining =
+      team &&
+      grantsOf(access.grants || [], {
+        kind: "KIND_TEAM",
+        id: team.id || "",
+      }).length > 0
+        ? people.filter((m) => {
+            const userId = m.user?.id || "";
+            return (
+              m.role === "WORKSPACE_ROLE_MEMBER" &&
+              members.has(userId) &&
+              !team.memberUserIds?.includes(userId) &&
+              !access.restrictedUserIds?.includes(userId)
+            );
+          })
+        : [];
+  const save = async () => {
+    setPending(true);
+    setError("");
+    const body = { name: name.trim(), memberUserIds: [...members] };
+    try {
+      if (team) await updateTeam(id, team.id || "", body);
+      else await createTeam(id, body);
+      await qc.invalidateQueries({ queryKey: accessQuery(id).queryKey });
+      notify(team ? `Saved ${body.name}.` : `Made ${body.name}.`);
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setConfirming(false);
+      setPending(false);
+    }
+  };
   return (
-    <Dialog
-      title={team ? `Edit ${team.name}` : "New team"}
-      description="A team’s members can read what the team is given."
-      size="sm"
-      onClose={onClose}
-    >
-      <form
-        data-replay-block
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setPending(true);
-          setError("");
-          const body = { name: name.trim(), memberUserIds: [...members] };
-          try {
-            if (team) await updateTeam(id, team.id || "", body);
-            else await createTeam(id, body);
-            await qc.invalidateQueries({ queryKey: accessQuery(id).queryKey });
-            notify(team ? `Saved ${body.name}.` : `Made ${body.name}.`);
-            onClose();
-          } catch (err) {
-            setError((err as Error).message);
-          } finally {
-            setPending(false);
+    <>
+      {confirming && (
+        <ConfirmDialog
+          title={
+            joining.length === 1
+              ? `Restrict ${nameOf(joining[0]!)}?`
+              : `Restrict ${plural(joining.length, "member")}?`
           }
-        }}
+          description={`${joining.map(nameOf).join(", ")} will see only what ${team?.name || "the team"}’s sources hold. ${restrictionCost}`}
+          confirmLabel="Save and restrict"
+          pending={pending}
+          onConfirm={() => void save()}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
+      <Dialog
+        title={team ? `Edit ${team.name}` : "New team"}
+        description="A team’s members read what the team is given. Once it has sources, anyone on it is restricted to what they hold, and stays so after leaving."
+        size="sm"
+        onClose={onClose}
       >
-        <label className="hf-field">
-          <span>Name</span>
-          <input
-            required
-            data-autofocus
-            autoComplete="off"
-            maxLength={120}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <fieldset className="wk-access-sources">
-          <legend>Members</legend>
-          <ul aria-label="Team members">
-            {people.map((m) => {
-              const userId = m.user?.id || "";
-              return (
-                <li key={userId}>
-                  <label className="checkbox wk-access-source">
-                    <input
-                      type="checkbox"
-                      checked={members.has(userId)}
-                      onChange={() =>
-                        setMembers((s) => {
-                          const next = new Set(s);
-                          if (!next.delete(userId)) next.add(userId);
-                          return next;
-                        })
-                      }
-                    />
-                    {nameOf(m)}
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-        </fieldset>
-        {error && (
-          <p role="alert" className="hf-form-error">
-            {error}
-          </p>
-        )}
-        <div className="hf-form-actions">
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            type="submit"
-            variant="primary"
-            pending={pending}
-            disabled={!name.trim()}
-          >
-            {team ? "Save" : "Create team"}
-          </Button>
-        </div>
-      </form>
-    </Dialog>
+        <form
+          data-replay-block
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (joining.length > 0) setConfirming(true);
+            else void save();
+          }}
+        >
+          <label className="hf-field">
+            <span>Name</span>
+            <input
+              required
+              data-autofocus
+              autoComplete="off"
+              maxLength={120}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <fieldset className="wk-access-sources">
+            <legend>Members</legend>
+            <ul aria-label="Team members">
+              {people.map((m) => {
+                const userId = m.user?.id || "";
+                return (
+                  <li key={userId}>
+                    <label className="checkbox wk-access-source">
+                      <input
+                        type="checkbox"
+                        checked={members.has(userId)}
+                        onChange={() =>
+                          setMembers((s) => {
+                            const next = new Set(s);
+                            if (!next.delete(userId)) next.add(userId);
+                            return next;
+                          })
+                        }
+                      />
+                      {nameOf(m)}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          </fieldset>
+          {error && (
+            <p role="alert" className="hf-form-error">
+              {error}
+            </p>
+          )}
+          <div className="hf-form-actions">
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              type="submit"
+              variant="primary"
+              pending={pending}
+              disabled={!name.trim()}
+            >
+              {team ? "Save" : "Create team"}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+    </>
   );
 }
 
@@ -1070,7 +1175,7 @@ function TeamsPanel({ data }: { data: AccessData }) {
       {deleting && (
         <ConfirmDialog
           title={`Delete ${deleting.name}?`}
-          description={`Its ${plural(deleting.memberUserIds?.length || 0, "member")} stop reading what it was given.`}
+          description={`Its ${plural(deleting.memberUserIds?.length || 0, "member")} stop reading what it was given. Anyone it restricted stays restricted, reading only what else they hold, until that’s lifted under People.`}
           confirmLabel="Delete team"
           tone="danger"
           pending={pending}
