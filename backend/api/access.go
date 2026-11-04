@@ -335,8 +335,16 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read grants: %v", err)
 	}
+	heldTargets := make([]access.Target, len(held))
+	for i, g := range held {
+		heldTargets[i] = g.Target
+	}
+	covered := access.NewGrants(heldTargets)
 	if slices.ContainsFunc(targets, func(t access.Target) bool {
-		return !slices.ContainsFunc(held, func(g foundrymodel.FoundryAccessGrant) bool { return g.Target == t })
+		if t.Kind() == access.TargetTable {
+			return !covered.CoversTable(access.TableRef{ConnectorID: t.ConnectorID(), Table: t.Table()})
+		}
+		return !slices.Contains(heldTargets, t)
 	}) {
 		if err := s.checkGrantee(ctx, req.GetWorkspaceId(), principal); err != nil {
 			return nil, err
