@@ -104,6 +104,13 @@ export const mock = {
     aiProbeOutcome?: "timeout";
     // The kinds the WFE offers, as a deployment's foundry.ai.kinds.
     aiKinds?: string[];
+    // Suggestions: foundry.heal.enabled off; the current load's audit not
+    // complete; an audit superseding a finding as it is dismissed.
+    healEnabled?: boolean;
+    healRun?: "running" | "failed" | "incomplete" | null;
+    healDismiss?: "superseded" | "fails";
+    // The current load's complete audit didn't check its rows.
+    healRowsMeasured?: boolean;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",

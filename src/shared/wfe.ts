@@ -2347,6 +2347,62 @@ export type ListReviewDecisionsResponse = {
 };
 export type DeleteReviewDecisionResponse = Record<string, never>;
 
+// ---------------------------------------------------------------- Ontology: suggestions
+// GET .../ontologies/{ontologyId}/heal-findings and POST
+// .../heal-findings/{fingerprint}:dismiss: what audits of the ontology's
+// current load found its ontology and mappings lack (self-healing), as the
+// backend's foundry-heal-worker stored them. The list is the top 20 open
+// ones by support; a dismissal holds until an audit finds twice the support,
+// or a spelling it wasn't dismissed with.
+
+/**
+ * v1FoundryHealFinding. `findingJson` is the ontology agent's Finding
+ * (audit_result.json `$defs/Finding`), its backing summed over the load:
+ * parse it without trust (areas/suggestions/model.ts). `kind` and `status`
+ * are the engine's and the backend's words; a later contract adds kinds.
+ */
+export type FoundryHealFinding = {
+  fingerprint: string;
+  // unmatched, unresolved, clash, row_errors, source_drift, or a later kind.
+  kind: string;
+  // open, dismissed or superseded.
+  status: string;
+  // int64 as strings: reviews (a row finding's rows), and documents.
+  support?: string;
+  sources?: string;
+  loadId?: string;
+  baseVersionId?: string;
+  findingJson: string;
+  dismissedByUserId?: string;
+  supportAtDismissal?: string;
+};
+/** v1FoundryHealRun: one audit of a load. */
+export type FoundryHealRun = {
+  id: string;
+  loadId?: string;
+  // running, complete, incomplete (even a page of one document ran out of
+  // time, the run did, or a graph job changed the load: nothing was stored,
+  // and a later run audits again) or failed.
+  status: string;
+  pages?: number;
+  cuts?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  // Whether it audited the load's rows: a complete run does when the load's
+  // report holds them.
+  rowsMeasured?: boolean;
+};
+export type ListHealFindingsResponse = {
+  findings?: FoundryHealFinding[];
+  lastRun?: FoundryHealRun;
+  // The newest complete audit, of whichever load.
+  lastCompleteRun?: FoundryHealRun;
+  // Whether this Foundry audits loads (foundry.heal.enabled); false or unset,
+  // no audit runs.
+  enabled?: boolean;
+};
+export type HealFindingResponse = { finding: FoundryHealFinding };
+
 // ---------------------------------------------------------------- People enrichment
 // GET and PATCH /v1/workspaces/{workspaceId}/foundry/enrichment and POST
 // .../ontologies/{ontologyId}/loads/{id}:stop-enrichment. An owner allows

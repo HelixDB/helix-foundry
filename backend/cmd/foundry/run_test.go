@@ -178,4 +178,32 @@ func TestBuildWorkers(t *testing.T) {
 	if !slices.Equal(names, want) {
 		t.Fatalf("parts = %v, want %v", names, want)
 	}
+
+	// With foundry.heal.enabled, the heal worker runs too; off (above), it
+	// isn't built.
+	heal := cfg.foundry()
+	heal.Foundry.Heal.Enabled = true
+	heal.Foundry.Read.GRPC.Listen, heal.Foundry.Read.HTTP.Listen = freeAddr(t), freeAddr(t)
+	parts, err = buildWorkers(heal, logger, newProbes(nil, logger), store.Unimplemented{}, aws.Config{Region: "us-east-1"},
+		local.Databases{HelixURL: cfg.Local.HelixURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names = nil
+	for _, p := range parts {
+		names = append(names, p.Name())
+		switch p.Name() {
+		case "foundry-read", "foundry-heal-worker":
+			t.Cleanup(func() { _ = p.Stop(context.Background()) })
+		}
+	}
+	slices.Sort(names)
+	want = []string{"foundry-ask-worker", "foundry-document-worker", "foundry-graph-worker", "foundry-heal-worker", "foundry-ontology-worker", "foundry-read",
+		"foundry-sync-worker"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("parts with heal = %v, want %v", names, want)
+	}
+	if n := len(workers); n != 6 {
+		t.Fatalf("the heal worker joined the install's own list: %d workers", n)
+	}
 }
