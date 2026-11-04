@@ -450,6 +450,32 @@ export function restrictable(
     : { ok: true };
 }
 
+/**
+ * Who saving sources for this principal would restrict, as people: a member
+ * given sources, or a team's members, while not restricted yet. An owner or
+ * admin on a team stays as they are.
+ */
+export function newlyRestricted(
+  access: ListFoundryAccessResponse,
+  people: readonly WorkspaceMember[],
+  principal: Principal,
+): WorkspaceMember[] {
+  const team =
+      principal.kind === "KIND_TEAM"
+        ? (access.teams || []).find((t) => t.id === principal.id)
+        : undefined,
+    reached = (id: string) =>
+      principal.kind === "KIND_USER"
+        ? id === principal.id
+        : !!team?.memberUserIds?.includes(id);
+  return people.filter(
+    (m) =>
+      m.role === "WORKSPACE_ROLE_MEMBER" &&
+      reached(m.user?.id || "") &&
+      !access.restrictedUserIds?.includes(m.user?.id || ""),
+  );
+}
+
 // ---------------------------------------------------------------- restricted mode
 
 /**
