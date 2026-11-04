@@ -1041,6 +1041,7 @@ test("a team's confirmation still asks when its members can't be read", async ({
   await make.getByRole("textbox", { name: "Name" }).fill("Finance");
   await make.getByRole("checkbox", { name: "Alan Turing" }).check();
   await make.getByRole("button", { name: "Create team" }).click();
+  await expect(page.getByText("Made Finance.")).toBeVisible();
   await page.route("**/papi/v1/workspaces/*/members*", (route) =>
     route.fulfill({
       status: 500,

@@ -1244,6 +1244,13 @@ func TestGrantsRestrict(t *testing.T) {
 		}); status.Code(err) != codes.FailedPrecondition {
 			t.Fatalf("adding isn't: %v", err)
 		}
+		table := []*foundryv1.FoundryAccessTarget{{Kind: foundryv1.FoundryAccessTarget_KIND_TABLE, ConnectorId: "conn-1", Table: "customers"}}
+		if err := set(user("querying"), table); err != nil {
+			t.Fatalf("a connector down to one of its tables is narrowing: %v", err)
+		}
+		if err := set(user("querying"), []*foundryv1.FoundryAccessTarget{{Kind: foundryv1.FoundryAccessTarget_KIND_TABLE, ConnectorId: "conn-1", Table: "invoices"}}); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("another table is adding: %v", err)
+		}
 		if err := set(user("querying"), nil); err != nil {
 			t.Fatal(err)
 		}

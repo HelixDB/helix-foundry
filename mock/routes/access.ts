@@ -784,7 +784,14 @@ export const accessRoutes: MockRoute[] = [
       );
       if (
         targets.some(
-          (t) => !holding.some((g) => targetKey(g.target) === targetKey(t)),
+          (t) =>
+            !holding.some(
+              (g) =>
+                targetKey(g.target) === targetKey(t) ||
+                (t.kind === "KIND_TABLE" &&
+                  g.target.kind === "KIND_CONNECTOR" &&
+                  g.target.connectorId === t.connectorId),
+            ),
         )
       ) {
         if (principal.kind === "KIND_USER") {
