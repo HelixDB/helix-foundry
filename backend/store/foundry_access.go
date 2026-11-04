@@ -57,7 +57,10 @@ FROM foundry_access_grants WHERE workspace_id=?`
 
 // SetFoundryAccessGrants replaces principal's grants in the workspace with
 // targets, which must be of its live connectors and sets: ErrNotFound means
-// one is not. Grants kept keep their id and creation.
+// one is not. Grants kept keep their id and creation. Giving a member or a
+// team any restricts that member or the team's members in the same
+// transaction, and taking them away leaves them restricted: taking access
+// away never gives anyone more.
 func (s *mysqlDB) SetFoundryAccessGrants(ctx context.Context, workspaceID string, principal access.Principal, targets []access.Target,
 	byUserID *string) error {
 	return s.WithTx(ctx, func(txDB Store) error {
@@ -119,7 +122,16 @@ func (s *mysqlDB) SetFoundryAccessGrants(ctx context.Context, workspaceID string
 		_, err = tx.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_access_grants
  (id, workspace_id, principal_kind, principal_id, target_kind, connector_id, table_name, document_set_id, created_by_user_id)
 VALUES `+strings.Join(rows, ", "), args...)
-		return err
+		if err != nil {
+			return err
+		}
+		switch principal.Kind {
+		case access.PrincipalUser:
+			return tx.SetFoundryMemberRestricted(ctx, workspaceID, principal.ID, true, byUserID)
+		case access.PrincipalTeam:
+			return tx.restrictFoundryTeamMembers(ctx, workspaceID, principal.ID, byUserID)
+		}
+		return nil
 	})
 }
 

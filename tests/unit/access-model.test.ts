@@ -16,6 +16,7 @@ import {
   readsPart,
   readsText,
   readings,
+  newlyRestricted,
   restrictable,
   setOwners,
   sourceState,
@@ -421,6 +422,33 @@ describe("restricting members", () => {
     role: wfe.WorkspaceRole,
     projectAccess?: wfe.ProjectAccess,
   ): wfe.WorkspaceMember => ({ workspaceId: "ws", role, projectAccess });
+  it("names who saving sources would restrict", () => {
+    const person = (
+      id: string,
+      role: wfe.WorkspaceRole,
+    ): wfe.WorkspaceMember => ({
+      workspaceId: "ws",
+      role,
+      user: { id },
+    });
+    const people = [
+      person("eve", "WORKSPACE_ROLE_MEMBER"),
+      person("alan", "WORKSPACE_ROLE_MEMBER"),
+      person("ada", "WORKSPACE_ROLE_OWNER"),
+    ];
+    const access: wfe.ListFoundryAccessResponse = {
+      restrictedUserIds: ["eve"],
+      teams: [{ id: "t", memberUserIds: ["eve", "alan", "ada"] }],
+    };
+    const ids = (p: Parameters<typeof newlyRestricted>[2]) =>
+      newlyRestricted(access, people, p).map((m) => m.user?.id);
+    expect(ids({ kind: "KIND_USER", id: "alan" })).toEqual(["alan"]);
+    expect(ids({ kind: "KIND_USER", id: "eve" })).toEqual([]);
+    expect(ids({ kind: "KIND_USER", id: "ada" })).toEqual([]);
+    expect(ids({ kind: "KIND_TEAM", id: "t" })).toEqual(["alan"]);
+    expect(ids({ kind: "KIND_TEAM", id: "gone" })).toEqual([]);
+    expect(ids({ kind: "KIND_SERVICE_CREDENTIAL", id: "alan" })).toEqual([]);
+  });
   it("restricts only a plain member reaching no database outside Foundry", () => {
     expect(restrictable(member("WORKSPACE_ROLE_OWNER"))).toEqual({
       ok: false,

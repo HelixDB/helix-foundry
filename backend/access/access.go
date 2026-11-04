@@ -7,8 +7,9 @@
 //
 // Everyone else is the host's caller, as before grants existed: the front
 // end that authenticated them authorized the call, and Foundry trusts its
-// Actor. Grants only ever add: a workspace that grants nothing behaves as it
-// did without them.
+// Actor. A workspace that grants nothing behaves as it did without them. A
+// member given grants, or on a team given any, is restricted to them, and
+// taking them away never lifts that (see Service.SetFoundryAccessGrants).
 //
 // The package holds the rules: who a call is for (Caller), and what each of
 // Foundry's methods lets a grantee do (Rules). Package api enforces them on

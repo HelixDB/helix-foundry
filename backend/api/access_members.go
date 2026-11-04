@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/ports"
@@ -27,8 +28,47 @@ const (
 	maxFoundryTeamName    = 120
 )
 
+// restrictable refuses a member grants can't confine: an owner or admin sees
+// everything, and a member with raw access reads the databases outside Foundry.
+func (s *Service) restrictable(ctx context.Context, workspaceID, userID string) error {
+	m, err := s.deps.People.Member(ctx, workspaceID, userID)
+	switch {
+	case err != nil:
+		return status.Errorf(codes.Internal, "read the member: %v", err)
+	case m.Role == ports.RoleNone:
+		return status.Error(codes.NotFound, "member not found")
+	case m.Role != ports.RoleMember:
+		return status.Error(codes.FailedPrecondition, "only a member can be restricted: owners and admins see everything")
+	case m.RawAccess:
+		return status.Error(codes.FailedPrecondition,
+			"this member can write a project or query its databases outside Foundry; take that access away in the Helix dashboard first")
+	}
+	return nil
+}
+
+// teamRestrictable refuses a team's grants while one of these members has raw
+// access. Owners and admins may sit on a team; they stay as they are.
+func (s *Service) teamRestrictable(ctx context.Context, workspaceID string, userIDs []string) error {
+	if s.deps.People == nil {
+		return nil
+	}
+	for _, userID := range userIDs {
+		m, err := s.deps.People.Member(ctx, workspaceID, userID)
+		if err != nil {
+			return status.Errorf(codes.Internal, "read the member: %v", err)
+		}
+		if m.Role == ports.RoleMember && m.RawAccess {
+			return status.Error(codes.FailedPrecondition,
+				"a member of this team can write a project or query its databases outside Foundry; take that access away in the Helix dashboard, or take them off the team, first")
+		}
+	}
+	return nil
+}
+
 // SetFoundryMemberRestricted restricts a plain member to what grants give, or
-// lifts it. Authz has checked the caller manages the workspace's members.
+// lifts it. A member holding sources, their own or a team's, stays restricted
+// until those are gone: holding them is what restricts. Authz has checked the
+// caller manages the workspace's members.
 func (s *Service) SetFoundryMemberRestricted(ctx context.Context, req *foundryv1.SetFoundryMemberRestrictedRequest) (*foundryv1.SetFoundryMemberRestrictedResponse, error) {
 	if req.GetWorkspaceId() == "" || req.GetUserId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id and user_id are required")
@@ -37,20 +77,14 @@ func (s *Service) SetFoundryMemberRestricted(ctx context.Context, req *foundryv1
 		if s.deps.People == nil {
 			return nil, status.Error(codes.FailedPrecondition, "this install has no members to restrict")
 		}
-		m, err := s.deps.People.Member(ctx, req.GetWorkspaceId(), req.GetUserId())
-		switch {
-		case err != nil:
-			return nil, status.Errorf(codes.Internal, "read the member: %v", err)
-		case m.Role == ports.RoleNone:
-			return nil, status.Error(codes.NotFound, "member not found")
-		case m.Role != ports.RoleMember:
-			return nil, status.Error(codes.FailedPrecondition, "only a member can be restricted: owners and admins see everything")
-		case m.RawAccess:
-			return nil, status.Error(codes.FailedPrecondition,
-				"this member can write a project or query its databases outside Foundry; take that access away in the Helix dashboard first")
+		if err := s.restrictable(ctx, req.GetWorkspaceId(), req.GetUserId()); err != nil {
+			return nil, err
 		}
 	}
-	if err := s.deps.DB.SetFoundryMemberRestricted(ctx, req.GetWorkspaceId(), req.GetUserId(), req.GetRestricted(), byUser(ctx)); err != nil {
+	switch err := s.deps.DB.SetFoundryMemberRestricted(ctx, req.GetWorkspaceId(), req.GetUserId(), req.GetRestricted(), byUser(ctx)); {
+	case errors.Is(err, foundrystore.ErrConflict):
+		return nil, status.Error(codes.FailedPrecondition, "this member holds sources, their own or a team's; take those away first")
+	case err != nil:
 		return nil, status.Errorf(codes.Internal, "set the member's restriction: %v", err)
 	}
 	return &foundryv1.SetFoundryMemberRestrictedResponse{Restricted: req.GetRestricted()}, nil
@@ -80,12 +114,33 @@ func (s *Service) CreateFoundryTeam(ctx context.Context, req *foundryv1.CreateFo
 	return s.foundryTeamResponse(ctx, req.GetWorkspaceId(), team.ID)
 }
 
-// UpdateFoundryTeam renames a team and replaces its members. Authz has
-// checked the caller manages the workspace's members.
+// UpdateFoundryTeam renames a team and replaces its members. Whoever joins a
+// team holding grants is restricted to them, and whoever leaves stays
+// restricted (the store does both). Authz has checked the caller manages the
+// workspace's members.
 func (s *Service) UpdateFoundryTeam(ctx context.Context, req *foundryv1.UpdateFoundryTeamRequest) (*foundryv1.FoundryTeamResponse, error) {
 	name, members, err := s.foundryTeam(ctx, req.GetWorkspaceId(), req.GetName(), req.GetMemberUserIds())
 	if err != nil {
 		return nil, err
+	}
+	held, err := s.deps.DB.ListFoundryAccessGrants(ctx, req.GetWorkspaceId(), []access.Principal{{Kind: access.PrincipalTeam, ID: req.GetTeamId()}})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read the team's grants: %v", err)
+	}
+	if len(held) > 0 {
+		// Only who joins: someone given raw access since doesn't stop a rename.
+		teams, err := s.deps.DB.ListFoundryTeams(ctx, req.GetWorkspaceId())
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "read teams: %v", err)
+		}
+		var had []string
+		if i := slices.IndexFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == req.GetTeamId() }); i >= 0 {
+			had = teams[i].MemberUserIDs
+		}
+		joining := slices.DeleteFunc(slices.Clone(members), func(userID string) bool { return slices.Contains(had, userID) })
+		if err := s.teamRestrictable(ctx, req.GetWorkspaceId(), joining); err != nil {
+			return nil, err
+		}
 	}
 	switch err := s.deps.DB.UpdateFoundryTeam(ctx, req.GetWorkspaceId(), req.GetTeamId(), name, members); {
 	case errors.Is(err, foundrystore.ErrNotFound):
