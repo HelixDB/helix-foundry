@@ -30,7 +30,7 @@ import { FORMAT_NAMES, readersText, setLabel } from "../documents/model";
 import { useOntologyNames } from "../documents/sets";
 import { ConnectData } from "./connect-data";
 import { connectorsQuery } from "./data-api";
-import { canManage, lastSyncedAt, rowTotal, syncBadge } from "./model";
+import { canManage, connectorBadge, lastSyncedAt, rowTotal } from "./model";
 import { useDataUpload } from "./upload";
 
 // The Connectors page (/data): what the workspace holds at a glance. Its totals, its
@@ -39,7 +39,8 @@ import { useDataUpload } from "./upload";
 // made, then the connections' own ("Granola / Notes"), which their syncs
 // write. The explorer beside it (./explorer.tsx) opens everything one by
 // one. Owners and admins add data (?add=1 opens the connector picker,
-// ?add=<kind> that kind's form, as the Helix MCP's links do) and upload
+// ?add=<kind> that kind's form, as the Helix MCP's links do, bound to the
+// sign-in an agent started with &sign_in=<id>) and upload
 // documents, with Upload documents or by dropping files on a set people
 // made or anywhere else on the page (./upload.tsx). One list each, so it
 // stays light.
@@ -69,7 +70,10 @@ export function DataOverview() {
         (p) => {
           const next = new URLSearchParams(p);
           if (open) next.set("add", "1");
-          else next.delete("add");
+          else {
+            next.delete("add");
+            next.delete("sign_in");
+          }
           return next;
         },
         { replace: true },
@@ -79,7 +83,7 @@ export function DataOverview() {
       ...c,
       nameText: c.name || connectorLabel(c.kind),
       kindText: connectorLabel(c.kind),
-      statusText: syncBadge(c.lastSync).label,
+      statusText: connectorBadge(c).label,
       tableCount: (c.tables || []).length,
       records: rowTotal(c),
       syncedAt: lastSyncedAt(c) || "",
@@ -198,7 +202,7 @@ export function DataOverview() {
                   label: "Status",
                   width: 130,
                   render: (c) => {
-                    const b = syncBadge(c.lastSync);
+                    const b = connectorBadge(c);
                     return (
                       <span
                         title={
@@ -325,6 +329,7 @@ export function DataOverview() {
         {picker && (
           <ConnectData
             initialKind={params.get("add")}
+            signIn={params.get("sign_in")}
             onClose={() => setPicker(false)}
           />
         )}

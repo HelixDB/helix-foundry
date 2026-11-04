@@ -683,6 +683,8 @@ describe("an API source in the Data routes", () => {
         displayName: "API source",
         requiresPro: false,
         available: true,
+        // Only the kinds Pipes signs in to do.
+        signIn: false,
       });
     const made = ok(
       await call("POST", `${base(GLOBEX)}/connectors`, {

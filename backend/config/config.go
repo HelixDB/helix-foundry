@@ -1002,6 +1002,15 @@ type ConnectorsConfig struct {
 	// backend and sync worker chain through it. Empty turns IAM role access
 	// off, leaving access keys.
 	S3RoleARN string `koanf:"s3_role_arn"`
+	// SignInReturnTo are the site callbacks a connector sign-in may return
+	// to, such as https://foundry.helix-db.com/connect/callback; each must
+	// also be a redirect URI the broker (WorkOS) lists. Empty refuses every
+	// sign-in.
+	SignInReturnTo []string `koanf:"sign_in_return_to"`
+	// GitHubAppInstallURL installs the GitHub App that signed-in GitHub
+	// connectors read through, on an account or organization, for its private
+	// repositories.
+	GitHubAppInstallURL string `koanf:"github_app_install_url"`
 }
 
 var iamRoleARN = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/[\w+=,.@/-]+$`)
@@ -1012,6 +1021,20 @@ func (c ConnectorsConfig) Enabled() bool { return c.CurrentKey != "" }
 func (c ConnectorsConfig) validate() error {
 	if c.S3RoleARN != "" && !iamRoleARN.MatchString(c.S3RoleARN) {
 		return fmt.Errorf("foundry.connectors.s3_role_arn must be an IAM role ARN, like arn:aws:iam::123456789012:role/name")
+	}
+	// The broker matches a sign-in's return_to to its redirect URIs exactly,
+	// and with no query string.
+	for _, callback := range c.SignInReturnTo {
+		u, err := url.Parse(callback)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("foundry.connectors.sign_in_return_to %q must be an absolute URL with no query, such as "+
+				"https://foundry.helix-db.com/connect/callback", callback)
+		}
+	}
+	if install := c.GitHubAppInstallURL; install != "" {
+		if u, err := url.Parse(install); err != nil || u.Scheme != "https" || u.Host == "" {
+			return fmt.Errorf("foundry.connectors.github_app_install_url %q must be an https URL", install)
+		}
 	}
 	if !c.Enabled() && c.CurrentKeyID == "" && c.PreviousKeyID == "" && c.PreviousKey == "" {
 		return nil

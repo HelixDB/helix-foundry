@@ -365,6 +365,30 @@ test("offers every connector to a new workspace", async ({ page }) => {
   await expect(picker.getByLabel("Host")).toBeVisible();
 });
 
+test("connects GitHub and Linear with a key, never by signing in", async ({
+  page,
+}) => {
+  // No accounts to sign in with: a local install has no WorkOS.
+  await page.goto("/data?add=github");
+  const form = page.locator("dialog[open]");
+  await expect(form).toHaveAccessibleName("GitHub");
+  await expect(form.getByLabel("Personal access token")).toBeVisible();
+  await expect(
+    form.getByRole("button", { name: /Connect with GitHub/ }),
+  ).toHaveCount(0);
+  await form.getByRole("button", { name: "← All sources" }).click();
+  await form.getByRole("button", { name: "Linear", exact: true }).click();
+  await expect(form.getByLabel("Personal API key")).toBeVisible();
+  await expect(form.getByText(/Connect with Linear/)).toHaveCount(0);
+  // The local API offers neither kind by signing in.
+  const kinds = (
+    await page.request
+      .get("/papi/v1/workspaces/ws_acme/foundry/connector-kinds")
+      .then((r) => r.json())
+  ).kinds as { kind: string; signIn?: boolean }[];
+  expect(kinds.filter((k) => k.signIn)).toEqual([]);
+});
+
 test("has no New API source in the palette", async ({ page }) => {
   await page.goto("/data");
   await expect(

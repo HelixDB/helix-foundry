@@ -1,5 +1,7 @@
 import type {
   Connector,
+  ConnectorAccount,
+  ConnectorAccountBroken,
   ConnectorConfig,
   ConnectorDiscovery,
   ConnectorKindName,
@@ -23,10 +25,20 @@ import {
   type MockRequest,
   type MockRoute,
 } from "../http";
-import { config, isReply, membership, onReset } from "../state";
+import {
+  LOCAL_TOKEN,
+  PROD_STAMP,
+  config,
+  db,
+  displayName,
+  isReply,
+  membership,
+  onReset,
+} from "../state";
 import { isFoundryPro, proRequired } from "./billing";
 import { dropConnectorDocuments, writeConnectorDocuments } from "./documents";
 import {
+  GITHUB_APP_INSTALL_URL,
   discover,
   documentStreams,
   hint,
@@ -59,12 +71,44 @@ import {
 // (./event-sources.ts) is queued by the pieces sent to it, or by a change of
 // its text field, and takes `eventSyncMs`; it merges every batch waiting,
 // then, with a text field, keeps its newest pieces as documents.
+//
+// The kinds Pipes signs in to (GitHub, Linear, Slack, Notion, PostHog,
+// Cal.com, Stripe, Google Workspace) also connect by signing in at the
+// provider (./sign-ins.ts), except in a local build or with `{"signIn":
+// false}`: such a connector has an account in place of a key, and only the
+// account's member may widen what it reads (widensReach). A signed-in
+// PostHog is US Cloud's: Pipes' PostHog has no region. `{"accountBroken": {"<connectorId>":
+// "member_left"}}` (or access_revoked, expired, account_missing) breaks its
+// account as the WFE does when the member leaves: it needs signing in
+// again, its live syncs fail, and Sync now is refused until then.
 
 const RUN_MS = 2400,
   EVENT_SYNC_MS = 1000;
 
-type Knobs = { eventSyncMs?: number };
+type BreakReason =
+  | "member_left"
+  | "access_revoked"
+  | "expired"
+  | "account_missing";
+type Knobs = {
+  eventSyncMs?: number;
+  signIn?: boolean;
+  accountBroken?: Record<string, BreakReason>;
+};
 const knobs = config as typeof config & Knobs;
+
+/** The broker's account a signed-in connector reads with (hosted: Pipes'). */
+export type StoredAccount = {
+  id: string;
+  // The member it reads as, and who the provider says signed in.
+  userId: string;
+  label: string;
+  // Bumped by each sign-in, as the WFE's account_generation.
+  generation: number;
+  connectedAt: string;
+  broken?: ConnectorAccountBroken;
+  brokenAt?: string;
+};
 
 export type StoredConnector = {
   id: string;
@@ -74,7 +118,60 @@ export type StoredConnector = {
   source: Source;
   createdAt: string;
   updatedAt: string;
+  // Set when it was connected by signing in.
+  account?: StoredAccount;
 };
+
+/** The kinds that connect by signing in, where the stamp offers it. */
+// Every one Pipes signs in to; prod's stamp (pnpm docs:media) lists GitHub
+// and Linear only, as its pipes.kinds starts.
+const SIGN_IN_KINDS: readonly ConnectorKindName[] = PROD_STAMP
+  ? ["github", "linear"]
+  : [
+      "github",
+      "linear",
+      "slack",
+      "notion",
+      "posthog",
+      "calcom",
+      "stripe",
+      "google",
+    ];
+
+/**
+ * Whether settings `now` let a signed-in connector read more than `was`
+ * (both prepared), as the WFE's widensReach decides: GitHub's repositories
+ * (none named where some were, or one not named before, case aside; from
+ * every repository any list narrows it), PostHog's project changed (its
+ * region is US Cloud, fixed). No other kind's settings reach further.
+ */
+export function widensReach(
+  was: ConnectorConfig,
+  now: ConnectorConfig,
+): boolean {
+  if ("github" in now) {
+    const before = ("github" in was && was.github.repos) || [],
+      after = now.github.repos || [];
+    if (!after.length) return before.length > 0;
+    if (!before.length) return false;
+    return after.some(
+      (r) => !before.some((b) => b.toLowerCase() === r.toLowerCase()),
+    );
+  }
+  if ("posthog" in now) {
+    const before = "posthog" in was ? was.posthog : {};
+    return (before.projectId || "") !== (now.posthog.projectId || "");
+  }
+  return false;
+}
+/**
+ * Whether `kind` connects by signing in here: hosted, with the switch on
+ * (a local API has no broker).
+ */
+export const signInOffered = (kind: string) =>
+  !LOCAL_TOKEN &&
+  knobs.signIn !== false &&
+  (SIGN_IN_KINDS as readonly string[]).includes(kind);
 type StoredSync = {
   id: string;
   connectorId: string;
@@ -101,6 +198,7 @@ const syncs: StoredSync[] = [];
 const tables = new Map<string, Map<string, SyncedTable>>();
 /** A workspace's connectors with their synced tables (for other areas' mocks). */
 export function workspaceConnectors(workspaceId: string): Connector[] {
+  applyBreaks();
   return [...connectors.values()]
     .filter((c) => c.workspaceId === workspaceId)
     .map(toConnector);
@@ -117,6 +215,138 @@ export const connectionKind = (connectorId: string) =>
  */
 export const advanceSyncs = (workspaceId: string) =>
   syncs.filter((s) => s.workspaceId === workspaceId).forEach(advance);
+
+// ---------------------------------------------------------------- Accounts
+
+const BROKEN: Record<BreakReason, ConnectorAccountBroken> = {
+  member_left: "CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT",
+  access_revoked: "CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED",
+  expired: "CONNECTOR_ACCOUNT_BROKEN_EXPIRED",
+  account_missing: "CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING",
+};
+const BROKEN_WHY: Record<ConnectorAccountBroken, string> = {
+  CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED: "its sign-in needs renewing",
+  CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT:
+    "the member who connected it left the workspace",
+  CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED:
+    "its access was rejected or revoked there",
+  CONNECTOR_ACCOUNT_BROKEN_EXPIRED: "its access lapsed and couldn't be renewed",
+  CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING: "its sign-in no longer exists",
+};
+const kindName = (kind: string) =>
+  kinds.find((k) => k.name === kind)?.displayName || kind;
+/** The syncer's refusal of a connector whose account is broken. */
+export const brokenMessage = (c: StoredConnector) =>
+  `${kindName(c.kind)} needs signing in again: ${BROKEN_WHY[c.account!.broken!]}. Its data is frozen as of its last sync. An owner or admin signs it in again from its page.`;
+
+/** FailedPrecondition with an ErrorInfo reason, as the WFE's refusals carry. */
+export function refusedFor(reason: string, message: string): MockReply {
+  const reply = fail("FAILED_PRECONDITION", message);
+  return {
+    ...reply,
+    body: {
+      ...(reply.body as object),
+      details: [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          reason,
+          domain: "foundry.helix-db.com",
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * Breaks the accounts `accountBroken` names, once each: BreakConnectorAccounts
+ * as the WFE runs it when the member leaves, which also ends the connector's
+ * live syncs.
+ */
+function applyBreaks() {
+  const asked = knobs.accountBroken;
+  if (!asked) return;
+  delete knobs.accountBroken;
+  const at = now();
+  for (const [connectorId, reason] of Object.entries(asked)) {
+    const c = connectors.get(connectorId);
+    if (!c?.account || c.account.broken || !BROKEN[reason]) continue;
+    c.account.broken = BROKEN[reason];
+    c.account.brokenAt = at;
+    for (const s of syncs)
+      if (s.connectorId === c.id && live(s)) {
+        s.status = "CONNECTOR_SYNC_STATUS_FAILED";
+        s.error = brokenMessage(c);
+        s.finishedAt = at;
+      }
+  }
+}
+
+/** The member's name, or "a former member" once they have left. */
+function connectedBy(c: StoredConnector, a: StoredAccount) {
+  const user = db.users.get(a.userId);
+  return user && !isReply(membership(c.workspaceId, a.userId))
+    ? displayName(user)
+    : "a former member";
+}
+
+const toAccount = (c: StoredConnector, a: StoredAccount): ConnectorAccount => ({
+  label: a.label,
+  state: a.broken
+    ? "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN"
+    : "CONNECTOR_ACCOUNT_STATE_CONNECTED",
+  broken: a.broken || "CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED",
+  brokenAt: a.brokenAt || null,
+  userId: a.userId,
+  connectedBy: connectedBy(c, a),
+  connectedAt: a.connectedAt,
+});
+
+/**
+ * Makes the connector a finished sign-in names, reading with `account`, and
+ * schedules its first sync at once (the mock has no scheduler: it queues
+ * it), as FinishConnectorSignIn does.
+ */
+export function addSignedInConnector(
+  workspaceId: string,
+  name: string,
+  source: Source,
+  account: StoredAccount,
+): StoredConnector {
+  const at = now();
+  const c: StoredConnector = {
+    id: id("conn"),
+    workspaceId,
+    kind: source.kind,
+    name,
+    source,
+    createdAt: at,
+    updatedAt: at,
+    account,
+  };
+  connectors.set(c.id, c);
+  queueSync(c, false);
+  return c;
+}
+
+/**
+ * Signs a connector in again with `account`: a new generation, the break
+ * cleared, and a sync at once. Whether the provider account changed: both
+ * labels known, and different but for case.
+ */
+export function signConnectorInAgain(
+  c: StoredConnector,
+  account: Omit<StoredAccount, "generation">,
+): boolean {
+  const was = c.account?.label || "";
+  const changed =
+    !!was &&
+    !!account.label &&
+    was.toLowerCase() !== account.label.toLowerCase();
+  c.account = { ...account, generation: (c.account?.generation || 0) + 1 };
+  c.updatedAt = now();
+  if (!syncsOf(c.id).some(live)) queueSync(c, false);
+  return changed;
+}
 
 // ---------------------------------------------------------------- Syncs
 
@@ -347,7 +577,8 @@ function toConnector(c: StoredConnector): Connector {
     kind: c.kind,
     name: c.name,
     config: responseConfig(c.source.settings, c.id),
-    secretHint: hint(c.source),
+    // A signed-in connector stores no key.
+    secretHint: c.account ? "" : hint(c.source),
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
     tables: [...(tables.get(c.id)?.values() || [])].sort((a, b) =>
@@ -365,6 +596,7 @@ function toConnector(c: StoredConnector): Connector {
             nextSyncAt: null,
             pausedReason: "",
           },
+    account: c.account ? toAccount(c, c.account) : null,
   };
 }
 
@@ -391,12 +623,14 @@ const discoveryJson = (d: ConnectorDiscovery): ConnectorDiscovery => ({
 
 const sourceFailure = (e: SourceError) => fail(e.code, e.message);
 
-// testSource: the Pro gate, the settings check, then discovery.
-function testSource(
+// testSource: the Pro gate, the settings check, then discovery. A
+// signed-in connector's (`signIn`) reads with the broker's token.
+export function testSource(
   workspaceId: string,
   config: unknown,
+  signIn = false,
 ): { source: Source; discovery: ConnectorDiscovery } | MockReply {
-  const prepared = prepare(config, workspaceId);
+  const prepared = prepare(config, workspaceId, signIn);
   if ("code" in prepared) return sourceFailure(prepared);
   const kind = kinds.find((k) => k.name === prepared.kind)!;
   if (kind.requiresPro && !isFoundryPro(workspaceId))
@@ -454,6 +688,7 @@ export function access(
   req: MockRequest,
   manage: boolean,
 ): MockReply | undefined {
+  applyBreaks();
   const m = membership(req.params.workspaceId!, req.principal.user.id);
   if (isReply(m)) return m;
   if (manage && m.role === "WORKSPACE_ROLE_MEMBER")
@@ -461,14 +696,18 @@ export function access(
   return undefined;
 }
 
-function load(req: MockRequest, id: string): StoredConnector | MockReply {
+export function load(
+  req: MockRequest,
+  id: string,
+): StoredConnector | MockReply {
   const c = connectors.get(id);
   return c && c.workspaceId === req.params.workspaceId
     ? c
     : fail("NOT_FOUND", "connector not found");
 }
-const isConnector = (x: StoredConnector | MockReply): x is StoredConnector =>
-  "source" in x;
+export const isConnector = (
+  x: StoredConnector | MockReply,
+): x is StoredConnector => "source" in x;
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry" as const;
 
@@ -484,9 +723,14 @@ export const dataRoutes: MockRoute[] = [
           displayName: k.displayName,
           requiresPro: k.requiresPro,
           available: !k.requiresPro || isFoundryPro(req.params.workspaceId!),
-          // The setup oneof: set for s3 where role access is configured.
+          signIn: signInOffered(k.name),
+          // The setup oneof: set for s3 where role access is configured,
+          // and for GitHub where it signs in.
           ...(k.name === "s3" && s3Setup(req.params.workspaceId!)
             ? { s3: s3Setup(req.params.workspaceId!) }
+            : {}),
+          ...(k.name === "github" && signInOffered(k.name)
+            ? { github: { installUrl: GITHUB_APP_INSTALL_URL } }
             : {}),
         })),
       } satisfies ListConnectorKindsResponse),
@@ -508,10 +752,21 @@ export const dataRoutes: MockRoute[] = [
   {
     method: "GET",
     path: `${BASE}/connectors`,
+    // needsSignIn: only those whose account needs signing in again,
+    // without their tables or syncs.
     handle: (req) =>
       access(req, false) ||
       ok({
-        connectors: workspaceConnectors(req.params.workspaceId!),
+        connectors:
+          req.query.get("needsSignIn") === "true"
+            ? [...connectors.values()]
+                .filter(
+                  (c) =>
+                    c.workspaceId === req.params.workspaceId &&
+                    !!c.account?.broken,
+                )
+                .map((c) => ({ ...toConnector(c), tables: [], lastSync: null }))
+            : workspaceConnectors(req.params.workspaceId!),
       } satisfies ListConnectorsResponse),
   },
   {
@@ -622,6 +877,47 @@ export const dataRoutes: MockRoute[] = [
               ...c.source,
               settings: { events: { ...held, ...asked } },
             };
+        } else if (c.account) {
+          // Signed in: no key to change, the broker's token re-tests it,
+          // and only the account's member widens what it reads.
+          const part = config[c.kind] || (config[c.kind] = {});
+          if (
+            part.token ||
+            part.apiKey ||
+            part.botToken ||
+            part.serviceAccountKey
+          )
+            return fail(
+              "FAILED_PRECONDITION",
+              `this connector signs in with ${kindName(c.kind)}: sign it in again instead`,
+            );
+          if (c.account.broken)
+            return refusedFor("ACCOUNT_NEEDS_SIGN_IN", brokenMessage(c));
+          const prepared = prepare(config, c.workspaceId, true);
+          if ("code" in prepared) return sourceFailure(prepared);
+          if (
+            widensReach(c.source.settings, prepared.settings) &&
+            req.principal.user.id !== c.account.userId
+          )
+            return refusedFor(
+              "ACCOUNT_OWNER_ONLY",
+              c.kind === "posthog"
+                ? `Only ${connectedBy(c, c.account)} can change its project: ${c.name} reads with their ${kindName(c.kind)} access`
+                : `Only ${connectedBy(c, c.account)} can add repositories, or read every one: ${c.name} reads with their ${kindName(c.kind)} access. You can narrow them`,
+            );
+          const tested = testSource(c.workspaceId, config, true);
+          if ("status" in tested) return tested;
+          if (
+            JSON.stringify(tested.source.settings) !==
+              JSON.stringify(c.source.settings) &&
+            syncsOf(c.id).some(live)
+          )
+            return fail(
+              "FAILED_PRECONDITION",
+              "a sync of this connector is queued or running; change its settings once the sync ends",
+            );
+          source = tested.source;
+          discovery = tested.discovery;
         } else {
           const part = config[c.kind] || (config[c.kind] = {});
           let kept = false;
@@ -745,6 +1041,8 @@ export const dataRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "an API source syncs when pieces arrive; send some first",
         );
+      if (c.account?.broken)
+        return refusedFor("ACCOUNT_NEEDS_SIGN_IN", brokenMessage(c));
       if (syncsOf(c.id).some(live))
         return fail(
           "ALREADY_EXISTS",
@@ -794,6 +1092,8 @@ function seed() {
   syncs.length = 0;
   tables.clear();
   delete knobs.eventSyncMs;
+  delete knobs.signIn;
+  delete knobs.accountBroken;
   const sources: [string, string, unknown][] = [
     [
       "conn_acme_stripe",

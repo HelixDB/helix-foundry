@@ -111,6 +111,15 @@ export const mock = {
     aiProbeOutcome?: "timeout";
     // The kinds the WFE offers, as a deployment's foundry.ai.kinds.
     aiKinds?: string[];
+    // false: no kind connects by signing in (pipes.enabled off).
+    signIn?: boolean;
+    // Every sign-in runs out now, once, as its 15 minutes would.
+    signInsRunOut?: boolean;
+    // Breaks these connectors' accounts, as a member leaving does.
+    accountBroken?: Record<
+      string,
+      "member_left" | "access_revoked" | "expired" | "account_missing"
+    >;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
@@ -274,6 +283,14 @@ export async function loadContracts(page: Page) {
   await expect(
     page.getByRole("status").filter({ hasText: "Loaded" }).first(),
   ).toBeVisible({ timeout: 20_000 });
+}
+
+/**
+ * A kind that signs in opens its form on Connect with <provider>: its key's
+ * form is behind the kind's "Use … instead".
+ */
+export async function chooseKeyForm(form: Locator) {
+  await form.getByRole("button", { name: /^Use (a|an) .+ instead$/ }).click();
 }
 
 /** A CSRF token for the signed-in page's session. */

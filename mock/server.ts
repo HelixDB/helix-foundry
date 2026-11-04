@@ -5,6 +5,7 @@ import { routes } from "./routes";
 import { handleBillingPage } from "./routes/billing";
 import { handleDocumentUpload } from "./routes/documents";
 import { sendPieces } from "./routes/event-sources";
+import { handleConnectPage } from "./routes/sign-ins";
 import {
   LOCAL_TOKEN,
   SEED_EMAIL,
@@ -33,7 +34,11 @@ import { handleWorkos } from "./workos";
 // enrichmentOutcome, documentsPerStream, eventSyncMs, eventCaps,
 // eventSetAllowanceSpent, aiProbeMs, aiProbeOutcome, aiDefault,
 // aiDefaultKind, aiDefaultNamed, aiDetect, ollamaBundled, aiKinds,
-// memberQueryRead, invoiceOnlyCustomers, freshInstall }.
+// memberQueryRead, invoiceOnlyCustomers, freshInstall, signIn,
+// signInsRunOut, accountBroken }.
+//
+// /mock/connect is a provider's consent page for connecting a source by
+// signing in (./routes/sign-ins.ts), as /mock/checkout is Stripe Checkout.
 //
 // POST /__mock/event-sources/{connectorId}/pieces sends pieces to an API
 // source, as an agent does through the Helix MCP: { clientToken?, pieces:
@@ -135,6 +140,7 @@ const server = createServer(async (req, res) => {
     }
     if (await handleWorkos(req, res, url, raw)) return;
     if (handleBillingPage(req, res, url, raw)) return;
+    if (handleConnectPage(req, res, url, raw)) return;
     const reply = url.pathname.startsWith("/v1/")
       ? await wfe(req, url, raw)
       : fail("NOT_FOUND", "Not Found");

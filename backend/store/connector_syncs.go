@@ -146,6 +146,13 @@ WHERE id=? AND status='running' AND lease_owner=?`, id, workerID)
 // A pushed schedule writes no interval and is not guarded by one: an event
 // source has none. It sets the pause, and the next sync as its PushedNext
 // says, so a sync a send scheduled during this one moves only by PushedAt.
+//
+// A connector whose account needs signing in again keeps its schedule as the
+// break left it, none: a sync that ends after the break, even one that
+// succeeded, never schedules it again. One signed in again since the sync
+// read it (its account generation moved past Schedule.Generation) isn't
+// this outcome's to schedule: it keeps its pause as signing in left it, and
+// is due now, so a sync with its new account runs at once.
 func (s *mysqlDB) FinishConnectorSync(ctx context.Context, id, workerID string, outcome model.ConnectorSyncOutcome) error {
 	if outcome.RetryAt != nil {
 		return execOrNotFound(ctx, s.db, `UPDATE connector_syncs
@@ -155,8 +162,8 @@ WHERE id=? AND status='running' AND lease_owner=?`, outcome.RetryAt.UTC(), outco
 	if outcome.Status != model.ConnectorSyncSucceeded && outcome.Status != model.ConnectorSyncFailed {
 		return fmt.Errorf("connector sync outcome %q is not terminal", outcome.Status)
 	}
-	var schedule string
-	var scheduleArgs []any
+	var schedule, resigned string
+	var scheduleArgs, resignedArgs []any
 	switch next := outcome.Schedule; {
 	case next == nil:
 	case next.Pushed == nil:
@@ -164,8 +171,15 @@ WHERE id=? AND status='running' AND lease_owner=?`, outcome.RetryAt.UTC(), outco
 		// the next one by it; the outcome, worked out from the old one, gives way.
 		schedule = `UPDATE connectors c JOIN connector_syncs s ON s.connector_id = c.id
 SET c.next_sync_at = ?, c.schedule_paused = NULLIF(?, '')
-WHERE s.id=? AND c.deleted_at IS NULL AND c.sync_every_seconds <=> ?`
+WHERE s.id=? AND c.deleted_at IS NULL AND c.sync_every_seconds <=> ? AND c.account_broken IS NULL`
 		scheduleArgs = []any{utcPtr(next.NextSyncAt), next.Paused, id, next.Every}
+		if next.Generation != nil {
+			schedule += ` AND c.account_generation = ?`
+			scheduleArgs = append(scheduleArgs, *next.Generation)
+			resigned = `UPDATE connectors c JOIN connector_syncs s ON s.connector_id = c.id SET c.next_sync_at = NOW(6)
+WHERE s.id=? AND c.deleted_at IS NULL AND c.account_broken IS NULL AND c.account_generation <> ?`
+			resignedArgs = []any{id, *next.Generation}
+		}
 	default:
 		if next.NextSyncAt != nil || next.Every != nil {
 			return fmt.Errorf("connector sync %s: a pushed schedule has no next sync time or interval of its own", id)
@@ -198,6 +212,12 @@ WHERE id=?`, string(outcome.Status), outcome.Error, outcome.RowsSynced, string(o
 		}
 		if _, err := tx.ExecContext(ctx, schedule, scheduleArgs...); err != nil {
 			return fmt.Errorf("schedule connector after sync %s: %w", id, err)
+		}
+		if resigned == "" {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, resigned, resignedArgs...); err != nil {
+			return fmt.Errorf("schedule connector signed in again during sync %s: %w", id, err)
 		}
 		return nil
 	})

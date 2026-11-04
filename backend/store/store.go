@@ -69,6 +69,17 @@ type ReadStore interface {
 	// Foundry connectors
 	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
 	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
+	// ListConnectorAccounts is every provider account the workspace holds:
+	// its live signed-in connectors', those waiting to be purged (deleted
+	// connectors'), and those its sign-ins hold without having connected.
+	// It is what a host deletes from its broker before
+	// DeleteWorkspaceConnectors, which queues the connectors' for the purge
+	// too.
+	ListConnectorAccounts(ctx context.Context, workspaceID string) ([]model.ConnectorAccountRef, error)
+	ListConnectorAccountChecks(ctx context.Context, before time.Time, limit int) ([]*model.Connector, error)
+	ListConnectorAccountPurges(ctx context.Context, limit int) ([]*model.ConnectorAccountPurge, error)
+	ConnectorAccountPurgeBacklog(ctx context.Context) (int, *time.Time, error)
+	GetConnectorSignIn(ctx context.Context, workspaceID, id string) (*model.ConnectorSignIn, error)
 	GetActiveConnectorSync(ctx context.Context, workspaceID, connectorID string) (*model.ConnectorSync, error)
 	GetConnectorSync(ctx context.Context, workspaceID, id string) (*model.ConnectorSync, error)
 	ListConnectorSyncs(ctx context.Context, workspaceID, connectorID string, limit int) ([]*model.ConnectorSync, error)
@@ -195,6 +206,26 @@ type Store interface {
 	UpdateConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate) error
 	DeleteConnector(ctx context.Context, workspaceID, id string) error
 	DeleteWorkspaceConnectors(ctx context.Context, workspaceID string) error
+	// BreakConnectorAccounts marks every connector of the workspace whose
+	// account acts as userID as needing signing in again, for reason (a
+	// ports.Account* reason), and stops it syncing. Its host calls it in the
+	// transaction that removes the member.
+	BreakConnectorAccounts(ctx context.Context, workspaceID, userID, reason string) error
+	BreakConnectorAccount(ctx context.Context, workspaceID, connectorID string, generation int, reason string) (bool, error)
+	MarkConnectorAccountChecked(ctx context.Context, workspaceID, connectorID string) error
+	DeferConnectorAccountCheck(ctx context.Context, workspaceID, connectorID string, checkedAt time.Time) error
+	DeleteConnectorAccountPurge(ctx context.Context, id string) error
+	RetryConnectorAccountPurge(ctx context.Context, id, lastError string, after time.Duration) error
+	// Connector sign-ins (connector_sign_ins.go): started, authorized, then
+	// claimed by the one finish that ends them.
+	StartConnectorSignIn(ctx context.Context, start model.ConnectorSignInStart) (*model.ConnectorSignIn, error)
+	SetConnectorSignInVerifier(ctx context.Context, workspaceID, id string, ciphertext []byte, keyID string) error
+	AuthorizeConnectorSignIn(ctx context.Context, workspaceID, id string, ttl, stale time.Duration) error
+	ClaimConnectorSignIn(ctx context.Context, workspaceID, id string) error
+	SetConnectorSignInAccount(ctx context.Context, workspaceID, id, accountID string) error
+	FailConnectorSignIn(ctx context.Context, workspaceID, id string, end model.ConnectorSignInEnd) error
+	ConnectConnectorSignIn(ctx context.Context, c model.ConnectorSignInConnect) error
+	DeleteEndedConnectorSignIns(ctx context.Context, after time.Duration, limit int) (int, error)
 	EnqueueConnectorSync(ctx context.Context, sync *model.ConnectorSync) error
 	ClaimConnectorSync(ctx context.Context, workerID string, lease time.Duration) (*model.ConnectorSync, error)
 	RenewConnectorSyncLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -204,7 +235,7 @@ type Store interface {
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
 	QueueDueConnectorSyncs(ctx context.Context, limit int, eventsAfter time.Duration) (int, error)
-	UpdateConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage, syncID, workerID string) error
+	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
 	ListStrandedConnectorCursors(ctx context.Context, kinds []string, limit int) ([]*model.Connector, error)
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
 	DeleteReplacedSnapshot(ctx context.Context, id string) error

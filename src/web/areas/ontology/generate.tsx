@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { ApiError, sentence } from "../../api";
@@ -14,6 +19,8 @@ import {
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { connectorsQuery } from "../data/data-api";
+import { SignInReturn } from "../data/sign-in";
+import { readPicks } from "../data/sign-ins";
 import {
   documentQueries,
   documentSetQueries,
@@ -57,7 +64,10 @@ import { useSampleOntology } from "./use-sample-ontology";
 // those the current version's generation read, through mappings (its
 // tables) or by extraction (its sets), once the connectors, the sets, the
 // version and its generation have loaded. A generation that can't be read
-// starts with none.
+// starts with none. Connecting by signing in leaves the page: its callback
+// comes back here with what was chosen (SignInReturn's picks, as router
+// state, which a long goal can't outgrow as a link would), the connector it
+// made among them.
 
 export function GeneratePage() {
   const { id, role } = useWorkspace(),
@@ -66,7 +76,11 @@ export function GeneratePage() {
     qc = useQueryClient(),
     [params] = useSearchParams(),
     sample = useSampleOntology(),
-    keepSample = sample?.id === o;
+    keepSample = sample?.id === o,
+    // What was chosen before a sign-in's round trip, when it is back.
+    back = readPicks(
+      (useLocation().state as { picks?: unknown } | null)?.picks,
+    );
   const connectors = useQuery(connectorsQuery(id)),
     generations = useQuery(ontologyQueries.generations(id, o)),
     sets = useQuery(documentSetQueries.list(id)),
@@ -76,13 +90,16 @@ export function GeneratePage() {
       enabled: !!ontology.currentVersionId,
     });
   const setChoices = sets.data?.filter((s) => keepSample || !isSampleSet(s));
-  // The chosen sets start as the prefill's, else the current version's,
-  // once what they come from has loaded; null until then.
+  // The chosen sets start as before a sign-in's round trip, else the
+  // prefill's, else the current version's, once what they come from has
+  // loaded; null until then.
   const prefill = params.get("sets"),
     fromCurrent = prefill === null && !!ontology.currentVersionId;
   const setsLoaded =
     !!sets.data && sample !== undefined && (!fromCurrent || !!current.data);
-  const [chosenSets, setChosenSets] = useState<Set<string> | null>(null);
+  const [chosenSets, setChosenSets] = useState<Set<string> | null>(() =>
+    back?.setIds ? new Set(back.setIds) : null,
+  );
   useEffect(() => {
     if (setsLoaded && chosenSets === null)
       setChosenSets(
@@ -95,8 +112,9 @@ export function GeneratePage() {
         ),
       );
   }, [setsLoaded]);
-  // The chosen API sources start as the prefill's, else those the current
-  // version's generation read; null until what they come from has loaded.
+  // The chosen API sources start as before a sign-in's round trip, else
+  // the prefill's, else those the current version's generation read; null
+  // until what they come from has loaded.
   const eventsPrefill = params.get("event_sources"),
     draftedBy =
       eventsPrefill === null ? current.data?.version?.generationId : undefined,
@@ -110,7 +128,9 @@ export function GeneratePage() {
     (eventsPrefill !== null ||
       !ontology.currentVersionId ||
       (!!current.data && (!draftedBy || !!drafted.data || !!drafted.error)));
-  const [chosenEvents, setChosenEvents] = useState<EventChoices | null>(null);
+  const [chosenEvents, setChosenEvents] = useState<EventChoices | null>(() =>
+    back?.eventSources ? new Map(back.eventSources) : null,
+  );
   useEffect(() => {
     if (eventsLoaded && chosenEvents === null)
       setChosenEvents(
@@ -122,11 +142,14 @@ export function GeneratePage() {
         ),
       );
   }, [eventsLoaded]);
-  const [goal, setGoal] = useState(() => params.get("goal") || "");
+  const [goal, setGoal] = useState(
+    () => back?.goal ?? params.get("goal") ?? "",
+  );
   // The WFE counts characters (code points), not UTF-16 units.
   const goalChars = [...goal.trim()].length;
   // Chosen connectors; by default every synced one (or the ones asked for).
   const [chosen, setChosen] = useState<Set<string> | null>(() => {
+    if (back) return back.connectorIds && new Set(back.connectorIds);
     const wanted = params.get("connectors");
     return wanted === null ? null : new Set(wanted.split(",").filter(Boolean));
   });
@@ -195,93 +218,109 @@ export function GeneratePage() {
   // No <form>: the pickers open the Data area's connection form, a form of
   // its own, whose submit would bubble to this one.
   return (
-    <Page width="narrow">
-      <PageHeader
-        breadcrumbs={crumbs}
-        title="Generate an ontology"
-        subtitle="Foundry’s agent reads your synced tables and documents and drafts the types, links and mappings between them. The draft becomes a new version; your current one stays until you choose otherwise."
-      />
-      <div className="on-stack">
-        <GoalPanel
-          goal={goal}
-          setGoal={setGoal}
-          ontology={ontology.name || ""}
-          chosen={chosen}
-          chosenEvents={chosenEvents}
-          chosenSets={chosenSets}
-          keepSample={keepSample}
+    <SignInReturn.Provider
+      value={{
+        path: paths.generate(o),
+        picks: {
+          goal,
+          connectorIds: chosen && [...chosen],
+          eventSources: chosenEvents && [...chosenEvents],
+          setIds: chosenSets && [...chosenSets],
+        },
+      }}
+    >
+      <Page width="narrow">
+        <PageHeader
+          breadcrumbs={crumbs}
+          title="Generate an ontology"
+          subtitle="Foundry’s agent reads your synced tables and documents and drafts the types, links and mappings between them. The draft becomes a new version; your current one stays until you choose otherwise."
         />
-        <Section
-          id="on-sources"
-          title={STEP_COPY.sources.title}
-          description={STEP_COPY.sources.text}
-        >
-          <SourcesPicker
+        <div className="on-stack">
+          <GoalPanel
+            goal={goal}
+            setGoal={setGoal}
+            ontology={ontology.name || ""}
             chosen={chosen}
-            setChosen={setChosen}
             chosenEvents={chosenEvents}
-            setChosenEvents={setChosenEvents}
             chosenSets={chosenSets}
-            setChosenSets={setChosenSets}
-            failed={
-              fromCurrent && !current.data && current.error
-                ? { error: current.error, retry: () => void current.refetch() }
-                : null
-            }
             keepSample={keepSample}
           />
-        </Section>
-        <div className="on-generate-foot">
-          <p className="on-muted" role="status">
-            {state.kind === "ready"
-              ? `${state.summary}.`
-              : state.kind === "blocked"
-                ? state.reason
-                : "…"}
-          </p>
-          {state.kind === "ready" && state.note && (
-            <p className="on-muted">{state.note}</p>
-          )}
-          {live && (
-            <p className="on-muted">
-              A generation is already{" "}
-              {live.status === "ONTOLOGY_GENERATION_STATUS_RUNNING"
-                ? "running"
-                : "queued"}
-              . <Link to={paths.generation(o, live.id)}>See its progress</Link>
-            </p>
-          )}
-          <AiRefusal
-            action="Generating an ontology"
-            error={error}
-            ready={aiReady}
+          <Section
+            id="on-sources"
+            title={STEP_COPY.sources.title}
+            description={STEP_COPY.sources.text}
           >
-            {!!error && (
-              <p className="hf-form-error" role="alert">
-                <SettingsLinked text={sentence((error as Error).message)} />
+            <SourcesPicker
+              chosen={chosen}
+              setChosen={setChosen}
+              chosenEvents={chosenEvents}
+              setChosenEvents={setChosenEvents}
+              chosenSets={chosenSets}
+              setChosenSets={setChosenSets}
+              failed={
+                fromCurrent && !current.data && current.error
+                  ? {
+                      error: current.error,
+                      retry: () => void current.refetch(),
+                    }
+                  : null
+              }
+              keepSample={keepSample}
+            />
+          </Section>
+          <div className="on-generate-foot">
+            <p className="on-muted" role="status">
+              {state.kind === "ready"
+                ? `${state.summary}.`
+                : state.kind === "blocked"
+                  ? state.reason
+                  : "…"}
+            </p>
+            {state.kind === "ready" && state.note && (
+              <p className="on-muted">{state.note}</p>
+            )}
+            {live && (
+              <p className="on-muted">
+                A generation is already{" "}
+                {live.status === "ONTOLOGY_GENERATION_STATUS_RUNNING"
+                  ? "running"
+                  : "queued"}
+                .{" "}
+                <Link to={paths.generation(o, live.id)}>See its progress</Link>
               </p>
             )}
-          </AiRefusal>
-          <div className="hf-form-actions">
-            <ButtonLink to={paths.ontology(o)}>Cancel</ButtonLink>
-            <Button
-              variant="primary"
-              icon={Sparkles}
-              pending={pending}
-              disabled={
-                state.kind !== "ready" ||
-                goalChars > MAX_GOAL ||
-                chosenSets === null ||
-                chosenEvents === null ||
-                aiReady === false
-              }
-              onClick={() => void submit()}
+            <AiRefusal
+              action="Generating an ontology"
+              error={error}
+              ready={aiReady}
             >
-              Generate
-            </Button>
+              {!!error && (
+                <p className="hf-form-error" role="alert">
+                  <SettingsLinked text={sentence((error as Error).message)} />
+                </p>
+              )}
+            </AiRefusal>
+            <div className="hf-form-actions">
+              <ButtonLink to={paths.ontology(o)}>Cancel</ButtonLink>
+              <Button
+                variant="primary"
+                icon={Sparkles}
+                pending={pending}
+                disabled={
+                  state.kind !== "ready" ||
+                  goalChars > MAX_GOAL ||
+                  chosenSets === null ||
+                  chosenEvents === null ||
+                  aiReady === false
+                }
+                onClick={() => void submit()}
+              >
+                Generate
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
-    </Page>
+      </Page>
+    </SignInReturn.Provider>
   );
 }
