@@ -412,6 +412,10 @@ test("shows the WFE's reasons for bad credentials and unreachable hosts", async 
     .getByRole("button", { name: "MySQL", exact: true })
     .click();
   const form = dialog(page);
+  // MySQL can't share one snapshot between connections, so the guide says so.
+  await expect(form.locator(".connection-guide")).toContainText(
+    "A sync reads each table in its own transaction, so tables can reflect slightly different moments.",
+  );
   await form.getByLabel("Host", { exact: true }).fill("10.0.0.12");
   await form.getByLabel("Database", { exact: true }).fill("app");
   await form.getByLabel("Username", { exact: true }).fill("foundry");

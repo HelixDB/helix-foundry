@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/filesource"
+	"github.com/jackc/pgx/v5"
 )
 
 // Source is one connector's settings and its decrypted credential. Settings
@@ -29,6 +30,9 @@ type Source struct {
 	// Captures are the capture methods the workspace's plan allows. A kind
 	// with more than one way to follow a table takes the best one allowed.
 	Captures []Capture
+	// held is the transaction a PostgreSQL SourceSnapshot holds open: every
+	// table read with this source is read on it, at its one snapshot.
+	held pgx.Tx
 	// SignIn is set when Secret is a token the host's broker vended for a
 	// signed-in connector's account, not a key a person entered: Prepare
 	// skips the key's format checks (and takes no Secret at all, to check
@@ -64,6 +68,29 @@ type Targeted interface {
 	// Target names where prepared settings send the credential; two settings
 	// with equal targets send it to the same server.
 	Target(settings json.RawMessage) (string, error)
+}
+
+// SnapshotKind is a kind that can read every table of a full read at one
+// snapshot of its source, so the tables agree with each other: a change
+// committed while they are read shows in all of them or in none.
+type SnapshotKind interface {
+	Kind
+	// SourceSnapshot holds one snapshot of the source open for the tables
+	// read with the returned Source, one at a time, until its Close. It
+	// takes no more of the source's connections than reading a table at a
+	// time does. A source Start already bound to a snapshot keeps it. An
+	// error holds nothing open: each table is then read at a moment of its
+	// own, as by any other kind.
+	SourceSnapshot(ctx context.Context, src Source) (SourceSnapshot, error)
+}
+
+// SourceSnapshot is the one moment of a source a full read's tables are read at.
+type SourceSnapshot struct {
+	// Source is what every table's Sync reads with, one table at a time.
+	Source Source
+	// Close releases the snapshot once the tables are read, on every path.
+	// Never nil.
+	Close func()
 }
 
 // Identifier is a kind that says who its credential reads as: for a person
