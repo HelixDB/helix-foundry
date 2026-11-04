@@ -9,7 +9,7 @@ open http://localhost:3000   # that name: the site answers no other host
 
 It opens in your first workspace, **My workspace**, made as the install first starts.
 
-**Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data.
+**Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data. Back it up with the data: [Back up and restore](#back-up-and-restore).
 
 **No analytics.** A local build loads no tracker and sends no usage data anywhere; only the hosted site, foundry.helix-db.com, records product analytics.
 
@@ -31,7 +31,7 @@ It opens in your first workspace, **My workspace**, made as the install first st
 | `ollama`         | Ollama, and `ollama-pull`, which downloads its model: with the `ollama` profile only.           |
 | `init-secrets`   | Writes the install's secrets into the `secrets` volume once, then exits, before the rest start. |
 
-Data lives in the Compose volumes `mysql`, `storage`, `helix` and `work`, its secrets in `secrets` (and Ollama's models in `ollama`). `docker compose down` keeps them; `docker compose down -v` deletes everything, the connector key with it.
+Data lives in the Compose volumes `mysql`, `storage`, `helix` and `work`, its secrets in `secrets` (and Ollama's models in `ollama`). `docker compose down` keeps them; `docker compose down -v` deletes everything, the connector key with it. [Back up and restore](#back-up-and-restore) copies them.
 
 ## AI
 
@@ -66,6 +66,63 @@ Foundry runs in Docker, so a server on this computer is `host.docker.internal`, 
 ## Images
 
 `docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+
+## Back up and restore
+
+**What a backup is.** The volumes `mysql`, `storage`, `helix`, `work` and `secrets`, all five copied together with the stack stopped, and the images that wrote them. The store, the files and the graph refer to each other: volumes copied at different times, or while Foundry runs, may not match. `acme-db` keeps nothing, and Ollama's models (`ollama`) download again.
+
+**Secrets.** `secrets` holds the site's token, the store's secret, MySQL's password and the connector key. Without it the restored data doesn't open: MySQL keeps the password it was first started with, and the connector key seals every database password and API key in the store. Whoever has it and the rest can read every one of them, so keep `secrets.tar.gz` encrypted, or apart from the other archives, and your `local/.env`, if you made one, with it.
+
+**Back up** from where you run Foundry: the repository's root, or `local/` for a `setup.sh` install that must run from there (above). `docker compose down` stops everything first, giving a load or question in flight up to two minutes to finish or be handed back, and the archives go into a folder only you can read. The block stops at the first step that fails, and the stack stays stopped until it runs to the end:
+
+```sh
+backup=~/foundry-backup-$(date +%F-%H%M)
+(
+  set -eu -o pipefail
+  mkdir -m 700 "$backup"
+  docker compose config --images | sort -u > "$backup/images.txt"
+  docker compose down
+  for v in mysql storage helix work secrets; do
+    docker volume inspect "helix-foundry_$v" > /dev/null
+    docker run --rm -v "helix-foundry_$v:/volume:ro" alpine:3.22 tar -czf - -C /volume . > "$backup/$v.tar.gz"
+    gzip -t "$backup/$v.tar.gz"
+  done
+  docker compose up -d --wait
+)
+```
+
+**Restore** onto the images the backup lists: the same release of this repository, with the same `local/.env`, run from the same place. If you keep `secrets.tar.gz` apart or encrypted, put it back in the backup's folder, decrypted, first. Then check the backup. This changes nothing, and prints `backup ok` only when the images match and every archive is whole:
+
+```sh
+backup=~/foundry-backup-2026-11-02-1413
+(
+  set -eu -o pipefail
+  docker compose config --images | sort -u | diff - "$backup/images.txt"
+  for v in mysql storage helix work secrets; do gzip -t "$backup/$v.tar.gz"; done
+  echo backup ok
+)
+```
+
+Every volume goes back under its own name before the stack first starts, so on a machine with an install, `docker compose down -v` deletes that first, once the check passes. Then restore, in the same shell (it reads `$backup`); it stops at the first step that fails. A start before the restore writes new secrets and an empty store: `docker compose down -v`, and restore again.
+
+```sh
+(
+  set -eu -o pipefail
+  docker compose create
+  for v in mysql storage helix work secrets; do
+    docker run --rm -i -v "helix-foundry_$v:/volume" alpine:3.22 tar -xzf - -C /volume < "$backup/$v.tar.gz"
+  done
+  docker compose up -d --wait
+)
+```
+
+**Check it**, after a restore and in a rehearsal on another machine now and then:
+
+- `docker compose logs init-secrets` says `kept` for each of the four secrets, and `wrote` none.
+- The site opens on your workspaces, with their connections, documents and ontologies. Sync a connection: it syncs only if the restored connector key opens its credential.
+- A document opens, and the Explorer shows what each ontology loaded.
+
+**Upgrades.** Back up before you upgrade (a new release, or another `FOUNDRY_*IMAGE`): its first start migrates the store, and migrations only go forward, so the release before must not run on it again. Restore a backup only onto the images it lists, then upgrade again if you need to.
 
 ## Connecting databases
 
