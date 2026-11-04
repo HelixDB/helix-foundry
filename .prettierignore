@@ -17,4 +17,4 @@ backend
 src/landing/data
 
 # P3 contract fixture, copied verbatim from the engine
-tests/unit/fixtures/ask-result-4.5.0.schema.json
+tests/unit/fixtures/ask-result-4.7.0.schema.json

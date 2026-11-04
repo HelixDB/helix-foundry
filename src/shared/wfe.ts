@@ -2222,7 +2222,7 @@ export type CitationTarget =
         tx: string;
         at: string;
         of: VersionOf;
-        // Contract 4.5.0: when the state held in the world, distinct from at.
+        // Contract 4.7.0: when the state held in the world, distinct from at.
         valid?: { from: string; to?: string };
       };
     };
@@ -2320,7 +2320,7 @@ export type AskUsage = {
   usd: number;
 };
 
-/** Contract 4.5.0's classification of why a question cannot be answered. */
+/** Contract 4.7.0's classification of why a question cannot be answered. */
 export type CannotAnswerKind =
   | "uncovered"
   | "after_as_of"
