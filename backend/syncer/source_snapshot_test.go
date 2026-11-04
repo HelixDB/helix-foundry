@@ -21,9 +21,8 @@ import (
 // source, which it names in the settings it binds: s1, s2, and so on.
 type snapshotKind struct {
 	fakeKind
-	// refuse fails SourceSnapshot; apart makes Close say a table was read apart.
+	// refuse fails SourceSnapshot.
 	refuse error
-	apart  bool
 	opened int
 	closed int
 	// fail fails the next read of each table it names.
@@ -36,10 +35,7 @@ func (k *snapshotKind) SourceSnapshot(_ context.Context, src connector.Source) (
 	}
 	k.opened++
 	src.Settings = json.RawMessage(fmt.Sprintf(`{"snapshot":"s%d"}`, k.opened))
-	return connector.SourceSnapshot{Source: src, Close: func() bool {
-		k.closed++
-		return !k.apart
-	}}, nil
+	return connector.SourceSnapshot{Source: src, Close: func() { k.closed++ }}, nil
 }
 
 func (k *snapshotKind) Sync(ctx context.Context, src connector.Source, table connector.Table, w connector.RowWriter) (connector.Table, error) {
@@ -135,24 +131,33 @@ func TestSyncerSourceSnapshot(t *testing.T) {
 			t.Fatalf("closed %d, counted %v", kind.closed, sourceSnapshotCount("one")-before)
 		}
 	})
-	t.Run("says when the source refused a table the snapshot", func(t *testing.T) {
+	// A source with no connection to spare for the snapshot (a role's
+	// connection limit, a pooler's wait) reads as it did before snapshots.
+	t.Run("reads a table at a time when the source has no connection for a snapshot", func(t *testing.T) {
 		kind := twoTables()
-		kind.apart = true
+		kind.refuse = &connector.RefusedError{Message: "could not connect; check the host, port and connection settings, then test again",
+			Err: errors.New("FATAL: too many connections for role \"reader\" (SQLSTATE 53300)")}
 		f := newFakeFixture(t, &kind.fakeKind, `{}`)
 		f.syncer.Catalog = connector.NewCatalogOf(kind)
-		before := sourceSnapshotCount("apart")
+		before, one := sourceSnapshotCount("unavailable"), sourceSnapshotCount("one")
 		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
 			t.Fatal(err)
 		}
-		if got := sourceSnapshotCount("apart") - before; got != 1 || len(f.store.tables) != 2 {
-			t.Fatalf("counted %v apart, tables %v", got, f.store.tables)
+		if !slices.Equal(kind.synced, []string{"a", "b"}) || !slices.Equal(kind.readWith(), []string{`{}`, `{}`}) {
+			t.Fatalf("read %v with %v, want both, unbound", kind.synced, kind.readWith())
+		}
+		if kind.opened != 0 || kind.closed != 0 || len(f.store.tables) != 2 {
+			t.Fatalf("opened %d, closed %d, tables %v", kind.opened, kind.closed, f.store.tables)
+		}
+		if got, shared := sourceSnapshotCount("unavailable")-before, sourceSnapshotCount("one")-one; got != 1 || shared != 0 {
+			t.Fatalf("counted %v unavailable and %v one, want one read unavailable", got, shared)
 		}
 	})
 	// A source that takes no snapshot reads as it did before snapshots, and a
 	// retry keeps what the attempt before it wrote.
 	t.Run("reads a table at a time when the source takes no snapshot", func(t *testing.T) {
 		kind := twoTables()
-		kind.refuse = errors.New("pg_export_snapshot is not supported")
+		kind.refuse = errors.New("the server refused a read-only transaction")
 		kind.fail = map[string]error{"b": &connector.RefusedError{Message: "the database is restarting"}}
 		f := newFakeFixture(t, &kind.fakeKind, `{}`)
 		f.syncer.Catalog = connector.NewCatalogOf(kind)
@@ -393,9 +398,38 @@ func TestSyncerPostgresSnapshot(t *testing.T) {
 		}
 		waitPostgresGone(t, role)
 	})
-	// A server that never saw the snapshot, or that ended its holder, refuses
-	// it: that table is read as it was before, and the sync says so.
-	t.Run("reads on when the server refuses a table the snapshot, and says so", func(t *testing.T) {
+	// The tables are read on the snapshot's own transaction, so a role
+	// limited to one connection, which a snapshot held beside each table's
+	// connection would lock out, reads every table at one moment.
+	t.Run("reads at one snapshot as a role limited to one connection", func(t *testing.T) {
+		f, kind, role, next := postgresFixture(t, "free", "CONNECTION LIMIT 1", nil)
+		var held []int32
+		kind.after = func(table string) {
+			if table == "a" {
+				held = postgresHolding(t, role)
+				next()
+			}
+		}
+		before := sourceSnapshotCount("one")
+		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
+			t.Fatal(err)
+		}
+		if len(held) != 1 {
+			t.Fatalf("sessions holding a snapshot during the read = %v, want one", held)
+		}
+		for _, table := range []string{"a", "b"} {
+			if got := f.snapshotRows(t, table); !slices.Equal(got, []string{`{"id":1,"generation":1}`}) {
+				t.Fatalf("%s = %v, want generation 1", table, got)
+			}
+		}
+		if got := sourceSnapshotCount("one") - before; got != 1 {
+			t.Fatalf("counted %v reads at one snapshot", got)
+		}
+		waitPostgresGone(t, role)
+	})
+	// A snapshot whose session ended fails the attempt; the retry keeps the
+	// table stored and reads the rest at a moment of its own.
+	t.Run("fails the attempt when the snapshot's session ends, and the retry reads on", func(t *testing.T) {
 		f, kind, role, next := postgresFixture(t, "free", "", nil)
 		kind.after = func(table string) {
 			if table != "a" {
@@ -407,16 +441,20 @@ func TestSyncerPostgresSnapshot(t *testing.T) {
 			waitPostgresGone(t, role)
 			next()
 		}
-		before := sourceSnapshotCount("apart")
+		if _, err := f.syncer.Run(ctx, f.sync); err == nil {
+			t.Fatal("the attempt succeeded, want b's read on the ended snapshot to fail")
+		}
+		kind.after, kind.read = nil, nil
+		before := sourceSnapshotCount("resumed")
 		if _, err := f.syncer.Run(ctx, f.sync); err != nil {
 			t.Fatal(err)
 		}
-		if a, b := f.snapshotRows(t, "a"), f.snapshotRows(t, "b"); !slices.Equal(a, []string{`{"id":1,"generation":1}`}) ||
-			!slices.Equal(b, []string{`{"id":1,"generation":2}`}) {
-			t.Fatalf("a = %v, b = %v, want b read at a moment of its own", a, b)
+		if a, b := f.snapshotRows(t, "a"), f.snapshotRows(t, "b"); !slices.Equal(kind.read, []string{"b"}) ||
+			!slices.Equal(a, []string{`{"id":1,"generation":1}`}) || !slices.Equal(b, []string{`{"id":1,"generation":2}`}) {
+			t.Fatalf("retry read %v; a = %v, b = %v, want b alone read at a moment of its own", kind.read, a, b)
 		}
-		if got := sourceSnapshotCount("apart") - before; got != 1 {
-			t.Fatalf("counted %v reads apart, want 1", got)
+		if got := sourceSnapshotCount("resumed") - before; got != 1 {
+			t.Fatalf("counted %v resumed, want 1", got)
 		}
 		waitPostgresGone(t, role)
 	})

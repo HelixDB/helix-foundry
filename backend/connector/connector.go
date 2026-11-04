@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/filesource"
+	"github.com/jackc/pgx/v5"
 )
 
 // Source is one connector's settings and its decrypted credential. Settings
@@ -30,10 +30,9 @@ type Source struct {
 	// Captures are the capture methods the workspace's plan allows. A kind
 	// with more than one way to follow a table takes the best one allowed.
 	Captures []Capture
-	// apart is set on a source a SnapshotKind bound to a snapshot the source
-	// may refuse: a table's Sync marks it when the source refused the table
-	// that snapshot and read it at a moment of its own instead.
-	apart *atomic.Bool
+	// held is the transaction a PostgreSQL SourceSnapshot holds open: every
+	// table read with this source is read on it, at its one snapshot.
+	held pgx.Tx
 	// SignIn is set when Secret is a token the host's broker vended for a
 	// signed-in connector's account, not a key a person entered: Prepare
 	// skips the key's format checks (and takes no Secret at all, to check
@@ -77,22 +76,21 @@ type Targeted interface {
 type SnapshotKind interface {
 	Kind
 	// SourceSnapshot holds one snapshot of the source open for the tables
-	// read with the returned Source, until its Close. A source Start already
-	// bound to a snapshot keeps it. An error holds nothing open: each table
-	// is then read at a moment of its own, as by any other kind.
+	// read with the returned Source, one at a time, until its Close. It
+	// takes no more of the source's connections than reading a table at a
+	// time does. A source Start already bound to a snapshot keeps it. An
+	// error holds nothing open: each table is then read at a moment of its
+	// own, as by any other kind.
 	SourceSnapshot(ctx context.Context, src Source) (SourceSnapshot, error)
 }
 
 // SourceSnapshot is the one moment of a source a full read's tables are read at.
 type SourceSnapshot struct {
-	// Source is what every table's Sync reads with.
+	// Source is what every table's Sync reads with, one table at a time.
 	Source Source
-	// Close releases the snapshot once the tables are read, on every path,
-	// and reports whether every table was read at it: false when the source
-	// refused some table the snapshot, as a server other than the one
-	// holding it does, and that table was read at a moment of its own.
+	// Close releases the snapshot once the tables are read, on every path.
 	// Never nil.
-	Close func() (whole bool)
+	Close func()
 }
 
 // Identifier is a kind that says who its credential reads as: for a person

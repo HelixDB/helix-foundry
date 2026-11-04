@@ -3,16 +3,13 @@ package connector
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"regexp"
 	"slices"
-	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type postgresKind struct {
@@ -32,8 +29,7 @@ func (k *postgresKind) Prepare(src Source) (json.RawMessage, error) {
 
 // postgresSettings are the stored settings plus what Discover and Start work
 // out for one sync. Discover recomputes Keyless and Unpublished every time,
-// and Snapshot only ever travels from Start or SourceSnapshot to the full
-// read's tables.
+// and Snapshot only ever travels from Start to the full read.
 type postgresSettings struct {
 	DatabaseSettings
 	// Keyless are the tables without a primary key; they are always read in full.
@@ -41,8 +37,7 @@ type postgresSettings struct {
 	// Unpublished are, with CDC on, the keyed tables the publication leaves
 	// out; they keep the cursor-column method.
 	Unpublished []string `json:"unpublished,omitempty"`
-	// Snapshot is the snapshot every table of the full read imports: the
-	// replication slot's (Start), else the full read's own (SourceSnapshot).
+	// Snapshot is the replication slot's exported snapshot, which the full read imports.
 	Snapshot string `json:"snapshot,omitempty"`
 }
 
@@ -254,34 +249,37 @@ func (k *postgresKind) Target(settings json.RawMessage) (string, error) {
 }
 
 // Sync copies one table from a consistent snapshot: the full read's, when
-// src carries one, else its own. PostgreSQL encodes each row as JSON itself,
-// so no column type needs mapping here.
+// src holds one (SourceSnapshot) or carries the replication slot's, else
+// its own. PostgreSQL encodes each row as JSON itself, so no column type
+// needs mapping here.
 func (k *postgresKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {
 	return table, k.copyRows(ctx, src, table.Name, w)
 }
 
 var _ SnapshotKind = (*postgresKind)(nil)
 
-// SourceSnapshot exports one snapshot for a full read from a connection of
-// its own, dialed through the guard with the read's settings, and holds it
-// in a read-only repeatable-read transaction until Close; every table's read
-// imports it (copyRows). The transaction sits idle between the reads, so it
-// first turns off idle_in_transaction_session_timeout for its session, a
-// server's setting that would end it: as the transaction's first statement,
-// which a transaction pooler sends to the server connection holding the
-// snapshot. A source the replication slot bound (Start) keeps the slot's
-// snapshot, which the slot's position matches.
+// SourceSnapshot opens a connection, dialed through the guard with the
+// read's settings, and holds a read-only repeatable-read transaction on it
+// until Close: every table of the full read is read on that transaction
+// (copyRows), so all at its one snapshot, over the one connection. A role
+// limited to one connection, a pooler with one server connection, or a
+// load-balanced reader endpoint reads exactly as it would a table at a time,
+// and a server that exports no snapshots needs none. The transaction sits
+// idle while each table is published, so its first statement turns off
+// idle_in_transaction_session_timeout, a server's setting that would end
+// it, for the transaction alone (SET LOCAL), never for a pooler's server
+// connection after it. A source the replication slot bound (Start) keeps
+// the slot's snapshot, which the slot's position matches, and holds nothing.
 //
-// What it costs the source: one more connection for as long as the full
-// read lasts, and the row versions the snapshot sees, which vacuum keeps
-// until it ends.
+// What it costs the source: the row versions the snapshot sees, which
+// vacuum keeps until the full read ends.
 func (k *postgresKind) SourceSnapshot(ctx context.Context, src Source) (SourceSnapshot, error) {
 	s, err := decodePostgresSettings(src.Settings)
 	if err != nil {
 		return SourceSnapshot{}, err
 	}
 	if s.Snapshot != "" {
-		return SourceSnapshot{Source: src, Close: func() bool { return true }}, nil
+		return SourceSnapshot{Source: src, Close: func() {}}, nil
 	}
 	conn, err := k.connect(ctx, s.DatabaseSettings, src.Secret)
 	if err != nil {
@@ -298,25 +296,13 @@ func (k *postgresKind) SourceSnapshot(ctx context.Context, src Source) (SourceSn
 		end()
 		return SourceSnapshot{}, connectFailure(err)
 	}
-	if _, err := tx.Exec(ctx, "SET idle_in_transaction_session_timeout = 0"); err != nil {
+	if _, err := tx.Exec(ctx, "SET LOCAL idle_in_transaction_session_timeout = 0"); err != nil {
 		end()
 		return SourceSnapshot{}, fmt.Errorf("keep the snapshot's transaction open: %w", err)
 	}
-	if err := tx.QueryRow(ctx, "SELECT pg_catalog.pg_export_snapshot()").Scan(&s.Snapshot); err != nil {
-		end()
-		return SourceSnapshot{}, fmt.Errorf("export a snapshot: %w", err)
-	}
-	settings, err := json.Marshal(s)
-	if err != nil {
-		end()
-		return SourceSnapshot{}, fmt.Errorf("encode postgres settings: %w", err)
-	}
 	read := src
-	read.Settings, read.apart = settings, new(atomic.Bool)
-	return SourceSnapshot{Source: read, Close: func() bool {
-		end()
-		return !read.apart.Load()
-	}}, nil
+	read.held = tx
+	return SourceSnapshot{Source: read, Close: end}, nil
 }
 
 // pgRowJSON is how every read encodes a row of the table aliased t, so a row
@@ -335,54 +321,48 @@ func (k *postgresKind) copyRows(ctx context.Context, src Source, table string, w
 	if s.Snapshot != "" && !pgSnapshotRE.MatchString(s.Snapshot) {
 		return fmt.Errorf("snapshot name %q is malformed", s.Snapshot)
 	}
+	if src.held != nil {
+		return pgCopyRows(ctx, src.held, s.Schema, table, w)
+	}
 	conn, err := k.connect(ctx, s.DatabaseSettings, src.Secret)
 	if err != nil {
 		return connectFailure(err)
 	}
 	defer conn.Close(context.Background())
-	readOnly := pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
-	tx, err := conn.BeginTx(ctx, readOnly)
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return connectFailure(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }() // a no-op after Commit
 	if s.Snapshot != "" {
 		if _, err := tx.Exec(ctx, "SET TRANSACTION SNAPSHOT '"+s.Snapshot+"'"); err != nil {
-			// The server refused the full read's own snapshot: it is not the
-			// server holding it, as behind a load-balanced reader endpoint, or
-			// it ended the holding transaction. This table is read at a moment
-			// of its own, as before the read shared one, and src says so. The
-			// slot's snapshot is the one its position matches, so it is never
-			// read around.
-			var refusal *pgconn.PgError
-			if src.apart == nil || !errors.As(err, &refusal) {
-				return fmt.Errorf("import snapshot %s: %w", s.Snapshot, err)
-			}
-			src.apart.Store(true)
-			if err := tx.Rollback(ctx); err != nil {
-				return connectFailure(err)
-			}
-			if tx, err = conn.BeginTx(ctx, readOnly); err != nil {
-				return connectFailure(err)
-			}
+			return fmt.Errorf("import snapshot %s: %w", s.Snapshot, err)
 		}
 	}
-	rows, err := tx.Query(ctx, "SELECT "+pgRowJSON+" FROM "+pgx.Identifier{s.Schema, table}.Sanitize()+" t")
+	if err := pgCopyRows(ctx, tx, s.Schema, table, w); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// pgCopyRows writes every row of schema.table, read on tx, to w.
+func pgCopyRows(ctx context.Context, tx pgx.Tx, schema, table string, w RowWriter) error {
+	rows, err := tx.Query(ctx, "SELECT "+pgRowJSON+" FROM "+pgx.Identifier{schema, table}.Sanitize()+" t")
 	if err != nil {
-		return fmt.Errorf("read %s.%s: %w", s.Schema, table, err)
+		return fmt.Errorf("read %s.%s: %w", schema, table, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var row []byte
 		if err := rows.Scan(&row); err != nil {
-			return fmt.Errorf("read %s.%s: %w", s.Schema, table, err)
+			return fmt.Errorf("read %s.%s: %w", schema, table, err)
 		}
 		if err := w.WriteJSON(row); err != nil {
 			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read %s.%s: %w", s.Schema, table, err)
+		return fmt.Errorf("read %s.%s: %w", schema, table, err)
 	}
-	return tx.Commit(ctx)
+	return nil
 }

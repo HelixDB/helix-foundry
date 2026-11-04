@@ -99,8 +99,32 @@ func TestPostgresSourceSnapshot(t *testing.T) {
 		if own := postgresFullRead(t, src, "b"); !slices.Equal(own, generation(2)) {
 			t.Fatalf("b read alone = %v, want generation 2", own)
 		}
-		if !snap.Close() {
-			t.Fatal("Close says a table was read apart")
+		snap.Close()
+		waitPostgresGone(t, role)
+	})
+	// Every table is read on the snapshot's own transaction, so a role
+	// limited to one connection (or a pooler with one server connection)
+	// reads as it did a table at a time.
+	t.Run("reads every table over the snapshot's one connection", func(t *testing.T) {
+		schema, role, src := postgresGenerations(t)
+		if _, err := postgresTestConn(t).Exec(ctx, "ALTER ROLE "+role+" CONNECTION LIMIT 1"); err != nil {
+			t.Fatal(err)
+		}
+		waitPostgresGone(t, role) // Discover's session, which the limit would count
+		snap, err := k.SourceSnapshot(ctx, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The limit is in force: a connection of a table's own is refused.
+		if _, err := k.Sync(ctx, src, Table{Name: "a"}, &postgresRawRows{}); err == nil {
+			t.Fatal("a second connection was let in, want the role's limit refusing it")
+		}
+		a := postgresFullRead(t, snap.Source, "a")
+		seedPostgres(t, schema, nextGeneration)
+		b := postgresFullRead(t, snap.Source, "b")
+		snap.Close()
+		if !slices.Equal(a, generation(1)) || !slices.Equal(b, generation(1)) {
+			t.Fatalf("a = %v, b = %v, want both at generation 1", a, b)
 		}
 		waitPostgresGone(t, role)
 	})
@@ -120,53 +144,52 @@ func TestPostgresSourceSnapshot(t *testing.T) {
 		seedPostgres(t, schema, nextGeneration)
 		time.Sleep(time.Second)
 		b := postgresFullRead(t, snap.Source, "b")
-		if whole := snap.Close(); !slices.Equal(a, generation(1)) || !slices.Equal(b, generation(1)) || !whole {
-			t.Fatalf("a = %v, b = %v, whole %v, want both at the snapshot's generation 1", a, b, whole)
+		snap.Close()
+		if !slices.Equal(a, generation(1)) || !slices.Equal(b, generation(1)) {
+			t.Fatalf("a = %v, b = %v, want both at the snapshot's generation 1", a, b)
 		}
 		waitPostgresGone(t, role)
 	})
-	// A load-balanced reader endpoint can land a table's connection on a
-	// server that never saw the snapshot; one whose holder ended refuses it
-	// the same way. The sync must read on as it did before.
-	t.Run("reads a table the server refuses the snapshot at a moment of its own", func(t *testing.T) {
-		schema, role, src := postgresGenerations(t)
+	// A snapshot whose session ended (a terminated backend, a dropped
+	// connection) fails the table's read: the sync's retry reads on, and
+	// nothing reads around it at another moment unannounced.
+	t.Run("fails a table's read once the snapshot's session ended", func(t *testing.T) {
+		_, role, src := postgresGenerations(t)
 		snap, err := k.SourceSnapshot(ctx, src)
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer snap.Close()
 		held := postgresHolding(t, role)
 		if len(held) != 1 {
 			t.Fatalf("sessions holding a snapshot = %v, want one", held)
 		}
-		a := postgresFullRead(t, snap.Source, "a")
 		if _, err := postgresTestConn(t).Exec(ctx, "SELECT pg_terminate_backend($1)", held[0]); err != nil {
 			t.Fatal(err)
 		}
 		waitPostgresGone(t, role)
-		seedPostgres(t, schema, nextGeneration)
-		b := postgresFullRead(t, snap.Source, "b")
-		if !slices.Equal(a, generation(1)) || !slices.Equal(b, generation(2)) {
-			t.Fatalf("a = %v, b = %v, want a from the snapshot and b read after the commit", a, b)
+		if _, err := k.Sync(ctx, snap.Source, Table{Name: "a"}, &postgresRawRows{}); err == nil {
+			t.Fatal("read a on an ended snapshot, want it to fail")
 		}
-		if snap.Close() {
-			t.Fatal("Close says every table was read at the snapshot")
-		}
-		waitPostgresGone(t, role)
 	})
-	// Servers and PostgreSQL-compatible databases that can't export one
-	// leave nothing open, and each table reads as before.
-	t.Run("holds nothing open when the server exports no snapshot", func(t *testing.T) {
+	// The tables share a transaction, not an exported snapshot, so servers
+	// and PostgreSQL-compatible databases that can't export one read at one
+	// snapshot too.
+	t.Run("needs no exported snapshot", func(t *testing.T) {
 		database, role := postgresDatabaseWithoutExport(t)
 		settings := postgresTestSettings("public")
 		settings["database"], settings["user"] = database, role
 		src, _ := postgresTestSource(t, settings, "reader", "")
-		if _, err := k.SourceSnapshot(ctx, src); err == nil || !strings.Contains(err.Error(), "export a snapshot") {
-			t.Fatalf("SourceSnapshot error = %v, want the export refused", err)
+		snap, err := k.SourceSnapshot(ctx, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, b := postgresFullRead(t, snap.Source, "a"), postgresFullRead(t, snap.Source, "b")
+		snap.Close()
+		if !slices.Equal(a, generation(1)) || !slices.Equal(b, generation(1)) {
+			t.Fatalf("a = %v, b = %v", a, b)
 		}
 		waitPostgresGone(t, role)
-		if rows := postgresFullRead(t, src, "a"); !slices.Equal(rows, generation(1)) {
-			t.Fatalf("a = %v", rows)
-		}
 	})
 	// CDC's full read must meet its slot's stream exactly, so it keeps the
 	// slot's snapshot, holds no other, and never reads around it.
@@ -182,7 +205,8 @@ func TestPostgresSourceSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(snap.Source.Settings, start.Source.Settings) || snap.Source.apart != nil || !snap.Close() {
+		snap.Close()
+		if !bytes.Equal(snap.Source.Settings, start.Source.Settings) || snap.Source.held != nil {
 			t.Fatalf("SourceSnapshot bound %s, want the slot's %s", snap.Source.Settings, start.Source.Settings)
 		}
 		s, err := decodePostgresSettings(snap.Source.Settings)
