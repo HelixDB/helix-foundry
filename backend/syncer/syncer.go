@@ -20,6 +20,8 @@ import (
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // Failure is why a sync stopped. Message is written for the customer; Err
@@ -119,6 +121,15 @@ type Syncer struct {
 	Allowances map[string]model.FoundrySetAllowance
 }
 
+// sourceSnapshots counts the full reads of a connector.SnapshotKind that
+// finished (readTables).
+var sourceSnapshots = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_sync_source_snapshots_total",
+	Help: "Finished full reads of two or more tables by a kind that reads them at one snapshot of its source, by kind and outcome: " +
+		"one (every table at it), unavailable (the source took no snapshot; every table at a moment of its own) " +
+		"or resumed (a retry kept the tables an earlier attempt wrote and read the rest a table at a time).",
+}, []string{"kind", "outcome"})
+
 // Result is what a sync did, for the worker to schedule the next one.
 type Result struct {
 	Rows int64
@@ -182,6 +193,8 @@ const releaseTimeout = 30 * time.Second
 //  4. Read in full or read changes (readMode); in full when a stream
 //     catches up on what a paused sync skipped (Allowances). A full read
 //     compares each table with its snapshot; a change read merges into it.
+//     A connector.SnapshotKind reads the tables it reads in full at one
+//     snapshot of its source (readTables).
 //     A table that did not change keeps its snapshot; one that did gets a
 //     new snapshot and a change batch, in one lease-guarded write.
 //  5. Once every table is in, empty the document sets of streams no longer
@@ -566,7 +579,9 @@ func (r *run) result(res Result) Result {
 // done reports a table this sync already wrote on an earlier attempt, which
 // is not read again. A followed table is always read again: this attempt's
 // cursor is later than the one the earlier attempt read up to, so skipping
-// it would lose the changes in between.
+// it would lose the changes in between. A table of a read at one snapshot
+// of its source is kept too, though it shows the earlier attempt's moment
+// rather than the rest's (readTables).
 func (r *run) done(table string, followed bool) bool {
 	if p := r.previous[table]; !followed && p != nil && p.SyncID == r.sync.ID {
 		r.keep(p)
@@ -615,14 +630,46 @@ func (r *run) readFull(ctx context.Context, reader connector.ChangeReader, table
 // readTables reads tables in full, one at a time, or all in one pass for a
 // PassKind. A table an earlier attempt of this sync wrote is not read again
 // (done); a pass still reads it, into writers that discard it.
-func (r *run) readTables(ctx context.Context, src connector.Source, tables []connector.Table, followed map[string]bool) error {
+//
+// A SnapshotKind reads two or more tables at one snapshot of its source, so
+// they agree with each other. A retry keeps the tables an earlier attempt
+// wrote, which show another moment, so a read longer than one attempt still
+// finishes across attempts, and reads the rest a table at a time. A source
+// that takes no snapshot is read as before, a table at a moment of its own.
+// The log and helix_foundry_sync_source_snapshots_total say which of these a
+// finished read was.
+func (r *run) readTables(ctx context.Context, src connector.Source, tables []connector.Table, followed map[string]bool) (err error) {
 	if pass, ok := r.kind.(connector.PassKind); ok {
 		return r.passTables(ctx, pass, src, tables, followed)
 	}
-	for _, table := range tables {
-		if r.done(table.Name, followed[table.Name]) {
-			continue
+	todo := slices.DeleteFunc(slices.Clone(tables), func(t connector.Table) bool { return r.done(t.Name, followed[t.Name]) })
+	if snapshots, ok := r.kind.(connector.SnapshotKind); ok && len(tables) > 1 {
+		var snap connector.SourceSnapshot
+		outcome := "resumed"
+		switch {
+		case len(todo) < len(tables):
+			log.From(ctx).Warn("a retry keeps the tables an earlier attempt wrote: they show another moment than the rest",
+				"connector", r.sync.ConnectorID, "kept", len(tables)-len(todo))
+		default:
+			var serr error
+			if snap, serr = snapshots.SourceSnapshot(ctx, src); serr != nil {
+				outcome = "unavailable"
+				log.From(ctx).Warn("the source took no snapshot: each table is read at a moment of its own",
+					"connector", r.sync.ConnectorID, "err", serr)
+			} else {
+				src, outcome = snap.Source, "one"
+			}
 		}
+		defer func() {
+			if snap.Close != nil {
+				snap.Close()
+			}
+			if err == nil {
+				sourceSnapshots.WithLabelValues(r.kind.Name(), outcome).Inc()
+			}
+		}()
+	}
+	for _, table := range todo {
 		if err := r.fullTable(ctx, src, table); err != nil {
 			return err
 		}

@@ -1000,6 +1000,14 @@ describe("mock source grants", () => {
     expect(refusal(await grant(user("usr_alan"), [general]))?.[1]).toContain(
       "take that access away in the Helix dashboard first",
     );
+    // A connector down to one of its tables is narrowing too.
+    expect(
+      (
+        await grant(user("usr_alan"), [
+          { ...stripe, kind: "KIND_TABLE", table: "customers" },
+        ])
+      ).status,
+    ).toBe(200);
     await grant(user("usr_alan"), []);
 
     const team = (
