@@ -315,15 +315,20 @@ service FoundryService {
   // user, a team, or a service credential: an agent's key) the workspace's
   // sources; a principal the front end's own permissions don't admit reads an
   // ontology's current load, and asks it questions, only while every source
-  // that load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants
-  // only add: a workspace that grants nothing behaves as it did without them.
+  // that load holds is granted to it (SOURCE_GRANTEE, actor.proto). A
+  // workspace that grants nothing behaves as it did without them. A member
+  // given any, or on a team given any, is restricted to them, and stays so
+  // once they're taken away, until someone lifts it.
   //
   // Every grant, and what each ontology's current load holds and who may
   // read it through grants.
   rpc ListFoundryAccess(ListFoundryAccessRequest) returns (ListFoundryAccessResponse) {
     option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/access" };
   }
-  // Replaces one principal's grants.
+  // Replaces one principal's grants. Giving a member or a team any restricts
+  // that member or the team's members: FAILED_PRECONDITION for an owner or
+  // admin, or a member (of the team too) holding project write or query scope,
+  // which reads the database outside Foundry.
   rpc SetFoundryAccessGrants(SetFoundryAccessGrantsRequest) returns (SetFoundryAccessGrantsResponse) {
     option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/grants" body: "*" };
   }
@@ -343,7 +348,8 @@ service FoundryService {
   // they see only the ontologies their grants cover, and change nothing.
   // Only a plain member holding no project write or query scope can be
   // restricted (FAILED_PRECONDITION otherwise): either reads the database
-  // outside Foundry.
+  // outside Foundry. Holding sources, their own or a team's, is what restricts
+  // a member, so it can't be lifted until those are gone (FAILED_PRECONDITION).
   rpc SetFoundryMemberRestricted(SetFoundryMemberRestrictedRequest) returns (SetFoundryMemberRestrictedResponse) {
     option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/members/{user_id}" body: "*" };
   }
@@ -351,7 +357,9 @@ service FoundryService {
   rpc CreateFoundryTeam(CreateFoundryTeamRequest) returns (FoundryTeamResponse) {
     option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/access/teams" body: "*" };
   }
-  // Renames a team and replaces its members.
+  // Renames a team and replaces its members. Whoever joins a team holding
+  // grants is restricted to them (FAILED_PRECONDITION for one holding project
+  // write or query scope), and whoever leaves stays restricted.
   rpc UpdateFoundryTeam(UpdateFoundryTeamRequest) returns (FoundryTeamResponse) {
     option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/teams/{team_id}" body: "*" };
   }

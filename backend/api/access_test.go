@@ -120,7 +120,27 @@ func (s *accessStore) SetFoundryAccessGrants(_ context.Context, workspaceID stri
 		s.grants = append(s.grants, foundrymodel.FoundryAccessGrant{ID: fmt.Sprintf("grant-%d", i), WorkspaceID: workspaceID, Principal: p, Target: t,
 			CreatedByUserID: by, CreatedAt: time.Now()})
 	}
+	if len(targets) > 0 {
+		switch p.Kind {
+		case access.PrincipalUser:
+			s.restrict(workspaceID, p.ID)
+		case access.PrincipalTeam:
+			for _, t := range s.teams {
+				if t.ID == p.ID {
+					s.restrict(workspaceID, t.MemberUserIDs...)
+				}
+			}
+		}
+	}
 	return nil
+}
+
+func (s *accessStore) restrict(workspaceID string, userIDs ...string) {
+	for _, userID := range userIDs {
+		if !slices.Contains(s.restricted[workspaceID], userID) {
+			s.restricted[workspaceID] = append(s.restricted[workspaceID], userID)
+		}
+	}
 }
 
 func (s *accessStore) FoundryVersionInputs(_ context.Context, _, _, versionID string) (access.Inputs, error) {
@@ -144,6 +164,14 @@ func (s *accessStore) ListFoundryRestrictedMembers(_ context.Context, workspaceI
 }
 
 func (s *accessStore) SetFoundryMemberRestricted(_ context.Context, workspaceID, userID string, restricted bool, _ *string) error {
+	if !restricted && slices.ContainsFunc(s.grants, func(g foundrymodel.FoundryAccessGrant) bool {
+		return g.WorkspaceID == workspaceID && (g.Principal == access.Principal{Kind: access.PrincipalUser, ID: userID} ||
+			g.Principal.Kind == access.PrincipalTeam && slices.ContainsFunc(s.teams, func(t foundrymodel.FoundryTeam) bool {
+				return t.ID == g.Principal.ID && slices.Contains(t.MemberUserIDs, userID)
+			}))
+	}) {
+		return foundrystore.ErrConflict
+	}
 	s.restricted[workspaceID] = slices.DeleteFunc(s.restricted[workspaceID], func(u string) bool { return u == userID })
 	if restricted {
 		s.restricted[workspaceID] = append(s.restricted[workspaceID], userID)
@@ -190,6 +218,11 @@ func (s *accessStore) UpdateFoundryTeam(_ context.Context, workspaceID, teamID, 
 	for i := range s.teams {
 		if s.teams[i].ID == teamID && s.teams[i].WorkspaceID == workspaceID {
 			s.teams[i].Name, s.teams[i].MemberUserIDs = name, members
+			if slices.ContainsFunc(s.grants, func(g foundrymodel.FoundryAccessGrant) bool {
+				return g.Principal == access.Principal{Kind: access.PrincipalTeam, ID: teamID}
+			}) {
+				s.restrict(workspaceID, members...)
+			}
 			return nil
 		}
 	}
@@ -1119,12 +1152,152 @@ func TestRestrictedMembers(t *testing.T) {
 		}
 	})
 	t.Run("lifted", func(t *testing.T) {
+		store.teams = nil
+		if _, err := s.SetFoundryAccessGrants(ports.WithActor(context.Background(), person), &foundryv1.SetFoundryAccessGrantsRequest{
+			WorkspaceId: "ws-1", Principal: &foundryv1.FoundryPrincipal{Kind: foundryv1.FoundryPrincipal_KIND_USER, Id: "user-9"}}); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := s.SetFoundryMemberRestricted(ports.WithActor(context.Background(), person),
 			&foundryv1.SetFoundryMemberRestrictedRequest{WorkspaceId: "ws-1", UserId: "user-9"}); err != nil {
 			t.Fatal(err)
 		}
 		if got := list(t, eve); len(got) != 2 {
 			t.Fatalf("lifted: %v", got)
+		}
+	})
+}
+
+// Sources are the limit: a member given any is restricted to them, stays so
+// when they go, and a member they couldn't confine isn't given any.
+func TestGrantsRestrict(t *testing.T) {
+	s, store := accessService(t)
+	ctx := ports.WithActor(context.Background(), person)
+	s.deps.People = accessPeople{
+		"plain": {Role: ports.RoleMember}, "joiner": {Role: ports.RoleMember}, "querying": {Role: ports.RoleMember, RawAccess: true},
+		"admin": {Role: ports.RoleAdmin, RawAccess: true}, "owner": {Role: ports.RoleOwner, RawAccess: true},
+	}
+	one := []*foundryv1.FoundryAccessTarget{{Kind: foundryv1.FoundryAccessTarget_KIND_CONNECTOR, ConnectorId: "conn-1"}}
+	user := func(id string) *foundryv1.FoundryPrincipal {
+		return &foundryv1.FoundryPrincipal{Kind: foundryv1.FoundryPrincipal_KIND_USER, Id: id}
+	}
+	team := func(id string) *foundryv1.FoundryPrincipal {
+		return &foundryv1.FoundryPrincipal{Kind: foundryv1.FoundryPrincipal_KIND_TEAM, Id: id}
+	}
+	set := func(p *foundryv1.FoundryPrincipal, targets []*foundryv1.FoundryAccessTarget) error {
+		_, err := s.SetFoundryAccessGrants(ctx, &foundryv1.SetFoundryAccessGrantsRequest{WorkspaceId: "ws-1", Principal: p, Targets: targets})
+		return err
+	}
+	lift := func(id string) error {
+		_, err := s.SetFoundryMemberRestricted(ctx, &foundryv1.SetFoundryMemberRestrictedRequest{WorkspaceId: "ws-1", UserId: id})
+		return err
+	}
+	restricted := func(id string) bool { return slices.Contains(store.restricted["ws-1"], id) }
+
+	t.Run("a member", func(t *testing.T) {
+		if err := set(user("plain"), one); err != nil {
+			t.Fatal(err)
+		}
+		if !restricted("plain") {
+			t.Fatal("given sources, a member is restricted to them")
+		}
+		if err := lift("plain"); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("while holding sources it can't be lifted: %v", err)
+		}
+		if err := set(user("plain"), nil); err != nil {
+			t.Fatal(err)
+		}
+		if !restricted("plain") {
+			t.Fatal("their last source gone, they stay restricted")
+		}
+		if err := lift("plain"); err != nil {
+			t.Fatalf("holding none, it can be: %v", err)
+		}
+		if restricted("plain") {
+			t.Fatal("lifted")
+		}
+	})
+	for name, who := range map[string]string{"a member with raw access": "querying", "an admin": "admin", "an owner": "owner"} {
+		t.Run(name+" is given nothing", func(t *testing.T) {
+			if err := set(user(who), one); status.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("%v", err)
+			}
+			if restricted(who) || slices.ContainsFunc(store.grants, func(g foundrymodel.FoundryAccessGrant) bool { return g.Principal.ID == who }) {
+				t.Fatalf("recorded anyway: %v", store.grants)
+			}
+			if err := set(user(who), nil); err != nil {
+				t.Fatalf("taking away what they hold is always allowed: %v", err)
+			}
+		})
+	}
+	t.Run("taking some away from someone given raw access since", func(t *testing.T) {
+		two := []access.Target{access.ConnectorTarget("conn-1"), access.ConnectorTarget("conn-pg")}
+		for i, target := range two {
+			store.grants = append(store.grants, foundrymodel.FoundryAccessGrant{ID: fmt.Sprintf("raw-%d", i), WorkspaceID: "ws-1",
+				Principal: access.Principal{Kind: access.PrincipalUser, ID: "querying"}, Target: target})
+		}
+		if err := set(user("querying"), one); err != nil {
+			t.Fatalf("narrowing what they hold is allowed: %v", err)
+		}
+		if err := set(user("querying"), []*foundryv1.FoundryAccessTarget{
+			{Kind: foundryv1.FoundryAccessTarget_KIND_CONNECTOR, ConnectorId: "conn-1"},
+			{Kind: foundryv1.FoundryAccessTarget_KIND_ENRICHMENT},
+		}); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("adding isn't: %v", err)
+		}
+		if err := set(user("querying"), nil); err != nil {
+			t.Fatal(err)
+		}
+		store.restricted["ws-1"] = slices.DeleteFunc(store.restricted["ws-1"], func(u string) bool { return u == "querying" })
+	})
+	t.Run("a team", func(t *testing.T) {
+		store.teams = append(store.teams,
+			foundrymodel.FoundryTeam{ID: "team-ok", WorkspaceID: "ws-1", Name: "Ok", MemberUserIDs: []string{"plain", "admin", "owner"}},
+			foundrymodel.FoundryTeam{ID: "team-raw", WorkspaceID: "ws-1", Name: "Raw", MemberUserIDs: []string{"plain", "querying"}})
+		if err := set(team("team-raw"), one); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("a team with a member grants can't confine: %v", err)
+		}
+		if restricted("plain") {
+			t.Fatal("a refused grant restricts no one")
+		}
+		if err := set(team("team-ok"), one); err != nil {
+			t.Fatalf("owners and admins may sit on a team: %v", err)
+		}
+		if !restricted("plain") {
+			t.Fatal("a team's members are restricted to what it's given")
+		}
+		if err := lift("plain"); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("while on a team holding sources: %v", err)
+		}
+		update := func(members ...string) error {
+			_, err := s.UpdateFoundryTeam(ctx, &foundryv1.UpdateFoundryTeamRequest{WorkspaceId: "ws-1", TeamId: "team-ok", Name: "Ok", MemberUserIds: members})
+			return err
+		}
+		if err := update("plain", "admin", "owner", "querying"); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("joining with raw access: %v", err)
+		}
+		if err := update("plain", "joiner"); err != nil {
+			t.Fatal(err)
+		}
+		if !restricted("joiner") {
+			t.Fatal("whoever joins is restricted")
+		}
+		// Given raw access since, a member already on the team doesn't stop a rename.
+		s.deps.People.(accessPeople)["joiner"] = ports.Member{Role: ports.RoleMember, RawAccess: true}
+		if err := update("plain", "joiner"); err != nil {
+			t.Fatalf("no one joins: %v", err)
+		}
+		if err := update("plain"); err != nil {
+			t.Fatal(err)
+		}
+		if !restricted("joiner") {
+			t.Fatal("whoever leaves stays restricted")
+		}
+		// A team with no grants takes anyone, and restricts no one.
+		if _, err := s.UpdateFoundryTeam(ctx, &foundryv1.UpdateFoundryTeamRequest{WorkspaceId: "ws-1", TeamId: "team-raw", Name: "Raw", MemberUserIds: []string{"querying"}}); err != nil {
+			t.Fatal(err)
+		}
+		if restricted("querying") {
+			t.Fatal("a team holding nothing restricts no one")
 		}
 	})
 }

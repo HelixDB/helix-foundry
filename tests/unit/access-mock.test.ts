@@ -935,6 +935,113 @@ describe("mock source grants", () => {
     expect((await grant(user("usr_eve"), [])).status).toBe(200);
   });
 
+  it("restricts whoever sources reach, and taking them away widens nothing", async () => {
+    Object.assign(config, { memberQueryRead: false });
+    const lift = (userId: string) =>
+        call("PUT", `${A}/members/${userId}`, { restricted: false }),
+      restricted = async () =>
+        (await call("GET", A)).body.restrictedUserIds as string[];
+    await grant(user("usr_alan"), [stripe]);
+    expect(await restricted()).toContain("usr_alan");
+    expect(refusal(await lift("usr_alan"))).toEqual([
+      400,
+      "this member holds sources, their own or a team's; take those away first",
+    ]);
+    await grant(user("usr_alan"), []);
+    expect(await restricted()).toContain("usr_alan");
+    expect((await lift("usr_alan")).body).toEqual({ restricted: false });
+    expect(await restricted()).not.toContain("usr_alan");
+
+    // A team: its members when it gets sources, and whoever joins after.
+    const team = (
+      await call("POST", `${A}/teams`, {
+        name: "Finance",
+        memberUserIds: ["usr_alan", "usr_ada"],
+      })
+    ).body.team as wfe.FoundryTeam;
+    expect(await restricted()).not.toContain("usr_alan");
+    const principal: wfe.FoundryPrincipal = { kind: "KIND_TEAM", id: team.id! };
+    await grant(principal, [stripe]);
+    expect(await restricted()).toContain("usr_alan");
+    expect(refusal(await lift("usr_alan"))?.[0]).toBe(400);
+    await call("PUT", `${A}/teams/${team.id}`, {
+      name: "Finance",
+      memberUserIds: ["usr_eve"],
+    });
+    expect(await restricted()).toContain("usr_alan");
+    expect((await lift("usr_alan")).body).toEqual({ restricted: false });
+
+    expect(
+      refusal(await grant({ kind: "KIND_TEAM", id: "team_none" }, [stripe])),
+    ).toEqual([404, "the workspace has no such team"]);
+  });
+
+  it("gives sources only to whom they can confine", async () => {
+    expect(refusal(await grant(user("usr_ada"), [stripe]))).toEqual([
+      400,
+      "only a member can be restricted: owners and admins see everything",
+    ]);
+    expect(refusal(await grant(user("usr_alan"), [stripe]))?.[1]).toContain(
+      "take that access away in the Helix dashboard first",
+    );
+    expect(refusal(await grant(user("usr_nobody"), [stripe]))).toEqual([
+      404,
+      "member not found",
+    ]);
+    // Taking away is always allowed, even some of what one given raw access
+    // since holds; adding isn't.
+    expect((await grant(user("usr_alan"), [])).body.grants).toEqual([]);
+    Object.assign(config, { memberQueryRead: false });
+    await grant(user("usr_alan"), [stripe, general]);
+    Object.assign(config, { memberQueryRead: true });
+    expect((await grant(user("usr_alan"), [stripe])).body.grants).toHaveLength(
+      1,
+    );
+    expect(refusal(await grant(user("usr_alan"), [general]))?.[1]).toContain(
+      "take that access away in the Helix dashboard first",
+    );
+    await grant(user("usr_alan"), []);
+
+    const team = (
+      await call("POST", `${A}/teams`, {
+        name: "Finance",
+        memberUserIds: ["usr_alan"],
+      })
+    ).body.team as wfe.FoundryTeam;
+    const principal: wfe.FoundryPrincipal = { kind: "KIND_TEAM", id: team.id! };
+    expect(refusal(await grant(principal, [stripe]))?.[1]).toContain(
+      "a member of this team can write a project",
+    );
+    await call("PUT", `${A}/teams/${team.id}`, {
+      name: "Finance",
+      memberUserIds: ["usr_eve"],
+    });
+    await grant(principal, [stripe]);
+    // Joining with raw access is refused; someone given it since doesn't stop a rename.
+    expect(
+      refusal(
+        await call("PUT", `${A}/teams/${team.id}`, {
+          name: "Finance",
+          memberUserIds: ["usr_eve", "usr_alan"],
+        }),
+      )?.[1],
+    ).toContain("a member of this team can write a project");
+    Object.assign(config, { memberQueryRead: false });
+    await call("PUT", `${A}/teams/${team.id}`, {
+      name: "Finance",
+      memberUserIds: ["usr_eve", "usr_alan"],
+    });
+    Object.assign(config, { memberQueryRead: true });
+    expect(
+      (
+        await call("PUT", `${A}/teams/${team.id}`, {
+          name: "Renamed",
+          memberUserIds: ["usr_eve", "usr_alan"],
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   it("restricts plain members without query access only", async () => {
     const restrict = (userId: string, restricted = true) =>
       call("PUT", `${A}/members/${userId}`, { restricted });
@@ -961,6 +1068,7 @@ describe("mock source grants", () => {
       (await call("GET", `${A}/me`, undefined, "usr_alan")).body.grantee,
     ).toBe(false);
     Object.assign(config, { alanRole: "WORKSPACE_ROLE_MEMBER" });
+    await grant(user("usr_eve"), []);
     expect((await restrict("usr_eve", false)).body).toEqual({
       restricted: false,
     });
@@ -1007,9 +1115,10 @@ describe("mock source grants", () => {
         })
       ).status,
     ).toBe(403);
+    // Given sources, he is restricted to them.
     await grant(user("usr_alan"), [general, stripe]);
     expect((await alan("GET", `${A}/me`)).body).toEqual({
-      grantee: false,
+      grantee: true,
       hasGrants: true,
       ontologyIds: ["ont_acme_contracts"],
       partialOntologyIds: [],

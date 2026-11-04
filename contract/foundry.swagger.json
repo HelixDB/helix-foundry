@@ -175,7 +175,7 @@
     },
     "/v1/workspaces/{workspaceId}/foundry/access": {
       "get": {
-        "summary": "Helix Foundry source grants. An owner or admin grants a principal (a\nuser, a team, or a service credential: an agent's key) the workspace's\nsources; a principal the front end's own permissions don't admit reads an\nontology's current load, and asks it questions, only while every source\nthat load holds is granted to it (SOURCE_GRANTEE, actor.proto). Grants\nonly add: a workspace that grants nothing behaves as it did without them.",
+        "summary": "Helix Foundry source grants. An owner or admin grants a principal (a\nuser, a team, or a service credential: an agent's key) the workspace's\nsources; a principal the front end's own permissions don't admit reads an\nontology's current load, and asks it questions, only while every source\nthat load holds is granted to it (SOURCE_GRANTEE, actor.proto). A\nworkspace that grants nothing behaves as it did without them. A member\ngiven any, or on a team given any, is restricted to them, and stays so\nonce they're taken away, until someone lifts it.",
         "description": "Every grant, and what each ontology's current load holds and who may\nread it through grants.",
         "operationId": "FoundryService_ListFoundryAccess",
         "responses": {
@@ -207,7 +207,7 @@
     },
     "/v1/workspaces/{workspaceId}/foundry/access/grants": {
       "put": {
-        "summary": "Replaces one principal's grants.",
+        "summary": "Replaces one principal's grants. Giving a member or a team any restricts\nthat member or the team's members: FAILED_PRECONDITION for an owner or\nadmin, or a member (of the team too) holding project write or query scope,\nwhich reads the database outside Foundry.",
         "operationId": "FoundryService_SetFoundryAccessGrants",
         "responses": {
           "200": {
@@ -277,7 +277,7 @@
     },
     "/v1/workspaces/{workspaceId}/foundry/access/members/{userId}": {
       "put": {
-        "summary": "Restricts a member to what grants give, or lifts it. A restricted\nmember is a grantee on every Foundry call while their role is member:\nthey see only the ontologies their grants cover, and change nothing.\nOnly a plain member holding no project write or query scope can be\nrestricted (FAILED_PRECONDITION otherwise): either reads the database\noutside Foundry.",
+        "summary": "Restricts a member to what grants give, or lifts it. A restricted\nmember is a grantee on every Foundry call while their role is member:\nthey see only the ontologies their grants cover, and change nothing.\nOnly a plain member holding no project write or query scope can be\nrestricted (FAILED_PRECONDITION otherwise): either reads the database\noutside Foundry. Holding sources, their own or a team's, is what restricts\na member, so it can't be lifted until those are gone (FAILED_PRECONDITION).",
         "operationId": "FoundryService_SetFoundryMemberRestricted",
         "responses": {
           "200": {
@@ -397,7 +397,7 @@
         ]
       },
       "put": {
-        "summary": "Renames a team and replaces its members.",
+        "summary": "Renames a team and replaces its members. Whoever joins a team holding\ngrants is restricted to them (FAILED_PRECONDITION for one holding project\nwrite or query scope), and whoever leaves stays restricted.",
         "operationId": "FoundryService_UpdateFoundryTeam",
         "responses": {
           "200": {
