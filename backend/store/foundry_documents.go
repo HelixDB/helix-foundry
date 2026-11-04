@@ -144,15 +144,20 @@ func (s *mysqlDB) ListFoundryDocuments(ctx context.Context, workspaceID, setID, 
 	return s.listFoundryDocuments(ctx, "", conds, args, pageToken, limit)
 }
 
-// ListFoundryOntologyDocuments returns what an ontology reads, newest first
+// ListFoundryOntologyDocuments returns what an ontology reads (of heldSets
+// alone, when it names any, so a page and its token say nothing of the rest),
+// newest first
 // (by foundryDocumentNewest), a page at a time: the documents of its current
 // load (currentLoadID, empty for none), and the uploaded documents of scope,
 // the sets the version that reads its new uploads reads. Deleted documents
 // are left out. filter keeps those the current load holds as it says.
-func (s *mysqlDB) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string,
+func (s *mysqlDB) ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string,
 	filter model.FoundryDocumentFilter, pageToken string, limit int) ([]*model.FoundryDocument, string, error) {
 	if !filter.Valid() {
 		return nil, "", fmt.Errorf("list foundry ontology documents: unknown filter %q", filter)
+	}
+	if heldSets != nil && len(*heldSets) == 0 {
+		return nil, "", nil
 	}
 	read := "EXISTS (SELECT 1 FROM foundry_load_documents m WHERE m.load_id=? AND m.document_id=d.id)"
 	args := []any{currentLoadID, workspaceID, currentLoadID}
@@ -161,6 +166,10 @@ func (s *mysqlDB) ListFoundryOntologyDocuments(ctx context.Context, workspaceID,
 		args = append(args, toAnySlice(scope)...)
 	}
 	conds := []string{"d.workspace_id=?", "d.status<>'deleted'", foundryDocumentOwnerLive, read}
+	if heldSets != nil {
+		conds = append(conds, "d.set_id IN ("+idPlaceholders(len(*heldSets))+")")
+		args = append(args, toAnySlice(*heldSets)...)
+	}
 	switch filter {
 	case model.FoundryDocumentFilterWaiting:
 		// A table file is never extracted, so it never waits.

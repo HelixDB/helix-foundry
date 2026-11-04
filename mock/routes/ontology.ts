@@ -25,6 +25,7 @@ import contractsBundle from "../fixtures/agent-bundle-contracts.json";
 import foundryDefinition from "../fixtures/foundry-definition.json";
 // The Sales graph: public.people, and version 2 enriching its people.
 import { PEOPLE, salesGraphBundle } from "../fixtures/sales-graph";
+import { viewOf } from "../graph/view";
 import { fail, id, now, ok, type MockRoute } from "../http";
 import { pruneDecisions } from "../review-decisions";
 import { config, onReset } from "../state";
@@ -425,6 +426,21 @@ export function ontologyVersion(
   );
 }
 /**
+ * For ./access.ts: what a version's generation drafted from (its tables and
+ * table files), as a load of it reads; undefined for a version without one.
+ */
+export function versionInputs(ontologyId: string, versionId: string) {
+  const v = ontologyVersion(ontologyId, versionId),
+    g = state.generations.find((x) => x.id === v?.generationId);
+  return v && g
+    ? {
+        tables: g.tables || [],
+        documents: (g.documents || []).flatMap((d) => (d.id ? [d.id] : [])),
+      }
+    : undefined;
+}
+
+/**
  * A version's scope as the WFE stores it: the sets given that are live in
  * the workspace, in their order, once each.
  */
@@ -691,15 +707,25 @@ const listed = (v: StoredVersion): OntologyVersion => ({
 });
 // For a caller who can't query the ontology's database (the
 // `ontologyDatabaseHidden` knob), a revised version's draft items go without
-// their cards, which Revise measured on its load, as the backend answers.
-const full = (v: StoredVersion): OntologyVersion => {
+// their cards, which Revise measured on its load, as the backend answers; a
+// grantee's (`granted`) go without any draft's cards, and its definition
+// without what drafting found and cost.
+const full = (v: StoredVersion, granted = false): OntologyVersion => {
   const definition = structuredClone(v.definition) as AgentBundleDefinition &
     Record<string, unknown>;
   const items = Object.values(definition.draft?.draft?.items || {});
   const hidden =
-    !!knobs.ontologyDatabaseHidden && !!definition.parent_version_id;
+    granted ||
+    (!!knobs.ontologyDatabaseHidden && !!definition.parent_version_id);
   const withheld = hidden && items.some((i) => i.card != null);
   if (hidden) for (const i of items) delete i.card;
+  if (granted) {
+    for (const i of items) delete (i as Record<string, unknown>).rationale;
+    delete definition.summary;
+    delete definition.usage;
+    delete definition.rules;
+    delete definition.parent_version_id;
+  }
   return {
     ...listed(v),
     definition,
@@ -893,10 +919,31 @@ export const ontologyRoutes: MockRoute[] = [
     handle: (req) => {
       const scope = ontologyOf(req);
       if (!isScope(scope)) return scope;
+      // A grantee reads only its load's version, without what drafting it
+      // found and cost.
       const v = ontologyVersion(scope.o.id, req.params.id!);
-      return v
-        ? ok({ version: full(v) } satisfies OntologyVersionResponse)
-        : fail("NOT_FOUND", "ontology version not found");
+      if (!v || (req.grantee && v.id !== req.grantee.load?.versionId))
+        return fail("NOT_FOUND", "ontology version not found");
+      const version = full(v, !!req.grantee);
+      // Of a load it holds only some of: the version as its sources fill it,
+      // and nothing else of the definition.
+      if (req.grantee?.load?.partial) {
+        const def = version.definition as Record<string, unknown>;
+        const view = viewOf(
+          req.grantee.visibility(scope.o.id),
+          String(def.ontology_toml || ""),
+          String(def.mappings_toml || ""),
+        );
+        version.definition = {
+          format: def.format,
+          status: def.status,
+          ontology_toml: view.ontologyToml,
+          mappings_toml: view.mappingsToml,
+        };
+        version.generationId = "";
+        version.documentSetIds = [];
+      }
+      return ok({ version } satisfies OntologyVersionResponse);
     },
   },
   {

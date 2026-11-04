@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Database } from "lucide-react";
 import {
@@ -15,6 +15,7 @@ import { useWorkspace } from "../../ui";
 import { DASHBOARD_URL } from "../workspace/members";
 import {
   LoadNotice,
+  NotShared,
   NothingLoaded,
   useLoadSelection,
 } from "../ontology/load-selection";
@@ -22,6 +23,7 @@ import { loadVersion, versionLayout } from "../ontology/model";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
 import { DiffPanel } from "./compare-panel";
+import { useReadAccess } from "./graph-reader";
 import type { KeyItem } from "./compare";
 import type { DatabaseQueryTarget } from "./database-query";
 import {
@@ -217,7 +219,28 @@ function LoadExplorer({
   );
 }
 
+/**
+ * /explore/:ontologyId: the graph, for those who read the ontology's
+ * database. Someone reading through source grants has Records for its
+ * Explorer; someone who can read neither is told so.
+ */
 export function ExplorerPage() {
+  const access = useReadAccess(),
+    { id: o } = useOntology();
+  if (access === "grants") return <Navigate to={paths.records(o)} replace />;
+  if (access === "none")
+    return (
+      <div className="ex-view">
+        <ExplorerTop view="graph" />
+        <div className="ex-frame">
+          <NotShared />
+        </div>
+      </div>
+    );
+  return <GraphPage />;
+}
+
+function GraphPage() {
   const { id: ws } = useWorkspace(),
     { id: o, ontology } = useOntology();
   const selection = useLoadSelection();

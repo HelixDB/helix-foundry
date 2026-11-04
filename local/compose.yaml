@@ -9,9 +9,11 @@
 # volume: its connector key seals every database password and API key given
 # to Foundry. `docker compose down -v` deletes it with the data.
 #
-# The site is the only way in. foundry (Foundry's API, its directory and its
-# workers), the ontology agent and the S3-compatible store share one network
-# namespace (the `pod` service), as they share a pod in the cloud: the agent
+# The site serves the browser; compose.mcp.yaml publishes foundry's MCP and
+# HTTP Ask for your own agents. foundry (Foundry's API, its
+# directory and its workers), the ontology agent and the S3-compatible store
+# share one network namespace (the `pod` service), as they share a pod in the
+# cloud: the agent
 # serves foundry on 127.0.0.1, and documents are PUT from the browser to the
 # store at the same http://localhost:8333 foundry presigns them for.
 name: helix-foundry
@@ -95,6 +97,9 @@ services:
       # (local.secrets_dir).
       HELIX_DB_DSN: helix@tcp(mysql:3306)/helix?parseTime=true&multiStatements=true
       HELIX_LOCAL__SECRETS_DIR: /secrets
+      # Where the browser reaches the site, its FOUNDRY_ORIGIN: the links
+      # agents are given start here.
+      HELIX_LOCAL__SITE_ORIGIN: http://localhost:3000
       # The install's AI provider, when FOUNDRY_AI_PROVIDER names one (in
       # this shell or local/.env; local/.env.example): drafts, document reads
       # and questions run on it until an owner chooses another in Settings ›
@@ -186,6 +191,11 @@ services:
         -s3.allowedOrigins=http://localhost:3000
         -master.volumeSizeLimitMB=1024 -volume.max=0
     volumes: ["storage:/data", "secrets:/secrets:ro"]
+    # It takes about 20 s to stop (its filer waits up to 10 s for its gRPC
+    # streams first), past Compose's default 10 s: time to shut down rather
+    # than be killed, so `docker compose down` leaves a store a backup can
+    # copy.
+    stop_grace_period: 1m
     depends_on: *secrets-first
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "8333"]

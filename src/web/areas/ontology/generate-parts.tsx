@@ -49,6 +49,7 @@ import {
   EVENT_SET_DEFAULTS,
   KINDS,
   canManage,
+  connectorBadge,
   eventSourceLine,
   eventsConfig,
   eventsTable,
@@ -60,8 +61,8 @@ import {
   setFolders,
   setHolding,
   setSpend,
-  syncBadge,
 } from "../data/model";
+import { needsSignIn } from "../data/sign-ins";
 import { useDataUpload } from "../data/upload";
 import {
   documentQueries,
@@ -101,7 +102,8 @@ import { isSampleConnector, isSampleSet } from "./sample";
 // ontology, which can still be drafted again.
 //
 // Neither page sends the user to Data. Add data opens the Data area's
-// picker over the page; the new connection's first sync shows in its row
+// picker over the page (connecting by signing in comes back to the page's
+// SignInReturn); the new connection's first sync shows in its row
 // (the connectors query polls while a sync is live) and it counts as chosen
 // once synced. New API source makes one over the page, with its send panel;
 // its row moves on as pieces arrive (it polls while it waits for them, as
@@ -295,7 +297,7 @@ export function ConnectorPicker({
     const ok = synced(c),
       live = isLiveSync(c.lastSync),
       rows = Number(c.lastSync?.rowsSynced || 0),
-      badge = syncBadge(c.lastSync),
+      badge = connectorBadge(c),
       isOpen = open.has(c.id),
       at = lastSynced(c),
       label = connectorLabel(c.kind || "");
@@ -324,12 +326,18 @@ export function ConnectorPicker({
                       ? c.lastSync.error || "its sync failed"
                       : "not synced yet"}
               </small>
+              {needsSignIn(c) && (
+                <small className="on-frozen">
+                  Needs signing in again: its data is frozen as of its last sync
+                  {at ? `, ${formatRelative(at)}` : ""}.
+                </small>
+              )}
             </span>
           </label>
           {!ok && (
             <StatusBadge status={badge.status} label={badge.label} size="sm" />
           )}
-          {!ok && !live && (
+          {!ok && !live && !needsSignIn(c) && (
             <Button
               size="sm"
               icon={RotateCcw}

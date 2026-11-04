@@ -80,7 +80,16 @@ export type Source = {
   secret: string;
   // Never from settings: the S3 kind derives its external ID from it.
   workspaceId: string;
+  // Connected by signing in at the provider (GitHub, Linear): it reads with
+  // a token the broker vends for each use, never stored, so `secret` is
+  // empty and no key format is checked.
+  signIn?: boolean;
 };
+
+// Helix Foundry's GitHub App (the dev stamp's), which a signed-in GitHub
+// connector reads private repositories through, where it is installed.
+export const GITHUB_APP_INSTALL_URL =
+  "https://github.com/apps/helix-foundry-dev/installations/new";
 
 /** Why a source was refused: a setting to fix, or the source saying no. */
 export type Refusal = { code: "INVALID_ARGUMENT" | "FAILED_PRECONDITION" };
@@ -2310,6 +2319,13 @@ export function keyHint(key: string, prefixParts: number) {
   return prefix + "…" + key.slice(-4);
 }
 
+/** A signed-in source of `kind`: its settings, and no stored credential. */
+const signedIn = (
+  kind: ConnectorKindName,
+  settings: ConnectorConfig,
+  workspaceId: string,
+): Source => ({ kind, settings, secret: "", workspaceId, signIn: true });
+
 /**
  * Splits a request's config into kind, settings and credential, then checks
  * the settings as the kind's Prepare does. API keys and S3 secrets are
@@ -2318,6 +2334,10 @@ export function keyHint(key: string, prefixParts: number) {
 export function prepare(
   config: unknown,
   workspaceId: string,
+  // As a signed-in connector: a kind that signs in, without its credential
+  // (the broker's token stands for it), and only with the settings a
+  // sign-in has (no Google subject; PostHog US Cloud only).
+  signIn = false,
 ): Source | SourceError {
   const c = (config || {}) as Partial<Record<ConnectorKindName, any>>;
   const set = kinds.map((k) => k.name).filter((k) => c[k] !== undefined);
@@ -2326,6 +2346,7 @@ export function prepare(
     raw = c[kind] || {};
   switch (kind) {
     case "stripe": {
+      if (signIn) return signedIn(kind, { stripe: {} }, workspaceId);
       const key = String(raw.apiKey || "").trim();
       if (!/^(sk|rk)_(test|live)_[A-Za-z0-9]+$/.test(key))
         return invalid(
@@ -2340,11 +2361,16 @@ export function prepare(
       return { kind, settings: { workos: {} }, secret: key, workspaceId };
     }
     case "posthog": {
-      const key = String(raw.apiKey || "").trim(),
+      const key = signIn ? "" : String(raw.apiKey || "").trim(),
         p = raw as PostHogConnectorConfig;
-      if (!/^phx_[A-Za-z0-9_]+$/.test(key))
+      if (!signIn && !/^phx_[A-Za-z0-9_]+$/.test(key))
         return invalid("enter a PostHog personal API key (phx_…)");
       const region = p.region || "us";
+      // Pipes' PostHog has no region: signing in reaches US Cloud only.
+      if (signIn && region !== "us")
+        return invalid(
+          "PostHog signs in to US Cloud only; EU Cloud and self-hosted PostHog connect with a personal API key",
+        );
       let host = "";
       if (region === "custom") {
         let url: URL | undefined;
@@ -2382,12 +2408,14 @@ export function prepare(
         },
         secret: key,
         workspaceId,
+        ...(signIn ? { signIn } : {}),
       };
     }
     case "github": {
-      const token = String(raw.token || "").trim(),
+      const token = signIn ? "" : String(raw.token || "").trim(),
         g = raw as GitHubConnectorConfig;
       if (
+        !signIn &&
         !/^(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})$/.test(
           token,
         )
@@ -2414,15 +2442,18 @@ export function prepare(
         },
         secret: token,
         workspaceId,
+        ...(signIn ? { signIn } : {}),
       };
     }
     case "linear": {
+      if (signIn) return signedIn(kind, { linear: {} }, workspaceId);
       const key = String(raw.apiKey || "").trim();
       if (!/^lin_api_[A-Za-z0-9]+$/.test(key))
         return invalid("enter a Linear personal API key (lin_api_…)");
       return { kind, settings: { linear: {} }, secret: key, workspaceId };
     }
     case "calcom": {
+      if (signIn) return signedIn(kind, { calcom: {} }, workspaceId);
       const key = String(raw.apiKey || "").trim();
       if (!/^cal_[A-Za-z0-9_]+$/.test(key))
         return invalid("enter a Cal.com API key (cal_live_… or cal_…)");
@@ -2440,8 +2471,8 @@ export function prepare(
       };
     }
     case "slack": {
-      const token = String(raw.botToken || "").trim();
-      if (!/^xoxb-[A-Za-z0-9-]+$/.test(token))
+      const token = signIn ? "" : String(raw.botToken || "").trim();
+      if (!signIn && !/^xoxb-[A-Za-z0-9-]+$/.test(token))
         return invalid("enter a Slack bot token (xoxb-…)");
       const historyDays = raw.historyDays || 90;
       if (historyDays < 1 || historyDays > 365)
@@ -2451,15 +2482,29 @@ export function prepare(
         settings: { slack: { historyDays } },
         secret: token,
         workspaceId,
+        ...(signIn ? { signIn } : {}),
       };
     }
     case "notion": {
+      if (signIn) return signedIn(kind, { notion: {} }, workspaceId);
       const token = String(raw.token || "").trim();
       if (!/^(ntn|secret)_[A-Za-z0-9]+$/.test(token))
         return invalid("enter a Notion integration secret (ntn_…)");
       return { kind, settings: { notion: {} }, secret: token, workspaceId };
     }
     case "google": {
+      // Signed in, it reads as the person who signed in: no service account,
+      // and a subject is refused (a blank one is none).
+      if (signIn) {
+        if (String(raw.subject || "").trim())
+          return invalid(
+            "a signed-in Google Workspace connector reads as the user who signed in, and acts as no other",
+          );
+        const eventDays = raw.eventDays || 90;
+        if (eventDays < 1 || eventDays > 365)
+          return invalid("keep 1 to 365 days of past events");
+        return signedIn(kind, { google: { eventDays } }, workspaceId);
+      }
       const key = String(raw.serviceAccountKey || "").trim();
       if (!serviceAccount(key))
         return invalid("paste the service account's JSON key");
@@ -2585,6 +2630,12 @@ export function discover(
     };
   if ("github" in s) {
     const missing = (s.github.repos || []).find((r) => /\/missing$/i.test(r));
+    // Signed in, it reads where Helix Foundry is installed: a repository it
+    // can't see is the app's install to make, not a credential to change.
+    if (missing && src.signIn)
+      return refused(
+        `Helix Foundry can't see ${missing}: install it on ${missing.split("/")[0]} (${GITHUB_APP_INSTALL_URL}), then Sync now`,
+      );
     if (missing)
       return invalid(
         `GitHub has no repository ${missing} that this token can read`,

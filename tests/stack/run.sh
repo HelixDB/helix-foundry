@@ -3,7 +3,9 @@
 # stack's volumes (its secrets too), starts it as a fresh clone does, with
 # nothing set up, plus the sample database, waits for the site, then runs
 # the suite in Playwright's image on the host network, its results in
-# test-results/stack. It runs the site and foundry built from source,
+# test-results/stack. It stops the stack when it ends, and keeps that run's
+# volumes to look into until the next run wipes them. It runs the site and
+# foundry built from source,
 # helix-foundry/{site,foundry}:local (it builds foundry's from backend/
 # first; Compose builds the site's when it is missing), and the release's
 # ontology agent, whose source is not here. FOUNDRY_SITE_IMAGE, FOUNDRY_IMAGE
@@ -20,7 +22,7 @@
 set -eu
 cd "$(dirname "$0")/../.."
 # Its own project, so wiping its volumes never touches an installation. The
-# two would share ports 3000 and 8333, so it refuses to run beside one.
+# two would share ports 3000, 8081 and 8333, so it refuses to run beside one.
 if docker compose ls -q | grep -qx helix-foundry; then
   echo "Helix Foundry is running here (project helix-foundry); stop it first." >&2
   exit 1
@@ -32,7 +34,7 @@ if [ -z "${FOUNDRY_IMAGE:-}" ]; then
   export FOUNDRY_IMAGE=helix-foundry/foundry:local
   docker build -t "$FOUNDRY_IMAGE" backend
 fi
-compose="docker compose -p helix-foundry-stack -f local/compose.yaml -f tests/stack/compose.yaml"
+compose="docker compose -p helix-foundry-stack -f local/compose.yaml -f local/compose.mcp.yaml -f tests/stack/compose.yaml"
 # Ollama's profile, overriding local/.env's.
 export COMPOSE_PROFILES=
 if [ -n "${FOUNDRY_STACK_OLLAMA:-}" ]; then
@@ -65,9 +67,25 @@ else
     FOUNDRY_AI_BASE_URL= FOUNDRY_AI_REGION= FOUNDRY_AI_ENDPOINT= FOUNDRY_AI_API= \
     FOUNDRY_AI_CONTEXT_TOKENS=
 fi
-# With the profile on, so a last run's Ollama goes too.
+# Its own secrets and port, as a fresh clone's: init-secrets would otherwise
+# write a real install's token, from this shell or an old local/.env, into the
+# volumes this run keeps, and the suite looks for the MCP on 8081.
+export FOUNDRY_LOCAL_TOKEN= FOUNDRY_S3_SECRET= FOUNDRY_MYSQL_PASSWORD= FOUNDRY_CONNECTOR_KEY= \
+  FOUNDRY_MCP_PORT=
+# With the profile on, so a last run's Ollama goes too. This also takes back
+# the ports of a run that was killed before it could stop.
 COMPOSE_PROFILES=ollama $compose down -v --remove-orphans
+# Stop this run's containers however it ends, keeping its volumes and its exit
+# status. A shell runs its EXIT trap on a signal only if a trap for that signal
+# exits (dash, /bin/sh on Linux).
+trap 'status=$?; trap - EXIT; COMPOSE_PROFILES=ollama $compose down --remove-orphans || true; exit $status' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 $compose up -d --wait
+# The test runner receives the disposable install's token through its environment,
+# never its command line, logs or checkout.
+FOUNDRY_STACK_OWNER_TOKEN=$($compose exec -T foundry cat /secrets/site-token)
+export FOUNDRY_STACK_OWNER_TOKEN
 # The suite's Ollama needs its model pulled and loaded, which --wait doesn't
 # wait for.
 if [ -n "${FOUNDRY_STACK_OLLAMA:-}" ]; then
@@ -81,6 +99,7 @@ fi
 mkdir -p test-results
 docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$PWD":/src:ro -v "$PWD/test-results":/out \
+  -e FOUNDRY_STACK_OWNER_TOKEN -e FOUNDRY_INTEGRATION_URL=http://localhost:8081 \
   -e FOUNDRY_URL=http://localhost:3000 -e FOUNDRY_STACK_MODELS="${FOUNDRY_STACK_MODELS:-}" \
   -e FOUNDRY_STACK_OWN_KEY="${FOUNDRY_STACK_MODELS:+${ANTHROPIC_API_KEY:-}}" \
   -e FOUNDRY_STACK_OLLAMA_MODEL="${FOUNDRY_STACK_OLLAMA:+$FOUNDRY_OLLAMA_MODEL}" \

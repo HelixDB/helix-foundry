@@ -759,6 +759,10 @@
   color: var(--hf-muted);
   font-size: var(--hf-text-sm);
 }
+/* A connector whose account needs signing in again: still read, frozen. */
+.on-connector-text small.on-frozen {
+  color: var(--hf-warning-text);
+}
 .on-disclose {
   display: grid;
   place-items: center;

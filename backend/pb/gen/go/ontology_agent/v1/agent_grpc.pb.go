@@ -181,6 +181,11 @@ type AgentClient interface {
 	// UNAVAILABLE: the graph failed, or the server is shutting down. Retry the last two.
 	//
 	// Cancelling the call stops the read: its evaluation and its graph requests.
+	//
+	// Since 4.6.0 `visibility` (with `mappings_toml`) reads only what a reader's sources wrote,
+	// the `view` read returns the ontology as it sees it, a query that needs what it sees only
+	// some of to filter, order, group, count or page fails `not_visible`, and a query pages by
+	// `offset` (see docs/grpc.md, "Reading part of a load").
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error)
 	// Compares two loads of one version, kind by kind: each entity type, each link, rows' and
 	// documents' evidence, and open violation records, by key and a digest of what each holds,
@@ -261,6 +266,10 @@ type AgentClient interface {
 	// Since 4.5.0 `limits.read` sets what each read may spend (`wall_ms`, `scan_entities`; the
 	// Read call's defaults, 5,000 ms and 20,000 matches, when left out), and a read stopped at
 	// one, or at `helix.timeout_secs`, says which in its `tool_result`'s error, with its value.
+	//
+	// Since 4.6.0 `visibility` asks as a reader who holds only some sources: the question sees
+	// the version and the load as those fill them, within the same `limits.read`, and has no
+	// raw or historic reads.
 	Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error)
 }
 
@@ -585,6 +594,11 @@ type AgentServer interface {
 	// UNAVAILABLE: the graph failed, or the server is shutting down. Retry the last two.
 	//
 	// Cancelling the call stops the read: its evaluation and its graph requests.
+	//
+	// Since 4.6.0 `visibility` (with `mappings_toml`) reads only what a reader's sources wrote,
+	// the `view` read returns the ontology as it sees it, a query that needs what it sees only
+	// some of to filter, order, group, count or page fails `not_visible`, and a query pages by
+	// `offset` (see docs/grpc.md, "Reading part of a load").
 	Read(context.Context, *ReadRequest) (*ReadResponse, error)
 	// Compares two loads of one version, kind by kind: each entity type, each link, rows' and
 	// documents' evidence, and open violation records, by key and a digest of what each holds,
@@ -665,6 +679,10 @@ type AgentServer interface {
 	// Since 4.5.0 `limits.read` sets what each read may spend (`wall_ms`, `scan_entities`; the
 	// Read call's defaults, 5,000 ms and 20,000 matches, when left out), and a read stopped at
 	// one, or at `helix.timeout_secs`, says which in its `tool_result`'s error, with its value.
+	//
+	// Since 4.6.0 `visibility` asks as a reader who holds only some sources: the question sees
+	// the version and the load as those fill them, within the same `limits.read`, and has no
+	// raw or historic reads.
 	Ask(*AskRequest, grpc.ServerStreamingServer[AskEvent]) error
 }
 

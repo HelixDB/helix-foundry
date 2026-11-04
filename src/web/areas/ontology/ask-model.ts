@@ -1473,6 +1473,10 @@ export type CitationContext = {
   name: (r: EntityRef) => string;
   // A result citation's words: the step that recorded it (resultLabel).
   result: (evidenceId: string) => string;
+  // The question's load is read through source grants: a rule break and a
+  // People enrichment profile have no page there (theirs read the database
+  // and the load's jobs), so each opens the step it came from.
+  shared?: true;
 };
 
 /** `relation:co_signed` as "co signed". */
@@ -1531,7 +1535,8 @@ export function citationText(t: CitationTarget, ctx: CitationContext): string {
  * entity, a fact its subject's Facts); a version of a violation record
  * opens nothing, since the load may no longer hold that record. A query's
  * result opens in the page (undefined), as does an entity of a type the
- * version doesn't know.
+ * version doesn't know, and, read through source grants (`shared`), a rule
+ * break or a People enrichment profile.
  */
 export function citationHref(
   t: CitationTarget,
@@ -1557,14 +1562,16 @@ export function citationHref(
       )
     );
   if ("violation" in t)
-    return ontologyPaths.loadRuleBreaks(
-      o,
-      ctx.loadId,
-      t.violation.constraint,
-      t.violation.key,
-    );
+    return ctx.shared
+      ? undefined
+      : ontologyPaths.loadRuleBreaks(
+          o,
+          ctx.loadId,
+          t.violation.constraint,
+          t.violation.key,
+        );
   if ("row" in t && t.row.source === ENRICHMENT_SOURCE)
-    return ontologyPaths.load(o, ctx.loadId);
+    return ctx.shared ? undefined : ontologyPaths.load(o, ctx.loadId);
   if ("row" in t) {
     return ctx.table(t.row.source)?.to;
   }

@@ -27,6 +27,8 @@ import { readStorage, writeStorage } from "../../kit/util";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { ontologyDatabase } from "../explore/reads";
+import { myAccessQuery } from "../workspace/access-api";
+import { readAccess } from "../workspace/access-model";
 import { TenantReadsProvider } from "../explore/tenant-reads";
 import { ontologySetup, type OntologySetup } from "./model";
 import {
@@ -172,8 +174,11 @@ export function OntologyScope({ explores = false }: { explores?: boolean }) {
     const jobs = jobsSeen(loads.data.loads),
       before = seen.current;
     seen.current = { ontologyId, jobs };
-    if (before?.ontologyId === ontologyId && jobEnded(before.jobs, jobs))
+    if (before?.ontologyId === ontologyId && jobEnded(before.jobs, jobs)) {
       void qc.invalidateQueries({ queryKey: [ws, "ontology", ontologyId] });
+      // What a load holds decides who reads it through grants.
+      void qc.invalidateQueries({ queryKey: myAccessQuery(ws).queryKey });
+    }
   }, [loads.data, ontologyId]);
   // The Ontologies panel's list isn't polled: each fresh read of this
   // ontology (its last load, name and database) replaces its row there, so
@@ -241,9 +246,9 @@ export function OntologyScope({ explores = false }: { explores?: boolean }) {
 
 /**
  * The ontology picker of the Explorer's and Ask's headers: the
- * workspace's ontologies by name, `ontologyId` chosen. Choosing one opens
- * `to` of it, which leaves this one's `?load=` and the rest of the page's
- * view behind.
+ * workspace's ontologies the user reads (readAccess) by name, `ontologyId`
+ * chosen. Choosing one opens `to` of it, which leaves this one's `?load=`
+ * and the rest of the page's view behind.
  */
 export function OntologyPicker({
   ontologyId: o,
@@ -254,9 +259,12 @@ export function OntologyPicker({
   to: (ontologyId: string) => string;
   className?: string;
 }) {
-  const { id: ws } = useWorkspace(),
+  const me = useWorkspace(),
+    { id: ws } = me,
     navigate = useNavigate();
-  const list = useQuery(ontologyQueries.list(ws)).data?.ontologies || [];
+  const list = (
+    useQuery(ontologyQueries.list(ws)).data?.ontologies || []
+  ).filter((x) => x.id === o || readAccess(me, x) !== "none");
   const own = useQuery(ontologyQueries.ontology(ws, o)).data?.ontology;
   // The page's own until the list is read (or if it doesn't name it yet).
   const ontologies = list.some((x) => x.id === o)

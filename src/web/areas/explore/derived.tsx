@@ -23,7 +23,7 @@ import {
 import type { Naming } from "./naming";
 import { readQueries } from "./reads";
 import { refKey } from "./rule-breaks";
-import { useTenantReads } from "./tenant-reads";
+import { useGraphReader } from "./graph-reader";
 
 // What a load's rules derive about an entity, evaluated when the page reads
 // it (./graph-read.ts): derived links, relations and facts beside its
@@ -51,12 +51,12 @@ type Named = RefView & { name: (r: EntityRef) => string };
 function useNamed(view: RefView, refs: EntityRef[]): Named {
   const { id: ws } = useWorkspace(),
     { id: o } = useOntology(),
-    { read } = useTenantReads();
+    { reader } = useGraphReader();
   const names = useQuery(
     readQueries.names(
       ws,
       o,
-      read,
+      reader,
       view.loadId,
       refs.filter((r) => !view.name(r)),
       view.naming,

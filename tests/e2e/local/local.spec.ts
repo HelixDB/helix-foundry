@@ -131,7 +131,7 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
     page.getByRole("heading", { level: 1, name: "Analyst" }),
   ).toBeVisible();
 
-  // No Helix MCP here, so no Getting into production.
+  // The hosted Getting into production card is not offered locally.
   const production = page.getByRole("region", {
     name: "Getting into production",
   });
@@ -150,7 +150,9 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
 
 test("opens a new install in its workspace's onboarding, never the workspace picker", async ({
   page,
+  context,
 }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await configure({ freshInstall: true });
   await page.goto("/");
   await expect(page).toHaveURL(/\/ontology\/new$/);
@@ -163,12 +165,18 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
   await expect(
     page.getByRole("heading", { name: "Create your first workspace" }),
   ).toHaveCount(0);
-  // No Helix MCP here, so no agent to set it up and nothing to toggle.
-  await expect(page.getByText("Use my own data")).toBeVisible();
-  await expect(page.getByRole("radio")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Copy prompt" })).toHaveCount(
-    0,
-  );
+  // Local setup keeps the own-data default and also offers its local MCP.
+  await expect(
+    page.getByRole("radio", { name: "Use my own data" }),
+  ).toBeChecked();
+  await page.getByRole("radio", { name: "Set up with your agent" }).click();
+  await page.getByRole("button", { name: "Copy prompt", exact: true }).click();
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  expect(prompt).toContain("http://localhost:8081/mcp");
+  expect(prompt).toContain("FOUNDRY_LOCAL_TOKEN");
+  expect(prompt).toContain("My workspace");
+  expect(prompt).not.toContain("mcp.helix-db.com");
+  expect(prompt).not.toContain("helix_signup");
 
   // Another workspace is still made from the switcher, and opens on its own
   // onboarding.
@@ -201,7 +209,8 @@ test("walks a new install through the sample company, from its database to Ask",
   page.on("response", async (response) => {
     if (response.request().resourceType() !== "script") return;
     const text = await response.text().catch(() => "");
-    if (text.includes("cdn.databuddy.cc")) tracked.push(response.url());
+    if (text.includes("Databuddy: No client ID found"))
+      tracked.push(response.url());
   });
   await configure({ freshInstall: true, ontologyStepMs: 300, loadStepMs: 200 });
   await page.goto("/");
@@ -342,7 +351,7 @@ test("offers every connector to a new workspace", async ({ page }) => {
     await expect(
       picker.getByRole("button", { name, exact: true }),
     ).not.toHaveAccessibleDescription(/Foundry Pro/);
-  // No API source: its senders need the Helix MCP, which runs only hosted.
+  // Local MCP supports connectors and documents; API sources remain hosted-only.
   await expect(picker.getByText("From your agent")).toHaveCount(0);
   await expect(
     picker.getByRole("button", { name: "API source", exact: true }),
@@ -354,6 +363,30 @@ test("offers every connector to a new workspace", async ({ page }) => {
     "Foundry connects from inside Docker, so a database on this computer is host.docker.internal, not localhost, and must accept connections from Docker’s network. If it has no TLS, choose No TLS under Connection options.",
   );
   await expect(picker.getByLabel("Host")).toBeVisible();
+});
+
+test("connects GitHub and Linear with a key, never by signing in", async ({
+  page,
+}) => {
+  // No accounts to sign in with: a local install has no WorkOS.
+  await page.goto("/data?add=github");
+  const form = page.locator("dialog[open]");
+  await expect(form).toHaveAccessibleName("GitHub");
+  await expect(form.getByLabel("Personal access token")).toBeVisible();
+  await expect(
+    form.getByRole("button", { name: /Connect with GitHub/ }),
+  ).toHaveCount(0);
+  await form.getByRole("button", { name: "← All sources" }).click();
+  await form.getByRole("button", { name: "Linear", exact: true }).click();
+  await expect(form.getByLabel("Personal API key")).toBeVisible();
+  await expect(form.getByText(/Connect with Linear/)).toHaveCount(0);
+  // The local API offers neither kind by signing in.
+  const kinds = (
+    await page.request
+      .get("/papi/v1/workspaces/ws_acme/foundry/connector-kinds")
+      .then((r) => r.json())
+  ).kinds as { kind: string; signIn?: boolean }[];
+  expect(kinds.filter((k) => k.signIn)).toEqual([]);
 });
 
 test("has no New API source in the palette", async ({ page }) => {

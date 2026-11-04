@@ -23,6 +23,7 @@ import type { WizardStepId } from "./areas/ontology/model";
 import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
+import type { SignInFailureCode } from "./areas/data/sign-ins";
 
 // The hosted site's product analytics, in Databuddy (./telemetry.tsx loads
 // its tracker). next.config.ts sets the stamp's client id only in a build
@@ -109,6 +110,17 @@ export type AnalyticsEvents = {
   };
   document_moved: undefined;
   document_set_created: undefined;
+  // Connecting a source by signing in at the provider: its button, as the
+  // page leaves for the provider (to a new connection or signing one in
+  // again), or why it couldn't; then how the callback found the sign-in
+  // ended, a failure with its code.
+  connector_sign_in_started: { kind: ConnectorKindName };
+  connector_sign_in_refused: { kind: ConnectorKindName; reason: Refusal };
+  connector_sign_in_finished: {
+    kind: ConnectorKindName;
+    outcome: "connected" | "declined" | "failed" | "expired";
+    reason?: SignInFailureCode;
+  };
 
   // Jobs: reported when they start and, by whichever read of them sees it
   // first, when they end (jobStarted, jobSeen); `*_refused` when the WFE
@@ -182,8 +194,8 @@ const LEAVE_WAIT_MS = 1000;
 const TRACK_URL = "https://basket.databuddy.cc/track";
 
 /**
- * Sends an event before the page may leave (for WorkOS, Stripe, or the app
- * from the landing page). The tracker holds custom events for up to 5 s and
+ * Sends an event before the page may leave (for WorkOS, Stripe, a
+ * provider's sign-in, or the app from the landing page). The tracker holds custom events for up to 5 s and
  * loses what it still holds when the page unloads (its build of Oct 2026),
  * and a call made before it loads waits in the SDK's queue, which the
  * navigation drops. So this waits for the tracker, at most a second, then
@@ -192,10 +204,28 @@ const TRACK_URL = "https://basket.databuddy.cc/track";
  * tracker has none while the visitor opts out (Do Not Track, Global Privacy
  * Control, databuddyOptOut()), and the SDK would read a stored one before
  * the tracker loads: without the tracker's, or a beacon, the event goes
- * through the tracker, which honours the opt-out. Only for pages whose path
- * names nothing: it isn't masked.
+ * through the tracker, which honours the opt-out. The event's path is the page's,
+ * unmasked: only for pages whose path names nothing (else
+ * trackBeforeLeavingAt).
  */
-export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
+export function trackBeforeLeaving<Name extends AnalyticsEventName>(
+  name: Name,
+  ...properties: EventArgs<Name>
+): Promise<void> {
+  return trackBeforeLeavingAt(
+    typeof location === "undefined" ? "/" : location.pathname,
+    name,
+    ...properties,
+  );
+}
+
+/**
+ * trackBeforeLeaving, under a fixed `path` in place of the page's: for a
+ * button on pages whose paths name ids (a connector's, an ontology's), which
+ * a beacon's path wouldn't mask.
+ */
+export async function trackBeforeLeavingAt<Name extends AnalyticsEventName>(
+  path: string,
   name: Name,
   ...properties: EventArgs<Name>
 ): Promise<void> {
@@ -220,7 +250,7 @@ export async function trackBeforeLeaving<Name extends AnalyticsEventName>(
       profileId: getProfileId() ?? undefined,
       // As the tracker sends its own: the visitor id is hashed on arrival.
       anonymizeVisitorIds: true,
-      path: location.origin + location.pathname,
+      path: location.origin + path,
       source: "browser",
       websiteId: DATABUDDY_CLIENT_ID,
     };

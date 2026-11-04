@@ -70,6 +70,8 @@ type runtimeDeps struct {
 	Databases  ports.Databases
 	Graph      ports.GraphReader
 	People     ports.People
+	// Accounts is nil where no connector signs in.
+	Accounts ports.ProviderAccounts
 	// LocalAI is nil hosted.
 	LocalAI *detect.Detector
 }
@@ -92,7 +94,9 @@ func New(d Deps) (*Service, error) {
 	var connectorCatalog *connector.Catalog
 	if connectorKeys != nil {
 		// The API only tests and discovers: its events kind reads no batches.
-		connectorCatalog = connector.NewCatalog(connector.DefaultEndpoints(),
+		endpoints := connector.DefaultEndpoints()
+		endpoints.GitHubAppInstall = cfg.Foundry.Connectors.GitHubAppInstallURL
+		connectorCatalog = connector.NewCatalog(endpoints,
 			connector.Guard{AllowPrivate: cfg.Foundry.Connectors.AllowPrivateHosts}, connector.NewS3Options(cfg, d.AWS), connector.EventsOptions{})
 	}
 	catalog, err := foundryplan.NewCatalog(cfg.Billing.Plans, connector.KindNames())
@@ -101,7 +105,8 @@ func New(d Deps) (*Service, error) {
 	}
 	s := &Service{deps: &runtimeDeps{
 		Cfg: cfg, DB: d.DB, Plans: d.Plans, Catalog: catalog, ConnectorCatalog: connectorCatalog, ConnectorKeys: connectorKeys,
-		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, LocalAI: d.LocalAI,
+		AI: aiDeployment, AIPlans: ai.NewPlans(d.Plans), Databases: d.Databases, Graph: d.Graph, People: d.People, Accounts: d.Accounts,
+		LocalAI: d.LocalAI,
 	}}
 	if d.Documents != nil {
 		s.deps.Documents = d.Documents
@@ -124,12 +129,12 @@ func New(d Deps) (*Service, error) {
 	return s, nil
 }
 
-// Register serves FoundryService and FoundryEventsService on srv. Install
-// ActorInterceptor on srv, and keep srv off any public network: every call
-// is trusted as its Actor.
+// Register serves FoundryService and FoundryEventsService on srv, every call
+// through the access check (authorize). Install ActorInterceptor on srv, and
+// keep srv off any public network: every call is trusted as its Actor.
 func (s *Service) Register(srv *grpc.Server) {
-	foundryv1.RegisterFoundryServiceServer(srv, s)
-	foundryv1.RegisterFoundryEventsServiceServer(srv, s)
+	srv.RegisterService(guarded(&foundryv1.FoundryService_ServiceDesc, s.authorize), s)
+	srv.RegisterService(guarded(&foundryv1.FoundryEventsService_ServiceDesc, s.authorize), s)
 }
 
 // Close closes the foundry-read connection.

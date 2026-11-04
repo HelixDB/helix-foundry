@@ -118,13 +118,33 @@ export type WorkspaceRole =
   | "WORKSPACE_ROLE_MEMBER"
   | "WORKSPACE_ROLE_OWNER";
 
-/** v1WorkspaceMember. `projectAccess` is left out: Foundry does not use it. */
+/**
+ * v1ResourceScope: which projects a scope reaches. `mode` is "all", "none"
+ * or "selected" (then `projectIds` names them); unset reads as none.
+ */
+export type ResourceScope = { mode?: string; projectIds?: string[] };
+
+/**
+ * v1ProjectAccess: a member's effective project policy. `write`, `queryRead`
+ * or `queryWrite` reaching any project lets them read databases outside
+ * Foundry, so they can't be restricted to source grants.
+ */
+export type ProjectAccess = {
+  version?: string;
+  read?: ResourceScope;
+  write?: ResourceScope;
+  queryRead?: ResourceScope;
+  queryWrite?: ResourceScope;
+};
+
+/** v1WorkspaceMember */
 export type WorkspaceMember = {
   id?: string;
   workspaceId: string;
   user?: User;
   role?: WorkspaceRole;
   timestamps?: Timestamps;
+  projectAccess?: ProjectAccess;
 };
 
 /** v1WhoamiResponse: GET /v1/whoami. `workspaces` are the user's memberships. */
@@ -341,6 +361,12 @@ export type S3ConnectorSetup = {
   // This workspace's; required by the trust policy.
   externalId?: string;
 };
+/**
+ * v1GitHubConnectorSetup: Helix Foundry's GitHub App, which a signed-in
+ * GitHub connector reads private repositories through, where it is
+ * installed.
+ */
+export type GitHubConnectorSetup = { installUrl?: string };
 /** v1ConnectorKind: GET .../foundry/connector-kinds, in display order. */
 export type ConnectorKind = {
   kind: string;
@@ -350,6 +376,14 @@ export type ConnectorKind = {
   available?: boolean;
   // s3 only, and only where role access is configured (proto oneof setup).
   s3?: S3ConnectorSetup | null;
+  // github only, where it connects by signing in (the same oneof).
+  github?: GitHubConnectorSetup | null;
+  // True when the caller can connect the kind by signing in at its
+  // provider (StartConnectorSignIn) instead of entering a key: hosted, the
+  // kinds Pipes signs in to that the stamp lists (GitHub, Linear, Slack,
+  // Notion, PostHog, Cal.com, Stripe, Google Workspace), for a member of the
+  // workspace's WorkOS organization.
+  signIn?: boolean;
 };
 /** helixwfev1ListConnectorKindsResponse */
 export type ListConnectorKindsResponse = { kinds?: ConnectorKind[] };
@@ -588,6 +622,44 @@ export type ConnectorSync = {
   nextAttemptAt?: string | null;
 };
 
+/** v1ConnectorAccountState */
+export type ConnectorAccountState =
+  | "CONNECTOR_ACCOUNT_STATE_UNSPECIFIED"
+  | "CONNECTOR_ACCOUNT_STATE_CONNECTED"
+  // It doesn't sync until an owner or admin signs it in again; its tables
+  // keep what the last sync read.
+  | "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN";
+/** v1ConnectorAccountBroken: why an account needs signing in again. */
+export type ConnectorAccountBroken =
+  | "CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED"
+  // The member it reads as left the workspace.
+  | "CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT"
+  // The provider rejected its access, or it was revoked there.
+  | "CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED"
+  // Its access lapsed and couldn't be renewed.
+  | "CONNECTOR_ACCOUNT_BROKEN_EXPIRED"
+  // The broker (hosted: WorkOS Pipes) no longer has the account.
+  | "CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING";
+/**
+ * v1ConnectorAccount: the provider account a connector connected by
+ * signing in reads with, in place of a stored key. The credential stays
+ * with the broker; the connector asks it for a token each time it reads.
+ */
+export type ConnectorAccount = {
+  // Who the provider says signed in: a GitHub login; a Linear user and
+  // workspace.
+  label?: string;
+  state?: ConnectorAccountState;
+  // Unspecified while connected.
+  broken?: ConnectorAccountBroken;
+  brokenAt?: string | null;
+  // The member whose access it reads with, and their name: "a former
+  // member" once they have left the workspace.
+  userId?: string;
+  connectedBy?: string;
+  connectedAt?: string | null;
+};
+
 /** v1Connector */
 export type Connector = {
   id: string;
@@ -606,6 +678,9 @@ export type Connector = {
   // When it syncs by itself; unset for an API source, which syncs as its
   // pieces arrive.
   schedule?: ConnectorSchedule | null;
+  // Set when it was connected by signing in at its provider; its
+  // `secretHint` is then empty.
+  account?: ConnectorAccount | null;
 };
 
 /**
@@ -622,8 +697,15 @@ export type ConnectorSchedule = {
   pausedReason?: string;
 };
 
-/** helixwfev1ListConnectorsResponse: GET .../foundry/connectors */
+/**
+ * helixwfev1ListConnectorsResponse: GET .../foundry/connectors. With
+ * `?needsSignIn=true` (ListConnectorsQuery), only the connectors whose
+ * account needs signing in again, without their tables or syncs: the cheap
+ * read the shell's notice of them makes.
+ */
 export type ListConnectorsResponse = { connectors?: Connector[] };
+/** ListConnectors' query parameters. */
+export type ListConnectorsQuery = { needsSignIn?: boolean };
 /**
  * helixwfev1ConnectorResponse: create, get and update. `discovery` is set
  * only when the call tested the credential.
@@ -716,6 +798,102 @@ export type ListFoundryEventBatchesResponse = {
   pendingPieces?: string;
   capacity?: EventSourceCapacity | null;
 };
+
+// Connecting a source by signing in at its provider (hosted: through
+// WorkOS Pipes) instead of entering a key: routes under
+// /v1/workspaces/{workspaceId}/foundry/sign-ins. A user, or their agent,
+// starts a sign-in with the connector's settings; that user authorizes it in
+// their browser, which the provider sends back to the site's
+// /connect/callback, which finishes it: the connector is made (or signed in
+// again) and its first sync scheduled. Only its starter may authorize or
+// finish it. No provider text is returned: failures are codes.
+
+/** v1ConnectorSignInStatus */
+export type ConnectorSignInStatus =
+  | "CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED"
+  // Started; its link not yet followed.
+  | "CONNECTOR_SIGN_IN_STATUS_PENDING"
+  // Sent to the provider to authorize.
+  | "CONNECTOR_SIGN_IN_STATUS_AUTHORIZING"
+  // Its callback arrived and is being finished.
+  | "CONNECTOR_SIGN_IN_STATUS_FINISHING"
+  | "CONNECTOR_SIGN_IN_STATUS_CONNECTED"
+  // The user declined at the provider. Authorizing again retries it.
+  | "CONNECTOR_SIGN_IN_STATUS_DECLINED"
+  // See `failure`. Authorizing again retries it.
+  | "CONNECTOR_SIGN_IN_STATUS_FAILED"
+  // 15 minutes passed since it started or was last authorized.
+  | "CONNECTOR_SIGN_IN_STATUS_EXPIRED";
+/** v1ConnectorSignInFailure: why a sign-in failed, for the site to word. */
+export type ConnectorSignInFailure =
+  | "CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED"
+  // The provider or the broker answered with an error.
+  | "CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR"
+  // The callback's code had lapsed or was already used.
+  | "CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED"
+  // The account isn't this workspace's, or wasn't made by its starter.
+  | "CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE"
+  // The provider refused the token it issued.
+  | "CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED"
+  // The connector's settings were refused.
+  | "CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID"
+  // The broker couldn't be reached.
+  | "CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE";
+/** v1ConnectorSignIn */
+export type ConnectorSignIn = {
+  id: string;
+  kind?: string;
+  name?: string;
+  status?: ConnectorSignInStatus;
+  // Set with CONNECTOR_SIGN_IN_STATUS_FAILED.
+  failure?: ConnectorSignInFailure;
+  // The connector it made, or signs in again.
+  connectorId?: string;
+  // Set when the connector was made but can't read all it names, in
+  // Foundry's words: a repository the GitHub App can't see, say.
+  discoveryProblem?: string;
+  // Signing in again changed the provider account the connector reads with.
+  identityChanged?: boolean;
+  // The caller started it: only they can authorize and finish it.
+  mine?: boolean;
+  createdAt?: string | null;
+  expiresAt?: string | null;
+  // The connector's settings, chosen before signing in; never a credential.
+  config?: ConnectorConfig | null;
+};
+/**
+ * FoundryServiceStartConnectorSignInBody: POST .../foundry/sign-ins (owners
+ * and admins, for a kind with `signIn`). `config` holds the settings with
+ * every credential field empty; `connectorId` signs that connector in
+ * again instead of making one. The same `clientToken` returns the sign-in
+ * the first call started.
+ */
+export type StartConnectorSignInRequest = {
+  kind: string;
+  name?: string;
+  config?: ConnectorConfig;
+  connectorId?: string;
+  clientToken?: string;
+};
+/** v1ConnectorSignInResponse: start, get and finish. */
+export type ConnectorSignInResponse = { signIn: ConnectorSignIn };
+/**
+ * FoundryServiceAuthorizeConnectorSignInBody: POST .../sign-ins/{id}:authorize,
+ * by its starter, until it connects: again after a decline or a failure.
+ * `returnTo` is the site's callback, which the WFE must list.
+ */
+export type AuthorizeConnectorSignInRequest = { returnTo: string };
+/** v1AuthorizeConnectorSignInResponse: the provider's page to send the browser to. */
+export type AuthorizeConnectorSignInResponse = { url: string };
+/**
+ * FoundryServiceFinishConnectorSignInBody: POST .../sign-ins/{id}:finish,
+ * from the callback: its `connectCode`, or its `error` when it came back
+ * without one (access_denied: declined). A repeat returns the sign-in as it
+ * stands.
+ */
+export type FinishConnectorSignInRequest =
+  | { connectCode: string }
+  | { error: string };
 
 // ---------------------------------------------------------------- Ontology: versions and generations
 
@@ -1166,6 +1344,9 @@ export type FoundryOntology = {
   // Whether a changed table it reads loads its current version again by
   // itself (a load of origin refresh), at most once per the plan's interval.
   autoRefresh?: boolean;
+  // A caller who reads through source grants holds only some of what its
+  // current load holds, and reads that part.
+  partialAccess?: boolean;
   // With autoRefresh: when the refresh it owes may start, since a table its
   // current load reads changed or a connector's document it read was
   // replaced or removed; unset when it owes none.
@@ -1972,6 +2153,8 @@ export type OntologyQuery = {
           columns: { at: number; prop?: string | null }[];
           order_by?: { at: number; prop: string; desc?: boolean } | null;
           limit?: number;
+          // Rows, in order, to pass over first; at most 10,000.
+          offset?: number;
         };
       }
     // The last position when `distinct_at` is null or left out.
@@ -2773,3 +2956,234 @@ export type AgentProviderKind =
   | "bedrock"
   | "ollama"
   | "openai_compatible";
+
+// ---------------------------------------------------------------- Access
+// Routes under /v1/workspaces/{workspaceId}/foundry/access... (Foundry's
+// source grants) and /v1/workspaces/{workspaceId}/service-credentials (the
+// WFE's agents' keys). Owners and admins grant a principal (a member, a team
+// or an agent's key) sources: a connector (its tables now and later, and the
+// document sets it owns), one table, a document set, or People enrichment. A
+// grantee reads the part of an ontology's current load its sources hold (all
+// of it while every source that load holds is granted to it), and changes
+// nothing: a restricted member (on every
+// Foundry call while their role is member), a member without database query
+// access on Ask's and the graph's reads, or an agent's key with grants.
+// Grants only add: a workspace that grants nothing behaves as before.
+
+/** v1FoundryPrincipalKind */
+export type FoundryPrincipalKind =
+  | "KIND_UNSPECIFIED"
+  | "KIND_USER"
+  | "KIND_SERVICE_CREDENTIAL"
+  | "KIND_TEAM";
+
+/** v1FoundryPrincipal: who a grant is for. `id` is a user's, a key's or a team's. */
+export type FoundryPrincipal = { kind?: FoundryPrincipalKind; id?: string };
+
+/** v1FoundryAccessTargetKind */
+export type FoundryAccessTargetKind =
+  | "KIND_UNSPECIFIED"
+  | "KIND_CONNECTOR"
+  | "KIND_TABLE"
+  | "KIND_DOCUMENT_SET"
+  | "KIND_ENRICHMENT";
+
+/**
+ * v1FoundryAccessTarget: what one grant gives. A connector names
+ * `connectorId`, a table `connectorId` and `table`, a set `documentSetId`,
+ * and People enrichment nothing.
+ */
+export type FoundryAccessTarget = {
+  kind?: FoundryAccessTargetKind;
+  connectorId?: string;
+  table?: string;
+  documentSetId?: string;
+};
+
+/** v1FoundryAccessGrant */
+export type FoundryAccessGrant = {
+  id?: string;
+  principal?: FoundryPrincipal;
+  target?: FoundryAccessTarget;
+  createdByUserId?: string;
+  createdAt?: string;
+};
+
+/** FoundryLoadAccessInputsTable */
+export type FoundryLoadAccessTable = { connectorId?: string; table?: string };
+/**
+ * FoundryLoadAccessInputsDocumentSet: a set the load's documents, table
+ * files or review decisions' documents are in now, with the connector that
+ * owns it, if one does. An empty `documentSetId` is a document in no set,
+ * which nothing covers.
+ */
+export type FoundryLoadAccessSet = {
+  documentSetId?: string;
+  connectorId?: string;
+};
+
+/**
+ * v1FoundryLoadAccessInputs: what a load holds, as far as grants go.
+ * `uncoverable`: it was made before grants, or applies a review decision
+ * whose documents weren't recorded; loading again makes it shareable.
+ */
+export type FoundryLoadAccessInputs = {
+  tables?: FoundryLoadAccessTable[];
+  documentSets?: FoundryLoadAccessSet[];
+  enrichment?: boolean;
+  uncoverable?: boolean;
+};
+
+/**
+ * v1FoundryOntologyAccess: a live ontology's current load as grants see it,
+ * and the principals whose own grants cover it (a team's members read it
+ * through the team; they aren't listed).
+ */
+export type FoundryOntologyAccess = {
+  ontologyId?: string;
+  loadId?: string;
+  inputs?: FoundryLoadAccessInputs;
+  readers?: FoundryPrincipal[];
+  // Those whose own grants hold only some of it, who read that part.
+  partialReaders?: FoundryPrincipal[];
+};
+
+/** v1FoundryTeam: members hold the team's grants. Names are unique, 1 to 120 characters. */
+export type FoundryTeam = {
+  id?: string;
+  name?: string;
+  memberUserIds?: string[];
+  createdByUserId?: string;
+  createdAt?: string;
+};
+
+/**
+ * v1ListFoundryAccessResponse: GET .../foundry/access, owners and admins.
+ * Grants oldest first; ontologies those with a current load; teams by name.
+ */
+export type ListFoundryAccessResponse = {
+  grants?: FoundryAccessGrant[];
+  ontologies?: FoundryOntologyAccess[];
+  teams?: FoundryTeam[];
+  restrictedUserIds?: string[];
+};
+
+/**
+ * FoundryServiceSetFoundryAccessGrantsBody: PUT .../foundry/access/grants
+ * replaces the principal's grants (none takes them all away); a connector or
+ * set not in the workspace is NOT_FOUND. Answers the principal's grants now.
+ */
+export type SetFoundryAccessGrantsRequest = {
+  principal: FoundryPrincipal;
+  targets: FoundryAccessTarget[];
+};
+/** v1SetFoundryAccessGrantsResponse */
+export type SetFoundryAccessGrantsResponse = { grants?: FoundryAccessGrant[] };
+
+/**
+ * v1FoundryAccessChange: one change the site warns about, exactly one of a
+ * load of a version (or making it current), deleting a connector, or moving
+ * a document to another set.
+ */
+export type FoundryAccessChange =
+  | { loadVersion: { ontologyId: string; versionId: string } }
+  | { deleteConnector: string }
+  | { moveDocument: { documentId: string; documentSetId: string } };
+
+/** FoundryServicePreviewFoundryAccessChangeBody: POST .../foundry/access:preview */
+export type PreviewFoundryAccessChangeRequest = { change: FoundryAccessChange };
+/** v1FoundryAccessLoss: a principal that would stop reading an ontology through grants. */
+export type FoundryAccessLoss = {
+  principal?: FoundryPrincipal;
+  ontologyId?: string;
+  // It would still read the part its grants hold.
+  keepsPart?: boolean;
+};
+/** v1PreviewFoundryAccessChangeResponse */
+export type PreviewFoundryAccessChangeResponse = {
+  losses?: FoundryAccessLoss[];
+};
+
+/**
+ * v1GetMyFoundryAccessResponse: GET .../foundry/access/me, any member.
+ * `grantee`: this caller reads only through grants (a restricted member);
+ * `ontologyIds`: the live ontologies whose current loads its grants hold any
+ * of, `partialOntologyIds` those of them it holds only some of.
+ */
+export type GetMyFoundryAccessResponse = {
+  grantee?: boolean;
+  hasGrants?: boolean;
+  ontologyIds?: string[];
+  partialOntologyIds?: string[];
+};
+
+/**
+ * FoundryServiceSetFoundryMemberRestrictedBody: PUT
+ * .../foundry/access/members/{userId}. Only a plain member without project
+ * write or query access can be restricted (FAILED_PRECONDITION otherwise).
+ */
+export type SetFoundryMemberRestrictedRequest = { restricted: boolean };
+/** v1SetFoundryMemberRestrictedResponse */
+export type SetFoundryMemberRestrictedResponse = { restricted?: boolean };
+
+/**
+ * FoundryServiceCreateFoundryTeamBody and FoundryServiceUpdateFoundryTeamBody:
+ * POST .../foundry/access/teams, PUT .../teams/{teamId} (renames and
+ * replaces its members). A taken name is ALREADY_EXISTS; at most 100 teams
+ * and 1,000 members a team.
+ */
+export type FoundryTeamRequest = { name: string; memberUserIds: string[] };
+/** v1FoundryTeamResponse */
+export type FoundryTeamResponse = { team?: FoundryTeam };
+
+/** v1ServiceCredentialPermission: a key's project grant. */
+export type ServiceCredentialPermission =
+  | "SERVICE_CREDENTIAL_PERMISSION_UNSPECIFIED"
+  | "SERVICE_CREDENTIAL_PERMISSION_PROJECT_READ"
+  | "SERVICE_CREDENTIAL_PERMISSION_PROJECT_WRITE"
+  | "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_READ"
+  | "SERVICE_CREDENTIAL_PERMISSION_DATABASE_QUERY_WRITE";
+
+/** v1ServiceCredentialGrant: what a key may do in one project. */
+export type ServiceCredentialGrant = {
+  projectId?: string;
+  permissions?: ServiceCredentialPermission[];
+};
+
+/**
+ * v1ServiceCredential: a workspace's key, an agent's. Its token is shown
+ * once, when it is made; `tokenPrefix` names it after. `legacyReportOwner`
+ * is left out: Foundry lists workspace keys only.
+ */
+export type ServiceCredential = {
+  id: string;
+  name?: string;
+  tokenPrefix?: string;
+  workspaceOwner?: { workspaceId?: string };
+  grants?: ServiceCredentialGrant[];
+  createdBy?: string;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+  lastUsedAt?: string | null;
+  timestamps?: Timestamps;
+};
+
+/** helixwfev1ListServiceCredentialsResponse: GET /v1/workspaces/{workspaceId}/service-credentials */
+export type ListServiceCredentialsResponse = {
+  credentials?: ServiceCredential[];
+};
+
+/**
+ * v1WfeServiceCreateServiceCredentialBody: POST
+ * /v1/workspaces/{workspaceId}/service-credentials. Foundry makes keys with
+ * no project grants: they reach Foundry only through source grants.
+ */
+export type CreateServiceCredentialRequest = {
+  name: string;
+  grants?: ServiceCredentialGrant[];
+};
+/** helixwfev1CreateServiceCredentialResponse: `token` is shown once. */
+export type CreateServiceCredentialResponse = {
+  credential?: ServiceCredential;
+  token?: string;
+};

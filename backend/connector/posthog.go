@@ -82,8 +82,18 @@ func (k *posthogKind) MinInterval(src Source) time.Duration {
 func (k *posthogKind) Name() string        { return "posthog" }
 func (k *posthogKind) DisplayName() string { return "PostHog" }
 
+var _ Identifier = (*posthogKind)(nil)
+
+// PostHogSignInRegion is the region Pipes' PostHog provider authorizes in:
+// it has no region setting, so a signed-in PostHog reads this cloud only
+// (verify on dev).
+const PostHogSignInRegion = "us"
+
+// Prepare checks a key's format and the settings. A token the broker vended
+// has no format of ours to check; it reads PostHogSignInRegion's cloud
+// only, so the other cloud and a self-hosted PostHog keep their keys.
 func (k *posthogKind) Prepare(src Source) (json.RawMessage, error) {
-	if !posthogKeyRE.MatchString(strings.TrimSpace(src.Secret)) {
+	if !src.SignIn && !posthogKeyRE.MatchString(strings.TrimSpace(src.Secret)) {
 		return nil, invalid("enter a PostHog personal API key (phx_…)")
 	}
 	var s PostHogSettings
@@ -106,6 +116,11 @@ func (k *posthogKind) Prepare(src Source) (json.RawMessage, error) {
 		s.Host = u.Scheme + "://" + u.Host
 	default:
 		return nil, invalid("PostHog region must be us, eu or custom")
+	}
+	if src.SignIn && s.Region != PostHogSignInRegion {
+		other := map[string]string{"us": "EU", "eu": "US"}[PostHogSignInRegion]
+		return nil, invalid("signing in reads PostHog %s Cloud only: connect PostHog %s Cloud or a self-hosted PostHog with a personal API key",
+			strings.ToUpper(PostHogSignInRegion), other)
 	}
 	s.ProjectID = strings.TrimSpace(s.ProjectID)
 	if s.ProjectID != "" && !posthogProjectRE.MatchString(s.ProjectID) {
@@ -140,7 +155,7 @@ func (k *posthogKind) Discover(ctx context.Context, src Source) (Discovery, erro
 	host := k.host(s)
 	header := http.Header{"Authorization": {"Bearer " + strings.TrimSpace(src.Secret)}}
 	if s.ProjectID == "" {
-		id, err := k.onlyProject(ctx, host, header)
+		id, err := k.onlyProject(ctx, host, header, src.SignIn)
 		if err != nil {
 			return Discovery{}, err
 		}
@@ -163,7 +178,7 @@ func (k *posthogKind) Discover(ctx context.Context, src Source) (Discovery, erro
 		case err != nil:
 			return false, refused(err, "could not reach PostHog; check the region or host")
 		case status == http.StatusUnauthorized:
-			return false, refused(nil, "PostHog rejected this key; check it and the region, then test again")
+			return false, rejectedCredential("PostHog", nil, "PostHog rejected this key; check it and the region, then test again")
 		case status == http.StatusTooManyRequests || status >= 500:
 			// Not an answer about the table: a sync must retry, not call it unreadable.
 			return false, refused(nil, "PostHog returned HTTP %d; try again", status)
@@ -197,8 +212,10 @@ func shapePostHogTables(tables []Table) {
 	}
 }
 
-// onlyProject returns the key's project when it sees exactly one.
-func (k *posthogKind) onlyProject(ctx context.Context, host string, header http.Header) (string, error) {
+// onlyProject returns the key's project when it sees exactly one. Otherwise
+// it lists them to choose from: by name and ID for a key, by ID alone for a
+// signed-in source, whose messages carry no text of the provider's.
+func (k *posthogKind) onlyProject(ctx context.Context, host string, header http.Header, signIn bool) (string, error) {
 	status, body, err := get(ctx, k.http, host+"/api/projects/", header)
 	switch {
 	case errors.Is(err, ErrPrivateAddress):
@@ -206,7 +223,7 @@ func (k *posthogKind) onlyProject(ctx context.Context, host string, header http.
 	case err != nil:
 		return "", refused(err, "could not reach PostHog; check the region or host")
 	case status == http.StatusUnauthorized:
-		return "", refused(nil, "PostHog rejected this key; check it and the region, then test again")
+		return "", rejectedCredential("PostHog", nil, "PostHog rejected this key; check it and the region, then test again")
 	case status == http.StatusForbidden:
 		return "", invalid("enter the project ID from PostHog project settings")
 	case status >= 300:
@@ -230,8 +247,54 @@ func (k *posthogKind) onlyProject(ctx context.Context, host string, header http.
 	names := make([]string, len(page.Results))
 	for i, p := range page.Results {
 		names[i] = fmt.Sprintf("%s (%s)", p.Name, p.ID)
+		if signIn {
+			names[i] = p.ID.String()
+		}
 	}
 	return "", invalid("enter a PostHog project ID: %s", strings.Join(names, ", "))
+}
+
+// Identity is the email of the user the credential reads as, and their
+// organization's name, from /api/users/@me; its id is the organization's
+// and the user's.
+func (k *posthogKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	var s PostHogSettings
+	if err := json.Unmarshal(orEmpty(src.Settings), &s); err != nil {
+		return "", "", invalid("PostHog settings are malformed")
+	}
+	status, body, err := get(ctx, k.http, k.host(s)+"/api/users/@me/", http.Header{"Authorization": {"Bearer " + strings.TrimSpace(src.Secret)}})
+	switch {
+	case errors.Is(err, ErrPrivateAddress):
+		return "", "", invalid("that PostHog host is not on the public internet")
+	case err != nil:
+		return "", "", refused(err, "could not reach PostHog; check the region or host")
+	case status == http.StatusUnauthorized:
+		return "", "", rejectedCredential("PostHog", nil, "PostHog rejected this key; check it and the region, then test again")
+	case status >= 300:
+		return "", "", refused(nil, "PostHog returned HTTP %d for /api/users/@me; try again", status)
+	}
+	var me struct {
+		UUID         string `json:"uuid"`
+		Email        string `json:"email"`
+		Organization struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"organization"`
+	}
+	if err := json.Unmarshal(body, &me); err != nil {
+		return "", "", fmt.Errorf("decode posthog /api/users/@me: %w", err)
+	}
+	id := ""
+	if me.UUID != "" && me.Organization.ID != "" {
+		id = me.Organization.ID + "/" + me.UUID
+	}
+	switch {
+	case me.Email == "":
+		return "", "", errors.New("posthog /api/users/@me names no user")
+	case me.Organization.Name == "":
+		return me.Email, id, nil
+	}
+	return me.Email + " in " + me.Organization.Name, id, nil
 }
 
 func (k *posthogKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }
@@ -348,7 +411,7 @@ func (k *posthogKind) copyRows(ctx context.Context, src Source, table string, w 
 	host := k.host(s)
 	header := http.Header{"Authorization": {"Bearer " + strings.TrimSpace(src.Secret)}}
 	if s.ProjectID == "" {
-		id, err := k.onlyProject(ctx, host, header)
+		id, err := k.onlyProject(ctx, host, header, src.SignIn)
 		if err != nil {
 			return err
 		}
@@ -414,7 +477,7 @@ func (k *posthogKind) query(ctx context.Context, queryURL string, header http.He
 	case err != nil:
 		return nil, refused(err, "could not reach PostHog; the sync will retry")
 	case status == http.StatusUnauthorized:
-		return nil, refused(nil, "PostHog rejected this key; update the connector")
+		return nil, rejectedCredential("PostHog", nil, "PostHog rejected this key; update the connector")
 	case status == http.StatusForbidden:
 		return nil, refused(nil, "this key is missing a permission; grant Query Read and Project Read")
 	case status >= 300:

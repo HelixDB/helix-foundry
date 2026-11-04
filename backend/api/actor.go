@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -63,25 +64,55 @@ func actorFromMetadata(ctx context.Context) (ports.Actor, error) {
 	if !ok {
 		return ports.Actor{}, status.Error(codes.Unauthenticated, "the call's actor names no caller")
 	}
+	if err := checkActor(a); err != nil {
+		return ports.Actor{}, status.Error(codes.Unauthenticated, err.Error())
+	}
 	return a, nil
+}
+
+// checkActor refuses an Actor whose fields don't fit its source: a service
+// credential beside a user or outside MCP and grantee calls, and a grantee
+// that is not exactly one user or credential of one workspace, without
+// scopes or a send token. A grantee is admitted by Foundry's grants alone,
+// so one that claimed anything more is a front end's mistake.
+func checkActor(a ports.Actor) error {
+	if a.ServiceCredentialID != "" && (a.UserID != "" || (a.Source != ports.SourceMCP && a.Source != ports.SourceGrantee)) {
+		return errors.New("the call's actor names a service credential where none may be")
+	}
+	if a.Source != ports.SourceGrantee {
+		return nil
+	}
+	readAny := a.QueryRead.All() || len(a.QueryRead.Projects()) > 0
+	writeAny := a.QueryWrite.All() || len(a.QueryWrite.Projects()) > 0
+	switch {
+	case a.WorkspaceID == "":
+		return errors.New("a grantee needs a workspace")
+	case (a.UserID == "") == (a.ServiceCredentialID == ""):
+		return errors.New("a grantee is exactly one user or service credential")
+	case a.EventSourceTokenID != "" || readAny || writeAny:
+		return errors.New("a grantee carries no query scope or send token")
+	}
+	return nil
 }
 
 var actorSourceToProto = map[ports.Source]foundryv1.Source{
 	ports.SourceUser:        foundryv1.Source_SOURCE_USER,
 	ports.SourceMCP:         foundryv1.Source_SOURCE_MCP,
 	ports.SourceEventSource: foundryv1.Source_SOURCE_EVENT_SOURCE,
+	ports.SourceGrantee:     foundryv1.Source_SOURCE_GRANTEE,
 }
 
 var actorSourceFromProto = map[foundryv1.Source]ports.Source{
 	foundryv1.Source_SOURCE_USER:         ports.SourceUser,
 	foundryv1.Source_SOURCE_MCP:          ports.SourceMCP,
 	foundryv1.Source_SOURCE_EVENT_SOURCE: ports.SourceEventSource,
+	foundryv1.Source_SOURCE_GRANTEE:      ports.SourceGrantee,
 }
 
 func actorToProto(a ports.Actor) *foundryv1.Actor {
 	return &foundryv1.Actor{
 		Source: actorSourceToProto[a.Source], UserId: a.UserID, EventSourceTokenId: a.EventSourceTokenID, WorkspaceId: a.WorkspaceID,
-		QueryRead: scopeToProto(a.QueryRead), QueryWrite: scopeToProto(a.QueryWrite),
+		QueryRead: scopeToProto(a.QueryRead), QueryWrite: scopeToProto(a.QueryWrite), ServiceCredentialId: a.ServiceCredentialID,
 	}
 }
 
@@ -93,7 +124,7 @@ func actorFromProto(pa *foundryv1.Actor) (ports.Actor, bool) {
 	}
 	return ports.Actor{
 		Source: source, UserID: pa.GetUserId(), EventSourceTokenID: pa.GetEventSourceTokenId(), WorkspaceID: pa.GetWorkspaceId(),
-		QueryRead: scopeFromProto(pa.GetQueryRead()), QueryWrite: scopeFromProto(pa.GetQueryWrite()),
+		QueryRead: scopeFromProto(pa.GetQueryRead()), QueryWrite: scopeFromProto(pa.GetQueryWrite()), ServiceCredentialID: pa.GetServiceCredentialId(),
 	}, true
 }
 

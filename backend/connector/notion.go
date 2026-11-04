@@ -144,8 +144,11 @@ type notionKind struct {
 func (k *notionKind) Name() string        { return "notion" }
 func (k *notionKind) DisplayName() string { return "Notion" }
 
+var _ Identifier = (*notionKind)(nil)
+
 func (k *notionKind) Prepare(src Source) (json.RawMessage, error) {
-	if !notionSecretRE.MatchString(strings.TrimSpace(src.Secret)) {
+	// A token the broker vended has no format of ours to check.
+	if !src.SignIn && !notionSecretRE.MatchString(strings.TrimSpace(src.Secret)) {
 		return nil, invalid("enter a Notion integration secret (ntn_…)")
 	}
 	if err := emptySettings(src.Settings); err != nil {
@@ -158,6 +161,35 @@ func (k *notionKind) Prepare(src Source) (json.RawMessage, error) {
 func (k *notionKind) Streams(Source) []Stream { return []Stream{notionPagesStream} }
 
 func (k *notionKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 1) }
+
+// Identity is the name of the workspace the integration's bot belongs to,
+// from /v1/users/me: a public integration signed in to one workspace. Its
+// id is the workspace's, else the bot's: never a name, which another
+// workspace may share.
+func (k *notionKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	status, raw, err := k.client(src.Secret).do(ctx, "/v1/users/me", nil, nil)
+	if err != nil {
+		return "", "", err
+	}
+	if err := notionStatus(status, "/v1/users/me"); err != nil {
+		return "", "", err
+	}
+	var me struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Bot  struct {
+			WorkspaceID   string `json:"workspace_id"`
+			WorkspaceName string `json:"workspace_name"`
+		} `json:"bot"`
+	}
+	if err := json.Unmarshal(raw, &me); err != nil {
+		return "", "", fmt.Errorf("decode notion /v1/users/me: %w", err)
+	}
+	if name := cmp.Or(me.Bot.WorkspaceName, me.Name); name != "" {
+		return name, cmp.Or(me.Bot.WorkspaceID, me.ID), nil
+	}
+	return "", "", errors.New("notion /v1/users/me names no workspace")
+}
 
 // Discover proves the secret on the integration's own user, lists the
 // shared data sources, then probes the users list and, when no data source
@@ -407,7 +439,7 @@ func (c *notionClient) do(ctx context.Context, path string, query url.Values, bo
 func notionStatus(status int, path string) error {
 	switch {
 	case status == http.StatusUnauthorized:
-		return refused(notionHTTPError(status), "Notion rejected this secret; check it and enter it again")
+		return rejectedCredential("Notion", notionHTTPError(status), "Notion rejected this secret; check it and enter it again")
 	case status == http.StatusForbidden || status == http.StatusNotFound:
 		return refused(notionHTTPError(status), "this integration cannot read %s; check its capabilities in Notion and test again", path)
 	case status >= 300:

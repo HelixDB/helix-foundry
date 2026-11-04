@@ -399,6 +399,25 @@ func TestFoundrySyncLimits(t *testing.T) {
 	}
 }
 
+// A sign-in returns only to a callback the broker can match exactly.
+func TestFoundrySignInConfig(t *testing.T) {
+	for _, tc := range []struct {
+		c  ConnectorsConfig
+		ok bool
+	}{
+		{ConnectorsConfig{SignInReturnTo: []string{"https://foundry.helix-db.com/connect/callback",
+			"https://local.foundry.helix-db.com:3000/connect/callback"},
+			GitHubAppInstallURL: "https://github.com/apps/helix-foundry/installations/new"}, true},
+		{ConnectorsConfig{SignInReturnTo: []string{"/connect/callback"}}, false},
+		{ConnectorsConfig{SignInReturnTo: []string{"https://foundry.helix-db.com/connect/callback?sign_in=1"}}, false},
+		{ConnectorsConfig{GitHubAppInstallURL: "http://github.com/apps/helix-foundry"}, false},
+	} {
+		if err := tc.c.validate(); (err == nil) != tc.ok {
+			t.Errorf("validate(%+v) = %v", tc.c, err)
+		}
+	}
+}
+
 func TestFoundryS3RoleARN(t *testing.T) {
 	for arn, ok := range map[string]bool{
 		"": true, "arn:aws:iam::123456789012:role/example-foundry-connector": true, "arn:aws:iam::123456789012:role/path/name": true,

@@ -418,6 +418,11 @@ type AskConfig struct {
 	MonthlyUSD float64 `koanf:"monthly_usd"`
 	MaxRunning int     `koanf:"max_running"`
 	PerHour    int     `koanf:"per_hour"`
+	// GranteeMonthlyUSD and GranteePerHour bound one grantee of a workspace's
+	// source grants (a member, or an agent's key) within those, so one of them
+	// can't spend the workspace's questions.
+	GranteeMonthlyUSD float64 `koanf:"grantee_monthly_usd"`
+	GranteePerHour    int     `koanf:"grantee_per_hour"`
 }
 
 // AskAgentConfig is the ontology agent sidecar of the ask worker.
@@ -455,6 +460,10 @@ func (a AskConfig) MaxMicros() int64 { return int64(math.Round(a.MaxUSD * 1e6)) 
 // of a US dollar.
 func (a AskConfig) MonthlyMicros() int64 { return int64(math.Round(a.MonthlyUSD * 1e6)) }
 
+// GranteeMonthlyMicros is one grantee's monthly budget, GranteeMonthlyUSD, in
+// millionths of a US dollar.
+func (a AskConfig) GranteeMonthlyMicros() int64 { return int64(math.Round(a.GranteeMonthlyUSD * 1e6)) }
+
 func (a AskConfig) validate() error {
 	switch {
 	case a.MaxUSD <= 0 || a.MaxSteps < 1 || a.MaxWallSecs < 1:
@@ -470,6 +479,10 @@ func (a AskConfig) validate() error {
 		return fmt.Errorf("foundry.ask.monthly_usd must be at least max_usd")
 	case a.MaxRunning < 1 || a.PerHour < 1:
 		return fmt.Errorf("foundry.ask max_running and per_hour must be positive")
+	case a.GranteeMonthlyUSD < a.MaxUSD:
+		return fmt.Errorf("foundry.ask.grantee_monthly_usd must be at least max_usd")
+	case a.GranteePerHour < 1:
+		return fmt.Errorf("foundry.ask.grantee_per_hour must be positive")
 	}
 	return nil
 }
@@ -1007,6 +1020,15 @@ type ConnectorsConfig struct {
 	// backend and sync worker chain through it. Empty turns IAM role access
 	// off, leaving access keys.
 	S3RoleARN string `koanf:"s3_role_arn"`
+	// SignInReturnTo are the site callbacks a connector sign-in may return
+	// to, such as https://foundry.helix-db.com/connect/callback; each must
+	// also be a redirect URI the broker (WorkOS) lists. Empty refuses every
+	// sign-in.
+	SignInReturnTo []string `koanf:"sign_in_return_to"`
+	// GitHubAppInstallURL installs the GitHub App that signed-in GitHub
+	// connectors read through, on an account or organization, for its private
+	// repositories.
+	GitHubAppInstallURL string `koanf:"github_app_install_url"`
 }
 
 var iamRoleARN = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/[\w+=,.@/-]+$`)
@@ -1017,6 +1039,20 @@ func (c ConnectorsConfig) Enabled() bool { return c.CurrentKey != "" }
 func (c ConnectorsConfig) validate() error {
 	if c.S3RoleARN != "" && !iamRoleARN.MatchString(c.S3RoleARN) {
 		return fmt.Errorf("foundry.connectors.s3_role_arn must be an IAM role ARN, like arn:aws:iam::123456789012:role/name")
+	}
+	// The broker matches a sign-in's return_to to its redirect URIs exactly,
+	// and with no query string.
+	for _, callback := range c.SignInReturnTo {
+		u, err := url.Parse(callback)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("foundry.connectors.sign_in_return_to %q must be an absolute URL with no query, such as "+
+				"https://foundry.helix-db.com/connect/callback", callback)
+		}
+	}
+	if install := c.GitHubAppInstallURL; install != "" {
+		if u, err := url.Parse(install); err != nil || u.Scheme != "https" || u.Host == "" {
+			return fmt.Errorf("foundry.connectors.github_app_install_url %q must be an https URL", install)
+		}
 	}
 	if !c.Enabled() && c.CurrentKeyID == "" && c.PreviousKeyID == "" && c.PreviousKey == "" {
 		return nil
@@ -1600,6 +1636,10 @@ func Defaults() Config {
 		MonthlyUSD:       30,
 		MaxRunning:       2,
 		PerHour:          30,
+		// A third of the workspace's: several grantees can ask in the same
+		// month, and none of them can spend it all.
+		GranteeMonthlyUSD: 10,
+		GranteePerHour:    10,
 	}, Enrichment: EnrichmentConfig{
 		HTTP:                 ServiceHTTPConfig{Listen: ":8100"},
 		Provider:             EnrichmentFake,

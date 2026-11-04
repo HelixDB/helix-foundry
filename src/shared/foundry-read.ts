@@ -50,6 +50,7 @@ export type Read =
     }
   | { evidence: { fact: FactRef; limit?: number } }
   | { evidence: { entity: EntityRef; prop?: string | null; limit?: number } }
+  | { view: Record<string, never> }
   | { query: OntologyQuery };
 
 // ---------------------------------------------------------------- Preds
@@ -123,19 +124,20 @@ export const predString = (p: Pred) => `${p.kind}:${p.name}`;
  * Why a read has no answer (Failure), by its code: `budget` (too deep to
  * compute live) and `hub` (an adjacency list past `per_list`) with the
  * limit, `too_broad` (a query past `scan_entities`) with the limit and the
- * count, `unknown_entity`, and `invalid` with a JSON pointer into a query.
+ * count, `unknown_entity`, `not_visible` (it would test, order, group or count
+ * what the reader's sources hold only some of) and `invalid`, each of those
+ * two with a JSON pointer into a query.
  */
 export type ReadFailure =
   | { code: "budget" | "hub"; message: string; limit: number }
   | { code: "too_broad"; message: string; limit: number; count: number }
   | { code: "unknown_entity"; message: string }
-  | { code: "invalid"; message: string; pointer?: string };
+  | { code: "not_visible" | "invalid"; message: string; pointer?: string };
 export type ReadErrorCode = ReadFailure["code"];
 /** Why one pred (or the live violations) of an entity read has no answer. */
-export type PartFailure = Extract<
-  ReadFailure,
-  { code: "budget" | "hub" | "invalid" }
->;
+export type PartFailure =
+  | Extract<ReadFailure, { code: "budget" | "hub" }>
+  | { code: "invalid"; message: string; pointer?: string };
 
 /** How a fact rules give is held: only derived, or stated and derived as well. */
 export type Basis = "derived" | "both";
@@ -256,6 +258,40 @@ export type EvidenceItem =
     };
 export type EvidenceResult = { items: EvidenceItem[] };
 
+/**
+ * The edge of one step of a query's row, when the columns name both its
+ * positions: a stored fact, or one only rules give (`pred` `<kind>:<name>`).
+ */
+export type QueryEdge = { step: number } & (
+  | { fact: FactRef }
+  | { derived: { pred: string; args: EntityRef[] } }
+);
+/**
+ * A typed query's answer, of the kinds pages ask for: rows (each cell the
+ * entity at a column without a prop, as an EntityCell `{type, id, name}`,
+ * else the prop's value, null when absent; the caller knows which, from its
+ * columns) with how many there are in all, or a count.
+ */
+export type QueryResult =
+  | {
+      kind: "rows";
+      rows: { cells: unknown[]; edges: QueryEdge[] }[];
+      // For a query narrowed to what a reader holds, the rows shown: the
+      // answer says nothing of the rest.
+      total: number;
+    }
+  | { kind: "count"; count: number };
+
+/**
+ * A view read's answer: the version's two files as the reader sees them, and
+ * what it sees only some of (`Type`, `Type.prop` and `link`).
+ */
+export type ViewResult = {
+  ontologyToml: string;
+  mappingsToml: string;
+  partial: string[];
+};
+
 /** One read's outcome, raw: its `ok` is parsed by the read's own parser. */
 export type Outcome<T> =
   | { ok: true; value: T }
@@ -331,9 +367,10 @@ export function parseFailure(v: unknown): ReadFailure {
         : { code: "too_broad", message, limit, count: n };
     case "unknown_entity":
       return { code: "unknown_entity", message };
+    case "not_visible":
     case "invalid": {
       const pointer = str(v.pointer);
-      return { code: "invalid", message, ...(pointer ? { pointer } : {}) };
+      return { code: v.code, message, ...(pointer ? { pointer } : {}) };
     }
     default:
       return MALFORMED;
@@ -430,7 +467,7 @@ export function parseEntityResult(ok: unknown): EntityResult | undefined {
         (failure.code === "budget" ||
           failure.code === "hub" ||
           failure.code === "invalid")
-        ? [{ part, failure }]
+        ? [{ part, failure: failure as PartFailure }]
         : [];
     }),
   };
@@ -607,4 +644,62 @@ export function parseEvidenceResult(ok: unknown): EvidenceResult | undefined {
         : [];
     }),
   };
+}
+
+/**
+ * A query read's `ok`: its rows or count. Undefined for another kind of
+ * answer (counts by value, aggregates) or one that isn't well formed; an
+ * edge that isn't is left out.
+ *
+ * @example
+ * parseQueryResult({ kind: "query", result: { kind: "count", count: 3 } }); // { kind: "count", count: 3 }
+ */
+export function parseQueryResult(ok: unknown): QueryResult | undefined {
+  const r = isKind(ok, "query") ? ok.result : undefined;
+  if (isKind(r, "count")) {
+    const n = count(r.count);
+    return n === undefined ? undefined : { kind: "count", count: n };
+  }
+  if (!isKind(r, "rows") || !Array.isArray(r.rows)) return undefined;
+  const total = count(r.total);
+  if (total === undefined) return undefined;
+  const edge = (e: unknown): QueryEdge[] => {
+    const step = isRow(e) ? count(e.step) : undefined;
+    if (!isRow(e) || step === undefined) return [];
+    if (isRow(e.fact)) {
+      const link = str(e.fact.link),
+        subject = entityRef(e.fact.subject),
+        object = entityRef(e.fact.object);
+      return link && subject && object
+        ? [{ step, fact: { link, subject, object } }]
+        : [];
+    }
+    const pred = isRow(e.derived) ? str(e.derived.pred) : undefined,
+      args = isRow(e.derived) ? refs(e.derived.args) : undefined;
+    return pred && args ? [{ step, derived: { pred, args } }] : [];
+  };
+  return {
+    kind: "rows",
+    rows: r.rows.flatMap((row) =>
+      isRow(row) && Array.isArray(row.cells)
+        ? [{ cells: row.cells, edges: list(row.edges).flatMap(edge) }]
+        : [],
+    ),
+    total,
+  };
+}
+
+/**
+ * A view read's answer, or undefined when it isn't one.
+ *
+ * @example
+ * parseViewResult({ kind: "view", ontology_toml: "o", mappings_toml: "m", partial: ["Customer"] }); // { ontologyToml: "o", mappingsToml: "m", partial: ["Customer"] }
+ */
+export function parseViewResult(ok: unknown): ViewResult | undefined {
+  if (!isKind(ok, "view")) return undefined;
+  const ontologyToml = str(ok.ontology_toml),
+    mappingsToml = str(ok.mappings_toml);
+  return ontologyToml === undefined || mappingsToml === undefined
+    ? undefined
+    : { ontologyToml, mappingsToml, partial: strings(ok.partial) };
 }

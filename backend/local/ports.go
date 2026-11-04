@@ -124,3 +124,16 @@ func (p People) DisplayName(ctx context.Context, userID string) (string, error) 
 	}
 	return u.Email, nil
 }
+
+// Member is the owner's membership of a live workspace of the install; the
+// install has no one else.
+func (p People) Member(ctx context.Context, workspaceID, userID string) (ports.Member, error) {
+	owner, err := p.Directory.Owner(ctx)
+	if err != nil {
+		return ports.Member{}, err
+	}
+	if w, err := p.Directory.Workspace(ctx, workspaceID); err != nil || !w.Live() || userID == "" || owner.ID != userID {
+		return ports.Member{}, nil
+	}
+	return ports.Member{Role: ports.RoleOwner, RawAccess: true}, nil
+}

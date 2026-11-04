@@ -341,6 +341,230 @@ describe("onboardingPrompt without a workspace", () => {
   });
 });
 
+describe("onboardingPrompt's connectors that sign in", () => {
+  const text = onboardingPrompt(input());
+  // The JSON payloads the prompt hands a tool, parsed.
+  const payloads = (out: string, tool: string) =>
+    [
+      ...out.matchAll(new RegExp(`\`${tool}\` with \`(\\{[^\`]+\\})\``, "g")),
+    ].map((m) => JSON.parse(m[1]!));
+  // Every workspace payload in the prompt, the per-kind examples among them.
+  const examples = (out: string) =>
+    [...out.matchAll(/`(\{"workspace_id": [^`]+\})`/g)].map((m) =>
+      JSON.parse(m[1]!),
+    );
+
+  // The prompt can't know whether the stamp offers signing in, or to whom:
+  // the agent reads it per kind, and every other kind keeps its form.
+  it("decides per kind from list_connector_kinds' sign_in", () => {
+    expect(text).toContain(
+      "Read the kinds with `helix_foundry_list_connector_kinds`, and decide how to connect each one from its own `sign_in`, every time",
+    );
+    expect(text).toContain(
+      "If its `sign_in` is true, I sign in at its provider, and no key passes through you:",
+    );
+    expect(text).toContain(
+      'Every other kind connects through its form, where I enter its credentials:\n\n1. Call `helix_foundry_connector_link` with `{"workspace_id": "ws1", "kind": "<kind>"}`',
+    );
+    expect(text).toContain(
+      "If you don’t have that tool, or it says signing in isn’t available to me, connect the kind through its form, below.",
+    );
+  });
+
+  it("starts a sign-in, opens its link and waits for it", () => {
+    expect(payloads(text, "helix_foundry_start_sign_in")).toContainEqual({
+      workspace_id: "ws1",
+      kind: "<kind>",
+      client_token: "<a new UUID>",
+    });
+    expect(text).toContain(
+      'adding `"name": "<name>"` for a name other than the kind’s.',
+    );
+    expect(text).toContain(
+      "2. Open its `url` in my browser (`open <url>` on macOS, `xdg-open <url>` on Linux), or give it to me.",
+    );
+    expect(text).toContain(
+      "I click its Connect button, then authorize Helix Foundry at the provider. Only I can, until its `expires_at`.",
+    );
+    expect(payloads(text, "helix_foundry_get_sign_in")).toEqual([
+      { workspace_id: "ws1", sign_in_id: "<its sign_in_id>", wait: true },
+    ]);
+    expect(text).toContain("again until its `sign_in.done` is true");
+    expect(text).toContain(
+      '`helix_foundry_get_sign_in`, `helix_foundry_get_sync`, `helix_foundry_get_generation` and `helix_foundry_get_load` take `"wait": true`',
+    );
+  });
+
+  it("follows each outcome: the first sync, another try, GitHub's install link", () => {
+    expect(text).toContain(
+      "- `connected`: its `connector` is the new connector. Follow its first sync, below.",
+    );
+    expect(text).toContain(
+      "- `declined`, `failed` or `expired`: tell me, and ask whether to try again. Until `expires_at` the same `url` works",
+    );
+    expect(text).toContain(
+      "Once it has expired, or failed with `settings_invalid`, start a new sign-in.",
+    );
+    expect(text).toContain(
+      "For GitHub, give me its `install_url` too, which installs the Helix Foundry GitHub App",
+    );
+    // Both ways in end at the same first sync.
+    expect(text).toContain(
+      "Then follow its first sync. It starts within a minute or so",
+    );
+    expect(text.split("If a sync fails, tell me its `error`")).toHaveLength(2);
+  });
+
+  // Signing a connector in again keeps its name and settings: the MCP
+  // refuses name and repos with connector_id.
+  it("offers to sign a broken connector in again, with its connector_id alone", () => {
+    expect(text).toContain(
+      "`helix_foundry_list_connectors` shows its `account.state` as `needs_sign_in`, with why in `account.broken`, and `sync_connector` fails with `account_needs_sign_in`.",
+    );
+    expect(text).toContain("offer to sign it in again");
+    const again = payloads(text, "helix_foundry_start_sign_in").find(
+      (p) => p.connector_id,
+    );
+    expect(again).toEqual({
+      workspace_id: "ws1",
+      kind: "<its kind>",
+      connector_id: "<its id>",
+      client_token: "<a new UUID>",
+    });
+    for (const setting of ["name", "repos", "project_id"])
+      expect(again).not.toHaveProperty(setting);
+    expect(text).toContain(
+      "and nothing else: it keeps its name and settings, and the tool refuses `name`, `repos` and `project_id` with `connector_id`.",
+    );
+    expect(text).toContain(
+      "- `account_needs_sign_in`: from `sync_connector`, the connector’s account needs signing in again",
+    );
+  });
+
+  // Which kinds sign in depends on the stamp and the user: the prompt names
+  // none as the ones that do, only the settings two kinds take.
+  it("names no fixed list of kinds that sign in", () => {
+    expect(text).not.toMatch(/GitHub (or|and) Linear/);
+    expect(text).not.toContain("Linear");
+    expect(text).not.toContain("Connect with GitHub");
+    expect(text).toContain(
+      "Its other settings start at the kind’s defaults, which I change on the connector’s page, except for two kinds, whose settings you ask me for first:",
+    );
+  });
+
+  it("gives GitHub's repositories and PostHog US Cloud's project", () => {
+    expect(examples(text)).toContainEqual({
+      workspace_id: "ws1",
+      kind: "github",
+      repos: ["<owner>/<repository>"],
+      client_token: "<a new UUID>",
+    });
+    expect(examples(text)).toContainEqual({
+      workspace_id: "ws1",
+      kind: "posthog",
+      project_id: "<project id>",
+      client_token: "<a new UUID>",
+    });
+    // Each kind's settings are its own: PostHog's carry no repos, and only
+    // PostHog's carry a project.
+    const settings = examples(text).filter(
+      (p) => "repos" in p || "project_id" in p,
+    );
+    expect(settings.map((p) => p.kind)).toEqual(["github", "posthog"]);
+    expect(text).toContain(
+      "PostHog: signing in reads PostHog US Cloud only, so ask me which PostHog I use.",
+    );
+    expect(text).toContain(
+      "PostHog EU Cloud or a self-hosted PostHog connects through its form, with its key.",
+    );
+  });
+
+  // Pipes' PostHog provider has no region: signing in is US Cloud's alone,
+  // so no payload carries one, on the landing page's prompt either.
+  it("sends no region in any payload", () => {
+    const landing = onboardingPrompt({
+      origin: "https://foundry.example.com",
+      mcpUrl: "https://mcp.example.com/mcp",
+      workspace: null,
+    });
+    for (const out of [text, landing]) {
+      const all = examples(out);
+      expect(all.length).toBeGreaterThan(0);
+      for (const payload of all) expect(payload).not.toHaveProperty("region");
+      expect(out).not.toContain('"region"');
+      expect(out).not.toContain("`region`");
+    }
+  });
+
+  it("says what Google Workspace and Notion read once signed in, one line each", () => {
+    expect(text).toContain(
+      "\n\nWhere Google Workspace signs in, it reads as me, and its directory only if I’m a Google admin. Where Notion signs in, it reads only the pages I choose on Notion’s screen.\n\n",
+    );
+  });
+
+  it("keeps the credentials rule, and holds no credential", () => {
+    expect(text).toContain(
+      "- Never ask me for credentials, keys or passwords in the chat. A connector’s credentials go only into Foundry, in my browser, through its link.\n",
+    );
+    for (const secret of ["ghp_", "github_pat_", "lin_api_", "hx_ev_"])
+      expect(text).not.toContain(secret);
+  });
+
+  // The rule holds wherever the setup is, since the connect step may be
+  // past: an ontology waiting for its load still has a connector to fix.
+  it("keeps signing in again among the rules once the data step is past", () => {
+    const later = onboardingPrompt(
+      input({ ontology: ontology({ step: "load", state: "todo" }) }),
+    );
+    expect(later).not.toContain("#### Connect a source");
+    expect(payloads(later, "helix_foundry_start_sign_in")).toEqual([
+      {
+        workspace_id: "ws1",
+        kind: "<its kind>",
+        connector_id: "<its id>",
+        client_token: "<a new UUID>",
+      },
+    ]);
+  });
+
+  it("reads the same on the landing page, without a workspace", () => {
+    const landing = onboardingPrompt({
+      origin: "https://foundry.example.com",
+      mcpUrl: "https://mcp.example.com/mcp",
+      workspace: null,
+    });
+    const starts = payloads(landing, "helix_foundry_start_sign_in");
+    expect(starts).toHaveLength(2);
+    expect(starts).toContainEqual({
+      workspace_id: "<workspace id>",
+      kind: "<kind>",
+      client_token: "<a new UUID>",
+    });
+    expect(starts).toContainEqual({
+      workspace_id: "<workspace id>",
+      kind: "<its kind>",
+      connector_id: "<its id>",
+      client_token: "<a new UUID>",
+    });
+    expect(payloads(landing, "helix_foundry_get_sign_in")).toEqual([
+      {
+        workspace_id: "<workspace id>",
+        sign_in_id: "<its sign_in_id>",
+        wait: true,
+      },
+    ]);
+    expect(landing).toContain(
+      "- `helix_foundry_list_connector_kinds`: the kinds it can connect, which need Foundry Pro, and which I connect by signing in (`sign_in`).",
+    );
+    expect(landing).toContain(
+      "- `helix_foundry_list_connectors`: its connectors and API sources, with their synced tables, and any whose `account` needs signing in again.",
+    );
+    expect(landing).toContain(
+      "target `connector:<workspace id>/<connector id>`",
+    );
+  });
+});
+
 describe("onboardingPrompt with a workspace", () => {
   it("leaves out sign-up and running it on my computer", () => {
     const text = onboardingPrompt(input());
@@ -801,5 +1025,69 @@ describe("onboardingPrompt for an ontology under way", () => {
     expect(steps(text)).toEqual(["Hand it back"]);
     expect(text).toContain("`explore_url`");
     expect(text).toContain("`ask_url`");
+  });
+});
+
+describe("local onboarding through MCP", () => {
+  const text = onboardingPrompt({
+    ...input(),
+    local: true,
+    origin: "http://localhost:3000",
+    mcpUrl: "http://localhost:8081/mcp",
+  });
+  it("uses the local owner and the full connector/document workflow", () => {
+    expect(text).toContain("http://localhost:8081/mcp");
+    expect(text).toContain("FOUNDRY_LOCAL_TOKEN");
+    expect(text).toContain("helix_list_workspaces");
+    expect(text).toContain("helix_prepare_foundry_operation");
+    expect(text).toContain("helix_execute_foundry_operation");
+    expect(text).toContain("helix_foundry_complete_document_upload");
+    expect(text).toContain("generate_ontology");
+    expect(text).toContain("create_load");
+    expect(text).toContain("helix_foundry_ask");
+    expect(text).toContain(
+      "consumption alone does not prove execution succeeded",
+    );
+    expect(text).not.toContain("create_event_source");
+    expect(text).not.toContain("Helix subscription");
+    expect(text).not.toContain("helix_get_started");
+    expect(text).not.toContain("sign in as me");
+  });
+  it("says what the local tools answer and where a moved MCP is", () => {
+    expect(text).toContain("FOUNDRY_MCP_PORT");
+    expect(text).toContain(
+      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
+    );
+    expect(text).toContain("helix_foundry_list_connectors");
+    expect(text).toContain(
+      "fails with failed_precondition: prepare it again with the same operation, target and payload",
+    );
+  });
+});
+
+describe("the landing prompt's Run it on my computer", () => {
+  const text = onboardingPrompt({
+    origin: "https://foundry.helix-db.com",
+    mcpUrl: "https://mcp.helix-db.com/mcp",
+    workspace: null,
+  });
+  const section = text.slice(text.indexOf("## Run it on my computer"));
+  it("takes the local MCP only where the release serves it", () => {
+    // The pinned images have none until a release moves them.
+    // Asked inside the container, so an image without one never shows its
+    // probes on the host.
+    expect(section).toContain(
+      "docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp",
+    );
+    expect(section).toContain("If it does: publish it");
+    expect(section).toContain(
+      "docker compose -f compose.yaml -f compose.mcp.yaml up -d --wait",
+    );
+    expect(section).toContain("connect to it");
+    expect(section).toContain("If not: I do the setup in Foundry’s pages");
+  });
+  it("says what to do when the MCP's port is taken, which only it needs", () => {
+    expect(section).toContain("FOUNDRY_MCP_PORT");
+    expect(section).toContain("ports 3000 and 8333 are free");
   });
 });

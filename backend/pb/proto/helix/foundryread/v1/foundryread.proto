@@ -38,6 +38,11 @@ message ReadRequest {
   string ontology_toml = 5;
   // A JSON array of 1 to 20 reads (the agent's read_request.json `reads`).
   string reads_json = 6;
+  // What the reader holds of the load, when it isn't everything: the agent's
+  // read_request.json `visibility`. Empty for a reader who may read it all.
+  string visibility_json = 7;
+  // The version's mappings.toml, which says what those sources fill.
+  string mappings_toml = 8;
 }
 
 message ReadResponse {

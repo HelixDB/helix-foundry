@@ -72,6 +72,7 @@ import {
   textFieldConfirm,
   textFieldProblem,
 } from "./model";
+import { useAccessCheck } from "../workspace/access-guard";
 
 // Set per stamp in next.config.ts: empty where API sources take pieces only
 // over the Helix MCP (prod, local mode).
@@ -126,6 +127,8 @@ export function EventSourcePage({ source: c }: { source: Connector }) {
       : undefined;
   const [editing, setEditing] = useState(false),
     [deleting, setDeleting] = useState<"confirm" | "pending" | null>(null);
+  // Who would stop reading through source grants, asked before it goes.
+  const access = useAccessCheck();
   const tokenDialog = params.get("token") === "new",
     closeTokenDialog = () =>
       setParams(
@@ -147,6 +150,8 @@ export function EventSourcePage({ source: c }: { source: Connector }) {
   // Leaves the page before the deleted source is refetched as missing.
   const remove = async () => {
     setDeleting("pending");
+    if (!(await access.check({ deleteConnector: c.id })))
+      return setDeleting("confirm");
     try {
       await deleteConnector(id, c.id);
       navigate(paths.data());
@@ -488,6 +493,7 @@ export function EventSourcePage({ source: c }: { source: Connector }) {
           onConfirm={remove}
         />
       )}
+      {access.dialog}
     </Page>
   );
 }

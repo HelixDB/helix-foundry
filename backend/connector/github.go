@@ -2,6 +2,7 @@ package connector
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -62,7 +64,8 @@ var githubForeignKeys = referencedBy(githubObjects, map[string][]string{
 
 // GitHubSettings choose what a GitHub connector reads.
 type GitHubSettings struct {
-	// Repos are owner/name; empty reads every repository the token can.
+	// Repos are owner/name; empty reads every repository the token can, or,
+	// signed in, every one of Helix Foundry's installations the user can.
 	Repos []string `json:"repos,omitempty"`
 	// ReviewDays limits reviews to pull requests updated in the last this many
 	// days: reviews are listed one pull request at a time.
@@ -72,7 +75,12 @@ type GitHubSettings struct {
 type githubKind struct {
 	base string
 	http *http.Client
+	// install is where to install Helix Foundry's GitHub App, which a
+	// signed-in connector reads through; empty names no link.
+	install string
 }
+
+var _ Identifier = (*githubKind)(nil)
 
 type githubRepo struct {
 	ID       int64
@@ -83,7 +91,8 @@ func (k *githubKind) Name() string        { return "github" }
 func (k *githubKind) DisplayName() string { return "GitHub" }
 
 func (k *githubKind) Prepare(src Source) (json.RawMessage, error) {
-	if !githubTokenRE.MatchString(strings.TrimSpace(src.Secret)) {
+	// A token the broker vended has no format of ours to check.
+	if !src.SignIn && !githubTokenRE.MatchString(strings.TrimSpace(src.Secret)) {
 		return nil, invalid("enter a GitHub personal access token (github_pat_… or ghp_…)")
 	}
 	var s GitHubSettings
@@ -116,7 +125,9 @@ func (k *githubKind) Prepare(src Source) (json.RawMessage, error) {
 }
 
 // Discover checks the token, resolves the repositories and probes the first
-// one for each object's permission.
+// one for each object's permission. Signed in, a token that reaches no
+// installation of Helix Foundry's GitHub App reads nothing until it is
+// installed.
 func (k *githubKind) Discover(ctx context.Context, src Source) (Discovery, error) {
 	var s GitHubSettings
 	if err := json.Unmarshal(src.Settings, &s); err != nil {
@@ -129,11 +140,15 @@ func (k *githubKind) Discover(ctx context.Context, src Source) (Discovery, error
 	if err := githubStatus(status, "/user"); err != nil {
 		return Discovery{}, err
 	}
-	repos, err := k.repos(ctx, src.Secret, s.Repos)
+	repos, err := k.repos(ctx, src, s.Repos)
 	if err != nil {
 		return Discovery{}, err
 	}
-	if len(repos) == 0 {
+	switch {
+	case len(repos) == 0 && src.SignIn:
+		return Discovery{}, invalid("Helix Foundry can't see any repository this GitHub sign-in reads: %s, then Sync now",
+			k.installWhere("an account or organization"))
+	case len(repos) == 0:
 		return Discovery{}, refused(nil, "this token cannot read any repository; grant it repositories and test again")
 	}
 	readable, err := probeAll(ctx, uniqueValues(githubProbes), func(ctx context.Context, path string) (bool, error) {
@@ -181,13 +196,36 @@ func (k *githubKind) Sync(ctx context.Context, src Source, table Table, w RowWri
 	return table, nil
 }
 
+// Identity is the login of the user the token reads as, and their number.
+func (k *githubKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	status, body, err := k.get(ctx, src.Secret, "/user", nil)
+	if err != nil {
+		return "", "", err
+	}
+	if err := githubStatus(status, "/user"); err != nil {
+		return "", "", err
+	}
+	var user struct {
+		Login string `json:"login"`
+		ID    int64  `json:"id"`
+	}
+	if err := json.Unmarshal(body, &user); err != nil || user.Login == "" {
+		return "", "", fmt.Errorf("decode github /user: no login (%v)", err)
+	}
+	id := ""
+	if user.ID != 0 {
+		id = strconv.FormatInt(user.ID, 10)
+	}
+	return user.Login, id, nil
+}
+
 // resolve reads the prepared settings and the repositories they name.
 func (k *githubKind) resolve(ctx context.Context, src Source) (GitHubSettings, []githubRepo, error) {
 	var s GitHubSettings
 	if err := json.Unmarshal(src.Settings, &s); err != nil {
 		return s, nil, invalid("GitHub settings are malformed")
 	}
-	repos, err := k.repos(ctx, src.Secret, s.Repos)
+	repos, err := k.repos(ctx, src, s.Repos)
 	return s, repos, err
 }
 
@@ -272,9 +310,19 @@ func (k *githubKind) reviews(ctx context.Context, token string, repo githubRepo,
 	return nil
 }
 
-// repos resolves the chosen repositories, or lists every one the token reads.
-func (k *githubKind) repos(ctx context.Context, token string, chosen []string) ([]githubRepo, error) {
+// repos resolves the chosen repositories, or lists every one the credential
+// reads: a key's own (/user/repos), or, signed in, those of Helix Foundry's
+// installations the user can reach (installedRepos). Signed in, a chosen
+// repository the GitHub App can't see is one to install it on: installing
+// it, then syncing, resumes the connector. An organization that uninstalls
+// or suspends the app reads the same way, which signing in again wouldn't
+// fix.
+func (k *githubKind) repos(ctx context.Context, src Source, chosen []string) ([]githubRepo, error) {
+	token := src.Secret
 	var out []githubRepo
+	if len(chosen) == 0 && src.SignIn {
+		return k.installedRepos(ctx, token)
+	}
 	if len(chosen) == 0 {
 		err := k.pages(ctx, token, "/user/repos", url.Values{"sort": {"full_name"}}, func(row map[string]any) error {
 			if len(out) == maxGitHubRepos {
@@ -293,7 +341,11 @@ func (k *githubKind) repos(ctx context.Context, token string, chosen []string) (
 		if err != nil {
 			return nil, err
 		}
-		if status == http.StatusForbidden || status == http.StatusNotFound {
+		switch {
+		case (status == http.StatusForbidden || status == http.StatusNotFound) && src.SignIn:
+			owner, _, _ := strings.Cut(name, "/")
+			return nil, invalid("Helix Foundry can't see the GitHub repository %s: %s, then Sync now", name, k.installWhere(owner))
+		case status == http.StatusForbidden || status == http.StatusNotFound:
 			return nil, invalid("GitHub has no repository %s that this token can read", name)
 		}
 		if err := githubStatus(status, "/repos/"+name); err != nil {
@@ -313,9 +365,69 @@ func (k *githubKind) repos(ctx context.Context, token string, chosen []string) (
 
 var errTooManyRepos = errors.New("too many repositories")
 
+// installedRepos lists the repositories of Helix Foundry's installations the
+// signed-in user can reach (/user/installations, then each one's
+// repositories), by name, at most maxGitHubRepos: not every repository the
+// user can see, which takes in public ones they only contribute to. A
+// suspended installation reads nothing.
+func (k *githubKind) installedRepos(ctx context.Context, token string) ([]githubRepo, error) {
+	var installations []int64
+	err := k.list(ctx, token, "/user/installations", nil, "installations", func(row map[string]any) error {
+		if row["suspended_at"] == nil {
+			installations = append(installations, int64Of(row["id"]))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int64]bool{}
+	var out []githubRepo
+	for _, installation := range installations {
+		err := k.list(ctx, token, fmt.Sprintf("/user/installations/%d/repositories", installation), nil, "repositories",
+			func(row map[string]any) error {
+				repo := githubRepo{ID: int64Of(row["id"]), FullName: fmt.Sprint(row["full_name"])}
+				switch {
+				case seen[repo.ID]:
+					return nil
+				case len(out) == maxGitHubRepos:
+					return errTooManyRepos
+				}
+				seen[repo.ID] = true
+				out = append(out, repo)
+				return nil
+			})
+		if errors.Is(err, errTooManyRepos) {
+			return nil, invalid("Helix Foundry is installed on more than %d repositories this sign-in reads; list the ones to sync", maxGitHubRepos)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	slices.SortFunc(out, func(a, b githubRepo) int {
+		return cmp.Compare(strings.ToLower(a.FullName), strings.ToLower(b.FullName))
+	})
+	return out, nil
+}
+
+// installWhere says to install Helix Foundry's GitHub App on where, with
+// its link when there is one.
+func (k *githubKind) installWhere(where string) string {
+	if k.install == "" {
+		return "install Helix Foundry's GitHub App on " + where
+	}
+	return "install Helix Foundry's GitHub App on " + where + " (" + k.install + ")"
+}
+
 // pages lists a GitHub collection 100 rows at a time by page number. A 410 is
 // a feature the repository turned off, such as issues, and lists nothing.
 func (k *githubKind) pages(ctx context.Context, token, path string, query url.Values, each func(map[string]any) error) error {
+	return k.list(ctx, token, path, query, "", each)
+}
+
+// list pages a collection as pages does: an array, or, with field, the
+// array an object holds in that field, as GitHub's installation lists do.
+func (k *githubKind) list(ctx context.Context, token, path string, query url.Values, field string, each func(map[string]any) error) error {
 	for page := 1; ; page++ {
 		if page > maxGitHubPages {
 			return fmt.Errorf("github %s: more than %d pages", path, maxGitHubPages)
@@ -335,6 +447,13 @@ func (k *githubKind) pages(ctx context.Context, token, path string, query url.Va
 			return err
 		}
 		var rows []map[string]any
+		if field != "" {
+			var wrapped map[string]json.RawMessage
+			if err := json.Unmarshal(body, &wrapped); err != nil {
+				return fmt.Errorf("decode github %s page: %w", path, err)
+			}
+			body = wrapped[field]
+		}
 		if err := json.Unmarshal(body, &rows); err != nil {
 			return fmt.Errorf("decode github %s page: %w", path, err)
 		}
@@ -399,7 +518,7 @@ func withinHost(req *http.Request, via []*http.Request) error {
 func githubStatus(status int, path string) error {
 	switch {
 	case status == http.StatusUnauthorized:
-		return refused(nil, "GitHub rejected this token; check it and enter it again")
+		return refused(&AuthError{Provider: "GitHub"}, "GitHub rejected this token; check it and enter it again")
 	case status == http.StatusForbidden || status == http.StatusNotFound:
 		return refused(nil, "this token cannot read %s; check its repository access and permissions", path)
 	case status >= 300:

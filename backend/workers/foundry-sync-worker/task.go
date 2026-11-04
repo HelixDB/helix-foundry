@@ -46,6 +46,8 @@ type Deps struct {
 	// sync; nil where none is sold.
 	Plans ports.PlanReader `optional:"true"`
 	AWS   aws.Config       `optional:"true"`
+	// Accounts gives signed-in connectors their tokens; nil where none sign in.
+	Accounts ports.ProviderAccounts `optional:"true"`
 }
 
 type syncQueue interface {
@@ -149,6 +151,11 @@ type Task struct {
 	// sourcesPurged is the last deleted event source the purge is done
 	// with, every one deleted before it done too (purgeEvents).
 	sourcesPurged model.FoundryEventSourcePurge
+	// accounts is the store's side of signed-in connectors' accounts, and
+	// broker the host's (Deps.Accounts): nil where none sign in, and
+	// keepAccounts does nothing.
+	accounts accountQueue
+	broker   ports.ProviderAccounts
 }
 
 func New(d Deps) (*Task, error) {
@@ -164,7 +171,9 @@ func New(d Deps) (*Task, error) {
 	snapshots := snapshot.NewS3(client, d.Cfg.Foundry.Sync.DataBucket)
 	documents := document.New(client, d.Cfg.Foundry.Sync.DataBucket)
 	ev := d.Cfg.Foundry.Events
-	catalog := connector.NewCatalog(connector.DefaultEndpoints(), connector.Guard{AllowPrivate: d.Cfg.Foundry.Connectors.AllowPrivateHosts},
+	endpoints := connector.DefaultEndpoints()
+	endpoints.GitHubAppInstall = d.Cfg.Foundry.Connectors.GitHubAppInstallURL
+	catalog := connector.NewCatalog(endpoints, connector.Guard{AllowPrivate: d.Cfg.Foundry.Connectors.AllowPrivateHosts},
 		connector.NewS3Options(d.Cfg, d.AWS), connector.EventsOptions{Batches: d.DB, Objects: snapshots,
 			Budget:    events.ReadBudget{Batches: ev.MaxBatchesPerSync, Pieces: ev.MaxPiecesPerSync, Bytes: ev.MaxBytesPerSync},
 			Extracted: ev.MaxExtracted})
@@ -188,13 +197,14 @@ func New(d Deps) (*Task, error) {
 		MonthBudget:      d.Cfg.Foundry.Graph.MonthBudget,
 		Allowances:       d.Cfg.Foundry.SetAllowances(),
 		Plans:            d.Plans,
+		Accounts:         d.Accounts,
 	}
 	return &Task{
 		deps: d, cfg: d.Cfg.Foundry.Sync, queue: d.DB, runner: s,
 		workerID: id.NewWorkerID(), now: time.Now, tempDir: os.TempDir(),
 		snapshots: snapshots, documents: documents, jitter: rand.Float64, lag: syncLag, releaser: s, releaseKinds: s.ReleaserKinds(),
 		spacing:     model.EventSyncSpacing{After: ev.SyncAfter, PerMillionRows: ev.SyncAfterPerMillionRows},
-		persistWait: time.Second,
+		persistWait: time.Second, accounts: d.DB, broker: d.Accounts,
 	}, nil
 }
 
@@ -203,13 +213,14 @@ func (t *Task) Name() string { return Name }
 func (t *Task) Start(ctx context.Context) error {
 	t.sweepTemp(ctx)
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
-		// A sync can run for hours; the schedule, the refreshes, the sweep and the purge tick beside it.
+		// A sync can run for hours; the schedule and the accounts it keeps,
+		// the refreshes, the sweep and the purge tick beside it.
 		var side sync.WaitGroup
 		for _, tick := range []struct {
 			every time.Duration
 			fn    func(context.Context)
-		}{{t.cfg.SchedulePoll, t.schedule}, {t.cfg.RefreshPoll, t.refresh}, {sweepEvery, t.sweep}, {sweepEvery, t.purgeEvents},
-			{releaseEvery, t.release}} {
+		}{{t.cfg.SchedulePoll, t.schedule}, {t.cfg.SchedulePoll, t.keepAccounts}, {t.cfg.RefreshPoll, t.refresh}, {sweepEvery, t.sweep},
+			{sweepEvery, t.purgeEvents}, {releaseEvery, t.release}} {
 			side.Add(1)
 			go func() {
 				defer side.Done()
@@ -312,6 +323,7 @@ func (t *Task) process(ctx context.Context, sync *model.ConnectorSync) {
 		}
 		if c != nil {
 			result.SyncEverySeconds = c.SyncEverySeconds
+			result.AccountGeneration = syncer.AccountGeneration(c)
 			if c.ChangeCursor == nil && slices.Contains(t.releaseKinds, c.Kind) {
 				releaseCtx, cancel := context.WithTimeout(ctx, releaseTimeout)
 				if releaseErr := t.releaser.Release(releaseCtx, c); releaseErr != nil {
@@ -437,7 +449,8 @@ func (t *Task) outcome(ctx context.Context, sync *model.ConnectorSync, result sy
 		outcome := model.ConnectorSyncOutcome{Status: model.ConnectorSyncSucceeded, RowsSynced: &rows, Mode: result.Mode}
 		switch pushed := result.Pushed; {
 		case pushed == nil:
-			outcome.Schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds}
+			outcome.Schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds,
+				Generation: result.AccountGeneration}
 		case pushed.Backlog == connector.BacklogNone:
 			outcome.Schedule = &model.ConnectorScheduleOutcome{Pushed: model.PushedKeep{}}
 		case pushed.Backlog == connector.BacklogMore:
@@ -463,16 +476,18 @@ func (t *Task) outcome(ctx context.Context, sync *model.ConnectorSync, result sy
 	case failure.PlanRequired:
 		// Buying the plan again is the fix, and nothing tells the schedule; it checks back daily.
 		day := t.now().Add(24 * time.Hour)
-		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: &day, Paused: message, Every: result.SyncEverySeconds}
+		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: &day, Paused: message, Every: result.SyncEverySeconds,
+			Generation: result.AccountGeneration}
 	case failure.Permanent:
 		// The same refusal comes back every time until the owner changes something.
-		schedule = &model.ConnectorScheduleOutcome{Paused: message, Every: result.SyncEverySeconds}
+		schedule = &model.ConnectorScheduleOutcome{Paused: message, Every: result.SyncEverySeconds, Generation: result.AccountGeneration}
 	case sync.Origin == model.ConnectorSyncEvents:
 		message = fmt.Sprintf("%s (gave up after %d attempts)", failure.Message, sync.Attempts)
 		schedule = &model.ConnectorScheduleOutcome{Pushed: model.PushedNotBefore{At: t.now().Add(t.spacing.For(max(result.StoredRows, rows)))}}
 	default:
 		message = fmt.Sprintf("%s (gave up after %d attempts)", failure.Message, sync.Attempts)
-		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds}
+		schedule = &model.ConnectorScheduleOutcome{NextSyncAt: t.next(result), Every: result.SyncEverySeconds,
+			Generation: result.AccountGeneration}
 	}
 	return model.ConnectorSyncOutcome{Status: model.ConnectorSyncFailed, Error: message, RowsSynced: &rows, Mode: result.Mode, Schedule: schedule}
 }
