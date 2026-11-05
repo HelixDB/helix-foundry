@@ -15,8 +15,8 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
-  it("is 4.6.0, the engine whose questions' reads take Foundry's caps and that reads part of a load", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.6.0 sha256:b73f1476ff882e94");
+  it("is 4.7.0, the engine whose answers cite when a state held and say what kind of gap a decline is", () => {
+    expect(AGENT_CONTRACT_VERSION).toBe("4.7.0 sha256:0e0b72154dc16dc7");
   });
 
   it("checks a value against a schema or one of its definitions", () => {
