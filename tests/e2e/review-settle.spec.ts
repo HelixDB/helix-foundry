@@ -39,6 +39,15 @@ async function openDocument(page: Page) {
 }
 const reviews = (page: Page) =>
   page.getByRole("list", { name: "Needs review" });
+/** Settles the open document's review as Not in data, from its Needs review tab. */
+async function settleNotInData(page: Page) {
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await choose(page.getByLabel("Link this name to"), "Not in data");
+  await page.getByRole("button", { name: "Settle review" }).click();
+  await expect(
+    page.getByText("Decision saved. Reload to apply."),
+  ).toBeVisible();
+}
 
 test("settles a suggested candidate, reloads linked, and removes the saved decision", async ({
   page,
@@ -123,12 +132,7 @@ test("settles not-in-data without creating an entity or link", async ({
 }) => {
   await setup(page);
   const doc = await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
+  await settleNotInData(page);
   await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
@@ -229,12 +233,7 @@ test("members can read candidate reviews but cannot settle or remove decisions",
 }) => {
   await setup(page);
   const doc = await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
+  await settleNotInData(page);
   await page.context().clearCookies();
   await signIn(page, "alan@example.com");
   await page.goto(`${doc}?tab=review`);
@@ -255,12 +254,7 @@ test("reconciles a decision removed elsewhere without keeping the saved status",
 }) => {
   await setup(page);
   await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
+  await settleNotInData(page);
   const decisions = page.getByRole("list", { name: "Saved decisions" });
   await expect(decisions).toContainText("Not in data");
   // Other failures leave the saved row available to retry.
