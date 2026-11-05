@@ -82,7 +82,7 @@ func TestFrontAgentIntegration(t *testing.T) {
 	// No tool sends an agent to what this install refuses.
 	described, err := json.Marshal(listed["tools"])
 	require.NoError(t, err)
-	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces", "Helix subscription", "shared cluster"} {
+	for _, word := range []string{"API source", "create_event_source", "event_source", "send_pieces", "Helix subscription", "shared cluster", "start_sign_in", "get_sign_in"} {
 		assert.NotContains(t, string(described), word)
 	}
 	tool := func(name string, args map[string]any) (map[string]any, bool) {
