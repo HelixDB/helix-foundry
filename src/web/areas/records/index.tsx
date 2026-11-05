@@ -249,6 +249,15 @@ export function RecordsPage() {
   // The type list is the section panel's while it shows (beside the sidebar, or
   // in a phone's open drawer), else it sits above the table.
   const slot = usePanelSlot();
+  const graphLink = (
+    <ButtonLink
+      variant="ghost"
+      icon={Network}
+      to={selection.link(paths.explore(o))}
+    >
+      Open the graph
+    </ButtonLink>
+  );
   const frame = (content: ReactNode) => (
     <div className="ex-view">
       {header}
@@ -258,122 +267,88 @@ export function RecordsPage() {
   if (access === "none") return frame(<NotShared />);
   if (!tenant)
     return frame(
-      <>
-        <EmptyState
-          icon={Database}
-          title="This ontology has no database"
-          text="Create an ontology on a database to see its records."
-          action={
-            <ButtonLink to={paths.ontologies()}>Go to Ontologies</ButtonLink>
-          }
-        />
-      </>,
+      <EmptyState
+        icon={Database}
+        title="This ontology has no database"
+        text="Create an ontology on a database to see its records."
+        action={
+          <ButtonLink to={paths.ontologies()}>Go to Ontologies</ButtonLink>
+        }
+      />,
     );
   if (
     (selection.choice.kind === "missing" && !selection.pending) ||
     selection.failed
   )
-    return frame(
-      <>
-        <LoadNotice selection={selection} />
-      </>,
-    );
+    return frame(<LoadNotice selection={selection} />);
   if (selection.choice.kind === "none" && !selection.pending)
     return frame(<NothingLoaded purpose="see its records" />);
   if (startingOf(counts.error ?? counts.failureReason))
-    return frame(
-      <>
-        <DatabaseStarting queryKey={countsRead.queryKey} />
-      </>,
-    );
+    return frame(<DatabaseStarting queryKey={countsRead.queryKey} />);
   if (
     !ready ||
     selection.pending ||
     !selection.scope ||
     (types.length > 0 && counts.isPending)
   )
-    return frame(
-      <>
-        <Skeleton height={420} />
-      </>,
-    );
+    return frame(<Skeleton height={420} />);
   // Records lists the version's types: without the version it has none.
   if (pausedOf(versionError))
     return frame(<DatabasePaused failure={pausedOf(versionError)!} />);
   if (versionError)
     return frame(
-      <>
-        <EmptyState
-          icon={CircleAlert}
-          title="Couldn’t read the load’s version"
-          text={versionError.message}
-          action={<Button onClick={refetch}>Retry</Button>}
-        />
-      </>,
+      <EmptyState
+        icon={CircleAlert}
+        title="Couldn’t read the load’s version"
+        text={versionError.message}
+        action={<Button onClick={refetch}>Retry</Button>}
+      />,
     );
   if (!type)
     return frame(
-      <>
-        <EmptyState
-          icon={Shapes}
-          title="The load’s version names no types"
-          text="Records lists the types of the version a load wrote. The graph shows what else the load holds."
-          action={
-            !shared && (
-              <>
-                <ButtonLink to={paths.versions(o)}>Schema versions</ButtonLink>
-                <ButtonLink
-                  variant="ghost"
-                  icon={Network}
-                  to={selection.link(paths.explore(o))}
-                >
-                  Open the graph
-                </ButtonLink>
-              </>
-            )
-          }
-        />
-      </>,
+      <EmptyState
+        icon={Shapes}
+        title="The load’s version names no types"
+        text="Records lists the types of the version a load wrote. The graph shows what else the load holds."
+        action={
+          !shared && (
+            <>
+              <ButtonLink to={paths.versions(o)}>Schema versions</ButtonLink>
+              {graphLink}
+            </>
+          )
+        }
+      />,
     );
   if (counts.error) {
     const paused = pausedOf(counts.error);
     if (paused) return frame(<DatabasePaused failure={paused} />);
     const f = failureText(counts.error);
     return frame(
-      <>
-        <EmptyState
-          icon={CircleAlert}
-          title={f.title}
-          text={f.text}
-          action={<Button onClick={() => void counts.refetch()}>Retry</Button>}
-        />
-      </>,
+      <EmptyState
+        icon={CircleAlert}
+        title={f.title}
+        text={f.text}
+        action={<Button onClick={() => void counts.refetch()}>Retry</Button>}
+      />,
     );
   }
   const count = (t: TypeNaming) => counts.data?.get(t.name) ?? null;
   if (types.every((t) => count(t) === 0))
     return frame(
-      <>
-        <EmptyState
-          icon={Table2}
-          title="Nothing loaded yet"
-          text={`Load the current version to fill ${ontology.databaseName || "the ontology’s database"} with its records.`}
-          action={
-            !shared && (
-              <>
-                <ButtonLink to={paths.ontology(o)}>Load data</ButtonLink>
-                <ButtonLink
-                  variant="ghost"
-                  icon={Network}
-                  to={selection.link(paths.explore(o))}
-                >
-                  Open the graph
-                </ButtonLink>
-              </>
-            )
-          }
-        />
-      </>,
+      <EmptyState
+        icon={Table2}
+        title="Nothing loaded yet"
+        text={`Load the current version to fill ${ontology.databaseName || "the ontology’s database"} with its records.`}
+        action={
+          !shared && (
+            <>
+              <ButtonLink to={paths.ontology(o)}>Load data</ButtonLink>
+              {graphLink}
+            </>
+          )
+        }
+      />,
     );
 
   // The types' colours: every type with records, alphabetically, as the graph's.
