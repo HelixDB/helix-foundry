@@ -7,16 +7,8 @@ import {
   type CSSProperties,
 } from "react";
 import { Link } from "react-router-dom";
-import {
-  ArrowRight,
-  Braces,
-  Database,
-  FileUp,
-  GitMerge,
-  Globe2,
-  Waypoints,
-} from "lucide-react";
-import { logoUrl, plural } from "../../kit";
+import { ArrowRight, GitMerge } from "lucide-react";
+import { plural, sourceMark } from "../../kit";
 import { useCurrentTheme } from "../../shell/theme";
 import "./suggested-ontology.css";
 
@@ -64,42 +56,11 @@ export type SchemaLink = {
   code?: string;
 };
 
-const logoFiles: Record<string, string> = {
-  planetscale: "planetscale",
-  workos: "workos",
-  posthog: "posthog",
-  github: "github",
-  linear: "linear",
-  calcom: "calcom",
-  granola: "granola",
-  slack: "slack",
-  notion: "notion",
-  google: "google",
-  stripe: "stripe",
-  s3: "s3",
-  postgres: "postgresql",
-  mysql: "mysql-wordmark",
-  neon: "neon",
-  supabase: "supabase",
-};
-const genericIcons = {
-  upload: FileUp,
-  rest: Globe2,
-  api: Braces,
-  neo4j: Waypoints,
-};
-
 function SourceLogo({ source }: { source: string }) {
-  const theme = useCurrentTheme();
-  const file = logoFiles[source];
-  const Icon = genericIcons[source as keyof typeof genericIcons] || Database;
+  const { url, wordmark, Icon } = sourceMark(source, useCurrentTheme());
   return (
-    <span className={`so-logo${source === "mysql" ? " is-wordmark" : ""}`}>
-      {file ? (
-        <img src={logoUrl(file, theme)} alt="" />
-      ) : (
-        <Icon size={11} aria-hidden />
-      )}
+    <span className={`so-logo${wordmark ? " is-wordmark" : ""}`}>
+      {url ? <img src={url} alt="" /> : <Icon size={11} aria-hidden />}
     </span>
   );
 }

@@ -30,10 +30,10 @@ export { DataGrid, columnsFromProfile } from "./DataGrid";
 export type { GridColumn, GridSort } from "./DataGrid";
 export {
   SourceLogo,
+  sourceMark,
   SourceStack,
   connectorKey,
   connectorLabel,
-  logoUrl,
 } from "./SourceLogo";
 export {
   Toolbar,

@@ -85,7 +85,7 @@ const darkLogos = new Set([
   "notion",
 ]);
 /** The URL of a logo file in public/connectors, in the page's theme. */
-export const logoUrl = (file: string, theme: Theme) =>
+const logoUrl = (file: string, theme: Theme) =>
   `/connectors/${file}${theme === "dark" && darkLogos.has(file) ? "-dark" : ""}.svg`;
 
 // Normalises connector names and kinds ("PostgreSQL", "Stripe") to a key.
@@ -106,6 +106,20 @@ export function connectorKey(...candidates: unknown[]): string {
 export const connectorLabel = (key: string) =>
   labels[connectorKey(key)] || key.charAt(0).toUpperCase() + key.slice(1);
 
+/** A source's mark in the page's theme: its logo's URL when it has one (a
+ *  wordmark for MySQL), else the generic icon that stands for it. Every
+ *  logo the site draws comes from here. */
+export function sourceMark(source: string, theme: Theme) {
+  const key = connectorKey(source),
+    file = logoFiles[key];
+  return {
+    key,
+    url: file ? logoUrl(file, theme) : undefined,
+    wordmark: key === "mysql",
+    Icon: generic[key] || Database,
+  };
+}
+
 export function SourceLogo({
   source,
   size = 20,
@@ -118,17 +132,14 @@ export function SourceLogo({
   showLabel?: boolean;
   className?: string;
 }) {
-  const theme = useCurrentTheme();
-  const key = connectorKey(source),
-    file = logoFiles[key],
-    label = connectorLabel(key),
-    Icon = generic[key] || Database;
+  const { key, url, wordmark, Icon } = sourceMark(source, useCurrentTheme()),
+    label = connectorLabel(key);
   const logo = (
     <span
       className={cx(
         "hf-logo",
-        key === "mysql" && "is-wordmark",
-        !file && "is-generic",
+        wordmark && "is-wordmark",
+        !url && "is-generic",
         !showLabel && className,
       )}
       style={{ width: size, height: size }}
@@ -136,8 +147,8 @@ export function SourceLogo({
       role={showLabel ? undefined : "img"}
       aria-label={showLabel ? undefined : label}
     >
-      {file ? (
-        <img src={logoUrl(file, theme)} alt="" />
+      {url ? (
+        <img src={url} alt="" />
       ) : (
         <Icon size={Math.round(size * 0.6)} aria-hidden />
       )}
