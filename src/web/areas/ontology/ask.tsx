@@ -54,7 +54,11 @@ import { useDocumentNames } from "../documents/documents-api";
 import { formatUsd } from "../documents/model";
 import { parseEntityId } from "../explore/model";
 import { readQueries } from "../explore/reads";
-import { useGraphReader, useReadAccess } from "../explore/graph-reader";
+import {
+  useGraphReader,
+  useReadAccess,
+  useReadsPart,
+} from "../explore/graph-reader";
 import { PartNote } from "../explore/part-note";
 import { useNaming } from "../explore/use-naming";
 import {
@@ -65,6 +69,7 @@ import {
 import {
   CANNOT_ANSWER_LABELS,
   EMPTY_STREAM,
+  PART_UNCOVERED_LABEL,
   MAX_QUESTION,
   answerView,
   askSuggestions,
@@ -1124,7 +1129,8 @@ function Outcome({
   reading: boolean;
 }) {
   const { id: o } = useOntology(),
-    { grantee } = useWorkspace();
+    { grantee } = useWorkspace(),
+    readsPart = useReadsPart();
   switch (view.kind) {
     case "waiting":
     case "queued":
@@ -1166,18 +1172,22 @@ function Outcome({
           }
         />
       );
-    case "cannot_answer":
+    case "cannot_answer": {
+      const gap = view.result.kind;
       return (
         <Callout
           icon={FileQuestion}
           tone="muted"
-          title={
-            view.result.kind
-              ? CANNOT_ANSWER_LABELS[view.result.kind]
-              : "This ontology can’t answer that"
-          }
+          title="This ontology can’t answer that"
           text={
             <>
+              {gap && (
+                <Tag>
+                  {readsPart && gap === "uncovered"
+                    ? PART_UNCOVERED_LABEL
+                    : CANNOT_ANSWER_LABELS[gap]}
+                </Tag>
+              )}{" "}
               {view.result.reason || "What it holds doesn’t say."}
               {view.result.gap && <> It lacks: {view.result.gap}</>}
               {!grantee && (
@@ -1196,6 +1206,7 @@ function Outcome({
           }
         />
       );
+    }
     case "answered":
       return (
         <Answer

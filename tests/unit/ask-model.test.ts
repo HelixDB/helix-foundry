@@ -1524,8 +1524,8 @@ describe("results", () => {
     });
   });
 
-  // A recorded version (the engine's Target::Version). The vendored contract
-  // predates it, so these are held to its shape here, not to the schema.
+  // A recorded version (the engine's Target::Version); its valid time is in
+  // ask-valid-time.test.ts.
   it("parses a version of each kind and refuses a malformed one", () => {
     const e = { type: "Customer", id: "cus_1" },
       msa = { type: "Contract", id: "msa" },

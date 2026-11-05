@@ -59,6 +59,7 @@ const json = (s: string): unknown => {
  * parseTarget({ row: { source: "src_1", mapping: "m", row_key: "cus_1" } }); // the row
  * parseTarget({ row: { source: "foundry_enrichment", mapping: "m", row_key: "" } }); // a profile, by no key
  * parseTarget({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { entity: { type: "Customer", id: "cus_1" } } } }); // a past state
+ * parseTarget({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { entity: { type: "Customer", id: "cus_1" } }, valid: { from: "x" } } }); // the past state, without its valid time
  * parseTarget({ link: "https://example.com" }); // undefined
  */
 export function parseTarget(x: unknown): CitationTarget | undefined {
@@ -121,32 +122,10 @@ export function parseTarget(x: unknown): CitationTarget | undefined {
     case "version": {
       // The tx is opaque: only the engine reads it.
       const tx = str(v.tx),
-        at = str(v.at),
-        of = parseVersionOf(v.of);
-      let valid: { from: string; to?: string } | undefined;
-      if (v.valid !== undefined && v.valid !== null) {
-        if (!isObj(v.valid)) return undefined;
-        const from = str(v.valid.from),
-          to = v.valid.to;
-        if (
-          !from ||
-          !RFC_3339.test(from) ||
-          Number.isNaN(Date.parse(from)) ||
-          (to !== undefined &&
-            to !== null &&
-            (typeof to !== "string" ||
-              !RFC_3339.test(to) ||
-              Number.isNaN(Date.parse(to)) ||
-              Date.parse(to) <= Date.parse(from)))
-        )
-          return undefined;
-        valid = { from, ...(typeof to === "string" ? { to } : {}) };
-      }
-      return tx &&
-        at &&
-        RFC_3339.test(at) &&
-        !Number.isNaN(Date.parse(at)) &&
-        of
+        at = v.at,
+        of = parseVersionOf(v.of),
+        valid = parseValid(v.valid);
+      return tx && isTime(at) && of
         ? { version: { tx, at, of, ...(valid ? { valid } : {}) } }
         : undefined;
     }
@@ -158,6 +137,44 @@ export function parseTarget(x: unknown): CitationTarget | undefined {
 /** RFC 3339's date-time: a date, a time and an offset. */
 const RFC_3339 =
   /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+
+/** A real calendar day, as YYYY-MM-DD. */
+const isDay = (x: unknown): x is string =>
+  typeof x === "string" &&
+  /^\d{4}-\d{2}-\d{2}$/.test(x) &&
+  !Number.isNaN(Date.parse(`${x}T00:00:00Z`)) &&
+  new Date(`${x}T00:00:00Z`).toISOString().startsWith(x);
+
+const isTime = (x: unknown): x is string =>
+  typeof x === "string" && RFC_3339.test(x) && !Number.isNaN(Date.parse(x));
+
+/**
+ * When a cited version's state held (contract 4.7.0's ValidRef), or
+ * undefined when absent or malformed: any malformed part drops all of it,
+ * never the citation, since a `from` without its `to` or its `day` would
+ * misstate when it held. `day` is a source's day with no time of day, whose
+ * `from` is the next midnight UTC.
+ *
+ * @example
+ * parseValid({ from: "2026-03-04T00:00:00Z", day: "2026-03-03" }); // { from: "2026-03-04T00:00:00Z", day: "2026-03-03" }
+ * parseValid({ from: "2026-03-04T00:00:00Z", to: null }); // { from: "2026-03-04T00:00:00Z" }
+ * parseValid({ from: "2026-03-04T00:00:00Z", day: "March 3" }); // undefined
+ */
+export function parseValid(
+  x: unknown,
+): { from: string; to?: string; day?: string } | undefined {
+  if (!isObj(x)) return undefined;
+  const { from, to, day } = x;
+  if (!isTime(from)) return undefined;
+  if (to != null && !(isTime(to) && Date.parse(to) > Date.parse(from)))
+    return undefined;
+  if (day != null && !isDay(day)) return undefined;
+  return {
+    from,
+    ...(to != null ? { to } : {}),
+    ...(day != null ? { day } : {}),
+  };
+}
 
 /**
  * What a version citation is of, or undefined when it isn't one. An entity
@@ -665,6 +682,13 @@ export const CANNOT_ANSWER_LABELS: Record<CannotAnswerKind, string> = {
   undeclared_property: "Property not defined",
   absent: "Entity not found in the sources",
 };
+
+/**
+ * `uncovered` for someone who reads part of the load: the engine shows them
+ * no past values, so their questions about another time or a change end
+ * uncovered whatever the load records.
+ */
+export const PART_UNCOVERED_LABEL = "Only current values are shared with you";
 
 const UNREACHED = "The model couldn’t be reached, after retries.";
 
@@ -1523,7 +1547,8 @@ const predText = (pred: string) =>
  * citationText({ quote: { doc_id: "d1", section: 0, start: 4, end: 9 } }, { docName: () => "contract.md" } as never); // "Quote in contract.md"
  * citationText({ entity: { type: "Order", id: "ord 2" } }, { name: () => "ORD-2" } as never); // "Order ORD-2"
  * citationText({ row: { source: "foundry_enrichment", mapping: "enrichment_people", row_key: "" } }, {} as never); // "A People enrichment profile"
- * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM: a break of must_sign" (en-US, UTC)
+ * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM: a break of must_sign" (en-US, in UTC)
+ * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } }, valid: { from: "2026-03-04T00:00:00Z", day: "2026-03-03" } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM · Valid from Mar 3, 2026: a break of must_sign" (en-US, in UTC)
  */
 export function citationText(t: CitationTarget, ctx: CitationContext): string {
   const ref = (r: EntityRef) => refText(r, ctx);
@@ -1552,9 +1577,11 @@ export function citationText(t: CitationTarget, ctx: CitationContext): string {
         : "record" in of
           ? `a break of ${of.record.constraint}`
           : citationText(of, ctx);
+    // Valid times in UTC, as the engine dates them; a source's day as that
+    // day, not the midnight after it that `from` is.
     const valid = t.version.valid;
     const when = valid
-      ? ` · Valid from ${formatDate(valid.from)}${valid.to ? ` until ${formatDate(valid.to)}` : ""}`
+      ? ` · Valid from ${valid.day ? formatDate(valid.day, false) : formatDate(valid.from, true, "UTC")}${valid.to ? ` until ${formatDate(valid.to, true, "UTC")}` : ""}`
       : "";
     return `As recorded ${formatDate(t.version.at)}${when}: ${subject}`;
   }

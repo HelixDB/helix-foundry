@@ -15,6 +15,3 @@ tests/unit/__fixtures__/event-render
 backend
 # The landing page's figures' data, as exported
 src/landing/data
-
-# P3 contract fixture, copied verbatim from the engine
-tests/unit/fixtures/ask-result-4.7.0.schema.json
