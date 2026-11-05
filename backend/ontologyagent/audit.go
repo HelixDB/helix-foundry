@@ -249,7 +249,8 @@ func decodeAuditFinding(raw map[string]json.RawMessage) (AuditFinding, error) {
 // exact), keeps the first MaxAuditExamples examples once it is whole
 // (below) and every page's spellings; one backed by rows comes once a run
 // and is kept as found. The first proposal kept is kept: it follows from
-// the signal.
+// the signal, but for a route's `gathered`, which Seen recomputes from
+// every page's spellings (regathered).
 //
 // Its memory follows the findings that matter, not the load: a finding
 // backed by fewer than model.FoundryHealMinSources documents so far is
@@ -379,6 +380,7 @@ func (s *AuditSums) Seen() ([]model.FoundryHealSeen, error) {
 		}
 		finding := cloneFields(f.raw)
 		finding["signal"] = encodedSignal
+		finding["proposal"] = regathered(finding["proposal"], f.signal)
 		if seen.Finding, err = json.Marshal(finding); err != nil {
 			return nil, err
 		}
@@ -405,6 +407,28 @@ func (f *AuditFinding) rowSupport() int64 {
 		return int64(len(drift.Added) + len(drift.Removed))
 	}
 	return 1
+}
+
+// regathered is a route proposal with `gathered` recomputed from the
+// summed signal as the engine sets it on a page: whether a spelling isn't
+// the canonical name (contract 4.8.0). The engine sees one page, and a sum
+// holds every page's spellings, so the first page's flag can say a route's
+// reports weren't gathered when a later page's were. Any other proposal,
+// or a signal with no spellings, is as sent.
+func regathered(proposal json.RawMessage, signal map[string]json.RawMessage) json.RawMessage {
+	var route map[string]json.RawMessage
+	var kind, canonical string
+	var spellings []string
+	if json.Unmarshal(proposal, &route) != nil || json.Unmarshal(route["proposal"], &kind) != nil || kind != "route" ||
+		json.Unmarshal(signal["canonical"], &canonical) != nil || json.Unmarshal(signal["spellings"], &spellings) != nil || spellings == nil {
+		return proposal
+	}
+	route["gathered"], _ = json.Marshal(slices.ContainsFunc(spellings, func(s string) bool { return s != canonical }))
+	encoded, err := json.Marshal(route)
+	if err != nil {
+		return proposal
+	}
+	return encoded
 }
 
 // unionSpellings is both lists of spellings together, sorted, each once; a

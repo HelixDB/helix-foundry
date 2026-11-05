@@ -212,6 +212,7 @@ func TestAuditSums(t *testing.T) {
 		} `json:"signal"`
 		Proposal struct {
 			Proposal string `json:"proposal"`
+			Gathered bool   `json:"gathered"`
 		} `json:"proposal"`
 	}
 	if err := json.Unmarshal(a.Finding, &finding); err != nil {
@@ -221,7 +222,9 @@ func TestAuditSums(t *testing.T) {
 	if b.Count != 25 || b.Sources != 21 || len(b.Examples) != MaxAuditExamples || b.Examples[0].DocID != "d000" || b.Examples[12].DocID != "d200" {
 		t.Fatalf("backing = %+v", b)
 	}
-	if strings.Join(finding.Signal.Spellings, ",") != "supplier_of,supplier_of_parts" || finding.Proposal.Proposal != "route" {
+	// The first page's route wasn't gathered, the third's was: the sum's is.
+	if strings.Join(finding.Signal.Spellings, ",") != "supplier_of,supplier_of_parts" || finding.Proposal.Proposal != "route" ||
+		!finding.Proposal.Gathered {
 		t.Fatalf("finding = %+v", finding)
 	}
 	if seen[1].Kind != "row_errors" || seen[1].Support != 3 || seen[1].Sources != 0 {
@@ -261,7 +264,7 @@ func TestAuditSumsThin(t *testing.T) {
 	}
 	var sums AuditSums
 	for _, p := range [][]AuditFinding{
-		page(unmatchedFinding(fp("a"), "supplier_of", 3, 1, []string{"d000", "d009"}),
+		page(unmatchedFinding(fp("a"), "supplier_of", 3, 1, []string{"d000", "d009"}, "supplier_of_parts"),
 			unmatchedFinding(fp("b"), "ceo_of", 1, 1, []string{"d001"})),
 		page(rowsFinding),
 	} {
@@ -270,10 +273,10 @@ func TestAuditSumsThin(t *testing.T) {
 		}
 	}
 	if a := sums.by[fp("a")]; !a.thin() || len(a.backing.Examples) != 0 || a.signal != nil || a.backing.Count != 3 || a.backing.Sources != 1 ||
-		string(a.spellings) != `["supplier_of"]` {
+		string(a.spellings) != `["supplier_of_parts"]` {
 		t.Fatalf("a one-document finding is held as more than its counts and spellings: %+v", a)
 	}
-	if err := sums.Add(page(unmatchedFinding(fp("a"), "supplier_of", 2, 1, []string{"d100"}, "supplier_of_parts", "vendor_of"))); err != nil {
+	if err := sums.Add(page(unmatchedFinding(fp("a"), "supplier_of", 2, 1, []string{"d100"}, "supplier_of", "vendor_of"))); err != nil {
 		t.Fatal(err)
 	}
 	if sums.Len() != 3 {
@@ -300,6 +303,7 @@ func TestAuditSumsThin(t *testing.T) {
 		} `json:"signal"`
 		Proposal struct {
 			Proposal string `json:"proposal"`
+			Gathered bool   `json:"gathered"`
 		} `json:"proposal"`
 	}
 	if err := json.Unmarshal(seen[0].Finding, &finding); err != nil {
@@ -310,9 +314,10 @@ func TestAuditSumsThin(t *testing.T) {
 		t.Fatalf("a = %+v, backing %+v", seen[0], b)
 	}
 	// The first document's spelling is kept with the second's: a person
-	// reads every form, and a dismissal holds for the forms it saw.
+	// reads every form, and a dismissal holds for the forms it saw. The
+	// route is gathered, as the spellings say.
 	if finding.Signal.Canonical != "supplier_of" || strings.Join(finding.Signal.Spellings, ",") != "supplier_of,supplier_of_parts,vendor_of" ||
-		finding.Proposal.Proposal != "route" {
+		finding.Proposal.Proposal != "route" || !finding.Proposal.Gathered {
 		t.Fatalf("finding = %+v", finding)
 	}
 	if err := contracttest.Validate(t, contracttest.Schema(t, "audit_result.json"), []byte(done(complete, string(seen[0].Finding)))); err != nil {
@@ -321,6 +326,45 @@ func TestAuditSumsThin(t *testing.T) {
 	// A thin sum is still checked: one fingerprint, one kind.
 	if err := sums.Add(page(strings.Replace(unmatchedFinding(fp("b"), "ceo_of", 1, 1, nil), `"kind":"unmatched"`, `"kind":"unresolved"`, 1))); err == nil {
 		t.Fatal("a thin finding of two kinds was summed")
+	}
+}
+
+// A route's gathered is recomputed from the signal, never trusted as sent;
+// anything else is as sent.
+func TestRegathered(t *testing.T) {
+	signal := func(spellings string) map[string]json.RawMessage {
+		s := map[string]json.RawMessage{"canonical": json.RawMessage(`"supplier_of"`)}
+		if spellings != "" {
+			s["spellings"] = json.RawMessage(spellings)
+		}
+		return s
+	}
+	route := `{"proposal":"route","set":"s","links":["supplies"],"gathered":%t}`
+	for _, c := range []struct {
+		proposal, spellings string
+		gathered            bool
+	}{
+		{fmt.Sprintf(route, false), `["supplier_of","supplier_of_parts"]`, true},
+		{fmt.Sprintf(route, true), `["supplier_of"]`, false},
+	} {
+		var got struct {
+			Gathered *bool    `json:"gathered"`
+			Links    []string `json:"links"`
+		}
+		if err := json.Unmarshal(regathered(json.RawMessage(c.proposal), signal(c.spellings)), &got); err != nil || got.Gathered == nil ||
+			*got.Gathered != c.gathered || len(got.Links) != 1 {
+			t.Fatalf("%s with %s = %+v, %v", c.proposal, c.spellings, got, err)
+		}
+	}
+	for _, kept := range []struct{ proposal, spellings string }{
+		{`{"proposal":"draft","brief":{"brief":"mapping","mapping":"m"},"origin":"finding"}`, `["supplier_of","x"]`},
+		{`null`, `["supplier_of","x"]`},
+		{fmt.Sprintf(route, true), ""},
+		{fmt.Sprintf(route, true), `3`},
+	} {
+		if got := string(regathered(json.RawMessage(kept.proposal), signal(kept.spellings))); got != kept.proposal {
+			t.Fatalf("%s with %q = %s, want it as sent", kept.proposal, kept.spellings, got)
+		}
 	}
 }
 
