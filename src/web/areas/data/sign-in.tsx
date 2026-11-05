@@ -26,6 +26,8 @@ import {
   signInQuery,
   startSignIn,
 } from "./data-api";
+import { GitHubInstallStep } from "./github-install-step";
+import { inWorkspace, needsGitHubInstall } from "./github-install";
 import { canManage } from "./model";
 import {
   accountLine,
@@ -413,8 +415,9 @@ export type SignedInArrival = {
 /**
  * A signed-in connector's notices on its page: that it needs signing in
  * again (why, since when, and Sign in again for owners and admins), what
- * the sign-in that just made it couldn't read, with GitHub's install link,
- * and whose access it reads with now when that changed.
+ * the sign-in that just made it couldn't read (for GitHub, the install
+ * step when Helix Foundry's GitHub App isn't installed where it reads), and
+ * whose access it reads with now when that changed.
  */
 export function AccountNotices({
   connector: c,
@@ -425,7 +428,7 @@ export function AccountNotices({
   arrival: SignedInArrival;
   installUrl?: string;
 }) {
-  const { role } = useWorkspace(),
+  const { role, id: workspaceId } = useWorkspace(),
     navigate = useNavigate(),
     manage = canManage(role);
   const dismiss = (key: keyof SignedInArrival) =>
@@ -433,6 +436,13 @@ export function AccountNotices({
   if (!c.account) return null;
   const at = c.account.brokenAt,
     provider = providerName(c.kind);
+  // GitHub's install link, when what it couldn't read is the app's install.
+  const installStep =
+    manage &&
+    c.kind === "github" &&
+    needsGitHubInstall(arrival.discoveryProblem)
+      ? installUrl
+      : undefined;
   return (
     <>
       {needsSignIn(c) && (
@@ -444,7 +454,20 @@ export function AccountNotices({
           action={manage && <SignInAgainButton connector={c} />}
         />
       )}
-      {arrival.discoveryProblem && (
+      {arrival.discoveryProblem && installStep && (
+        <GitHubInstallStep
+          problem={arrival.discoveryProblem}
+          installUrl={installStep}
+          install={{
+            workspaceId,
+            connectorId: c.id,
+            to: inWorkspace(paths.connection(c.id), workspaceId),
+          }}
+          onSkip={() => dismiss("discoveryProblem")}
+          skipLabel="Dismiss"
+        />
+      )}
+      {arrival.discoveryProblem && !installStep && (
         <Callout
           icon={PlugZap}
           tone="muted"

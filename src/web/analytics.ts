@@ -43,7 +43,8 @@ export type RevisionMode = "preview" | "save";
 /**
  * Where a sync was queued: a connection's page, the Data explorer, the
  * ontology's source picker, an API source's page, the first sync a new
- * connection starts with, or the sample's database.
+ * connection starts with, the sample's database, or GitHub's return once
+ * Helix Foundry's GitHub App is installed.
  */
 export type SyncFrom =
   | "connection"
@@ -51,7 +52,8 @@ export type SyncFrom =
   | "setup"
   | "api_source"
   | "created"
-  | "sample";
+  | "sample"
+  | "install";
 
 /**
  * How the WFE refused a call (src/web/api.ts refusalOf): too many at once,

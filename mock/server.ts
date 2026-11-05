@@ -35,7 +35,8 @@ import { handleWorkos } from "./workos";
 // eventSetAllowanceSpent, aiProbeMs, aiProbeOutcome, aiDefault,
 // aiDefaultKind, aiDefaultNamed, aiDetect, ollamaBundled, aiKinds,
 // memberQueryRead, invoiceOnlyCustomers, healEnabled, healRun, healDismiss,
-// healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken }.
+// healRowsMeasured, freshInstall, signIn, signInsRunOut, accountBroken,
+// githubInstalled }.
 //
 // /mock/connect is a provider's consent page for connecting a source by
 // signing in (./routes/sign-ins.ts), as /mock/checkout is Stripe Checkout.
