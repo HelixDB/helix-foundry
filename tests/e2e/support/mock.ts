@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   expect,
   test as base,
@@ -269,9 +270,16 @@ export async function createFirstOntology(page: Page): Promise<string> {
   return createdOntology(page);
 }
 
-/** Makes Customer contracts' version 3 current and loads it: Stripe's customers and invoices. */
-export async function loadContracts(page: Page) {
-  await mock.configure({ loadStepMs: 100 });
+/**
+ * The seeded contract (mock/fixtures/contract.md): it names Globex and
+ * Initech, two Stripe customers, and Umbrella Holdings.
+ */
+export const CONTRACT = readFileSync(
+  new URL("../../../mock/fixtures/contract.md", import.meta.url),
+);
+
+/** Makes Customer contracts' version 3, the contracts draft, current from its page. */
+export async function makeContractsCurrent(page: Page) {
   await page.goto("/ontology/ont_acme_contracts/versions/ver_seed_3");
   await page.getByRole("button", { name: "Make current" }).click();
   await page
@@ -279,6 +287,14 @@ export async function loadContracts(page: Page) {
     .getByRole("button", { name: "Make current" })
     .click();
   await expect(page.getByText("Version 3 is now current.")).toBeVisible();
+}
+
+/**
+ * Loads Customer contracts' current version 3 from its Loads page and waits
+ * on the load's page (where the overview's "isn’t loaded yet" can't pass
+ * for "Loaded") for the end; the load's id.
+ */
+export async function loadVersion3(page: Page): Promise<string> {
   await page.goto("/ontology/ont_acme_contracts#loads");
   await page
     .getByRole("main")
@@ -289,6 +305,50 @@ export async function loadContracts(page: Page) {
     .getByRole("dialog", { name: "Load version 3 into contracts?" })
     .getByRole("button", { name: "Load" })
     .click();
+  await expect(page).toHaveURL(/\/loads\/load_/);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
+  ).toBeVisible({ timeout: 20_000 });
+  return new URL(page.url()).pathname.split("/").pop()!;
+}
+
+/** Makes Customer contracts' version 3 current and loads it: Stripe's customers and invoices. */
+export async function loadContracts(page: Page) {
+  await mock.configure({ loadStepMs: 100 });
+  await makeContractsCurrent(page);
+  await loadVersion3(page);
+}
+
+/**
+ * Starts a load of Customer contracts' current version 3 from the
+ * overview's "Version 3 isn’t loaded yet" callout, through the Load dialog.
+ */
+export async function startContractsLoad(page: Page) {
+  await page.goto("/ontology/ont_acme_contracts");
+  await page
+    .getByRole("status")
+    .filter({ hasText: "Version 3 isn’t loaded yet" })
+    .getByRole("button", { name: "Load data" })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Load version 3 into contracts?" })
+    .getByRole("button", { name: "Load" })
+    .click();
+}
+
+/**
+ * Uploads the seeded contract (and `more` with it) into General, makes
+ * Customer contracts' version 3 current and loads it from the overview,
+ * waiting on the load's page for the end: its current load reads Stripe's
+ * customers and invoices and General.
+ */
+export async function uploadAndLoadContract(
+  page: Page,
+  more: ReturnType<typeof file>[] = [],
+) {
+  await uploadInData(page, [file("contract.md", CONTRACT), ...more]);
+  await makeContractsCurrent(page);
+  await startContractsLoad(page);
   await expect(page).toHaveURL(/\/loads\/load_/);
   await expect(
     page.getByRole("status").filter({ hasText: "Loaded" }).first(),

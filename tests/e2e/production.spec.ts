@@ -1,43 +1,16 @@
 import type { Page } from "@playwright/test";
-import { expect, explorer, mock, signIn, test } from "./support/mock";
+import { expect, explorer, loadContracts, signIn, test } from "./support/mock";
 
 // Getting into production: creating an ontology, then querying it through the
 // Helix MCP. Acme already has ontologies, so its next step is the MCP prompt.
 // Only the Analyst shows them, in a card. The sample doesn't count as an
 // ontology (sample.spec.ts).
 
-const O = "/ontology/ont_acme_contracts",
-  A = "/ask/ont_acme_contracts";
+const A = "/ask/ont_acme_contracts";
 const production = (page: Page) =>
   page.getByRole("region", { name: "Getting into production" });
 const toggle = (page: Page) =>
   production(page).getByRole("button", { name: /^Getting into production/ });
-
-/** Makes version 3 current and loads it, so the Analyst has its composer. */
-async function loadContracts(page: Page) {
-  await mock.configure({ loadStepMs: 100 });
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto(`${O}#loads`);
-  await page
-    .getByRole("main")
-    .getByRole("button", { name: "Load data" })
-    .first()
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-}
 
 test("the Analyst's card copies the prompt, minimises, and floats beside the conversation", async ({
   page,
