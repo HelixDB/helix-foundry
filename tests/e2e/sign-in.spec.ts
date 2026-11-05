@@ -903,6 +903,12 @@ test("stops a sign-in from the wizard at GitHub's install step, and comes back t
     step.getByRole("button", { name: "Skip for now" }),
   ).toBeVisible();
 
+  // A refresh reads the sign-in again and shows the same step.
+  await page.reload();
+  await expect(step).toContainText(
+    "Helix Foundry can't see any repository this GitHub sign-in reads",
+  );
+
   await installOnGitHub(page, step);
   await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
   const row = page
@@ -935,6 +941,12 @@ test("skips GitHub's install step back to the wizard, and says what an owner was
   });
   await step.getByRole("button", { name: "Skip for now" }).click();
   await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+
+  // Gone from the callback, the tab holds no sign-in any more.
+  await page.goto("/connect/callback");
+  await expect(
+    page.getByRole("heading", { name: "This tab didn’t start a sign-in" }),
+  ).toBeVisible();
 
   // An organization member asks its owners instead: nothing to sync yet.
   await page.goto("/connect/github?setup_action=request");

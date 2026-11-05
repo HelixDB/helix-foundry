@@ -184,17 +184,17 @@ export function ConnectCallbackPage() {
         trackEvent("connector_created", {
           kind: entry.kind as ConnectorKindName,
         });
-      forgetConnect(tabStorage());
       await Promise.all(
         ["connectors", "document-sets"].map((key) =>
           qc.invalidateQueries({ queryKey: [entry.workspaceId, key] }),
         ),
       );
-      notify(
-        entry.connectorId
-          ? `Signed in again. ${s.name || provider} syncs now`
-          : `Connected ${s.name || provider}. Its first sync is queued`,
-      );
+      if (answer)
+        notify(
+          entry.connectorId
+            ? `Signed in again. ${s.name || provider} syncs now`
+            : `Connected ${s.name || provider}. Its first sync is queued`,
+        );
       // The page's own picks go back to it, the new connector among them.
       const arrival: SignedInArrival & { picks?: ReturnPicks } = {
         ...(s.discoveryProblem ? { discoveryProblem: s.discoveryProblem } : {}),
@@ -203,8 +203,13 @@ export function ConnectCallbackPage() {
           ? { picks: withConnected(entry.picks, s.connectorId) }
           : {}),
       };
+      // The entry is kept until the tab leaves the callback, so a reload of
+      // the install step reads the sign-in again and shows the step again.
       const to = connectedPath(entry, s.connectorId, paths.connection),
-        go = () => navigate(to, { replace: true, state: arrival });
+        go = () => {
+          forgetConnect(tabStorage());
+          navigate(to, { replace: true, state: arrival });
+        };
       const toConnection =
         new URL(to, "https://foundry.invalid").pathname ===
         paths.connection(s.connectorId);
@@ -268,6 +273,7 @@ export function ConnectCallbackPage() {
           problem={phase.problem}
           installUrl={phase.installUrl}
           install={phase.install}
+          onInstall={() => forgetConnect(tabStorage())}
           onSkip={phase.skip}
         />
       ) : phase.kind === "refused" ? (
