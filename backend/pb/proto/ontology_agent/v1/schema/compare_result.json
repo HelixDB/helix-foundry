@@ -9,7 +9,7 @@
       "type": "boolean"
     },
     "kinds": {
-      "description": "Each kind: `entity` by type, `fact` by link, `evidence` of rows (`row`) and of documents\n(`quote`), and open `violation` records, with each load's count and hash and the keys\nthat differ.",
+      "description": "Each kind: `entity` by type, `fact` by link, `evidence` of rows (`row`) and of documents\n(`quote`), open `violation` records, and the claims documents' commits held back (`held`,\nby claim key), with each load's count and hash and the keys that differ.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/KindCompared"
@@ -57,11 +57,11 @@
           "type": "boolean"
         },
         "kind": {
-          "description": "`entity`, `fact`, `evidence` or `violation`.",
+          "description": "`entity`, `fact`, `evidence`, `violation` or `held`.",
           "type": "string"
         },
         "label": {
-          "description": "The type, the link, `row` or `quote`, or `violation`.",
+          "description": "The type, the link, `row` or `quote`, `violation` or `held`.",
           "type": "string"
         }
       },
