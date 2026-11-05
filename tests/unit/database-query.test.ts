@@ -331,14 +331,14 @@ describe("queriesPaused", () => {
       "@/web/areas/explore/explorer/query/failure"
     );
     const { ReadFailed, pausedOf } = await import("@/web/areas/explore/reads");
-    expect(describeFailure(NO_PLAN, "read")).toEqual({
+    expect(describeFailure(NO_PLAN)).toEqual({
       title: "Queries are paused: this workspace has no active Helix plan",
       hint: "Choose a plan in the Helix dashboard to resume them.",
       tone: "amber",
     });
-    expect(
-      describeFailure(refused("disabled", "Paused.", 402), "read").title,
-    ).toBe("Queries are paused for billing");
+    expect(describeFailure(refused("disabled", "Paused.", 402)).title).toBe(
+      "Queries are paused for billing",
+    );
     expect(pausedOf(new ReadFailed(NO_PLAN))).toBe(NO_PLAN);
     expect(pausedOf(new ReadFailed(refused("invalid", "bad")))).toBeNull();
     expect(pausedOf(new Error("Queries are paused"))).toBeNull();

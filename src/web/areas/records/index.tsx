@@ -99,7 +99,7 @@ const NO_SCOPE: Scope = { id: "" };
 /** What a failed read says: the explorer's words for the transport's failure. */
 function failureText(error: unknown) {
   if (error instanceof ReadFailed) {
-    const d = describeFailure(error.failure, "read");
+    const d = describeFailure(error.failure);
     return { title: d.title, text: error.failure.message };
   }
   return {

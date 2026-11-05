@@ -129,8 +129,6 @@ type FailureFields = {
   message: string;
   /** The database said whether a retry is safe, when it said. */
   retryable?: boolean;
-  /** A write's outcome is unknown. Never set: reads only. */
-  outcomeUnknown?: boolean;
   /** The decoded error body, for "show details". */
   body?: unknown;
   elapsedMs: number;
