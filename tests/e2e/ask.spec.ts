@@ -151,6 +151,9 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
     "The graph query in step 11",
     "The counts in step 9",
     "The query in step 10",
+    // A version from its history read, with when it held: a document's day
+    // as that day; when it was recorded in UTC.
+    /^As recorded .+ UTC · Valid from Oct 1, 2026: the signed_on of Contract Master services agreement$/,
   ]);
   // The graph query the model wrote opens on its code, with no Output:
   // its event carries none.
@@ -529,6 +532,10 @@ test("drafts a new version from a question the ontology can't answer", async ({
   await expect(question).toContainText("This ontology can’t answer that", {
     timeout: 10_000,
   });
+  // Its kind (4.7.0) is a chip before its reason.
+  await expect(question.locator(".hf-tag")).toHaveText(
+    "Relationship not defined",
+  );
   await expect(question).toContainText("It lacks: A signed_by link");
   // The ending call shows as the callout, not its input.
   await expect(
@@ -878,11 +885,24 @@ test("on a phone, says why the threads couldn't be read, where they would show",
   await expect(page.getByRole("button", { name: "Threads" })).toHaveCount(0);
 });
 
-// Inject P3 fixtures at the browser boundary; the 4.4.0 mock stays unchanged.
+// An interval with an end, and a malformed one, injected at the browser
+// boundary: the mock's versions have neither.
 test("shows valid time beside a citation's recording time", async ({
   page,
 }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
+  const recorded = (marker: string, valid: unknown) => ({
+    marker,
+    evidence_id: "e1",
+    target: {
+      version: {
+        tx: "opaque-tx",
+        at: "2026-10-03T09:00:00Z",
+        of: { record: { constraint: "required", key: "record" } },
+        valid,
+      },
+    },
+  });
   await page.route(
     (url) =>
       /\/ontologies\/ont_acme_contracts\/questions\/[^/:]+$/.test(url.pathname),
@@ -893,23 +913,15 @@ test("shows valid time beside a citation's recording time", async ({
         const result = JSON.parse(body.question.resultJson);
         if (result.status === "answered") {
           result.citations = [
-            {
-              marker: "c1",
-              evidence_id: "e1",
-              target: {
-                version: {
-                  tx: "opaque-tx",
-                  at: "2026-10-03T09:00:00Z",
-                  of: { record: { constraint: "required", key: "record" } },
-                  valid: {
-                    from: "2026-10-01T00:00:00Z",
-                    to: "2026-10-02T00:00:00Z",
-                  },
-                },
-              },
-            },
+            recorded("c1", {
+              from: "2026-10-01T00:00:00Z",
+              to: "2026-10-02T00:00:00Z",
+            }),
+            recorded("c2", { from: "2026-10-01", day: "October" }),
           ];
-          result.answer = { blocks: [{ para: "The recorded state [c1]" }] };
+          result.answer = {
+            blocks: [{ para: "The recorded state [c1], and before [c2]" }],
+          };
           body.question.resultJson = JSON.stringify(result);
         }
       }
@@ -919,9 +931,14 @@ test("shows valid time beside a citation's recording time", async ({
   await signIn(page);
   await loadContract(page);
   const question = await ask(page, "What state was recorded?");
-  await expect(question.getByRole("list", { name: "Sources" })).toContainText(
-    /As recorded .* · Valid from .* until .*: a break of required/,
-  );
+  // In UTC whatever the reader's zone; a malformed interval loses only its
+  // text, never the citation.
+  await expect(
+    question.getByRole("list", { name: "Sources" }).getByRole("listitem"),
+  ).toHaveText([
+    /^As recorded Oct 3, 2026, 09:00 AM UTC · Valid from Oct 1, 2026, 12:00 AM UTC until Oct 2, 2026, 12:00 AM UTC: a break of required$/,
+    /^As recorded Oct 3, 2026, 09:00 AM UTC: a break of required$/,
+  ]);
   await expect(
     question.getByRole("button", {
       name: /Source 1: As recorded .* · Valid from .* until/,
@@ -929,7 +946,7 @@ test("shows valid time beside a citation's recording time", async ({
   ).toBeVisible();
 });
 
-test("labels a P3 gap and keeps its reason and draft action", async ({
+test("labels a gap's kind and keeps its reason and draft action", async ({
   page,
 }) => {
   await mock.configure({
@@ -960,7 +977,10 @@ test("labels a P3 gap and keeps its reason and draft action", async ({
   await signIn(page);
   await loadContract(page);
   const question = await ask(page, "What was true before this was recorded?");
-  await expect(question).toContainText("No recorded state covers that time");
+  await expect(question).toContainText("This ontology can’t answer that");
+  await expect(question.locator(".hf-tag")).toHaveText(
+    "No recorded state covers that time",
+  );
   await expect(question).toContainText("It lacks: A signed_by link");
   await expect(
     question.getByRole("link", { name: "Draft a new version with this" }),

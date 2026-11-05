@@ -2222,8 +2222,10 @@ export type CitationTarget =
         tx: string;
         at: string;
         of: VersionOf;
-        // Contract 4.7.0: when the state held in the world, distinct from at.
-        valid?: { from: string; to?: string };
+        // When the state held in the world (contract 4.7.0), distinct from
+        // at: from `from` until `to`. `day` is a source's day with no time
+        // of day, whose `from` is the next midnight UTC.
+        valid?: { from: string; to?: string; day?: string };
       };
     };
 

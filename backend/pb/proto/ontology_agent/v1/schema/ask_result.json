@@ -51,6 +51,17 @@
           "description": "What the ontology or the data would need, in plain text.",
           "type": "string"
         },
+        "kind": {
+          "description": "What kind of gap it is. Absent only from a result of a contract before 4.7.0.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GapKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "reason": {
           "description": "Why not, in plain text.",
           "type": "string"
@@ -752,6 +763,36 @@
           "description": "The greatest.",
           "type": "string",
           "const": "max"
+        }
+      ]
+    },
+    "GapKind": {
+      "description": "What the load lacks that the question needs.",
+      "oneOf": [
+        {
+          "description": "No state the load records covers the time asked about: before what it records begins.",
+          "type": "string",
+          "const": "uncovered"
+        },
+        {
+          "description": "The time asked about is after the question's `as_of`.",
+          "type": "string",
+          "const": "after_as_of"
+        },
+        {
+          "description": "The ontology declares no link for the relation asked about.",
+          "type": "string",
+          "const": "undeclared_relation"
+        },
+        {
+          "description": "The ontology declares no property for what is asked of an entity.",
+          "type": "string",
+          "const": "undeclared_property"
+        },
+        {
+          "description": "The entity asked about is in no source.",
+          "type": "string",
+          "const": "absent"
         }
       ]
     },
@@ -1489,6 +1530,37 @@
         "usd"
       ]
     },
+    "ValidRef": {
+      "description": "When a version's state held, by valid time: from `from` until `to` (exclusive).",
+      "type": "object",
+      "properties": {
+        "day": {
+          "description": "A source's day with no time of day: `from` is then the next midnight UTC.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "from": {
+          "description": "When it is first known to hold.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "to": {
+          "description": "When it stopped holding, if it did.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from"
+      ]
+    },
     "VersionOf": {
       "description": "What a recorded version is of: an entity, one of its properties, a fact, or a violation record. One key names which.",
       "oneOf": [
@@ -1597,6 +1669,17 @@
         "tx": {
           "description": "The transaction, by the load's id for it.",
           "type": "string"
+        },
+        "valid": {
+          "description": "When the state held, by valid time: on a history step or a past value its statements date. Absent on what was recorded before valid times were kept.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,

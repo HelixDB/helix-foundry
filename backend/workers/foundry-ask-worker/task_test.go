@@ -492,7 +492,7 @@ const (
 		`"citations":[{"marker":"c1","evidence_id":"e1","target":{"entity":{"type":"Customer","id":"acme"}}},` +
 		`{"marker":"c2","evidence_id":"e1","target":{"result":{"evidence_id":"e1"}}}],"queries":[],` +
 		`"usage":{"input":1000,"cache_read":200,"cache_write":300,"output":400,"usd":0.031}}`
-	cannotResult = `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.","queries":[],` +
+	cannotResult = `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.","kind":"undeclared_relation","queries":[],` +
 		`"usage":{"input":10,"cache_read":0,"cache_write":0,"output":5,"usd":0.002}}`
 	budgetResult = `{"status":"budget_exhausted","queries":[],"usage":{"input":10,"cache_read":0,"cache_write":0,"output":5,"usd":0.5}}`
 )

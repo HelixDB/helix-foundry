@@ -1524,8 +1524,8 @@ describe("results", () => {
     });
   });
 
-  // A recorded version (the engine's Target::Version). The vendored contract
-  // predates it, so these are held to its shape here, not to the schema.
+  // A recorded version (the engine's Target::Version); its valid time is in
+  // ask-valid-time.test.ts.
   it("parses a version of each kind and refuses a malformed one", () => {
     const e = { type: "Customer", id: "cus_1" },
       msa = { type: "Contract", id: "msa" },
@@ -1794,7 +1794,7 @@ describe("citations", () => {
       "Contract Master services agreement signed_with Customer Globex Corporation",
       "co signed: Customer Globex Corporation, Contract Master services agreement (derived)",
       "A break of credit_limit: Customer Globex Corporation",
-      `As recorded ${formatDate("2026-10-03T09:14:07Z")}: the tier of Customer Globex Corporation`,
+      `As recorded ${formatDate("2026-10-03T09:14:07Z", true, "UTC")}: the tier of Customer Globex Corporation`,
       // A page that can't name it keeps its key.
       "Customer cus_2",
     ]);
@@ -1865,9 +1865,9 @@ describe("citations", () => {
           "the tier of Customer cus_1",
           "Contract MSA signed_with Customer cus_1",
           "a break of credit_limit",
-        ].map((what) => `As recorded ${formatDate(at)}: ${what}`),
+        ].map((what) => `As recorded ${formatDate(at, true, "UTC")}: ${what}`),
       );
-      // The reader's own clock and words, not the engine's text.
+      // In UTC and in words, not the engine's text.
       expect(citationText(ofEntity, ctx)).not.toContain(at);
     });
 

@@ -15,6 +15,7 @@ import type {
   QuestionEvent,
   QuestionResponse,
   QuestionStatus,
+  VersionOf,
 } from "../../src/shared/wfe";
 import { entityRef, type EntityRef } from "../../src/shared/foundry-read";
 import {
@@ -76,7 +77,12 @@ import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 // model's first call fails (a lookup by identifier the engine can't run
 // yet); near the end it counts the subject's type with a graph query of its
 // own (`helix_query`, a Helix v3 JSON read: no query record holds it),
-// which the answer cites. As the engine's, their events carry a summary and
+// which the answer cites, then reads the subject's history (`history_of`),
+// whose signed_on version it cites with when it held by valid time (contract
+// 4.7.0's `valid`: the day the contract gives, as that `day`, `from` the
+// next midnight UTC). A grantee asks through a view, even holding
+// everything, and is offered neither: no graph query, no history. As the
+// engine's, their events carry a summary and
 // an evidence id, never what they read. Its first answer is refused (it
 // cites an entity the evidence read didn't show) and its second, the last
 // call, ends the question, its result carrying neither evidence nor error.
@@ -84,7 +90,10 @@ import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 // takes `askStepMs`.
 // As the WFE will, question lists leave the queries' outputs out of
 // `resultJson`; GET of one question keeps them.
-// Test knobs through POST /__mock/config: `askOutcome` "cannot_answer",
+// Test knobs through POST /__mock/config: `askOutcome` "cannot_answer" (a
+// decline, which from 4.7.0 always says its `kind`: the missing signed_by
+// link is undeclared_relation, and an asker who reads part of the load,
+// asking about another time, is uncovered),
 // "budget_exhausted" (stops at this question's cap) or "failed" (the model
 // failed); `askMarkup` puts links, an image and HTML in the answer, as a
 // misbehaving model might; `askVisuals: false` answers as a 3.10.0 engine
@@ -477,7 +486,14 @@ const usage = (u: Partial<AskUsage>): AskUsage => ({
   ...u,
 });
 
-function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
+function answer(
+  o: StoredOntology,
+  loadId: string,
+  outcome: Outcome,
+  // A grantee who holds all of the load still asks through a view, offered
+  // no helix_query, history_of or changes.
+  viewed = false,
+): Script {
   const g = new LoadGraph(tenantGraph(o.tenantId), loadId);
   const found = outcome === "cannot_answer" ? undefined : quotedFact(g);
   // The asking model in force, and the kind that serves it (./ai.ts).
@@ -558,13 +574,14 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
     const type = [...g.nodes()].find((n) => n.props.entity_key !== undefined);
     const reason = "No link in this ontology records who signed a contract.",
       gap =
-        "A signed_by link from Contract to the Person who signed it, filled from the contracts.";
+        "A signed_by link from Contract to the Person who signed it, filled from the contracts.",
+      kind = "undeclared_relation";
     return {
       events: [
         ...profiled,
         call(1, "describe_type", { type: type?.label || "Contract" }),
         recorded(1, 2, `describe_type: ${type?.label || "Contract"}`),
-        call(2, "cannot_answer", { reason, gap }),
+        call(2, "cannot_answer", { reason, gap, kind }),
         ended(2, "cannot_answer"),
         { event: "finished" },
       ],
@@ -573,6 +590,7 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
         status: "cannot_answer",
         reason,
         gap,
+        kind,
         queries: [],
         usage: usage({
           input: 6_100,
@@ -647,7 +665,8 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
   const invoices = invoiceQueries(g);
   // The graph query the model writes itself (a Helix v3 JSON read): the
   // load's entities of the subject's type, counted.
-  const helix = invoices ? 10 : 8;
+  const helix = invoices ? 10 : 8,
+    history = helix + 1;
   const countRead = {
     count: {
       input: {
@@ -770,14 +789,29 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
           ),
         ]
       : []),
-    // How many of the subject's type the load holds, read from the graph
-    // itself: not a typed query, so no query record holds it.
-    call(helix, "helix_query", { query: countRead, limit: 50 }),
-    // A count is one value, as the engine words it.
-    recorded(helix, helix, "helix_query: a value"),
+    // Under a view, whole or partial, the engine offers neither tool that
+    // reads the graph as stored, helix_query and history_of.
+    ...(viewed
+      ? []
+      : [
+          // How many of the subject's type the load holds, read from the
+          // graph itself: not a typed query, so no query record holds it.
+          call(helix, "helix_query", { query: countRead, limit: 50 }),
+          // A count is one value, as the engine words it.
+          recorded(helix, helix, "helix_query: a value"),
+          // What the load recorded of the subject, by transaction: its
+          // build, then the contract's extract, which stated its signed_on.
+          call(history, "history_of", { target: { entity: "n2" } }),
+          recorded(history, history, "history_of: 2 steps"),
+        ]),
   ];
   const cite = (marker: string, e: number, target: CitationTarget) =>
     ({ marker, evidence_id: `e${e}`, target }) satisfies AskCitation;
+  const built = ontologyLoad(o.id, loadId),
+    builtAt = built?.finishedAt || built?.createdAt || new Date().toISOString(),
+    signedOn = /^\d{4}-\d{2}-\d{2}$/.test(String(subject.props.signed_on))
+      ? String(subject.props.signed_on)
+      : undefined;
   const citations: AskCitation[] = [
     cite("c1", 2, { entity: objectRef }),
     cite("c2", 3, { entity: subjectRef }),
@@ -818,7 +852,29 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
           cite("c10", 9, { result: { evidence_id: "e9" } }),
         ]
       : []),
-    cite("c11", helix, { result: { evidence_id: `e${helix}` } }),
+    ...(viewed
+      ? []
+      : [cite("c11", helix, { result: { evidence_id: `e${helix}` } })]),
+    // The signed_on the contract's extract set, with when it held by valid
+    // time (contract 4.7.0): a day with no time of day holds from the next
+    // midnight UTC, its `day` the day the source gave.
+    ...(signedOn && !viewed
+      ? [
+          cite("c12", history, {
+            version: {
+              tx: loadId,
+              at: builtAt,
+              of: { prop: { entity: subjectRef, prop: "signed_on" } },
+              valid: {
+                from: new Date(Date.parse(`${signedOn}T00:00:00Z`) + 86_400_000)
+                  .toISOString()
+                  .replace(".000Z", "Z"),
+                day: signedOn,
+              },
+            },
+          }),
+        ]
+      : []),
   ];
   const blocks = [
     {
@@ -836,7 +892,11 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
           ? [`${broken.count} records break ${broken.constraint} [c7]`]
           : []),
         `Every ${subject.label} with who signed it [c8]`,
-        `The load holds ${ofSubject} ${subject.label} ${ofSubject === 1 ? "entity" : "entities"} [c11]`,
+        ...(viewed
+          ? []
+          : [
+              `The load holds ${ofSubject} ${subject.label} ${ofSubject === 1 ? "entity" : "entities"} [c11]`,
+            ]),
       ],
     },
     // A paragraph to introduce each visual.
@@ -851,6 +911,9 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
               : "No invoice bills a customer [c10].",
           },
         ]
+      : []),
+    ...(signedOn && !viewed
+      ? [{ para: `It was signed on ${signedOn}, its history says [c12].` }]
       : []),
     ...(knobs.askMarkup
       ? [
@@ -868,6 +931,21 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
     [`${subjectRef.type}\0${subjectRef.id}`, "n2"],
   ]);
   const handle = (r: EntityRef) => handles.get(`${r.type}\0${r.id}`) ?? "n3";
+  // What a version is of, named the same way.
+  const ofNamed = (of: VersionOf) =>
+    "entity" in of
+      ? { entity: handle(of.entity) }
+      : "prop" in of
+        ? { prop: { entity: handle(of.prop.entity), prop: of.prop.prop } }
+        : "fact" in of
+          ? {
+              fact: {
+                link: of.fact.link,
+                subject: handle(of.fact.subject),
+                object: handle(of.fact.object),
+              },
+            }
+          : of;
   const written = citations.map((c) => ({
     ...c,
     target:
@@ -888,7 +966,14 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
                   args: c.target.derived.args.map(handle),
                 },
               }
-            : c.target,
+            : "version" in c.target
+              ? {
+                  version: {
+                    ...c.target.version,
+                    of: ofNamed(c.target.version.of),
+                  },
+                }
+              : c.target,
   }));
   // The invoices by status after the paragraph that counts them, as the
   // shape suits (bars); the largest after the one naming the first, asked
@@ -910,7 +995,7 @@ function answer(o: StoredOntology, loadId: string, outcome: Outcome): Script {
   const refused = written.map((c) =>
     c.marker === "c2" ? { ...c, evidence_id: "e4" } : c,
   );
-  const answering = helix + 1;
+  const answering = viewed ? helix : history + 1;
   return {
     events: [
       ...reads,
@@ -1028,9 +1113,23 @@ function partAnswer(
   };
   const reads = types.map(readOf),
     { type, query, rows } = reads.find((r) => r.rows.length) || reads[0]!;
-  const reason =
-    "The sources shared with the person asking hold nothing about this.";
-  const gap = "Sources shared with them that state it.";
+  // `askOutcome` "cannot_answer" asks about another time, which such an
+  // asker can't read (no `valid`, `past` or `as_of`): uncovered. With no
+  // rows it can see, it holds no such entity: absent.
+  const { reason, gap, kind } =
+    outcome === "cannot_answer"
+      ? {
+          reason:
+            "What held at another time isn't shared with the person asking: they read only current values.",
+          gap: "Sources shared with them, read whole, that date what they state.",
+          kind: "uncovered" as const,
+        }
+      : {
+          reason:
+            "The sources shared with the person asking hold nothing about this.",
+          gap: "Sources shared with them that state it.",
+          kind: "absent" as const,
+        };
   if (!rows.length || outcome === "cannot_answer")
     return {
       events: [
@@ -1039,7 +1138,7 @@ function partAnswer(
           event: "tool_call",
           call_id: "toolu_01",
           tool: "cannot_answer",
-          input: { reason, gap },
+          input: { reason, gap, kind },
         },
         {
           event: "tool_result",
@@ -1053,6 +1152,7 @@ function partAnswer(
         status: "cannot_answer",
         reason,
         gap,
+        kind,
         queries: [],
         usage: usage({ input: 3_100, output: 120, usd: 0.0112 }),
       },
@@ -1391,7 +1491,7 @@ export const questionRoutes: MockRoute[] = [
         stepMs: knobs.askStepMs ?? STEP_MS,
         script: view
           ? partAnswer(s.o, load.id, view, knobs.askOutcome || "answered")
-          : answer(s.o, load.id, knobs.askOutcome || "answered"),
+          : answer(s.o, load.id, knobs.askOutcome || "answered", !!req.grantee),
         events: [],
         resultJson: "",
         error: "",

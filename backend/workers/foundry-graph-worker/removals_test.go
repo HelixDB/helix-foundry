@@ -31,7 +31,7 @@ func removing(req string, stream agentv1.Agent_ExtractServer) error {
 		return extractAll(req, stream)
 	}
 	return extractEvents(stream, []string{
-		`{"event":"extract_started","contract_version":"4.6.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+		`{"event":"extract_started","contract_version":"4.7.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 		`{"event":"document_removed","doc_id":"doc-x","facts_removed":3,"entities_removed":1}`,
 		`{"event":"extract_finished"}`,
 	}, `{"status":"done","totals":`+totals+`}`)

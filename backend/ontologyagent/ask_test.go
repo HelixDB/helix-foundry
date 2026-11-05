@@ -147,9 +147,10 @@ const (
 		`{"marker":"c9","evidence_id":"e6","target":{"version":{"tx":"01JDTX0000000000000000000A","at":"2026-10-20T08:30:00.123456Z",` +
 		`"of":{"entity":{"type":"Customer","id":"acme"}}}}},` +
 		`{"marker":"c10","evidence_id":"e6","target":{"version":{"tx":"01JDTX0000000000000000000B","at":"2026-10-20T09:30:00+01:00",` +
-		`"of":{"prop":{"entity":{"type":"Customer","id":"acme"},"prop":"tier"}}}}},` +
+		`"of":{"prop":{"entity":{"type":"Customer","id":"acme"},"prop":"tier"}},"valid":{"from":"2026-03-04T00:00:00Z","day":"2026-03-03"}}}},` +
 		`{"marker":"c11","evidence_id":"e6","target":{"version":{"tx":"01JDTX0000000000000000000C","at":"2026-10-20T08:30:00Z",` +
-		`"of":{"fact":{"link":"party_to","subject":{"type":"Customer","id":"acme"},"object":{"type":"Contract","id":"msa"}}}}}},` +
+		`"of":{"fact":{"link":"party_to","subject":{"type":"Customer","id":"acme"},"object":{"type":"Contract","id":"msa"}}},` +
+		`"valid":{"from":"2026-05-01T06:00:00Z","to":"2026-06-01T06:00:00Z"}}}},` +
 		`{"marker":"c12","evidence_id":"e7","target":{"version":{"tx":"01JDTX0000000000000000000D","at":"2026-10-21T00:00:00Z",` +
 		`"of":{"record":{"constraint":"credit_limit","key":"v1"}}}}}`
 )
@@ -268,7 +269,8 @@ func TestDecodeAskResult(t *testing.T) {
 	// A question that can't be answered says why and what is missing; the
 	// website offers to draft a version with the gap.
 	t.Run("reads cannot_answer's reason and gap", func(t *testing.T) {
-		raw := `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.",` + askQueries + `,` + askUsage + `}`
+		raw := `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.","kind":"undeclared_relation",` +
+			askQueries + `,` + askUsage + `}`
 		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_result.json"), []byte(raw)); err != nil {
 			t.Fatalf("the fixture does not match ask_result.json: %v", err)
 		}
@@ -475,6 +477,10 @@ func TestDecodeAskResult(t *testing.T) {
 			"of a violation":        version(tx, at, `"of":{"violation":{"constraint":"c","key":"k"}}`),
 			"of a prop by its name": version(tx, at, `"of":{"prop":{"entity":{"type":"C","id":"c"}}}`),
 			"of a fact half":        version(tx, at, `"of":{"fact":{"link":"l","subject":{"type":"C","id":"c"}}}`),
+			// Contract 4.7.0's valid time takes from, and to and day, nothing else:
+			// a decoder of 4.6.0's schema refuses any version that has one.
+			"valid with no from":      version(tx, at, entity+`,"valid":{"to":"2026-06-01T06:00:00Z"}`),
+			"valid with another time": version(tx, at, entity+`,"valid":{"from":"2026-05-01T06:00:00Z","until":"2026-06-01T06:00:00Z"}`),
 		} {
 			if err := contracttest.Validate(t, schema, []byte(raw)); err == nil {
 				t.Errorf("%s: ask_result.json accepted %s", name, raw)
