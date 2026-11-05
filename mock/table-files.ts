@@ -2,6 +2,7 @@ import { parquetMetadata, parquetReadObjects } from "hyparquet";
 import { compressors } from "hyparquet-compressors";
 import Papa from "papaparse";
 import type { DocumentMediaType } from "../src/shared/wfe";
+import { isRecord } from "../src/shared/json";
 
 // The mock's stand-in for the WFE's document worker reading a table file
 // once, when its upload completes (the backend's document/read): CSV and TSV split by their header,
@@ -23,8 +24,6 @@ const unsupported = (message: string): TableRead => ({
   code: "unsupported",
   message,
 });
-const isRecord = (v: unknown): v is Row =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 
 /** JSON's value as rows hold it: bigints and dates made JSON. */
 function plain(v: unknown): unknown {

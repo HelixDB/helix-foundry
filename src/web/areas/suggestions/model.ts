@@ -9,6 +9,7 @@ import type {
   FoundryHealRun,
   ListHealFindingsResponse,
 } from "../../../shared/wfe";
+import { isRecord } from "../../../shared/json";
 
 /** One review behind a finding: its document and the text it is about. */
 export type SuggestionExample = { docId: string; quote: string };
@@ -46,8 +47,6 @@ const KIND_LABELS: Record<string, string> = {
   source_drift: "Source changed",
 };
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 const texts = (v: unknown) =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -68,7 +67,7 @@ const list = (items: string[]) =>
 
 /** An entity key as the engine writes one: its type and name or key. */
 function entity(v: unknown): string {
-  if (!isObject(v)) return "an entity";
+  if (!isRecord(v)) return "an entity";
   const id = text(v.norm_name) || text(v.key);
   return id ? `${text(v.type) || "entity"} ${quoted(id)}` : "an entity";
 }
@@ -92,7 +91,7 @@ function said(
       };
     }
     case "unresolved": {
-      const now = isObject(s.now) ? s.now : {},
+      const now = isRecord(s.now) ? s.now : {},
         resolves = text(now.resolves);
       return {
         title: `Documents name a ${text(s.type) || "thing"} ${quoted(text(s.norm_name))} that resolved to no one`,
@@ -107,7 +106,7 @@ function said(
       };
     }
     case "clash": {
-      const clash = isObject(s.clash) ? s.clash : {},
+      const clash = isRecord(s.clash) ? s.clash : {},
         entities = Array.isArray(clash.entities)
           ? clash.entities.map(entity)
           : [];
@@ -134,7 +133,7 @@ function said(
         title: `Rows of ${quoted(text(s.mapping))} didn't load`,
       };
     case "source_drift": {
-      const drift = isObject(s.drift) ? s.drift : {},
+      const drift = isRecord(s.drift) ? s.drift : {},
         added = texts(drift.added),
         removed = texts(drift.removed);
       return {
@@ -153,14 +152,14 @@ function said(
 
 /** What a proposal proposes, in words; set names a document set by its id. */
 function proposed(p: unknown, set: (id: string) => string): string | undefined {
-  if (!isObject(p)) return undefined;
+  if (!isRecord(p)) return undefined;
   switch (text(p.proposal)) {
     case "route": {
       const links = texts(p.links);
       return `Let documents of ${text(p.set) ? set(text(p.set)) : "the set"} state ${list(links.map(quoted))}`;
     }
     case "draft": {
-      const brief = isObject(p.brief) ? p.brief : {};
+      const brief = isRecord(p.brief) ? p.brief : {};
       switch (text(brief.brief)) {
         case "description":
           return `Describe ${quoted(text(brief.link))} so documents use it`;
@@ -202,14 +201,14 @@ export function suggestion(
   } catch {
     finding = undefined;
   }
-  const record = isObject(finding) ? finding : {},
-    signal = isObject(record.signal) ? record.signal : {},
+  const record = isRecord(finding) ? finding : {},
+    signal = isRecord(record.signal) ? record.signal : {},
     kind = text(signal.kind) || f.kind;
-  const backing = isObject(signal.backing) ? signal.backing : undefined,
-    errors = isObject(signal.errors) ? signal.errors : undefined;
+  const backing = isRecord(signal.backing) ? signal.backing : undefined,
+    errors = isRecord(signal.errors) ? signal.errors : undefined;
   const examples: SuggestionExample[] = backing
     ? (Array.isArray(backing.examples) ? backing.examples : [])
-        .filter(isObject)
+        .filter(isRecord)
         .map((e) => ({ docId: text(e.doc_id), quote: text(e.quote) }))
         .filter((e) => e.quote)
     : texts(errors?.examples).map((quote) => ({ docId: "", quote }));

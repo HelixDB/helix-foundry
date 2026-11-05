@@ -9,6 +9,7 @@ import type { DynamicQueryRequest, JsonValue } from "./database-query";
 import { scopedPredicates, type Scope } from "./load-scope";
 
 import { settleable, type Settleable } from "../reviews/model";
+import { isRecord } from "../../../shared/json";
 
 // What the website reads from an ontology's database, as v3 dynamic read
 // queries over the ontology agent's graph layout (C3), run with the user's
@@ -123,10 +124,8 @@ export type EntityRow = {
 };
 
 type Row = Record<string, unknown>;
-const isRow = (v: unknown): v is Row =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 const rows = (v: unknown): Row[] =>
-  Array.isArray(v) ? v.filter(isRow) : isRow(v) ? [v] : [];
+  Array.isArray(v) ? v.filter(isRecord) : isRecord(v) ? [v] : [];
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 const num = (v: unknown) =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -445,7 +444,7 @@ function concernedBy(data: Row): Map<number, EntityRow[]> {
 
 /** Reads documentRequest's answer; nothing in it is trusted. */
 export function parseDocument(body: unknown): DocumentGraph {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const sections = rows(data.sections)
     .flatMap((r): DocSection[] => {
       const dbId = int(r.$id),
@@ -592,7 +591,7 @@ export function parseDocumentFacts(
   body: unknown,
   doc: DocumentGraph,
 ): DocFact[] {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const byKey = new Map<string, DocFact>();
   const entities = new Map(doc.entities.map((e) => [e.dbId, e]));
   for (const e of doc.evidence) {
@@ -904,7 +903,7 @@ const LAYOUT_PROPS = new Set([
 
 /** Reads entityRequest's answer; nothing in it is trusted. */
 export function parseEntity(body: unknown): EntityGraph {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const self = rows(data.entity)[0];
   const row = self && entityRow(self);
   const facts = (["out", "in"] as const).flatMap((direction) => {
@@ -1294,7 +1293,7 @@ export function factEvidenceRequest(
 
 /** Each fact key's evidence, from factEvidenceRequest's answer. */
 export function parseFactEvidence(body: unknown): Map<string, Evidence[]> {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const out = new Map<string, Evidence[]>();
   for (const name of Object.keys(data)) {
     const i = /^evidence_(\d+)$/.exec(name)?.[1];

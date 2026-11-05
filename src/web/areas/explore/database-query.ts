@@ -4,6 +4,7 @@ import type {
 } from "../../../shared/wfe";
 import { LOCAL } from "../../../shared/deployment";
 import { ApiError, api } from "../../api";
+import { isRecord } from "../../../shared/json";
 
 // Runs v3 dynamic read queries against an ontology's database with the
 // user's session, through the control plane's query broker (WFE POST
@@ -180,10 +181,6 @@ export function decodeResponseJson(responseJson: string): string {
 }
 
 // ============ Response parsing ============
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 // An integer literal in value position with at least 16 digits: every
 // integer beyond Number.MAX_SAFE_INTEGER has one. Floats are excluded.

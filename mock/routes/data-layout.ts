@@ -5,6 +5,7 @@ import type {
 import { fail, ok, type MockRequest, type MockRoute } from "../http";
 import { config, isReply, membership, onReset } from "../state";
 import { manages } from "./workspaces";
+import { isRecord } from "../../src/shared/json";
 
 // The Data tree's layout, as the WFE keeps it (the backend's
 // foundry_data_layouts): one JSON object per workspace, opaque here beyond
@@ -26,9 +27,6 @@ const knobs = config as typeof config & Knobs;
 
 type StoredLayout = { layout: Record<string, unknown>; revision: number };
 const layouts = new Map<string, StoredLayout>();
-
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 
 const reply = (l?: StoredLayout): DataLayoutResponse => ({
   layout: l?.layout ?? {},
@@ -61,7 +59,7 @@ export const dataLayoutRoutes: MockRoute[] = [
       const ws = req.params.workspaceId!,
         body = (req.body || {}) as Partial<PutDataLayoutRequest>,
         expected = Number(body.expectedRevision ?? 0);
-      if (!isObject(body.layout))
+      if (!isRecord(body.layout))
         return fail("INVALID_ARGUMENT", "layout is required: a JSON object");
       if (!Number.isSafeInteger(expected) || expected < 0)
         return fail(

@@ -45,6 +45,7 @@ import {
 } from "./model";
 import { readable, type Naming, type TypeNaming } from "./naming";
 import { RULE_BREAK_LIMITS, refKey } from "./rule-breaks";
+import { isRecord } from "../../../shared/json";
 
 // Reads of the one load a user's source grants cover, through the WFE's
 // typed reads (POST .../loads/{loadId}:read, src/shared/foundry-read.ts),
@@ -112,8 +113,6 @@ export async function runPlan<T>(
   return plan.parse(outcomes);
 }
 
-const isRow = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 const chunks = <T>(xs: readonly T[], n: number): T[][] =>
   Array.from({ length: Math.ceil(xs.length / n) }, (_, i) =>
     xs.slice(i * n, (i + 1) * n),
@@ -147,7 +146,8 @@ function entityOf(
   const ref = entityRef(cell),
     identity = ref && identityOf(ref, naming);
   if (!ref || !identity) return undefined;
-  const stored = isRow(cell) && typeof cell.name === "string" ? cell.name : "";
+  const stored =
+    isRecord(cell) && typeof cell.name === "string" ? cell.name : "";
   return {
     dbId: 0,
     id: entityId(identity),

@@ -4,7 +4,6 @@ import { holds, inLoad, scopedLabel, type Scope } from "../../load-scope";
 import type { IndexCatalogEntry } from "./types";
 
 import {
-  isRecord,
   keysForLabel,
   MAX_SHAPE_KEYS,
   rowsOf,
@@ -34,6 +33,7 @@ import type {
   NodeFetchShape,
   SearchHit,
 } from "./types";
+import { isRecord } from "../../../../../shared/json";
 
 /**
  * v3 request builders and response parsers for the explorer. Every builder

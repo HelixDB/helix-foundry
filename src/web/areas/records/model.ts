@@ -14,6 +14,7 @@ import {
   type Readable,
   type TypeNaming,
 } from "../explore/naming";
+import { isRecord } from "../../../shared/json";
 
 // Records: an ontology's database as a table, one type of a load's version
 // at a time. Every read is a v3 dynamic read query run with the user's
@@ -95,9 +96,8 @@ function request(
 }
 
 type Row = Record<string, unknown>;
-const isRow = (v: unknown): v is Row =>
-  !!v && typeof v === "object" && !Array.isArray(v);
-const rows = (v: unknown): Row[] => (Array.isArray(v) ? v.filter(isRow) : []);
+const rows = (v: unknown): Row[] =>
+  Array.isArray(v) ? v.filter(isRecord) : [];
 const total = (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
 
@@ -156,7 +156,7 @@ export function parseTypeCounts(
   return new Map(
     batches.flatMap((b, k) => {
       const body = bodies[k];
-      const data = isRow(body) ? body : {};
+      const data = isRecord(body) ? body : {};
       return b.types.map((t, i) => [t, total(data[`count_${i}`])] as const);
     }),
   );
@@ -559,7 +559,7 @@ export function parsePage(
   naming: Naming,
   t: TypeNaming,
 ): RecordsPage {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const found = rows(data.rows).flatMap((r): RecordRow[] => {
     const dbId = r.$id;
     if (typeof dbId !== "number" || !Number.isInteger(dbId)) return [];
