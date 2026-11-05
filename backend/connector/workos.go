@@ -217,21 +217,6 @@ func (k *workosKind) listParents(ctx context.Context, header http.Header, parent
 	})
 }
 
-// get sends one GET of path with query, retrying rate limits.
-func (k *workosKind) get(ctx context.Context, header http.Header, path string, query url.Values) (int, []byte, error) {
-	target := k.base + path
-	if len(query) > 0 {
-		target += "?" + query.Encode()
-	}
-	return fetch(ctx, k.http, func() (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodGet, target, nil)
-		if err == nil {
-			req.Header = header.Clone()
-		}
-		return req, err
-	})
-}
-
 // workosRefusal is the error for a read of path that failed; nil when it succeeded.
 func workosRefusal(status int, err error, path string) error {
 	switch {
@@ -261,7 +246,7 @@ func (k *workosKind) list(ctx context.Context, header http.Header, path string, 
 		if after != "" {
 			query.Set("after", after)
 		}
-		status, body, err := k.get(ctx, header, path, query)
+		status, body, err := fetchGet(ctx, k.http, k.base+path, query, header)
 		if err := workosRefusal(status, err, path); err != nil {
 			return err
 		}
