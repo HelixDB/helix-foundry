@@ -300,7 +300,7 @@
           ]
         },
         {
-          "description": "Relationships no link covered, of any of these suggested links.",
+          "description": "Relationships no link covered, of any of these suggested links: spelled so, or begun by\none of them that is the longest declared name the suggestion starts with.",
           "type": "object",
           "properties": {
             "canonicals": {
@@ -661,7 +661,7 @@
       ]
     },
     "Fingerprint": {
-      "description": "A finding's name: the SHA-256 of its signal's kind and target, as lowercase hex. The same\nwhatever its backing, version, load, page or review order (P5 D10): a relationship's by its\nset and canonical link, a name's by its type and normalized name, a clash's by its kind and\nits entities, row errors' and drift's by their mapping.",
+      "description": "A finding's name: the SHA-256 of its signal's kind and target, as lowercase hex. The same\nwhatever its backing, load, page or review order (P5 D10), and its version so long as what\nnames the finding doesn't move: a relationship's by its set and canonical link, a name's by\nits type and normalized name, a clash's by its kind and its entities, row errors' and drift's\nby their mapping.\n\nA relationship's canonical link is the declared name its suggestion is gathered under\n([`crate::Relations`]), so an ontology's links are part of its name: adding\n`country_of_residence` next to `country` moves those reports out of `country`'s finding into\na finding of their own, with another fingerprint, and removing it moves them back. A dismissal\nby fingerprint covers every spelling the finding gathers, and no spelling gathered elsewhere\nlater: `docs/foundry-integration.md` says how to keep them.",
       "type": "string"
     },
     "Mined": {
@@ -703,6 +703,21 @@
         }
       ]
     },
+    "Origin": {
+      "description": "Where a draft's proposal came from.",
+      "oneOf": [
+        {
+          "description": "A signal proposed it ([`propose`]), and its target is what the signal reported.",
+          "type": "string",
+          "const": "finding"
+        },
+        {
+          "description": "A person asked for it, no signal behind it.",
+          "type": "string",
+          "const": "asked"
+        }
+      ]
+    },
     "Proposal": {
       "description": "A change to the bundle a finding proposes, only ever an addition (P5 D4): route links, or a\ndraft of a [`Brief`]; or the question a change only a person may make becomes.",
       "oneOf": [
@@ -710,6 +725,11 @@
           "description": "Add `links` to what the routes covering `set` let its documents state.",
           "type": "object",
           "properties": {
+            "gathered": {
+              "description": "Whether a report behind it was gathered under a declared name it only starts with\n([`crate::Relations`]). The gathering rule can be wrong (`country_of_residence` under\n`country`): a person's reading of the quotes is the only check, so layer 3's `Auto`\nmust leave such a route in the queue.",
+              "type": "boolean",
+              "default": false
+            },
             "links": {
               "description": "The links to add, each one the ontology declares and the set's routes lack.",
               "type": "array",
@@ -736,7 +756,8 @@
             "proposal",
             "set",
             "links",
-            "target"
+            "target",
+            "gathered"
           ]
         },
         {
@@ -746,6 +767,11 @@
             "brief": {
               "description": "What the draft is to fix.",
               "$ref": "#/$defs/Brief"
+            },
+            "origin": {
+              "description": "Who it's for: which targets it may be held to depends on it ([`Proposal::aimed`]). A\nproposal that doesn't say is a finding's.",
+              "$ref": "#/$defs/Origin",
+              "default": "finding"
             },
             "proposal": {
               "type": "string",
@@ -760,7 +786,8 @@
           "required": [
             "proposal",
             "brief",
-            "target"
+            "target",
+            "origin"
           ]
         },
         {
@@ -1035,7 +1062,7 @@
       "description": "What a page's reviews signal, each backed by the reviews behind it, and what a load's rows\nsignal (layer 2): its ingest report's row errors and its sources' drift, which the caller\nsends ([`SignalKind`] names its kind).",
       "oneOf": [
         {
-          "description": "Documents of `set` state a relationship no link of their routes covers, which their\nextractor suggested as a link named `canonical`.",
+          "description": "Documents of `set` state a relationship no link of their routes covers, which their\nextractor suggested as a link named `canonical`, or named so and more words, where\n`canonical` is the longest name of the ontology's links the suggestion starts with\n([`Relations`]).",
           "type": "object",
           "properties": {
             "backing": {
@@ -1043,7 +1070,7 @@
               "$ref": "#/$defs/Backing"
             },
             "canonical": {
-              "description": "The suggested link's canonical form.",
+              "description": "The suggested link's canonical form, or the declared name it is gathered under.",
               "$ref": "#/$defs/Canonical"
             },
             "kind": {
@@ -1053,11 +1080,21 @@
             "set": {
               "description": "The documents' set.",
               "$ref": "#/$defs/SetId"
+            },
+            "spellings": {
+              "description": "How the reports spelled it: what a person reads to tell whether they belong together,\nand what makes a route on them [gathered](crate::Proposal::Route::gathered).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Canonical"
+              },
+              "minItems": 1,
+              "uniqueItems": true
             }
           },
           "required": [
             "kind",
             "canonical",
+            "spellings",
             "set",
             "backing"
           ]
@@ -1170,7 +1207,7 @@
       "description": "A signal's kind: what an audit cut short names of the kinds it didn't finish.",
       "oneOf": [
         {
-          "description": "Documents of `set` state a relationship no link of their routes covers, which their\nextractor suggested as a link named `canonical`.",
+          "description": "Documents of `set` state a relationship no link of their routes covers, which their\nextractor suggested as a link named `canonical`, or named so and more words, where\n`canonical` is the longest name of the ontology's links the suggestion starts with\n([`Relations`]).",
           "type": "string",
           "const": "unmatched"
         },

@@ -3,6 +3,7 @@ package ontologyagent
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,20 +14,26 @@ import (
 func fp(d string) string { return strings.Repeat(d, 64) }
 
 // unmatchedFinding is an unmatched finding of canonical, backed by count
-// reviews from sources documents with examples of these documents, and its
-// route proposal; extra fields are added to its signal as sent.
-func unmatchedFinding(fingerprint, canonical string, count, sources int, docs []string, extra string) string {
+// reviews from sources documents with examples of these documents, spelled
+// as spellings (none: canonical alone), and its route proposal, gathered
+// when a spelling isn't canonical, as a 4.8.0 agent writes them.
+func unmatchedFinding(fingerprint, canonical string, count, sources int, docs []string, spellings ...string) string {
 	var examples []string
 	for _, d := range docs {
 		examples = append(examples, fmt.Sprintf(`{"doc_id":%q,"quote":"Acme supplies Helio"}`, d))
 	}
-	return fmt.Sprintf(`{"fingerprint":%q,"signal":{"kind":"unmatched","canonical":%q,"set":"set_1","backing":{"count":%d,"sources":%d,"examples":[%s]}%s},
-"proposal":{"proposal":"route","set":"set_1","links":["supplies"],"target":{"count":"unmatched","canonicals":[%q]}}}`,
-		fingerprint, canonical, count, sources, strings.Join(examples, ","), extra, canonical)
+	if len(spellings) == 0 {
+		spellings = []string{canonical}
+	}
+	spelled, _ := json.Marshal(spellings)
+	gathered := slices.ContainsFunc(spellings, func(s string) bool { return s != canonical })
+	return fmt.Sprintf(`{"fingerprint":%q,"signal":{"kind":"unmatched","canonical":%q,"spellings":%s,"set":"set_1","backing":{"count":%d,"sources":%d,"examples":[%s]}},
+"proposal":{"proposal":"route","set":"set_1","links":["supplies"],"target":{"count":"unmatched","canonicals":[%q]},"gathered":%t}}`,
+		fingerprint, canonical, spelled, count, sources, strings.Join(examples, ","), canonical, gathered)
 }
 
 const rowsFinding = `{"fingerprint":"` + "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" + `","signal":{"kind":"row_errors","mapping":"people",
-"errors":{"count":3,"examples":["row 4"]}},"proposal":{"proposal":"draft","brief":{"brief":"mapping","mapping":"people"},"target":{"count":"row_errors","mapping":"people"}}}`
+"errors":{"count":3,"examples":["row 4"]}},"proposal":{"proposal":"draft","brief":{"brief":"mapping","mapping":"people"},"target":{"count":"row_errors","mapping":"people"},"origin":"finding"}}`
 
 // done is a done result holding findings, mined as given.
 func done(mined string, findings ...string) string {
@@ -62,8 +69,10 @@ func TestAuditRequestContract(t *testing.T) {
 
 func TestDecodeAuditResult(t *testing.T) {
 	schema := contracttest.Schema(t, "audit_result.json")
+	gathered := unmatchedFinding(fp("a"), "date_of_death", 2, 2, []string{"d1", "d2"}, "date_of_death", "date_of_death_no_link")
 	valid := map[string]string{
-		"complete":      done(complete, unmatchedFinding(fp("a"), "supplier_of", 2, 2, []string{"d1", "d2"}, ""), rowsFinding),
+		"complete":      done(complete, unmatchedFinding(fp("a"), "supplier_of", 2, 2, []string{"d1", "d2"}), rowsFinding),
+		"gathered":      done(complete, gathered),
 		"cut":           done(`{"mined":"cut","kinds":["unresolved"]}`),
 		"load_unknown":  `{"outcome":"load_unknown"}`,
 		"load_mismatch": `{"outcome":"load_mismatch","stored_version":"foundry-v2"}`,
@@ -100,13 +109,11 @@ func TestDecodeAuditResult(t *testing.T) {
 		t.Fatalf("unmeasured = %+v, %v", r, err)
 	}
 
-	// A later contract's fields and kinds are kept, not refused: 4.8.0's
-	// spellings, a route's gathered and a draft's origin, and a kind this
-	// contract lacks.
+	// 4.8.0's spellings, a route's gathered and a draft's origin are kept
+	// as sent, and so are a later contract's fields and kinds, not refused.
 	later := done(complete,
-		unmatchedFinding(fp("a"), "date_of_death", 2, 2, []string{"d1"}, `,"spellings":["date_of_death","date_of_death_no_link"]`),
-		`{"fingerprint":"`+fp("d")+`","signal":{"kind":"held","link":"ceo_of","backing":{"count":2,"sources":2,"examples":[]}},"proposal":{"proposal":"draft","origin":"finding","brief":{"brief":"description","link":"ceo_of"},"target":{"count":"facts","link":"ceo_of"}},"later":true}`)
-	later = strings.Replace(later, `"target":{"count":"unmatched"`, `"gathered":true,"target":{"count":"unmatched"`, 1)
+		strings.Replace(gathered, `"set":"set_1",`, `"set":"set_1","later":1,`, 1),
+		`{"fingerprint":"`+fp("d")+`","signal":{"kind":"held","link":"ceo_of","backing":{"count":2,"sources":2,"examples":[]}},"proposal":{"proposal":"draft","origin":"asked","brief":{"brief":"description","link":"ceo_of"},"target":{"count":"facts","link":"ceo_of"}},"later":true}`)
 	r, err = DecodeAuditResult([]byte(later))
 	if err != nil {
 		t.Fatal(err)
@@ -119,12 +126,12 @@ func TestDecodeAuditResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kept := range []string{`"spellings":["date_of_death","date_of_death_no_link"]`, `"gathered":true`} {
+	for _, kept := range []string{`"spellings":["date_of_death","date_of_death_no_link"]`, `"gathered":true`, `"later":1`} {
 		if !strings.Contains(string(seen[0].Finding), kept) {
 			t.Fatalf("%s lost: %s", kept, seen[0].Finding)
 		}
 	}
-	if seen[1].Kind != "held" || !strings.Contains(string(seen[1].Finding), `"later":true`) || !strings.Contains(string(seen[1].Finding), `"origin":"finding"`) {
+	if seen[1].Kind != "held" || !strings.Contains(string(seen[1].Finding), `"later":true`) || !strings.Contains(string(seen[1].Finding), `"origin":"asked"`) {
 		t.Fatalf("a later kind = %+v", seen[1])
 	}
 
@@ -141,8 +148,8 @@ func TestDecodeAuditResult(t *testing.T) {
 		"no signal":                   done(complete, `{"fingerprint":"`+fp("a")+`","proposal":null}`),
 		"no kind":                     done(complete, `{"fingerprint":"`+fp("a")+`","signal":{"mapping":"m"},"proposal":null}`),
 		"a kind too long to store":    done(complete, `{"fingerprint":"`+fp("a")+`","signal":{"kind":"`+strings.Repeat("k", 33)+`"},"proposal":null}`),
-		"a backing of nothing":        done(complete, unmatchedFinding(fp("a"), "x", 0, 1, nil, "")),
-		"a backing of no documents":   done(complete, unmatchedFinding(fp("a"), "x", 1, 0, nil, "")),
+		"a backing of nothing":        done(complete, unmatchedFinding(fp("a"), "x", 0, 1, nil)),
+		"a backing of no documents":   done(complete, unmatchedFinding(fp("a"), "x", 1, 0, nil)),
 		"a backing that isn't one":    done(complete, `{"fingerprint":"`+fp("a")+`","signal":{"kind":"unmatched","backing":3},"proposal":null}`),
 		"a finding that isn't object": done(complete, `3`),
 	} {
@@ -170,9 +177,9 @@ func TestAuditSums(t *testing.T) {
 	}
 	var sums AuditSums
 	for _, p := range [][]AuditFinding{
-		page(unmatchedFinding(fp("a"), "supplier_of", 15, 12, docs(0, 12), `,"spellings":["supplier_of"]`), rowsFinding),
-		page(unmatchedFinding(fp("b"), "ceo_of", 2, 2, docs(100, 2), "")),
-		page(unmatchedFinding(fp("a"), "supplier_of", 10, 9, docs(200, 9), `,"spellings":["supplier_of_parts","supplier_of"]`)),
+		page(unmatchedFinding(fp("a"), "supplier_of", 15, 12, docs(0, 12)), rowsFinding),
+		page(unmatchedFinding(fp("b"), "ceo_of", 2, 2, docs(100, 2))),
+		page(unmatchedFinding(fp("a"), "supplier_of", 10, 9, docs(200, 9), "supplier_of_parts", "supplier_of")),
 	} {
 		if err := sums.Add(p); err != nil {
 			t.Fatal(err)
@@ -238,10 +245,11 @@ func TestAuditSums(t *testing.T) {
 	}
 }
 
-// A finding one document backs is held thin, its counts alone, until a
-// page backs it with a second: then it is whole, from that page's finding,
-// its examples and spellings that page's, with the thin sum's counts. One
-// still thin isn't seen, so neither stored nor shown.
+// A finding one document backs is held thin, its counts and spellings
+// alone, until a page backs it with a second: then it is whole, from that
+// page's finding, its examples that page's, with the thin sum's counts and
+// every page's spellings. One still thin isn't seen, so neither stored nor
+// shown.
 func TestAuditSumsThin(t *testing.T) {
 	page := func(findings ...string) []AuditFinding {
 		t.Helper()
@@ -253,18 +261,19 @@ func TestAuditSumsThin(t *testing.T) {
 	}
 	var sums AuditSums
 	for _, p := range [][]AuditFinding{
-		page(unmatchedFinding(fp("a"), "supplier_of", 3, 1, []string{"d000", "d009"}, `,"spellings":["supplier_of"]`),
-			unmatchedFinding(fp("b"), "ceo_of", 1, 1, []string{"d001"}, "")),
+		page(unmatchedFinding(fp("a"), "supplier_of", 3, 1, []string{"d000", "d009"}),
+			unmatchedFinding(fp("b"), "ceo_of", 1, 1, []string{"d001"})),
 		page(rowsFinding),
 	} {
 		if err := sums.Add(p); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if a := sums.by[fp("a")]; !a.thin() || len(a.backing.Examples) != 0 || a.signal != nil || a.backing.Count != 3 || a.backing.Sources != 1 {
-		t.Fatalf("a one-document finding is held as more than its counts: %+v", a)
+	if a := sums.by[fp("a")]; !a.thin() || len(a.backing.Examples) != 0 || a.signal != nil || a.backing.Count != 3 || a.backing.Sources != 1 ||
+		string(a.spellings) != `["supplier_of"]` {
+		t.Fatalf("a one-document finding is held as more than its counts and spellings: %+v", a)
 	}
-	if err := sums.Add(page(unmatchedFinding(fp("a"), "supplier_of", 2, 1, []string{"d100"}, `,"spellings":["vendor_of"]`))); err != nil {
+	if err := sums.Add(page(unmatchedFinding(fp("a"), "supplier_of", 2, 1, []string{"d100"}, "supplier_of_parts", "vendor_of"))); err != nil {
 		t.Fatal(err)
 	}
 	if sums.Len() != 3 {
@@ -300,14 +309,17 @@ func TestAuditSumsThin(t *testing.T) {
 	if seen[0].Support != 5 || seen[0].Sources != 2 || b.Count != 5 || b.Sources != 2 || len(b.Examples) != 1 || b.Examples[0].DocID != "d100" {
 		t.Fatalf("a = %+v, backing %+v", seen[0], b)
 	}
-	if finding.Signal.Canonical != "supplier_of" || strings.Join(finding.Signal.Spellings, ",") != "vendor_of" || finding.Proposal.Proposal != "route" {
+	// The first document's spelling is kept with the second's: a person
+	// reads every form, and a dismissal holds for the forms it saw.
+	if finding.Signal.Canonical != "supplier_of" || strings.Join(finding.Signal.Spellings, ",") != "supplier_of,supplier_of_parts,vendor_of" ||
+		finding.Proposal.Proposal != "route" {
 		t.Fatalf("finding = %+v", finding)
 	}
 	if err := contracttest.Validate(t, contracttest.Schema(t, "audit_result.json"), []byte(done(complete, string(seen[0].Finding)))); err != nil {
 		t.Fatal(err)
 	}
 	// A thin sum is still checked: one fingerprint, one kind.
-	if err := sums.Add(page(strings.Replace(unmatchedFinding(fp("b"), "ceo_of", 1, 1, nil, ""), `"kind":"unmatched"`, `"kind":"unresolved"`, 1))); err == nil {
+	if err := sums.Add(page(strings.Replace(unmatchedFinding(fp("b"), "ceo_of", 1, 1, nil), `"kind":"unmatched"`, `"kind":"unresolved"`, 1))); err == nil {
 		t.Fatal("a thin finding of two kinds was summed")
 	}
 }

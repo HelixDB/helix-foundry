@@ -80,7 +80,7 @@ describe("a suggestion's words", () => {
       support: 12,
       documents: 5,
       proposal: "Let documents of set_acme_general state “supplies”",
-      spellings: [],
+      spellings: ["supplier_of", "supplier_of_packaging"],
     });
     expect(unmatched!.examples[0]).toEqual({
       docId: "doc_acme_msa",

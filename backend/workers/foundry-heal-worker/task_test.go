@@ -282,8 +282,8 @@ func backed(tags ...string) func(ontologyagent.AuditRequest) string {
 			for _, doc := range req.DocIDs {
 				examples = append(examples, fmt.Sprintf(`{"doc_id":%q,"quote":"Acme supplies Helio"}`, doc))
 			}
-			findings = append(findings, fmt.Sprintf(`{"fingerprint":%q,"signal":{"kind":"unmatched","canonical":%q,"set":"set_1",
-"backing":{"count":%d,"sources":%d,"examples":[%s]}},"proposal":null}`, fp(tag), tag, len(req.DocIDs), len(req.DocIDs), strings.Join(examples[:min(20, len(examples))], ",")))
+			findings = append(findings, fmt.Sprintf(`{"fingerprint":%q,"signal":{"kind":"unmatched","canonical":%q,"spellings":[%q],"set":"set_1",
+"backing":{"count":%d,"sources":%d,"examples":[%s]}},"proposal":null}`, fp(tag), tag, tag, len(req.DocIDs), len(req.DocIDs), strings.Join(examples[:min(20, len(examples))], ",")))
 		}
 		rows := "unmeasured"
 		if req.Rows != nil {

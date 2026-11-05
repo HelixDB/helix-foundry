@@ -97,6 +97,11 @@ test("lists the current load's suggestions and dismisses one", async ({
   await expect(first).toContainText(
     "Suggested: Let documents of “General” state “supplies”",
   );
+  // 4.8.0 gathered two forms of the relationship into one finding: a
+  // person's reading of the quotes is the only check they belong together.
+  await expect(first).toContainText(
+    "Reported as “supplier_of”, “supplier_of_packaging”: check the quotes say the same thing.",
+  );
   await expect(first.getByRole("list", { name: "Examples" })).toContainText(
     "Globex supplies Acme with steel under this agreement.",
   );
