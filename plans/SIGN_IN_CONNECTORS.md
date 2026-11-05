@@ -785,14 +785,15 @@ The dev stamp uses WorkOS staging; production uses WorkOS production.
 
 ## Implementation
 
-Three pull requests, one per repository, then a setup track, verification on dev, and production. Each is safe to merge alone: with no port, `pipes.enabled` off, or no `signIn`, nothing changes for anyone. The work was built as the five parts below (PR 1 to 5), then gathered by repository.
+Five pull requests, then a setup track, verification on dev, and production. Each is safe to merge alone: with no port, `pipes.enabled` off, or no `signIn`, nothing changes for anyone. The work was built as the five parts below (PR 1 to 5), then gathered by repository.
 
-| Pull request       | Repository       | Branch (from `dev`/`main`)   | Holds                       | Needs                            | Safe because                                                                                                           |
-| ------------------ | ---------------- | ---------------------------- | --------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| helix-foundry #220 | helix-foundry    | `sign-in-connectors-backend` | parts 1, 3 and 5's prompt   | none                             | Without a port, `sign_in` is false; every new screen is gated on `signIn`; the prompt falls back to the connector form |
-| MCP tools          | helix-foundry    | `sign-in-mcp-tools`          | part 4's tools              | #220 merged                      | `integration.Service.SignIn` is false until hosted sets it, so no tool registers and no description names them         |
-| Hosted             | helix-hyperscale | `foundry-sign-in-connectors` | part 2, and part 4's switch | #220 merged, for the module bump | `pipes.enabled` stays off until setup is done, and the MCP's tools register only where sign-in is offered              |
-| Skills             | HelixDB/skills   | `foundry-sign-in-connectors` | part 5's skills             | the hosted PR deployed to dev    | —                                                                                                                      |
+| Pull request          | Repository       | Branch (from `dev`/`main`)   | Holds                     | Needs                                              | Safe because                                                                                                           |
+| --------------------- | ---------------- | ---------------------------- | ------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| helix-foundry #220    | helix-foundry    | `sign-in-connectors-backend` | parts 1, 3 and 5's prompt | none                                               | Without a port, `sign_in` is false; every new screen is gated on `signIn`; the prompt falls back to the connector form |
+| MCP tools             | helix-foundry    | `sign-in-mcp-tools`          | part 4's tools            | #220 merged                                        | `integration.Service.SignIn` is false until hosted sets it, so no tool registers and no description names them         |
+| helix-hyperscale #584 | helix-hyperscale | `foundry-sign-in-connectors` | part 2                    | #220 merged, for the module bump                   | `pipes.enabled` stays off until setup is done                                                                          |
+| Hosted switch         | helix-hyperscale | to come                      | part 4's switch           | #584 and the MCP tools merged, for the module bump | the MCP's tools register only where sign-in is offered                                                                 |
+| Skills                | HelixDB/skills   | `foundry-sign-in-connectors` | part 5's skills           | the hosted PR deployed to dev                      | —                                                                                                                      |
 
 **About the POC branch:**
 
