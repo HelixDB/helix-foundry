@@ -169,12 +169,13 @@ func TestFoundryOntologyWorker(t *testing.T) {
 	})
 	// The agent's internal error is its bug on this input: it is retried
 	// once, whatever max_attempts says, and logged as an error with its code
-	// and description; an unavailable agent is retried to max_attempts.
+	// and description, which the stored error never holds; an unavailable
+	// agent is retried to max_attempts.
 	t.Run("retries the agent's internal error once", func(t *testing.T) {
 		const description = "the turn failed: a panic at crates/x.rs:1:2: boom"
-		const says = "the ontology agent failed to draft this ontology on this input (Internal: " + description + "); Helix will retry once"
+		const says = "the ontology agent failed to draft this ontology on this input; Helix will retry once"
 		panicked := status.Error(codes.Internal, description)
-		internal := &ontologygen.Failure{Message: ontologyagent.InternalMessage("draft this ontology", panicked), Internal: true, Err: panicked}
+		internal := &ontologygen.Failure{Message: ontologyagent.InternalMessage("draft this ontology"), Internal: true, Err: panicked}
 		unavailable := &ontologygen.Failure{Message: "the ontology agent is unavailable; Helix will retry", Err: status.Error(codes.Unavailable, "shutting down")}
 		for name, tc := range map[string]struct {
 			err                  *ontologygen.Failure
@@ -196,7 +197,8 @@ func TestFoundryOntologyWorker(t *testing.T) {
 			var logs bytes.Buffer
 			task.drain(log.Into(context.Background(), slog.New(slog.NewJSONHandler(&logs, nil))))
 			got := q.outcomes["g1"]
-			if got.Error != tc.says || (got.RetryAt != nil) != tc.retried || (got.Status == model.OntologyGenerationFailed) == tc.retried {
+			if got.Error != tc.says || (got.RetryAt != nil) != tc.retried || (got.Status == model.OntologyGenerationFailed) == tc.retried ||
+				strings.Contains(got.Error, description) || strings.Contains(got.Error, "panic") {
 				t.Fatalf("%s: outcome = %+v", name, got)
 			}
 			logged := logs.String()

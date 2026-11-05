@@ -1512,13 +1512,7 @@ func TestLoadOutcomes(t *testing.T) {
 		"an agent that can't load": {func(h *harness) { h.agent.ingest = refuseIngest(codes.Unimplemented) }, failed, ontologyagent.ContractVersion},
 		"a full agent":             {func(h *harness) { h.agent.ingest = refuseIngest(codes.ResourceExhausted) }, retried, "unavailable"},
 		"an agent's internal error": {func(h *harness) { h.agent.ingest = refuseIngest(codes.Internal) }, retried,
-			"the ontology agent failed to load the tables on this input (Internal: refused); Helix will retry once"},
-		// The description is clipped to 500 bytes: byte 500 falls inside the 250th é.
-		"an agent's long internal error": {func(h *harness) {
-			h.agent.ingest = func(string, agentv1.Agent_IngestServer) error {
-				return status.Error(codes.Internal, "x"+strings.Repeat("é", 300))
-			}
-		}, retried, "(Internal: x" + strings.Repeat("é", 249) + "…)"},
+			"the ontology agent failed to load the tables on this input; Helix will retry once"},
 		"models the agent can't run": {func(h *harness) {
 			h.agent.extract = func(string, agentv1.Agent_ExtractServer) error {
 				return status.Error(codes.FailedPrecondition, "this server extracts no documents")
@@ -1658,7 +1652,8 @@ func TestLoadOutcomes(t *testing.T) {
 
 	// The agent's internal error is its bug on this input: whichever call
 	// ends with it, the job is retried once, whatever max_attempts says, and
-	// then fails, the code and description stored and logged as an error.
+	// then fails; the code and description are logged as an error, never
+	// stored for the customer.
 	t.Run("retries the agent's internal error once", func(t *testing.T) {
 		const description = "the call failed: a panic at crates/x.rs:1:2: boom"
 		panicked := status.Error(codes.Internal, description)
@@ -1682,7 +1677,7 @@ func TestLoadOutcomes(t *testing.T) {
 				h.agent.clues = func(string, agentv1.Agent_CluesServer) error { return panicked }
 			}, "read the people to look up"},
 		} {
-			says := "the ontology agent failed to " + tc.what + " on this input (Internal: " + description + "); Helix will retry once"
+			says := "the ontology agent failed to " + tc.what + " on this input; Helix will retry once"
 			for _, step := range []struct {
 				attempt, maxAttempts int
 				retried              bool
@@ -1701,7 +1696,8 @@ func TestLoadOutcomes(t *testing.T) {
 				job.Attempts = step.attempt
 				outcome, logged, _ := h.runLogged(t, job)
 				if outcome.Error != step.says || (outcome.RetryAt != nil) != step.retried ||
-					(outcome.Status == model.FoundryGraphJobFailed) == step.retried || outcome.Uncounted {
+					(outcome.Status == model.FoundryGraphJobFailed) == step.retried || outcome.Uncounted ||
+					strings.Contains(outcome.Error, description) || strings.Contains(outcome.Error, "panic") {
 					t.Fatalf("%s, attempt %d of %d: outcome = %+v", name, step.attempt, step.maxAttempts, outcome)
 				}
 				if !strings.Contains(logged, `"level":"ERROR","msg":"graph job attempt failed"`) ||
@@ -1725,7 +1721,7 @@ func TestLoadOutcomes(t *testing.T) {
 		// A stopping worker's attempt is given back, internal error or not.
 		job.Attempts = 2
 		if outcome := h.task.outcome(context.Background(), job, &attempt{}, callFailure("load the tables", panicked), true); outcome.RetryAt == nil ||
-			!outcome.Uncounted || outcome.Error != "the ontology agent failed to load the tables on this input (Internal: "+description+"); Helix will retry once" {
+			!outcome.Uncounted || outcome.Error != "the ontology agent failed to load the tables on this input; Helix will retry once" {
 			t.Fatalf("outcome = %+v, want an uncounted retry", outcome)
 		}
 	})

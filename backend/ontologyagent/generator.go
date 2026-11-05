@@ -441,21 +441,17 @@ func tokens(result *ontologygen.Result, u Usage) {
 const InternalAttempts = 2
 
 // InternalMessage words a call to `what` that the agent ended with INTERNAL
-// for the customer: the agent failed on this input, it isn't unavailable. It
-// keeps the status's code and description (where the agent panicked and with
-// what message, never document text), the description clipped to 500 bytes
-// and valid UTF-8. grpc-go also ends a stream INTERNAL on a transport fault
-// (a reset or unreadable stream), rare over the sidecar's loopback; that gets
-// the same words and the same one retry.
-func InternalMessage(what string, err error) string {
-	const limit = 500
-	s := status.Convert(err)
-	description := s.Message()
-	if len(description) > limit {
-		description = description[:limit] + "…"
-	}
-	return fmt.Sprintf("the ontology agent failed to %s on this input (%s: %s); Helix will retry once",
-		what, s.Code(), strings.ToValidUTF8(description, ""))
+// for the customer: the agent failed on this input, it isn't unavailable,
+// and Helix retries once. The status's code and description (engine paths
+// and panic text) are Helix's to read, never the customer's: they stay in
+// the failure's Err and the worker's error log. grpc-go also ends a stream
+// INTERNAL on a transport fault (a reset or unreadable stream), rare over
+// the sidecar's loopback; that gets the same words and the same one retry.
+//
+//	InternalMessage("extract the documents")
+//	// the ontology agent failed to extract the documents on this input; Helix will retry once
+func InternalMessage(what string) string {
+	return "the ontology agent failed to " + what + " on this input; Helix will retry once"
 }
 
 // turnFailure classifies a failed call. A result past the agent's 32 MiB
@@ -476,7 +472,7 @@ func turnFailure(err error, afterEvents bool) error {
 	case code == codes.Unimplemented:
 		return &ontologygen.Failure{Message: "the ontology agent does not serve turns", Permanent: true, Err: err}
 	case code == codes.Internal:
-		return &ontologygen.Failure{Message: InternalMessage("draft this ontology", err), Internal: true, Err: err}
+		return &ontologygen.Failure{Message: InternalMessage("draft this ontology"), Internal: true, Err: err}
 	}
 	// UNAVAILABLE, RESOURCE_EXHAUSTED before any event, a dropped stream, a
 	// deadline: another attempt may get through.

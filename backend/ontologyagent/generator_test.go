@@ -20,7 +20,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -729,8 +728,8 @@ func TestGenerator(t *testing.T) {
 	})
 
 	// INTERNAL is the agent's own bug on this input (a panic it caught),
-	// whenever it comes: retried, marked for the worker's cap, its code and
-	// description in the message.
+	// whenever it comes: retried, marked for the worker's cap, worded for
+	// the customer with its code and description kept in Err only.
 	t.Run("marks the agent's internal error, before or after events", func(t *testing.T) {
 		const description = "the turn failed: a panic at crates/x.rs:1:2: boom"
 		for name, events := range map[string][]string{"before events": nil, "after events": testEvents[:1]} {
@@ -741,8 +740,13 @@ func TestGenerator(t *testing.T) {
 				return status.Error(codes.Internal, description)
 			})
 			_, err := h.generator.Run(ctx, generation())
-			if f := asFailure(t, err); f.Permanent || !f.Internal || f.Message != "the ontology agent failed to draft this ontology on this input (Internal: "+description+"); Helix will retry once" {
+			f := asFailure(t, err)
+			if f.Permanent || !f.Internal || f.Message != "the ontology agent failed to draft this ontology on this input; Helix will retry once" ||
+				strings.Contains(f.Message, description) || strings.Contains(f.Message, "panic") {
 				t.Fatalf("%s: failure %+v", name, f)
+			}
+			if s := status.Convert(f.Err); s.Code() != codes.Internal || s.Message() != description {
+				t.Fatalf("%s: the cause was lost: %v", name, f.Err)
 			}
 		}
 	})
@@ -915,7 +919,7 @@ func TestGenerator(t *testing.T) {
 func TestTurnFailure(t *testing.T) {
 	const unavailable = "the ontology agent is unavailable; Helix will retry"
 	panicked := status.Error(codes.Internal, "the turn failed: a panic at crates/x.rs:1:2: boom")
-	internal := ontologygen.Failure{Message: "the ontology agent failed to draft this ontology on this input (Internal: the turn failed: a panic at crates/x.rs:1:2: boom); Helix will retry once", Internal: true}
+	internal := ontologygen.Failure{Message: "the ontology agent failed to draft this ontology on this input; Helix will retry once", Internal: true}
 	for name, tc := range map[string]struct {
 		err         error
 		afterEvents bool
@@ -944,21 +948,10 @@ func TestTurnFailure(t *testing.T) {
 	}
 }
 
-// InternalMessage keeps the description whole up to 500 bytes, clips it past
-// them on a rune boundary, and drops bytes that aren't UTF-8.
-func TestInternalMessage(t *testing.T) {
-	for name, tc := range map[string]struct{ description, want string }{
-		"kept whole":   {"the call failed: a panic at crates/x.rs:1:2: boom", "the call failed: a panic at crates/x.rs:1:2: boom"},
-		"at the limit": {strings.Repeat("a", 500), strings.Repeat("a", 500)},
-		// Byte 500 falls inside the 250th é.
-		"clipped on a rune boundary": {"x" + strings.Repeat("é", 300), "x" + strings.Repeat("é", 249) + "…"},
-		"not UTF-8":                  {"boom\xff!", "boom!"},
-	} {
-		got := InternalMessage("extract the documents", status.Error(codes.Internal, tc.description))
-		if want := "the ontology agent failed to extract the documents on this input (Internal: " + tc.want + "); Helix will retry once"; got != want || !utf8.ValidString(got) {
-			t.Fatalf("%s: message %q, want %q", name, got, want)
-		}
-	}
+// InternalMessage names the step and the one retry, nothing of the cause.
+func ExampleInternalMessage() {
+	fmt.Println(InternalMessage("extract the documents"))
+	// Output: the ontology agent failed to extract the documents on this input; Helix will retry once
 }
 
 // TestSnapshotCacheBudget bounds the snapshots one attempt unpacks: the
