@@ -14,7 +14,13 @@ import {
 import type { Connector, ConnectorSync } from "../../../shared/wfe";
 import { ApiError } from "../../api";
 import { paths } from "../../paths";
-import { Loading, RefreshFailed, useAction, useWorkspace } from "../../ui";
+import {
+  Loading,
+  RefreshFailed,
+  canManage,
+  useAction,
+  useWorkspace,
+} from "../../ui";
 import {
   Button,
   ButtonLink,
@@ -62,7 +68,6 @@ import {
   syncConnector,
 } from "./data-api";
 import {
-  canManage,
   connectorBadge,
   isEventSource,
   isKnownKind,

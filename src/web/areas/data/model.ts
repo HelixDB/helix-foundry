@@ -24,7 +24,6 @@ import type {
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
 import { formatNumber, formatRelative, plural } from "../../kit/util";
-import type { WorkspaceRole } from "../../ui";
 
 // The Data area's logic, kept apart from its components so it is tested on
 // its own: connector kinds, the Data page's tree of them and of the
@@ -70,9 +69,6 @@ export const isDatabase = (kind: string): kind is "postgres" | "mysql" =>
 export const hasTableChoice = (
   kind: string,
 ): kind is "postgres" | "mysql" | "s3" => isDatabase(kind) || kind === "s3";
-
-/** Owners and admins hold workspace.connectors.manage; members only read. */
-export const canManage = (role: WorkspaceRole) => role !== "member";
 
 // ---------------------------------------------------------------- Syncs
 

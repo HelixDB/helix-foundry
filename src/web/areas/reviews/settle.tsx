@@ -9,8 +9,7 @@ import type {
 import { Button, ButtonLink, Select } from "../../kit";
 import { paths } from "../../paths";
 import { ApiError } from "../../api";
-import { useWorkspace } from "../../ui";
-import { canManage } from "../ontology/parts";
+import { canManage, useWorkspace } from "../../ui";
 import { useOntology } from "../ontology/scope";
 import { valueText } from "../explore/model";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";

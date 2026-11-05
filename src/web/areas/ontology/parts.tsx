@@ -32,7 +32,7 @@ import {
 } from "../../kit";
 import { sentence } from "../../api";
 import { paths } from "../../paths";
-import { useWorkspace, type WorkspaceRole } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { SettingsLinked } from "../workspace/ai-gate";
 import { DASHBOARD_URL } from "../workspace/members";
 import {
@@ -52,10 +52,6 @@ import { ontologyName, useOntology } from "./scope";
 import { useAccessCheck } from "../workspace/access-guard";
 
 // Pieces several Ontology pages share.
-
-/** Owners and admins manage ontologies (workspace.ontology.manage). */
-export const canManage = (role: WorkspaceRole) =>
-  role === "owner" || role === "admin";
 
 const statuses: Record<string, Status> = {
   ONTOLOGY_GENERATION_STATUS_QUEUED: "queued",

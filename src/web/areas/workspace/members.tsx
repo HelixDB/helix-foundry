@@ -19,10 +19,9 @@ import {
   Tag,
   formatDate,
 } from "../../kit";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { shellRoles } from "../../workspaces";
 import { initials, roleLabel } from "./people";
-import { canManage } from "./plan";
 
 // Settings → Members: who is in the workspace, read-only, and inviting by
 // email. Role changes and removals stay in the Helix dashboard; the WFE sends

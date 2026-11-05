@@ -3,12 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { LOCAL } from "../../../shared/deployment";
 import type { FoundryAccessChange } from "../../../shared/wfe";
 import { ConfirmDialog } from "../../kit";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { ontologyQueries } from "../ontology/queries";
 import { accessQuery, keysQuery, previewChange } from "./access-api";
 import { lossLines } from "./access-model";
 import { membersQuery } from "./members";
-import { canManage } from "./plan";
 
 // Before a change that can take away what someone reads through source
 // grants (loading or making current a version, deleting a connection,

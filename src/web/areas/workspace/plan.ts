@@ -9,7 +9,6 @@ import {
 } from "../../../shared/wfe";
 import { trackEvent } from "../../analytics";
 import { ApiError, api } from "../../api";
-import type { WorkspaceRole } from "../../ui";
 
 // Foundry Free, Pro and Max.
 // Autumn is the system of record and the WFE reads it live on every call, so
@@ -78,10 +77,6 @@ export function planSummary(plan: FoundryPlan | undefined): PlanSummary {
     periodEnd: end && !Number.isNaN(end.getTime()) ? end : null,
   };
 }
-
-/** Owners and admins hold workspace.billing.manage and workspace.members.manage. */
-export const canManage = (role: WorkspaceRole) =>
-  role === "owner" || role === "admin";
 
 export const planKey = (workspaceId: string) => [workspaceId, "foundry-plan"];
 export const planQuery = (workspaceId: string) => ({

@@ -17,7 +17,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { NotFound } from "../../shell/ErrorBoundary";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { AccessTab } from "./access";
 import { AiTab } from "./ai";
 import { BillingTab } from "./billing";
@@ -25,7 +25,6 @@ import { EnrichmentTab } from "./enrichment";
 import { DASHBOARD_URL, MembersTab } from "./members";
 import type { SettingsTab } from "./paths";
 import { roleLabel } from "./people";
-import { canManage } from "./plan";
 
 // /settings: the workspace itself, read-only. Renaming and deleting stay in
 // the Helix dashboard.

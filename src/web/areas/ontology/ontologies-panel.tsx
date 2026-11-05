@@ -16,11 +16,11 @@ import {
 import { paths } from "../../paths";
 import { childActive } from "../../shell/nav";
 import type { NavChild } from "../../shell/types";
-import { RefreshFailed, useWorkspace } from "../../ui";
+import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import { OntologyDocumentsTree } from "../documents/explorer";
 import { suggestionQueries } from "../suggestions/api";
 import { loadVersion } from "./model";
-import { canManage, lastLoadBadge } from "./parts";
+import { lastLoadBadge } from "./parts";
 import { ontologyQueries } from "./queries";
 import { ontologyName } from "./scope";
 

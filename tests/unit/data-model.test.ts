@@ -11,7 +11,6 @@ import {
   EVENT_SET_DEFAULTS,
   KINDS,
   MAX_NAME_BYTES,
-  canManage,
   configKind,
   emptyForm,
   eventCapacity,
@@ -109,12 +108,6 @@ describe("kinds and roles", () => {
     expect(isEventSource("event")).toBe(false);
     expect(isEventSource("Events")).toBe(false);
     expect(isEventSource("")).toBe(false);
-  });
-
-  it("lets owners and admins manage connectors, not members", () => {
-    expect(canManage("owner")).toBe(true);
-    expect(canManage("admin")).toBe(true);
-    expect(canManage("member")).toBe(false);
   });
 });
 

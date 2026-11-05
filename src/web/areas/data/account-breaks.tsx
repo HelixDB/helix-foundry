@@ -4,9 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { KeyRound, TriangleAlert } from "lucide-react";
 import { Button, ButtonLink, Dialog } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { needsSignInQuery } from "./data-api";
-import { canManage } from "./model";
 import { useSignInStart } from "./sign-in";
 import { breakKey, brokenNotice, needsSignIn } from "./sign-ins";
 

@@ -18,7 +18,7 @@ import { trackBeforeLeavingAt, trackEvent } from "../../analytics";
 import { refusalOf, sentence } from "../../api";
 import { Button, ButtonAnchor, KeyValue, formatDate, plural } from "../../kit";
 import { paths } from "../../paths";
-import { Loading, useWorkspace } from "../../ui";
+import { Loading, canManage, useWorkspace } from "../../ui";
 import { Callout } from "../ontology/parts";
 import {
   authorizeSignIn,
@@ -28,7 +28,6 @@ import {
 } from "./data-api";
 import { GitHubInstallStep } from "./github-install-step";
 import { inWorkspace, needsGitHubInstall } from "./github-install";
-import { canManage } from "./model";
 import {
   accountLine,
   brokenWhy,

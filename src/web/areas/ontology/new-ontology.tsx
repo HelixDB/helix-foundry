@@ -26,7 +26,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { trackEvent } from "../../analytics";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { ConnectData } from "../data/connect-data";
 import { SignInReturn } from "../data/sign-in";
 import { connectorsQuery } from "../data/data-api";
@@ -52,7 +52,7 @@ import {
   type DatabasePick,
   type WizardStepId,
 } from "./model";
-import { Callout, FlowStep, canManage, type Arrival } from "./parts";
+import { Callout, FlowStep, type Arrival } from "./parts";
 import { SAMPLE, isSampleConnector, isSampleSet } from "./sample";
 import { TrySample } from "./try-sample";
 import {

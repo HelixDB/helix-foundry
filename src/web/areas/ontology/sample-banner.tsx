@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
-import { useWorkspace } from "../../ui";
-import { canManage } from "./parts";
+import { canManage, useWorkspace } from "../../ui";
 import { ontologyPaths as paths } from "./paths";
 import { isLiveQuestion, ontologyQueries, questionQueries } from "./queries";
 import { sampleInView } from "./sample";

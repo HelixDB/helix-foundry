@@ -35,7 +35,7 @@ import {
   formatRelative,
   plural,
 } from "../../kit";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { ConnectData } from "../data/connect-data";
 import {
   connectorKindsQuery,
@@ -48,7 +48,6 @@ import { EventSourceSend, useEventSends } from "../data/event-source-send";
 import {
   EVENT_SET_DEFAULTS,
   KINDS,
-  canManage,
   connectorBadge,
   eventSourceLine,
   eventsConfig,

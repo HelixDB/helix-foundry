@@ -13,12 +13,12 @@ import type { Connector, ConnectorKindName } from "../../../shared/wfe";
 import { logoUrl } from "../../kit";
 import { paths } from "../../paths";
 import { useCurrentTheme, type Theme } from "../../shell/theme";
-import { Loading, useWorkspace } from "../../ui";
+import { Loading, canManage, useWorkspace } from "../../ui";
 import { ProGate } from "../workspace/pro-gate";
 import { ConnectionForm } from "./connection-form";
 import { connectorKindsQuery, connectorsQuery, signInQuery } from "./data-api";
 import { EventSourceForm } from "./event-source-form";
-import { canManage, isEventSource, isKnownKind } from "./model";
+import { isEventSource, isKnownKind } from "./model";
 import { AgentSignIn, SignInReturn } from "./sign-in";
 
 // "Add data": helix-foundry's connector picker and per-kind form in its
