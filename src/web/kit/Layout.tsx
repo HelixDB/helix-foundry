@@ -1,8 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
-import { Link } from "react-router-dom";
-import { ArrowUpRight, Inbox, type LucideIcon } from "lucide-react";
+import { Inbox, type LucideIcon } from "lucide-react";
 import { cx } from "./util";
-import { StatusDot, type Status } from "./StatusBadge";
 
 export function EmptyState({
   icon: Icon = Inbox,
@@ -29,71 +27,6 @@ export function EmptyState({
       {text && <p>{text}</p>}
       {action && <div className="hf-empty-action">{action}</div>}
     </div>
-  );
-}
-
-export function StatCard({
-  label,
-  value,
-  hint,
-  delta,
-  to,
-  icon: Icon,
-  status,
-  children,
-  loading,
-  className,
-}: {
-  label: ReactNode;
-  value: ReactNode;
-  hint?: ReactNode;
-  delta?: { value: ReactNode; trend: "up" | "down" | "flat"; good?: boolean };
-  // Makes the whole card a link.
-  to?: string;
-  icon?: LucideIcon;
-  // Shows a status dot beside the label.
-  status?: Status;
-  // Extra content under the value, e.g. a <SourceStack/>.
-  children?: ReactNode;
-  loading?: boolean;
-  className?: string;
-}) {
-  const body = (
-    <>
-      <div className="hf-stat-label">
-        {Icon && <Icon size={15} aria-hidden />}
-        <span>{label}</span>
-        {status && <StatusDot status={status} />}
-        {to && <ArrowUpRight size={14} className="hf-stat-go" aria-hidden />}
-      </div>
-      <div className="hf-stat-value hf-num">
-        {loading ? <span className="hf-skeleton hf-stat-skeleton" /> : value}
-      </div>
-      {delta && (
-        <div
-          className={cx(
-            "hf-stat-delta",
-            delta.good === undefined
-              ? "is-flat"
-              : delta.good
-                ? "is-good"
-                : "is-bad",
-          )}
-        >
-          {delta.trend === "up" ? "▲" : delta.trend === "down" ? "▼" : "•"}{" "}
-          {delta.value}
-        </div>
-      )}
-      {hint && <div className="hf-stat-hint">{hint}</div>}
-      {children && <div className="hf-stat-extra">{children}</div>}
-    </>
-  );
-  return to ? (
-    <Link to={to} className={cx("hf-stat", "is-link", className)}>
-      {body}
-    </Link>
-  ) : (
-    <div className={cx("hf-stat", className)}>{body}</div>
   );
 }
 
@@ -167,36 +100,6 @@ export function Panel({
         {children}
       </div>
       {footer && <div className="hf-panel-foot">{footer}</div>}
-    </div>
-  );
-}
-
-// List on the left, detail on the right; on narrow screens shows one at a time.
-export function SplitView({
-  list,
-  detail,
-  hasSelection = false,
-  listWidth = 320,
-  listLabel = "Items",
-  className,
-}: {
-  list: ReactNode;
-  detail: ReactNode;
-  // When true, narrow screens show the detail instead of the list.
-  hasSelection?: boolean;
-  listWidth?: number;
-  listLabel?: string;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cx("hf-split", hasSelection && "has-selection", className)}
-      style={{ "--hf-split-list": listWidth + "px" } as CSSProperties}
-    >
-      <aside className="hf-split-list" aria-label={listLabel}>
-        {list}
-      </aside>
-      <div className="hf-split-detail">{detail}</div>
     </div>
   );
 }

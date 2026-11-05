@@ -187,12 +187,6 @@ export const normName = (s: string) =>
     .replace(/[^\p{L}\p{N}\p{M}+#&@$\uE000]+/gu, " ")
     .replace(/\uE000/g, ".")
     .trim();
-/** The C3 entity id: base64url of the type, NUL, then k:key or n:name. */
-export const entityId = (
-  type: string,
-  identity: `k:${string}` | `n:${string}`,
-) => Buffer.from(`${type}\0${identity}`, "utf8").toString("base64url");
-
 type Block = { start: number; end: number; heading: boolean };
 
 /** The document's sections: their text and UTF-16 range in it. */

@@ -163,34 +163,3 @@ export function SourceLogo({
     logo
   );
 }
-
-// Overlapping logos, e.g. every connector in a workspace.
-export function SourceStack({
-  sources,
-  max = 5,
-  size = 22,
-}: {
-  sources: string[];
-  max?: number;
-  size?: number;
-}) {
-  const unique = [...new Set(sources.map((s) => connectorKey(s)))];
-  const shown = unique.slice(0, max),
-    rest = unique.length - shown.length;
-  return (
-    <span
-      className="hf-logo-stack"
-      role="img"
-      aria-label={unique.map(connectorLabel).join(", ")}
-    >
-      {shown.map((s) => (
-        <SourceLogo key={s} source={s} size={size} />
-      ))}
-      {rest > 0 && (
-        <span className="hf-logo hf-logo-more" style={{ height: size }}>
-          +{rest}
-        </span>
-      )}
-    </span>
-  );
-}

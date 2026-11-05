@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -424,12 +424,6 @@ export function GenerateButton({
       Generate
     </ButtonLink>
   );
-}
-
-/** A link to a version, by number. */
-export function VersionLink({ id, version }: { id: string; version?: number }) {
-  const { id: o } = useOntology();
-  return <Link to={paths.version(o, id)}>Version {version ?? "?"}</Link>;
 }
 
 /**
