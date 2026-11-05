@@ -780,13 +780,42 @@ describe("mock source grants", () => {
         .map((e: { eventJson: string }) => JSON.parse(e.eventJson))
         .filter((e: { event: string }) => e.event === "tool_call")
         .map((e: { tool: string }) => e.tool);
+      // It reads no past (4.7.0): no history, no changes, no valid times.
       expect(tools).not.toContain("helix_query");
+      expect(tools).not.toContain("history_of");
+      expect(tools).not.toContain("changes");
+      expect(JSON.stringify(result)).not.toContain('"valid"');
       expect(tools).toContain("query");
       // Its answer goes with what it read.
       await grant(user("usr_eve"), [general]);
       expect((await eve("GET", `${O}/questions/${q.id}`)).status).toBe(404);
       await grant(user("usr_eve"), [customersTable]);
       expect((await eve("GET", `${O}/questions/${q.id}`)).status).toBe(200);
+    });
+
+    it("declines a question about another time as uncovered", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: false, now: Date.now() });
+      Object.assign(config, { askStepMs: 10, askOutcome: "cannot_answer" });
+      await loaded();
+      await grant(user("usr_eve"), [customersTable]);
+      const q = (
+        await eve("POST", `${O}/questions`, {
+          question: "Which customers did we have last March?",
+          clientToken: "part-past",
+        })
+      ).body.question;
+      later(60_000);
+      const asked = (await eve("GET", `${O}/questions/${q.id}`)).body.question;
+      expect(asked.status).toBe("cannot_answer");
+      const result = JSON.parse(asked.resultJson);
+      expect(contractErrors("ask_result", result)).toEqual([]);
+      expect(result).toMatchObject({ kind: "uncovered" });
+      const declined = (
+        await eve("GET", `${O}/questions/${q.id}/events`)
+      ).body.events
+        .map((e: { eventJson: string }) => JSON.parse(e.eventJson))
+        .find((e: { tool?: string }) => e.tool === "cannot_answer");
+      expect(declined.input).toMatchObject({ kind: "uncovered" });
     });
 
     it("pages a whole type by offset, with its total", async () => {

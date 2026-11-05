@@ -602,6 +602,52 @@ test("someone whose sources hold part of an ontology reads that part", async ({
   expect(requests.filter((r) => / 403$/.test(r))).toEqual([]);
 });
 
+test("someone who reads part of an ontology is told plainly that its past isn't shared", async ({
+  page,
+  browser,
+}) => {
+  // Asked about another time, the agent shows such a reader no past, so it
+  // declines as uncovered (contract 4.7.0).
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    invoiceOnlyCustomers: 90,
+    askOutcome: "cannot_answer",
+  });
+  await signIn(page);
+  await loadContract(page);
+  const sources = await openSources(page, "people", "Eve Adler");
+  await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
+  await sources
+    .getByRole("checkbox", { name: "customers", exact: true })
+    .check();
+  await sources.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved what Eve Adler can read.")).toBeVisible();
+  await page.close();
+
+  const as = await asEve(browser);
+  await expect(
+    as.getByText("You can read part of this ontology"),
+  ).toBeVisible();
+  const form = as.getByRole("form", { name: "Ask a question" });
+  await form
+    .getByRole("textbox", { name: /^Question/ })
+    .fill("Which customers did we have last March?");
+  await form.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(as.getByText("This ontology can’t answer that")).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(as.locator(".on-card .hf-tag")).toHaveText(
+    "Only current values are shared with you",
+  );
+  await expect(as.getByText("No recorded state covers that time")).toHaveCount(
+    0,
+  );
+  await expect(
+    as.getByRole("link", { name: "Draft a new version with this" }),
+  ).toHaveCount(0);
+});
+
 test("someone whose sources hold all of a type pages past the first read", async ({
   page,
   browser,
