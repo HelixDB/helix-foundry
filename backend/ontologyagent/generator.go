@@ -434,10 +434,10 @@ func tokens(result *ontologygen.Result, u Usage) {
 	result.InputTokens, result.OutputTokens = int(u.Input+u.CacheRead+u.CacheWrite), int(u.Output)
 }
 
-// InternalAttempts is the most attempts a generation or graph job gets when
-// the agent ends its call with INTERNAL, whatever the worker's max_attempts:
-// INTERNAL is the agent's own bug (a panic it caught) on this input, so one
-// retry covers a fluke and more would only repeat it.
+// InternalAttempts is the most attempts a generation, graph job or question
+// gets when the agent ends its call with INTERNAL, whatever the worker's
+// max_attempts: INTERNAL is the agent's own bug (a panic it caught) on this
+// input, so one retry covers a fluke and more would only repeat it.
 const InternalAttempts = 2
 
 // InternalMessage words a call to `what` that the agent ended with INTERNAL

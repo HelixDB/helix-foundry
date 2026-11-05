@@ -426,6 +426,9 @@ type AskConfig struct {
 	// Concurrency is how many questions one worker runs at once; the
 	// sidecar's --max-concurrent-asks matches it.
 	Concurrency int `koanf:"concurrency"`
+	// MaxAttempts caps a question's attempts at a failure a retry may fix;
+	// the agent's internal error (INTERNAL) gets at most
+	// ontologyagent.InternalAttempts.
 	MaxAttempts int `koanf:"max_attempts"`
 	// RetryBackoff is the wait before a failed attempt's retry.
 	RetryBackoff time.Duration `koanf:"retry_backoff"`
