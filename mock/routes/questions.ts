@@ -77,12 +77,12 @@ import { isScope, ontologyOf, type StoredOntology } from "./ontologies";
 // model's first call fails (a lookup by identifier the engine can't run
 // yet); near the end it counts the subject's type with a graph query of its
 // own (`helix_query`, a Helix v3 JSON read: no query record holds it),
-// which the answer cites, then, asked with no view, reads the subject's
-// history (`history_of`), whose signed_on version it cites with when it held
-// by valid time (contract 4.7.0's `valid`: the day the contract gives, as
-// that `day`, `from` the next midnight UTC; a grantee asks through a view,
-// even holding everything, and is offered no history). As the engine's,
-// their events carry a summary and
+// which the answer cites, then reads the subject's history (`history_of`),
+// whose signed_on version it cites with when it held by valid time (contract
+// 4.7.0's `valid`: the day the contract gives, as that `day`, `from` the
+// next midnight UTC). A grantee asks through a view, even holding
+// everything, and is offered neither: no graph query, no history. As the
+// engine's, their events carry a summary and
 // an evidence id, never what they read. Its first answer is refused (it
 // cites an entity the evidence read didn't show) and its second, the last
 // call, ends the question, its result carrying neither evidence nor error.
@@ -491,7 +491,7 @@ function answer(
   loadId: string,
   outcome: Outcome,
   // A grantee who holds all of the load still asks through a view, offered
-  // no history_of (4.7.0).
+  // no helix_query, history_of or changes.
   viewed = false,
 ): Script {
   const g = new LoadGraph(tenantGraph(o.tenantId), loadId);
@@ -789,17 +789,18 @@ function answer(
           ),
         ]
       : []),
-    // How many of the subject's type the load holds, read from the graph
-    // itself: not a typed query, so no query record holds it.
-    call(helix, "helix_query", { query: countRead, limit: 50 }),
-    // A count is one value, as the engine words it.
-    recorded(helix, helix, "helix_query: a value"),
-    // What the load recorded of the subject, by transaction: its build,
-    // then the contract's extract, which stated its signed_on. Under a view
-    // there is no history_of.
+    // Under a view, whole or partial, the engine offers neither tool that
+    // reads the graph as stored, helix_query and history_of.
     ...(viewed
       ? []
       : [
+          // How many of the subject's type the load holds, read from the
+          // graph itself: not a typed query, so no query record holds it.
+          call(helix, "helix_query", { query: countRead, limit: 50 }),
+          // A count is one value, as the engine words it.
+          recorded(helix, helix, "helix_query: a value"),
+          // What the load recorded of the subject, by transaction: its
+          // build, then the contract's extract, which stated its signed_on.
           call(history, "history_of", { target: { entity: "n2" } }),
           recorded(history, history, "history_of: 2 steps"),
         ]),
@@ -851,7 +852,9 @@ function answer(
           cite("c10", 9, { result: { evidence_id: "e9" } }),
         ]
       : []),
-    cite("c11", helix, { result: { evidence_id: `e${helix}` } }),
+    ...(viewed
+      ? []
+      : [cite("c11", helix, { result: { evidence_id: `e${helix}` } })]),
     // The signed_on the contract's extract set, with when it held by valid
     // time (contract 4.7.0): a day with no time of day holds from the next
     // midnight UTC, its `day` the day the source gave.
@@ -889,7 +892,11 @@ function answer(
           ? [`${broken.count} records break ${broken.constraint} [c7]`]
           : []),
         `Every ${subject.label} with who signed it [c8]`,
-        `The load holds ${ofSubject} ${subject.label} ${ofSubject === 1 ? "entity" : "entities"} [c11]`,
+        ...(viewed
+          ? []
+          : [
+              `The load holds ${ofSubject} ${subject.label} ${ofSubject === 1 ? "entity" : "entities"} [c11]`,
+            ]),
       ],
     },
     // A paragraph to introduce each visual.
@@ -988,7 +995,7 @@ function answer(
   const refused = written.map((c) =>
     c.marker === "c2" ? { ...c, evidence_id: "e4" } : c,
   );
-  const answering = viewed ? helix + 1 : history + 1;
+  const answering = viewed ? helix : history + 1;
   return {
     events: [
       ...reads,

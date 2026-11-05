@@ -809,15 +809,20 @@ describe("mock source grants", () => {
       expect(asked.status).toBe("answered");
       const result = JSON.parse(asked.resultJson);
       expect(contractErrors("ask_result", result)).toEqual([]);
-      // 4.7.0 offers no history_of under any view, whole ones too.
+      // No tool reads the graph as stored under any view, whole ones too.
       const tools = (
         await eve("GET", `${O}/questions/${q.id}/events`)
       ).body.events
         .map((e: { eventJson: string }) => JSON.parse(e.eventJson))
         .filter((e: { event: string }) => e.event === "tool_call")
         .map((e: { tool: string }) => e.tool);
+      expect(tools).not.toContain("helix_query");
       expect(tools).not.toContain("history_of");
+      expect(tools).not.toContain("changes");
       expect(JSON.stringify(result)).not.toContain('"version"');
+      expect(
+        result.citations.map((c: { marker: string }) => c.marker),
+      ).not.toContain("c11");
       expect(tools.at(-1)).toBe("answer");
     });
 

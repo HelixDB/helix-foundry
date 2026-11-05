@@ -1867,7 +1867,7 @@ describe("citations", () => {
           "a break of credit_limit",
         ].map((what) => `As recorded ${formatDate(at, true, "UTC")}: ${what}`),
       );
-      // The reader's own clock and words, not the engine's text.
+      // In UTC and in words, not the engine's text.
       expect(citationText(ofEntity, ctx)).not.toContain(at);
     });
 
