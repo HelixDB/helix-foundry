@@ -1154,16 +1154,10 @@ func timePtr(v sql.NullTime) *time.Time {
 
 // scanStrings reads one string column of every row and closes rows.
 func scanStrings(rows *sql.Rows) ([]string, error) {
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return scanAll(rows, func(row rowScanner) (v string, err error) {
+		err = row.Scan(&v)
+		return v, err
+	})
 }
 
 func scanFoundryLoadEnrichment(scanner rowScanner) (*model.FoundryLoadEnrichment, error) {

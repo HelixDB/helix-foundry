@@ -100,16 +100,7 @@ FROM foundry_ontology_generations WHERE ontology_id=? ORDER BY created_at DESC, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.OntologyGeneration
-	for rows.Next() {
-		gen, err := scanOntologyGeneration(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, gen)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanOntologyGeneration)
 }
 
 // ClaimOntologyGeneration leases the oldest due generation to workerID: a

@@ -441,8 +441,7 @@ ORDER BY d.created_at, d.id`, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanFoundryDocuments(rows)
+	return scanAll(rows, scanFoundryDocument)
 }
 
 // CountReadableFoundryTextDocuments counts the workspace's uploaded documents
@@ -475,8 +474,7 @@ WHERE d.workspace_id=? AND d.id IN (`+idPlaceholders(len(ids))+`) AND`+foundryDo
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	docs, err := scanFoundryDocuments(rows)
+	docs, err := scanAll(rows, scanFoundryDocument)
 	for _, d := range docs {
 		out[d.ID] = d
 	}

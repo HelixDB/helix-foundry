@@ -43,16 +43,7 @@ WHERE ontology_id=? AND status='open' AND (sources=0 OR sources>=?) ORDER BY sup
 	if err != nil {
 		return nil, fmt.Errorf("list heal findings: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var out []*model.FoundryHealFinding
-	for rows.Next() {
-		f, err := scanFoundryHealFinding(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryHealFinding)
 }
 
 // GetFoundryHealFinding is one of an ontology's findings by fingerprint.

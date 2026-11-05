@@ -52,16 +52,7 @@ FROM connector_syncs WHERE connector_id=? AND workspace_id=? ORDER BY created_at
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.ConnectorSync
-	for rows.Next() {
-		sync, err := scanConnectorSync(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sync)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanConnectorSync)
 }
 
 // ClaimConnectorSync leases the oldest due sync to workerID: a queued one whose
