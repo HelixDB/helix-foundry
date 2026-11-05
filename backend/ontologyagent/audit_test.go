@@ -245,10 +245,11 @@ func TestAuditSums(t *testing.T) {
 	}
 }
 
-// A finding one document backs is held thin, its counts alone, until a
-// page backs it with a second: then it is whole, from that page's finding,
-// its examples and spellings that page's, with the thin sum's counts. One
-// still thin isn't seen, so neither stored nor shown.
+// A finding one document backs is held thin, its counts and spellings
+// alone, until a page backs it with a second: then it is whole, from that
+// page's finding, its examples that page's, with the thin sum's counts and
+// every page's spellings. One still thin isn't seen, so neither stored nor
+// shown.
 func TestAuditSumsThin(t *testing.T) {
 	page := func(findings ...string) []AuditFinding {
 		t.Helper()
@@ -268,10 +269,11 @@ func TestAuditSumsThin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if a := sums.by[fp("a")]; !a.thin() || len(a.backing.Examples) != 0 || a.signal != nil || a.backing.Count != 3 || a.backing.Sources != 1 {
-		t.Fatalf("a one-document finding is held as more than its counts: %+v", a)
+	if a := sums.by[fp("a")]; !a.thin() || len(a.backing.Examples) != 0 || a.signal != nil || a.backing.Count != 3 || a.backing.Sources != 1 ||
+		string(a.spellings) != `["supplier_of"]` {
+		t.Fatalf("a one-document finding is held as more than its counts and spellings: %+v", a)
 	}
-	if err := sums.Add(page(unmatchedFinding(fp("a"), "supplier_of", 2, 1, []string{"d100"}, "vendor_of"))); err != nil {
+	if err := sums.Add(page(unmatchedFinding(fp("a"), "supplier_of", 2, 1, []string{"d100"}, "supplier_of_parts", "vendor_of"))); err != nil {
 		t.Fatal(err)
 	}
 	if sums.Len() != 3 {
@@ -307,7 +309,10 @@ func TestAuditSumsThin(t *testing.T) {
 	if seen[0].Support != 5 || seen[0].Sources != 2 || b.Count != 5 || b.Sources != 2 || len(b.Examples) != 1 || b.Examples[0].DocID != "d100" {
 		t.Fatalf("a = %+v, backing %+v", seen[0], b)
 	}
-	if finding.Signal.Canonical != "supplier_of" || strings.Join(finding.Signal.Spellings, ",") != "vendor_of" || finding.Proposal.Proposal != "route" {
+	// The first document's spelling is kept with the second's: a person
+	// reads every form, and a dismissal holds for the forms it saw.
+	if finding.Signal.Canonical != "supplier_of" || strings.Join(finding.Signal.Spellings, ",") != "supplier_of,supplier_of_parts,vendor_of" ||
+		finding.Proposal.Proposal != "route" {
 		t.Fatalf("finding = %+v", finding)
 	}
 	if err := contracttest.Validate(t, contracttest.Schema(t, "audit_result.json"), []byte(done(complete, string(seen[0].Finding)))); err != nil {
