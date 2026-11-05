@@ -314,6 +314,12 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 // what an applied load should hold, so what differs is drift
 // (helix_foundry_graph_apply_drift_total). It runs before the refresh
 // finishes, while both loads are in the database, and never fails it.
+//
+// Held claims (contract 4.9.0's `held` kind) are reviews whose claims the
+// load doesn't hold, and a load stored before 4.9.0 keys them by review key
+// rather than claim key, so its first rebuild differs there whatever the
+// applies did. A rebuild that differs only in them is counted as held, not
+// drifted: it is no drift in what the graph holds.
 func (r *runner) compareRebuild(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
 	target ontologyagent.HelixTarget, ontologyVersion string) {
 	if job.RefreshesLoadID == nil {
@@ -348,15 +354,25 @@ func (r *runner) compareRebuild(ctx context.Context, job *model.FoundryGraphJob,
 		logger.Info("graph job: the rebuild holds what applies left", "applied", replaced.ID)
 		return
 	}
-	rebuilds.WithLabelValues("drifted").Inc()
+	outcome := "equal"
 	for _, k := range result.Kinds {
 		if k.Equal {
 			continue
 		}
 		applyDrift.WithLabelValues(k.Kind).Inc()
-		logger.Warn("graph job: applies drifted from a fresh load", "applied", replaced.ID, "kind", k.Kind, "label", k.Label,
-			"applied_count", k.ACount, "rebuilt_count", k.BCount, "differing", k.Differing)
+		attrs := []any{"applied", replaced.ID, "kind", k.Kind, "label", k.Label, "applied_count", k.ACount, "rebuilt_count", k.BCount,
+			"differing", k.Differing}
+		if k.Kind == "held" {
+			if outcome == "equal" {
+				outcome = "held"
+			}
+			logger.Info("graph job: the rebuild holds back other claims than the applied load", attrs...)
+			continue
+		}
+		outcome = "drifted"
+		logger.Warn("graph job: applies drifted from a fresh load", attrs...)
 	}
+	rebuilds.WithLabelValues(outcome).Inc()
 }
 
 func (r *runner) timeStep(step string, start time.Time) {

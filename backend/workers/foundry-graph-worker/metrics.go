@@ -74,10 +74,10 @@ var documentsRemoved = promauto.NewCounter(prometheus.CounterOpts{
 
 var rebuilds = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_rebuilds_total",
-	Help: "Refresh loads that replaced a load applies had brought up to date, by what comparing the two found: equal, drifted (alert on it) or failed.",
+	Help: "Refresh loads that replaced a load applies had brought up to date, by what comparing the two found: equal, drifted (alert on it), held (only the claims documents held back differ) or failed.",
 }, []string{"outcome"})
 
 var applyDrift = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_apply_drift_total",
-	Help: "Labels that differ between an applied load and the rebuild that replaced it, by kind: entity, fact, evidence or violation.",
+	Help: "Labels that differ between an applied load and the rebuild that replaced it, by kind: entity, fact, evidence, violation or held.",
 }, []string{"kind"})
