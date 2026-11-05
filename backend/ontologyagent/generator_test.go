@@ -633,7 +633,7 @@ func TestGenerator(t *testing.T) {
 
 	// The model recorded is the one the turn says it started on.
 	t.Run("records the model the turn started on", func(t *testing.T) {
-		started := `{"event":"turn_started","contract_version":"4.7.0","model":{"provider":"bedrock","name":"us.anthropic.claude-opus-5-5"}}`
+		started := `{"event":"turn_started","contract_version":"4.8.0","model":{"provider":"bedrock","name":"us.anthropic.claude-opus-5-5"}}`
 		h := newHarness(t, func(stream agentv1.Agent_TurnServer) error {
 			return send(stream, append([]string{started}, testEvents[1:]...), testResult(`"done"`, 1))
 		})

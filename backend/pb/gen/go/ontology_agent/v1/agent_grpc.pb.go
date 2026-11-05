@@ -220,6 +220,17 @@ type AgentClient interface {
 	// `done` says what a relationship no link covers needs, summed over the pages, before a
 	// person may have a new link drafted for it (`new_link_support`): a thinner one stays a
 	// finding.
+	//
+	// Since 4.8.0 a suggested link is gathered under the longest name of the ontology's links it
+	// starts with, word for word, a link's own or the relationship it is named for (its name
+	// before its first `__`): `date_of_death_no_link_covers_this_period` counts with
+	// `date_of_death` as one finding, `date_of_death`, which proposes describing
+	// `date_of_death__per__time`. No edit distance, no model. A relationship no link has, that a
+	// shorter link's name begins (`country_of_residence` under `country`), is gathered there too:
+	// `spellings` shows the forms the reports took (canonical, not as written), the person who sees
+	// the draft is the check on that, and a route on such reports says so (`gathered`). A
+	// fingerprint holds the canonical name, so adding a link can move reports to a finding of
+	// another fingerprint.
 	Audit(ctx context.Context, in *AuditRequest, opts ...grpc.CallOption) (*AuditResponse, error)
 	// Checks a self-healing draft before a person sees it (4.4.0), held to the target its
 	// proposal carries. The draft may only add what its brief asks for: one that removes, loosens
@@ -239,6 +250,17 @@ type AgentClient interface {
 	// source outside the files root.
 	// The endpoint's API key travels in `x-foundry-model-key`, as Extract's. It counts against
 	// the server's turn limit (RESOURCE_EXHAUSTED past it). Cancelling the call stops it.
+	//
+	// Since 4.8.0 a description's draft is proposed, and a person decides. `gate` fails it only for
+	// clear harm (`silenced`, or `facts_fell` of its own link), past what `disallowed` refuses; a
+	// pass comes with `card`, which asks whether the link's meaning is unchanged and shows what to
+	// weigh, `by_name` and `own_words` each read against their own judge's noise. On a link at or
+	// below its noise a refusal can't fire, and the card says so (`couldnt_detect`). It reads at
+	// most 6 documents and 32 KiB past the replay, those most about its link, or the smallest alone
+	// if none fits in 32 KiB, asks the base again twice (`more_fresh`), and every paid arm's
+	// verifier judges a link whose description the draft changed by its name alone. A draft a
+	// person asked for (`origin: asked`) may target its link's facts; reports count as `Audit`
+	// gathers them.
 	Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error)
 	// Answers one question over a load, read-only, through `helix` (a read-only proxy). The
 	// stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
@@ -624,6 +646,17 @@ type AgentServer interface {
 	// `done` says what a relationship no link covers needs, summed over the pages, before a
 	// person may have a new link drafted for it (`new_link_support`): a thinner one stays a
 	// finding.
+	//
+	// Since 4.8.0 a suggested link is gathered under the longest name of the ontology's links it
+	// starts with, word for word, a link's own or the relationship it is named for (its name
+	// before its first `__`): `date_of_death_no_link_covers_this_period` counts with
+	// `date_of_death` as one finding, `date_of_death`, which proposes describing
+	// `date_of_death__per__time`. No edit distance, no model. A relationship no link has, that a
+	// shorter link's name begins (`country_of_residence` under `country`), is gathered there too:
+	// `spellings` shows the forms the reports took (canonical, not as written), the person who sees
+	// the draft is the check on that, and a route on such reports says so (`gathered`). A
+	// fingerprint holds the canonical name, so adding a link can move reports to a finding of
+	// another fingerprint.
 	Audit(context.Context, *AuditRequest) (*AuditResponse, error)
 	// Checks a self-healing draft before a person sees it (4.4.0), held to the target its
 	// proposal carries. The draft may only add what its brief asks for: one that removes, loosens
@@ -643,6 +676,17 @@ type AgentServer interface {
 	// source outside the files root.
 	// The endpoint's API key travels in `x-foundry-model-key`, as Extract's. It counts against
 	// the server's turn limit (RESOURCE_EXHAUSTED past it). Cancelling the call stops it.
+	//
+	// Since 4.8.0 a description's draft is proposed, and a person decides. `gate` fails it only for
+	// clear harm (`silenced`, or `facts_fell` of its own link), past what `disallowed` refuses; a
+	// pass comes with `card`, which asks whether the link's meaning is unchanged and shows what to
+	// weigh, `by_name` and `own_words` each read against their own judge's noise. On a link at or
+	// below its noise a refusal can't fire, and the card says so (`couldnt_detect`). It reads at
+	// most 6 documents and 32 KiB past the replay, those most about its link, or the smallest alone
+	// if none fits in 32 KiB, asks the base again twice (`more_fresh`), and every paid arm's
+	// verifier judges a link whose description the draft changed by its name alone. A draft a
+	// person asked for (`origin: asked`) may target its link's facts; reports count as `Audit`
+	// gathers them.
 	Check(context.Context, *CheckRequest) (*CheckResponse, error)
 	// Answers one question over a load, read-only, through `helix` (a read-only proxy). The
 	// stream carries every event as it happens (`started`, `tool_call`, `tool_result`,
