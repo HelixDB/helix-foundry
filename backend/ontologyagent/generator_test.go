@@ -741,7 +741,7 @@ func TestGenerator(t *testing.T) {
 				return status.Error(codes.Internal, description)
 			})
 			_, err := h.generator.Run(ctx, generation())
-			if f := asFailure(t, err); f.Permanent || !f.Internal || f.Message != "the ontology agent failed on this input (Internal: "+description+")" {
+			if f := asFailure(t, err); f.Permanent || !f.Internal || f.Message != "the ontology agent failed to draft this ontology on this input (Internal: "+description+"); Helix will retry once" {
 				t.Fatalf("%s: failure %+v", name, f)
 			}
 		}
@@ -909,15 +909,13 @@ func TestGenerator(t *testing.T) {
 	})
 }
 
-// TestSnapshotCacheBudget bounds the snapshots one attempt unpacks: the
-// volume they land on is only so big.
 // turnFailure keeps every code's class: the agent's refusals and a draft too
 // large fail for good, INTERNAL is retried as the agent's internal error
 // before or after events, and the rest is retried as an unavailable agent.
 func TestTurnFailure(t *testing.T) {
 	const unavailable = "the ontology agent is unavailable; Helix will retry"
 	panicked := status.Error(codes.Internal, "the turn failed: a panic at crates/x.rs:1:2: boom")
-	internal := ontologygen.Failure{Message: "the ontology agent failed on this input (Internal: the turn failed: a panic at crates/x.rs:1:2: boom)", Internal: true}
+	internal := ontologygen.Failure{Message: "the ontology agent failed to draft this ontology on this input (Internal: the turn failed: a panic at crates/x.rs:1:2: boom); Helix will retry once", Internal: true}
 	for name, tc := range map[string]struct {
 		err         error
 		afterEvents bool
@@ -956,13 +954,15 @@ func TestInternalMessage(t *testing.T) {
 		"clipped on a rune boundary": {"x" + strings.Repeat("é", 300), "x" + strings.Repeat("é", 249) + "…"},
 		"not UTF-8":                  {"boom\xff!", "boom!"},
 	} {
-		got := InternalMessage(status.Error(codes.Internal, tc.description))
-		if want := "the ontology agent failed on this input (Internal: " + tc.want + ")"; got != want || !utf8.ValidString(got) {
+		got := InternalMessage("extract the documents", status.Error(codes.Internal, tc.description))
+		if want := "the ontology agent failed to extract the documents on this input (Internal: " + tc.want + "); Helix will retry once"; got != want || !utf8.ValidString(got) {
 			t.Fatalf("%s: message %q, want %q", name, got, want)
 		}
 	}
 }
 
+// TestSnapshotCacheBudget bounds the snapshots one attempt unpacks: the
+// volume they land on is only so big.
 func TestSnapshotCacheBudget(t *testing.T) {
 	ctx := context.Background()
 	rows := strings.Repeat("{\"id\":\"cus_1\"}\n", 10) // 150 bytes

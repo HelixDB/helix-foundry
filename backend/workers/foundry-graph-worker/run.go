@@ -1391,7 +1391,7 @@ func callFailure(what string, err error) error {
 	case codes.Aborted:
 		return retry("another job is writing this database; Helix will retry", err)
 	case codes.Internal:
-		return &failure{Message: ontologyagent.InternalMessage(err), Internal: true, Err: err}
+		return &failure{Message: ontologyagent.InternalMessage(what, err), Internal: true, Err: err}
 	}
 	return retry("the ontology agent is unavailable; Helix will retry", err)
 }

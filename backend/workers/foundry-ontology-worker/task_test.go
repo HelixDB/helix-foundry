@@ -172,9 +172,9 @@ func TestFoundryOntologyWorker(t *testing.T) {
 	// and description; an unavailable agent is retried to max_attempts.
 	t.Run("retries the agent's internal error once", func(t *testing.T) {
 		const description = "the turn failed: a panic at crates/x.rs:1:2: boom"
-		const says = "the ontology agent failed on this input (Internal: " + description + ")"
+		const says = "the ontology agent failed to draft this ontology on this input (Internal: " + description + "); Helix will retry once"
 		panicked := status.Error(codes.Internal, description)
-		internal := &ontologygen.Failure{Message: ontologyagent.InternalMessage(panicked), Internal: true, Err: panicked}
+		internal := &ontologygen.Failure{Message: ontologyagent.InternalMessage("draft this ontology", panicked), Internal: true, Err: panicked}
 		unavailable := &ontologygen.Failure{Message: "the ontology agent is unavailable; Helix will retry", Err: status.Error(codes.Unavailable, "shutting down")}
 		for name, tc := range map[string]struct {
 			err                  *ontologygen.Failure
@@ -182,9 +182,11 @@ func TestFoundryOntologyWorker(t *testing.T) {
 			retried              bool
 			says, level          string
 		}{
-			"an internal error on the first attempt":     {internal, 1, 5, true, says, "ERROR"},
-			"an internal error on the second attempt":    {internal, 2, 5, false, says + " (gave up after 2 attempts)", "ERROR"},
-			"an internal error with one attempt":         {internal, 1, 1, false, says + " (gave up after 1 attempts)", "ERROR"},
+			"an internal error on the first attempt":  {internal, 1, 5, true, says, "ERROR"},
+			"an internal error on the second attempt": {internal, 2, 5, false, says + " (gave up after 2 attempts)", "ERROR"},
+			"an internal error with one attempt":      {internal, 1, 1, false, says + " (gave up after 1 attempts)", "ERROR"},
+			// The cap counts every attempt: an internal error after attempts that failed otherwise fails at once.
+			"an internal error on a later attempt":       {internal, 3, 5, false, says + " (gave up after 3 attempts)", "ERROR"},
 			"an unavailable agent on the second attempt": {unavailable, 2, 5, true, unavailable.Message, "WARN"},
 			"an unavailable agent on the last attempt":   {unavailable, 5, 5, false, unavailable.Message + " (gave up after 5 attempts)", "WARN"},
 		} {
