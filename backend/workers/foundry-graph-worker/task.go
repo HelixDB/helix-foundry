@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/dig"
+	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
@@ -397,7 +398,9 @@ func (t *Task) renewLease(ctx context.Context, cancel context.CancelFunc, jobID 
 // has settled before the retry reads the database. An attempt that would be
 // retried while the worker is stopping was stopped, not failed, and one that
 // found an index still building did nothing wrong: either is retried after
-// the floor and given back, whatever attempt it was.
+// the floor and given back, whatever attempt it was. The agent's internal
+// error is Helix's bug: it is logged as an error, for on-call, and gets
+// ontologyagent.InternalAttempts attempts at most.
 func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attempt, err error, stopping bool) model.FoundryGraphJobOutcome {
 	outcome := model.FoundryGraphJobOutcome{IngestDone: a.ingestDone, Report: a.report(), Progress: a.progress}
 	if err == nil {
@@ -408,8 +411,16 @@ func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attem
 	if !errors.As(err, &f) {
 		f = &failure{Message: "the load failed; Helix will retry", Err: err}
 	}
-	log.From(ctx).Warn("graph job attempt failed", "job", job.ID, "ontology", job.OntologyID, "attempt", job.Attempts,
+	logger := log.From(ctx).With("job", job.ID, "ontology", job.OntologyID, "attempt", job.Attempts,
 		"permanent", f.Permanent, "budget", f.Budget, "stopping", stopping, "err", err)
+	maxAttempts := t.cfg.MaxAttempts
+	if f.Internal {
+		s := status.Convert(f.Err)
+		logger.Error("graph job attempt failed", "code", s.Code().String(), "description", s.Message())
+		maxAttempts = min(maxAttempts, ontologyagent.InternalAttempts)
+	} else {
+		logger.Warn("graph job attempt failed")
+	}
 	switch {
 	case f.Budget:
 		outcome.Status, outcome.Error, outcome.HeldSets = model.FoundryGraphJobBudgetExhausted, f.Message, a.held
@@ -418,7 +429,7 @@ func (t *Task) outcome(ctx context.Context, job *model.FoundryGraphJob, a *attem
 	case stopping || f.Uncounted:
 		retryAt := t.now().Add(t.cfg.RetryBackoff)
 		outcome.RetryAt, outcome.Uncounted, outcome.Error = &retryAt, true, f.Message
-	case job.Attempts < t.cfg.MaxAttempts:
+	case job.Attempts < maxAttempts:
 		retryAt := t.now().Add(t.cfg.RetryBackoff << (job.Attempts - 1))
 		outcome.RetryAt, outcome.Error = &retryAt, f.Message
 	default:

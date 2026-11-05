@@ -1511,6 +1511,14 @@ func TestLoadOutcomes(t *testing.T) {
 		"a refused request":        {func(h *harness) { h.agent.ingest = refuseIngest(codes.InvalidArgument) }, failed, "refused"},
 		"an agent that can't load": {func(h *harness) { h.agent.ingest = refuseIngest(codes.Unimplemented) }, failed, ontologyagent.ContractVersion},
 		"a full agent":             {func(h *harness) { h.agent.ingest = refuseIngest(codes.ResourceExhausted) }, retried, "unavailable"},
+		"an agent's internal error": {func(h *harness) { h.agent.ingest = refuseIngest(codes.Internal) }, retried,
+			"the ontology agent failed on this input (Internal: refused)"},
+		// The description is clipped to 500 bytes: byte 500 falls inside the 250th é.
+		"an agent's long internal error": {func(h *harness) {
+			h.agent.ingest = func(string, agentv1.Agent_IngestServer) error {
+				return status.Error(codes.Internal, "x"+strings.Repeat("é", 300))
+			}
+		}, retried, "(Internal: x" + strings.Repeat("é", 249) + "…)"},
 		"models the agent can't run": {func(h *harness) {
 			h.agent.extract = func(string, agentv1.Agent_ExtractServer) error {
 				return status.Error(codes.FailedPrecondition, "this server extracts no documents")
@@ -1645,6 +1653,70 @@ func TestLoadOutcomes(t *testing.T) {
 		outcome = h.run(t, job)
 		if outcome.Status != model.FoundryGraphJobFailed || !strings.Contains(outcome.Error, "gave up after 5 attempts") {
 			t.Fatalf("outcome = %+v", outcome)
+		}
+	})
+
+	// The agent's internal error is its bug on this input: whichever call
+	// ends with it, the job is retried once, whatever max_attempts says, and
+	// then fails, the code and description stored and logged as an error.
+	t.Run("retries the agent's internal error once", func(t *testing.T) {
+		const description = "the call failed: a panic at crates/x.rs:1:2: boom"
+		const says = "the ontology agent failed on this input (Internal: " + description + ")"
+		panicked := status.Error(codes.Internal, description)
+		for name, tc := range map[string]struct {
+			job   func() *model.FoundryGraphJob
+			setup func(*harness)
+		}{
+			"ingest": {loadJob, func(h *harness) { h.agent.ingest = func(string, agentv1.Agent_IngestServer) error { return panicked } }},
+			"extract": {extractJob, func(h *harness) {
+				h.agent.extract = func(string, agentv1.Agent_ExtractServer) error { return panicked }
+			}},
+			"delete load": {deleteJob, func(h *harness) {
+				h.agent.deleteLoad = func(string, agentv1.Agent_DeleteLoadServer) error { return panicked }
+			}},
+		} {
+			for _, step := range []struct {
+				attempt, maxAttempts int
+				retried              bool
+				says                 string
+			}{
+				{1, 5, true, says},
+				{2, 5, false, says + " (gave up after 2 attempts)"},
+				{1, 1, false, says + " (gave up after 1 attempts)"},
+			} {
+				h := newHarness(t)
+				tc.setup(h)
+				h.task.cfg.MaxAttempts = step.maxAttempts
+				job := tc.job()
+				job.Attempts = step.attempt
+				outcome, logged, _ := h.runLogged(t, job)
+				if outcome.Error != step.says || (outcome.RetryAt != nil) != step.retried ||
+					(outcome.Status == model.FoundryGraphJobFailed) == step.retried || outcome.Uncounted {
+					t.Fatalf("%s, attempt %d of %d: outcome = %+v", name, step.attempt, step.maxAttempts, outcome)
+				}
+				if !strings.Contains(logged, `"level":"ERROR","msg":"graph job attempt failed"`) ||
+					!strings.Contains(logged, `"code":"Internal","description":"`+description+`"`) {
+					t.Fatalf("%s, attempt %d of %d: logged %s", name, step.attempt, step.maxAttempts, logged)
+				}
+			}
+		}
+
+		// An unavailable agent is still retried past the cap, and warned of.
+		h := newHarness(t)
+		h.agent.ingest = refuseIngest(codes.Unavailable)
+		job := loadJob()
+		job.Attempts = 3
+		outcome, logged, _ := h.runLogged(t, job)
+		if outcome.RetryAt == nil || outcome.Error != "the ontology agent is unavailable; Helix will retry" ||
+			!strings.Contains(logged, `"level":"WARN","msg":"graph job attempt failed"`) || strings.Contains(logged, `"level":"ERROR","msg":"graph job attempt failed"`) {
+			t.Fatalf("outcome = %+v, logged %s", outcome, logged)
+		}
+
+		// A stopping worker's attempt is given back, internal error or not.
+		job.Attempts = 2
+		if outcome := h.task.outcome(context.Background(), job, &attempt{}, callFailure("load the tables", panicked), true); outcome.RetryAt == nil ||
+			!outcome.Uncounted || outcome.Error != says {
+			t.Fatalf("outcome = %+v, want an uncounted retry", outcome)
 		}
 	})
 

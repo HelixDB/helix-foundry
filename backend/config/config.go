@@ -354,8 +354,11 @@ type GraphConfig struct {
 	// so it must be at least twice HelixTimeoutSecs.
 	Lease time.Duration `koanf:"lease"`
 	// Timeout bounds one attempt: downloads, Ingest and Extract.
-	Timeout     time.Duration `koanf:"timeout"`
-	MaxAttempts int           `koanf:"max_attempts"`
+	Timeout time.Duration `koanf:"timeout"`
+	// MaxAttempts caps a job's attempts at a failure a retry may fix; the
+	// agent's internal error (INTERNAL) gets at most
+	// ontologyagent.InternalAttempts.
+	MaxAttempts int `koanf:"max_attempts"`
 	// RetryBackoff is the first retry's wait, doubling after. It must exceed
 	// twice the agent's Helix timeout, so a write that timed out has settled.
 	RetryBackoff time.Duration `koanf:"retry_backoff"`
@@ -606,8 +609,11 @@ type OntologyConfig struct {
 	// Lease is how long a claimed generation stays owned without a renewal.
 	Lease time.Duration `koanf:"lease"`
 	// Timeout bounds one attempt: the downloads and the agent's turn.
-	Timeout     time.Duration `koanf:"timeout"`
-	MaxAttempts int           `koanf:"max_attempts"`
+	Timeout time.Duration `koanf:"timeout"`
+	// MaxAttempts caps a generation's attempts at a failure a retry may fix;
+	// the agent's internal error (INTERNAL) gets at most
+	// ontologyagent.InternalAttempts.
+	MaxAttempts int `koanf:"max_attempts"`
 	// MaxTables caps the tables, synced and table files, one generation reads.
 	MaxTables int `koanf:"max_tables"`
 	// PerHour caps the generations a workspace may start in an hour; the

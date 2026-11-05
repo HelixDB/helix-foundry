@@ -1,17 +1,23 @@
 package foundryontologyworker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/helixdb/helix-foundry/backend/config"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	"github.com/helixdb/helix-foundry/backend/ontologygen"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/sample"
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -159,6 +165,43 @@ func TestFoundryOntologyWorker(t *testing.T) {
 		got := q.outcomes["g1"]
 		if got.Status != model.OntologyGenerationFailed || !strings.Contains(got.Error, "gave up after 3 attempts") {
 			t.Fatalf("outcome = %+v", got)
+		}
+	})
+	// The agent's internal error is its bug on this input: it is retried
+	// once, whatever max_attempts says, and logged as an error with its code
+	// and description; an unavailable agent is retried to max_attempts.
+	t.Run("retries the agent's internal error once", func(t *testing.T) {
+		const description = "the turn failed: a panic at crates/x.rs:1:2: boom"
+		const says = "the ontology agent failed on this input (Internal: " + description + ")"
+		panicked := status.Error(codes.Internal, description)
+		internal := &ontologygen.Failure{Message: ontologyagent.InternalMessage(panicked), Internal: true, Err: panicked}
+		unavailable := &ontologygen.Failure{Message: "the ontology agent is unavailable; Helix will retry", Err: status.Error(codes.Unavailable, "shutting down")}
+		for name, tc := range map[string]struct {
+			err                  *ontologygen.Failure
+			attempt, maxAttempts int
+			retried              bool
+			says, level          string
+		}{
+			"an internal error on the first attempt":     {internal, 1, 5, true, says, "ERROR"},
+			"an internal error on the second attempt":    {internal, 2, 5, false, says + " (gave up after 2 attempts)", "ERROR"},
+			"an internal error with one attempt":         {internal, 1, 1, false, says + " (gave up after 1 attempts)", "ERROR"},
+			"an unavailable agent on the second attempt": {unavailable, 2, 5, true, unavailable.Message, "WARN"},
+			"an unavailable agent on the last attempt":   {unavailable, 5, 5, false, unavailable.Message + " (gave up after 5 attempts)", "WARN"},
+		} {
+			q := newQueue(&model.OntologyGeneration{ID: "g1", Attempts: tc.attempt})
+			task := newTask(q, spent(tc.err))
+			task.cfg.MaxAttempts = tc.maxAttempts
+			var logs bytes.Buffer
+			task.drain(log.Into(context.Background(), slog.New(slog.NewJSONHandler(&logs, nil))))
+			got := q.outcomes["g1"]
+			if got.Error != tc.says || (got.RetryAt != nil) != tc.retried || (got.Status == model.OntologyGenerationFailed) == tc.retried {
+				t.Fatalf("%s: outcome = %+v", name, got)
+			}
+			logged := logs.String()
+			if !strings.Contains(logged, `"level":"`+tc.level+`","msg":"ontology generation attempt failed"`) ||
+				strings.Contains(logged, `"code":"Internal","description":"`+description+`"`) != (tc.level == "ERROR") {
+				t.Fatalf("%s: logged %s", name, logged)
+			}
 		}
 	})
 	// Another worker owns a generation whose lease was lost, so this attempt must stop.

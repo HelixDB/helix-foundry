@@ -434,10 +434,33 @@ func tokens(result *ontologygen.Result, u Usage) {
 	result.InputTokens, result.OutputTokens = int(u.Input+u.CacheRead+u.CacheWrite), int(u.Output)
 }
 
+// InternalAttempts is the most attempts a generation or graph job gets when
+// the agent ends its call with INTERNAL, whatever the worker's max_attempts:
+// INTERNAL is the agent's own bug (a panic it caught) on this input, so one
+// retry covers a fluke and more would only repeat it.
+const InternalAttempts = 2
+
+// InternalMessage words a call the agent ended with INTERNAL for the
+// customer: the agent failed on this input, it isn't unavailable. It keeps
+// the status's code and description (where the agent panicked and with what
+// message, never document text), the description clipped to 500 bytes and
+// valid UTF-8.
+func InternalMessage(err error) string {
+	const limit = 500
+	s := status.Convert(err)
+	description := s.Message()
+	if len(description) > limit {
+		description = description[:limit] + "…"
+	}
+	return fmt.Sprintf("the ontology agent failed on this input (%s: %s)", s.Code(), strings.ToValidUTF8(description, ""))
+}
+
 // turnFailure classifies a failed call. A result past the agent's 32 MiB
 // limit is OUT_OF_RANGE: the agent (tonic) refuses to encode it and ends the
 // stream with that status. The client's own limit gives RESOURCE_EXHAUSTED
-// after events; the agent's busy refusal comes before any event.
+// after events; the agent's busy refusal comes before any event. INTERNAL,
+// before or after events, is the agent's own bug: retried within
+// InternalAttempts.
 func turnFailure(err error, afterEvents bool) error {
 	switch code := status.Code(err); {
 	case code == codes.OutOfRange, code == codes.ResourceExhausted && afterEvents:
@@ -449,6 +472,8 @@ func turnFailure(err error, afterEvents bool) error {
 		return &ontologygen.Failure{Message: "the ontology agent can't draft on these models", Permanent: true, Err: err}
 	case code == codes.Unimplemented:
 		return &ontologygen.Failure{Message: "the ontology agent does not serve turns", Permanent: true, Err: err}
+	case code == codes.Internal:
+		return &ontologygen.Failure{Message: InternalMessage(err), Internal: true, Err: err}
 	}
 	// UNAVAILABLE, RESOURCE_EXHAUSTED before any event, a dropped stream, a
 	// deadline: another attempt may get through.
