@@ -102,6 +102,10 @@ type Service struct {
 	Polls                   []time.Duration
 	RunTool                 Runner
 	Logger                  *slog.Logger
+	// SignIn is whether the host offers connecting a connector by signing in at its provider
+	// (hosted: pipes.enabled). Only then are the sign-in tools registered; a local install
+	// has no provider accounts and leaves it false.
+	SignIn bool
 }
 
 func (s *Service) AddTools(server *mcp.Server, identity *Identity) {

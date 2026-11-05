@@ -498,17 +498,19 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
 
 **WFE authorization:** `internal/auth/authz/registry.go:105-109` gives the four RPCs `PermissionWorkspaceConnectorsManage` with `FromWorkspaceID`, like `CreateConnector`.
 
-### MCP (`server/service/mcpinsights`)
+### MCP (helix-foundry `backend/integration`)
 
-| Tool                          | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | RPCs                                                       |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `helix_foundry_start_sign_in` | `{workspace_id, kind, name?, repos?, project_id?, connector_id?, client_token?}` → `{sign_in_id, url, expires_at, next}`. `repos` is GitHub's and `project_id` PostHog's (US Cloud only); every other setting takes the kind's default, which the user changes on the connector's page. `url` is `foundryURL + /data?add=<kind>&sign_in=<id>&workspace=<ws>`. `next`: open it in the user's browser (macOS `open`, Linux `xdg-open`), or give it to them, then call `helix_foundry_get_sign_in` with `wait`. It refuses `repos` for any kind but GitHub and `project_id` for any kind but PostHog, and, with `connector_id` (signing a connector in again), any name or setting.                | `ListConnectorKinds`, `StartConnectorSignIn`               |
-| `helix_foundry_get_sign_in`   | `{workspace_id, sign_in_id, wait}`. Waits up to 25 s (`waitWhile`, `foundry.go:1115`) while the sign-in is pending, authorizing or finishing. Returns `sign_in` (with `discovery_problem` and `identity_changed`), GitHub's `install_url` on every answer, and `next`. Connected: the connector, its `url` and `last_sync`; `next` says to follow the sync, and names the install link when there is a discovery problem. Declined or failed: `next` says to ask whether to try again; the same link works until it expires, except after `settings_invalid`, which needs a new sign-in. Expired: no `url`; `next` says to start again (with `connector_id` when signing a connector in again). | `GetConnectorSignIn`, `GetConnector`, `ListConnectorKinds` |
+The MCP's Foundry tools moved into the module's `backend/integration` package (helix-foundry #212 and #236) while #220 was in review; hosted's `mcpinsights` registers them from there. The sign-in tools are in `integration/foundry_sign_ins.go`.
+
+| Tool                          | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | RPCs                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `helix_foundry_start_sign_in` | `{workspace_id, kind, name?, repos?, project_id?, connector_id?, client_token?}` → `{sign_in_id, url, expires_at, next}`. `repos` is GitHub's and `project_id` PostHog's (US Cloud only); every other setting takes the kind's default, which the user changes on the connector's page. `url` is `foundryURL + /data?add=<kind>&sign_in=<id>&workspace=<ws>`. `next`: open it in the user's browser (macOS `open`, Linux `xdg-open`), or give it to them, then call `helix_foundry_get_sign_in` with `wait`. It refuses `repos` for any kind but GitHub and `project_id` for any kind but PostHog, and, with `connector_id` (signing a connector in again), any name or setting.                         | `ListConnectorKinds`, `StartConnectorSignIn`               |
+| `helix_foundry_get_sign_in`   | `{workspace_id, sign_in_id, wait}`. Waits up to 25 s (`waitWhile` in `integration/foundry.go`) while the sign-in is pending, authorizing or finishing. Returns `sign_in` (with `discovery_problem` and `identity_changed`), GitHub's `install_url` on every answer, and `next`. Connected: the connector, its `url` and `last_sync`; `next` says to follow the sync, and names the install link when there is a discovery problem. Declined or failed: `next` says to ask whether to try again; the same link works until it expires, except after `settings_invalid`, which needs a new sign-in. Expired: no `url`; `next` says to start again (with `connector_id` when signing a connector in again). | `GetConnectorSignIn`, `GetConnector`, `ListConnectorKinds` |
 
 **Registration and access:**
 
-- Registered for users with `workspace.connectors.manage`, and only when the stamp offers sign-in (`pipes.enabled`) and has `mcp.foundry_url`, beside the check at `foundry.go:693`. Service keys, agent registrations and send tokens get neither tool.
-- Checked with `authorizeFoundry(…, foundryUserOnly, …)`. Keys get neither tool.
+- Registered for users with `workspace.connectors.manage`, and only when the host offers sign-in (`integration.Service.SignIn`, which hosted sets from `pipes.enabled`; a local install leaves it off) and names the website (`FoundryURL`, hosted's `mcp.foundry_url`): `signInTools`. Service keys, agent registrations and send tokens get neither tool.
+- Checked with `AuthorizeFoundry(…, UserOnly, …)`. Keys get neither tool.
 - `start_sign_in` is annotated as a write.
 - Outputs carry `failure` codes and Foundry's own words, never provider text: query strings and labels are data an attacker can write.
 
@@ -521,8 +523,8 @@ It has a key of its own, `pipes.api_key`: the Foundry application's key, so the 
 
 **Docs:**
 
-- `plans/FOUNDRY_MCP.md`: its tools table, and the rule at `:189-190`.
-- `backend/docs/identity/credentials.md` (`:189`, `:210`).
+- hyperscale's `plans/FOUNDRY_MCP.md`: its tools table, and the rule at `:189-190`.
+- hyperscale's `backend/docs/identity/credentials.md` (`:189`, `:210`).
 
 ## Site (`helix-foundry`)
 
@@ -783,13 +785,15 @@ The dev stamp uses WorkOS staging; production uses WorkOS production.
 
 ## Implementation
 
-Three pull requests, one per repository, then a setup track, verification on dev, and production. Each is safe to merge alone: with no port, `pipes.enabled` off, or no `signIn`, nothing changes for anyone. The work was built as the five parts below (PR 1 to 5), then gathered by repository.
+Five pull requests, then a setup track, verification on dev, and production. Each is safe to merge alone: with no port, `pipes.enabled` off, or no `signIn`, nothing changes for anyone. The work was built as the five parts below (PR 1 to 5), then gathered by repository.
 
-| Pull request       | Repository       | Branch (from `dev`/`main`)   | Holds                     | Needs                            | Safe because                                                                                                           |
-| ------------------ | ---------------- | ---------------------------- | ------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| helix-foundry #220 | helix-foundry    | `sign-in-connectors-backend` | parts 1, 3 and 5's prompt | none                             | Without a port, `sign_in` is false; every new screen is gated on `signIn`; the prompt falls back to the connector form |
-| Hosted             | helix-hyperscale | `foundry-sign-in-connectors` | parts 2 and 4             | #220 merged, for the module bump | `pipes.enabled` stays off until setup is done, and the MCP's tools register only where sign-in is offered              |
-| Skills             | HelixDB/skills   | `foundry-sign-in-connectors` | part 5's skills           | the hosted PR deployed to dev    | —                                                                                                                      |
+| Pull request          | Repository       | Branch (from `dev`/`main`)   | Holds                     | Needs                                              | Safe because                                                                                                           |
+| --------------------- | ---------------- | ---------------------------- | ------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| helix-foundry #220    | helix-foundry    | `sign-in-connectors-backend` | parts 1, 3 and 5's prompt | none                                               | Without a port, `sign_in` is false; every new screen is gated on `signIn`; the prompt falls back to the connector form |
+| MCP tools             | helix-foundry    | `sign-in-mcp-tools`          | part 4's tools            | #220 merged                                        | `integration.Service.SignIn` is false until hosted sets it, so no tool registers and no description names them         |
+| helix-hyperscale #584 | helix-hyperscale | `foundry-sign-in-connectors` | part 2                    | #220 merged, for the module bump                   | `pipes.enabled` stays off until setup is done                                                                          |
+| Hosted switch         | helix-hyperscale | to come                      | part 4's switch           | #584 and the MCP tools merged, for the module bump | the MCP's tools register only where sign-in is offered                                                                 |
+| Skills                | HelixDB/skills   | `foundry-sign-in-connectors` | part 5's skills           | the hosted PR deployed to dev                      | —                                                                                                                      |
 
 **About the POC branch:**
 
@@ -895,7 +899,9 @@ Three pull requests, one per repository, then a setup track, verification on dev
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm e2e` pass, including `tests/e2e/sign-in.spec.ts` and the local spec;
 - it may merge before PR 2.
 
-### PR 4: MCP (helix-hyperscale)
+### PR 4: MCP (helix-foundry `backend/integration`; hosted's switch)
+
+The tools are the module's; hosted sets `integration.Service.SignIn` from `pipes.enabled` where `mcpinsights` builds the service, with a module bump.
 
 - [ ] `helix_foundry_start_sign_in` and `helix_foundry_get_sign_in`:
   - registered only where sign-in is offered;

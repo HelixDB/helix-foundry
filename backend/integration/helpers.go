@@ -51,6 +51,7 @@ const (
 	errCodeInternal           stableToolError = "internal_error"
 	errCodeFailedPrecondition stableToolError = "failed_precondition"
 	errCodeFoundryProRequired stableToolError = "foundry_pro_required"
+	errCodeAccountNeedsSignIn stableToolError = "account_needs_sign_in"
 	errCodeResourceExhausted  stableToolError = "resource_exhausted"
 	errCodeAlreadyExists      stableToolError = "already_exists"
 	errCodeRequestTimeout     stableToolError = "request_timeout"
@@ -99,6 +100,10 @@ func stableErrorCode(err error) stableToolError {
 		for _, detail := range status.Convert(err).Details() {
 			if info, ok := detail.(*errdetails.ErrorInfo); ok && info.GetReason() == "FOUNDRY_PRO_REQUIRED" {
 				return errCodeFoundryProRequired
+			}
+			// A connector signed in at its provider whose account needs signing in again.
+			if info, ok := detail.(*errdetails.ErrorInfo); ok && info.GetReason() == "ACCOUNT_NEEDS_SIGN_IN" {
+				return errCodeAccountNeedsSignIn
 			}
 		}
 		return errCodeFailedPrecondition
