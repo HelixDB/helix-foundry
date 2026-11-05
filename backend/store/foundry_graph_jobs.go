@@ -87,60 +87,37 @@ WHERE workspace_id=? AND created_at >= ?`, workspaceID, since.UTC()).Scan(&micro
 // ClaimFoundryGraphJob leases the oldest due job to workerID: a queued one
 // whose retry time has come, or a running one whose lease expired. Nil means
 // none is due.
-func (s *mysqlDB) ClaimFoundryGraphJob(ctx context.Context, workerID string, lease time.Duration) (_ *model.FoundryGraphJob, err error) {
-	if s.root == nil {
-		return nil, fmt.Errorf("foundry graph job claim requires a root database connection")
-	}
-	tx, err := s.root.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin foundry graph job claim: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	// A user's job goes before a refresh's, an apply being one, so a refresh
-	// never delays a load someone waits for by more than the job running. The
-	// subquery takes no lock: a locking clause locks only the outer query's rows.
-	job, err := scanFoundryGraphJob(tx.QueryRowContext(ctx, "SELECT "+foundryGraphJobColumns+`
+func (s *mysqlDB) ClaimFoundryGraphJob(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryGraphJob, error) {
+	return claimLease(ctx, s.root, "foundry graph job", "foundry_load_jobs", workerID, lease, func(tx *sql.Tx) (*model.FoundryGraphJob, string, error) {
+		// A user's job goes before a refresh's, an apply being one, so a refresh
+		// never delays a load someone waits for by more than the job running. The
+		// subquery takes no lock: a locking clause locks only the outer query's rows.
+		job, err := scanFoundryGraphJob(tx.QueryRowContext(ctx, "SELECT "+foundryGraphJobColumns+`
 FROM foundry_load_jobs j
 WHERE (status='queued' AND next_attempt_at <= NOW(6)) OR (status='running' AND lease_until < NOW(6))
 ORDER BY j.kind = 'apply' OR (SELECT l.origin = 'refresh' FROM foundry_loads l WHERE l.id = j.load_id), next_attempt_at, id
 LIMIT 1 FOR UPDATE SKIP LOCKED`))
-	if err == ErrNotFound {
-		_ = tx.Rollback()
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("select foundry graph job claim: %w", err)
-	}
-	now := time.Now().UTC()
-	leaseUntil := now.Add(lease)
-	if _, err = tx.ExecContext(ctx, `
-UPDATE foundry_load_jobs
-SET status='running', attempts=attempts+1, lease_owner=?, lease_until=?, started_at=COALESCE(started_at, NOW(6))
-WHERE id=?`, workerID, leaseUntil, job.ID); err != nil {
-		return nil, fmt.Errorf("claim foundry graph job: %w", err)
-	}
-	var origin, refreshes sql.NullString
-	if err = tx.QueryRowContext(ctx, `SELECT origin, refreshes_load_id FROM foundry_loads WHERE id=?`, job.LoadID).
-		Scan(&origin, &refreshes); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("read foundry load %s origin: %w", job.LoadID, err)
-	}
-	job.Origin = model.FoundryLoadOrigin(origin.String)
-	if refreshes.Valid {
-		job.RefreshesLoadID = &refreshes.String
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit foundry graph job claim: %w", err)
-	}
-	job.Status, job.LeaseOwner, job.LeaseUntil = model.FoundryGraphJobRunning, &workerID, &leaseUntil
-	job.Attempts++
-	if job.StartedAt == nil {
-		job.StartedAt = &now
-	}
-	return job, nil
+		if err != nil {
+			return nil, "", err
+		}
+		return job, job.ID, nil
+	}, func(tx *sql.Tx, job *model.FoundryGraphJob, now, leaseUntil time.Time) error {
+		var origin, refreshes sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT origin, refreshes_load_id FROM foundry_loads WHERE id=?`, job.LoadID).
+			Scan(&origin, &refreshes); err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("read foundry load %s origin: %w", job.LoadID, err)
+		}
+		job.Origin = model.FoundryLoadOrigin(origin.String)
+		if refreshes.Valid {
+			job.RefreshesLoadID = &refreshes.String
+		}
+		job.Status, job.LeaseOwner, job.LeaseUntil = model.FoundryGraphJobRunning, &workerID, &leaseUntil
+		job.Attempts++
+		if job.StartedAt == nil {
+			job.StartedAt = &now
+		}
+		return nil
+	})
 }
 
 const ownedFoundryGraphJob = ` WHERE id=? AND status='running' AND lease_owner=?`

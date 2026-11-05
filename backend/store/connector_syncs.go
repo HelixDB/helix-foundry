@@ -66,29 +66,18 @@ FROM connector_syncs WHERE connector_id=? AND workspace_id=? ORDER BY created_at
 
 // ClaimConnectorSync leases the oldest due sync to workerID: a queued one whose
 // retry time has come, or a running one whose lease expired. Nil means none is due.
-func (s *mysqlDB) ClaimConnectorSync(ctx context.Context, workerID string, lease time.Duration) (_ *model.ConnectorSync, err error) {
-	if s.root == nil {
-		return nil, fmt.Errorf("connector sync claim requires a root database connection")
-	}
-	tx, err := s.root.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin connector sync claim: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	// One running sync per workspace and class keeps a workspace with many
-	// connectors from holding every worker. The classes are event sources'
-	// syncs (origin events) and the rest: an event source's sync takes
-	// seconds, and must not wait hours behind a database's, nor hold one
-	// back. The check reads without locking, so two workers claiming at once
-	// can still start two of a class's syncs; that costs fairness only, since
-	// a connector has one live sync at most. A locking clause locks only the
-	// outer query's rows, which is why the subquery takes none; Vitess cannot
-	// parse FOR UPDATE OF.
-	sync, err := scanConnectorSync(tx.QueryRowContext(ctx, "SELECT "+connectorSyncColumns+`
+func (s *mysqlDB) ClaimConnectorSync(ctx context.Context, workerID string, lease time.Duration) (*model.ConnectorSync, error) {
+	return claimLease(ctx, s.root, "connector sync", "connector_syncs", workerID, lease, func(tx *sql.Tx) (*model.ConnectorSync, string, error) {
+		// One running sync per workspace and class keeps a workspace with many
+		// connectors from holding every worker. The classes are event sources'
+		// syncs (origin events) and the rest: an event source's sync takes
+		// seconds, and must not wait hours behind a database's, nor hold one
+		// back. The check reads without locking, so two workers claiming at once
+		// can still start two of a class's syncs; that costs fairness only, since
+		// a connector has one live sync at most. A locking clause locks only the
+		// outer query's rows, which is why the subquery takes none; Vitess cannot
+		// parse FOR UPDATE OF.
+		sync, err := scanConnectorSync(tx.QueryRowContext(ctx, "SELECT "+connectorSyncColumns+`
 FROM connector_syncs c
 WHERE ((c.status='queued' AND c.next_attempt_at <= NOW(6)) OR (c.status='running' AND c.lease_until < NOW(6)))
   AND NOT EXISTS (SELECT 1 FROM connector_syncs r
@@ -96,30 +85,18 @@ WHERE ((c.status='queued' AND c.next_attempt_at <= NOW(6)) OR (c.status='running
       AND (r.origin='events') = (c.origin='events'))
 ORDER BY c.next_attempt_at, c.id
 LIMIT 1 FOR UPDATE SKIP LOCKED`))
-	if err == ErrNotFound {
-		_ = tx.Rollback()
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("select connector sync claim: %w", err)
-	}
-	now := time.Now().UTC()
-	leaseUntil := now.Add(lease)
-	if _, err = tx.ExecContext(ctx, `
-UPDATE connector_syncs
-SET status='running', attempts=attempts+1, lease_owner=?, lease_until=?, started_at=COALESCE(started_at, NOW(6))
-WHERE id=?`, workerID, leaseUntil, sync.ID); err != nil {
-		return nil, fmt.Errorf("claim connector sync: %w", err)
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit connector sync claim: %w", err)
-	}
-	sync.Status, sync.LeaseOwner, sync.LeaseUntil = model.ConnectorSyncRunning, &workerID, &leaseUntil
-	sync.Attempts++
-	if sync.StartedAt == nil {
-		sync.StartedAt = &now
-	}
-	return sync, nil
+		if err != nil {
+			return nil, "", err
+		}
+		return sync, sync.ID, nil
+	}, func(_ *sql.Tx, sync *model.ConnectorSync, now, leaseUntil time.Time) error {
+		sync.Status, sync.LeaseOwner, sync.LeaseUntil = model.ConnectorSyncRunning, &workerID, &leaseUntil
+		sync.Attempts++
+		if sync.StartedAt == nil {
+			sync.StartedAt = &now
+		}
+		return nil
+	})
 }
 
 // RenewConnectorSyncLease extends the lease; ErrNotFound means workerID lost it.

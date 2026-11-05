@@ -408,6 +408,53 @@ func (s *mysqlDB) WithTx(ctx context.Context, fn func(Store) error) (err error) 
 	return nil
 }
 
+// claimLease leases one due row of table to workerID, in a transaction of
+// its own on root. pick selects the row FOR UPDATE SKIP LOCKED and returns it
+// with its id; ErrNotFound (none due) makes claimLease return T's zero and no
+// error. The row is then set running, with one more attempt, leased to
+// workerID until now+lease; claimed sets the same on the returned value, and
+// may read more in the transaction, before it commits. what names the row in
+// errors.
+func claimLease[T any](ctx context.Context, root *sql.DB, what, table, workerID string, lease time.Duration,
+	pick func(*sql.Tx) (T, string, error), claimed func(tx *sql.Tx, row T, now, leaseUntil time.Time) error) (_ T, err error) {
+	var none T
+	if root == nil {
+		return none, fmt.Errorf("%s claim requires a root database connection", what)
+	}
+	tx, err := root.BeginTx(ctx, nil)
+	if err != nil {
+		return none, fmt.Errorf("begin %s claim: %w", what, err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	row, id, err := pick(tx)
+	if err == ErrNotFound {
+		_ = tx.Rollback()
+		return none, nil
+	}
+	if err != nil {
+		return none, fmt.Errorf("select %s claim: %w", what, err)
+	}
+	now := time.Now().UTC()
+	leaseUntil := now.Add(lease)
+	if _, err = tx.ExecContext(ctx, `
+UPDATE `+table+`
+SET status='running', attempts=attempts+1, lease_owner=?, lease_until=?, started_at=COALESCE(started_at, NOW(6))
+WHERE id=?`, workerID, leaseUntil, id); err != nil {
+		return none, fmt.Errorf("claim %s: %w", what, err)
+	}
+	if err = claimed(tx, row, now, leaseUntil); err != nil {
+		return none, err
+	}
+	if err = tx.Commit(); err != nil {
+		return none, fmt.Errorf("commit %s claim: %w", what, err)
+	}
+	return row, nil
+}
+
 // WorkspaceDeleting reports whether a workspace is deleted or being deleted:
 // ErrNotFound when it is absent.
 func (s *mysqlDB) WorkspaceDeleting(ctx context.Context, id string) (bool, error) {

@@ -115,48 +115,25 @@ FROM foundry_ontology_generations WHERE ontology_id=? ORDER BY created_at DESC, 
 // ClaimOntologyGeneration leases the oldest due generation to workerID: a
 // queued one whose retry time has come, or a running one whose lease expired.
 // Nil means none is due.
-func (s *mysqlDB) ClaimOntologyGeneration(ctx context.Context, workerID string, lease time.Duration) (_ *model.OntologyGeneration, err error) {
-	if s.root == nil {
-		return nil, fmt.Errorf("ontology generation claim requires a root database connection")
-	}
-	tx, err := s.root.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin ontology generation claim: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-	gen, err := scanOntologyGeneration(tx.QueryRowContext(ctx, "SELECT "+ontologyGenerationColumns+`
+func (s *mysqlDB) ClaimOntologyGeneration(ctx context.Context, workerID string, lease time.Duration) (*model.OntologyGeneration, error) {
+	return claimLease(ctx, s.root, "ontology generation", "foundry_ontology_generations", workerID, lease, func(tx *sql.Tx) (*model.OntologyGeneration, string, error) {
+		gen, err := scanOntologyGeneration(tx.QueryRowContext(ctx, "SELECT "+ontologyGenerationColumns+`
 FROM foundry_ontology_generations
 WHERE (status='queued' AND next_attempt_at <= NOW(6)) OR (status='running' AND lease_until < NOW(6))
 ORDER BY next_attempt_at, id
 LIMIT 1 FOR UPDATE SKIP LOCKED`))
-	if err == ErrNotFound {
-		_ = tx.Rollback()
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("select ontology generation claim: %w", err)
-	}
-	now := time.Now().UTC()
-	leaseUntil := now.Add(lease)
-	if _, err = tx.ExecContext(ctx, `
-UPDATE foundry_ontology_generations
-SET status='running', attempts=attempts+1, lease_owner=?, lease_until=?, started_at=COALESCE(started_at, NOW(6))
-WHERE id=?`, workerID, leaseUntil, gen.ID); err != nil {
-		return nil, fmt.Errorf("claim ontology generation: %w", err)
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit ontology generation claim: %w", err)
-	}
-	gen.Status, gen.LeaseOwner, gen.LeaseUntil = model.OntologyGenerationRunning, &workerID, &leaseUntil
-	gen.Attempts++
-	if gen.StartedAt == nil {
-		gen.StartedAt = &now
-	}
-	return gen, nil
+		if err != nil {
+			return nil, "", err
+		}
+		return gen, gen.ID, nil
+	}, func(_ *sql.Tx, gen *model.OntologyGeneration, now, leaseUntil time.Time) error {
+		gen.Status, gen.LeaseOwner, gen.LeaseUntil = model.OntologyGenerationRunning, &workerID, &leaseUntil
+		gen.Attempts++
+		if gen.StartedAt == nil {
+			gen.StartedAt = &now
+		}
+		return nil
+	})
 }
 
 // RenewOntologyGenerationLease extends the lease; ErrNotFound means workerID lost it.
