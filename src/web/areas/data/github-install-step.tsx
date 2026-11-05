@@ -35,12 +35,15 @@ export function GitHubInstallStep({
   problem,
   installUrl,
   install,
+  onInstall,
   onSkip,
   skipLabel = "Skip for now",
 }: {
   problem: string;
   installUrl: string;
   install: Omit<PendingInstall, "at">;
+  /** Called as the tab leaves for GitHub. */
+  onInstall?: () => void;
   onSkip?: () => void;
   skipLabel?: string;
 }) {
@@ -56,7 +59,10 @@ export function GitHubInstallStep({
             size="sm"
             variant="primary"
             href={installUrl}
-            onClick={() => rememberInstall(installStorage(), install)}
+            onClick={() => {
+              rememberInstall(installStorage(), install);
+              onInstall?.();
+            }}
           >
             Install on GitHub
           </ButtonAnchor>
