@@ -1,4 +1,4 @@
-import type { DynamicQueryRequest } from "./database-query";
+import { readRequest, type DynamicQueryRequest } from "./database-query";
 import { scopedLabel } from "./load-scope";
 
 // Comparing two loads (?load=A&compare=B): what changed between them, read
@@ -75,15 +75,7 @@ export function keysRequest(load: string, type: string): DynamicQueryRequest {
       properties: ["entity_key", "norm_name"],
     },
   };
-  return {
-    request_type: "read",
-    query_name: "foundry_compare_keys",
-    query: {
-      read: { entries: [{ query: { name: "keys", root } }], returns: ["keys"] },
-    },
-    parameters: {},
-    parameter_types: {},
-  };
+  return readRequest("foundry_compare_keys", [{ name: "keys", root }]);
 }
 
 /** An entity in the diff: what finds it on the canvas, and its name. */

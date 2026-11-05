@@ -24,6 +24,7 @@ import type {
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
 import { formatNumber, formatRelative, plural } from "../../kit/util";
+import { isRecord } from "../../../shared/json";
 
 // The Data area's logic, kept apart from its components so it is tested on
 // its own: connector kinds, the Data page's tree of them and of the
@@ -1355,9 +1356,7 @@ export function previewGrid(t: Pick<ConnectorTable, "columns" | "preview">): {
   const records = (t.preview || []).flatMap((row) => {
     try {
       const v: unknown = JSON.parse(row);
-      return v && typeof v === "object" && !Array.isArray(v)
-        ? [rawMembers(row)]
-        : [];
+      return isRecord(v) ? [rawMembers(row)] : [];
     } catch {
       return [];
     }

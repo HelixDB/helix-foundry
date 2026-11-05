@@ -1,3 +1,5 @@
+import { isRecord } from "../../../shared/json";
+
 // Installing Helix Foundry's GitHub App: the step a GitHub connector that
 // signed in needs before it reads anything, since GitHub chooses an app's
 // repositories when it is installed, never when someone signs in. Foundry
@@ -108,10 +110,7 @@ export function takeInstall(
       at > now
     )
       return null;
-    const state =
-      e.state && typeof e.state === "object" && !Array.isArray(e.state)
-        ? (e.state as Record<string, unknown>)
-        : undefined;
+    const state = isRecord(e.state) ? e.state : undefined;
     return { workspaceId, connectorId, to, at, ...(state ? { state } : {}) };
   } catch {
     return null;

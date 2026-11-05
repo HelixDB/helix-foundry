@@ -1,5 +1,12 @@
 import { isFoundryLabel } from "../../../shared/foundry-labels";
-import type { DynamicQueryRequest, JsonValue } from "../explore/database-query";
+import {
+  readRequest,
+  type Ast,
+  type DynamicQueryRequest,
+  type JsonValue,
+  type ReadEntry,
+  type ReadParam,
+} from "../explore/database-query";
 import {
   MAX_COUNTS,
   scopedPredicates,
@@ -50,10 +57,6 @@ export const RECORDS_LIMITS = Object.freeze({
 
 // ---------------------------------------------------------------- AST
 
-type Ast = { [key: string]: JsonValue };
-type Param = { value: JsonValue; type: JsonValue };
-type Entry = { name: string; root: Ast };
-
 const literal = (n: number): Ast => ({ literal: Math.max(0, Math.floor(n)) });
 const and = (...predicates: Ast[]): Ast =>
   predicates.length === 1 ? predicates[0]! : { and: { predicates } };
@@ -69,31 +72,6 @@ const count = (input: Ast): Ast => ({ count: { input } });
 const limit = (input: Ast, n: number): Ast => ({
   limit: { input, count: literal(n) },
 });
-
-function request(
-  name: string,
-  entries: Entry[],
-  params: Record<string, Param> = {},
-): DynamicQueryRequest {
-  return {
-    request_type: "read",
-    query_name: name,
-    query: {
-      read: {
-        entries: entries.map((e) => ({
-          query: { name: e.name, root: e.root },
-        })),
-        returns: entries.map((e) => e.name),
-      },
-    },
-    parameters: Object.fromEntries(
-      Object.entries(params).map(([k, p]) => [k, p.value]),
-    ),
-    parameter_types: Object.fromEntries(
-      Object.entries(params).map(([k, p]) => [k, p.type]),
-    ),
-  };
-}
 
 type Row = Record<string, unknown>;
 const rows = (v: unknown): Row[] =>
@@ -134,7 +112,7 @@ export function typeCountsRequests(
   );
   return batches.map((batch) => ({
     types: batch,
-    request: request(
+    request: readRequest(
       "foundry_record_counts",
       batch.map((t, i) => ({
         name: `count_${i}`,
@@ -329,7 +307,7 @@ const INTEGER = /^[+-]?\d+$/;
 export type Search =
   | { kind: "all" }
   | { kind: "none" }
-  | { kind: "match"; predicate: Ast; params: Record<string, Param> };
+  | { kind: "match"; predicate: Ast; params: Record<string, ReadParam> };
 
 /**
  * The search for `text` in a type: its normalized names contain the text
@@ -345,7 +323,7 @@ export function searchOf(t: TypeNaming, text: string): Search {
   const type = (p: string) =>
     t.props.find((x) => x.name === p)?.type || "string";
   const preds = new Map<string, Ast>(),
-    params: Record<string, Param> = {};
+    params: Record<string, ReadParam> = {};
   const add = (pred: Ast, param: string, value: JsonValue, kind: string) => {
     preds.set(JSON.stringify(pred), pred);
     params[param] = { value, type: kind };
@@ -476,7 +454,7 @@ export function pageRead(
 ): PageRead {
   const search = searchOf(t, view.search);
   if (search.kind === "none") return { kind: "none" };
-  const params: Record<string, Param> =
+  const params: Record<string, ReadParam> =
     search.kind === "match" ? { ...search.params } : {};
   const where: Ast[] = scopedPredicates(scope, t.name);
   const filter = activeFilter(view);
@@ -500,7 +478,7 @@ export function pageRead(
     };
   const page = Math.min(Math.max(view.page, 0), MAX_PAGE),
     offset = page * RECORDS_LIMITS.page;
-  const entries: Entry[] = [
+  const entries: ReadEntry[] = [
     {
       name: "rows",
       root: {
@@ -524,7 +502,7 @@ export function pageRead(
     });
   return {
     kind: "read",
-    request: request("foundry_records", entries, params),
+    request: readRequest("foundry_records", entries, params),
     offset,
   };
 }
