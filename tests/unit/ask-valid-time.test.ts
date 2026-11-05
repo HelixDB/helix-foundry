@@ -67,7 +67,7 @@ describe("valid-time citations", () => {
       },
     });
     expect(citationText(parsed, {} as CitationContext)).toBe(
-      `As recorded ${formatDate(at)} · ${when}: a break of required`,
+      `As recorded ${utc(at)} · ${when}: a break of required`,
     );
   });
 
@@ -80,7 +80,7 @@ describe("valid-time citations", () => {
       expect(contractErrors("ask_result", answered(target))).toEqual([]);
       expect(parsedTarget(target)).toEqual({ version });
       expect(citationText(parseTarget(target)!, {} as CitationContext)).toBe(
-        `As recorded ${formatDate(at)}: a break of required`,
+        `As recorded ${utc(at)}: a break of required`,
       );
     },
   );
@@ -112,7 +112,7 @@ describe("valid-time citations", () => {
       citations: [{ marker: "c1", target: { version } }],
     });
     expect(citationText(parseTarget(target)!, {} as CitationContext)).toBe(
-      `As recorded ${formatDate(at)}: a break of required`,
+      `As recorded ${utc(at)}: a break of required`,
     );
   });
 

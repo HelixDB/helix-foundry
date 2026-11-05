@@ -1547,8 +1547,8 @@ const predText = (pred: string) =>
  * citationText({ quote: { doc_id: "d1", section: 0, start: 4, end: 9 } }, { docName: () => "contract.md" } as never); // "Quote in contract.md"
  * citationText({ entity: { type: "Order", id: "ord 2" } }, { name: () => "ORD-2" } as never); // "Order ORD-2"
  * citationText({ row: { source: "foundry_enrichment", mapping: "enrichment_people", row_key: "" } }, {} as never); // "A People enrichment profile"
- * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM: a break of must_sign" (en-US, in UTC)
- * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } }, valid: { from: "2026-03-04T00:00:00Z", day: "2026-03-03" } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM · Valid from Mar 3, 2026: a break of must_sign" (en-US, in UTC)
+ * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM UTC: a break of must_sign" (en-US)
+ * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } }, valid: { from: "2026-03-04T00:00:00Z", day: "2026-03-03" } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM UTC · Valid from Mar 3, 2026: a break of must_sign" (en-US)
  */
 export function citationText(t: CitationTarget, ctx: CitationContext): string {
   const ref = (r: EntityRef) => refText(r, ctx);
@@ -1577,13 +1577,15 @@ export function citationText(t: CitationTarget, ctx: CitationContext): string {
         : "record" in of
           ? `a break of ${of.record.constraint}`
           : citationText(of, ctx);
-    // Valid times in UTC, as the engine dates them; a source's day as that
-    // day, not the midnight after it that `from` is.
+    // The engine's times in UTC, named, so when it was recorded and when it
+    // held read alike; a source's day as that day, not the midnight after it
+    // that `from` is.
+    const utc = (time: string) => formatDate(time, true, "UTC");
     const valid = t.version.valid;
     const when = valid
-      ? ` · Valid from ${valid.day ? formatDate(valid.day, false) : formatDate(valid.from, true, "UTC")}${valid.to ? ` until ${formatDate(valid.to, true, "UTC")}` : ""}`
+      ? ` · Valid from ${valid.day ? formatDate(valid.day, false) : utc(valid.from)}${valid.to ? ` until ${utc(valid.to)}` : ""}`
       : "";
-    return `As recorded ${formatDate(t.version.at)}${when}: ${subject}`;
+    return `As recorded ${utc(t.version.at)}${when}: ${subject}`;
   }
   return ctx.result(t.result.evidence_id);
 }

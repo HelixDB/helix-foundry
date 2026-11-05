@@ -793,6 +793,34 @@ describe("mock source grants", () => {
       expect((await eve("GET", `${O}/questions/${q.id}`)).status).toBe(200);
     });
 
+    it("asks through a view, with no history, when it holds all of the load", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: false, now: Date.now() });
+      Object.assign(config, { askStepMs: 10 });
+      await loaded();
+      await grant(user("usr_eve"), [general, stripe]);
+      const q = (
+        await eve("POST", `${O}/questions`, {
+          question: "Who signed it?",
+          clientToken: "whole",
+        })
+      ).body.question;
+      later(60_000);
+      const asked = (await eve("GET", `${O}/questions/${q.id}`)).body.question;
+      expect(asked.status).toBe("answered");
+      const result = JSON.parse(asked.resultJson);
+      expect(contractErrors("ask_result", result)).toEqual([]);
+      // 4.7.0 offers no history_of under any view, whole ones too.
+      const tools = (
+        await eve("GET", `${O}/questions/${q.id}/events`)
+      ).body.events
+        .map((e: { eventJson: string }) => JSON.parse(e.eventJson))
+        .filter((e: { event: string }) => e.event === "tool_call")
+        .map((e: { tool: string }) => e.tool);
+      expect(tools).not.toContain("history_of");
+      expect(JSON.stringify(result)).not.toContain('"version"');
+      expect(tools.at(-1)).toBe("answer");
+    });
+
     it("declines a question about another time as uncovered", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: false, now: Date.now() });
       Object.assign(config, { askStepMs: 10, askOutcome: "cannot_answer" });

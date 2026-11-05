@@ -1794,7 +1794,7 @@ describe("citations", () => {
       "Contract Master services agreement signed_with Customer Globex Corporation",
       "co signed: Customer Globex Corporation, Contract Master services agreement (derived)",
       "A break of credit_limit: Customer Globex Corporation",
-      `As recorded ${formatDate("2026-10-03T09:14:07Z")}: the tier of Customer Globex Corporation`,
+      `As recorded ${formatDate("2026-10-03T09:14:07Z", true, "UTC")}: the tier of Customer Globex Corporation`,
       // A page that can't name it keeps its key.
       "Customer cus_2",
     ]);
@@ -1865,7 +1865,7 @@ describe("citations", () => {
           "the tier of Customer cus_1",
           "Contract MSA signed_with Customer cus_1",
           "a break of credit_limit",
-        ].map((what) => `As recorded ${formatDate(at)}: ${what}`),
+        ].map((what) => `As recorded ${formatDate(at, true, "UTC")}: ${what}`),
       );
       // The reader's own clock and words, not the engine's text.
       expect(citationText(ofEntity, ctx)).not.toContain(at);

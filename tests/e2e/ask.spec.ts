@@ -151,10 +151,9 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
     "The graph query in step 11",
     "The counts in step 9",
     "The query in step 10",
-    // Versions from its history read, with when each held: a document's
-    // day as that day, the link from its build's time, in UTC.
-    /^As recorded .+ · Valid from Oct 1, 2026: the signed_on of Contract Master services agreement$/,
-    /^As recorded .+ · Valid from .+ UTC: Contract Master services agreement signed_with Customer Globex Corporation$/,
+    // A version from its history read, with when it held: a document's day
+    // as that day; when it was recorded in UTC.
+    /^As recorded .+ UTC · Valid from Oct 1, 2026: the signed_on of Contract Master services agreement$/,
   ]);
   // The graph query the model wrote opens on its code, with no Output:
   // its event carries none.
@@ -937,8 +936,8 @@ test("shows valid time beside a citation's recording time", async ({
   await expect(
     question.getByRole("list", { name: "Sources" }).getByRole("listitem"),
   ).toHaveText([
-    /^As recorded .+ · Valid from Oct 1, 2026, 12:00 AM UTC until Oct 2, 2026, 12:00 AM UTC: a break of required$/,
-    /^As recorded [^·]+: a break of required$/,
+    /^As recorded Oct 3, 2026, 09:00 AM UTC · Valid from Oct 1, 2026, 12:00 AM UTC until Oct 2, 2026, 12:00 AM UTC: a break of required$/,
+    /^As recorded Oct 3, 2026, 09:00 AM UTC: a break of required$/,
   ]);
   await expect(
     question.getByRole("button", {

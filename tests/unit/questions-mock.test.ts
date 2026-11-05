@@ -322,7 +322,6 @@ describe("mock questions", () => {
       "result",
       "result",
       "version",
-      "version",
     ]);
     // The answer cites what the graph query counted, as a result.
     expect(view.sources[8]!.citation).toEqual({
@@ -330,16 +329,14 @@ describe("mock questions", () => {
       evidence_id: "e10",
       target: { result: { evidence_id: "e10" } },
     });
-    // And the states the load's build wrote, from its history read, each
-    // with when it held (4.7.0): the date a document gave its signed_on, as
-    // that day, from the next midnight UTC; the link from when it was built.
+    // And the signed_on its history read shows, with when it held (4.7.0):
+    // the day a document gave it, as that day, from the next midnight UTC.
     const built = (await call("GET", `${O}/loads/${load}`)).body.load;
     const contract = {
       type: "Contract",
       id: "master services agreement",
     };
-    const [day, link] = view.sources.slice(-2).map((s) => s.citation);
-    expect(day).toEqual({
+    expect(view.sources.at(-1)!.citation).toEqual({
       marker: "c12",
       evidence_id: "e11",
       target: {
@@ -354,23 +351,15 @@ describe("mock questions", () => {
         },
       },
     });
-    expect(link).toEqual({
-      marker: "c13",
-      evidence_id: "e11",
-      target: {
-        version: {
-          tx: load,
-          at: built.finishedAt,
-          of: {
-            fact: {
-              link: "signed_with",
-              subject: contract,
-              object: { type: "Customer", id: "cus_GLOBEX01" },
-            },
-          },
-          valid: { from: built.finishedAt },
-        },
-      },
+    // As the model wrote it, by handle.
+    expect(
+      (
+        stream.steps.at(-1)!.input as {
+          citations: { marker: string; target: unknown }[];
+        }
+      ).citations.find((c) => c.marker === "c12")!.target,
+    ).toMatchObject({
+      version: { of: { prop: { entity: "n2", prop: "signed_on" } } },
     });
     expect(result.answer.blocks[1]).toMatchObject({
       list: expect.arrayContaining(["The load holds 1 Contract entity [c11]"]),

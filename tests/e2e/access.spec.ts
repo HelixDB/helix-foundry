@@ -648,6 +648,57 @@ test("someone who reads part of an ontology is told plainly that its past isn't 
   ).toHaveCount(0);
 });
 
+test("someone who holds all of an ontology reads an uncovered time as the load's", async ({
+  page,
+  browser,
+}) => {
+  // They see valid times and past values, so uncovered means the load
+  // doesn't say: the general label, not the part reader's.
+  await mock.configure({
+    loadStepMs: 200,
+    askStepMs: 100,
+    askOutcome: "cannot_answer",
+  });
+  await signIn(page);
+  await loadContract(page);
+  await shareWithEve(page);
+  await page.close();
+
+  const as = await asEve(browser);
+  await as.route(
+    (url) =>
+      /\/ontologies\/ont_acme_contracts\/questions(?:\/[^/:]+)?$/.test(
+        url.pathname,
+      ),
+    async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      for (const question of body.questions ??
+        (body.question ? [body.question] : [])) {
+        if (!question.resultJson) continue;
+        const result = JSON.parse(question.resultJson);
+        if (result.status === "cannot_answer") result.kind = "uncovered";
+        question.resultJson = JSON.stringify(result);
+      }
+      await route.fulfill({ response, json: body });
+    },
+  );
+  await expect(as.getByText("You can read part of this ontology")).toHaveCount(
+    0,
+  );
+  const form = as.getByRole("form", { name: "Ask a question" });
+  await form
+    .getByRole("textbox", { name: /^Question/ })
+    .fill("Who signed it last March?");
+  await form.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(as.getByText("This ontology can’t answer that")).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(as.locator(".on-card .hf-tag")).toHaveText(
+    "No recorded state covers that time",
+  );
+});
+
 test("someone whose sources hold all of a type pages past the first read", async ({
   page,
   browser,
