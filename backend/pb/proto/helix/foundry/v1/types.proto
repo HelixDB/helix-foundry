@@ -65,12 +65,17 @@ message ConnectorKind {
   bool   requires_pro = 3;
   // False when the workspace's plan does not include the kind.
   bool available = 4;
-  // What a customer sets up for the kind; s3 only, where role access is configured.
+  // What a customer sets up for the kind: s3 where role access is configured,
+  // github where connectors sign in through Helix Foundry's GitHub App.
   oneof setup {
-    S3ConnectorSetup s3 = 5;
+    S3ConnectorSetup     s3     = 5;
+    GitHubConnectorSetup github = 8;
   }
   // The lowest catalog plan that includes the kind.
   string plan_code = 6;
+  // True when the caller can connect the kind by signing in at its provider
+  // (StartConnectorSignIn) instead of entering a key.
+  bool sign_in = 7;
 }
 
 // S3ConnectorSetup is what a customer's role must trust.
@@ -79,6 +84,14 @@ message S3ConnectorSetup {
   string principal_arn = 1;
   // This workspace's; the role's trust policy must require it.
   string external_id = 2;
+}
+
+// GitHubConnectorSetup is what a GitHub connector that signs in needs from
+// the customer.
+message GitHubConnectorSetup {
+  // Installs Helix Foundry's GitHub App on an account or organization, which
+  // a signed-in connector needs to read its private repositories.
+  string install_url = 1;
 }
 
 // S3ConnectorConfig reads Parquet, JSON, JSON Lines and CSV files from a bucket.
@@ -284,6 +297,106 @@ message Connector {
   ConnectorSchedule schedule = 11;
   // Set while the connector reads a database's log.
   ConnectorCDCStatus cdc_status = 12;
+  // Set when the connector was connected by signing in at its provider: the
+  // account it reads with, in place of a stored key.
+  ConnectorAccount account = 13;
+}
+
+// ConnectorAccount is the provider account a signed-in connector reads with.
+// The credential stays with the provider broker (hosted: WorkOS Pipes); the
+// connector asks it for a token each time it reads.
+message ConnectorAccount {
+  // Who the provider says signed in: a GitHub login; a Linear user and
+  // workspace.
+  string                label = 1;
+  ConnectorAccountState state = 2;
+  // Why it needs signing in again; unspecified while connected.
+  ConnectorAccountBroken    broken    = 3;
+  google.protobuf.Timestamp broken_at = 4;
+  // The member whose access it reads with, and their name: "a former
+  // member" once they have left the workspace.
+  string                    user_id      = 5;
+  string                    connected_by = 6;
+  google.protobuf.Timestamp connected_at = 7;
+}
+
+enum ConnectorAccountState {
+  CONNECTOR_ACCOUNT_STATE_UNSPECIFIED = 0;
+  CONNECTOR_ACCOUNT_STATE_CONNECTED   = 1;
+  // It doesn't sync until an owner or admin signs it in again; its tables
+  // keep what the last sync read.
+  CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN = 2;
+}
+
+enum ConnectorAccountBroken {
+  CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED = 0;
+  // The member it reads as left the workspace.
+  CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT = 1;
+  // The provider rejected its access, or it was revoked there.
+  CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED = 2;
+  // Its access lapsed and couldn't be renewed.
+  CONNECTOR_ACCOUNT_BROKEN_EXPIRED = 3;
+  // The broker no longer has the account.
+  CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING = 4;
+}
+
+// ConnectorSignIn connects a provider account by signing in. A user, or
+// their agent, starts it; that user authorizes it in their browser; the
+// site's callback finishes it. Finishing creates the connector, or signs one
+// in again.
+message ConnectorSignIn {
+  string                id     = 1;
+  string                kind   = 2;
+  string                name   = 3;
+  ConnectorSignInStatus status = 4;
+  // Why it failed; set with CONNECTOR_SIGN_IN_STATUS_FAILED.
+  ConnectorSignInFailure failure = 5;
+  // The connector it made, or signs in again.
+  string connector_id = 6;
+  // Set when the connector was made but can't read all it names, in
+  // Foundry's own words: a repository the GitHub App can't see, say.
+  string discovery_problem = 7;
+  // Set when signing in again changed the provider account the connector
+  // reads with.
+  bool identity_changed = 8;
+  // True when the caller started it: only they can authorize and finish it.
+  bool                      mine       = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp expires_at = 11;
+  // The connector's settings, chosen before signing in; never a credential.
+  ConnectorConfig config = 12;
+}
+
+enum ConnectorSignInStatus {
+  CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED = 0;
+  // Started; its link not yet followed.
+  CONNECTOR_SIGN_IN_STATUS_PENDING = 1;
+  // Sent to the provider to authorize.
+  CONNECTOR_SIGN_IN_STATUS_AUTHORIZING = 2;
+  // Its callback arrived and is being finished.
+  CONNECTOR_SIGN_IN_STATUS_FINISHING = 3;
+  CONNECTOR_SIGN_IN_STATUS_CONNECTED = 4;
+  // The user declined at the provider. Authorizing again retries it.
+  CONNECTOR_SIGN_IN_STATUS_DECLINED = 5;
+  // See failure. Authorizing again retries it.
+  CONNECTOR_SIGN_IN_STATUS_FAILED  = 6;
+  CONNECTOR_SIGN_IN_STATUS_EXPIRED = 7;
+}
+
+enum ConnectorSignInFailure {
+  CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED = 0;
+  // The provider or the broker answered with an error.
+  CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR = 1;
+  // The callback's code had lapsed or was already used.
+  CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED = 2;
+  // The account isn't this workspace's, or wasn't made by its starter.
+  CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE = 3;
+  // The provider refused the token it issued.
+  CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED = 4;
+  // The connector's settings were refused.
+  CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID = 5;
+  // The broker couldn't be reached.
+  CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE = 6;
 }
 
 // ConnectorSchedule is when a connector syncs by itself.
@@ -648,6 +761,9 @@ message FoundryOntology {
   google.protobuf.Timestamp refresh_due_at = 13;
   // Why an owed refresh waits: busy (a job is live); empty otherwise.
   string refresh_waiting = 14;
+  // The caller holds only some of what its current load holds, and reads that
+  // part: set only for a caller who reads through source grants.
+  bool partial_access = 15;
 }
 
 message FoundryOntologyLastLoad {
@@ -1513,4 +1629,156 @@ message FoundryOllamaModel {
   // context window is too small, it runs on ollama.com, it needs a newer
   // Ollama); empty when it can, or when the server can't say.
   string unusable = 4;
+}
+
+// FoundryPrincipal is who a source grant is for.
+message FoundryPrincipal {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // A workspace member.
+    KIND_USER = 1;
+    // A workspace service credential: an agent's key.
+    KIND_SERVICE_CREDENTIAL = 2;
+    // A workspace team: its members hold its grants.
+    KIND_TEAM = 3;
+  }
+  Kind   kind = 1;
+  string id   = 2;
+}
+
+// FoundryAccessTarget is the source one grant gives. Each kind names what it
+// needs and leaves the rest empty.
+message FoundryAccessTarget {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // A connector: every table it syncs, now and later, and every document
+    // set it owns. connector_id.
+    KIND_CONNECTOR = 1;
+    // One table of a connector. connector_id and table.
+    KIND_TABLE = 2;
+    // One document set. document_set_id.
+    KIND_DOCUMENT_SET = 3;
+    // The People enrichment profiles a load applies. Nothing else.
+    KIND_ENRICHMENT = 4;
+  }
+  Kind   kind            = 1;
+  string connector_id    = 2;
+  string table           = 3;
+  string document_set_id = 4;
+}
+
+// FoundryAccessGrant is one source an owner or admin granted a principal.
+message FoundryAccessGrant {
+  string                    id                 = 1;
+  FoundryPrincipal          principal          = 2;
+  FoundryAccessTarget       target             = 3;
+  string                    created_by_user_id = 4;
+  google.protobuf.Timestamp created_at         = 5;
+}
+
+// FoundryLoadAccessInputs is what a load holds, as far as grants go: a
+// grantee reads it only when its grants cover all of it.
+message FoundryLoadAccessInputs {
+  message Table {
+    string connector_id = 1;
+    string table        = 2;
+  }
+  // A set its documents, table files or review decisions' documents are in
+  // now, with the connector that owns it, if one does; an empty
+  // document_set_id is a document in no set, which nothing covers.
+  message DocumentSet {
+    string document_set_id = 1;
+    string connector_id    = 2;
+  }
+  repeated Table       tables        = 1;
+  repeated DocumentSet document_sets = 2;
+  // It applied People enrichment's profiles.
+  bool enrichment = 3;
+  // It holds what no grant covers: it was made before grants, or applies a
+  // review decision whose documents weren't recorded. Loading again makes
+  // it shareable.
+  bool uncoverable = 4;
+}
+
+// FoundryOntologyAccess is an ontology's current load as grants see it.
+message FoundryOntologyAccess {
+  string                  ontology_id = 1;
+  string                  load_id     = 2;
+  FoundryLoadAccessInputs inputs      = 3;
+  // The principals whose own grants cover it.
+  repeated FoundryPrincipal readers = 4;
+  // The principals whose own grants hold only some of it, who read that part.
+  repeated FoundryPrincipal partial_readers = 5;
+}
+
+// FoundryAccessLoss is a principal that would stop reading an ontology
+// through grants.
+message FoundryAccessLoss {
+  FoundryPrincipal principal   = 1;
+  string           ontology_id = 2;
+  // It would still read the part its grants hold.
+  bool keeps_part = 3;
+}
+
+// FoundryTeam is a team of the workspace's members: each holds the team's
+// grants.
+message FoundryTeam {
+  string                    id                 = 1;
+  string                    name               = 2;
+  repeated string           member_user_ids    = 3;
+  string                    created_by_user_id = 4;
+  google.protobuf.Timestamp created_at         = 5;
+}
+
+// Helix Foundry self-healing findings: what the ontology
+// agent's Audit of a load found in its documents' reviews and its rows,
+// summed over the load's pages by the foundry-heal-worker.
+
+// FoundryHealFinding is one finding, named by its fingerprint, which the
+// engine keeps the same across versions, loads and pages.
+message FoundryHealFinding {
+  string fingerprint = 1;
+  // The signal's kind, as the engine names it: unmatched, unresolved,
+  // clash, row_errors or source_drift; a later contract may add others.
+  // Foundry sends the engine no source fields yet, so no audit checks
+  // source_drift and none is found: an empty list says nothing of it.
+  string kind = 2;
+  // open, dismissed or superseded.
+  string status = 3;
+  // The reviews behind it, summed over the load's pages; a row finding's
+  // rows.
+  int64 support = 4;
+  // The documents behind it; 0 for a row finding.
+  int64 sources = 5;
+  // The load the support was counted over, and its version.
+  string load_id         = 6;
+  string base_version_id = 7;
+  // The engine's Finding (audit_result.json, $defs/Finding) as JSON, its
+  // backing summed over the load's pages: signal, proposal and fingerprint.
+  // Parse it without trust, as the agent's other JSON.
+  string finding_json = 8;
+  // Who dismissed it, and its support then; set while dismissed.
+  optional string dismissed_by_user_id = 9;
+  optional int64  support_at_dismissal = 10;
+}
+
+// FoundryHealRun is one audit of an ontology's load.
+message FoundryHealRun {
+  string id      = 1;
+  string load_id = 2;
+  // running, complete, incomplete (even a page of one document was cut
+  // short, the run ran out of time, or a graph job changed the load under
+  // it: nothing was stored, and a later run audits the load again) or
+  // failed.
+  string status = 3;
+  // The Audit calls it made, and how many of them were cut short; a page
+  // cut short is audited again in smaller pages.
+  int32 pages = 4;
+  int32 cuts  = 5;
+  google.protobuf.Timestamp started_at  = 6;
+  google.protobuf.Timestamp finished_at = 7;
+  // Whether it audited the load's rows: a complete run does when the
+  // load's report holds them. False, no row finding of this load can be
+  // told apart from none.
+  bool rows_measured = 8;
 }

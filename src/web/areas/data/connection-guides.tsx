@@ -4,6 +4,7 @@ import { LOCAL } from "../../../shared/deployment";
 import { Button } from "../../kit";
 import { useWorkspace } from "../../ui";
 import type { ConnectionForm, CredentialKind } from "./model";
+import type { SignInKind } from "./sign-ins";
 
 // How to make a read-only credential for each kind, shown above its form
 // (S3's policies to paste sit with its role and key fields).
@@ -350,6 +351,10 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO foundry_readonly;`}</pre>
       <p>Run this as an administrator, replacing the database and password:</p>
       <pre>{`CREATE USER 'foundry'@'%' IDENTIFIED BY 'choose-a-password';
 GRANT SELECT ON app.* TO 'foundry'@'%';`}</pre>
+      <p>
+        A sync reads each table in its own transaction, so tables can reflect
+        slightly different moments.
+      </p>
       <DatabaseReach />
     </>
   ),
@@ -379,6 +384,152 @@ GRANT SELECT ON app.* TO 'foundry'@'%';`}</pre>
     </>
   ),
 };
+
+// What every sign-in guide ends with: who keeps the sign-in, what stops it,
+// and the credential as the alternative, below the button.
+function KeptBy({ provider, instead }: { provider: string; instead: string }) {
+  return (
+    <li>
+      {provider} keeps the sign-in, not Foundry: it reads as you, and stops if
+      you leave this workspace, until an owner or admin signs it in again.{" "}
+      {instead} works instead.
+    </li>
+  );
+}
+
+// Each kind's sign-in: what Helix Foundry asks to read at the provider, and
+// what it then reads.
+const signInGuides: Record<SignInKind, (installUrl?: string) => ReactNode> = {
+  github: (installUrl) => (
+    <ol>
+      <li>
+        Choose the repositories to read below, or leave them blank, then click{" "}
+        <strong>Connect with GitHub</strong> and authorize Helix Foundry. It
+        reads metadata, issues and pull requests, never code, and can change
+        nothing.
+      </li>
+      <li>
+        It reads only where Helix Foundry is installed. For an organization’s
+        repositories, an owner of the organization installs it{" "}
+        {installUrl ? (
+          <External href={installUrl}>on GitHub</External>
+        ) : (
+          "on GitHub"
+        )}
+        , choosing the repositories; then <strong>Sync now</strong> reads them.
+      </li>
+      <KeptBy provider="GitHub" instead="A personal access token" />
+    </ol>
+  ),
+  linear: () => (
+    <ol>
+      <li>
+        Click <strong>Connect with Linear</strong> and authorize Helix Foundry
+        to read your Linear workspace. It reads every team you can see, and can
+        change nothing.
+      </li>
+      <KeptBy provider="Linear" instead="A personal API key" />
+    </ol>
+  ),
+  slack: () => (
+    <ol>
+      <li>
+        Click <strong>Connect with Slack</strong> and allow Helix Foundry in
+        your Slack workspace. It reads the channels it is in, their messages and
+        people, never direct messages, and posts nothing.
+      </li>
+      <li>
+        Then invite it to each channel to sync, public or private, with{" "}
+        <code>/invite @Helix Foundry</code>.
+      </li>
+      <KeptBy provider="Slack" instead="An app’s bot token" />
+    </ol>
+  ),
+  notion: () => (
+    <ol>
+      <li>
+        Click <strong>Connect with Notion</strong>. At Notion’s screen, choose
+        the pages and databases Helix Foundry may read: it reads those and the
+        pages under them, and the workspace’s people, and can change nothing.
+      </li>
+      <li>
+        To read other pages later, sign it in again from its page and choose
+        them there.
+      </li>
+      <KeptBy provider="Notion" instead="An internal integration’s secret" />
+    </ol>
+  ),
+  posthog: () => (
+    <ol>
+      <li>
+        For PostHog US Cloud: choose a project when you have several, then click{" "}
+        <strong>Connect with PostHog</strong> and authorize Helix Foundry to
+        read it. It reads events and persons, and changes nothing.
+      </li>
+      <li>
+        EU Cloud and self-hosted PostHog connect with a personal API key
+        instead: choose its region.
+      </li>
+      <KeptBy provider="PostHog" instead="A personal API key" />
+    </ol>
+  ),
+  calcom: () => (
+    <ol>
+      <li>
+        Click <strong>Connect with Cal.com</strong> and authorize Helix Foundry
+        to read your Cal.com account: bookings and their attendees, event types,
+        schedules, and teams on a Teams plan. It changes nothing.
+      </li>
+      <KeptBy provider="Cal.com" instead="An API key" />
+    </ol>
+  ),
+  stripe: () => (
+    <ol>
+      <li>
+        Click <strong>Connect with Stripe</strong> and choose the account to
+        connect. Helix Foundry asks for read-only access: customers,
+        subscriptions, invoices and payments, never changes.
+      </li>
+      <KeptBy provider="Stripe" instead="A restricted key" />
+    </ol>
+  ),
+  google: () => (
+    <ol>
+      <li>
+        Click <strong>Connect with Google</strong> and allow Helix Foundry to
+        read your Drive and Calendar. Signed in, it reads as you: the files and
+        calendars you can see, and each Google Doc you can open becomes a
+        document.
+      </li>
+      <li>
+        The directory of your organization’s people needs an admin to sign in;
+        for anyone else, that table is left out.
+      </li>
+      <KeptBy provider="Google" instead="A service account key" />
+    </ol>
+  ),
+};
+
+/**
+ * How connecting by signing in goes, for a kind that offers it, above its
+ * Connect button: what Helix Foundry asks to read at the provider, and what
+ * it then reads (for GitHub, where it reads and the install a private
+ * repository needs; for Google, as the person who signs in). Its credential
+ * stays the alternative, below the button.
+ */
+export function SignInGuide({
+  kind,
+  installUrl,
+}: {
+  kind: SignInKind;
+  installUrl?: string;
+}) {
+  return (
+    <div className="span2 muted small connection-guide">
+      {signInGuides[kind](installUrl)}
+    </div>
+  );
+}
 
 export function ConnectionGuide({ form }: { form: ConnectionForm }) {
   return (

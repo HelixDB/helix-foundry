@@ -19,6 +19,8 @@ on:
       - "backend/go.mod"
       - "backend/go.sum"
       - "backend/cmd/foundry/**"
+      - "backend/integration/**"
+      - "backend/local/**"
   workflow_dispatch:
     inputs:
       release_version:
@@ -122,6 +124,17 @@ jobs:
           echo "::add-mask::$token"
           curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:8081/v1/whoami |
             jq -e '.workspaces | length == 1' >/dev/null
+          # Local agents use the same listener and owner token. Check the actual
+          # image's transport and registry without making a model call.
+          curl -fsS -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"image-smoke","version":"1"}}}' \
+            http://127.0.0.1:8081/mcp | jq -e '.result.capabilities.tools' >/dev/null
+          curl -fsS -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+            --data '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            http://127.0.0.1:8081/mcp |
+            jq -e '[.result.tools[].name] | index("helix_foundry_ask") != null and index("helix_foundry_send_pieces") == null' >/dev/null
           docker rm -f foundry storage mysql
       - name: Save the tested image
         if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''

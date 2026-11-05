@@ -1,7 +1,11 @@
 // Records area: an ontology's database as a table, by type, beside the
 // Explorer's graph. Lazy-loaded by the Ontology area's Explorer route table
 // at /explore/:ontologyId/records; the URL holds the whole view (./model.ts
-// readView), the open record included.
+// readView), the open record included. Read through source grants
+// (../explore/graph-reader.ts), it is the Explorer: there is no graph, a
+// type's rows come from typed reads by offset, cut into pages here, with as many
+// of its columns as one read returns. What grants hold only part of is one read
+// with no pages: the first rows its reader can read.
 import "../explore/explore.css";
 import "./records.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -36,12 +40,21 @@ import type { Scope } from "../explore/load-scope";
 import type { TypeNaming } from "../explore/naming";
 import { ReadFailed, pausedOf, startingOf } from "../explore/reads";
 import { DatabasePaused, DatabaseStarting } from "../explore/starting";
-import { useTenantReads } from "../explore/tenant-reads";
+import { useGraphReader, useReadsPart } from "../explore/graph-reader";
+import { PartNote } from "../explore/part-note";
+import { graphReadQueries } from "../explore/graph-read";
+import {
+  typedColumns,
+  typedNarrows,
+  typedRecordsPage,
+  type TypedRecords,
+} from "../explore/typed-reads";
 import { ExplorerTop } from "../explore/top-bar";
 import { useNaming } from "../explore/use-naming";
 import { typeHue } from "../ontology/colors";
 import {
   LoadNotice,
+  NotShared,
   NothingLoaded,
   useLoadSelection,
 } from "../ontology/load-selection";
@@ -110,32 +123,58 @@ export function RecordsPage() {
     error: versionError,
     refetch,
   } = useNaming(selection.versionId);
-  const { read } = useTenantReads();
-  const tenant = ontology.tenantId || "";
+  const { access, reader } = useGraphReader(),
+    shared = access === "grants",
+    part = useReadsPart();
+  // Through grants the WFE reads the load; else the user's own database.
+  const tenant = shared ? o : ontology.tenantId || "";
   const types = useMemo(() => recordTypes(naming), [naming]);
-  const countsRead = recordQueries.counts(ws, o, read, scope, naming);
+  const countsRead = recordQueries.counts(ws, o, reader, scope, naming);
   const counts = useQuery({
     ...countsRead,
-    enabled: ready && !!tenant && !!selection.scope && types.length > 0,
+    enabled:
+      access !== "none" &&
+      ready &&
+      !!tenant &&
+      !!selection.scope &&
+      types.length > 0,
   });
   // The URL's type, else the first that has records, else the first.
   const type =
     types.find((t) => t.name === view.type) ||
     types.find((t) => (counts.data?.get(t.name) || 0) > 0) ||
     types[0];
+  // What of the load its reader holds only part of says whether a type's read
+  // is narrowed; not knowing, it reads as one, which is never refused.
+  const partial = useQuery({
+    ...graphReadQueries.view(
+      ws,
+      o,
+      ontology.currentLoad?.id || "",
+      ontology.createdAt,
+    ),
+    enabled: part && !!ontology.currentLoad?.id,
+  });
+  const narrowed =
+    part &&
+    !!type &&
+    (!partial.data || typedNarrows(type, partial.data.partial));
   const pageQuery = recordQueries.page(
     ws,
     o,
-    read,
+    reader,
     scope,
     naming,
     type || NO_TYPE,
     view,
+    narrowed,
   );
   const page = useQuery({
     ...pageQuery,
     enabled:
       pageQuery.enabled &&
+      !(part && partial.isPending) &&
+      access !== "none" &&
       ready &&
       !!tenant &&
       !!selection.scope &&
@@ -216,6 +255,7 @@ export function RecordsPage() {
       <div className="ex-frame">{content}</div>
     </div>
   );
+  if (access === "none") return frame(<NotShared />);
   if (!tenant)
     return frame(
       <>
@@ -258,6 +298,8 @@ export function RecordsPage() {
       </>,
     );
   // Records lists the version's types: without the version it has none.
+  if (pausedOf(versionError))
+    return frame(<DatabasePaused failure={pausedOf(versionError)!} />);
   if (versionError)
     return frame(
       <>
@@ -277,16 +319,18 @@ export function RecordsPage() {
           title="The load’s version names no types"
           text="Records lists the types of the version a load wrote. The graph shows what else the load holds."
           action={
-            <>
-              <ButtonLink to={paths.versions(o)}>Schema versions</ButtonLink>
-              <ButtonLink
-                variant="ghost"
-                icon={Network}
-                to={selection.link(paths.explore(o))}
-              >
-                Open the graph
-              </ButtonLink>
-            </>
+            !shared && (
+              <>
+                <ButtonLink to={paths.versions(o)}>Schema versions</ButtonLink>
+                <ButtonLink
+                  variant="ghost"
+                  icon={Network}
+                  to={selection.link(paths.explore(o))}
+                >
+                  Open the graph
+                </ButtonLink>
+              </>
+            )
           }
         />
       </>,
@@ -315,42 +359,61 @@ export function RecordsPage() {
           title="Nothing loaded yet"
           text={`Load the current version to fill ${ontology.databaseName || "the ontology’s database"} with its records.`}
           action={
-            <>
-              <ButtonLink to={paths.ontology(o)}>Load data</ButtonLink>
-              <ButtonLink
-                variant="ghost"
-                icon={Network}
-                to={selection.link(paths.explore(o))}
-              >
-                Open the graph
-              </ButtonLink>
-            </>
+            !shared && (
+              <>
+                <ButtonLink to={paths.ontology(o)}>Load data</ButtonLink>
+                <ButtonLink
+                  variant="ghost"
+                  icon={Network}
+                  to={selection.link(paths.explore(o))}
+                >
+                  Open the graph
+                </ButtonLink>
+              </>
+            )
           }
         />
       </>,
     );
 
   // The types' colours: every type with records, alphabetically, as the graph's.
-  const hues = types.filter((t) => (count(t) || 0) > 0).map((t) => t.name);
-  const columns = columnsOf(type),
-    shown = shownColumns(type, chosen[type.name]),
+  // (A type only partly held can't be counted: it may have some.)
+  const hues = types
+    .filter((t) => (count(t) || 0) > 0 || (part && count(t) === null))
+    .map((t) => t.name);
+  // Through grants, as many columns as one typed read returns.
+  const readable = shared ? new Set(typedColumns(type)) : null;
+  const fits = (c: Column) =>
+    c.role === "record" || !readable || readable.has(c.key);
+  const columns = columnsOf(type).filter(fits),
+    shown = shownColumns(type, chosen[type.name]).filter(fits),
     isShown = (c: Column) => shown.some((x) => x.key === c.key);
   // A field picked with nothing typed yet filters nothing.
   const applied = activeFilter(view);
   const filter = applied ? filterOf(type, applied.field, applied.value) : null;
-  const data = page.data;
+  // A typed read's rows are cut into pages here.
+  const typed = shared ? (page.data as TypedRecords | undefined) : undefined;
+  const data = typed ? typedRecordsPage(typed, view.page) : page.data;
   const searching = !!view.search.trim() || !!applied;
-  const total = searching ? (data?.matched?.count ?? null) : count(type);
+  // A read narrowed to what its reader holds has no total and no pages: it is
+  // the first rows they can read.
+  const partlyHeld = !!typed && typed.total === null;
+  const total = partlyHeld
+    ? null
+    : searching
+      ? (data?.matched?.count ?? null)
+      : count(type);
   const span = pageSpan(
-    view.page,
+    partlyHeld ? 0 : view.page,
     data?.rows.length || 0,
     total,
     !!data?.matched?.capped,
     !!data?.more,
   );
   // A value the field can't hold reads nothing: it says so in the table's
-  // place, or under the box while the last rows stay up.
-  const refused = filter && !filter.ok ? filter.error : "";
+  // place, or under the box while the last rows stay up. So does a filter or
+  // a search of what the reader's sources hold only part of.
+  const refused = filter && !filter.ok ? filter.error : data?.refused || "";
   const pagePaused = pausedOf(page.error);
   const rows: GridRow[] = (data?.rows || []).map((r) => ({
     ...r.props,
@@ -399,6 +462,7 @@ export function RecordsPage() {
   return frame(
     <>
       <LoadNotice selection={selection} />
+      <PartNote />
       <div className="rx">
         {slot ? (
           <PanelContent label="Types">
@@ -420,7 +484,13 @@ export function RecordsPage() {
             onChange: (search) => setDraft((d) => ({ ...d, search })),
             placeholder: `Search ${type.name} records`,
           }}
-          count={span.text || undefined}
+          count={
+            partlyHeld
+              ? data?.rows.length
+                ? `The first ${data.rows.length > 1 ? `${formatNumber(data.rows.length)} records` : "record"} you can read`
+                : undefined
+              : span.text || undefined
+          }
           actions={
             <details className="rx-columns">
               <summary className="hf-btn hf-btn--secondary hf-btn--sm">
@@ -507,6 +577,11 @@ export function RecordsPage() {
             {refused}
           </p>
         )}
+        {data?.notice && !refused && (
+          <p className="rx-hint" role="status">
+            {data.notice}
+          </p>
+        )}
         {startingOf(page.error ?? page.failureReason) ? (
           <DatabaseStarting queryKey={pageQuery.queryKey} />
         ) : pagePaused ? (
@@ -524,6 +599,22 @@ export function RecordsPage() {
           // wide as every column.
           refused ? (
             <EmptyState size="sm" icon={CircleAlert} title={refused} />
+          ) : partlyHeld ? (
+            // Only the first are read, so more may follow: a search may reach them.
+            <EmptyState
+              size="sm"
+              icon={Table2}
+              title={
+                searching
+                  ? "None of the matches read are in the sources shared with you."
+                  : "None of the records read are in the sources shared with you."
+              }
+              text={
+                searching
+                  ? undefined
+                  : "Only the first are read. A search or a filter may reach others."
+              }
+            />
           ) : view.page > 0 ? (
             <EmptyState
               size="sm"

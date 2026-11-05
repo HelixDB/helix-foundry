@@ -1,0 +1,35 @@
+/* Suggestions area: built from the kit and the ontology area's stack. */
+.sg-list {
+  display: grid;
+  gap: var(--hf-space-15);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sg-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hf-space-1);
+  align-items: center;
+  margin: 0;
+}
+.sg-examples {
+  display: grid;
+  gap: var(--hf-space-05);
+  margin: 0;
+  padding-left: 1.2em;
+}
+.sg-examples q {
+  margin-right: var(--hf-space-1);
+}
+.sg-run {
+  margin: 0;
+}
+
+/* The Undo of a dismissal's toast: text, unlike the toast's close icon. */
+.sg-toast .sg-undo {
+  width: auto;
+  padding: 0 8px;
+  font-weight: 600;
+  opacity: 1;
+}

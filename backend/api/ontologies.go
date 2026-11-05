@@ -9,6 +9,7 @@ import (
 
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
@@ -119,6 +120,9 @@ func (s *Service) ListFoundryOntologies(ctx context.Context, req *foundryv1.List
 	if req.GetWorkspaceId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
+	if g, ok := access.GranteeFrom(ctx); ok {
+		return s.granteeFoundryOntologies(ctx, g)
+	}
 	ontologies, next, err := s.deps.DB.ListFoundryOntologies(ctx, req.GetWorkspaceId(), req.GetPageToken(), foundryPageSize)
 	switch {
 	case errors.Is(err, foundrystore.ErrInvalidPageToken):
@@ -142,7 +146,65 @@ func (s *Service) GetFoundryOntology(ctx context.Context, req *foundryv1.GetFoun
 	if err != nil {
 		return nil, err
 	}
+	if granted, ok := granteeLoad(ctx); ok {
+		out, err := s.granteeFoundryOntology(ctx, o, granted)
+		if err != nil {
+			return nil, err
+		}
+		return &foundryv1.FoundryOntologyResponse{Ontology: out}, nil
+	}
 	return s.foundryOntologyResponse(ctx, o)
+}
+
+// granteeFoundryOntologies lists the ontologies whose current loads the
+// grantee's grants hold anything of, newest first, all on one page.
+func (s *Service) granteeFoundryOntologies(ctx context.Context, g access.Grantee) (*foundryv1.ListFoundryOntologiesResponse, error) {
+	loads, err := s.granteeLoads(ctx, g, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp := &foundryv1.ListFoundryOntologiesResponse{}
+	for pageToken := ""; len(loads) > 0; {
+		ontologies, next, err := s.deps.DB.ListFoundryOntologies(ctx, g.WorkspaceID, pageToken, foundryPageSize)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "list ontologies: %v", err)
+		}
+		for _, o := range ontologies {
+			load, ok := loads[o.ID]
+			if !ok {
+				continue
+			}
+			out, err := s.granteeFoundryOntology(ctx, o, load)
+			if err != nil {
+				return nil, err
+			}
+			resp.Ontologies = append(resp.Ontologies, out)
+		}
+		if next == "" {
+			break
+		}
+		pageToken = next
+	}
+	return resp, nil
+}
+
+// granteeFoundryOntology is an ontology as a grantee sees it: its name and
+// the load its grants cover, without its database, versions, jobs or
+// counts.
+func (s *Service) granteeFoundryOntology(ctx context.Context, o *foundrymodel.FoundryOntology,
+	granted foundrymodel.FoundryLoadInputs) (*foundryv1.FoundryOntology, error) {
+	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, granted.LoadID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get current load: %v", err)
+	}
+	out := &foundryv1.FoundryOntology{
+		Id: o.ID, Name: o.Name, CreatedAt: timestamppb.New(o.CreatedAt), PartialAccess: granted.Partial,
+		CurrentLoad: &foundryv1.FoundryOntologyCurrentLoad{Id: load.ID, Version: load.OntologyVersion()},
+	}
+	if load.FinishedAt != nil {
+		out.CurrentLoad.FinishedAt = timestamppb.New(*load.FinishedAt)
+	}
+	return out, nil
 }
 
 // DeleteFoundryOntology deletes the ontology: its live job is cancelled, and

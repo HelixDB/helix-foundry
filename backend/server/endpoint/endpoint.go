@@ -65,6 +65,10 @@ type Options struct {
 	BuildGateway        bool
 	StatsHandler        stats.Handler
 	GatewayErrorHandler runtime.ErrorHandlerFunc
+	// NoProbes leaves /healthz, /readyz and /metrics, which take no credential,
+	// off the HTTP listener: for one published to callers those aren't for, with
+	// the probes served on a listener of their own.
+	NoProbes bool
 }
 
 // Endpoint owns the gRPC + HTTP servers for one service. Callers
@@ -126,9 +130,11 @@ func New(opts Options) (*Endpoint, error) {
 	}
 
 	httpMux := http.NewServeMux()
-	httpMux.HandleFunc("/healthz", opts.Health.LivenessHandler())
-	httpMux.HandleFunc("/readyz", opts.Health.ReadinessHandler())
-	httpMux.Handle("/metrics", promhttp.Handler())
+	if !opts.NoProbes {
+		httpMux.HandleFunc("/healthz", opts.Health.LivenessHandler())
+		httpMux.HandleFunc("/readyz", opts.Health.ReadinessHandler())
+		httpMux.Handle("/metrics", promhttp.Handler())
+	}
 
 	ep := &Endpoint{
 		Name:        opts.Name,

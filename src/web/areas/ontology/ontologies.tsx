@@ -14,6 +14,7 @@ import {
 } from "../../kit";
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
+import { readAccess } from "../workspace/access-model";
 import { canManage } from "./parts";
 import { deleteOntology, ontologyQueries } from "./queries";
 import { lastOntology, ontologyName, useOntology } from "./scope";
@@ -31,21 +32,33 @@ import { lastOntology, ontologyName, useOntology } from "./scope";
  * skips it, and only while the address is still its own: a link followed
  * while the list loads isn't taken back. A workspace without one is
  * onboarding, which main.tsx sends to /ontology/new, as this does while the
- * routes catch up.
+ * routes catch up. A grantee with nothing shared is told so instead.
+ * `reads` (Ask and the Explorer) opens only an ontology the user reads
+ * (../workspace/access-model.ts readAccess): a member who can't query its
+ * database reads only those their source grants cover.
  */
 export function OpenOntology({
   title,
   to,
+  reads = false,
 }: {
   title: string;
   to: (ontologyId: string) => string;
+  reads?: boolean;
 }) {
-  const { id: ws } = useWorkspace();
+  const me = useWorkspace(),
+    { id: ws, grantee } = me;
   const list = useQuery(ontologyQueries.list(ws));
-  const ontologies = list.data?.ontologies || [],
+  const ontologies = (list.data?.ontologies || []).filter(
+      (o) => !reads || readAccess(me, o) !== "none",
+    ),
     last = lastOntology(ws);
   const open = ontologies.find((o) => o.id === last) ?? ontologies[0];
-  const target = open ? to(open.id) : list.data ? paths.newOntology() : null;
+  const target = open
+    ? to(open.id)
+    : list.data && !grantee && !list.data.ontologies?.length
+      ? paths.newOntology()
+      : null;
   const { pathname } = useLocation(),
     navigate = useNavigate();
   // The router renders a followed link's route in a transition, so this page
@@ -58,7 +71,13 @@ export function OpenOntology({
   return (
     <Page>
       <PageHeader title={title} />
-      {list.error ? (
+      {list.data ? (
+        <EmptyState
+          icon={Shapes}
+          title="Nothing shared with you yet"
+          text="An owner or admin of this workspace chooses what you can read. The ontologies they share with you show here."
+        />
+      ) : list.error ? (
         <EmptyState
           icon={Shapes}
           title="Couldn’t load the ontologies"
@@ -121,7 +140,7 @@ export function DeleteOntology() {
       {confirming && (
         <ConfirmDialog
           title={`Delete ${ontologyName(ontology)}?`}
-          description={`Foundry forgets this ontology: its versions, generations and loads, and deletes what its loads wrote from ${ontology.databaseName || "its database"}, with any edges added to those nodes. The database stays in Helix with your own data, and your documents stay in Connectors.`}
+          description={`Deletes this ontology, its versions, generations and loads, and the data its loads wrote to ${ontology.databaseName || "its database"}. Edges attached to those nodes are also deleted. The database, your other data and documents in Connectors are kept.`}
           confirmLabel="Delete ontology"
           tone="danger"
           pending={pending}

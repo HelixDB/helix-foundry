@@ -36,7 +36,7 @@ async function openSample(page: Page) {
   await page.getByRole("button", { name: "Upgrade", exact: true }).click();
   await page
     .getByRole("dialog", { name: "Upgrade Foundry" })
-    .getByRole("button", { name: "Continue to payment" })
+    .getByRole("button", { name: "Upgrade to Pro" })
     .click();
   await expect(
     page.getByRole("heading", { name: /Foundry Pro/ }),

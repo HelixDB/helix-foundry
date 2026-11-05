@@ -22,7 +22,8 @@ func askRequest() AskRequest {
 		Catalog:  []CatalogEntry{{ID: "src_1", Kind: CatalogTable, Name: "Stripe / customers"}},
 		Question: "Which customers?", History: []AskTurn{},
 		Helix: HelixTarget{URL: "http://127.0.0.1:1", Token: "t", MaxRequestBytes: 10, TimeoutSecs: 30},
-		AsOf:  "2026-10-19T12:00:00Z", Limits: Limits{MaxUSD: 0.5, MaxSteps: 10, MaxWallSecs: 120}, Models: houseAskModels(),
+		AsOf:  "2026-10-19T12:00:00Z", Models: houseAskModels(),
+		Limits: AskLimits{MaxUSD: 0.5, MaxSteps: 10, MaxWallSecs: 120, Read: AskReadLimits{WallMS: 5000, ScanEntities: 20000}},
 	}
 }
 
@@ -50,6 +51,33 @@ func TestAskRequest(t *testing.T) {
 		plain, _ := json.Marshal(askRequest())
 		if strings.Contains(string(plain), `"focus"`) {
 			t.Fatalf("a request without a focus sends one: %s", plain)
+		}
+	})
+
+	// Every read cap is sent, each at least 1 and none the agent doesn't
+	// take: a request without them reads with the agent's defaults, which
+	// Foundry's config would no longer say.
+	t.Run("sends every read cap the agent takes", func(t *testing.T) {
+		body, _ := json.Marshal(askRequest())
+		const sent = `"limits":{"max_usd":0.5,"max_steps":10,"max_wall_secs":120,"read":{"wall_ms":5000,"scan_entities":20000}}`
+		if !strings.Contains(string(body), sent) {
+			t.Fatalf("limits sent as %s", body)
+		}
+		schema := contracttest.Schema(t, "ask_request.json")
+		const caps = `"max_usd":0.5,"max_steps":10,"max_wall_secs":120`
+		for name, limits := range map[string]string{
+			"no wall time":         `{` + caps + `,"read":{"wall_ms":0,"scan_entities":20000}}`,
+			"no matches":           `{` + caps + `,"read":{"wall_ms":5000,"scan_entities":0}}`,
+			"a negative cap":       `{` + caps + `,"read":{"wall_ms":-1,"scan_entities":20000}}`,
+			"a fractional cap":     `{` + caps + `,"read":{"wall_ms":5000.5,"scan_entities":20000}}`,
+			"a cap it lacks":       `{` + caps + `,"read":{"wall_ms":5000,"scan_entities":20000,"instances":1}}`,
+			"not an object":        `{` + caps + `,"read":5000}`,
+			"a read cap misplaced": `{` + caps + `,"wall_ms":5000}`,
+		} {
+			loose := strings.Replace(string(body), sent, `"limits":`+limits, 1)
+			if err := contracttest.Validate(t, schema, []byte(loose)); err == nil {
+				t.Errorf("%s: ask_request.json accepted %s", name, loose)
+			}
 		}
 	})
 
@@ -119,9 +147,10 @@ const (
 		`{"marker":"c9","evidence_id":"e6","target":{"version":{"tx":"01JDTX0000000000000000000A","at":"2026-10-20T08:30:00.123456Z",` +
 		`"of":{"entity":{"type":"Customer","id":"acme"}}}}},` +
 		`{"marker":"c10","evidence_id":"e6","target":{"version":{"tx":"01JDTX0000000000000000000B","at":"2026-10-20T09:30:00+01:00",` +
-		`"of":{"prop":{"entity":{"type":"Customer","id":"acme"},"prop":"tier"}}}}},` +
+		`"of":{"prop":{"entity":{"type":"Customer","id":"acme"},"prop":"tier"}},"valid":{"from":"2026-03-04T00:00:00Z","day":"2026-03-03"}}}},` +
 		`{"marker":"c11","evidence_id":"e6","target":{"version":{"tx":"01JDTX0000000000000000000C","at":"2026-10-20T08:30:00Z",` +
-		`"of":{"fact":{"link":"party_to","subject":{"type":"Customer","id":"acme"},"object":{"type":"Contract","id":"msa"}}}}}},` +
+		`"of":{"fact":{"link":"party_to","subject":{"type":"Customer","id":"acme"},"object":{"type":"Contract","id":"msa"}}},` +
+		`"valid":{"from":"2026-05-01T06:00:00Z","to":"2026-06-01T06:00:00Z"}}}},` +
 		`{"marker":"c12","evidence_id":"e7","target":{"version":{"tx":"01JDTX0000000000000000000D","at":"2026-10-21T00:00:00Z",` +
 		`"of":{"record":{"constraint":"credit_limit","key":"v1"}}}}}`
 )
@@ -240,7 +269,8 @@ func TestDecodeAskResult(t *testing.T) {
 	// A question that can't be answered says why and what is missing; the
 	// website offers to draft a version with the gap.
 	t.Run("reads cannot_answer's reason and gap", func(t *testing.T) {
-		raw := `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.",` + askQueries + `,` + askUsage + `}`
+		raw := `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.","kind":"undeclared_relation",` +
+			askQueries + `,` + askUsage + `}`
 		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_result.json"), []byte(raw)); err != nil {
 			t.Fatalf("the fixture does not match ask_result.json: %v", err)
 		}
@@ -447,6 +477,10 @@ func TestDecodeAskResult(t *testing.T) {
 			"of a violation":        version(tx, at, `"of":{"violation":{"constraint":"c","key":"k"}}`),
 			"of a prop by its name": version(tx, at, `"of":{"prop":{"entity":{"type":"C","id":"c"}}}`),
 			"of a fact half":        version(tx, at, `"of":{"fact":{"link":"l","subject":{"type":"C","id":"c"}}}`),
+			// Contract 4.7.0's valid time takes from, and to and day, nothing else:
+			// a decoder of 4.6.0's schema refuses any version that has one.
+			"valid with no from":      version(tx, at, entity+`,"valid":{"to":"2026-06-01T06:00:00Z"}`),
+			"valid with another time": version(tx, at, entity+`,"valid":{"from":"2026-05-01T06:00:00Z","until":"2026-06-01T06:00:00Z"}`),
 		} {
 			if err := contracttest.Validate(t, schema, []byte(raw)); err == nil {
 				t.Errorf("%s: ask_result.json accepted %s", name, raw)

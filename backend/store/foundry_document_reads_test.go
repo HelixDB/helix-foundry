@@ -315,12 +315,12 @@ func TestFoundryTableFilesInLoads(t *testing.T) {
 		f := newFoundryFixture(t, "TL3")
 		md := f.uploaded(t, "md")
 		f.uploadedAs(t, "csv", model.FoundryMediaCSV)
-		docs, _, err := f.db.ListFoundryOntologyDocuments(ctx, f.ontology.WorkspaceID, "", []string{generalSetID(f.ontology.ID)},
+		docs, _, err := f.db.ListFoundryOntologyDocuments(ctx, f.ontology.WorkspaceID, "", []string{generalSetID(f.ontology.ID)}, nil,
 			model.FoundryDocumentFilterWaiting, "", 10)
 		require.NoError(t, err)
 		require.Len(t, docs, 1)
 		assert.Equal(t, md, docs[0].ID)
-		all, _, err := f.db.ListFoundryOntologyDocuments(ctx, f.ontology.WorkspaceID, "", []string{generalSetID(f.ontology.ID)},
+		all, _, err := f.db.ListFoundryOntologyDocuments(ctx, f.ontology.WorkspaceID, "", []string{generalSetID(f.ontology.ID)}, nil,
 			model.FoundryDocumentFilterAll, "", 10)
 		require.NoError(t, err)
 		assert.Len(t, all, 2, "the ontology still lists it")

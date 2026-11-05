@@ -80,8 +80,35 @@ func TestBakedFoundryConfig(t *testing.T) {
 	if got := f.Foundry.Ask.MaxWallSecs; got != foundryconfig.AskWallSecsLimit-1 {
 		t.Fatalf("foundry.ask.max_wall_secs = %d", got)
 	}
+	// Its reads may each take 30 s and 100,000 matches, past the agent's own
+	// caps, and no Helix request of one ends first.
+	if a := f.Foundry.Ask; a.ReadWallMS != 30_000 || a.ReadScanEntities != 100_000 || a.HelixTimeoutSecs*1000 < a.ReadWallMS ||
+		a.ReadWallMS <= defaults.Foundry.Ask.ReadWallMS || a.ReadScanEntities <= defaults.Foundry.Ask.ReadScanEntities {
+		t.Fatalf("foundry.ask read_wall_ms %d, read_scan_entities %d, helix_timeout_secs %d", a.ReadWallMS, a.ReadScanEntities, a.HelixTimeoutSecs)
+	}
 	if o := f.Foundry.Ontology; o.Agent.Limits.MaxWallSecs != 2400 || o.Timeout != 40*time.Minute+foundryconfig.AgentAttemptMargin {
 		t.Fatalf("foundry.ontology timeout %s, agent.limits %+v", o.Timeout, o.Agent.Limits)
+	}
+}
+
+// An install raises or lowers its questions' read caps with HELIX_
+// variables, as local/README.md says; one past the question's own wall time
+// stops the install before it starts.
+func TestAskReadCapsFromEnvironment(t *testing.T) {
+	secrets(t)
+	t.Setenv("HELIX_FOUNDRY__ASK__READ_WALL_MS", "60000")
+	t.Setenv("HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES", "200000")
+	t.Setenv("HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS", "60")
+	cfg, err := load("foundry.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := cfg.Foundry.Ask; a.ReadWallMS != 60_000 || a.ReadScanEntities != 200_000 || a.HelixTimeoutSecs != 60 {
+		t.Fatalf("foundry.ask read_wall_ms %d, read_scan_entities %d, helix_timeout_secs %d", a.ReadWallMS, a.ReadScanEntities, a.HelixTimeoutSecs)
+	}
+	t.Setenv("HELIX_FOUNDRY__ASK__READ_WALL_MS", "300000")
+	if _, err := load("foundry.yaml"); err == nil || !strings.Contains(err.Error(), "foundry.ask.read_wall_ms (300000) must be at most max_wall_secs (299s)") {
+		t.Fatalf("load = %v", err)
 	}
 }
 
@@ -188,6 +215,8 @@ func TestValidate(t *testing.T) {
 		"a helix query":      {func(c *Config) { c.Local.HelixURL = "http://helix:8080?x=1" }, "local.helix_url must be"},
 		"a helix user":       {func(c *Config) { c.Local.HelixURL = "http://u:p@helix:8080" }, "local.helix_url must be"},
 		"a helix fragment":   {func(c *Config) { c.Local.HelixURL = "http://helix:8080#x" }, "local.helix_url must be"},
+		"no site origin":     {func(c *Config) { c.Local.SiteOrigin = "" }, "local.site_origin must be"},
+		"a site path":        {func(c *Config) { c.Local.SiteOrigin = "http://localhost:3000/app" }, "local.site_origin must be"},
 		"another scheme":     {func(c *Config) { c.Local.HelixURL = "ftp://helix" }, "local.helix_url must be"},
 		"no store":           {func(c *Config) { c.Local.S3.Endpoint = "localhost:8333" }, "local.s3.endpoint must be"},
 		"no store key":       {func(c *Config) { c.Local.S3.AccessKeyID = "" }, "local.s3.access_key_id and"},

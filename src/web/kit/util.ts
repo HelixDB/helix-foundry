@@ -71,8 +71,10 @@ export function calendarDate(year: number, month: number, day = 1) {
   d.setFullYear(year, month - 1, day);
   return d;
 }
-export function formatDate(value: unknown, withTime = true) {
-  // "2026-09-16" is a calendar day: read it as local midnight, not UTC.
+// A time in the viewer's zone, or in UTC, named, with timeZone "UTC".
+export function formatDate(value: unknown, withTime = true, timeZone?: "UTC") {
+  // "2026-09-16" is a calendar day: read it as local midnight, not UTC, and
+  // show it as that day in any zone.
   const day =
     typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
       ? value.split("-").map(Number)
@@ -81,6 +83,8 @@ export function formatDate(value: unknown, withTime = true) {
     ? calendarDate(day[0], day[1], day[2])
     : new Date(value as string);
   if (Number.isNaN(d.getTime())) return String(value);
+  const zone =
+    timeZone && !day ? { timeZone, timeZoneName: "short" as const } : {};
   return withTime
     ? d.toLocaleString(undefined, {
         year: "numeric",
@@ -88,11 +92,13 @@ export function formatDate(value: unknown, withTime = true) {
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
+        ...zone,
       })
     : d.toLocaleDateString(undefined, {
         year: "numeric",
         month: "short",
         day: "numeric",
+        ...zone,
       });
 }
 export function formatRelative(

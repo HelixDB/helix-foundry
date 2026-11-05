@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 
 	foundrymodel "github.com/helixdb/helix-foundry/backend/store/model"
@@ -45,7 +46,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	if !load.Status.Servable() {
 		return nil, status.Error(codes.FailedPrecondition, "the load is not ready")
 	}
-	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop"})
+	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop", "values"})
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +107,19 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 		d.Kind = foundrymodel.FoundryReviewProp
 		d.EntityKey = &entity
 		d.Prop = &prop
+		// The engine's PropQuote records, each naming the document it quotes:
+		// what the value chosen came from, so a grantee covers it only by
+		// covering them. Unreadable quotes record none, and leave the decision
+		// covered by no one.
+		var quotes []struct {
+			DocID string `json:"doc_id"`
+		}
+		_ = json.Unmarshal([]byte(text("values")), &quotes)
+		for _, q := range quotes {
+			if q.DocID != "" && !slices.Contains(d.DocumentIDs, q.DocID) {
+				d.DocumentIDs = append(d.DocumentIDs, q.DocID)
+			}
+		}
 		propType, ok := ty.Props[prop]
 		if !ok {
 			return nil, status.Error(codes.FailedPrecondition, "the property is not in the loaded version")

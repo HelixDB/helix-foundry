@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Database, FileText, Shapes } from "lucide-react";
+import { Database, FileText, Shapes, Sparkles } from "lucide-react";
 import {
   Button,
   ButtonLink,
@@ -15,8 +15,10 @@ import {
   formatRelative,
   plural,
 } from "../../kit";
+import type { OntologyVersion } from "../../../shared/wfe";
 import { paths } from "../../paths";
 import { RefreshFailed, useWorkspace } from "../../ui";
+import { PartNote } from "../explore/part-note";
 import { liveRead } from "../documents/model";
 import { projectsQuery } from "./databases-api";
 import { formatLabel, versionFormat } from "./format";
@@ -24,8 +26,10 @@ import { GraphView } from "./graph";
 import {
   agentGraph,
   foundryGraph,
+  loadVersion,
   readAgentBundle,
   readFoundry,
+  type Graph,
 } from "./model";
 import {
   ArrivalNotes,
@@ -53,9 +57,96 @@ import { VersionsSection } from "./versions";
 // documents it reads (the workspace's, in its version's sets). Below the
 // graph, its schema versions (#versions, ./versions.tsx) and data loads
 // (#loads, ./loads.tsx), each once it has one; ?new-load=1 opens the Load
-// dialog.
+// dialog. A grantee (restricted to what source grants give) sees only the
+// schema its shared load holds (SharedOntologyHome).
 
 export function OntologyHome() {
+  return useWorkspace().grantee ? <SharedOntologyHome /> : <OntologyOverview />;
+}
+
+/** A version's graph, in either format. */
+const graphOf = (v: OntologyVersion): Graph =>
+  versionFormat(v) === "agent_bundle"
+    ? agentGraph(readAgentBundle(v.definition))
+    : foundryGraph(readFoundry(v.definition));
+
+/**
+ * A grantee's overview: the types and links of the version its shared load
+ * holds, read only, and Ask. The ontology's database, versions, loads and
+ * setup aren't the grantee's to see (the WFE leaves them out).
+ */
+function SharedOntologyHome() {
+  const { id } = useWorkspace(),
+    { id: o, ontology } = useOntology();
+  // The one load a grantee reads: the current one its grants cover.
+  const loads = useQuery(ontologyQueries.loads(id, o)),
+    load = loads.data?.loads?.[0];
+  const version = useQuery({
+    ...ontologyQueries.version(id, o, load?.versionId || ""),
+    enabled: !!load?.versionId,
+  });
+  const sources = useSources();
+  const v = version.data?.version;
+  const graph = useMemo(() => v && graphOf(v), [v]);
+  const failed = loads.error || version.error;
+  return (
+    <Page width="wide">
+      <PageHeader
+        breadcrumbs={[{ label: "Ontologies", to: paths.ontologies() }]}
+        title={ontologyName(ontology)}
+        subtitle="Shared with you: the types and links its current load holds."
+        meta={
+          ontology.currentLoad && (
+            <span
+              title={
+                ontology.currentLoad.finishedAt
+                  ? formatDate(ontology.currentLoad.finishedAt)
+                  : undefined
+              }
+            >
+              Load {loadVersion(ontology.currentLoad)}
+              {ontology.currentLoad.finishedAt &&
+                `, ${formatRelative(ontology.currentLoad.finishedAt)}`}
+            </span>
+          )
+        }
+        actions={
+          <ButtonLink variant="primary" icon={Sparkles} to={paths.ask(o)}>
+            Ask
+          </ButtonLink>
+        }
+      />
+      <PartNote />
+      {graph && v ? (
+        <GraphView
+          graph={graph}
+          sources={sources}
+          versionId={v.id}
+          tab={versionFormat(v) === "agent_bundle" ? "types" : "entities"}
+        />
+      ) : failed ? (
+        <EmptyState
+          icon={Shapes}
+          title="Couldn’t load the ontology"
+          text={failed.message}
+          action={
+            <Button
+              onClick={() =>
+                void (loads.error ? loads.refetch() : version.refetch())
+              }
+            >
+              Retry
+            </Button>
+          }
+        />
+      ) : (
+        <SkeletonText lines={6} />
+      )}
+    </Page>
+  );
+}
+
+function OntologyOverview() {
   const { id } = useWorkspace(),
     { id: o, ontology } = useOntology(),
     { hash } = useLocation(),
@@ -89,12 +180,7 @@ export function OntologyHome() {
     enabled: !!v?.generationId,
   });
   const sources = useSources(generation.data?.generation?.tables);
-  const graph = useMemo(() => {
-    if (!v) return undefined;
-    return versionFormat(v) === "agent_bundle"
-      ? agentGraph(readAgentBundle(v.definition))
-      : foundryGraph(readFoundry(v.definition));
-  }, [v]);
+  const graph = useMemo(() => v && graphOf(v), [v]);
   const list = versions.data?.versions || [];
   // #versions and #loads name sections that show once their lists and the
   // graph above them are in: scroll to them then.

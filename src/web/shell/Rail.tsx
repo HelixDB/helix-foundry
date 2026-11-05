@@ -5,7 +5,7 @@ import { useWorkspace, type ShellUser, type ShellWorkspace } from "../ui";
 import { AccountMenu } from "../areas/workspace/account-menu";
 import { WorkspaceSwitcher } from "../areas/workspace/switcher";
 import { useShell } from "./context";
-import { activeSection, onboardingNav, primaryNav } from "./nav";
+import { activeSection, granteeNav, onboardingNav, primaryNav } from "./nav";
 import { ariaShortcut, shortcut } from "./shortcut";
 import { SettingsLink } from "./Sidebar";
 
@@ -28,7 +28,8 @@ function HelixMark() {
  * Sidebar.tsx). The mark, search and the drawer's close button, which every
  * link presses too, a link per section, then the workspace, the account and
  * settings. While the workspace is onboarding it holds only the mark, the
- * way back to the onboarding, the workspace and the account.
+ * way back to the onboarding, the workspace and the account; for a grantee,
+ * no search or settings, and only Analyst, Ontologies and the Explorer.
  */
 export function Rail({
   workspaces,
@@ -44,7 +45,7 @@ export function Rail({
   onClose: () => void;
 }) {
   const shell = useShell(),
-    { onboarding } = useWorkspace(),
+    { onboarding, grantee } = useWorkspace(),
     section = activeSection(useLocation().pathname);
   return (
     <div className="hf-rail">
@@ -67,7 +68,7 @@ export function Rail({
       >
         <X size={18} aria-hidden />
       </button>
-      {!onboarding && (
+      {!onboarding && !grantee && (
         <button
           type="button"
           className="hf-btn hf-btn--ghost hf-btn--md hf-btn--icon hf-search-button"
@@ -81,23 +82,25 @@ export function Rail({
       )}
       <nav aria-label="Main navigation" className="hf-rail-nav">
         <ul className="hf-rail-list" aria-label="Workspace">
-          {(onboarding ? onboardingNav : primaryNav).map((n) => {
-            const active = section === n.id;
-            return (
-              <li key={n.id}>
-                <Link
-                  to={n.to}
-                  onClick={onClose}
-                  className={cx("hf-rail-link", active && "is-active")}
-                  aria-label={n.label}
-                  title={n.label}
-                  aria-current={active ? "page" : undefined}
-                >
-                  <n.icon size={18} aria-hidden />
-                </Link>
-              </li>
-            );
-          })}
+          {(onboarding ? onboardingNav : grantee ? granteeNav : primaryNav).map(
+            (n) => {
+              const active = section === n.id;
+              return (
+                <li key={n.id}>
+                  <Link
+                    to={n.to}
+                    onClick={onClose}
+                    className={cx("hf-rail-link", active && "is-active")}
+                    aria-label={n.label}
+                    title={n.label}
+                    aria-current={active ? "page" : undefined}
+                  >
+                    <n.icon size={18} aria-hidden />
+                  </Link>
+                </li>
+              );
+            },
+          )}
         </ul>
       </nav>
       <div className="hf-rail-foot">
@@ -107,7 +110,7 @@ export function Rail({
           onSwitch={onSwitch}
         />
         <AccountMenu user={user} current={current} collapsed />
-        {!onboarding && <SettingsLink />}
+        {!onboarding && !grantee && <SettingsLink />}
       </div>
     </div>
   );

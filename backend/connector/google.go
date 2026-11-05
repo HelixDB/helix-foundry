@@ -189,8 +189,13 @@ func parseGoogleKey(secret string) (key googleKey, ok bool) {
 	return key, err == nil
 }
 
+var _ Identifier = (*googleKind)(nil)
+
+// Prepare checks a service account's key and the user it acts as. A
+// signed-in source reads as the user who signed in: it takes no key of
+// ours to check, and no user to act as.
 func (k *googleKind) Prepare(src Source) (json.RawMessage, error) {
-	if _, ok := parseGoogleKey(src.Secret); !ok {
+	if _, ok := parseGoogleKey(src.Secret); !ok && !src.SignIn {
 		return nil, invalid("paste the service account's JSON key")
 	}
 	var s GoogleSettings
@@ -200,8 +205,14 @@ func (k *googleKind) Prepare(src Source) (json.RawMessage, error) {
 		return nil, invalid("this connector takes only its key, the user it acts as and how many days of past events to keep")
 	}
 	s.Subject = strings.ToLower(strings.TrimSpace(s.Subject))
-	if address, err := mail.ParseAddress(s.Subject); err != nil || address.Address != s.Subject || strings.Count(s.Subject, "@") != 1 {
-		return nil, invalid("enter the email of the Workspace user Foundry acts as")
+	switch {
+	case src.SignIn && s.Subject != "":
+		return nil, invalid("a signed-in Google Workspace connector reads as the user who signed in, and acts as no other")
+	case src.SignIn:
+	default:
+		if address, err := mail.ParseAddress(s.Subject); err != nil || address.Address != s.Subject || strings.Count(s.Subject, "@") != 1 {
+			return nil, invalid("enter the email of the Workspace user Foundry acts as")
+		}
 	}
 	switch {
 	case s.EventDays == 0:
@@ -253,7 +264,10 @@ func (k *googleKind) Discover(ctx context.Context, src Source) (Discovery, error
 		return Discovery{}, err
 	}
 	d := saasDiscovery(googleObjects, func(name string) bool { return readable[googleAPIOf[name].name] }, googleForeignKeys)
-	if len(d.Tables) == 0 {
+	switch {
+	case len(d.Tables) == 0 && c.signIn:
+		return Discovery{}, refused(nil, "this sign-in cannot read Drive, Calendar or the Directory; sign it in again, allowing them")
+	case len(d.Tables) == 0:
 		return Discovery{}, refused(nil, "the service account cannot read Drive, Calendar or the Directory as %s; "+
 			"check its domain-wide delegation and test again", c.settings.Subject)
 	}
@@ -268,6 +282,36 @@ func (k *googleKind) Discover(ctx context.Context, src Source) (Discovery, error
 		d.Tables[i].Windowed = WindowedTable("google", t.Name)
 	}
 	return d, nil
+}
+
+// Identity is the email of the user the credential reads as, from Drive's
+// about; its id is the user's Drive permission id, else the email.
+func (k *googleKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	c, err := k.client(src)
+	if err != nil {
+		return "", "", err
+	}
+	const about = "/drive/v3/about?fields=user"
+	status, body, err := c.get(ctx, c.k.http, googleDrive, about)
+	if err == nil {
+		err = c.status(status, body, googleDrive, about)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	var reply struct {
+		User struct {
+			EmailAddress string `json:"emailAddress"`
+			PermissionID string `json:"permissionId"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(body, &reply); err != nil {
+		return "", "", fmt.Errorf("decode google drive about: %w", err)
+	}
+	if reply.User.EmailAddress == "" {
+		return "", "", errors.New("google drive about names no user")
+	}
+	return reply.User.EmailAddress, cmp.Or(reply.User.PermissionID, reply.User.EmailAddress), nil
 }
 
 // Hint is the key's service account and the last four characters of its
@@ -323,12 +367,16 @@ func (k *googleKind) SyncPass(ctx context.Context, src Source, tables []Table, r
 }
 
 // googleClient is one read's requests as the settings' user, paced together
-// under one limit, with a token per API's scope.
+// under one limit, with a token per API's scope; or, signed in, as the user
+// who signed in, with the token the broker vended for every API.
 type googleClient struct {
 	k        *googleKind
 	settings GoogleSettings
 	tokens   map[string]*googleToken // by scope
-	pace     *rate.Limiter
+	// signIn is a signed-in source's client, and vended its token.
+	signIn bool
+	vended string
+	pace   *rate.Limiter
 	// exports is the kind's HTTP client with googleExportTimeout.
 	exports *http.Client
 }
@@ -343,22 +391,27 @@ type googleToken struct {
 
 // client reads the prepared settings and the key. A subject is required:
 // without one the assertion names no user, and the service account would
-// read as itself.
+// read as itself. A signed-in source has neither key nor subject: its
+// vended token reads as the user who signed in.
 func (k *googleKind) client(src Source) (*googleClient, error) {
-	key, ok := parseGoogleKey(src.Secret)
-	if !ok {
-		return nil, invalid("paste the service account's JSON key")
-	}
 	var s GoogleSettings
 	if err := json.Unmarshal(src.Settings, &s); err != nil {
 		return nil, invalid("Google Workspace settings are malformed")
 	}
-	if s.Subject == "" {
-		return nil, invalid("enter the email of the Workspace user Foundry acts as")
-	}
 	exports := *k.http
 	exports.Timeout = googleExportTimeout
 	c := &googleClient{k: k, settings: s, tokens: map[string]*googleToken{}, pace: rate.NewLimiter(rate.Every(googleInterval), 1), exports: &exports}
+	if src.SignIn {
+		c.signIn, c.vended = true, strings.TrimSpace(src.Secret)
+		return c, nil
+	}
+	key, ok := parseGoogleKey(src.Secret)
+	if !ok {
+		return nil, invalid("paste the service account's JSON key")
+	}
+	if s.Subject == "" {
+		return nil, invalid("enter the email of the Workspace user Foundry acts as")
+	}
 	for _, api := range googleAPIOf {
 		c.tokens[api.scope] = &googleToken{config: &jwt.Config{Email: key.ClientEmail, PrivateKey: []byte(key.PrivateKey),
 			PrivateKeyID: key.PrivateKeyID, Scopes: []string{api.scope}, TokenURL: k.tokenURL, Subject: s.Subject}}
@@ -372,6 +425,13 @@ func (k *googleKind) client(src Source) (*googleClient, error) {
 // retries. A scope the admin didn't delegate is unreadable; a user Google
 // doesn't know, or a key it doesn't, is refused.
 func (c *googleClient) token(ctx context.Context, api googleAPI, rejected string) (string, error) {
+	if c.signIn {
+		// No API takes an empty token: the broker's is rejected.
+		if c.vended == "" {
+			return "", rejectedCredential("Google", nil, "Google rejected the access this connector signed in with; sign it in again")
+		}
+		return c.vended, nil
+	}
 	t := c.tokens[api.scope]
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -469,7 +529,8 @@ func (c *googleClient) get(ctx context.Context, hc *http.Client, api googleAPI, 
 		limited := status == http.StatusTooManyRequests ||
 			status == http.StatusForbidden && slices.ContainsFunc(reasons, func(r string) bool { return slices.Contains(googleLimits, r) })
 		switch {
-		case status == http.StatusUnauthorized && rejected == "" && attempt < maxRetries:
+		// A vended token is the only one: the broker renews it, not this read.
+		case status == http.StatusUnauthorized && rejected == "" && attempt < maxRetries && !c.signIn:
 			rejected = token
 			continue
 		case (limited || status >= 500) && attempt < maxRetries:
@@ -484,10 +545,36 @@ func (c *googleClient) get(ctx context.Context, hc *http.Client, api googleAPI, 
 			if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
 				when = "after " + time.Now().Add(time.Duration(seconds)*time.Second).UTC().Format("15:04 UTC")
 			}
-			return 0, nil, refused(nil, "this service account has used up its Google rate limit; try again %s", when)
+			return 0, nil, refused(nil, "%s has used up its Google rate limit; try again %s", c.credential(), when)
 		}
 		return status, body, nil
 	}
+}
+
+// who is the user the client reads as: the settings' subject, or the user
+// who signed in.
+func (c *googleClient) who() string {
+	if c.signIn {
+		return "the signed-in user"
+	}
+	return c.settings.Subject
+}
+
+// credential is what the client reads with, as its messages name it.
+func (c *googleClient) credential() string {
+	if c.signIn {
+		return "this sign-in"
+	}
+	return "this service account"
+}
+
+// project is the Google Cloud project whose APIs the client reads through:
+// the service account's, or the signed-in app's, which is Helix's.
+func (c *googleClient) project() string {
+	if c.signIn {
+		return "Helix Foundry's Google Cloud project"
+	}
+	return "the service account's Google Cloud project"
 }
 
 // status says what an answer other than a success means for api's target:
@@ -500,16 +587,28 @@ func (c *googleClient) status(status int, body []byte, api googleAPI, target str
 	path, _, _ := strings.Cut(target, "?")
 	reasons, message := googleError(body)
 	switch {
+	case status == http.StatusUnauthorized && c.signIn:
+		return rejectedCredential("Google", nil, "Google rejected the access this connector signed in with; sign it in again")
+	// Only a Workspace admin reads the Directory: a signed-in user who isn't
+	// one, or whose account is no Workspace's, finds its first request
+	// refused. A refusal past the first page is the listing stopping part
+	// way (pages), and any other answer says what it says; an API not
+	// enabled is said as such below.
+	case api == googleDirectory && c.signIn && (status == http.StatusForbidden || status == http.StatusNotFound) &&
+		!strings.Contains(target, "pageToken=") && !slices.ContainsFunc(reasons, func(r string) bool {
+		return slices.Contains(googleLimits, r) || r == "accessNotConfigured" || r == "SERVICE_DISABLED"
+	}):
+		return refused(errUnreadable, "the signed-in user is not a Workspace admin, so the Directory's users can't be read")
 	// The token endpoint took the key, and get tried a new token, so the
 	// key is not the fault.
 	case status == http.StatusUnauthorized:
 		return refused(nil, "Google refused the %s API's access token for %s; try again", api.name, c.settings.Subject)
 	case status == http.StatusForbidden && (slices.Contains(reasons, "accessNotConfigured") || slices.Contains(reasons, "SERVICE_DISABLED")):
-		return refused(errUnreadable, "enable the %s API in the service account's Google Cloud project", api.name)
-	case status == http.StatusForbidden && api == googleDirectory && strings.Contains(message, "Not Authorized to access this resource/api"):
+		return refused(errUnreadable, "enable the %s API in %s", api.name, c.project())
+	case status == http.StatusForbidden && api == googleDirectory && !c.signIn && strings.Contains(message, "Not Authorized to access this resource/api"):
 		return refused(errUnreadable, "%s is not an admin, so the Directory's users can't be read", c.settings.Subject)
 	case status == http.StatusForbidden || status == http.StatusNotFound:
-		return refused(errNoAccess, "this service account cannot read %s as %s; check its access and test again", path, c.settings.Subject)
+		return refused(errNoAccess, "%s cannot read %s as %s; check its access and test again", c.credential(), path, c.who())
 	// Calendar's answer to a sync token it no longer takes.
 	case status == http.StatusGone:
 		return refused(errTokenGone, "Google no longer holds the changes of %s; try again", path)
@@ -561,7 +660,7 @@ func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, qu
 		}
 		if err := c.status(status, body, api, target); err != nil {
 			if page > 0 && errors.Is(err, errNoAccess) {
-				return "", refused(nil, "Google stopped listing %s as %s part way through; try again", path, c.settings.Subject)
+				return "", refused(nil, "Google stopped listing %s as %s part way through; try again", path, c.who())
 			}
 			return "", err
 		}
@@ -581,7 +680,7 @@ func (c *googleClient) pages(ctx context.Context, api googleAPI, path string, qu
 		case err != nil || fields == nil:
 			return "", fmt.Errorf("google %s: the answer is not a complete page of %s", path, field)
 		case incomplete:
-			return "", refused(nil, "Drive searched only part of what %s can read; try again later", c.settings.Subject)
+			return "", refused(nil, "Drive searched only part of what %s can read; try again later", c.who())
 		case next != "" && next == query.Get("pageToken"):
 			return "", fmt.Errorf("google %s: a page gives back the token it was asked with", path)
 		}

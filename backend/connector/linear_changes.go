@@ -50,7 +50,7 @@ func (k *linearKind) Changes(ctx context.Context, src Source, tables []Table, cu
 			w.Reset(t.Name, "the table has no change cursor yet")
 			continue
 		}
-		err := k.read(ctx, src.Secret, t.Name, &since, func(row map[string]any) error { return w.Upsert(t.Name, row) })
+		err := k.read(ctx, src, t.Name, &since, func(row map[string]any) error { return w.Upsert(t.Name, row) })
 		if err != nil {
 			return nil, err
 		}

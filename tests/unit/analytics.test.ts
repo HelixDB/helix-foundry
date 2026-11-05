@@ -321,6 +321,23 @@ describe("trackBeforeLeaving", () => {
     });
   });
 
+  it("names a fixed path in place of a page's that names ids", async () => {
+    const a = await load();
+    vi.stubGlobal("location", {
+      origin: "https://foundry.helix-db.com",
+      pathname: "/data/connections/conn_1",
+    });
+    const beacons = beacon();
+    await a.trackBeforeLeavingAt("/data", "connector_sign_in_started", {
+      kind: "github",
+    });
+    expect(JSON.parse(await beacons[0].body.text())).toMatchObject({
+      name: "connector_sign_in_started",
+      properties: { kind: "github" },
+      path: "https://foundry.helix-db.com/data",
+    });
+  });
+
   it("goes through the tracker when the beacon is refused", async () => {
     const a = await load();
     beacon(false);
@@ -497,6 +514,61 @@ describe("jobs", () => {
       ["question_asked", undefined],
       ["question_asked", undefined],
       ["question_unanswered", { status: "failed" }],
+    ]);
+  });
+
+  it.each([
+    "uncovered",
+    "after_as_of",
+    "undeclared_relation",
+    "undeclared_property",
+    "absent",
+  ])("reports only the known gap kind %s", async (kind) => {
+    const a = await load();
+    a.jobStarted({ job: "question" }, "q_kind");
+    a.jobSeen("question", [
+      {
+        id: "q_kind",
+        status: "cannot_answer",
+        resultJson: JSON.stringify({
+          status: "cannot_answer",
+          kind,
+          reason: "private text",
+          gap: "private gap",
+        }),
+      },
+    ]);
+    expect(sent().at(-1)).toEqual([
+      "question_unanswered",
+      { status: "cannot_answer", kind },
+    ]);
+    a.jobSeen("question", [
+      {
+        id: "q_kind",
+        status: "cannot_answer",
+        resultJson: JSON.stringify({ status: "cannot_answer", kind }),
+      },
+    ]);
+    expect(sent()).toHaveLength(2);
+  });
+
+  it.each([
+    "",
+    "broken",
+    "null",
+    "[]",
+    '{"status":"cannot_answer","kind":"private text"}',
+    '{"status":"answered","kind":"absent"}',
+    '{"status":"cannot_answer","kind":null}',
+  ])("does not send untrusted gap text (%s)", async (resultJson) => {
+    const a = await load();
+    a.jobStarted({ job: "question" }, "q_unknown");
+    a.jobSeen("question", [
+      { id: "q_unknown", status: "cannot_answer", resultJson },
+    ]);
+    expect(sent().at(-1)).toEqual([
+      "question_unanswered",
+      { status: "cannot_answer" },
     ]);
   });
 
@@ -685,6 +757,30 @@ describe("TRACKER", () => {
       trackInteractions: true,
       replay: true,
     });
+  });
+
+  it("loads the SDK's own tracker and recorder, checked by SRI", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-test");
+    vi.resetModules();
+    const { TRACKER } = await import("@/web/telemetry");
+    const { createScript, createReplayScript } =
+      await vi.importActual<typeof import("@databuddy/sdk")>("@databuddy/sdk");
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", {
+      querySelector: () => null,
+      createElement: () => ({ setAttribute: () => {} }),
+    });
+    // Each SDK release pins its scripts' date-versioned URLs and SHA-384
+    // hashes, so a change on Databuddy's CDN can't run here; a `scriptUrl`
+    // in TRACKER would load bytes nothing checks.
+    for (const script of [createScript(TRACKER), createReplayScript(TRACKER)])
+      expect(script).toMatchObject({
+        src: expect.stringMatching(
+          /^https:\/\/cdn\.databuddy\.cc\/(databuddy|replay)\.\d{4}-\d{2}-\d{2}\.\d+\.js$/,
+        ),
+        integrity: expect.stringMatching(/^sha384-[A-Za-z0-9+/]{64}$/),
+        crossOrigin: "anonymous",
+      });
   });
 });
 

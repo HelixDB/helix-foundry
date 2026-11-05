@@ -49,6 +49,7 @@ import {
   sweepViolations,
 } from "../graph/rules";
 import { scopeFor } from "../graph/scope";
+import { viewOf, type View } from "../graph/view";
 import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
 import { aiModel } from "./ai";
@@ -158,8 +159,16 @@ type Knobs = {
   documentAdjudicated?: boolean;
   deleteOutcome?: "succeed" | "fail";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
+  // The next n reads find every read slot taken.
+  readsBusy?: number;
+  // Reads are refused as a database whose queries are paused, in these words.
+  readsPaused?: string;
   // ./ontologies.ts: the caller can't read the ontology's database.
   ontologyDatabaseHidden?: boolean;
+  // How many customers only Stripe's invoices table states: a load written
+  // with it set bills them, and its version's invoices mapping creates them
+  // (`missing = "create"`), so Customer has two sources.
+  invoiceOnlyCustomers?: number;
 };
 const knobs = config as typeof config & Knobs;
 /**
@@ -300,6 +309,9 @@ onReset(() => {
   delete knobs.documentAdjudicated;
   delete knobs.deleteOutcome;
   delete knobs.readErrors;
+  delete knobs.readsBusy;
+  delete knobs.readsPaused;
+  delete knobs.invoiceOnlyCustomers;
 });
 
 const live = (j: StoredJob) => j.status === "queued" || j.status === "running";
@@ -340,6 +352,25 @@ export const currentLoadId = (ontologyId: string) =>
 /** The version of an ontology's current load, if it has one. */
 export const currentLoadVersionId = (ontologyId: string) =>
   loadById(currentLoadId(ontologyId) || "")?.versionId;
+
+/**
+ * For ./access.ts: an ontology's current load when it can be read (ready or
+ * partial), and whether it applied People enrichment's profiles: every load
+ * of a version that enriches has a step.
+ */
+export function servableLoad(ontologyId: string) {
+  advanceLoads(ontologyId);
+  const l = loadById(currentLoadId(ontologyId) || "");
+  return l && (l.status === "ready" || l.status === "partial")
+    ? { loadId: l.id, versionId: l.versionId, enrichment: !!l.enrichment }
+    : undefined;
+}
+
+/** The properties a load's decisions settled, by type. */
+export const loadPropDecisions = (loadId: string) =>
+  (loadById(loadId)?.decisions || []).flatMap((d) =>
+    d.kind === "prop" ? [{ type: d.type, prop: d.prop }] : [],
+  );
 
 /** The ontology's live job, of any kind. */
 export const liveJob = (ontologyId: string) => {
@@ -429,9 +460,26 @@ function ontologyOfVersion(def: Definition): ExtractOntology & {
   };
 }
 
+/**
+ * The customers only the invoices table states, as the `invoiceOnlyCustomers`
+ * knob asks, each with an invoice billing it. Their ids sort before the
+ * customers table's, so they come first in a read of Customer.
+ */
+const invoiceOnlyRows = (n: number) =>
+  Array.from({ length: n }, (_, i) => {
+    const no = String(i + 1).padStart(4, "0");
+    return { customer: `cus_0${no}`, invoice: `in_0${no}` };
+  });
+
 function ingest(j: StoredJob) {
   const def = (ontologyVersion(j.ontologyId, j.versionId)?.definition ||
     {}) as Definition;
+  const extra = invoiceOnlyRows(knobs.invoiceOnlyCustomers || 0);
+  if (extra.length)
+    def.mappings_toml = String(def.mappings_toml || "").replace(
+      /(\[mappings\.invoices\.bind\.customer\][^[]*missing = )"report"/,
+      '$1"create"',
+    );
   const mappings = String(def.mappings_toml || "");
   const { names, identifiers } = ontologyOfVersion(def);
   const stripe = workspaceConnectors(j.workspaceId).find(
@@ -476,17 +524,28 @@ function ingest(j: StoredJob) {
       })),
     );
   if (bills)
-    chunk(
-      bills,
-      "invoices",
-      invoices.map(([key, customer, amount, status]) => ({
+    chunk(bills, "invoices", [
+      ...extra.map(({ customer }) => ({
+        type: "Customer",
+        key: customer,
+        name: customer,
+        props: { customer_id: customer },
+      })),
+      ...invoices.map(([key, customer, amount, status]) => ({
         type: "Invoice",
         key,
         name: key,
         props: { invoice_id: key, amount_due: amount, status },
         links: [{ link: "billed_to", toType: "Customer", toKey: customer }],
       })),
-    );
+      ...extra.map(({ customer, invoice }) => ({
+        type: "Invoice",
+        key: invoice,
+        name: invoice,
+        props: { invoice_id: invoice, amount_due: 1000, status: "open" },
+        links: [{ link: "billed_to", toType: "Customer", toKey: customer }],
+      })),
+    ]);
   // public.people, through the mapping that reads it: each binding's
   // entities, the ends of its links first.
   const m = peopleMapping(mappings),
@@ -1141,12 +1200,13 @@ function chain(ontologyId: string, at: number) {
 /** The model of a load's version's rules over what the load holds. */
 function rulesOf(
   l: Pick<StoredLoad, "ontologyId" | "versionId" | "tenantId" | "id">,
+  view?: View,
 ) {
   const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
     {}) as Definition;
   return evaluate(
     tenantGraph(l.tenantId).view(l.id),
-    compile(String(def.ontology_toml || "")),
+    compile(view ? view.ontologyToml : String(def.ontology_toml || "")),
   );
 }
 
@@ -1506,6 +1566,20 @@ const toLoad = (l: StoredLoad): FoundryLoad => {
   };
 };
 
+/**
+ * The load a grantee reads, as it may see it: which version it holds and
+ * when it was written, without its jobs, their spend or its People
+ * enrichment step.
+ */
+const granteeLoad = (l: StoredLoad): FoundryLoad => ({
+  ...toLoad(l),
+  current: true,
+  jobs: [],
+  jobCount: 0,
+  usdMicros: "0",
+  enrichment: null,
+});
+
 const BASE =
   "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/loads" as const;
 
@@ -1605,8 +1679,13 @@ export const loadRoutes: MockRoute[] = [
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
       advanceLoads(s.o.id);
+      const granted = req.grantee?.load?.loadId;
       return ok({
-        loads: loadsOf(s.o.id).map(toLoad),
+        loads: granted
+          ? loadsOf(s.o.id)
+              .filter((l) => l.id === granted)
+              .map(granteeLoad)
+          : loadsOf(s.o.id).map(toLoad),
       } satisfies ListLoadsResponse);
     },
   },
@@ -1617,10 +1696,13 @@ export const loadRoutes: MockRoute[] = [
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
       advanceLoads(s.o.id);
+      const granted = req.grantee?.load?.loadId;
       const l = loadsOf(s.o.id).find((x) => x.id === req.params.id);
-      return l
-        ? ok({ load: toLoad(l) } satisfies LoadResponse)
-        : fail("NOT_FOUND", "load not found");
+      if (!l || (granted && l.id !== granted))
+        return fail("NOT_FOUND", "load not found");
+      return ok({
+        load: granted ? granteeLoad(l) : toLoad(l),
+      } satisfies LoadResponse);
     },
   },
   {
@@ -1662,8 +1744,11 @@ export const loadRoutes: MockRoute[] = [
     handle: (req) => {
       const s = ontologyOf(req);
       if (!isScope(s)) return s;
-      if (knobs.ontologyDatabaseHidden)
+      // A grantee reads its granted load whatever the database's project.
+      if (knobs.ontologyDatabaseHidden && !req.grantee)
         return fail("PERMISSION_DENIED", "permission denied");
+      if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
+        return fail("NOT_FOUND", "load not found");
       const reads = readsOf(
         (req.body as Partial<ReadFoundryGraphRequest> | undefined)?.readsJson,
       );
@@ -1673,12 +1758,35 @@ export const loadRoutes: MockRoute[] = [
       if (!l) return fail("NOT_FOUND", "load not found");
       if (l.status === "deleting" || l.status === "delete_failed")
         return fail("FAILED_PRECONDITION", "the load is being deleted");
-      const model = rulesOf(l);
+      if (knobs.readsBusy) {
+        knobs.readsBusy -= 1;
+        return fail(
+          "RESOURCE_EXHAUSTED",
+          "the workspace already runs 4 graph reads; try again when one ends",
+        );
+      }
+      if (knobs.readsPaused)
+        return fail("FAILED_PRECONDITION", knobs.readsPaused);
+      // A database still starting reaches the WFE only as a failed read.
+      if (startingRefuses(l.tenantId))
+        return fail("UNAVAILABLE", "the graph reader failed; try again");
+      // Of a load it holds only some of, a grantee reads what its sources
+      // fill (../graph/view.ts).
+      const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
+        {}) as Definition;
+      const view = req.grantee?.load?.partial
+        ? viewOf(
+            req.grantee.visibility(s.o.id),
+            String(def.ontology_toml || ""),
+            String(def.mappings_toml || ""),
+          )
+        : undefined;
+      const model = rulesOf(l, view);
       return ok({
         resultJson: JSON.stringify({
           as_of: now().slice(0, 10),
           results: reads.map((r) =>
-            answer(model, r, { errors: knobs.readErrors }),
+            answer(model, r, { errors: knobs.readErrors, view }),
           ),
           stats: { instances: model.facts.size, wall_ms: 1 },
         }),

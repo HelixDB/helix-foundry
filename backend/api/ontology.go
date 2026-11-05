@@ -14,10 +14,12 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/connector"
 	"github.com/helixdb/helix-foundry/backend/ontology"
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
+	foundryreadv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundryread/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
@@ -85,6 +87,10 @@ func (s *Service) GetOntologyVersion(ctx context.Context, req *foundryv1.GetOnto
 	if err != nil {
 		return nil, err
 	}
+	granted, grantee := granteeLoad(ctx)
+	if grantee && req.GetId() != granted.VersionID {
+		return nil, status.Error(codes.NotFound, "ontology version not found")
+	}
 	v, err := s.loadOntologyVersion(ctx, o.ID, req.GetId())
 	if err != nil {
 		return nil, err
@@ -93,7 +99,72 @@ func (s *Service) GetOntologyVersion(ctx context.Context, req *foundryv1.GetOnto
 	if err != nil {
 		return nil, err
 	}
-	return ontologyResponse(v, o.CurrentVersionID != nil && v.ID == *o.CurrentVersionID, loadEvidence(ctx, o), scope)
+	resp, err := ontologyResponse(v, o.CurrentVersionID != nil && v.ID == *o.CurrentVersionID, loadEvidence(ctx, o), scope)
+	if err == nil && grantee {
+		// A draft's cards measured what its generation read, and its
+		// rationale says how; a grantee reads only the load.
+		resp.Version.EvidenceWithheld = withoutCards(resp.Version.Definition) || resp.Version.EvidenceWithheld
+		fields := resp.Version.GetDefinition().GetFields()
+		// What drafting it cost and found, in its agent's words, is no grantee's.
+		delete(fields, "summary")
+		delete(fields, "usage")
+		delete(fields, "rules")
+		delete(fields, "parent_version_id")
+		items := fields["draft"].GetStructValue().GetFields()["draft"].GetStructValue().GetFields()["items"].GetStructValue().GetFields()
+		for _, item := range items {
+			delete(item.GetStructValue().GetFields(), "rationale")
+		}
+		if granted.Partial {
+			err = s.projectVersion(ctx, o, granted, v, resp.Version)
+		}
+	}
+	return resp, err
+}
+
+// projectVersion narrows a version to what a grantee who holds only some of its
+// load's sources may see: its two files as the agent projects them, with its
+// format and status and nothing else, the draft and questions and the sets it
+// reads saying what the rest of its sources are.
+func (s *Service) projectVersion(ctx context.Context, o *foundrymodel.FoundryOntology, granted foundrymodel.FoundryLoadInputs,
+	v *foundrymodel.OntologyVersion, out *foundryv1.OntologyVersion) error {
+	if s.deps.FoundryRead == nil {
+		return status.Error(codes.Unavailable, "graph reads are not available here")
+	}
+	var def ontologyagent.Definition
+	if err := json.Unmarshal(v.Definition, &def); err != nil || v.Format != foundrymodel.OntologyFormatAgentBundle {
+		return status.Errorf(codes.Internal, "the load's version %s is not an ontology agent draft", v.ID)
+	}
+	g, _ := access.GranteeFrom(ctx)
+	visibility, err := s.granteeVisibility(ctx, g, granted.LoadID)
+	if err != nil {
+		return err
+	}
+	load, err := s.deps.DB.GetFoundryLoad(ctx, o.ID, granted.LoadID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "get load: %v", err)
+	}
+	read, err := s.deps.FoundryRead.Read(ctx, &foundryreadv1.ReadRequest{
+		WorkspaceId: o.WorkspaceID, OntologyId: o.ID, LoadId: granted.LoadID, OntologyVersion: load.OntologyVersion(),
+		OntologyToml: def.OntologyTOML, ReadsJson: `[{"view":{}}]`, VisibilityJson: visibility, MappingsToml: def.MappingsTOML,
+	})
+	if err != nil {
+		return err
+	}
+	view, err := ontologyagent.ParseReadView(read.GetResultJson())
+	if err != nil {
+		return status.Errorf(codes.Internal, "read the version's view: %v", err)
+	}
+	fields := out.GetDefinition().GetFields()
+	for field := range fields {
+		if field != "format" && field != "status" {
+			delete(fields, field)
+		}
+	}
+	fields["ontology_toml"] = structpb.NewStringValue(view.OntologyTOML)
+	fields["mappings_toml"] = structpb.NewStringValue(view.MappingsTOML)
+	out.GenerationId = ""
+	out.DocumentSetIds = nil
+	return nil
 }
 
 // CreateOntologyVersion stores a hand-written version after validating it
@@ -255,16 +326,24 @@ func ontologyResponse(v *foundrymodel.OntologyVersion, current, evidence bool, s
 		return nil, status.Errorf(codes.Internal, "read ontology version %s: %v", v.ID, err)
 	}
 	if !evidence && def.Fields["parent_version_id"].GetStringValue() != "" {
-		// definition.draft is the DraftView, its draft the engine's Draft.
-		items := def.Fields["draft"].GetStructValue().GetFields()["draft"].GetStructValue().GetFields()["items"].GetStructValue().GetFields()
-		for _, item := range items {
-			fields := item.GetStructValue().GetFields()
-			pv.EvidenceWithheld = pv.EvidenceWithheld || fields["card"].GetStructValue() != nil
-			delete(fields, "card")
-		}
+		pv.EvidenceWithheld = withoutCards(&def)
 	}
 	pv.Definition = &def
 	return &foundryv1.OntologyVersionResponse{Version: pv}, nil
+}
+
+// withoutCards takes every item's card out of a draft's definition, and
+// reports whether there were any.
+func withoutCards(def *structpb.Struct) bool {
+	// definition.draft is the DraftView, its draft the engine's Draft.
+	items := def.GetFields()["draft"].GetStructValue().GetFields()["draft"].GetStructValue().GetFields()["items"].GetStructValue().GetFields()
+	withheld := false
+	for _, item := range items {
+		fields := item.GetStructValue().GetFields()
+		withheld = withheld || fields["card"].GetStructValue() != nil
+		delete(fields, "card")
+	}
+	return withheld
 }
 
 // loadEvidence reports whether the caller may see what was measured on o's

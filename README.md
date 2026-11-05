@@ -50,11 +50,11 @@ cd helix-foundry
 docker compose up -d --wait
 ```
 
-Open **http://localhost:3000**. There is no account and nothing to set up: one owner, every connector and feature on, and **My workspace** to start in.
+Open **http://localhost:3000**. Foundry creates **My workspace** for you. No sign-in is required.
 
-**AI** runs where Foundry finds it: Claude or OpenAI when the shell you ran `docker compose up` from has an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, else a model that calls tools in Ollama (`docker compose --profile ollama up -d` runs one beside Foundry, or use Ollama on your computer), else LM Studio on your computer. **Settings › AI models** says which it chose and why, and switches to Ollama, Claude, OpenAI, Azure OpenAI or Amazon Bedrock with your own key, or any OpenAI-compatible server (vLLM, a gateway).
+**AI:** Foundry uses the `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` of the shell that ran `docker compose up`, else a local model in Ollama or LM Studio (`docker compose --profile ollama up -d` runs Ollama beside Foundry). Open **Settings › AI models** to see the selected provider or choose another. Until there is one, drafting, uploading documents and asking wait for it.
 
-[local/README.md](local/README.md) covers what runs, where data lives, each AI provider, Ollama in Docker, ports, and how to reach databases on this machine.
+See the [local setup guide](local/README.md) for what runs, where data lives, AI providers, ports and connecting to databases on your computer.
 
 **What you do next**
 

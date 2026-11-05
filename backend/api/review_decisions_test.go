@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -177,6 +178,21 @@ func TestSettleFoundryReview(t *testing.T) {
 		if len(db.saved) != 1 || out.Decision.Kind != "prop" || out.Decision.GetProp() != "name" || out.Decision.Value == nil {
 			t.Fatalf("%+v", out)
 		}
+		if db.saved[0].DocumentIDs != nil {
+			t.Fatalf("a review that quotes nothing records no documents: %v", db.saved[0].DocumentIDs)
+		}
+	}
+	// The documents its quotes come from are recorded with it, once each:
+	// a grantee covers the value only by covering them.
+	quotes := `[{"value":"A","doc_id":"doc-a","quote":"A","span":{"section":0,"start":0,"end":1}},` +
+		`{"value":"B","doc_id":"doc-b","quote":"B","span":{"section":1,"start":0,"end":1}},{"value":"A","doc_id":"doc-a"},{"value":"C"}]`
+	values, _ := json.Marshal(quotes)
+	s, db, _ := reviewService(t, `{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name","values":`+string(values)+`}]}`)
+	if _, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(propChoice(propText("A")))); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.saved[0].DocumentIDs; !slices.Equal(got, []string{"doc-a", "doc-b"}) {
+		t.Fatalf("recorded %v", got)
 	}
 }
 

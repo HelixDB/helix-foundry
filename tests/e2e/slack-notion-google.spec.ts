@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { dataTree, expect, signIn, test } from "./support/mock";
+import { dataTree, expect, signIn, test, chooseKeyForm } from "./support/mock";
 
 // Slack, Notion and Google Workspace, each connected end to end: its
 // guide and form, the WFE's refusals and what the credential can't read,
@@ -50,6 +50,8 @@ async function openPicker(page: Page, kind: string) {
   await page.getByRole("button", { name: "Add data" }).first().click();
   await dialog(page).getByRole("button", { name: kind, exact: true }).click();
   await expect(dialog(page)).toHaveAttribute("aria-label", kind);
+  // Each signs in too: these are their keys' forms.
+  await chooseKeyForm(dialog(page));
 }
 
 /**
@@ -186,6 +188,7 @@ test("connects Notion, shows its databases' first rows, and keeps its pages as d
   // The Helix MCP's connector link opens Notion's form.
   await page.goto("/data?add=notion");
   await expect(dialog(page)).toHaveAttribute("aria-label", "Notion");
+  await chooseKeyForm(dialog(page));
   const guide = dialog(page).locator(".connection-guide");
   await expect(
     guide.getByRole("link", { name: "Integrations in Notion" }),

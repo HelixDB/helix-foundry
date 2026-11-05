@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/pkg/helixgateway"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -175,11 +177,42 @@ func TestProxy(t *testing.T) {
 		}
 	})
 
-	// The agent sees a gateway it can't reach as a failed request, not a hang.
+	// The agent sees a gateway it can't reach as a failed request, not a
+	// hang, and the operator sees it as a warning.
 	t.Run("answers bad gateway when the gateway fails", func(t *testing.T) {
-		p := serve(t, &gateway{err: errors.New("dial")})
+		logged := &logs{}
+		p, err := Serve(log.Into(context.Background(), logged.logger()), Binding{OntologyID: "ont-1", TenantID: "tenant-1", Endpoint: "https://gw.example/v2/query"},
+			&gateway{err: errors.New("dial")}, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Close() })
 		if resp := post(t, p, QueryPath, p.Token(), []byte(`{}`), nil); resp.StatusCode != http.StatusBadGateway {
 			t.Fatalf("status %d", resp.StatusCode)
+		}
+		if line := logged.line(t, "gateway request failed"); !strings.Contains(line, "level=WARN") || !strings.Contains(line, "err=dial") {
+			t.Fatalf("logged %q", line)
+		}
+	})
+
+	// A caller that stops waiting cancels its query: that is no failure of
+	// the gateway's, so it is logged at info with the time waited, never as
+	// a warning.
+	t.Run("logs a query its caller dropped at info", func(t *testing.T) {
+		logged := &logs{}
+		g := &blockingGateway{started: make(chan struct{}), cancelled: make(chan struct{})}
+		p, err := Serve(log.Into(context.Background(), logged.logger()), Binding{OntologyID: "ont-1", TenantID: "tenant-1", Endpoint: "https://gw.example/v2/query"},
+			g, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = p.Close() })
+		drop(t, g, p.URL(), p.Token(), `{}`)
+		if line := logged.line(t, "query abandoned"); !strings.Contains(line, "level=INFO") || !strings.Contains(line, "waited=") || !strings.Contains(line, "context canceled") {
+			t.Fatalf("logged %q", line)
+		}
+		if all := logged.String(); strings.Contains(all, "level=WARN") {
+			t.Fatalf("a dropped query was logged as a warning: %s", all)
 		}
 	})
 
@@ -394,6 +427,74 @@ func TestProxy(t *testing.T) {
 			t.Fatal("served after close")
 		}
 	})
+}
+
+// logs captures what a proxy logs, at every level, as text.
+type logs struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logs) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logs) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+func (l *logs) logger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(l, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// line is the first line logged that holds want, waited for up to 5 s: a
+// handler logs after its caller has its answer, or has gone.
+func (l *logs) line(t *testing.T, want string) string {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for line := range strings.Lines(l.String()) {
+			if strings.Contains(line, want) {
+				return line
+			}
+		}
+	}
+	t.Fatalf("nothing logged holds %q: %s", want, l.String())
+	return ""
+}
+
+// drop sends body to the proxy at url and goes away once g holds it, as the
+// agent drops a read that passed its wall time.
+func drop(t *testing.T, g *blockingGateway, url, token, body string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+QueryPath, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	done := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		done <- err
+	}()
+	<-g.started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the dropped request ended with %v", err)
+	}
+	select {
+	case <-g.cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dropped query was not cancelled")
+	}
 }
 
 // blockingGateway holds each query until its context ends, as a slow write does.

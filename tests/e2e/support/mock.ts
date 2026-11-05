@@ -62,6 +62,11 @@ export const mock = {
     // The database with that slug refuses its next n requests with the
     // gateway's 503 rate_limit_unavailable, as a new database does.
     startingQueries?: Record<string, number>;
+    // How many customers only Stripe's invoices table states, in a load
+    // written from now on: Customer then has two sources.
+    invoiceOnlyCustomers?: number;
+    readsBusy?: number;
+    readsPaused?: string;
     // A load's reads with rules: parts that fail in entity reads, by pred
     // ("derived:x", or "violations") and code (budget, hub or invalid).
     readErrors?: Record<string, "budget" | "hub" | "invalid">;
@@ -79,6 +84,8 @@ export const mock = {
     dataLayoutConflicts?: number;
     // Alan's role in Acme (a member by default).
     alanRole?: "WORKSPACE_ROLE_ADMIN" | "WORKSPACE_ROLE_MEMBER";
+    // Alan can't query databases: he reads through source grants.
+    memberQueryRead?: boolean;
     // People enrichment: a batch of lookups (and the wait for a slot), and
     // how the lookups stop: the credit cap, context.dev, the time limit, or
     // no free slot.
@@ -104,6 +111,22 @@ export const mock = {
     aiProbeOutcome?: "timeout";
     // The kinds the WFE offers, as a deployment's foundry.ai.kinds.
     aiKinds?: string[];
+    // false: no kind connects by signing in (pipes.enabled off).
+    signIn?: boolean;
+    // Every sign-in runs out now, once, as its 15 minutes would.
+    signInsRunOut?: boolean;
+    // Breaks these connectors' accounts, as a member leaving does.
+    accountBroken?: Record<
+      string,
+      "member_left" | "access_revoked" | "expired" | "account_missing"
+    >;
+    // Suggestions: foundry.heal.enabled off; the current load's audit not
+    // complete; an audit superseding a finding as it is dismissed.
+    healEnabled?: boolean;
+    healRun?: "running" | "failed" | "incomplete" | null;
+    healDismiss?: "superseded" | "fails";
+    // The current load's complete audit didn't check its rows.
+    healRowsMeasured?: boolean;
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",
@@ -267,6 +290,14 @@ export async function loadContracts(page: Page) {
   await expect(
     page.getByRole("status").filter({ hasText: "Loaded" }).first(),
   ).toBeVisible({ timeout: 20_000 });
+}
+
+/**
+ * A kind that signs in opens its form on Connect with <provider>: its key's
+ * form is behind the kind's "Use … instead".
+ */
+export async function chooseKeyForm(form: Locator) {
+  await form.getByRole("button", { name: /^Use (a|an) .+ instead$/ }).click();
 }
 
 /** A CSRF token for the signed-in page's session. */

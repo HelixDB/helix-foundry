@@ -754,9 +754,9 @@ export function SampleTour() {
           state={answered ? "current" : "upcoming"}
         >
           <p className="on-muted">
-            Pick what to draw from and say what it should serve. Foundry’s agent
-            drafts the ontology, loads it, and emails you when it’s ready to
-            ask, in a few minutes.
+            Choose your sources and describe the questions you want to answer.
+            Foundry’s agent drafts the ontology, loads it, and emails you when
+            it’s ready to ask, in a few minutes.
           </p>
           <span className="on-card-actions">
             <ButtonLink

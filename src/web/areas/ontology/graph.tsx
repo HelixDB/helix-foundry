@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { plural } from "../../kit";
 import { paths } from "../../paths";
+import { useWorkspace } from "../../ui";
 import { useOntology } from "./scope";
 import type { Graph } from "./model";
 import type { Sources } from "./sources";
@@ -11,7 +12,8 @@ import {
 } from "./suggested-ontology";
 
 // A version's graph as the suggested-ontology schema: every type as a card,
-// with its links drawn and named.
+// with its links drawn and named. A card opens its type on the version's
+// page, except a grantee's, which has no such page.
 
 const cardinality: Record<string, string> = {
   one_to_one: "one to one",
@@ -32,7 +34,8 @@ export function GraphView({
   // The tab that lists the types, for the cards' links.
   tab: string;
 }) {
-  const { id: o } = useOntology();
+  const { id: o } = useOntology(),
+    { grantee } = useWorkspace();
   const entities: SchemaEntity[] = useMemo(
     () =>
       graph.nodes.map((n) => {
@@ -84,8 +87,13 @@ export function GraphView({
       <OntologySchema
         entities={entities}
         links={links}
-        entityHref={(e) =>
-          paths.version(o, versionId, tab) + "#type-" + encodeURIComponent(e.id)
+        entityHref={
+          grantee
+            ? undefined
+            : (e) =>
+                paths.version(o, versionId, tab) +
+                "#type-" +
+                encodeURIComponent(e.id)
         }
       />
     </div>

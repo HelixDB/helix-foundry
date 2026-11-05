@@ -18,7 +18,7 @@ set -eu
 cp backend/pb/gen/openapiv2/helix/foundry/v1/foundry.swagger.json contract/foundry.swagger.json
 schemas=backend/pb/proto/ontology_agent/v1/schema
 mkdir -p contract/ontology_agent
-for f in read_request.json read_result.json ask_request.json ask_event.json ask_result.json probe_result.json catalog.json VERSION; do
+for f in read_request.json read_result.json ask_request.json ask_event.json ask_result.json probe_result.json audit_result.json check_result.json catalog.json VERSION; do
   cp "$schemas/$f" "contract/ontology_agent/$f"
 done
 echo "contract/foundry.swagger.json and contract/ontology_agent ($(cat contract/ontology_agent/VERSION)) copied from backend/"

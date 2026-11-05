@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/helixdb/helix-foundry/backend/access"
 )
 
 // The Read contract (schema/read_request.json, schema/read_result.json):
@@ -21,7 +23,7 @@ const (
 
 // ReadKinds are the reads a request may carry (ReadItem), each answered by
 // an answer of the same kind.
-var ReadKinds = []string{"entity", "pattern", "explain", "violations", "evidence", "query"}
+var ReadKinds = []string{"entity", "pattern", "explain", "violations", "evidence", "query", "view"}
 
 // ReadRequest reads one load (schema/read_request.json).
 type ReadRequest struct {
@@ -40,6 +42,99 @@ type ReadRequest struct {
 	AsOf   string     `json:"as_of"`
 	Budget ReadBudget `json:"budget"`
 	Reads  Reads      `json:"reads"`
+	// Visibility is what the reader holds of the load, when it isn't everything:
+	// the agent reads the version and the load as those sources fill them, which
+	// MappingsTOML says.
+	Visibility   *Visibility `json:"visibility,omitempty"`
+	MappingsTOML string      `json:"mappings_toml,omitempty"`
+}
+
+// Visibility is what a reader holds of a load it doesn't hold all of (the
+// contract's Visibility).
+type Visibility struct {
+	// Sources are the tables and table files it holds, by the ids mappings read
+	// them by.
+	Sources []string `json:"sources"`
+	// Documents are the load's documents it holds.
+	Documents VisibleDocuments `json:"documents"`
+	// Sets are the document sets it holds a document of.
+	Sets []string `json:"sets"`
+	// Enrichment says it holds People enrichment's profiles.
+	Enrichment bool `json:"enrichment"`
+	// Withheld are properties decided from documents it doesn't hold.
+	Withheld []WithheldProp `json:"withheld"`
+}
+
+// VisibleDocuments is every one of a load's documents, or those of Only.
+type VisibleDocuments struct {
+	All  bool
+	Only []string
+}
+
+// MarshalJSON writes "all", or {"only": [...]}.
+func (d VisibleDocuments) MarshalJSON() ([]byte, error) {
+	if d.All {
+		return json.Marshal("all")
+	}
+	only := d.Only
+	if only == nil {
+		only = []string{}
+	}
+	return json.Marshal(map[string][]string{"only": only})
+}
+
+// UnmarshalJSON reads what MarshalJSON writes.
+func (d *VisibleDocuments) UnmarshalJSON(raw []byte) error {
+	var all string
+	if err := json.Unmarshal(raw, &all); err == nil {
+		if all != "all" {
+			return fmt.Errorf("documents is %q; it must be \"all\" or {\"only\": [...]}", all)
+		}
+		*d = VisibleDocuments{All: true}
+		return nil
+	}
+	var only struct {
+		Only []string `json:"only"`
+	}
+	if err := json.Unmarshal(raw, &only); err != nil {
+		return err
+	}
+	*d = VisibleDocuments{Only: only.Only}
+	return nil
+}
+
+// WithheldProp is a property a reader doesn't see at all.
+type WithheldProp struct {
+	Type string `json:"type"`
+	Prop string `json:"prop"`
+}
+
+// VisibilityOf is what the agent reads of part.
+func VisibilityOf(part access.Part) Visibility {
+	out := Visibility{
+		Sources: make([]string, 0, len(part.Tables)+len(part.Files)), Sets: make([]string, 0, len(part.Sets)),
+		Documents: VisibleDocuments{All: part.AllDocuments, Only: part.Documents}, Enrichment: part.Enrichment,
+		Withheld: make([]WithheldProp, 0, len(part.Withheld)),
+	}
+	for _, t := range part.Tables {
+		out.Sources = append(out.Sources, TableSourceID(t.ConnectorID, t.Table))
+	}
+	out.Sources = append(out.Sources, part.Files...)
+	for _, s := range part.Sets {
+		out.Sets = append(out.Sets, s.SetID)
+	}
+	for _, w := range part.Withheld {
+		out.Withheld = append(out.Withheld, WithheldProp{Type: w.Type, Prop: w.Prop})
+	}
+	return out
+}
+
+// ReadView is the answer to a view read: the version's files as the reader
+// sees them, and what it sees only some of.
+type ReadView struct {
+	OntologyTOML string   `json:"ontology_toml"`
+	MappingsTOML string   `json:"mappings_toml"`
+	Partial      []string `json:"partial"`
 }
 
 // ReadBudget is what one read call may spend (ReadLimits); past any bound a
@@ -128,6 +223,9 @@ const (
 	ReadTooBroad ReadErrorCode = "too_broad"
 	// ReadUnknownEntity names an entity the load doesn't hold.
 	ReadUnknownEntity ReadErrorCode = "unknown_entity"
+	// ReadNotVisible would test, order, group or count what the reader sees
+	// only some of.
+	ReadNotVisible ReadErrorCode = "not_visible"
 	// ReadInvalid doesn't fit the ontology: an unknown type, predicate or
 	// constraint, a wrong number of arguments, a limit out of range.
 	ReadInvalid ReadErrorCode = "invalid"
@@ -150,7 +248,7 @@ type ReadFailure struct {
 // readFailureCodes are the codes a whole read may fail with, and
 // partFailureCodes those part of an entity read may (PartFailure).
 var (
-	readFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadTooBroad, ReadUnknownEntity, ReadInvalid}
+	readFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadTooBroad, ReadUnknownEntity, ReadInvalid, ReadNotVisible}
 	partFailureCodes = []ReadErrorCode{ReadBudgetExceeded, ReadHub, ReadInvalid}
 )
 
@@ -185,7 +283,7 @@ func decodeReadFailure(data json.RawMessage, codes []ReadErrorCode) (ReadFailure
 			return ReadFailure{}, fmt.Errorf("too_broad error lacks its limit or count")
 		}
 		f.Limit, f.Count = *raw.Limit, *raw.Count
-	case ReadInvalid:
+	case ReadInvalid, ReadNotVisible:
 		f.Pointer = raw.Pointer
 	}
 	return f, nil
@@ -252,4 +350,23 @@ func CheckReadResult(data []byte, reads Reads) error {
 		}
 	}
 	return nil
+}
+
+// ParseReadView reads the answer to one view read out of its result.
+func ParseReadView(result string) (ReadView, error) {
+	var parsed struct {
+		Results []struct {
+			OK *struct {
+				ReadView
+				Kind string `json:"kind"`
+			} `json:"ok"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return ReadView{}, err
+	}
+	if len(parsed.Results) != 1 || parsed.Results[0].OK == nil || parsed.Results[0].OK.Kind != "view" {
+		return ReadView{}, errors.New("the result holds no view")
+	}
+	return parsed.Results[0].OK.ReadView, nil
 }

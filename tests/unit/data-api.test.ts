@@ -65,6 +65,62 @@ describe("data api", () => {
     ]);
   });
 
+  it("starts, reads, authorizes and finishes a sign-in at the provider", async () => {
+    const d = await load();
+    const config = { github: { repos: ["acme/api"], reviewDays: 30 } };
+    await d.startSignIn("ws_1", {
+      kind: "github",
+      name: "GitHub",
+      config,
+      clientToken: "t1",
+    });
+    await d.getSignIn("ws_1", "csi 1");
+    await d.signInQuery("ws_1", "csi_1").queryFn();
+    await d.authorizeSignIn(
+      "ws_1",
+      "csi_1",
+      "https://foundry.helix-db.com/connect/callback",
+    );
+    await d.finishSignIn("ws_1", "csi_1", { connectCode: "abc" });
+    await d.finishSignIn("ws_1", "csi_1", { error: "access_denied" });
+    expect(calls).toEqual([
+      {
+        method: "POST",
+        url: `${F}/sign-ins`,
+        body: { kind: "github", name: "GitHub", config, clientToken: "t1" },
+      },
+      { method: "GET", url: `${F}/sign-ins/csi%201`, body: undefined },
+      { method: "GET", url: `${F}/sign-ins/csi_1`, body: undefined },
+      {
+        method: "POST",
+        url: `${F}/sign-ins/csi_1:authorize`,
+        body: { returnTo: "https://foundry.helix-db.com/connect/callback" },
+      },
+      {
+        method: "POST",
+        url: `${F}/sign-ins/csi_1:finish`,
+        body: { connectCode: "abc" },
+      },
+      {
+        method: "POST",
+        url: `${F}/sign-ins/csi_1:finish`,
+        body: { error: "access_denied" },
+      },
+    ]);
+  });
+
+  it("reads only the connectors that need signing in again, for the shell", async () => {
+    const d = await load();
+    const q = d.needsSignInQuery("ws_1");
+    await q.queryFn();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${F}/connectors?needsSignIn=true`,
+    ]);
+    // Under the connectors' key: whatever refreshes them refreshes it.
+    expect(q.queryKey.slice(0, 2)).toEqual(["ws_1", "connectors"]);
+    expect(q.staleTime).toBeGreaterThanOrEqual(60_000);
+  });
+
   it("sets and clears an API source's text field, sending it alone", async () => {
     const d = await load();
     await d.setEventTextField("ws_1", "c 1", "reply");

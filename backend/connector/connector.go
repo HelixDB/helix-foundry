@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/filesource"
+	"github.com/jackc/pgx/v5"
 )
 
 // Source is one connector's settings and its decrypted credential. Settings
@@ -29,6 +30,14 @@ type Source struct {
 	// Captures are the capture methods the workspace's plan allows. A kind
 	// with more than one way to follow a table takes the best one allowed.
 	Captures []Capture
+	// held is the transaction a PostgreSQL SourceSnapshot holds open: every
+	// table read with this source is read on it, at its one snapshot.
+	held pgx.Tx
+	// SignIn is set when Secret is a token the host's broker vended for a
+	// signed-in connector's account, not a key a person entered: Prepare
+	// skips the key's format checks (and takes no Secret at all, to check
+	// settings alone), and the kind sends it as the OAuth token it is.
+	SignIn bool
 }
 
 func (s Source) Allows(c Capture) bool { return slices.Contains(s.Captures, c) }
@@ -59,6 +68,41 @@ type Targeted interface {
 	// Target names where prepared settings send the credential; two settings
 	// with equal targets send it to the same server.
 	Target(settings json.RawMessage) (string, error)
+}
+
+// SnapshotKind is a kind that can read every table of a full read at one
+// snapshot of its source, so the tables agree with each other: a change
+// committed while they are read shows in all of them or in none.
+type SnapshotKind interface {
+	Kind
+	// SourceSnapshot holds one snapshot of the source open for the tables
+	// read with the returned Source, one at a time, until its Close. It
+	// takes no more of the source's connections than reading a table at a
+	// time does. A source Start already bound to a snapshot keeps it. An
+	// error holds nothing open: each table is then read at a moment of its
+	// own, as by any other kind.
+	SourceSnapshot(ctx context.Context, src Source) (SourceSnapshot, error)
+}
+
+// SourceSnapshot is the one moment of a source a full read's tables are read at.
+type SourceSnapshot struct {
+	// Source is what every table's Sync reads with, one table at a time.
+	Source Source
+	// Close releases the snapshot once the tables are read, on every path.
+	// Never nil.
+	Close func()
+}
+
+// Identifier is a kind that says who its credential reads as: for a person
+// to recognise the account a signed-in connector reads with, and to tell
+// whether signing in again changed it.
+type Identifier interface {
+	// Identity is the provider's name for the credential's identity, its
+	// label (a GitHub login; a Linear user and their workspace), and a
+	// stable id that tells one identity from another where labels repeat
+	// (a GitHub user's number). An empty id is an identity unknown. Its
+	// errors are the kind's, an *AuthError among them.
+	Identity(ctx context.Context, src Source) (label, id string, err error)
 }
 
 // SecretContext binds a sealed credential to its connector row, so a
@@ -186,6 +230,30 @@ func refused(err error, format string, args ...any) error {
 	return &RefusedError{Message: fmt.Sprintf(format, args...), Err: err}
 }
 
+// AuthError is the provider rejecting the credential itself, not one
+// request: GitHub's HTTP 401, Linear's AUTHENTICATION_ERROR. It rides in the
+// RefusedError that words it for a key, so a caller that doesn't look for it
+// reads a refusal; one that does (errors.As) asks a signed-in connector's
+// broker for a fresh token, or says to sign it in again.
+type AuthError struct {
+	// Provider is the kind's display name.
+	Provider string
+}
+
+func (e *AuthError) Error() string { return e.Provider + " rejected the credential" }
+
+// rejectedCredential is the refusal of a credential provider rejected
+// outright, worded for a key: an *AuthError, beside cause when the kind
+// keeps one, so a signed-in connector's callers ask its broker for a fresh
+// token or say to sign it in again.
+func rejectedCredential(provider string, cause error, format string, args ...any) error {
+	var err error = &AuthError{Provider: provider}
+	if cause != nil {
+		err = errors.Join(cause, err)
+	}
+	return refused(err, format, args...)
+}
+
 // Endpoints are the SaaS API roots; tests point them at local servers.
 type Endpoints struct {
 	Stripe string
@@ -206,6 +274,10 @@ type Endpoints struct {
 	// S3 and STS replace AWS's own endpoints in tests; empty uses AWS's.
 	S3  string
 	STS string
+	// GitHubAppInstall is where a signed-in GitHub connector's messages send
+	// people to install Helix Foundry's GitHub App
+	// (foundry.connectors.github_app_install_url); empty names no link.
+	GitHubAppInstall string
 }
 
 func DefaultEndpoints() Endpoints {
@@ -242,7 +314,7 @@ func NewCatalog(endpoints Endpoints, guard Guard, s3 S3Options, pushed EventsOpt
 		&stripeKind{base: endpoints.Stripe, http: saas},
 		&workosKind{base: endpoints.WorkOS, http: saas},
 		&posthogKind{us: endpoints.PostHogUS, eu: endpoints.PostHogEU, http: guard.HTTPClient(), files: files},
-		&githubKind{base: endpoints.GitHub, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: withinHost}},
+		&githubKind{base: endpoints.GitHub, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: withinHost}, install: endpoints.GitHubAppInstall},
 		&linearKind{base: endpoints.Linear, http: saas},
 		&calcomKind{base: endpoints.Calcom, http: saas},
 		&granolaKind{base: endpoints.Granola, http: saas},

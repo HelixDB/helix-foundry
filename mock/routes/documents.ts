@@ -538,6 +538,22 @@ export function loadDocuments(loadId: string) {
       };
     });
 }
+/**
+ * For ./access.ts: the set a document is in now, with the connector that
+ * owns that set, if one does; `setId` "" for a document in no set.
+ */
+export function documentSet(documentId: string) {
+  const setId = documents.get(documentId)?.setId || "";
+  return { setId, connectorId: sets.get(setId)?.connector?.connectorId || "" };
+}
+/** For ./access.ts: a set's connector, if a connector owns it. */
+export const setConnector = (setId: string) =>
+  sets.get(setId)?.connector?.connectorId || "";
+/** For ./access.ts: every document a load holds, by id. */
+export const loadDocumentIds = (loadId: string) => [
+  ...(members.get(loadId)?.keys() || []),
+];
+
 /** Records what a load read from a document. */
 export const setExtraction = (
   loadId: string,
@@ -1169,7 +1185,13 @@ export const documentRoutes: MockRoute[] = [
       const setId = req.query.get("setId") || "",
         token = req.query.get("pageToken"),
         ids = req.query.getAll("ids");
-      // These documents only, as asked, each once, deleted ones too.
+      if (req.grantee && !ids.length)
+        return fail(
+          "PERMISSION_DENIED",
+          "source grants let a grantee name documents only by id",
+        );
+      // These documents only, as asked, each once, deleted ones too; a
+      // grantee's only those in sets its grants cover.
       if (ids.length) {
         if (ids.length > MAX_IDS)
           return fail(
@@ -1184,7 +1206,11 @@ export const documentRoutes: MockRoute[] = [
         return ok({
           documents: [...new Set(ids)].flatMap((id) => {
             const d = documents.get(id);
-            return d && d.workspaceId === m.workspaceId ? [toDocument(d)] : [];
+            return d &&
+              d.workspaceId === m.workspaceId &&
+              (!req.grantee || req.grantee.coversSet(d.setId))
+              ? [toDocument(d)]
+              : [];
           }),
           nextPageToken: "",
         } satisfies ListDocumentsResponse);
@@ -1241,6 +1267,9 @@ export const documentRoutes: MockRoute[] = [
     handle: (req) => {
       const d = find(req, false);
       if (!isDocument(d)) return d;
+      // A grantee reads the text of a document a load its grants cover holds.
+      if (req.grantee && !req.grantee.holds(d.id))
+        return fail("NOT_FOUND", "document not found");
       const pdf = FORMATS[d.mediaType].kind === "pdf";
       if (FORMATS[d.mediaType].binary && !pdf)
         return fail(
@@ -1366,8 +1395,12 @@ export const documentRoutes: MockRoute[] = [
           `status "${status}" is none of waiting, extracted, review, duplicate, failed or out_of_scope`,
         );
       advanceLoads(s.o.id);
-      const held = members.get(currentLoadId(s.o.id) || ""),
-        { scope } = reader(s.o.id);
+      // A grantee lists the documents of the load its grants cover, and no
+      // others of the scope.
+      const held = members.get(
+          req.grantee?.load?.loadId || currentLoadId(s.o.id) || "",
+        ),
+        scope = req.grantee ? [] : reader(s.o.id).scope;
       const read = [...documents.values()].flatMap((d) => {
         if (
           d.workspaceId !== s.o.workspaceId ||
@@ -1375,7 +1408,9 @@ export const documentRoutes: MockRoute[] = [
           !(
             held?.has(d.id) ||
             (d.status === "uploaded" && scope.includes(d.setId))
-          )
+          ) ||
+          // Of a load it holds only some of, only what it holds.
+          (req.grantee?.load?.partial && !req.grantee.coversSet(d.setId))
         )
           return [];
         const x = currentExtraction(s.o.id, d.id);
@@ -1411,7 +1446,9 @@ export const documentRoutes: MockRoute[] = [
       // Any document of the workspace, so a citation of one that moved out
       // of scope still opens.
       const d = documents.get(req.params.id!);
-      return d && d.workspaceId === s.o.workspaceId
+      return d &&
+        d.workspaceId === s.o.workspaceId &&
+        (!req.grantee || req.grantee.holds(d.id, s.o.id))
         ? ok({
             document: toDocument(d, currentExtraction(s.o.id, d.id)),
           } satisfies DocumentResponse)

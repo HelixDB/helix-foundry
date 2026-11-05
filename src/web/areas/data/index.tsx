@@ -6,6 +6,7 @@ import "../documents/documents.css";
 import "./data.css";
 import { Route, Routes, useParams } from "react-router-dom";
 import { NotFound } from "../../shell/ErrorBoundary";
+import { ConnectCallbackPage } from "./connect-callback";
 import { ConnectionDetail } from "./connection";
 import { DataDocumentPage } from "./document";
 import { DataOverview } from "./overview";
@@ -36,6 +37,11 @@ export function TablePage() {
 export function DocumentPage() {
   const { documentId = "" } = useParams();
   return <DataDocumentPage key={documentId} documentId={documentId} />;
+}
+// /connect/callback: where a provider returns from connecting a source by
+// signing in, outside /data so the onboarding offers it too (main.tsx).
+export function ConnectCallback() {
+  return <ConnectCallbackPage />;
 }
 // /data/*: the Data area's route table (main.tsx delegates the whole
 // prefix). The Data explorer is the section's panel beside the sidebar

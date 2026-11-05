@@ -5,6 +5,7 @@ import type {
   AskFailure,
   AskResult,
   AskVisual,
+  CannotAnswerKind,
   CitationTarget,
   FoundryQuestion,
   ListQuestionEventsResponse,
@@ -17,6 +18,7 @@ import type {
   VersionOf,
   VisualKind,
 } from "../../../shared/wfe";
+import { cannotAnswerKind } from "../../../shared/foundry-ask";
 import { entityRef, type EntityRef } from "../../../shared/foundry-read";
 import { formatDate, plural } from "../../kit/util";
 import { sentence } from "../../api";
@@ -57,6 +59,7 @@ const json = (s: string): unknown => {
  * parseTarget({ row: { source: "src_1", mapping: "m", row_key: "cus_1" } }); // the row
  * parseTarget({ row: { source: "foundry_enrichment", mapping: "m", row_key: "" } }); // a profile, by no key
  * parseTarget({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { entity: { type: "Customer", id: "cus_1" } } } }); // a past state
+ * parseTarget({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { entity: { type: "Customer", id: "cus_1" } }, valid: { from: "x" } } }); // the past state, without its valid time
  * parseTarget({ link: "https://example.com" }); // undefined
  */
 export function parseTarget(x: unknown): CitationTarget | undefined {
@@ -119,14 +122,11 @@ export function parseTarget(x: unknown): CitationTarget | undefined {
     case "version": {
       // The tx is opaque: only the engine reads it.
       const tx = str(v.tx),
-        at = str(v.at),
-        of = parseVersionOf(v.of);
-      return tx &&
-        at &&
-        RFC_3339.test(at) &&
-        !Number.isNaN(Date.parse(at)) &&
-        of
-        ? { version: { tx, at, of } }
+        at = v.at,
+        of = parseVersionOf(v.of),
+        valid = parseValid(v.valid);
+      return tx && isTime(at) && of
+        ? { version: { tx, at, of, ...(valid ? { valid } : {}) } }
         : undefined;
     }
     default:
@@ -137,6 +137,44 @@ export function parseTarget(x: unknown): CitationTarget | undefined {
 /** RFC 3339's date-time: a date, a time and an offset. */
 const RFC_3339 =
   /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+
+/** A real calendar day, as YYYY-MM-DD. */
+const isDay = (x: unknown): x is string =>
+  typeof x === "string" &&
+  /^\d{4}-\d{2}-\d{2}$/.test(x) &&
+  !Number.isNaN(Date.parse(`${x}T00:00:00Z`)) &&
+  new Date(`${x}T00:00:00Z`).toISOString().startsWith(x);
+
+const isTime = (x: unknown): x is string =>
+  typeof x === "string" && RFC_3339.test(x) && !Number.isNaN(Date.parse(x));
+
+/**
+ * When a cited version's state held (contract 4.7.0's ValidRef), or
+ * undefined when absent or malformed: any malformed part drops all of it,
+ * never the citation, since a `from` without its `to` or its `day` would
+ * misstate when it held. `day` is a source's day with no time of day, whose
+ * `from` is the next midnight UTC.
+ *
+ * @example
+ * parseValid({ from: "2026-03-04T00:00:00Z", day: "2026-03-03" }); // { from: "2026-03-04T00:00:00Z", day: "2026-03-03" }
+ * parseValid({ from: "2026-03-04T00:00:00Z", to: null }); // { from: "2026-03-04T00:00:00Z" }
+ * parseValid({ from: "2026-03-04T00:00:00Z", day: "March 3" }); // undefined
+ */
+export function parseValid(
+  x: unknown,
+): { from: string; to?: string; day?: string } | undefined {
+  if (!isObj(x)) return undefined;
+  const { from, to, day } = x;
+  if (!isTime(from)) return undefined;
+  if (to != null && !(isTime(to) && Date.parse(to) > Date.parse(from)))
+    return undefined;
+  if (day != null && !isDay(day)) return undefined;
+  return {
+    from,
+    ...(to != null ? { to } : {}),
+    ...(day != null ? { day } : {}),
+  };
+}
 
 /**
  * What a version citation is of, or undefined when it isn't one. An entity
@@ -615,13 +653,16 @@ export function parseAskResult(resultJson: string): AskResult | undefined {
         ...common,
       };
     }
-    case "cannot_answer":
+    case "cannot_answer": {
+      const kind = cannotAnswerKind(x.kind);
       return {
         status: "cannot_answer",
+        ...(kind ? { kind } : {}),
         reason: str(x.reason) || "",
         gap: str(x.gap) || "",
         ...common,
       };
+    }
     case "budget_exhausted":
       return { status: "budget_exhausted", ...common };
     case "failed":
@@ -632,6 +673,22 @@ export function parseAskResult(resultJson: string): AskResult | undefined {
       return undefined;
   }
 }
+
+/** Plain labels for the engine's known reasons; reason and gap remain beside them. */
+export const CANNOT_ANSWER_LABELS: Record<CannotAnswerKind, string> = {
+  uncovered: "No recorded state covers that time",
+  after_as_of: "After this question’s time",
+  undeclared_relation: "Relationship not defined",
+  undeclared_property: "Property not defined",
+  absent: "Entity not found in the sources",
+};
+
+/**
+ * `uncovered` for someone who reads part of the load: the engine shows them
+ * no past values, so their questions about another time or a change end
+ * uncovered whatever the load records.
+ */
+export const PART_UNCOVERED_LABEL = "Only current values are shared with you";
 
 const UNREACHED = "The model couldn’t be reached, after retries.";
 
@@ -1473,6 +1530,10 @@ export type CitationContext = {
   name: (r: EntityRef) => string;
   // A result citation's words: the step that recorded it (resultLabel).
   result: (evidenceId: string) => string;
+  // The question's load is read through source grants: a rule break and a
+  // People enrichment profile have no page there (theirs read the database
+  // and the load's jobs), so each opens the step it came from.
+  shared?: true;
 };
 
 /** `relation:co_signed` as "co signed". */
@@ -1486,7 +1547,8 @@ const predText = (pred: string) =>
  * citationText({ quote: { doc_id: "d1", section: 0, start: 4, end: 9 } }, { docName: () => "contract.md" } as never); // "Quote in contract.md"
  * citationText({ entity: { type: "Order", id: "ord 2" } }, { name: () => "ORD-2" } as never); // "Order ORD-2"
  * citationText({ row: { source: "foundry_enrichment", mapping: "enrichment_people", row_key: "" } }, {} as never); // "A People enrichment profile"
- * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM: a break of must_sign" (en-US, UTC)
+ * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM UTC: a break of must_sign" (en-US)
+ * citationText({ version: { tx: "01J…", at: "2026-10-03T09:14:07Z", of: { record: { constraint: "must_sign", key: "9f2c" } }, valid: { from: "2026-03-04T00:00:00Z", day: "2026-03-03" } } }, {} as never); // "As recorded Oct 3, 2026, 09:14 AM UTC · Valid from Mar 3, 2026: a break of must_sign" (en-US)
  */
 export function citationText(t: CitationTarget, ctx: CitationContext): string {
   const ref = (r: EntityRef) => refText(r, ctx);
@@ -1515,7 +1577,15 @@ export function citationText(t: CitationTarget, ctx: CitationContext): string {
         : "record" in of
           ? `a break of ${of.record.constraint}`
           : citationText(of, ctx);
-    return `As recorded ${formatDate(t.version.at)}: ${subject}`;
+    // The engine's times in UTC, named, so when it was recorded and when it
+    // held read alike; a source's day as that day, not the midnight after it
+    // that `from` is.
+    const utc = (time: string) => formatDate(time, true, "UTC");
+    const valid = t.version.valid;
+    const when = valid
+      ? ` · Valid from ${valid.day ? formatDate(valid.day, false) : utc(valid.from)}${valid.to ? ` until ${utc(valid.to)}` : ""}`
+      : "";
+    return `As recorded ${utc(t.version.at)}${when}: ${subject}`;
   }
   return ctx.result(t.result.evidence_id);
 }
@@ -1531,7 +1601,8 @@ export function citationText(t: CitationTarget, ctx: CitationContext): string {
  * entity, a fact its subject's Facts); a version of a violation record
  * opens nothing, since the load may no longer hold that record. A query's
  * result opens in the page (undefined), as does an entity of a type the
- * version doesn't know.
+ * version doesn't know, and, read through source grants (`shared`), a rule
+ * break or a People enrichment profile.
  */
 export function citationHref(
   t: CitationTarget,
@@ -1557,14 +1628,16 @@ export function citationHref(
       )
     );
   if ("violation" in t)
-    return ontologyPaths.loadRuleBreaks(
-      o,
-      ctx.loadId,
-      t.violation.constraint,
-      t.violation.key,
-    );
+    return ctx.shared
+      ? undefined
+      : ontologyPaths.loadRuleBreaks(
+          o,
+          ctx.loadId,
+          t.violation.constraint,
+          t.violation.key,
+        );
   if ("row" in t && t.row.source === ENRICHMENT_SOURCE)
-    return ontologyPaths.load(o, ctx.loadId);
+    return ctx.shared ? undefined : ontologyPaths.load(o, ctx.loadId);
   if ("row" in t) {
     return ctx.table(t.row.source)?.to;
   }

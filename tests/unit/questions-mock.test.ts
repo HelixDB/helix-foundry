@@ -251,6 +251,7 @@ describe("mock questions", () => {
       ["query", "recorded", "e8"],
       ["query", "recorded", "e9"],
       ["helix_query", "recorded", "e10"],
+      ["history_of", "recorded", "e11"],
       ["answer", "failed", undefined],
       ["answer", "ended", undefined],
     ]);
@@ -320,12 +321,45 @@ describe("mock questions", () => {
       "result",
       "result",
       "result",
+      "version",
     ]);
     // The answer cites what the graph query counted, as a result.
     expect(view.sources[8]!.citation).toEqual({
       marker: "c11",
       evidence_id: "e10",
       target: { result: { evidence_id: "e10" } },
+    });
+    // And the signed_on its history read shows, with when it held (4.7.0):
+    // the day a document gave it, as that day, from the next midnight UTC.
+    const built = (await call("GET", `${O}/loads/${load}`)).body.load;
+    const contract = {
+      type: "Contract",
+      id: "master services agreement",
+    };
+    expect(view.sources.at(-1)!.citation).toEqual({
+      marker: "c12",
+      evidence_id: "e11",
+      target: {
+        version: {
+          tx: load,
+          at: built.finishedAt,
+          of: { prop: { entity: contract, prop: "signed_on" } },
+          valid: {
+            from: "2026-10-02T00:00:00Z",
+            day: "2026-10-01",
+          },
+        },
+      },
+    });
+    // As the model wrote it, by handle.
+    expect(
+      (
+        stream.steps.at(-1)!.input as {
+          citations: { marker: string; target: unknown }[];
+        }
+      ).citations.find((c) => c.marker === "c12")!.target,
+    ).toMatchObject({
+      version: { of: { prop: { entity: "n2", prop: "signed_on" } } },
     });
     expect(result.answer.blocks[1]).toMatchObject({
       list: expect.arrayContaining(["The load holds 1 Contract entity [c11]"]),
@@ -668,10 +702,16 @@ describe("mock questions", () => {
     const cannot = await end("cannot_answer");
     await fitsContract(cannot.id);
     expect(cannot.status).toBe("cannot_answer");
+    // From 4.7.0 every decline says its kind, the model's call as its result.
     expect(parseAskResult(cannot.resultJson)).toMatchObject({
       status: "cannot_answer",
       gap: expect.stringContaining("signed_by"),
+      kind: "undeclared_relation",
     });
+    const declined = (await call("GET", `${Q}/${cannot.id}/events`)).body.events
+      .map((e: { eventJson: string }) => JSON.parse(e.eventJson))
+      .find((e: { tool?: string }) => e.tool === "cannot_answer");
+    expect(declined.input).toMatchObject({ kind: "undeclared_relation" });
     const stopped = await end("budget_exhausted");
     await fitsContract(stopped.id);
     expect(stopped).toMatchObject({ status: "failed", usdMicros: "500000" });

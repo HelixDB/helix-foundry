@@ -248,10 +248,61 @@ func (k *postgresKind) Target(settings json.RawMessage) (string, error) {
 	return databaseTarget(settings)
 }
 
-// Sync copies one table from a consistent snapshot. PostgreSQL encodes each
-// row as JSON itself, so no column type needs mapping here.
+// Sync copies one table from a consistent snapshot: the full read's, when
+// src holds one (SourceSnapshot) or carries the replication slot's, else
+// its own. PostgreSQL encodes each row as JSON itself, so no column type
+// needs mapping here.
 func (k *postgresKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {
 	return table, k.copyRows(ctx, src, table.Name, w)
+}
+
+var _ SnapshotKind = (*postgresKind)(nil)
+
+// SourceSnapshot opens a connection, dialed through the guard with the
+// read's settings, and holds a read-only repeatable-read transaction on it
+// until Close: every table of the full read is read on that transaction
+// (copyRows), so all at its one snapshot, over the one connection. A role
+// limited to one connection, a pooler with one server connection, or a
+// load-balanced reader endpoint reads exactly as it would a table at a time,
+// and a server that exports no snapshots needs none. The transaction sits
+// idle while each table is published, so its first statement turns off
+// idle_in_transaction_session_timeout, a server's setting that would end
+// it, for the transaction alone (SET LOCAL), never for a pooler's server
+// connection after it. A source the replication slot bound (Start) keeps
+// the slot's snapshot, which the slot's position matches, and holds nothing.
+//
+// What it costs the source: the row versions the snapshot sees, which
+// vacuum keeps until the full read ends.
+func (k *postgresKind) SourceSnapshot(ctx context.Context, src Source) (SourceSnapshot, error) {
+	s, err := decodePostgresSettings(src.Settings)
+	if err != nil {
+		return SourceSnapshot{}, err
+	}
+	if s.Snapshot != "" {
+		return SourceSnapshot{Source: src, Close: func() {}}, nil
+	}
+	conn, err := k.connect(ctx, s.DatabaseSettings, src.Secret)
+	if err != nil {
+		return SourceSnapshot{}, connectFailure(err)
+	}
+	// Closing the connection ends the transaction, and the snapshot with it.
+	end := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = conn.Close(ctx) // best-effort: the server ends the transaction with the connection
+	}
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		end()
+		return SourceSnapshot{}, connectFailure(err)
+	}
+	if _, err := tx.Exec(ctx, "SET LOCAL idle_in_transaction_session_timeout = 0"); err != nil {
+		end()
+		return SourceSnapshot{}, fmt.Errorf("keep the snapshot's transaction open: %w", err)
+	}
+	read := src
+	read.held = tx
+	return SourceSnapshot{Source: read, Close: end}, nil
 }
 
 // pgRowJSON is how every read encodes a row of the table aliased t, so a row
@@ -270,6 +321,9 @@ func (k *postgresKind) copyRows(ctx context.Context, src Source, table string, w
 	if s.Snapshot != "" && !pgSnapshotRE.MatchString(s.Snapshot) {
 		return fmt.Errorf("snapshot name %q is malformed", s.Snapshot)
 	}
+	if src.held != nil {
+		return pgCopyRows(ctx, src.held, s.Schema, table, w)
+	}
 	conn, err := k.connect(ctx, s.DatabaseSettings, src.Secret)
 	if err != nil {
 		return connectFailure(err)
@@ -285,22 +339,30 @@ func (k *postgresKind) copyRows(ctx context.Context, src Source, table string, w
 			return fmt.Errorf("import snapshot %s: %w", s.Snapshot, err)
 		}
 	}
-	rows, err := tx.Query(ctx, "SELECT "+pgRowJSON+" FROM "+pgx.Identifier{s.Schema, table}.Sanitize()+" t")
+	if err := pgCopyRows(ctx, tx, s.Schema, table, w); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// pgCopyRows writes every row of schema.table, read on tx, to w.
+func pgCopyRows(ctx context.Context, tx pgx.Tx, schema, table string, w RowWriter) error {
+	rows, err := tx.Query(ctx, "SELECT "+pgRowJSON+" FROM "+pgx.Identifier{schema, table}.Sanitize()+" t")
 	if err != nil {
-		return fmt.Errorf("read %s.%s: %w", s.Schema, table, err)
+		return fmt.Errorf("read %s.%s: %w", schema, table, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var row []byte
 		if err := rows.Scan(&row); err != nil {
-			return fmt.Errorf("read %s.%s: %w", s.Schema, table, err)
+			return fmt.Errorf("read %s.%s: %w", schema, table, err)
 		}
 		if err := w.WriteJSON(row); err != nil {
 			return err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read %s.%s: %w", s.Schema, table, err)
+		return fmt.Errorf("read %s.%s: %w", schema, table, err)
 	}
-	return tx.Commit(ctx)
+	return nil
 }

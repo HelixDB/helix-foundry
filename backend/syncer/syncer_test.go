@@ -40,6 +40,28 @@ type memoryStore struct {
 	replaced []string
 	// failPrune fails the next prune, as an attempt that dies after writing its tables does.
 	failPrune bool
+	// breaks are the accounts broken, as connector@generation:reason;
+	// checked counts the tokens vended.
+	breaks  []string
+	checked int
+	// discarded are the cursors a sync of an older account generation
+	// wrote, which the store dropped.
+	discarded []string
+}
+
+func (m *memoryStore) BreakConnectorAccount(_ context.Context, _, connectorID string, generation int, reason string) (bool, error) {
+	c := m.connectors[connectorID]
+	if c == nil || c.Account == nil || c.Account.Generation != generation || c.Account.Broken != nil {
+		return false, nil
+	}
+	c.Account.Broken = &reason
+	m.breaks = append(m.breaks, fmt.Sprintf("%s@%d:%s", connectorID, generation, reason))
+	return true, nil
+}
+
+func (m *memoryStore) MarkConnectorAccountChecked(context.Context, string, string) error {
+	m.checked++
+	return nil
 }
 
 func (m *memoryStore) WorkspaceDeleting(_ context.Context, id string) (bool, error) {
@@ -142,11 +164,16 @@ func (m *memoryStore) PruneConnectorTables(_ context.Context, _, _ string, keep 
 	return removed, nil
 }
 
-func (m *memoryStore) UpdateConnectorCursor(_ context.Context, connectorID string, cursor json.RawMessage, _, workerID string) error {
+func (m *memoryStore) UpdateConnectorCursor(_ context.Context, connectorID string, generation int, cursor json.RawMessage, _, workerID string) error {
 	if workerID != m.leaseOwner {
 		return foundrystore.ErrNotFound
 	}
-	m.connectors[connectorID].ChangeCursor = cursor
+	c := m.connectors[connectorID]
+	if current := AccountGeneration(c); *current != generation {
+		m.discarded = append(m.discarded, string(cursor))
+		return nil
+	}
+	c.ChangeCursor = cursor
 	return nil
 }
 

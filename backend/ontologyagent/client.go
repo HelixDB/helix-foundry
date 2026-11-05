@@ -141,6 +141,17 @@ func (c *Client) Compare(ctx context.Context, request []byte) (json.RawMessage, 
 	return json.RawMessage(resp.GetResultJson()), nil
 }
 
+// Audit audits one page of a load (an AuditRequest): one unary call, which
+// returns the AuditResult or the agent's gRPC status (RESOURCE_EXHAUSTED
+// while it runs another audit). Cancelling stops it.
+func (c *Client) Audit(ctx context.Context, request []byte) (json.RawMessage, error) {
+	resp, err := c.agent.Audit(ctx, &agentv1.AuditRequest{RequestJson: string(request)})
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(resp.GetResultJson()), nil
+}
+
 // Ask answers one question over a load on its request's model, key its
 // endpoint's, as Ingest loads tables: each event goes to onEvent, and the
 // result ends the stream. Cancelling stops it before its next model call.

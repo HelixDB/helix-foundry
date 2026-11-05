@@ -54,7 +54,12 @@ import { useDocumentNames } from "../documents/documents-api";
 import { formatUsd } from "../documents/model";
 import { parseEntityId } from "../explore/model";
 import { readQueries } from "../explore/reads";
-import { useTenantReads } from "../explore/tenant-reads";
+import {
+  useGraphReader,
+  useReadAccess,
+  useReadsPart,
+} from "../explore/graph-reader";
+import { PartNote } from "../explore/part-note";
 import { useNaming } from "../explore/use-naming";
 import {
   AiRefusal,
@@ -62,7 +67,9 @@ import {
   useAiConfigured,
 } from "../workspace/ai-gate";
 import {
+  CANNOT_ANSWER_LABELS,
   EMPTY_STREAM,
+  PART_UNCOVERED_LABEL,
   MAX_QUESTION,
   answerView,
   askSuggestions,
@@ -95,6 +102,7 @@ import {
 import {
   LoadNotice,
   LoadPicker,
+  NotShared,
   NothingLoaded,
   useLoadSelection,
 } from "./load-selection";
@@ -162,11 +170,15 @@ function focusOf(param: string | null): EntityRef | undefined {
 
 export function AskPage() {
   const { id: ws } = useWorkspace(),
-    { id: o, ontology } = useOntology();
+    { id: o, ontology } = useOntology(),
+    access = useReadAccess();
   const [params, setParams] = useSearchParams();
   const focus = focusOf(params.get("focus"));
   const selection = useLoadSelection();
-  const list = useQuery(questionQueries.list(ws, o));
+  const list = useQuery({
+    ...questionQueries.list(ws, o),
+    enabled: access !== "none",
+  });
   const threads = threadsOf(list.data?.questions || []);
   const load =
     selection.choice.kind === "load" ? selection.choice.load : undefined;
@@ -198,13 +210,26 @@ export function AskPage() {
       },
       { replace: false },
     );
+  // Through source grants, Ask asks the one load they cover: the Load
+  // picker hides itself.
   const picker = (
     <>
       <OntologyPicker ontologyId={o} to={paths.ask} />
       <LoadPicker selection={selection} />
     </>
   );
-  if (!ontology.tenantId)
+  if (access === "none")
+    return (
+      <div className="ak-chat">
+        <ChatBar title="Analyst">{picker}</ChatBar>
+        <div className="ak-scroll ak-chat--empty">
+          <NotShared />
+        </div>
+      </div>
+    );
+  // Through grants, the WFE reads the load: the database isn't the user's
+  // to name (a grantee isn't sent it).
+  if (!ontology.tenantId && access === "database")
     return (
       <div className="ak-chat">
         <ChatBar title="Analyst">{picker}</ChatBar>
@@ -235,7 +260,12 @@ export function AskPage() {
         load={load}
         budget={list.data?.budget}
         picker={picker}
-        notice={<LoadNotice selection={selection} />}
+        notice={
+          <>
+            <PartNote />
+            <LoadNotice selection={selection} />
+          </>
+        }
         onBack={() => setThread("")}
       />
     );
@@ -264,6 +294,7 @@ export function AskPage() {
           <h1 className="ak-hello">
             What do you want to know about {ontologyName(ontology)}?
           </h1>
+          <PartNote />
           <Composer
             load={load}
             focus={focus}
@@ -291,6 +322,8 @@ function ChatBar({
   onBack?: () => void;
   children: ReactNode;
 }) {
+  // Its prompt has an agent read the database: not for who reads through grants.
+  const reads = useReadAccess();
   return (
     <>
       <header className="ak-bar">
@@ -314,7 +347,7 @@ function ChatBar({
         )}
         {children}
       </header>
-      {!LOCAL && <ProductionCard />}
+      {!LOCAL && reads === "database" && <ProductionCard />}
     </>
   );
 }
@@ -513,8 +546,8 @@ function useCitations(
   named: ReadonlyMap<string, string>;
 } {
   const { id: ws } = useWorkspace(),
-    { id: o } = useOntology(),
-    { readLater } = useTenantReads();
+    { id: o, ontology } = useOntology(),
+    { access, reader } = useGraphReader(true);
   const loads = useQuery(ontologyQueries.loads(ws, o));
   const loadId = q.loadId || "";
   const versionId =
@@ -522,9 +555,15 @@ function useCitations(
     loads.data?.loads?.find((l) => l.id === loadId)?.versionId ||
     "";
   const { naming } = useNaming(versionId);
-  const names = useQuery(
-    readQueries.names(ws, o, readLater, loadId, cited, naming),
-  );
+  // Through grants, the names are typed reads of the one load they cover:
+  // a question asked of an earlier load names its entities as its steps do.
+  const named = readQueries.names(ws, o, reader, loadId, cited, naming);
+  const names = useQuery({
+    ...named,
+    enabled:
+      named.enabled &&
+      (access !== "grants" || loadId === ontology.currentLoad?.id),
+  });
   // A citation names any document of the workspace, a connector's too.
   const docName = useDocumentNames(ws, "a document");
   const sources = useSources();
@@ -532,6 +571,7 @@ function useCitations(
     named: names.data ?? new Map(),
     ontologyId: o,
     loadId,
+    ...(access === "grants" ? { shared: true as const } : {}),
     keyed: (type) => {
       const t = naming.types.get(type);
       return t ? t.key.length > 0 : undefined;
@@ -1088,7 +1128,9 @@ function Outcome({
   entityHref: (r: EntityRef) => string | undefined;
   reading: boolean;
 }) {
-  const { id: o } = useOntology();
+  const { id: o } = useOntology(),
+    { grantee } = useWorkspace(),
+    readsPart = useReadsPart();
   switch (view.kind) {
     case "waiting":
     case "queued":
@@ -1130,7 +1172,8 @@ function Outcome({
           }
         />
       );
-    case "cannot_answer":
+    case "cannot_answer": {
+      const gap = view.result.kind;
       return (
         <Callout
           icon={FileQuestion}
@@ -1138,22 +1181,32 @@ function Outcome({
           title="This ontology can’t answer that"
           text={
             <>
+              {gap && (
+                <Tag>
+                  {readsPart && gap === "uncovered"
+                    ? PART_UNCOVERED_LABEL
+                    : CANNOT_ANSWER_LABELS[gap]}
+                </Tag>
+              )}{" "}
               {view.result.reason || "What it holds doesn’t say."}
               {view.result.gap && <> It lacks: {view.result.gap}</>}
-              <span className="ak-draft">
-                <ButtonLink
-                  size="sm"
-                  to={paths.generate(o, {
-                    goal: draftGoal(q.question || "", view.result),
-                  })}
-                >
-                  Draft a new version with this
-                </ButtonLink>
-              </span>
+              {!grantee && (
+                <span className="ak-draft">
+                  <ButtonLink
+                    size="sm"
+                    to={paths.generate(o, {
+                      goal: draftGoal(q.question || "", view.result),
+                    })}
+                  >
+                    Draft a new version with this
+                  </ButtonLink>
+                </span>
+              )}
             </>
           }
         />
       );
+    }
     case "answered":
       return (
         <Answer

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -88,8 +89,11 @@ type calcomKind struct {
 func (k *calcomKind) Name() string        { return "calcom" }
 func (k *calcomKind) DisplayName() string { return "Cal.com" }
 
+var _ Identifier = (*calcomKind)(nil)
+
 func (k *calcomKind) Prepare(src Source) (json.RawMessage, error) {
-	if !calcomKeyRE.MatchString(strings.TrimSpace(src.Secret)) {
+	// A token the broker vended has no format of ours to check.
+	if !src.SignIn && !calcomKeyRE.MatchString(strings.TrimSpace(src.Secret)) {
 		return nil, invalid("enter a Cal.com API key (cal_live_… or cal_…)")
 	}
 	if err := emptySettings(src.Settings); err != nil {
@@ -142,6 +146,26 @@ func (k *calcomKind) Discover(ctx context.Context, src Source) (Discovery, error
 }
 
 func (k *calcomKind) Hint(secret string) string { return keyHint(strings.TrimSpace(secret), 2) }
+
+// Identity is the username of the user the credential reads as, from
+// /v2/me, and their id.
+func (k *calcomKind) Identity(ctx context.Context, src Source) (string, string, error) {
+	me, err := k.me(ctx, src.Secret)
+	if err != nil {
+		return "", "", err
+	}
+	id := ""
+	if n, ok := me["id"].(float64); ok && n != 0 {
+		id = strconv.FormatInt(int64(n), 10)
+	}
+	if username, _ := me["username"].(string); username != "" {
+		return username, id, nil
+	}
+	if email, _ := me["email"].(string); email != "" {
+		return email, id, nil
+	}
+	return "", "", errors.New("cal.com /v2/me names no username")
+}
 
 func (k *calcomKind) Sync(ctx context.Context, src Source, table Table, w RowWriter) (Table, error) {
 	key := src.Secret
@@ -411,7 +435,7 @@ func (k *calcomKind) get(ctx context.Context, key, path, version string, query u
 	}
 	switch status {
 	case http.StatusUnauthorized:
-		return 0, nil, refused(nil, "Cal.com rejected this key; check it and enter it again")
+		return 0, nil, rejectedCredential("Cal.com", nil, "Cal.com rejected this key; check it and enter it again")
 	case http.StatusTooManyRequests:
 		// Cal.com sends no Retry-After; the reset header is the seconds until the key's block ends.
 		resets := "later"

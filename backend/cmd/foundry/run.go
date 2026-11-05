@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -40,6 +41,7 @@ import (
 	foundryaskworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ask-worker"
 	foundrydocumentworker "github.com/helixdb/helix-foundry/backend/workers/foundry-document-worker"
 	foundrygraphworker "github.com/helixdb/helix-foundry/backend/workers/foundry-graph-worker"
+	foundryhealworker "github.com/helixdb/helix-foundry/backend/workers/foundry-heal-worker"
 	foundryontologyworker "github.com/helixdb/helix-foundry/backend/workers/foundry-ontology-worker"
 	foundrysyncworker "github.com/helixdb/helix-foundry/backend/workers/foundry-sync-worker"
 )
@@ -67,6 +69,10 @@ var workers = []any{
 	foundrygraphworker.New,
 	foundryaskworker.New,
 }
+
+// healWorker audits loads for self-healing's findings, beside the graph
+// worker on its sidecar, only with foundry.heal.enabled (off by default).
+var healWorker = foundryhealworker.New
 
 // run starts the install and blocks until ctx is cancelled, SIGINT or
 // SIGTERM arrives, or a part exits, returning the first error.
@@ -196,8 +202,8 @@ func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 }
 
 // front is the install's front end: one gRPC server with the directory and
-// FoundryService behind the site token, and their REST gateway, which is
-// all the site calls.
+// FoundryService behind the site token, their REST gateway, which is all the
+// site calls, and the MCP and HTTP Ask the owner's agents call beside it.
 type front struct {
 	ep  *endpoint.Endpoint
 	api *api.Service
@@ -230,6 +236,9 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 		Name: "foundry", Logger: logger.With("service", "foundry"), Health: probes,
 		GRPC: endpoint.GRPC{Listen: cfg.Local.Listen.GRPC, MaxRecvMsgMB: 16}, HTTP: endpoint.HTTP{Listen: cfg.Local.Listen.REST},
 		Interceptor: auth, BuildGateway: true,
+		// local/compose.mcp.yaml publishes REST on the host for agents; the probes
+		// stay on the health listener (serve), which isn't.
+		NoProbes: true,
 	})
 	if err != nil {
 		_ = foundrySvc.Close()
@@ -246,6 +255,9 @@ func newFront(ctx context.Context, cfg *Config, logger *slog.Logger, probes *pro
 			return nil, err
 		}
 	}
+	integrations := local.IntegrationHandler(auth, dir, ep.GatewayConn, fcfg.Foundry.Documents, cfg.Local.SiteOrigin, logger.With("component", "integration"))
+	ep.RegisterHTTPHandler("/mcp", integrations)
+	ep.RegisterHTTPHandler("/v1/ontologies/", integrations)
 	return f, nil
 }
 
@@ -277,7 +289,11 @@ func buildWorkers(cfg *foundryconfig.Config, logger *slog.Logger, probes *probes
 			return nil, err
 		}
 	}
-	for _, constructor := range workers {
+	constructors := workers
+	if cfg.Foundry.Heal.Enabled {
+		constructors = append(slices.Clip(workers), healWorker)
+	}
+	for _, constructor := range constructors {
 		if err := c.Provide(constructor, dig.Group("components"), dig.As(new(component))); err != nil {
 			return nil, err
 		}

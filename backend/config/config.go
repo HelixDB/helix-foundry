@@ -100,6 +100,44 @@ type Foundry struct {
 	Enrichment EnrichmentConfig `koanf:"enrichment"`
 	Events     EventsConfig     `koanf:"events"`
 	Notify     NotifyConfig     `koanf:"notify"`
+	Heal       HealConfig       `koanf:"heal"`
+}
+
+// HealConfig drives the foundry-heal-worker, which audits each ontology's
+// current load with the ontology agent's Audit and stores what it finds
+// for people to see (foundry_heal_findings), and the API, which says
+// whether audits run at all. The worker runs beside the
+// foundry-graph-worker, on its sidecar (foundry.graph.agent), reading
+// through a read-only proxy of its own. Its settings are checked where it
+// runs (Validate).
+type HealConfig struct {
+	// Enabled is the deployment's switch, off by default: off, no audit
+	// runs and no finding is stored, even where the worker is a task.
+	Enabled bool `koanf:"enabled"`
+	// PollInterval is how often the worker looks for loads due an audit.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	// Every is how long after a load's last complete audit started it is
+	// audited again (nightly); a load is audited as it becomes current, too.
+	Every time.Duration `koanf:"every"`
+	// RetryAfter is how long after an incomplete or failed audit, or one
+	// whose worker's lease ran out, the load is audited again.
+	RetryAfter time.Duration `koanf:"retry_after"`
+	// Lease is how long a run holds its ontology without a renewal: a
+	// worker that dies holds it no longer.
+	Lease time.Duration `koanf:"lease"`
+}
+
+// Validate checks the worker's settings where it runs, once Enabled; the
+// foundry-heal-worker checks them as it starts, too.
+func (h HealConfig) Validate() error {
+	switch {
+	case h.PollInterval <= 0 || h.Every <= 0 || h.RetryAfter <= 0:
+		return fmt.Errorf("foundry.heal poll_interval, every and retry_after must be positive")
+	case h.Lease < 30*time.Second:
+		// Renewed every third of it; shorter would lapse on a slow renewal.
+		return fmt.Errorf("foundry.heal.lease must be at least 30s")
+	}
+	return nil
 }
 
 // NotifyConfig drives the foundry-notify-worker, which emails people
@@ -393,18 +431,36 @@ type AskConfig struct {
 	Defer time.Duration `koanf:"defer"`
 	// Agent is the sidecar's gRPC address.
 	Agent AskAgentConfig `koanf:"agent"`
-	// HelixTimeoutSecs is how long the agent waits for one Helix read.
+	// HelixTimeoutSecs is how long the agent waits for one Helix request
+	// (the agent's helix.timeout_secs). A read of the graph may make several.
 	HelixTimeoutSecs int `koanf:"helix_timeout_secs"`
 	// MaxUSD, MaxSteps and MaxWallSecs cap one question.
 	MaxUSD      float64 `koanf:"max_usd"`
 	MaxSteps    int     `koanf:"max_steps"`
 	MaxWallSecs int     `koanf:"max_wall_secs"`
+	// ReadWallMS and ReadScanEntities cap each read of the graph a question
+	// makes (the agent's limits.read: wall_ms and scan_entities): its wall
+	// time, in milliseconds, at most MaxWallSecs; and the matches a query may
+	// read into memory before it is too broad. A read stopped at one fails
+	// its step with an error naming the field and its value, and the agent
+	// reads narrower or says it can't answer. The defaults are the agent's
+	// own, 5,000 ms and 20,000 matches. Each Helix request of a read still
+	// ends at HelixTimeoutSecs, so a wall time past it helps only reads of
+	// several requests. A helix_query read runs inside Helix, past both: only
+	// HelixTimeoutSecs and MaxWallSecs bound it.
+	ReadWallMS       int `koanf:"read_wall_ms"`
+	ReadScanEntities int `koanf:"read_scan_entities"`
 	// MonthlyUSD is a workspace's monthly budget for questions, separate
 	// from foundry.graph.monthly_usd; MaxRunning and PerHour bound its
 	// questions at once and asked in an hour.
 	MonthlyUSD float64 `koanf:"monthly_usd"`
 	MaxRunning int     `koanf:"max_running"`
 	PerHour    int     `koanf:"per_hour"`
+	// GranteeMonthlyUSD and GranteePerHour bound one grantee of a workspace's
+	// source grants (a member, or an agent's key) within those, so one of them
+	// can't spend the workspace's questions.
+	GranteeMonthlyUSD float64 `koanf:"grantee_monthly_usd"`
+	GranteePerHour    int     `koanf:"grantee_per_hour"`
 }
 
 // AskAgentConfig is the ontology agent sidecar of the ask worker.
@@ -442,16 +498,29 @@ func (a AskConfig) MaxMicros() int64 { return int64(math.Round(a.MaxUSD * 1e6)) 
 // of a US dollar.
 func (a AskConfig) MonthlyMicros() int64 { return int64(math.Round(a.MonthlyUSD * 1e6)) }
 
+// GranteeMonthlyMicros is one grantee's monthly budget, GranteeMonthlyUSD, in
+// millionths of a US dollar.
+func (a AskConfig) GranteeMonthlyMicros() int64 { return int64(math.Round(a.GranteeMonthlyUSD * 1e6)) }
+
 func (a AskConfig) validate() error {
 	switch {
 	case a.MaxUSD <= 0 || a.MaxSteps < 1 || a.MaxWallSecs < 1:
 		return fmt.Errorf("foundry.ask max_usd, max_steps and max_wall_secs must be positive")
 	case a.MaxWallSecs >= AskWallSecsLimit:
 		return fmt.Errorf("foundry.ask.max_wall_secs must be under %d, which the agent refuses", AskWallSecsLimit)
+	case a.ReadWallMS < 1 || a.ReadScanEntities < 1:
+		return fmt.Errorf("foundry.ask read_wall_ms and read_scan_entities must be positive")
+	case a.ReadWallMS > a.MaxWallSecs*1000:
+		return fmt.Errorf("foundry.ask.read_wall_ms (%d) must be at most max_wall_secs (%ds) in milliseconds: the agent refuses a read that may outlast its question",
+			a.ReadWallMS, a.MaxWallSecs)
 	case a.MonthlyUSD < a.MaxUSD:
 		return fmt.Errorf("foundry.ask.monthly_usd must be at least max_usd")
 	case a.MaxRunning < 1 || a.PerHour < 1:
 		return fmt.Errorf("foundry.ask max_running and per_hour must be positive")
+	case a.GranteeMonthlyUSD < a.MaxUSD:
+		return fmt.Errorf("foundry.ask.grantee_monthly_usd must be at least max_usd")
+	case a.GranteePerHour < 1:
+		return fmt.Errorf("foundry.ask.grantee_per_hour must be positive")
 	}
 	return nil
 }
@@ -989,6 +1058,15 @@ type ConnectorsConfig struct {
 	// backend and sync worker chain through it. Empty turns IAM role access
 	// off, leaving access keys.
 	S3RoleARN string `koanf:"s3_role_arn"`
+	// SignInReturnTo are the site callbacks a connector sign-in may return
+	// to, such as https://foundry.helix-db.com/connect/callback; each must
+	// also be a redirect URI the broker (WorkOS) lists. Empty refuses every
+	// sign-in.
+	SignInReturnTo []string `koanf:"sign_in_return_to"`
+	// GitHubAppInstallURL installs the GitHub App that signed-in GitHub
+	// connectors read through, on an account or organization, for its private
+	// repositories.
+	GitHubAppInstallURL string `koanf:"github_app_install_url"`
 }
 
 var iamRoleARN = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/[\w+=,.@/-]+$`)
@@ -999,6 +1077,20 @@ func (c ConnectorsConfig) Enabled() bool { return c.CurrentKey != "" }
 func (c ConnectorsConfig) validate() error {
 	if c.S3RoleARN != "" && !iamRoleARN.MatchString(c.S3RoleARN) {
 		return fmt.Errorf("foundry.connectors.s3_role_arn must be an IAM role ARN, like arn:aws:iam::123456789012:role/name")
+	}
+	// The broker matches a sign-in's return_to to its redirect URIs exactly,
+	// and with no query string.
+	for _, callback := range c.SignInReturnTo {
+		u, err := url.Parse(callback)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("foundry.connectors.sign_in_return_to %q must be an absolute URL with no query, such as "+
+				"https://foundry.helix-db.com/connect/callback", callback)
+		}
+	}
+	if install := c.GitHubAppInstallURL; install != "" {
+		if u, err := url.Parse(install); err != nil || u.Scheme != "https" || u.Host == "" {
+			return fmt.Errorf("foundry.connectors.github_app_install_url %q must be an https URL", install)
+		}
 	}
 	if !c.Enabled() && c.CurrentKeyID == "" && c.PreviousKeyID == "" && c.PreviousKey == "" {
 		return nil
@@ -1207,9 +1299,9 @@ type Roles struct {
 	Read, Events bool
 	// The workers, by their tasks: foundry-sync-worker,
 	// foundry-document-worker, foundry-ontology-worker, foundry-graph-worker,
-	// foundry-ask-worker, foundry-enrichment-worker and
-	// foundry-notify-worker.
-	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker bool
+	// foundry-ask-worker, foundry-enrichment-worker,
+	// foundry-notify-worker and foundry-heal-worker.
+	SyncWorker, DocumentWorker, OntologyWorker, GraphWorker, AskWorker, EnrichmentWorker, NotifyWorker, HealWorker bool
 }
 
 // modelCalls reports whether the roles call models: the workers that draft,
@@ -1306,6 +1398,17 @@ func (c *Config) validateRoles(roles Roles) error {
 	if roles.NotifyWorker {
 		if err := f.Notify.Validate(); err != nil {
 			return err
+		}
+	}
+	if roles.HealWorker && f.Heal.Enabled {
+		g := f.Graph
+		switch err := f.Heal.Validate(); {
+		case err != nil:
+			return err
+		case g.Agent.Addr == "" || !loopback(g.Agent.Addr):
+			return fmt.Errorf("foundry.graph.agent.addr must be a loopback address when 'foundry-heal-worker' is in tasks: it audits on the graph worker's sidecar")
+		case g.HelixTimeoutSecs < 1:
+			return fmt.Errorf("foundry.graph.helix_timeout_secs must be positive when 'foundry-heal-worker' is in tasks")
 		}
 	}
 	if roles.SyncWorker {
@@ -1577,9 +1680,15 @@ func Defaults() Config {
 		MaxUSD:           0.5,
 		MaxSteps:         20,
 		MaxWallSecs:      240,
+		ReadWallMS:       5000,
+		ReadScanEntities: 20000,
 		MonthlyUSD:       30,
 		MaxRunning:       2,
 		PerHour:          30,
+		// A third of the workspace's: several grantees can ask in the same
+		// month, and none of them can spend it all.
+		GranteeMonthlyUSD: 10,
+		GranteePerHour:    10,
 	}, Enrichment: EnrichmentConfig{
 		HTTP:                 ServiceHTTPConfig{Listen: ":8100"},
 		Provider:             EnrichmentFake,
@@ -1602,6 +1711,11 @@ func Defaults() Config {
 		FollowUpAfter:  24 * time.Hour,
 		FollowUpWindow: 72 * time.Hour,
 		MaxAttempts:    5,
+	}, Heal: HealConfig{
+		PollInterval: time.Minute,
+		Every:        24 * time.Hour,
+		RetryAfter:   15 * time.Minute,
+		Lease:        2 * time.Minute,
 	}},
 		Billing: Billing{Plans: DefaultPlans()},
 	}

@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"time"
 )
 
@@ -65,9 +66,14 @@ type FoundryQuestion struct {
 	// LastSeq is the seq of its newest event; 0 before any.
 	LastSeq       int
 	AskedByUserID *string
-	CreatedAt     time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
+	// Grantee is who asked through source grants, set only for such a
+	// question: the question is that principal's own, and runs as its.
+	Grantee *access.Principal
+	// Seen is what that grantee held of the load when it ran, if not all of it.
+	Seen       *access.Inputs
+	CreatedAt  time.Time
+	StartedAt  *time.Time
+	FinishedAt *time.Time
 }
 
 // FoundryQuestionEvent is one event of a question's run, in its order.
@@ -88,6 +94,11 @@ type FoundryQuestionLimits struct {
 	PerHour int
 	// Running is how many of its questions may run at once.
 	Running int
+	// GranteePerHour and GranteeCapMicros are the same limits for one grantee
+	// of the workspace's source grants, on top of the workspace's, so no one
+	// of them can spend it all: they bound a question with a Grantee.
+	GranteePerHour   int
+	GranteeCapMicros int64
 }
 
 // FoundryQuestionSpend is what a workspace's questions charged to one month spent,

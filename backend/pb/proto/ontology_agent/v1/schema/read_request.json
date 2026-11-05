@@ -32,6 +32,13 @@
       "description": "The load read: the id of the job that created it.",
       "$ref": "#/$defs/LoadId"
     },
+    "mappings_toml": {
+      "description": "The load's version's `mappings.toml`, which says what `visibility`'s sources fill.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "ontology_toml": {
       "description": "The load's version's `ontology.toml`, whose rules apply.",
       "type": "string"
@@ -50,6 +57,17 @@
     "request_id": {
       "description": "The idempotency key; a read writes nothing, so a retry simply reads again.",
       "type": "string"
+    },
+    "visibility": {
+      "description": "What the reader holds of the load, when it isn't everything: the reads see the version\nand the load as those sources fill them. Needs `mappings_toml`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Visibility"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -190,6 +208,33 @@
           "description": "From the object to the subject.",
           "type": "string",
           "const": "in"
+        }
+      ]
+    },
+    "DocumentAccess": {
+      "description": "Which of a load's documents a reader holds.",
+      "oneOf": [
+        {
+          "description": "Every one.",
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "description": "These, by id.",
+          "type": "object",
+          "properties": {
+            "only": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "only"
+          ]
         }
       ]
     },
@@ -677,6 +722,19 @@
           ]
         },
         {
+          "description": "The version as the reader sees it: for a reader that holds only some of the load's\nsources, its files without what they don't fill.",
+          "type": "object",
+          "properties": {
+            "view": {
+              "$ref": "#/$defs/ViewRead"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "view"
+          ]
+        },
+        {
           "description": "A typed query over the load.",
           "type": "object",
           "properties": {
@@ -816,6 +874,12 @@
           "default": 50,
           "minimum": 0
         },
+        "offset": {
+          "description": "How many rows, in order, to pass over first: the next page's is this page's plus its\n`limit`. At most 10,000.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "order_by": {
           "description": "The order: a property of a position the columns name, then the entities; by the\nentities alone if `null`.",
           "anyOf": [
@@ -909,6 +973,11 @@
         "to"
       ]
     },
+    "ViewRead": {
+      "description": "A read of the version as the reader sees it.",
+      "type": "object",
+      "additionalProperties": false
+    },
     "ViolationsRead": {
       "description": "A page of stored violation records, in key order.",
       "type": "object",
@@ -950,6 +1019,68 @@
         }
       },
       "additionalProperties": false
+    },
+    "Visibility": {
+      "description": "What a reader holds of a load, as whoever serves it works out from its grants.",
+      "type": "object",
+      "properties": {
+        "documents": {
+          "description": "The load's documents it holds.",
+          "$ref": "#/$defs/DocumentAccess",
+          "default": "all"
+        },
+        "enrichment": {
+          "description": "Whether it holds People enrichment's profiles.",
+          "type": "boolean",
+          "default": false
+        },
+        "sets": {
+          "description": "The document sets it holds a document of: a route that reads only other sets reads\nnothing it holds.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "sources": {
+          "description": "The tables and table files it holds, by the ids mappings read them by.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "withheld": {
+          "description": "Properties someone decided from documents it doesn't hold.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/WithheldProp"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "WithheldProp": {
+      "description": "A property a reader doesn't see at all.",
+      "type": "object",
+      "properties": {
+        "prop": {
+          "description": "The property.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "prop"
+      ]
     }
   }
 }

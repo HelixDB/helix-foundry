@@ -502,7 +502,7 @@ func TestFoundryOntologyDocuments(t *testing.T) {
 
 		list := func(filter model.FoundryDocumentFilter) []string {
 			t.Helper()
-			docs, _, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, filter, "", 50)
+			docs, _, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, nil, filter, "", 50)
 			require.NoError(t, err)
 			var ids []string
 			for _, d := range docs {
@@ -518,27 +518,38 @@ func TestFoundryOntologyDocuments(t *testing.T) {
 		assert.Equal(t, sorted(review), list(model.FoundryDocumentFilterReview))
 		assert.Equal(t, sorted(failed), list(model.FoundryDocumentFilterFailed))
 		assert.Empty(t, list(model.FoundryDocumentFilterDuplicate))
-		_, _, err = s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, nil, "bogus", "", 50)
+		_, _, err = s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, nil, nil, "bogus", "", 50)
 		assert.Error(t, err)
 
 		// With no load current, the reading version's scope alone.
-		docs, _, err := s.b.db.ListFoundryOntologyDocuments(ctx, ws, "", []string{s.shared}, model.FoundryDocumentFilterAll, "", 50)
+		docs, _, err := s.b.db.ListFoundryOntologyDocuments(ctx, ws, "", []string{s.shared}, nil, model.FoundryDocumentFilterAll, "", 50)
 		require.NoError(t, err)
 		var ids []string
 		for _, d := range docs {
 			ids = append(ids, d.ID)
 		}
 		assert.Equal(t, sorted(read, outside.ID), sorted(ids...))
-		docs, _, err = s.b.db.ListFoundryOntologyDocuments(ctx, ws, "", nil, model.FoundryDocumentFilterAll, "", 50)
+		docs, _, err = s.b.db.ListFoundryOntologyDocuments(ctx, ws, "", nil, nil, model.FoundryDocumentFilterAll, "", 50)
 		require.NoError(t, err)
 		assert.Empty(t, docs, "nothing reads its uploads yet")
 
 		// Pages newest first.
-		page, next, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, model.FoundryDocumentFilterAll, "", 2)
+		page, next, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, nil, model.FoundryDocumentFilterAll, "", 2)
 		require.NoError(t, err)
 		require.Len(t, page, 2)
 		assert.Equal(t, waiting, page[0].ID)
-		rest, last, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, model.FoundryDocumentFilterAll, next, 2)
+		// Kept to the sets a grantee holds, nothing of another shows, on the page or in its token.
+		none := []string{}
+		held, _, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, &none, model.FoundryDocumentFilterAll, "", 2)
+		require.NoError(t, err)
+		assert.Empty(t, held)
+		only := []string{general}
+		held, _, err = s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, &only, model.FoundryDocumentFilterAll, "", 50)
+		require.NoError(t, err)
+		for _, d := range held {
+			assert.Equal(t, general, d.SetID)
+		}
+		rest, last, err := s.a.db.ListFoundryOntologyDocuments(ctx, ws, load, []string{general}, nil, model.FoundryDocumentFilterAll, next, 2)
 		require.NoError(t, err)
 		assert.Len(t, rest, 2)
 		assert.Empty(t, last)

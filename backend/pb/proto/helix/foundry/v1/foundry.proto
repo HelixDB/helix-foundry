@@ -66,6 +66,22 @@ service FoundryService {
     option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/connectors/{connector_id}/syncs" };
   }
 
+  // Connecting a connector by signing in at its provider: started by a user
+  // or their agent, authorized and finished in that user's browser. Only
+  // kinds whose ConnectorKind.sign_in is true.
+  rpc StartConnectorSignIn(StartConnectorSignInRequest) returns (ConnectorSignInResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/sign-ins" body: "*" };
+  }
+  rpc GetConnectorSignIn(GetConnectorSignInRequest) returns (ConnectorSignInResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/sign-ins/{id}" };
+  }
+  rpc AuthorizeConnectorSignIn(AuthorizeConnectorSignInRequest) returns (AuthorizeConnectorSignInResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/sign-ins/{id}:authorize" body: "*" };
+  }
+  rpc FinishConnectorSignIn(FinishConnectorSignInRequest) returns (ConnectorSignInResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/sign-ins/{id}:finish" body: "*" };
+  }
+
   // Helix Foundry event sources: connectors of kind events, made, changed and
   // deleted through the connector routes. No route sends pieces.
   rpc CreateFoundryEventSourceToken(CreateFoundryEventSourceTokenRequest) returns (CreateFoundryEventSourceTokenResponse) {
@@ -213,6 +229,19 @@ service FoundryService {
   rpc DeleteFoundryReviewDecision(DeleteFoundryReviewDecisionRequest) returns (DeleteFoundryReviewDecisionResponse) {
     option (google.api.http) = {delete: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/review-decisions/{id}"};
   }
+  // Self-healing suggestions: what audits of the ontology's current load
+  // found its ontology and mappings lack, the top open ones by support.
+  rpc ListFoundryHealFindings(ListFoundryHealFindingsRequest) returns (ListFoundryHealFindingsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/heal-findings" };
+  }
+  // Hides an open finding until audits find it with twice the support it
+  // has now, or under a spelling it doesn't hold.
+  rpc DismissFoundryHealFinding(DismissFoundryHealFindingRequest) returns (FoundryHealFindingResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/heal-findings/{fingerprint}:dismiss"
+      body: "*"
+    };
+  }
   // An ontology's documents, read only: what its current load holds and
   // what its reading version's scope holds, each with its extraction there.
   rpc ListFoundryOntologyDocuments(ListFoundryOntologyDocumentsRequest) returns (ListFoundryDocumentsResponse) {
@@ -293,6 +322,63 @@ service FoundryService {
   // Ollama server has, for the Ollama card's model choice.
   rpc ListFoundryOllamaModels(ListFoundryOllamaModelsRequest) returns (ListFoundryOllamaModelsResponse) {
     option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/ai/ollama-models" };
+  }
+
+  // Helix Foundry source grants. An owner or admin grants a principal (a
+  // user, a team, or a service credential: an agent's key) the workspace's
+  // sources; a principal the front end's own permissions don't admit reads an
+  // ontology's current load, and asks it questions, only while every source
+  // that load holds is granted to it (SOURCE_GRANTEE, actor.proto). A
+  // workspace that grants nothing behaves as it did without them. A member
+  // given any, or on a team given any, is restricted to them, and stays so
+  // once they're taken away, until someone lifts it.
+  //
+  // Every grant, and what each ontology's current load holds and who may
+  // read it through grants.
+  rpc ListFoundryAccess(ListFoundryAccessRequest) returns (ListFoundryAccessResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/access" };
+  }
+  // Replaces one principal's grants. Giving a member or a team any restricts
+  // that member or the team's members: FAILED_PRECONDITION for an owner or
+  // admin, or a member (of the team too) holding project write or query scope,
+  // which reads the database outside Foundry.
+  rpc SetFoundryAccessGrants(SetFoundryAccessGrantsRequest) returns (SetFoundryAccessGrantsResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/grants" body: "*" };
+  }
+  // Who would stop reading which ontologies through grants after a change:
+  // loading or making current a version, deleting a connector, or moving a
+  // document to another set. The site asks before it makes one.
+  rpc PreviewFoundryAccessChange(PreviewFoundryAccessChangeRequest) returns (PreviewFoundryAccessChangeResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/access:preview" body: "*" };
+  }
+  // What the caller reads through grants: whether it came as a grantee, and
+  // the ontologies its grants cover.
+  rpc GetMyFoundryAccess(GetMyFoundryAccessRequest) returns (GetMyFoundryAccessResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/foundry/access/me" };
+  }
+  // Restricts a member to what grants give, or lifts it. A restricted
+  // member is a grantee on every Foundry call while their role is member:
+  // they see only the ontologies their grants cover, and change nothing.
+  // Only a plain member holding no project write or query scope can be
+  // restricted (FAILED_PRECONDITION otherwise): either reads the database
+  // outside Foundry. Holding sources, their own or a team's, is what restricts
+  // a member, so it can't be lifted until those are gone (FAILED_PRECONDITION).
+  rpc SetFoundryMemberRestricted(SetFoundryMemberRestrictedRequest) returns (SetFoundryMemberRestrictedResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/members/{user_id}" body: "*" };
+  }
+  // Teams of the workspace's members, which hold grants for them.
+  rpc CreateFoundryTeam(CreateFoundryTeamRequest) returns (FoundryTeamResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/foundry/access/teams" body: "*" };
+  }
+  // Renames a team and replaces its members. Whoever joins a team holding
+  // grants is restricted to them (FAILED_PRECONDITION for one holding project
+  // write or query scope), and whoever leaves stays restricted.
+  rpc UpdateFoundryTeam(UpdateFoundryTeamRequest) returns (FoundryTeamResponse) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/foundry/access/teams/{team_id}" body: "*" };
+  }
+  // Deletes a team with its grants.
+  rpc DeleteFoundryTeam(DeleteFoundryTeamRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/foundry/access/teams/{team_id}" };
   }
 }
 
@@ -445,8 +531,48 @@ message ConnectorResponse {
   Connector          connector = 1;
   ConnectorDiscovery discovery = 2;
 }
+
+message StartConnectorSignInRequest {
+  string workspace_id = 1;
+  string kind         = 2;
+  string name         = 3;
+  // The connector's settings; its credential fields must be empty.
+  ConnectorConfig config = 4;
+  // Sign this connector in again instead of making one.
+  string connector_id = 5;
+  // Makes a retry return the sign-in the first attempt started.
+  string client_token = 6;
+}
+message GetConnectorSignInRequest {
+  string workspace_id = 1;
+  string id           = 2;
+}
+message AuthorizeConnectorSignInRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  // The site's callback; one of foundry.connectors.sign_in_return_to.
+  string return_to = 3;
+}
+message AuthorizeConnectorSignInResponse {
+  // The provider's authorization page, for the user's browser.
+  string url = 1;
+}
+message FinishConnectorSignInRequest {
+  string workspace_id = 1;
+  string id           = 2;
+  // The connect_code the callback was given.
+  string connect_code = 3;
+  // The callback's error when it was given no code, such as access_denied.
+  string error = 4;
+}
+message ConnectorSignInResponse {
+  ConnectorSignIn sign_in = 1;
+}
 message ListConnectorsRequest {
   string workspace_id = 1;
+  // Only the connectors whose account needs signing in again, without their
+  // tables or syncs: the cheap read for the site's banner.
+  bool needs_sign_in = 2;
 }
 message ListConnectorsResponse {
   repeated Connector connectors = 1;
@@ -1087,3 +1213,139 @@ message DeleteFoundryReviewDecisionRequest {
   string id = 3;
 }
 message DeleteFoundryReviewDecisionResponse {}
+
+// ListFoundryAccessRequest reads the workspace's grants.
+message ListFoundryAccessRequest {
+  string workspace_id = 1;
+}
+message ListFoundryAccessResponse {
+  // Every grant, oldest first.
+  repeated FoundryAccessGrant grants = 1;
+  // Each live ontology with a current load: what it holds, and who reads it
+  // through grants.
+  repeated FoundryOntologyAccess ontologies = 2;
+  // The workspace's teams, by name.
+  repeated FoundryTeam teams = 3;
+  // The members restricted to what grants give.
+  repeated string restricted_user_ids = 4;
+}
+
+// SetFoundryAccessGrantsRequest replaces a principal's grants with targets,
+// none to take them all away. Every target must be of a live connector or
+// set of the workspace (NOT_FOUND otherwise).
+message SetFoundryAccessGrantsRequest {
+  string                       workspace_id = 1;
+  FoundryPrincipal             principal    = 2;
+  repeated FoundryAccessTarget targets      = 3;
+}
+message SetFoundryAccessGrantsResponse {
+  // The principal's grants now.
+  repeated FoundryAccessGrant grants = 1;
+}
+
+// PreviewFoundryAccessChangeRequest asks what a change would take away.
+message PreviewFoundryAccessChangeRequest {
+  string              workspace_id = 1;
+  FoundryAccessChange change       = 2;
+}
+// FoundryAccessChange is one change the site warns about.
+message FoundryAccessChange {
+  // A load of an ontology's version, or making it current.
+  message LoadVersion {
+    string ontology_id = 1;
+    string version_id  = 2;
+  }
+  // A document moved to another set.
+  message MoveDocument {
+    string document_id     = 1;
+    string document_set_id = 2;
+  }
+  oneof change {
+    LoadVersion  load_version     = 1;
+    string       delete_connector = 2;
+    MoveDocument move_document    = 3;
+  }
+}
+message PreviewFoundryAccessChangeResponse {
+  // Each principal that reads an ontology through grants now and wouldn't
+  // after the change.
+  repeated FoundryAccessLoss losses = 1;
+}
+
+// GetMyFoundryAccessRequest reads what the caller reads through grants.
+message GetMyFoundryAccessRequest {
+  string workspace_id = 1;
+}
+message GetMyFoundryAccessResponse {
+  // The call came as a grantee: the caller reads only through grants.
+  bool grantee = 1;
+  // The caller holds grants, through itself or its teams.
+  bool has_grants = 2;
+  // The live ontologies whose current loads its grants hold any of.
+  repeated string ontology_ids = 3;
+  // Those of them it holds only some of.
+  repeated string partial_ontology_ids = 4;
+}
+
+// SetFoundryMemberRestrictedRequest restricts user_id, or lifts it.
+message SetFoundryMemberRestrictedRequest {
+  string workspace_id = 1;
+  string user_id      = 2;
+  bool   restricted   = 3;
+}
+message SetFoundryMemberRestrictedResponse {
+  bool restricted = 1;
+}
+
+// CreateFoundryTeamRequest makes a team of members. Names are unique in the
+// workspace (ALREADY_EXISTS otherwise), 1 to 120 characters.
+message CreateFoundryTeamRequest {
+  string          workspace_id    = 1;
+  string          name            = 2;
+  repeated string member_user_ids = 3;
+}
+message UpdateFoundryTeamRequest {
+  string          workspace_id    = 1;
+  string          team_id         = 2;
+  string          name            = 3;
+  repeated string member_user_ids = 4;
+}
+message DeleteFoundryTeamRequest {
+  string workspace_id = 1;
+  string team_id      = 2;
+}
+message FoundryTeamResponse {
+  FoundryTeam team = 1;
+}
+
+// ListFoundryHealFindingsRequest lists an ontology's self-healing findings:
+// up to 20 open ones, by support, of those backed by two documents or more
+// and every row finding. NOT_FOUND for an ontology of another workspace or
+// one deleted.
+message ListFoundryHealFindingsRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+}
+message ListFoundryHealFindingsResponse {
+  repeated FoundryHealFinding findings = 1;
+  // The ontology's latest audit, if it has had one.
+  optional FoundryHealRun last_run = 2;
+  // Its newest complete audit, of whichever load: whether the current load
+  // was audited whole, though a later run of it is running or failed.
+  optional FoundryHealRun last_complete_run = 4;
+  // Whether this deployment audits loads (foundry.heal.enabled). Off, no
+  // audit runs: findings and last_run stay as they were.
+  bool enabled = 3;
+}
+// DismissFoundryHealFindingRequest dismisses an open finding by its
+// fingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has
+// no finding of; FAILED_PRECONDITION for one superseded. One already
+// dismissed is returned as it is.
+message DismissFoundryHealFindingRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string fingerprint  = 3;
+}
+message FoundryHealFindingResponse {
+  FoundryHealFinding finding = 1;
+}

@@ -16,6 +16,7 @@ import {
   UserSearch,
 } from "lucide-react";
 import type {
+  Connector,
   FoundryLoad,
   GraphJob,
   OntologyVersion,
@@ -37,6 +38,7 @@ import {
   Panel,
   SkeletonText,
   StatusBadge,
+  connectorLabel,
   formatDate,
   formatNumber,
   formatRelative,
@@ -49,6 +51,9 @@ import {
   documentQueries,
   documentSetQueries,
 } from "../documents/documents-api";
+import { connectorsQuery } from "../data/data-api";
+import { lastSyncedAt } from "../data/model";
+import { needsSignIn } from "../data/sign-ins";
 import { andList, formatBytes, formatUsd, liveRead } from "../documents/model";
 import { loadCountsQuery } from "../explore/load-counts";
 import { rulesOf } from "../explore/graph-read";
@@ -98,6 +103,7 @@ import {
 } from "./queries";
 import { ontologyName, useOntology } from "./scope";
 import { useSources, type SourceInfo } from "./sources";
+import { useAccessCheck } from "../workspace/access-guard";
 
 // Loading an ontology's database: Load on the current version (an agent
 // draft whose status is done), behind a dialog that says what it reads and
@@ -153,6 +159,20 @@ function tablesText(tables: { sourceId: string; info?: SourceInfo }[]) {
 }
 
 /**
+ * What a load reads of connectors whose account needs signing in again:
+ * their tables as their last syncs left them.
+ */
+function frozenText(frozen: Connector[]) {
+  if (!frozen.length) return "";
+  if (frozen.length === 1) {
+    const c = frozen[0]!,
+      at = lastSyncedAt(c);
+    return `${c.name || connectorLabel(c.kind)} needs signing in again: its data is frozen as of its last sync${at ? `, ${formatRelative(at)}` : ""}.`;
+  }
+  return `${andList(frozen.map((c) => c.name || connectorLabel(c.kind)))} need signing in again: their data is frozen as of their last syncs.`;
+}
+
+/**
  * Load in a page header or callout: for owners and admins, on the current
  * version when it is an agent draft whose status is done. Opens the dialog,
  * at once when `opened`.
@@ -180,8 +200,19 @@ export function LoadButton({
     documents = useQuery(documentQueries.workspace(id)),
     read = useQuery(documentQueries.list(id, o)),
     sets = useQuery(documentSetQueries.list(id)),
-    settings = useQuery(enrichmentQuery(id));
+    settings = useQuery(enrichmentQuery(id)),
+    connectors = useQuery(connectorsQuery(id));
   const { bundle, tables, ids, files } = useLoadPlan(version);
+  // Who would stop reading through source grants, asked before it loads.
+  const access = useAccessCheck();
+  // The connectors whose tables it reads that are frozen.
+  const frozen = (connectors.data?.connectors || []).filter(
+    (c) =>
+      needsSignIn(c) &&
+      tables.some(
+        (t) => t.info?.source === "connector" && t.info.connectorId === c.id,
+      ),
+  );
   const [open, setOpen] = useState(opened),
     [pending, setPending] = useState(false),
     [error, setError] = useState(""),
@@ -232,6 +263,12 @@ export function LoadButton({
   const start = async () => {
     setPending(true);
     setError("");
+    if (
+      !(await access.check({
+        loadVersion: { ontologyId: o, versionId: version.id },
+      }))
+    )
+      return setPending(false);
     try {
       const { load } = await createLoad(id, o, {
         versionId: version.id,
@@ -303,6 +340,7 @@ export function LoadButton({
                 {tables.length
                   ? tablesText(tables)
                   : "None: this version maps no tables."}
+                {frozen.length > 0 && ` ${frozenText(frozen)}`}
               </span>
             </li>
             <li>
@@ -372,6 +410,7 @@ export function LoadButton({
           )}
         </Dialog>
       )}
+      {access.dialog}
     </>
   );
 }
@@ -431,7 +470,7 @@ export function LiveLoad() {
       }
       text={
         starting
-          ? `The database is still starting. The ${job.kind === "extract" ? "reading" : "load"} tries again by itself once it takes writes.`
+          ? `Your new database is starting. The ${job.kind === "extract" ? "reading" : "load"} tries again automatically once it’s ready.`
           : p.documentsTotal
             ? `${p.documentsDone || 0} of ${plural(p.documentsTotal, "document")} read so far.`
             : "What it writes shows in the Explorer as it goes."
@@ -538,7 +577,7 @@ function CountCell({
     return (
       <span
         className="on-muted"
-        title="The new database is still starting; this reads it again by itself."
+        title="Your new database is starting. The page updates automatically."
       >
         …
       </span>
@@ -615,6 +654,7 @@ export function LoadsSection() {
     [error, setError] = useState("");
   const currentLoad = rows.find((l) => l.current);
   const manage = canManage(role);
+  const access = useAccessCheck();
   const act = async (
     l: FoundryLoad,
     run: () => Promise<unknown>,
@@ -649,6 +689,7 @@ export function LoadsSection() {
         description={`Each one writes your tables, as a schema version maps them, then your documents, into ${ontology.databaseName || "the ontology’s database"}, beside the others. Reads go to the current one. Foundry keeps the last ${RETAINED}: the current one and the newest others; older ones are deleted from the database in the background.`}
       >
         {loads.data && <RefreshFailed query={loads} />}
+        {access.dialog}
         {failed ? (
           <EmptyState
             icon={DatabaseZap}
@@ -840,11 +881,21 @@ export function LoadsSection() {
                                 icon={CircleCheck}
                                 disabled={busy === l.id}
                                 onSelect={() =>
-                                  void act(
-                                    l,
-                                    () => setCurrentLoad(id, o, l.id),
-                                    `${loadVersion(l)} is the current load`,
-                                  )
+                                  void access
+                                    .check({
+                                      loadVersion: {
+                                        ontologyId: o,
+                                        versionId: l.versionId || "",
+                                      },
+                                    })
+                                    .then((go) => {
+                                      if (!go) return;
+                                      void act(
+                                        l,
+                                        () => setCurrentLoad(id, o, l.id),
+                                        `${loadVersion(l)} is the current load`,
+                                      );
+                                    })
                                 }
                               >
                                 Set current
@@ -1124,8 +1175,8 @@ export function LoadPage({ loadId }: { loadId: string }) {
           <Callout
             icon={LoaderCircle}
             live
-            title="The new database is still starting"
-            text={`${ontology.databaseName || "The database"} doesn’t take writes yet, which can last a few minutes after it’s created. The load tries again by itself once it does.`}
+            title="Your new database is starting"
+            text={`Starting ${ontology.databaseName ? `the ${ontology.databaseName} database` : "the database"} may take a few minutes. The load tries again automatically once it’s ready.`}
           />
         )}
         {retry?.kind === "failed" && (
@@ -1308,7 +1359,7 @@ export function LoadPage({ loadId }: { loadId: string }) {
                   loadRetry(x, ontology.createdAt, now)?.kind === "starting" ? (
                     <span
                       className="on-muted on-cell-text"
-                      title="The new database is still starting; the load tries again by itself once it takes writes."
+                      title="Your new database is starting. The load tries again automatically once it’s ready."
                     >
                       Database starting
                     </span>

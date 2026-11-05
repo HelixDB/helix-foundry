@@ -173,6 +173,312 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/access": {
+      "get": {
+        "summary": "Helix Foundry source grants. An owner or admin grants a principal (a\nuser, a team, or a service credential: an agent's key) the workspace's\nsources; a principal the front end's own permissions don't admit reads an\nontology's current load, and asks it questions, only while every source\nthat load holds is granted to it (SOURCE_GRANTEE, actor.proto). A\nworkspace that grants nothing behaves as it did without them. A member\ngiven any, or on a team given any, is restricted to them, and stays so\nonce they're taken away, until someone lifts it.",
+        "description": "Every grant, and what each ontology's current load holds and who may\nread it through grants.",
+        "operationId": "FoundryService_ListFoundryAccess",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryAccessResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/grants": {
+      "put": {
+        "summary": "Replaces one principal's grants. Giving a member or a team any restricts\nthat member or the team's members: FAILED_PRECONDITION for an owner or\nadmin, or a member (of the team too) holding project write or query scope,\nwhich reads the database outside Foundry.",
+        "operationId": "FoundryService_SetFoundryAccessGrants",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetFoundryAccessGrantsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSetFoundryAccessGrantsBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/me": {
+      "get": {
+        "summary": "What the caller reads through grants: whether it came as a grantee, and\nthe ontologies its grants cover.",
+        "operationId": "FoundryService_GetMyFoundryAccess",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetMyFoundryAccessResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/members/{userId}": {
+      "put": {
+        "summary": "Restricts a member to what grants give, or lifts it. A restricted\nmember is a grantee on every Foundry call while their role is member:\nthey see only the ontologies their grants cover, and change nothing.\nOnly a plain member holding no project write or query scope can be\nrestricted (FAILED_PRECONDITION otherwise): either reads the database\noutside Foundry. Holding sources, their own or a team's, is what restricts\na member, so it can't be lifted until those are gone (FAILED_PRECONDITION).",
+        "operationId": "FoundryService_SetFoundryMemberRestricted",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetFoundryMemberRestrictedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceSetFoundryMemberRestrictedBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/teams": {
+      "post": {
+        "summary": "Teams of the workspace's members, which hold grants for them.",
+        "operationId": "FoundryService_CreateFoundryTeam",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryTeamResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceCreateFoundryTeamBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access/teams/{teamId}": {
+      "delete": {
+        "summary": "Deletes a team with its grants.",
+        "operationId": "FoundryService_DeleteFoundryTeam",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      },
+      "put": {
+        "summary": "Renames a team and replaces its members. Whoever joins a team holding\ngrants is restricted to them (FAILED_PRECONDITION for one holding project\nwrite or query scope), and whoever leaves stays restricted.",
+        "operationId": "FoundryService_UpdateFoundryTeam",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryTeamResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceUpdateFoundryTeamBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/access:preview": {
+      "post": {
+        "summary": "Who would stop reading which ontologies through grants after a change:\nloading or making current a version, deleting a connector, or moving a\ndocument to another set. The site asks before it makes one.",
+        "operationId": "FoundryService_PreviewFoundryAccessChange",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PreviewFoundryAccessChangeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServicePreviewFoundryAccessChangeBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ai": {
       "get": {
         "summary": "Helix Foundry model providers",
@@ -407,6 +713,13 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "needsSignIn",
+            "description": "Only the connectors whose account needs signing in again, without their\ntables or syncs: the cheap read for the site's banner.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -2252,6 +2565,94 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings": {
+      "get": {
+        "summary": "Self-healing suggestions: what audits of the ontology's current load\nfound its ontology and mappings lack, the top open ones by support.",
+        "operationId": "FoundryService_ListFoundryHealFindings",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListFoundryHealFindingsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/heal-findings/{fingerprint}:dismiss": {
+      "post": {
+        "summary": "Hides an open finding until audits find it with twice the support it\nhas now, or under a spelling it doesn't hold.",
+        "operationId": "FoundryService_DismissFoundryHealFinding",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryHealFindingResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceDismissFoundryHealFindingBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/loads": {
       "get": {
         "operationId": "FoundryService_ListFoundryLoads",
@@ -3195,6 +3596,169 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins": {
+      "post": {
+        "summary": "Connecting a connector by signing in at its provider: started by a user\nor their agent, authorized and finished in that user's browser. Only\nkinds whose ConnectorKind.sign_in is true.",
+        "operationId": "FoundryService_StartConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceStartConnectorSignInBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}": {
+      "get": {
+        "operationId": "FoundryService_GetConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}:authorize": {
+      "post": {
+        "operationId": "FoundryService_AuthorizeConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1AuthorizeConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAuthorizeConnectorSignInBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspaceId}/foundry/sign-ins/{id}:finish": {
+      "post": {
+        "operationId": "FoundryService_FinishConnectorSignIn",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ConnectorSignInResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceFinishConnectorSignInBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/usage": {
       "get": {
         "summary": "Helix Foundry usage: the workspace's AI spend this month, by task",
@@ -3229,6 +3793,53 @@
     }
   },
   "definitions": {
+    "FoundryAccessChangeLoadVersion": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "versionId": {
+          "type": "string"
+        }
+      },
+      "description": "A load of an ontology's version, or making it current."
+    },
+    "FoundryAccessChangeMoveDocument": {
+      "type": "object",
+      "properties": {
+        "documentId": {
+          "type": "string"
+        },
+        "documentSetId": {
+          "type": "string"
+        }
+      },
+      "description": "A document moved to another set."
+    },
+    "FoundryLoadAccessInputsDocumentSet": {
+      "type": "object",
+      "properties": {
+        "documentSetId": {
+          "type": "string"
+        },
+        "connectorId": {
+          "type": "string"
+        }
+      },
+      "description": "A set its documents, table files or review decisions' documents are in\nnow, with the connector that owns it, if one does; an empty\ndocument_set_id is a document in no set, which nothing covers."
+    },
+    "FoundryLoadAccessInputsTable": {
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        }
+      }
+    },
     "FoundryServiceAskFoundryQuestionBody": {
       "type": "object",
       "properties": {
@@ -3253,6 +3864,15 @@
         }
       },
       "description": "AskFoundryQuestionRequest queues a question of a ready or partial load\n(FAILED_PRECONDITION otherwise, or when the workspace has spent this\nmonth's questions budget; RESOURCE_EXHAUSTED past its questions an hour).\nThe same client_token returns the question it queued."
+    },
+    "FoundryServiceAuthorizeConnectorSignInBody": {
+      "type": "object",
+      "properties": {
+        "returnTo": {
+          "type": "string",
+          "description": "The site's callback; one of foundry.connectors.sign_in_return_to."
+        }
+      }
     },
     "FoundryServiceCancelFoundryQuestionBody": {
       "type": "object",
@@ -3384,6 +4004,21 @@
         }
       }
     },
+    "FoundryServiceCreateFoundryTeamBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "memberUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "CreateFoundryTeamRequest makes a team of members. Names are unique in the\nworkspace (ALREADY_EXISTS otherwise), 1 to 120 characters."
+    },
     "FoundryServiceCreateOntologyVersionBody": {
       "type": "object",
       "properties": {
@@ -3395,6 +4030,23 @@
     "FoundryServiceDetectFoundryAIDefaultBody": {
       "type": "object",
       "description": "DetectFoundryAIDefaultRequest looks again for a local install's default;\nit answers the workspace's AI settings, as GetFoundryAI does. FAILED_PRECONDITION\nwhere the install names its default (FOUNDRY_AI_PROVIDER)."
+    },
+    "FoundryServiceDismissFoundryHealFindingBody": {
+      "type": "object",
+      "description": "DismissFoundryHealFindingRequest dismisses an open finding by its\nfingerprint, for the caller. NOT_FOUND for a fingerprint the ontology has\nno finding of; FAILED_PRECONDITION for one superseded. One already\ndismissed is returned as it is."
+    },
+    "FoundryServiceFinishConnectorSignInBody": {
+      "type": "object",
+      "properties": {
+        "connectCode": {
+          "type": "string",
+          "description": "The connect_code the callback was given."
+        },
+        "error": {
+          "type": "string",
+          "description": "The callback's error when it was given no code, such as access_denied."
+        }
+      }
     },
     "FoundryServiceGenerateOntologyBody": {
       "type": "object",
@@ -3456,6 +4108,15 @@
         }
       }
     },
+    "FoundryServicePreviewFoundryAccessChangeBody": {
+      "type": "object",
+      "properties": {
+        "change": {
+          "$ref": "#/definitions/v1FoundryAccessChange"
+        }
+      },
+      "description": "PreviewFoundryAccessChangeRequest asks what a change would take away."
+    },
     "FoundryServicePutFoundryDataLayoutBody": {
       "type": "object",
       "properties": {
@@ -3514,6 +4175,31 @@
         }
       }
     },
+    "FoundryServiceSetFoundryAccessGrantsBody": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessTarget"
+          }
+        }
+      },
+      "description": "SetFoundryAccessGrantsRequest replaces a principal's grants with targets,\nnone to take them all away. Every target must be of a live connector or\nset of the workspace (NOT_FOUND otherwise)."
+    },
+    "FoundryServiceSetFoundryMemberRestrictedBody": {
+      "type": "object",
+      "properties": {
+        "restricted": {
+          "type": "boolean"
+        }
+      },
+      "description": "SetFoundryMemberRestrictedRequest restricts user_id, or lifts it."
+    },
     "FoundryServiceSettleFoundryReviewBody": {
       "type": "object",
       "properties": {
@@ -3522,6 +4208,29 @@
         }
       },
       "description": "Reads the current load's review. Stores a decision for the next load only."
+    },
+    "FoundryServiceStartConnectorSignInBody": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/definitions/v1ConnectorConfig",
+          "description": "The connector's settings; its credential fields must be empty."
+        },
+        "connectorId": {
+          "type": "string",
+          "description": "Sign this connector in again instead of making one."
+        },
+        "clientToken": {
+          "type": "string",
+          "description": "Makes a retry return the sign-in the first attempt started."
+        }
+      }
     },
     "FoundryServiceStopFoundryLoadEnrichmentBody": {
       "type": "object",
@@ -3642,6 +4351,20 @@
         }
       }
     },
+    "FoundryServiceUpdateFoundryTeamBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "memberUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "protobufAny": {
       "type": "object",
       "properties": {
@@ -3675,6 +4398,15 @@
             "type": "object",
             "$ref": "#/definitions/protobufAny"
           }
+        }
+      }
+    },
+    "v1AuthorizeConnectorSignInResponse": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The provider's authorization page, for the user's browser."
         }
       }
     },
@@ -3743,8 +4475,66 @@
         "cdcStatus": {
           "$ref": "#/definitions/v1ConnectorCDCStatus",
           "description": "Set while the connector reads a database's log."
+        },
+        "account": {
+          "$ref": "#/definitions/v1ConnectorAccount",
+          "description": "Set when the connector was connected by signing in at its provider: the\naccount it reads with, in place of a stored key."
         }
       }
+    },
+    "v1ConnectorAccount": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Who the provider says signed in: a GitHub login; a Linear user and\nworkspace."
+        },
+        "state": {
+          "$ref": "#/definitions/v1ConnectorAccountState"
+        },
+        "broken": {
+          "$ref": "#/definitions/v1ConnectorAccountBroken",
+          "description": "Why it needs signing in again; unspecified while connected."
+        },
+        "brokenAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "userId": {
+          "type": "string",
+          "description": "The member whose access it reads with, and their name: \"a former\nmember\" once they have left the workspace."
+        },
+        "connectedBy": {
+          "type": "string"
+        },
+        "connectedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ConnectorAccount is the provider account a signed-in connector reads with.\nThe credential stays with the provider broker (hosted: WorkOS Pipes); the\nconnector asks it for a token each time it reads."
+    },
+    "v1ConnectorAccountBroken": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED",
+        "CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT",
+        "CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED",
+        "CONNECTOR_ACCOUNT_BROKEN_EXPIRED",
+        "CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING"
+      ],
+      "default": "CONNECTOR_ACCOUNT_BROKEN_UNSPECIFIED",
+      "description": " - CONNECTOR_ACCOUNT_BROKEN_MEMBER_LEFT: The member it reads as left the workspace.\n - CONNECTOR_ACCOUNT_BROKEN_ACCESS_REVOKED: The provider rejected its access, or it was revoked there.\n - CONNECTOR_ACCOUNT_BROKEN_EXPIRED: Its access lapsed and couldn't be renewed.\n - CONNECTOR_ACCOUNT_BROKEN_ACCOUNT_MISSING: The broker no longer has the account."
+    },
+    "v1ConnectorAccountState": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_ACCOUNT_STATE_UNSPECIFIED",
+        "CONNECTOR_ACCOUNT_STATE_CONNECTED",
+        "CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN"
+      ],
+      "default": "CONNECTOR_ACCOUNT_STATE_UNSPECIFIED",
+      "description": " - CONNECTOR_ACCOUNT_STATE_NEEDS_SIGN_IN: It doesn't sync until an owner or admin signs it in again; its tables\nkeep what the last sync read."
     },
     "v1ConnectorCDCStatus": {
       "type": "object",
@@ -3896,9 +4686,16 @@
         "s3": {
           "$ref": "#/definitions/v1S3ConnectorSetup"
         },
+        "github": {
+          "$ref": "#/definitions/v1GitHubConnectorSetup"
+        },
         "planCode": {
           "type": "string",
           "description": "The lowest catalog plan that includes the kind."
+        },
+        "signIn": {
+          "type": "boolean",
+          "description": "True when the caller can connect the kind by signing in at its provider\n(StartConnectorSignIn) instead of entering a key."
         }
       },
       "description": "ConnectorKind is one type of Helix Foundry data source."
@@ -3938,6 +4735,93 @@
         }
       },
       "description": "ConnectorSchedule is when a connector syncs by itself."
+    },
+    "v1ConnectorSignIn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1ConnectorSignInStatus"
+        },
+        "failure": {
+          "$ref": "#/definitions/v1ConnectorSignInFailure",
+          "description": "Why it failed; set with CONNECTOR_SIGN_IN_STATUS_FAILED."
+        },
+        "connectorId": {
+          "type": "string",
+          "description": "The connector it made, or signs in again."
+        },
+        "discoveryProblem": {
+          "type": "string",
+          "description": "Set when the connector was made but can't read all it names, in\nFoundry's own words: a repository the GitHub App can't see, say."
+        },
+        "identityChanged": {
+          "type": "boolean",
+          "description": "Set when signing in again changed the provider account the connector\nreads with."
+        },
+        "mine": {
+          "type": "boolean",
+          "description": "True when the caller started it: only they can authorize and finish it."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "config": {
+          "$ref": "#/definitions/v1ConnectorConfig",
+          "description": "The connector's settings, chosen before signing in; never a credential."
+        }
+      },
+      "description": "ConnectorSignIn connects a provider account by signing in. A user, or\ntheir agent, starts it; that user authorizes it in their browser; the\nsite's callback finishes it. Finishing creates the connector, or signs one\nin again."
+    },
+    "v1ConnectorSignInFailure": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED",
+        "CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR",
+        "CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED",
+        "CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE",
+        "CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED",
+        "CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID",
+        "CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE"
+      ],
+      "default": "CONNECTOR_SIGN_IN_FAILURE_UNSPECIFIED",
+      "description": " - CONNECTOR_SIGN_IN_FAILURE_PROVIDER_ERROR: The provider or the broker answered with an error.\n - CONNECTOR_SIGN_IN_FAILURE_CODE_EXPIRED: The callback's code had lapsed or was already used.\n - CONNECTOR_SIGN_IN_FAILURE_NOT_THIS_WORKSPACE: The account isn't this workspace's, or wasn't made by its starter.\n - CONNECTOR_SIGN_IN_FAILURE_TOKEN_REJECTED: The provider refused the token it issued.\n - CONNECTOR_SIGN_IN_FAILURE_SETTINGS_INVALID: The connector's settings were refused.\n - CONNECTOR_SIGN_IN_FAILURE_UNAVAILABLE: The broker couldn't be reached."
+    },
+    "v1ConnectorSignInResponse": {
+      "type": "object",
+      "properties": {
+        "signIn": {
+          "$ref": "#/definitions/v1ConnectorSignIn"
+        }
+      }
+    },
+    "v1ConnectorSignInStatus": {
+      "type": "string",
+      "enum": [
+        "CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED",
+        "CONNECTOR_SIGN_IN_STATUS_PENDING",
+        "CONNECTOR_SIGN_IN_STATUS_AUTHORIZING",
+        "CONNECTOR_SIGN_IN_STATUS_FINISHING",
+        "CONNECTOR_SIGN_IN_STATUS_CONNECTED",
+        "CONNECTOR_SIGN_IN_STATUS_DECLINED",
+        "CONNECTOR_SIGN_IN_STATUS_FAILED",
+        "CONNECTOR_SIGN_IN_STATUS_EXPIRED"
+      ],
+      "default": "CONNECTOR_SIGN_IN_STATUS_UNSPECIFIED",
+      "description": " - CONNECTOR_SIGN_IN_STATUS_PENDING: Started; its link not yet followed.\n - CONNECTOR_SIGN_IN_STATUS_AUTHORIZING: Sent to the provider to authorize.\n - CONNECTOR_SIGN_IN_STATUS_FINISHING: Its callback arrived and is being finished.\n - CONNECTOR_SIGN_IN_STATUS_DECLINED: The user declined at the provider. Authorizing again retries it.\n - CONNECTOR_SIGN_IN_STATUS_FAILED: See failure. Authorizing again retries it."
     },
     "v1ConnectorSync": {
       "type": "object",
@@ -4649,6 +5533,89 @@
           "$ref": "#/definitions/v1FoundryAI"
         }
       }
+    },
+    "v1FoundryAccessChange": {
+      "type": "object",
+      "properties": {
+        "loadVersion": {
+          "$ref": "#/definitions/FoundryAccessChangeLoadVersion"
+        },
+        "deleteConnector": {
+          "type": "string"
+        },
+        "moveDocument": {
+          "$ref": "#/definitions/FoundryAccessChangeMoveDocument"
+        }
+      },
+      "description": "FoundryAccessChange is one change the site warns about."
+    },
+    "v1FoundryAccessGrant": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "target": {
+          "$ref": "#/definitions/v1FoundryAccessTarget"
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryAccessGrant is one source an owner or admin granted a principal."
+    },
+    "v1FoundryAccessLoss": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/definitions/v1FoundryPrincipal"
+        },
+        "ontologyId": {
+          "type": "string"
+        },
+        "keepsPart": {
+          "type": "boolean",
+          "description": "It would still read the part its grants hold."
+        }
+      },
+      "description": "FoundryAccessLoss is a principal that would stop reading an ontology\nthrough grants."
+    },
+    "v1FoundryAccessTarget": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/v1FoundryAccessTargetKind"
+        },
+        "connectorId": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "documentSetId": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryAccessTarget is the source one grant gives. Each kind names what it\nneeds and leaves the rest empty."
+    },
+    "v1FoundryAccessTargetKind": {
+      "type": "string",
+      "enum": [
+        "KIND_UNSPECIFIED",
+        "KIND_CONNECTOR",
+        "KIND_TABLE",
+        "KIND_DOCUMENT_SET",
+        "KIND_ENRICHMENT"
+      ],
+      "default": "KIND_UNSPECIFIED",
+      "description": " - KIND_CONNECTOR: A connector: every table it syncs, now and later, and every document\nset it owns. connector_id.\n - KIND_TABLE: One table of a connector. connector_id and table.\n - KIND_DOCUMENT_SET: One document set. document_set_id.\n - KIND_ENRICHMENT: The People enrichment profiles a load applies. Nothing else."
     },
     "v1FoundryCatalogPlan": {
       "type": "object",
@@ -5363,6 +6330,97 @@
         }
       }
     },
+    "v1FoundryHealFinding": {
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "The signal's kind, as the engine names it: unmatched, unresolved,\nclash, row_errors or source_drift; a later contract may add others.\nFoundry sends the engine no source fields yet, so no audit checks\nsource_drift and none is found: an empty list says nothing of it."
+        },
+        "status": {
+          "type": "string",
+          "description": "open, dismissed or superseded."
+        },
+        "support": {
+          "type": "string",
+          "format": "int64",
+          "description": "The reviews behind it, summed over the load's pages; a row finding's\nrows."
+        },
+        "sources": {
+          "type": "string",
+          "format": "int64",
+          "description": "The documents behind it; 0 for a row finding."
+        },
+        "loadId": {
+          "type": "string",
+          "description": "The load the support was counted over, and its version."
+        },
+        "baseVersionId": {
+          "type": "string"
+        },
+        "findingJson": {
+          "type": "string",
+          "description": "The engine's Finding (audit_result.json, $defs/Finding) as JSON, its\nbacking summed over the load's pages: signal, proposal and fingerprint.\nParse it without trust, as the agent's other JSON."
+        },
+        "dismissedByUserId": {
+          "type": "string",
+          "description": "Who dismissed it, and its support then; set while dismissed."
+        },
+        "supportAtDismissal": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "FoundryHealFinding is one finding, named by its fingerprint, which the\nengine keeps the same across versions, loads and pages."
+    },
+    "v1FoundryHealFindingResponse": {
+      "type": "object",
+      "properties": {
+        "finding": {
+          "$ref": "#/definitions/v1FoundryHealFinding"
+        }
+      }
+    },
+    "v1FoundryHealRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "loadId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "running, complete, incomplete (even a page of one document was cut\nshort, the run ran out of time, or a graph job changed the load under\nit: nothing was stored, and a later run audits the load again) or\nfailed."
+        },
+        "pages": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The Audit calls it made, and how many of them were cut short; a page\ncut short is audited again in smaller pages."
+        },
+        "cuts": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "rowsMeasured": {
+          "type": "boolean",
+          "description": "Whether it audited the load's rows: a complete run does when the\nload's report holds them. False, no row finding of this load can be\ntold apart from none."
+        }
+      },
+      "description": "FoundryHealRun is one audit of an ontology's load."
+    },
     "v1FoundryLoad": {
       "type": "object",
       "properties": {
@@ -5439,6 +6497,34 @@
         }
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
+    },
+    "v1FoundryLoadAccessInputs": {
+      "type": "object",
+      "properties": {
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FoundryLoadAccessInputsTable"
+          }
+        },
+        "documentSets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FoundryLoadAccessInputsDocumentSet"
+          }
+        },
+        "enrichment": {
+          "type": "boolean",
+          "description": "It applied People enrichment's profiles."
+        },
+        "uncoverable": {
+          "type": "boolean",
+          "description": "It holds what no grant covers: it was made before grants, or applies a\nreview decision whose documents weren't recorded. Loading again makes\nit shareable."
+        }
+      },
+      "description": "FoundryLoadAccessInputs is what a load holds, as far as grants go: a\ngrantee reads it only when its grants cover all of it."
     },
     "v1FoundryLoadEnrichment": {
       "type": "object",
@@ -5655,9 +6741,44 @@
         "refreshWaiting": {
           "type": "string",
           "description": "Why an owed refresh waits: busy (a job is live); empty otherwise."
+        },
+        "partialAccess": {
+          "type": "boolean",
+          "description": "The caller holds only some of what its current load holds, and reads that\npart: set only for a caller who reads through source grants."
         }
       },
       "description": "FoundryOntology is a workspace's ontology, bound to one Helix database: a\ntenant of one of the workspace's projects. Statuses are the lowercase names\nthe Foundry contract fixes."
+    },
+    "v1FoundryOntologyAccess": {
+      "type": "object",
+      "properties": {
+        "ontologyId": {
+          "type": "string"
+        },
+        "loadId": {
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/definitions/v1FoundryLoadAccessInputs"
+        },
+        "readers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryPrincipal"
+          },
+          "description": "The principals whose own grants cover it."
+        },
+        "partialReaders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryPrincipal"
+          },
+          "description": "The principals whose own grants hold only some of it, who read that part."
+        }
+      },
+      "description": "FoundryOntologyAccess is an ontology's current load as grants see it."
     },
     "v1FoundryOntologyActiveJob": {
       "type": "object",
@@ -5768,6 +6889,29 @@
           "$ref": "#/definitions/v1FoundryPlan"
         }
       }
+    },
+    "v1FoundryPrincipal": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/v1FoundryPrincipalKind"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "description": "FoundryPrincipal is who a source grant is for."
+    },
+    "v1FoundryPrincipalKind": {
+      "type": "string",
+      "enum": [
+        "KIND_UNSPECIFIED",
+        "KIND_USER",
+        "KIND_SERVICE_CREDENTIAL",
+        "KIND_TEAM"
+      ],
+      "default": "KIND_UNSPECIFIED",
+      "description": " - KIND_USER: A workspace member.\n - KIND_SERVICE_CREDENTIAL: A workspace service credential: an agent's key.\n - KIND_TEAM: A workspace team: its members hold its grants."
     },
     "v1FoundryPropValue": {
       "type": "object",
@@ -6049,6 +7193,39 @@
       },
       "description": "FoundrySyncRules is how often a plan syncs connectors and refreshes graphs."
     },
+    "v1FoundryTeam": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "memberUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryTeam is a team of the workspace's members: each holds the team's\ngrants."
+    },
+    "v1FoundryTeamResponse": {
+      "type": "object",
+      "properties": {
+        "team": {
+          "$ref": "#/definitions/v1FoundryTeam"
+        }
+      }
+    },
     "v1FoundryTier": {
       "type": "string",
       "enum": [
@@ -6155,6 +7332,33 @@
         }
       }
     },
+    "v1GetMyFoundryAccessResponse": {
+      "type": "object",
+      "properties": {
+        "grantee": {
+          "type": "boolean",
+          "description": "The call came as a grantee: the caller reads only through grants."
+        },
+        "hasGrants": {
+          "type": "boolean",
+          "description": "The caller holds grants, through itself or its teams."
+        },
+        "ontologyIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The live ontologies whose current loads its grants hold any of."
+        },
+        "partialOntologyIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Those of them it holds only some of."
+        }
+      }
+    },
     "v1GitHubConnectorConfig": {
       "type": "object",
       "properties": {
@@ -6175,6 +7379,16 @@
           "description": "Reviews are read for pull requests updated in the last this many days, 1 to 365; 0 means 90."
         }
       }
+    },
+    "v1GitHubConnectorSetup": {
+      "type": "object",
+      "properties": {
+        "installUrl": {
+          "type": "string",
+          "description": "Installs Helix Foundry's GitHub App on an account or organization, which\na signed-in connector needs to read its private repositories."
+        }
+      },
+      "description": "GitHubConnectorSetup is what a GitHub connector that signs in needs from\nthe customer."
     },
     "v1GoogleWorkspaceConnectorConfig": {
       "type": "object",
@@ -6253,6 +7467,42 @@
         }
       }
     },
+    "v1ListFoundryAccessResponse": {
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessGrant"
+          },
+          "description": "Every grant, oldest first."
+        },
+        "ontologies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryOntologyAccess"
+          },
+          "description": "Each live ontology with a current load: what it holds, and who reads it\nthrough grants."
+        },
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryTeam"
+          },
+          "description": "The workspace's teams, by name."
+        },
+        "restrictedUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The members restricted to what grants give."
+        }
+      }
+    },
     "v1ListFoundryDocumentSetsResponse": {
       "type": "object",
       "properties": {
@@ -6313,6 +7563,30 @@
         }
       },
       "description": "Newest first, revoked ones included, at most 50."
+    },
+    "v1ListFoundryHealFindingsResponse": {
+      "type": "object",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryHealFinding"
+          }
+        },
+        "lastRun": {
+          "$ref": "#/definitions/v1FoundryHealRun",
+          "description": "The ontology's latest audit, if it has had one."
+        },
+        "lastCompleteRun": {
+          "$ref": "#/definitions/v1FoundryHealRun",
+          "description": "Its newest complete audit, of whichever load: whether the current load\nwas audited whole, though a later run of it is running or failed."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this deployment audits loads (foundry.heal.enabled). Off, no\naudit runs: findings and last_run stay as they were."
+        }
+      }
     },
     "v1ListFoundryLoadsResponse": {
       "type": "object",
@@ -6767,6 +8041,19 @@
         }
       }
     },
+    "v1PreviewFoundryAccessChangeResponse": {
+      "type": "object",
+      "properties": {
+        "losses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessLoss"
+          },
+          "description": "Each principal that reads an ontology through grants now and wouldn't\nafter the change."
+        }
+      }
+    },
     "v1ReadFoundryGraphResponse": {
       "type": "object",
       "properties": {
@@ -6849,6 +8136,27 @@
       "properties": {
         "roleArn": {
           "type": "string"
+        }
+      }
+    },
+    "v1SetFoundryAccessGrantsResponse": {
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryAccessGrant"
+          },
+          "description": "The principal's grants now."
+        }
+      }
+    },
+    "v1SetFoundryMemberRestrictedResponse": {
+      "type": "object",
+      "properties": {
+        "restricted": {
+          "type": "boolean"
         }
       }
     },

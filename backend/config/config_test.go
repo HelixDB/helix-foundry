@@ -1,11 +1,15 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
@@ -20,7 +24,7 @@ func helixClaude() AIDefault {
 // every runs each of Foundry's roles but foundry-notify-worker, which needs
 // the site's origin (TestFoundryNotifyValidate).
 var every = Roles{API: true, Read: true, Events: true, SyncWorker: true, DocumentWorker: true, OntologyWorker: true, GraphWorker: true,
-	AskWorker: true, EnrichmentWorker: true}
+	AskWorker: true, EnrichmentWorker: true, HealWorker: true}
 
 // The defaults, with a model provider and the connectors' key, serve every
 // role; each role's own settings are checked only where it runs.
@@ -35,6 +39,20 @@ func TestValidateRoles(t *testing.T) {
 	if c := valid(); c.Validate(every) != nil {
 		t.Fatalf("defaults for every role: %v", c.Validate(every))
 	}
+	// Off, the heal worker's settings aren't read; on, the defaults serve.
+	if c := valid(); c.Foundry.Heal.Enabled {
+		t.Fatal("heal is on by default")
+	}
+	off := valid()
+	off.Foundry.Heal.Lease = 0
+	if err := off.Validate(Roles{HealWorker: true}); err != nil {
+		t.Fatalf("an off heal worker's settings were checked: %v", err)
+	}
+	on := valid()
+	on.Foundry.Heal.Enabled = true
+	if err := on.Validate(every); err != nil {
+		t.Fatalf("heal on, the defaults: %v", err)
+	}
 	for name, tc := range map[string]struct {
 		mutate func(*Config)
 		roles  Roles
@@ -46,9 +64,16 @@ func TestValidateRoles(t *testing.T) {
 		"the API's generation cap":    {func(c *Config) { c.Foundry.Ontology.PerHour = 0 }, Roles{API: true}, "foundry.ontology.per_hour"},
 		"the hosted default's key":    {func(c *Config) { c.Foundry.AI.Default.APIKey = "" }, Roles{GraphWorker: true}, "api_key must be set"},
 		"the graph worker's rate":     {func(c *Config) { c.Foundry.Graph.LoadRateLimit.Burst = 5 }, Roles{GraphWorker: true}, "load_rate_limit"},
+		"the ask worker's read caps":  {func(c *Config) { c.Foundry.Ask.ReadScanEntities = 0 }, Roles{AskWorker: true}, "read_scan_entities"},
 		"the enrichment worker's key": {func(c *Config) { c.Foundry.Enrichment.Provider = EnrichmentContextDev }, Roles{EnrichmentWorker: true}, "api_key"},
 		"the shared plan catalog":     {func(c *Config) { c.Billing.Plans = nil }, Roles{}, "at least the Free plan"},
 		"a stream's extracts":         {func(c *Config) { c.Foundry.Events.MaxExtracted = c.Foundry.Documents.MaxPerStream + 1 }, Roles{}, "max_extracted"},
+		"the heal worker's lease":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Lease = true, time.Second }, Roles{HealWorker: true}, "foundry.heal.lease"},
+		"the heal worker's every":     {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Heal.Every = true, 0 }, Roles{HealWorker: true}, "foundry.heal"},
+		"the heal worker's sidecar": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.Agent.Addr = true, "agent:50051" }, Roles{HealWorker: true},
+			"foundry.graph.agent.addr"},
+		"the heal worker's timeout": {func(c *Config) { c.Foundry.Heal.Enabled, c.Foundry.Graph.HelixTimeoutSecs = true, 0 }, Roles{HealWorker: true},
+			"helix_timeout_secs"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := valid()
@@ -293,6 +318,64 @@ func TestFoundryAskDefaults(t *testing.T) {
 	}
 }
 
+// Each read of a question is held to the agent's own defaults unless a
+// deployment raises them, so a hosted question reads as it did before the
+// setting: the agent's schema says what it reads in their place.
+func TestFoundryAskReadDefaults(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(contracttest.Dir(t), "ask_request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Defs struct {
+			AskReadLimits struct {
+				Properties struct {
+					WallMS       struct{ Default int } `json:"wall_ms"`
+					ScanEntities struct{ Default int } `json:"scan_entities"`
+				} `json:"properties"`
+			} `json:"AskReadLimits"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	a, agent := Defaults().Foundry.Ask, schema.Defs.AskReadLimits.Properties
+	if a.ReadWallMS != 5000 || a.ReadScanEntities != 20000 || a.ReadWallMS != agent.WallMS.Default || a.ReadScanEntities != agent.ScanEntities.Default {
+		t.Fatalf("foundry.ask read_wall_ms %d and read_scan_entities %d, the agent's defaults %d and %d",
+			a.ReadWallMS, a.ReadScanEntities, agent.WallMS.Default, agent.ScanEntities.Default)
+	}
+}
+
+// A read's caps are positive, and its wall time fits its question's, which
+// the agent checks too; a read may take the whole question's time.
+func TestFoundryAskReadLimits(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate func(*AskConfig)
+		want   string
+	}{
+		"the defaults":                {func(*AskConfig) {}, ""},
+		"no wall time":                {func(a *AskConfig) { a.ReadWallMS = 0 }, "read_wall_ms and read_scan_entities must be positive"},
+		"a negative wall time":        {func(a *AskConfig) { a.ReadWallMS = -1 }, "read_wall_ms and read_scan_entities must be positive"},
+		"no matches":                  {func(a *AskConfig) { a.ReadScanEntities = 0 }, "read_wall_ms and read_scan_entities must be positive"},
+		"the question's whole time":   {func(a *AskConfig) { a.ReadWallMS = a.MaxWallSecs * 1000 }, ""},
+		"past the question's time":    {func(a *AskConfig) { a.ReadWallMS = a.MaxWallSecs*1000 + 1 }, "foundry.ask.read_wall_ms (240001) must be at most max_wall_secs (240s)"},
+		"one ms in a one-second call": {func(a *AskConfig) { a.MaxWallSecs, a.ReadWallMS = 1, 1 }, ""},
+		"a local install's caps": {func(a *AskConfig) {
+			a.MaxWallSecs, a.ReadWallMS, a.ReadScanEntities = AskWallSecsLimit-1, 30_000, 100_000
+		},
+			""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := Defaults().Foundry.Ask
+			tc.mutate(&a)
+			err := a.validate()
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !contains(err.Error(), tc.want)) {
+				t.Fatalf("validate = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // An attempt is bounded by the wait for the sidecar, the wall-time cap and
 // its margin.
 func ExampleAskConfig_AttemptTimeout() {
@@ -333,6 +416,25 @@ func TestFoundrySyncLimits(t *testing.T) {
 				t.Fatalf("validateLimits() = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// A sign-in returns only to a callback the broker can match exactly.
+func TestFoundrySignInConfig(t *testing.T) {
+	for _, tc := range []struct {
+		c  ConnectorsConfig
+		ok bool
+	}{
+		{ConnectorsConfig{SignInReturnTo: []string{"https://foundry.helix-db.com/connect/callback",
+			"https://local.foundry.helix-db.com:3000/connect/callback"},
+			GitHubAppInstallURL: "https://github.com/apps/helix-foundry/installations/new"}, true},
+		{ConnectorsConfig{SignInReturnTo: []string{"/connect/callback"}}, false},
+		{ConnectorsConfig{SignInReturnTo: []string{"https://foundry.helix-db.com/connect/callback?sign_in=1"}}, false},
+		{ConnectorsConfig{GitHubAppInstallURL: "http://github.com/apps/helix-foundry"}, false},
+	} {
+		if err := tc.c.validate(); (err == nil) != tc.ok {
+			t.Errorf("validate(%+v) = %v", tc.c, err)
+		}
 	}
 }
 

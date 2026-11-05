@@ -14,7 +14,8 @@ import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { askOntologyId, askView, threadGroups, threadsOf } from "./ask-model";
 import { withLoad } from "./model";
-import { questionQueries } from "./queries";
+import { readAccess } from "../workspace/access-model";
+import { ontologyQueries, questionQueries } from "./queries";
 
 // Ask's threads, in the shell's sidebar under the sections (and, on a narrow
 // screen, as the Ask page itself until a thread is chosen): New thread and
@@ -41,10 +42,19 @@ function Threads({
   ontologyId: string;
   onNavigate?: () => void;
 }) {
-  const { id: ws } = useWorkspace(),
+  // Someone who can't read the ontology (readAccess) has no threads of it to
+  // list. Through grants, the budget is the asker's own.
+  const me = useWorkspace(),
+    { id: ws } = me,
     [params] = useSearchParams(),
     now = useNow(60_000);
-  const list = useQuery(questionQueries.list(ws, o));
+  const read = useQuery(ontologyQueries.ontology(ws, o)),
+    ontology = read.data?.ontology;
+  const unread = !!ontology && readAccess(me, ontology) === "none";
+  const list = useQuery({
+    ...questionQueries.list(ws, o),
+    enabled: !!ontology && !unread,
+  });
   const threads = threadsOf(list.data?.questions || []);
   // What the page shows: on a narrow screen without a thread chosen, these
   // threads, and a new thread about an entity isn't New thread's page.
@@ -71,7 +81,20 @@ function Threads({
         </ButtonLink>
       </div>
       <nav className="ak-threads" aria-label="Threads">
-        {list.isPending ? (
+        {unread ? (
+          <p className="ak-threads-note">Not shared with you.</p>
+        ) : !ontology && read.isError ? (
+          <p className="ak-threads-note" role="alert">
+            Couldn’t read the threads: {read.error.message}{" "}
+            <button
+              type="button"
+              className="ak-retry"
+              onClick={() => void read.refetch()}
+            >
+              Retry
+            </button>
+          </p>
+        ) : list.isPending ? (
           <div className="ak-threads-note" aria-busy="true">
             <SkeletonText lines={3} />
           </div>

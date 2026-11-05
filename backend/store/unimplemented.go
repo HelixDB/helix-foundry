@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/events"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -67,6 +68,82 @@ func (u Unimplemented) DeleteConnector(context.Context, string, string) error {
 	u.unimplemented("DeleteConnector")
 	return nil
 }
+func (u Unimplemented) ListConnectorAccounts(context.Context, string) ([]model.ConnectorAccountRef, error) {
+	u.unimplemented("ListConnectorAccounts")
+	return nil, nil
+}
+func (u Unimplemented) BreakConnectorAccounts(context.Context, string, string, string) error {
+	u.unimplemented("BreakConnectorAccounts")
+	return nil
+}
+func (u Unimplemented) BreakConnectorAccount(context.Context, string, string, int, string) (bool, error) {
+	u.unimplemented("BreakConnectorAccount")
+	return false, nil
+}
+func (u Unimplemented) ListConnectorAccountChecks(context.Context, time.Time, int) ([]*model.Connector, error) {
+	u.unimplemented("ListConnectorAccountChecks")
+	return nil, nil
+}
+func (u Unimplemented) MarkConnectorAccountChecked(context.Context, string, string) error {
+	u.unimplemented("MarkConnectorAccountChecked")
+	return nil
+}
+func (u Unimplemented) DeferConnectorAccountCheck(context.Context, string, string, time.Time) error {
+	u.unimplemented("DeferConnectorAccountCheck")
+	return nil
+}
+func (u Unimplemented) ListConnectorAccountPurges(context.Context, int) ([]*model.ConnectorAccountPurge, error) {
+	u.unimplemented("ListConnectorAccountPurges")
+	return nil, nil
+}
+func (u Unimplemented) ConnectorAccountPurgeBacklog(context.Context) (int, *time.Time, error) {
+	u.unimplemented("ConnectorAccountPurgeBacklog")
+	return 0, nil, nil
+}
+func (u Unimplemented) DeleteConnectorAccountPurge(context.Context, string) error {
+	u.unimplemented("DeleteConnectorAccountPurge")
+	return nil
+}
+func (u Unimplemented) RetryConnectorAccountPurge(context.Context, string, string, time.Duration) error {
+	u.unimplemented("RetryConnectorAccountPurge")
+	return nil
+}
+func (u Unimplemented) GetConnectorSignIn(context.Context, string, string) (*model.ConnectorSignIn, error) {
+	u.unimplemented("GetConnectorSignIn")
+	return nil, nil
+}
+func (u Unimplemented) StartConnectorSignIn(context.Context, model.ConnectorSignInStart) (*model.ConnectorSignIn, error) {
+	u.unimplemented("StartConnectorSignIn")
+	return nil, nil
+}
+func (u Unimplemented) SetConnectorSignInVerifier(context.Context, string, string, []byte, string) error {
+	u.unimplemented("SetConnectorSignInVerifier")
+	return nil
+}
+func (u Unimplemented) AuthorizeConnectorSignIn(context.Context, string, string, time.Duration, time.Duration) error {
+	u.unimplemented("AuthorizeConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) ClaimConnectorSignIn(context.Context, string, string) error {
+	u.unimplemented("ClaimConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) SetConnectorSignInAccount(context.Context, string, string, string) error {
+	u.unimplemented("SetConnectorSignInAccount")
+	return nil
+}
+func (u Unimplemented) FailConnectorSignIn(context.Context, string, string, model.ConnectorSignInEnd) error {
+	u.unimplemented("FailConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) ConnectConnectorSignIn(context.Context, model.ConnectorSignInConnect) error {
+	u.unimplemented("ConnectConnectorSignIn")
+	return nil
+}
+func (u Unimplemented) DeleteEndedConnectorSignIns(context.Context, time.Duration, int) (int, error) {
+	u.unimplemented("DeleteEndedConnectorSignIns")
+	return 0, nil
+}
 func (u Unimplemented) DeleteWorkspaceConnectors(context.Context, string) error {
 	u.unimplemented("DeleteWorkspaceConnectors")
 	return nil
@@ -119,7 +196,7 @@ func (u Unimplemented) QueueDueConnectorSyncs(context.Context, int, time.Duratio
 	u.unimplemented("QueueDueConnectorSyncs")
 	return 0, nil
 }
-func (u Unimplemented) UpdateConnectorCursor(context.Context, string, json.RawMessage, string, string) error {
+func (u Unimplemented) UpdateConnectorCursor(context.Context, string, int, json.RawMessage, string, string) error {
 	u.unimplemented("UpdateConnectorCursor")
 	return nil
 }
@@ -396,7 +473,7 @@ func (u Unimplemented) GetOntologyVersionMappings(context.Context, string, strin
 	u.unimplemented("GetOntologyVersionMappings")
 	return "", nil
 }
-func (u Unimplemented) ListFoundryOntologyDocuments(context.Context, string, string, []string, model.FoundryDocumentFilter, string, int) ([]*model.FoundryDocument, string, error) {
+func (u Unimplemented) ListFoundryOntologyDocuments(context.Context, string, string, []string, *[]string, model.FoundryDocumentFilter, string, int) ([]*model.FoundryDocument, string, error) {
 	u.unimplemented("ListFoundryOntologyDocuments")
 	return nil, "", nil
 }
@@ -564,7 +641,7 @@ func (u Unimplemented) GetFoundryQuestionByClientToken(context.Context, string, 
 	u.unimplemented("GetFoundryQuestionByClientToken")
 	return nil, nil
 }
-func (u Unimplemented) ListFoundryQuestions(context.Context, string, string, string, int) ([]*model.FoundryQuestion, string, error) {
+func (u Unimplemented) ListFoundryQuestions(context.Context, string, string, string, int, *access.Principal) ([]*model.FoundryQuestion, string, error) {
 	u.unimplemented("ListFoundryQuestions")
 	return nil, "", nil
 }
@@ -576,6 +653,11 @@ func (u Unimplemented) ListFoundryQuestionEvents(context.Context, string, int, i
 	u.unimplemented("ListFoundryQuestionEvents")
 	return nil, nil
 }
+func (u Unimplemented) SumFoundryGranteeQuestionSpend(context.Context, string, access.Principal, time.Time) (model.FoundryQuestionSpend, error) {
+	u.unimplemented("SumFoundryGranteeQuestionSpend")
+	return model.FoundryQuestionSpend{}, nil
+}
+
 func (u Unimplemented) SumFoundryQuestionSpend(context.Context, string, time.Time) (model.FoundryQuestionSpend, error) {
 	u.unimplemented("SumFoundryQuestionSpend")
 	return model.FoundryQuestionSpend{}, nil
@@ -798,5 +880,143 @@ func (u Unimplemented) ClaimFoundryNotification(context.Context, string, time.Du
 }
 func (u Unimplemented) FinishFoundryNotification(context.Context, string, string, model.FoundryNotificationOutcome) error {
 	u.unimplemented("FinishFoundryNotification")
+	return nil
+}
+
+func (u Unimplemented) ListFoundryAccessGrants(context.Context, string, []access.Principal) ([]model.FoundryAccessGrant, error) {
+	u.unimplemented("ListFoundryAccessGrants")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundryLoadHoldings(context.Context, string, string) (access.Holdings, error) {
+	u.unimplemented("FoundryLoadHoldings")
+	return access.Holdings{}, nil
+}
+
+func (u Unimplemented) SetFoundryQuestionSeen(context.Context, string, *access.Inputs) error {
+	u.unimplemented("SetFoundryQuestionSeen")
+	return nil
+}
+
+func (u Unimplemented) ListFoundryLoadInputs(context.Context, string, []string) (map[string]model.FoundryLoadInputs, error) {
+	u.unimplemented("ListFoundryLoadInputs")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryCurrentLoadInputs(context.Context, string, []string) (map[string]model.FoundryLoadInputs, error) {
+	u.unimplemented("ListFoundryCurrentLoadInputs")
+	return nil, nil
+}
+
+func (u Unimplemented) SetFoundryAccessGrants(context.Context, string, access.Principal, []access.Target, *string) error {
+	u.unimplemented("SetFoundryAccessGrants")
+	return nil
+}
+
+func (u Unimplemented) DeleteFoundryAccessPrincipal(context.Context, string, access.Principal) error {
+	u.unimplemented("DeleteFoundryAccessPrincipal")
+	return nil
+}
+
+func (u Unimplemented) FoundryVersionInputs(context.Context, string, string, string) (access.Inputs, error) {
+	u.unimplemented("FoundryVersionInputs")
+	return access.Inputs{}, nil
+}
+
+func (u Unimplemented) ListFoundryOntologiesHoldingDocument(context.Context, string, string) ([]string, error) {
+	u.unimplemented("ListFoundryOntologiesHoldingDocument")
+	return nil, nil
+}
+
+func (u Unimplemented) IsFoundryMemberRestricted(context.Context, string, string) (bool, error) {
+	u.unimplemented("IsFoundryMemberRestricted")
+	return false, nil
+}
+
+func (u Unimplemented) ListFoundryRestrictedMembers(context.Context, string) ([]string, error) {
+	u.unimplemented("ListFoundryRestrictedMembers")
+	return nil, nil
+}
+
+func (u Unimplemented) ListFoundryTeams(context.Context, string) ([]model.FoundryTeam, error) {
+	u.unimplemented("ListFoundryTeams")
+	return nil, nil
+}
+
+func (u Unimplemented) FoundryTeamsOf(context.Context, string, string) ([]string, error) {
+	u.unimplemented("FoundryTeamsOf")
+	return nil, nil
+}
+
+func (u Unimplemented) SetFoundryMemberRestricted(context.Context, string, string, bool, *string) error {
+	u.unimplemented("SetFoundryMemberRestricted")
+	return nil
+}
+
+func (u Unimplemented) CreateFoundryTeam(context.Context, *model.FoundryTeam) error {
+	u.unimplemented("CreateFoundryTeam")
+	return nil
+}
+
+func (u Unimplemented) UpdateFoundryTeam(context.Context, string, string, string, []string) error {
+	u.unimplemented("UpdateFoundryTeam")
+	return nil
+}
+
+func (u Unimplemented) DeleteFoundryTeam(context.Context, string, string) error {
+	u.unimplemented("DeleteFoundryTeam")
+	return nil
+}
+
+func (u Unimplemented) RemoveFoundryAccessMember(context.Context, string, string) error {
+	u.unimplemented("RemoveFoundryAccessMember")
+	return nil
+}
+func (u Unimplemented) ListFoundryHealFindings(context.Context, string) ([]*model.FoundryHealFinding, error) {
+	u.unimplemented("ListFoundryHealFindings")
+	return nil, nil
+}
+func (u Unimplemented) GetFoundryHealFinding(context.Context, string, string) (*model.FoundryHealFinding, error) {
+	u.unimplemented("GetFoundryHealFinding")
+	return nil, nil
+}
+func (u Unimplemented) GetLatestFoundryHealRun(context.Context, string) (*model.FoundryHealRun, error) {
+	u.unimplemented("GetLatestFoundryHealRun")
+	return nil, nil
+}
+func (u Unimplemented) GetLatestCompleteFoundryHealRun(context.Context, string) (*model.FoundryHealRun, error) {
+	u.unimplemented("GetLatestCompleteFoundryHealRun")
+	return nil, nil
+}
+func (u Unimplemented) FoundryHealLoadChanged(context.Context, string, string, string) (bool, error) {
+	u.unimplemented("FoundryHealLoadChanged")
+	return false, nil
+}
+func (u Unimplemented) ListFoundryHealDocuments(context.Context, string, string, int) ([]string, error) {
+	u.unimplemented("ListFoundryHealDocuments")
+	return nil, nil
+}
+func (u Unimplemented) DismissFoundryHealFinding(context.Context, string, string, string) error {
+	u.unimplemented("DismissFoundryHealFinding")
+	return nil
+}
+func (u Unimplemented) DueFoundryHealOntologies(context.Context, time.Duration, time.Duration, int) ([]model.FoundryHealDue, error) {
+	u.unimplemented("DueFoundryHealOntologies")
+	return nil, nil
+}
+func (u Unimplemented) StartFoundryHealRun(context.Context, *model.FoundryHealRun, time.Duration) error {
+	u.unimplemented("StartFoundryHealRun")
+	return nil
+}
+func (u Unimplemented) RenewFoundryHealRun(context.Context, string, time.Duration) error {
+	u.unimplemented("RenewFoundryHealRun")
+	return nil
+}
+func (u Unimplemented) FinishFoundryHealRun(context.Context, string, model.FoundryHealRunStatus, int, int) error {
+	u.unimplemented("FinishFoundryHealRun")
+	return nil
+}
+func (u Unimplemented) PublishFoundryHealRun(context.Context, model.FoundryHealPublish) error {
+	u.unimplemented("PublishFoundryHealRun")
 	return nil
 }

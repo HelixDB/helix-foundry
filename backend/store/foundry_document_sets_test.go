@@ -633,7 +633,7 @@ func TestFoundryConnectorDocumentOrder(t *testing.T) {
 		var got []string
 		token := ""
 		for range 5 {
-			page, next, err := f.db.ListFoundryOntologyDocuments(ctx, ws, "", []string{general, notes.ID}, model.FoundryDocumentFilterAll, token, 2)
+			page, next, err := f.db.ListFoundryOntologyDocuments(ctx, ws, "", []string{general, notes.ID}, nil, model.FoundryDocumentFilterAll, token, 2)
 			require.NoError(t, err)
 			got = append(got, documentIDs(page)...)
 			if token = next; token == "" {

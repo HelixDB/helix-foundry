@@ -104,6 +104,13 @@ export type DatabaseQueryFailure =
       retryInMs: number;
     });
 
+/** A read that failed, with the transport's description. */
+export class ReadFailed extends Error {
+  constructor(readonly failure: DatabaseQueryFailure) {
+    super(failure.message);
+  }
+}
+
 export type DatabaseQueryResult =
   | {
       ok: true;
@@ -290,7 +297,7 @@ const MESSAGES = {
   databaseInternal:
     "The database hit an internal error. Try again, and contact support if it keeps happening.",
   starting:
-    "Helix is still starting this new database, which can take a few minutes. Try again shortly.",
+    "Your new database is starting, which may take a few minutes. Try again shortly.",
 } as const;
 
 function failure(
@@ -623,6 +630,38 @@ export function startingOr(
     retryInMs: startingRetryMs(now - Date.parse(createdAt || "")),
   };
 }
+
+/**
+ * What the WFE's refusal of a typed read (.../loads/{id}:read) says of the
+ * database, when it says anything: its queries are paused, or, within a new
+ * database's window, the reader couldn't read it (503: the gateway's
+ * rate_limit_unavailable reaches the WFE only as a failed read). Null for
+ * anything else, which keeps the WFE's own words.
+ *
+ * @example
+ * typedReadFailure(new ApiError("queries are paused: the workspace has no active plan", 400), undefined, 0)?.kind; // "disabled"
+ * typedReadFailure(new ApiError("the graph reader failed; try again", 503), undefined, 0); // null
+ */
+export function typedReadFailure(
+  e: ApiError,
+  createdAt: string | null | undefined,
+  now: number,
+): DatabaseQueryFailure | null {
+  const f = outerFailure(e, 0);
+  if (f.kind === "disabled") return f;
+  return e.status === 503 && mayBeStarting(createdAt, now)
+    ? {
+        ...f,
+        kind: "starting",
+        message: MESSAGES.starting,
+        retryInMs: startingRetryMs(now - Date.parse(createdAt || "")),
+      }
+    : null;
+}
+
+/** Whether the WFE refused a typed read for now: every read slot is taken. */
+export const readsBusy = (e: ApiError) =>
+  e.status === 429 && !isSizeMessage(e.message);
 
 const isAbortError = (e: unknown) =>
   typeof e === "object" &&

@@ -1,7 +1,7 @@
 // Package ports names what Foundry needs from the host that runs it: who is
 // calling, the databases ontologies load into, the plans workspaces hold,
-// the people in a workspace, the rate-limit boosts a graph job may take, and
-// the email it sends people.
+// the people in a workspace, the rate-limit boosts a graph job may take, the
+// email it sends people, and the provider accounts connectors sign in with.
 //
 // A host implements each port. A hosted deployment backs them with its own
 // identity, billing and database gateway; a standalone install backs them
@@ -11,14 +11,18 @@
 // The ports Foundry's store already defines are not repeated here:
 // store.Workspaces (the host's workspaces, read and locked inside the
 // store's statements) and the store methods a host calls inside its own
-// transactions (CancelWorkspaceFoundryWork, DeleteWorkspaceConnectors).
+// transactions (CancelWorkspaceFoundryWork, DeleteWorkspaceConnectors,
+// BreakConnectorAccounts when a member leaves, ListConnectorAccounts before
+// a workspace's connectors are deleted).
 // Object storage is an aws.Config the host supplies; metrics register on
 // Prometheus's default registerer.
 package ports
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/plan"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -37,6 +41,11 @@ const (
 	SourceMCP
 	// SourceEventSource is an event source's sender, holding its send token.
 	SourceEventSource
+	// SourceGrantee is a user or service credential the front end's own
+	// permissions did not admit, so Foundry decides from its source grants
+	// (package access). It names exactly one of UserID and
+	// ServiceCredentialID, a WorkspaceID, and no query scope.
+	SourceGrantee
 )
 
 // Actor is who calls Foundry's API, as the front end that authenticated the
@@ -44,10 +53,15 @@ const (
 // authorized the call. It never comes from a request body.
 type Actor struct {
 	Source Source
-	// UserID is the user's id; empty for an event source.
+	// UserID is the user's id; empty for an event source and for a service
+	// credential.
 	UserID string
 	// EventSourceTokenID is the send token's id; set only for SourceEventSource.
 	EventSourceTokenID string
+	// ServiceCredentialID is the workspace service credential (an agent's
+	// key) the caller authenticated with; set only for SourceMCP and
+	// SourceGrantee, and then UserID is empty.
+	ServiceCredentialID string
 	// WorkspaceID is the workspace QueryRead and QueryWrite are of: the
 	// request's. A scope of another workspace grants nothing.
 	WorkspaceID string
@@ -173,6 +187,29 @@ type People interface {
 	// DisplayName is the name Foundry shows for a user: their display name,
 	// else their email; store.ErrNotFound when there is no such user.
 	DisplayName(ctx context.Context, userID string) (string, error)
+	// Member is userID's membership of workspaceID, RoleNone when they are
+	// not a member.
+	Member(ctx context.Context, workspaceID, userID string) (Member, error)
+}
+
+// Role is a member's role in a workspace.
+type Role uint8
+
+const (
+	// RoleNone is no member.
+	RoleNone Role = iota
+	RoleMember
+	RoleAdmin
+	RoleOwner
+)
+
+// Member is what Foundry's source grants need of a workspace member.
+type Member struct {
+	Role Role
+	// RawAccess is that the member may write a project, or query a
+	// project's databases, outside Foundry: grants can't restrict what they
+	// read.
+	RawAccess bool
 }
 
 // PlanReader reads the Foundry plan a workspace holds now. Optional: where
@@ -264,3 +301,97 @@ type Mail interface {
 	// delivered the email.
 	Send(ctx context.Context, to Recipient, e Email) error
 }
+
+// ProviderAccounts keeps the accounts users connect by signing in at a
+// provider, owned by their workspace (hosted: WorkOS Pipes). Optional: where
+// it is nil no kind connects by signing in, as in a local build.
+type ProviderAccounts interface {
+	// Kinds are the connector kinds userID can connect to the workspace by
+	// signing in: none when they can't (hosted: no WorkOS organization, no
+	// WorkOS membership of it, or Pipes switched off).
+	Kinds(ctx context.Context, workspaceID, userID string) ([]string, error)
+	// Authorize is the provider's page for the user to authorize a. With
+	// a.AccountID set (a reauthorization), an account the broker no longer
+	// has is an *AccountBroken{Reason: AccountAccountMissing}. Foundry then
+	// authorizes again without AccountID, for a new account, and only once
+	// that succeeds records the connector's account as missing: a broker
+	// that can't tell a lost account from a switched-off integration may
+	// answer so for either.
+	Authorize(ctx context.Context, a AccountAuthorization) (string, error)
+	// Finish saves the account the user authorized, having checked it is
+	// the workspace's and was made by ref.UserID; otherwise it deletes it
+	// and fails (ErrAccountNotThisWorkspace). ref.AccountID is set when the
+	// sign-in reauthorized that account, the connector's own
+	// (AccountAuthorization.AccountID): Finish never deletes it, and on a
+	// mismatch returns the error and leaves it alone. When Finish refuses an
+	// account the broker gave it, it returns that account (its ID and
+	// UserID) with the error, whether or not its own delete of it
+	// succeeded: Foundry purges it too, unless it is ref.AccountID.
+	Finish(ctx context.Context, ref AccountRef, code, verifier string) (ProviderAccount, error)
+	// Token is the account's current credential, asked for as ref.UserID.
+	Token(ctx context.Context, ref AccountRef) (Credential, error)
+	// Delete removes the account; one already gone is no error.
+	Delete(ctx context.Context, ref AccountRef) error
+}
+
+// AccountAuthorization is what a user authorizes: a new account of Kind for
+// the workspace, or, with AccountID, that account signed in again.
+type AccountAuthorization struct {
+	WorkspaceID, UserID, Kind string
+	// Label names the account in the broker's own records.
+	Label string
+	// ReturnTo is the site's callback, Challenge the S256 PKCE challenge of
+	// the verifier Finish is given.
+	ReturnTo, Challenge string
+	// AccountID, when set, reauthorizes that account. Foundry sets it only
+	// when UserID is the member the account acts as, since an account
+	// can't move to another member: anyone else signing a connector in
+	// again makes a new one.
+	AccountID string
+}
+
+// AccountRef names a workspace's account of a kind, used as UserID.
+type AccountRef struct {
+	WorkspaceID, UserID, Kind, AccountID string
+}
+
+// ProviderAccount is a saved account and the user it acts as: the one the
+// broker says made it.
+type ProviderAccount struct {
+	ID, UserID string
+}
+
+// Credential is an account's token, held in memory for one use.
+type Credential struct {
+	Value     string
+	ExpiresAt *time.Time
+}
+
+// The reasons an account needs signing in again.
+const (
+	AccountMemberLeft     = "member_left"
+	AccountAccessRevoked  = "access_revoked"
+	AccountExpired        = "expired"
+	AccountAccountMissing = "account_missing"
+)
+
+// AccountBroken is Token's error when the account needs signing in again.
+type AccountBroken struct {
+	Reason string // one of the Account* reasons
+}
+
+func (e *AccountBroken) Error() string { return "the account needs signing in again: " + e.Reason }
+
+// ErrAccountsUnavailable is every other failure to reach the accounts:
+// switched off, unreachable, rate limited. It is retried, never a break.
+var ErrAccountsUnavailable = errors.New("provider accounts are unavailable")
+
+// ErrAccountCodeRejected is Finish's error when the broker refuses the
+// callback's code: it lapsed, was used already, or its verifier doesn't
+// match. Authorizing again gives the user a new one.
+var ErrAccountCodeRejected = errors.New("the sign-in's code was refused")
+
+// ErrAccountNotThisWorkspace is Finish's error when the account the code
+// made isn't the workspace's, or wasn't made by the user finishing; Finish
+// has deleted it.
+var ErrAccountNotThisWorkspace = errors.New("the account isn't this workspace's")

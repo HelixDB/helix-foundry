@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"log/slog"
 	"maps"
 	"net"
@@ -130,6 +131,12 @@ type memStore struct {
 	version    *model.OntologyVersion
 	generation *model.OntologyGeneration
 	history    []*model.FoundryQuestion
+	// holdings are what each load holds, document by document, and seen what
+	// each question that read part of its load read.
+	holdings map[string]access.Holdings
+	seen     map[string]*access.Inputs
+	// olderLoads are loads other than the current ones, by load.
+	olderLoads map[string]model.FoundryLoadInputs
 	// cancelAfter cancels the question once that many appends stored events
 	// (0: never): every write of its attempt then finds no lease.
 	cancelAfter int
@@ -149,6 +156,12 @@ type memStore struct {
 	renews int
 	// aiConfig is the workspace's AI setting; nil is Helix's Claude.
 	aiConfig *model.FoundryAIConfig
+	// grants and currentLoads are what a grantee's question is checked
+	// against: the workspace's grants, and each ontology's current load.
+	grants       []model.FoundryAccessGrant
+	currentLoads map[string]model.FoundryLoadInputs
+	// teams are each user's teams.
+	teams map[string][]string
 }
 
 func (s *memStore) GetActiveFoundryAIConfig(context.Context, string) (*model.FoundryAIConfig, error) {
@@ -236,6 +249,69 @@ func (s *memStore) GetOntologyVersionScope(_ context.Context, ontologyID, id str
 		return []string{}, nil
 	}
 	return *s.version.DocumentSetIDs, nil
+}
+
+func (s *memStore) ListFoundryAccessGrants(_ context.Context, _ string, principals []access.Principal) ([]model.FoundryAccessGrant, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []model.FoundryAccessGrant
+	for _, g := range s.grants {
+		if slices.Contains(principals, g.Principal) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) ListFoundryCurrentLoadInputs(_ context.Context, _ string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]model.FoundryLoadInputs{}
+	for _, id := range ontologyIDs {
+		if l, ok := s.currentLoads[id]; ok {
+			out[id] = l
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) FoundryLoadHoldings(_ context.Context, _, loadID string) (access.Holdings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.holdings[loadID], nil
+}
+
+func (s *memStore) SetFoundryQuestionSeen(_ context.Context, questionID string, seen *access.Inputs) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen == nil {
+		s.seen = map[string]*access.Inputs{}
+	}
+	s.seen[questionID] = seen
+	return nil
+}
+
+func (s *memStore) ListFoundryLoadInputs(_ context.Context, _ string, loadIDs []string) (map[string]model.FoundryLoadInputs, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]model.FoundryLoadInputs{}
+	for _, l := range s.currentLoads {
+		if slices.Contains(loadIDs, l.LoadID) {
+			out[l.LoadID] = l
+		}
+	}
+	for id, l := range s.olderLoads {
+		if slices.Contains(loadIDs, id) {
+			out[id] = l
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) FoundryTeamsOf(_ context.Context, _, userID string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.teams[userID], nil
 }
 
 func (s *memStore) ListFoundryQuestionHistory(context.Context, *model.FoundryQuestion, int) ([]*model.FoundryQuestion, error) {
@@ -416,7 +492,7 @@ const (
 		`"citations":[{"marker":"c1","evidence_id":"e1","target":{"entity":{"type":"Customer","id":"acme"}}},` +
 		`{"marker":"c2","evidence_id":"e1","target":{"result":{"evidence_id":"e1"}}}],"queries":[],` +
 		`"usage":{"input":1000,"cache_read":200,"cache_write":300,"output":400,"usd":0.031}}`
-	cannotResult = `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.","queries":[],` +
+	cannotResult = `{"status":"cannot_answer","reason":"No link says who signed.","gap":"A signed_by link.","kind":"undeclared_relation","queries":[],` +
 		`"usage":{"input":10,"cache_read":0,"cache_write":0,"output":5,"usd":0.002}}`
 	budgetResult = `{"status":"budget_exhausted","queries":[],"usage":{"input":10,"cache_read":0,"cache_write":0,"output":5,"usd":0.5}}`
 )
@@ -598,7 +674,7 @@ func TestAnswer(t *testing.T) {
 			t.Fatalf("question = %+v", req)
 		case len(req.History) != 1 || req.History[0] != (ontologyagent.AskTurn{Question: "Who are our customers?", Answer: "Acme signed [c1].\n\n- Globex [c2]"}):
 			t.Fatalf("history = %+v", req.History)
-		case req.Limits != (ontologyagent.Limits{MaxUSD: 0.5, MaxSteps: 20, MaxWallSecs: 240}):
+		case req.Limits != (ontologyagent.AskLimits{MaxUSD: 0.5, MaxSteps: 20, MaxWallSecs: 240, Read: ontologyagent.AskReadLimits{WallMS: 5000, ScanEntities: 20000}}):
 			t.Fatalf("limits = %+v", req.Limits)
 		case !strings.HasPrefix(req.Helix.URL, "http://127.0.0.1:") || req.Helix.Token == "" || req.Helix.TimeoutSecs != 30:
 			t.Fatalf("helix = %+v", req.Helix)
@@ -629,6 +705,24 @@ func TestAnswer(t *testing.T) {
 			if got := <-left; got < want || got > bound {
 				t.Fatalf("info after %s: the agent's call had %s left, want at least %s and at most %s", delay, got, want, bound)
 			}
+		}
+	})
+
+	// Each read of the question runs under the deployment's caps, not the
+	// agent's own: a local install raises them for reads over a month of
+	// rows, and a question set past them reads within them all the same.
+	t.Run("sends the configured caps of each read", func(t *testing.T) {
+		h := newHarness(t)
+		h.task.runner.cfg.Foundry.Ask.ReadWallMS, h.task.runner.cfg.Foundry.Ask.ReadScanEntities = 30_000, 100_000
+		if settled := h.run(t, question(1)); len(settled) != 1 || settled[0].Status != model.FoundryQuestionAnswered {
+			t.Fatalf("settled %+v", settled)
+		}
+		raw := h.agent.calls()[0]
+		if err := contracttest.Validate(t, contracttest.Schema(t, "ask_request.json"), []byte(raw)); err != nil {
+			t.Fatalf("the request does not match ask_request.json: %v", err)
+		}
+		if req, _ := decodeAsk(t, raw); req.Limits.Read != (ontologyagent.AskReadLimits{WallMS: 30_000, ScanEntities: 100_000}) {
+			t.Fatalf("read caps = %+v", req.Limits.Read)
 		}
 	})
 

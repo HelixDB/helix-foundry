@@ -349,10 +349,143 @@ describe("mock rules", () => {
       read(model, {
         query: {
           start: { type: "Org" },
-          return: { count: {} },
-        } as never,
+          return: { group_count: { at: 0, prop: "code" } },
+        },
       }),
     ).toMatchObject({ error: { code: "invalid" } });
+  });
+
+  it("answers typed queries: rows along steps, counts, text and ids", () => {
+    const { model } = load();
+    const ok = (q: Parameters<typeof query>[1]) => {
+      const a = query(model, q);
+      if (!("ok" in a)) throw new Error(JSON.stringify(a));
+      return a.ok as { result: Record<string, unknown> };
+    };
+    const query = (
+      m: Model,
+      q: Extract<Parameters<typeof answer>[1], { query: unknown }>["query"],
+    ) => read(m, { query: q });
+    // Every Org, by its code, with the place each is based in and the edge.
+    const rows = ok({
+      start: { type: "Org" },
+      steps: [{ via: "based_in", dir: "out", to: "Place" }],
+      return: {
+        rows: {
+          columns: [
+            { at: 0 },
+            { at: 0, prop: "code" },
+            { at: 1, prop: "name" },
+          ],
+          order_by: { at: 0, prop: "code", desc: true },
+        },
+      },
+    }).result;
+    expect(rows).toEqual({
+      kind: "rows",
+      rows: [
+        {
+          cells: [{ type: "Org", id: "bolt", name: "bolt" }, "bolt", "soho"],
+          edges: [
+            {
+              step: 0,
+              fact: { link: "based_in", subject: bolt, object: soho },
+            },
+          ],
+        },
+        {
+          cells: [{ type: "Org", id: "acme", name: "acme" }, "acme", "soho"],
+          edges: [
+            {
+              step: 0,
+              fact: { link: "based_in", subject: acme, object: soho },
+            },
+          ],
+        },
+      ],
+      total: 2,
+    });
+    // One end named: rows distinct over it, without the edge.
+    expect(
+      ok({
+        start: { type: "Org" },
+        steps: [{ via: "based_in", dir: "out", to: "Place" }],
+        return: { rows: { columns: [{ at: 1 }], limit: 1 } },
+      }).result,
+    ).toEqual({
+      kind: "rows",
+      rows: [{ cells: [{ ...soho, name: "soho" }], edges: [] }],
+      total: 1,
+    });
+    // Back along a link, and a fact only rules give.
+    expect(
+      ok({
+        start: { type: "Place", ids: ["england"] },
+        steps: [{ via: "in", dir: "in", to: "Place" }],
+        return: { rows: { columns: [{ at: 0 }, { at: 1 }] } },
+      }).result,
+    ).toMatchObject({
+      total: 2,
+      rows: [
+        { edges: [{ step: 0, fact: { link: "in" } }] },
+        {
+          edges: [
+            { step: 0, derived: { pred: "link:in", args: [soho, england] } },
+          ],
+        },
+      ],
+    });
+    // Counts, a flag, where and a text search of names.
+    expect(
+      ok({ start: { type: "Place" }, return: { count: {} } }).result,
+    ).toEqual({ kind: "count", count: 3 });
+    expect(
+      ok({
+        start: { type: "Org" },
+        filters: [{ at: 0, holds: "big" }],
+        return: { count: { distinct_at: 0 } },
+      }).result,
+    ).toEqual({ kind: "count", count: 2 });
+    expect(
+      ok({
+        start: {
+          type: "Org",
+          where: [{ prop: "code", op: "starts_with", value: "co" }],
+        },
+        filters: [{ at: 0, violates: "org_somewhere" }],
+        return: { count: {} },
+      }).result,
+    ).toEqual({ kind: "count", count: 0 });
+    expect(
+      ok({
+        start: { type: "Place", text: "London town" },
+        return: { rows: { columns: [{ at: 0 }] } },
+      }).result,
+    ).toMatchObject({ total: 1, rows: [{ cells: [london] }] });
+    // What the engine refuses, with a pointer to it.
+    expect(
+      query(model, {
+        start: { type: "Org", text: "acme" },
+        return: { count: {} },
+      }),
+    ).toMatchObject({ error: { code: "invalid", pointer: "/start/text" } });
+    expect(
+      query(model, {
+        start: { type: "Org" },
+        return: { rows: { columns: [{ at: 0, prop: "nope" }] } },
+      }),
+    ).toMatchObject({
+      error: { code: "invalid", pointer: "/return/rows/columns/0" },
+    });
+    expect(
+      query(model, {
+        start: { type: "Org" },
+        return: { rows: { columns: [{ at: 0 }], limit: 201 } },
+      }),
+    ).toMatchObject({ error: { pointer: "/return/rows/limit" } });
+    expect(
+      query(model, { start: { type: "Ghost" }, return: { count: {} } }),
+    ).toMatchObject({ error: { pointer: "/start/type" } });
   });
 
   it("leaves out datalog with values, and refuses negation through a cycle", () => {

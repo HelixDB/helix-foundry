@@ -20,6 +20,9 @@ jobs:
     runs-on: crucible-4vcpu-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # buf breaking compares with the pull request's base.
+          fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: backend/go.mod
@@ -44,3 +47,9 @@ jobs:
           "$buf" generate --template buf.internal.gen.yaml
           changed=$(git status --porcelain -- pb/gen)
           if [ -n "$changed" ]; then echo "$changed"; exit 1; fi
+      # Hosted Helix and older sites call these protos: a change keeps what
+      # they rely on. The agent's contract moves with its own version.
+      - name: buf breaking
+        if: github.event_name == 'pull_request'
+        run: |
+          "$(go env GOPATH)/bin/buf" breaking --against "../.git#ref=refs/remotes/origin/${GITHUB_BASE_REF},subdir=backend" --exclude-path pb/proto/ontology_agent

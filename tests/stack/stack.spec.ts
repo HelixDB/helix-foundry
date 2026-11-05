@@ -29,7 +29,7 @@ let ontologyPath = "",
   generationPath = "";
 
 // The first workspace opens on its onboarding, Get started, which is all it
-// offers until it has an ontology. Use my own data, alone on a local build,
+// offers until it has an ontology. Use my own data, selected on a local build,
 // continues to the first ontology's sources step, which connects the database
 // and uploads the document; the ontology is named from them and goes on a new
 // database. Each test opens it afresh.
@@ -40,7 +40,11 @@ async function toSources(page: Page) {
 
 // The install made the owner's first workspace as it first started, so the
 // site opens in it, never on the page that creates one.
-test("opens in the workspace the install starts with", async ({ page }) => {
+test("opens in the workspace the install starts with", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
@@ -52,6 +56,14 @@ test("opens in the workspace the install starts with", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Create your first workspace" }),
   ).toHaveCount(0);
+  await page.getByRole("radio", { name: "Set up with your agent" }).click();
+  await page.getByRole("button", { name: "Copy prompt", exact: true }).click();
+  const prompt = await page.evaluate(() => navigator.clipboard.readText());
+  expect(prompt).toContain("http://localhost:8081/mcp");
+  expect(prompt).toContain("FOUNDRY_LOCAL_TOKEN");
+  expect(prompt).toContain("helix_list_workspaces");
+  expect(prompt).not.toContain("mcp.helix-db.com");
+  expect(prompt).not.toContain("helix_signup");
 });
 
 test("connects and syncs a PostgreSQL database", async ({ page }) => {
@@ -317,7 +329,7 @@ test.describe("with models", () => {
       .or(page.getByText("Failed", { exact: true }))
       .first();
 
-  test("drafts the ontology with the agent and makes it current", async ({
+  test("drafts the ontology with the agent, which starts its load", async ({
     page,
   }) => {
     test.setTimeout((onOllama ? 50 : 30) * 60_000);
@@ -327,27 +339,17 @@ test.describe("with models", () => {
       timeout: (onOllama ? 45 : 25) * 60_000,
     });
     await expect(done(page, "Succeeded")).toHaveText("Succeeded");
-    await page.getByRole("link", { name: /^Review version \d+$/ }).click();
-    await page.getByRole("button", { name: "Make current" }).click();
-    await page
-      .getByRole("dialog", { name: /^Make version \d+ current\?$/ })
-      .getByRole("button", { name: "Make current" })
-      .click();
-    await expect(
-      page.getByText(/^Version \d+ is now current\.$/),
-    ).toBeVisible();
+    // A first ontology's draft is made current and its load started.
+    await page.getByRole("link", { name: /^Open / }).click();
+    await expect(page).toHaveURL(ontologyPath);
   });
 
   test("loads it into HelixDB, the document included", async ({ page }) => {
-    await page.goto(ontologyPath);
+    await page.goto(`${ontologyPath}#loads`);
     await page
-      .getByRole("status")
-      .filter({ hasText: /isn’t loaded yet/ })
-      .getByRole("button", { name: "Load data" })
-      .click();
-    await page
-      .getByRole("dialog", { name: /^Load version \d+ into / })
-      .getByRole("button", { name: "Load" })
+      .getByRole("grid", { name: "Loads" })
+      .getByRole("row")
+      .nth(1)
       .click();
     await expect(page).toHaveURL(/\/loads\/[0-9A-Z]{26}$/);
     const loaded = page

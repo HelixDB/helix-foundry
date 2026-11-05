@@ -104,6 +104,110 @@
   }
 }
 
+/* Access: agents, people and teams, each a row of the members list, and
+   the sources dialog (what a principal is given, then what it can read). */
+.wk-access.hf-tab-panel {
+  display: grid;
+  gap: var(--hf-space-2);
+  padding: var(--hf-space-2) 0 0;
+}
+.wk-access .wk-member {
+  flex-wrap: wrap;
+}
+.wk-access-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--hf-space-1);
+  margin-left: auto;
+}
+.wk-access-switch {
+  margin: 0;
+  font-size: var(--hf-text-sm);
+  white-space: nowrap;
+}
+.wk-access-grants {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--hf-space-2);
+}
+@media (max-width: 720px) {
+  .wk-access-grants {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.wk-access-sources {
+  display: grid;
+  gap: var(--hf-space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.wk-access-sources legend,
+.wk-access-reads h4 {
+  margin: 0 0 6px;
+  padding: 0;
+  color: var(--hf-text);
+  font-size: var(--hf-text-md);
+  font-weight: 500;
+}
+.wk-access-sources ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wk-access-sources .wk-access-nested {
+  margin-top: 4px;
+  padding-left: 26px;
+}
+.wk-access-source {
+  display: flex;
+  align-items: center;
+  gap: var(--hf-space-1);
+  margin: 0;
+  font-size: var(--hf-text-base);
+}
+.wk-access-source small,
+.wk-access-lacks small {
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+.wk-access-reads {
+  display: grid;
+  align-content: start;
+  gap: var(--hf-space-1);
+  min-width: 0;
+}
+.wk-access-reads h4 {
+  margin: 0;
+}
+.wk-access-reads ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-base);
+}
+.wk-access-lacks li {
+  display: grid;
+}
+.wk-access-token {
+  padding: 0;
+  justify-items: stretch;
+}
+.wk-access-copy {
+  display: flex;
+  gap: 6px;
+}
+.wk-access-copy input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Plan and billing */
 .wk-plan-current {
   display: flex;

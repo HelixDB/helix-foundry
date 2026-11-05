@@ -81,13 +81,14 @@ import {
 } from "./layout";
 import {
   canManage,
+  connectorBadge,
   isEventSource,
   isLiveSync,
   lastSyncedAt,
   rowTotal,
-  syncBadge,
   type TreeItem,
 } from "./model";
+import { needsSignIn } from "./sign-ins";
 
 // The Data explorer's tree as the layout arranges it: folders at the root
 // (a kind's, the workspace's own, and documents/), connections in the
@@ -429,7 +430,8 @@ function ConnectorFolder({
 // One connection: its grip, its chevron while it lists something, its
 // kind's logo, its name (renamed in place, as helix-foundry's suggested
 // ontology renames a type; what it holds in the name's tooltip), its
-// sync's status as a dot (said in the row's name), Sync while hovered or
+// sync's status as a dot (said in the row's name; "Needs signing in again"
+// while its account does, when Sync is off), Sync while hovered or
 // focused, and, open, its tables and its own sets (those a search found it
 // by, while one is on). The name opens its page; the chevron (or the arrow
 // keys) opens it here. An API source has no Sync: its pieces sync as they
@@ -464,7 +466,7 @@ function ConnectorItem({
   });
   const treeItem = useTreeItem(`c:${c.id}`, 2, lists ? open : undefined);
   const [moving, setMoving] = useState(false);
-  const badge = syncBadge(c.lastSync),
+  const badge = connectorBadge(c),
     live = isLiveSync(c.lastSync),
     pushed = isEventSource(c.kind),
     all = c.tables || [],
@@ -519,17 +521,19 @@ function ConnectorItem({
           name={name}
           to={paths.connection(c.id)}
           hint={
-            error
-              ? `Last sync failed: ${error}`
-              : pushed
-                ? all.length
-                  ? `${plural(rowTotal(c), "piece")}${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
-                  : "Pieces appear after their first sync"
-                : all.length
-                  ? `${plural(all.length, "table")} · ${number(rowTotal(c))} records${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
-                  : live
-                    ? "Copying tables…"
-                    : "Tables appear after the first sync"
+            needsSignIn(c)
+              ? `Needs signing in again: its data is frozen as of its last sync${refreshed ? `, ${relative(refreshed)}` : ""}`
+              : error
+                ? `Last sync failed: ${error}`
+                : pushed
+                  ? all.length
+                    ? `${plural(rowTotal(c), "piece")}${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
+                    : "Pieces appear after their first sync"
+                  : all.length
+                    ? `${plural(all.length, "table")} · ${number(rowTotal(c))} records${refreshed ? ` · synced ${relative(refreshed)}` : ""}`
+                    : live
+                      ? "Copying tables…"
+                      : "Tables appear after the first sync"
           }
           manage={manage}
           maxLength={120}
@@ -548,7 +552,7 @@ function ConnectorItem({
               label={`Sync ${name}`}
               size="sm"
               variant="ghost"
-              disabled={action.pending || live}
+              disabled={action.pending || live || needsSignIn(c)}
               onClick={() =>
                 void action.run(
                   () => syncConnector(id, c.id, "tree"),
@@ -803,7 +807,7 @@ export function NewFolderDialog({
   return (
     <Dialog
       title="New folder"
-      description="A folder of connections, shared with the workspace. Drag connections into it, or move them from their menus."
+      description="Organise connections in a folder shared with your workspace."
       size="sm"
       onClose={onClose}
     >

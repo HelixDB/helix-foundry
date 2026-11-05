@@ -16,9 +16,12 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/pkg/secretbox"
 	foundryplan "github.com/helixdb/helix-foundry/backend/plan"
+	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/snapshot"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // Failure is why a sync stopped. Message is written for the customer; Err
@@ -48,7 +51,7 @@ type store interface {
 	UpsertConnectorTable(ctx context.Context, t *model.ConnectorTable, batch *model.ConnectorChangeBatch, workerID string) error
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
-	UpdateConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage, syncID, workerID string) error
+	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
 	ListConnectorChangeBatches(ctx context.Context, workspaceID, syncID string) ([]*model.ConnectorChangeBatch, error)
 	ListFoundryDocumentSets(ctx context.Context, workspaceID string) ([]*model.FoundryDocumentSet, error)
@@ -60,6 +63,8 @@ type store interface {
 	MarkFoundryDocumentSetSkipped(ctx context.Context, workspaceID, setID string, month time.Time) error
 	ClearFoundryDocumentSetSkipped(ctx context.Context, workspaceID, setID, syncID, workerID string) error
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
+	BreakConnectorAccount(ctx context.Context, workspaceID, connectorID string, generation int, reason string) (bool, error)
+	MarkConnectorAccountChecked(ctx context.Context, workspaceID, connectorID string) error
 }
 
 type planReader interface {
@@ -76,6 +81,9 @@ type Syncer struct {
 	DB      store
 	Catalog *connector.Catalog
 	Keys    *secretbox.Keyring
+	// Accounts vends signed-in connectors' tokens; nil where none sign in,
+	// and a connector with an account then waits, retried, for one.
+	Accounts ports.ProviderAccounts
 	// Plans is nil when the deployment sells no Foundry plan; every workspace is then Free.
 	Plans       planReader
 	PlanCatalog *foundryplan.Catalog
@@ -113,6 +121,15 @@ type Syncer struct {
 	Allowances map[string]model.FoundrySetAllowance
 }
 
+// sourceSnapshots counts the full reads of a connector.SnapshotKind that
+// finished (readTables).
+var sourceSnapshots = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_sync_source_snapshots_total",
+	Help: "Finished full reads of two or more tables by a kind that reads them at one snapshot of its source, by kind and outcome: " +
+		"one (every table at it), unavailable (the source took no snapshot; every table at a moment of its own) " +
+		"or resumed (a retry kept the tables an earlier attempt wrote and read the rest a table at a time).",
+}, []string{"kind", "outcome"})
+
 // Result is what a sync did, for the worker to schedule the next one.
 type Result struct {
 	Rows int64
@@ -129,6 +146,9 @@ type Result struct {
 	Changed []string
 	// SyncEverySeconds is the connector's own interval: nil the plan's, 0 manual only.
 	SyncEverySeconds *int
+	// AccountGeneration is the account generation the sync read the
+	// connector at (0 for a key); nil when it stopped before reading it.
+	AccountGeneration *int
 	// MinEvery is the kind's own floor on the interval under these settings; 0 when it has none.
 	MinEvery time.Duration
 	// Pushed is set for a Pushed kind once the sync stored its cursor; nil
@@ -162,12 +182,19 @@ const releaseTimeout = 30 * time.Second
 //  1. Load the workspace and connector; either being deleted ends the sync.
 //  2. Read the plan, which may have lapsed since the sync was queued; its
 //     rules say which capture methods the sync may use.
-//  3. Re-discover with the stored credential, which also proves it still works.
+//  3. Open the credential (Credentials): the stored key, or a signed-in
+//     connector's token, asked of its broker for this sync. An account the
+//     broker or Foundry's record says is broken fails for good, and is
+//     recorded broken at the generation the sync asked with
+//     (accountFailure); a broker that can't be reached is retried.
+//     Re-discover with it, which also proves it still works.
 //     A table in scope (chosen, or synced before when none is chosen) that the
 //     source now cannot read fails the sync rather than vanishing.
 //  4. Read in full or read changes (readMode); in full when a stream
 //     catches up on what a paused sync skipped (Allowances). A full read
 //     compares each table with its snapshot; a change read merges into it.
+//     A connector.SnapshotKind reads the tables it reads in full at one
+//     snapshot of its source (readTables).
 //     A table that did not change keeps its snapshot; one that did gets a
 //     new snapshot and a change batch, in one lease-guarded write.
 //  5. Once every table is in, empty the document sets of streams no longer
@@ -175,6 +202,11 @@ const releaseTimeout = 30 * time.Second
 //     the cursor the next change read starts from.
 //  6. Mark the ontologies that read a changed table as owing a refresh.
 //  7. For a Pushed kind, read what waits beyond the stored cursor.
+//
+// A provider that rejects a signed-in connector's token (connector.AuthError)
+// gets one fresh token and steps 3 to 7 again: the broker renews one that
+// ran out mid-sync, and this attempt's tables already written are kept. A
+// second rejection breaks the account (access_revoked).
 func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result, err error) {
 	deleting, err := s.DB.WorkspaceDeleting(ctx, sync.WorkspaceID)
 	if errors.Is(err, foundrystore.ErrNotFound) || err == nil && deleting {
@@ -190,7 +222,7 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	if err != nil {
 		return res, retryable(fmt.Errorf("load connector: %w", err))
 	}
-	res.SyncEverySeconds = c.SyncEverySeconds
+	res.SyncEverySeconds, res.AccountGeneration = c.SyncEverySeconds, AccountGeneration(c)
 	kind, err := s.Catalog.Kind(c.Kind)
 	if err != nil {
 		return res, &Failure{Message: "this connector kind is no longer supported", Permanent: true, Err: err}
@@ -203,11 +235,23 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 		return res, err
 	}
 	res.Plan = plan
-	secret, err := s.Keys.Open(c.SecretCiphertext, c.SecretKeyID, connector.SecretContext(c.ID))
-	if err != nil {
-		return res, retryable(fmt.Errorf("open connector credential: %w", err))
+	credentials := s.credentials()
+	src, err := credentials.Source(ctx, c)
+	var rejected *connector.AuthError
+	if c.Account != nil && errors.As(err, &rejected) {
+		// A token no provider takes, such as an empty one: ask once more,
+		// and a second is a break, as a provider's second rejection is.
+		if src, err = credentials.Source(ctx, c); errors.As(err, &rejected) {
+			err = &ports.AccountBroken{Reason: ports.AccountAccessRevoked}
+		}
 	}
-	src := connector.Source{Settings: c.Config, Secret: string(secret), WorkspaceID: c.WorkspaceID, ConnectorID: c.ID, ForSync: true}
+	if c.Account != nil && err != nil {
+		return res, s.accountFailure(ctx, c, kind, err)
+	}
+	if err != nil {
+		return res, retryable(err)
+	}
+	src.ForSync = true
 	// A first full read whose Start took a slot, and that then fails for good,
 	// stores no cursor: no later sync or release tick would know to drop it.
 	if releaser, ok := kind.(connector.Releaser); ok && c.ChangeCursor == nil {
@@ -226,7 +270,35 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	for _, capture := range plan.Sync.Capture {
 		src.Captures = append(src.Captures, connector.Capture(capture))
 	}
-	discovery, err := kind.Discover(ctx, src)
+	base := res
+	res, err = s.read(ctx, sync, c, kind, plan, &src, base, false)
+	if c.Account == nil || !errors.As(err, &rejected) {
+		return res, err
+	}
+	credential, terr := credentials.Token(ctx, c)
+	if errors.As(terr, &rejected) {
+		terr = &ports.AccountBroken{Reason: ports.AccountAccessRevoked}
+	}
+	if terr != nil {
+		return res, s.accountFailure(ctx, c, kind, terr)
+	}
+	log.From(ctx).Info("a signed-in connector's token was rejected; reading again with a fresh one", "connector", c.ID,
+		"sync", sync.ID, "expires_at", credential.ExpiresAt)
+	src.Secret, src.Settings = credential.Value, c.Config
+	res, err = s.read(ctx, sync, c, kind, plan, &src, base, true)
+	if errors.As(err, &rejected) {
+		return res, s.accountFailure(ctx, c, kind, &ports.AccountBroken{Reason: ports.AccountAccessRevoked})
+	}
+	return res, err
+}
+
+// read is Run's steps 3 to 7 with src, the credential opened: it discovers,
+// reads, publishes and stores the cursor. again is a second read of the same
+// attempt, which owes the refreshes of the tables the first changed as an
+// earlier attempt's are.
+func (s *Syncer) read(ctx context.Context, sync *model.ConnectorSync, c *model.Connector, kind connector.Kind,
+	plan *foundryplan.Plan, src *connector.Source, res Result, again bool) (Result, error) {
+	discovery, err := kind.Discover(ctx, *src)
 	if err != nil {
 		return res, classify(err)
 	}
@@ -255,13 +327,13 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 		}
 	}
 	tables := selected(discovery, choice)
-	r := &run{s: s, sync: sync, kind: kind, src: src, previous: previous}
+	r := &run{s: s, sync: sync, kind: kind, src: *src, previous: previous}
 	if r.docs, err = r.openDocuments(ctx, tables); err != nil {
 		return res, err
 	}
 	// An earlier attempt's changes still owe their refreshes, though this
 	// attempt keeps those tables or finds nothing new in them.
-	if sync.Attempts > 1 {
+	if sync.Attempts > 1 || again {
 		batches, err := s.DB.ListConnectorChangeBatches(ctx, c.WorkspaceID, sync.ID)
 		if err != nil {
 			return res, retryable(fmt.Errorf("list earlier attempts' changes: %w", err))
@@ -279,7 +351,7 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	followed := map[string]bool{}
 	if follows {
 		for _, t := range tables {
-			capture := reader.Capture(src, t.Name)
+			capture := reader.Capture(*src, t.Name)
 			// Changes merge by key, so a keyless table is read in full on every sync.
 			keyed := len(t.PrimaryKey) > 0 || previous[t.Name] != nil && len(prevKey(previous[t.Name])) > 0
 			followed[t.Name] = keyed && capture != connector.CaptureFull && (isPushed || plan.Sync.Allows(foundryplan.Capture(capture)))
@@ -314,12 +386,12 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	// A connector that stops following changes gives back what it held, such as a replication slot.
 	if cursor == nil && c.ChangeCursor != nil {
 		if releaser, ok := kind.(connector.Releaser); ok {
-			if err := releaser.Release(ctx, src, c.ChangeCursor); err != nil {
+			if err := releaser.Release(ctx, *src, c.ChangeCursor); err != nil {
 				return r.result(res), classify(err)
 			}
 		}
 	}
-	if err := s.DB.UpdateConnectorCursor(ctx, c.ID, cursor, sync.ID, leaseOwner(sync)); err != nil {
+	if err := s.DB.UpdateConnectorCursor(ctx, c.ID, *res.AccountGeneration, cursor, sync.ID, leaseOwner(sync)); err != nil {
 		return r.result(res), published(err, "store the change cursor")
 	}
 	res = r.result(res)
@@ -331,13 +403,60 @@ func (s *Syncer) Run(ctx context.Context, sync *model.ConnectorSync) (res Result
 	// Read last, so a failure here has already owed this sync's refreshes,
 	// and the retry merges nothing twice.
 	if isPushed {
-		backlog, err := pushed.Backlog(ctx, src, cursor)
+		backlog, err := pushed.Backlog(ctx, *src, cursor)
 		if err != nil {
 			return res, retryable(fmt.Errorf("read what waits beyond the cursor: %w", err))
 		}
 		res.Pushed = &PushedResult{Backlog: backlog, Rows: res.Rows}
 	}
 	return res, nil
+}
+
+// AccountGeneration is the connector's account generation: 0 for one with
+// a key, which never moves.
+func AccountGeneration(c *model.Connector) *int {
+	generation := 0
+	if c.Account != nil {
+		generation = c.Account.Generation
+	}
+	return &generation
+}
+
+// credentials opens connectors' credentials with the syncer's keyring and
+// broker, recording each token vended.
+func (s *Syncer) credentials() Credentials {
+	return Credentials{Keys: s.Keys, Accounts: s.Accounts, Checked: s.DB}
+}
+
+// accountFailure is why a signed-in connector's sync stopped when its
+// credential failed. A broken account fails for good, in its reason's words;
+// one the broker found broken is recorded so at the generation the sync
+// asked with, so the schedule, Sync now and every retry refuse it until
+// someone signs it in again. If the connector was signed in again since the
+// sync asked, nothing breaks, and the sync retries with the new account. A
+// broker that can't be reached, or none, is a refusal that is retried, never
+// a permanent failure, which would pause the connector for good.
+func (s *Syncer) accountFailure(ctx context.Context, c *model.Connector, kind connector.Kind, err error) error {
+	var broken *ports.AccountBroken
+	switch {
+	case errors.As(err, &broken) && c.Account.Broken == nil:
+		broke, berr := s.DB.BreakConnectorAccount(ctx, c.WorkspaceID, c.ID, c.Account.Generation, broken.Reason)
+		if berr != nil {
+			return retryable(fmt.Errorf("record the broken account of connector %s: %w", c.ID, berr))
+		}
+		if !broke {
+			return &Failure{Message: kind.DisplayName() + " was signed in again during the sync; Helix will retry", Err: err}
+		}
+		CountAccountBreak(broken.Reason)
+		log.From(ctx).Warn("a signed-in connector's account broke", "workspace", c.WorkspaceID, "connector", c.ID, "kind", c.Kind,
+			"user", c.Account.UserID, "account", c.Account.ID, "reason", broken.Reason, "generation", c.Account.Generation)
+		fallthrough
+	case errors.As(err, &broken):
+		return &Failure{Message: AccountBrokenMessage(kind.DisplayName(), broken.Reason), Permanent: true, Err: err}
+	case errors.Is(err, ports.ErrAccountsUnavailable):
+		return &Failure{Message: "signing in to " + kind.DisplayName() + " is unavailable right now; Helix will retry", Err: err}
+	}
+	return retryable(err)
 }
 
 // Release gives back what a connector's change cursor holds on its source,
@@ -460,7 +579,9 @@ func (r *run) result(res Result) Result {
 // done reports a table this sync already wrote on an earlier attempt, which
 // is not read again. A followed table is always read again: this attempt's
 // cursor is later than the one the earlier attempt read up to, so skipping
-// it would lose the changes in between.
+// it would lose the changes in between. A table of a read at one snapshot
+// of its source is kept too, though it shows the earlier attempt's moment
+// rather than the rest's (readTables).
 func (r *run) done(table string, followed bool) bool {
 	if p := r.previous[table]; !followed && p != nil && p.SyncID == r.sync.ID {
 		r.keep(p)
@@ -509,14 +630,46 @@ func (r *run) readFull(ctx context.Context, reader connector.ChangeReader, table
 // readTables reads tables in full, one at a time, or all in one pass for a
 // PassKind. A table an earlier attempt of this sync wrote is not read again
 // (done); a pass still reads it, into writers that discard it.
-func (r *run) readTables(ctx context.Context, src connector.Source, tables []connector.Table, followed map[string]bool) error {
+//
+// A SnapshotKind reads two or more tables at one snapshot of its source, so
+// they agree with each other. A retry keeps the tables an earlier attempt
+// wrote, which show another moment, so a read longer than one attempt still
+// finishes across attempts, and reads the rest a table at a time. A source
+// that takes no snapshot is read as before, a table at a moment of its own.
+// The log and helix_foundry_sync_source_snapshots_total say which of these a
+// finished read was.
+func (r *run) readTables(ctx context.Context, src connector.Source, tables []connector.Table, followed map[string]bool) (err error) {
 	if pass, ok := r.kind.(connector.PassKind); ok {
 		return r.passTables(ctx, pass, src, tables, followed)
 	}
-	for _, table := range tables {
-		if r.done(table.Name, followed[table.Name]) {
-			continue
+	todo := slices.DeleteFunc(slices.Clone(tables), func(t connector.Table) bool { return r.done(t.Name, followed[t.Name]) })
+	if snapshots, ok := r.kind.(connector.SnapshotKind); ok && len(tables) > 1 {
+		var snap connector.SourceSnapshot
+		outcome := "resumed"
+		switch {
+		case len(todo) < len(tables):
+			log.From(ctx).Warn("a retry keeps the tables an earlier attempt wrote: they show another moment than the rest",
+				"connector", r.sync.ConnectorID, "kept", len(tables)-len(todo))
+		default:
+			var serr error
+			if snap, serr = snapshots.SourceSnapshot(ctx, src); serr != nil {
+				outcome = "unavailable"
+				log.From(ctx).Warn("the source took no snapshot: each table is read at a moment of its own",
+					"connector", r.sync.ConnectorID, "err", serr)
+			} else {
+				src, outcome = snap.Source, "one"
+			}
 		}
+		defer func() {
+			if snap.Close != nil {
+				snap.Close()
+			}
+			if err == nil {
+				sourceSnapshots.WithLabelValues(r.kind.Name(), outcome).Inc()
+			}
+		}()
+	}
+	for _, table := range todo {
 		if err := r.fullTable(ctx, src, table); err != nil {
 			return err
 		}

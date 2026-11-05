@@ -30,9 +30,9 @@ type Ontologies interface {
 }
 
 // Authenticator is a standalone install's front end, as a gRPC interceptor
-// (endpoint.ServerInterceptors). Its only caller is the Foundry site, which
-// sends the site token as its bearer for the install's owner. For each call
-// it:
+// (endpoint.ServerInterceptors). Its callers are the Foundry site and the
+// owner's agents, through MCP and HTTP Ask (IntegrationHandler): each sends
+// the site token as its bearer for the install's owner. For each call it:
 //
 //  1. lets the health service's methods through, as they are;
 //  2. refuses a call without the site token: Unauthenticated, before any

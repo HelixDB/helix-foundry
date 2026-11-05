@@ -4,6 +4,7 @@ import {
   parseEntityResult,
   parseExplainResult,
   parseReadResult,
+  parseViewResult,
   predString,
   type EntityRef,
   type LiveViolation,
@@ -17,19 +18,26 @@ import type {
   ReadFoundryGraphRequest,
   ReadFoundryGraphResponse,
 } from "../../../shared/wfe";
-import { api } from "../../api";
+import { ApiError, api } from "../../api";
 import { versionFormat } from "../ontology/format";
 import { readAgentBundle, type AgentOntology } from "../ontology/model";
+import { ReadFailed, readsBusy, typedReadFailure } from "./database-query";
+import {
+  createRequestLimiter,
+  delay,
+  type RequestLimiter,
+} from "./explorer/lib/request-limiter";
 import type { EntityIdentity, Violation } from "./model";
 import type { Naming } from "./naming";
 
 // Reads of a load with its version's rules evaluated as they are read
 // (POST .../loads/{loadId}:read, src/shared/foundry-read.ts): an entity's
 // derived facts, flags and live violations, and why one holds. The WFE runs them through the ontology agent, at the database's
-// rate, at most four at once per workspace, so a page asks for them only
-// when the load's version has rules, and each answer is cached under the
-// load like the database's own reads ([ws, "ontology", o, "read", load,
-// ...]), refreshed when a job ends.
+// rate, at most four at once per workspace (past that it refuses, 429), so a
+// page asks for them only when the load's version has rules, this tab sends at
+// most two at once per ontology, and a refused one is sent again, later. Each
+// answer is cached under the load like the database's own reads ([ws,
+// "ontology", o, "read", load, ...]), refreshed when a job ends.
 
 /** An entity's identity as the engine names it. */
 export const refOf = (i: EntityIdentity): EntityRef => ({
@@ -104,6 +112,7 @@ export function rulesOf(v?: OntologyVersion | null): AgentOntology | null {
  * @example
  * readFailureText({ code: "budget", message: "m", limit: 64 }); // "Too deep to compute live"
  * readFailureText({ code: "too_broad", message: "m", limit: 20000, count: 31200 }); // "Covers too many entities to compute live: 31,200, past 20,000"
+ * readFailureText({ code: "not_visible", message: "m" }); // "Only part of this is in the sources shared with you, so it can’t be counted, filtered or sorted"
  */
 export function readFailureText(f: ReadFailure): string {
   switch (f.code) {
@@ -115,6 +124,8 @@ export function readFailureText(f: ReadFailure): string {
       return `Covers too many entities to compute live: ${f.count.toLocaleString("en-US")}, past ${f.limit.toLocaleString("en-US")}`;
     case "unknown_entity":
       return "This load doesn’t hold it";
+    case "not_visible":
+      return "Only part of this is in the sources shared with you, so it can’t be counted, filtered or sorted";
     case "invalid":
       return `The rules can’t answer this${f.pointer ? ` (at ${f.pointer})` : ""}`;
   }
@@ -123,30 +134,64 @@ export function readFailureText(f: ReadFailure): string {
 /** A pred as a person reads it: its name, with spaces for underscores. */
 export const predLabel = (p: { name: string }) => p.name.replace(/_/g, " ");
 
+// One ontology's reads at a time in this tab: two, and no pacing of their own
+// (the WFE paces what they read).
+const READS_AT_ONCE = { maxInFlight: 2, perSecond: 1000, burst: 1000 };
+/** Waits before sending again a read the WFE had no slot for. */
+export const BUSY_RETRY_DELAYS_MS: readonly number[] = Object.freeze([
+  500, 1000, 2000, 4000, 8000,
+]);
+const limiters = new Map<string, RequestLimiter>();
+
+/** How a read goes: `createdAt` is its ontology's, when a page knows it. */
+export type ReadOptions = { signal?: AbortSignal; createdAt?: string | null };
+
+const aborted = () => new DOMException("The read was cancelled.", "AbortError");
+
 /**
- * Runs reads against a load, in one request; each outcome in the reads'
- * order. Throws the WFE's error (ApiError) when it refuses them all.
+ * Runs reads against a load, in one request, when the ontology's turn comes;
+ * each outcome in the reads' order. A request the WFE has no slot for (429) is
+ * sent again after BUSY_RETRY_DELAYS_MS. Throws ReadFailed when the database is
+ * paused or still starting, else the WFE's error (ApiError) when it refuses
+ * them all.
  */
 export async function readGraph(
   ws: string,
   o: string,
   loadId: string,
   reads: Read[],
-  signal?: AbortSignal,
+  { signal, createdAt }: ReadOptions = {},
 ): Promise<Outcome<unknown>[]> {
   if (!reads.length || reads.length > MAX_READS)
     throw new Error(`1 to ${MAX_READS} reads go in one request`);
   const enc = encodeURIComponent;
-  const res = await api<ReadFoundryGraphResponse>(
-    `/v1/workspaces/${enc(ws)}/foundry/ontologies/${enc(o)}/loads/${enc(loadId)}:read`,
-    { readsJson: JSON.stringify(reads) } satisfies ReadFoundryGraphRequest,
-    "POST",
-    undefined,
-    { signal },
-  );
-  const result = parseReadResult(res?.resultJson || "");
-  if (!result) throw new Error("The read’s answer is malformed.");
-  return result.results;
+  const limiter =
+    limiters.get(o) ||
+    limiters.set(o, createRequestLimiter(READS_AT_ONCE)).get(o)!;
+  for (let retry = 0; ; retry += 1) {
+    const release = await limiter.acquire({ automatic: true, signal });
+    if (!release) throw aborted();
+    try {
+      const res = await api<ReadFoundryGraphResponse>(
+        `/v1/workspaces/${enc(ws)}/foundry/ontologies/${enc(o)}/loads/${enc(loadId)}:read`,
+        { readsJson: JSON.stringify(reads) } satisfies ReadFoundryGraphRequest,
+        "POST",
+        undefined,
+        { signal },
+      );
+      const result = parseReadResult(res?.resultJson || "");
+      if (!result) throw new Error("The read’s answer is malformed.");
+      return result.results;
+    } catch (e) {
+      if (!(e instanceof ApiError)) throw e;
+      const failure = typedReadFailure(e, createdAt, Date.now());
+      if (failure) throw new ReadFailed(failure);
+      if (!readsBusy(e) || retry >= BUSY_RETRY_DELAYS_MS.length) throw e;
+    } finally {
+      release();
+    }
+    if (!(await delay(BUSY_RETRY_DELAYS_MS[retry]!, signal))) throw aborted();
+  }
 }
 
 const key = (ws: string, o: string, loadId: string, ...rest: unknown[]) => [
@@ -160,6 +205,21 @@ const key = (ws: string, o: string, loadId: string, ...rest: unknown[]) => [
 ];
 
 export const graphReadQueries = {
+  // What the reader sees of a load: the version's two files as its sources
+  // fill them, and what it sees only some of (`Type`, `Type.prop`, `link`).
+  view: (ws: string, o: string, loadId: string, createdAt?: string | null) => ({
+    queryKey: key(ws, o, loadId, "view"),
+    queryFn: async ({ signal }: { signal?: AbortSignal }) => {
+      const [outcome] = await readGraph(ws, o, loadId, [{ view: {} }], {
+        signal,
+        createdAt,
+      });
+      const r = outcomeOf(outcome, parseViewResult);
+      if (!r.ok) throw new Error(r.error.message);
+      return r.value;
+    },
+    retry: false,
+  }),
   // An entity's derived facts, flags, live violations and failed preds.
   entity: (
     ws: string,
@@ -174,7 +234,7 @@ export const graphReadQueries = {
         o,
         loadId,
         [{ entity: refOf(identity) }],
-        signal,
+        { signal },
       );
       return outcomeOf(r, parseEntityResult);
     },
@@ -196,7 +256,7 @@ export const graphReadQueries = {
         o,
         loadId,
         [{ explain: { pred: predString(pred), args } }],
-        signal,
+        { signal },
       );
       return outcomeOf(r, parseExplainResult);
     },

@@ -66,12 +66,42 @@ type AskRequest struct {
 	History []AskTurn `json:"history"`
 	// Helix is the question's read-only proxy.
 	Helix HelixTarget `json:"helix"`
+	// Visibility is what the asker holds of the load, when it isn't everything.
+	Visibility *Visibility `json:"visibility,omitempty"`
 	// AsOf is when the question was asked (RFC 3339), the `today` its rules see.
-	AsOf   string `json:"as_of"`
-	Limits Limits `json:"limits"`
+	AsOf   string    `json:"as_of"`
+	Limits AskLimits `json:"limits"`
 	// Models is the question's model, resolved for the workspace; the key
 	// goes in the call's metadata.
 	Models AskModels `json:"models"`
+}
+
+// AskLimits are the hard caps on one question: its spend, model calls and
+// wall time, as a turn's Limits, and what each of its reads of the graph may
+// spend.
+type AskLimits struct {
+	MaxUSD      float64 `json:"max_usd"`
+	MaxSteps    uint32  `json:"max_steps"`
+	MaxWallSecs uint64  `json:"max_wall_secs"`
+	// Read is always sent: the agent reads with the caps Foundry is
+	// configured with, never defaults of its own.
+	Read AskReadLimits `json:"read"`
+}
+
+// AskReadLimits cap each read of the graph a question makes: a tool call's
+// read and each of the load profile's. Both are at least 1. A read stopped
+// at one fails its step, its error naming the field and its value. A
+// helix_query read runs inside Helix, past both: HelixTarget.TimeoutSecs and
+// the question's wall time bound it.
+type AskReadLimits struct {
+	// WallMS is one read's wall time, in milliseconds, at most the
+	// question's MaxWallSecs, which the agent refuses past. Each Helix
+	// request of the read also ends at HelixTarget.TimeoutSecs.
+	WallMS uint64 `json:"wall_ms"`
+	// ScanEntities is how many matches a query read may read into memory
+	// before it is too broad. What runs inside Helix (a count, a group count,
+	// an ungrouped aggregate) reads none.
+	ScanEntities uint64 `json:"scan_entities"`
 }
 
 // EntityRef is one entity of a load: its type, and its identity in the load,

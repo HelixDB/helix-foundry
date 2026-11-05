@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helixdb/helix-foundry/backend/access"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/events"
@@ -68,6 +69,17 @@ type ReadStore interface {
 	// Foundry connectors
 	GetConnector(ctx context.Context, workspaceID, id string) (*model.Connector, error)
 	ListConnectors(ctx context.Context, workspaceID string) ([]*model.Connector, error)
+	// ListConnectorAccounts is every provider account the workspace holds:
+	// its live signed-in connectors', those waiting to be purged (deleted
+	// connectors'), and those its sign-ins hold without having connected.
+	// It is what a host deletes from its broker before
+	// DeleteWorkspaceConnectors, which queues the connectors' for the purge
+	// too.
+	ListConnectorAccounts(ctx context.Context, workspaceID string) ([]model.ConnectorAccountRef, error)
+	ListConnectorAccountChecks(ctx context.Context, before time.Time, limit int) ([]*model.Connector, error)
+	ListConnectorAccountPurges(ctx context.Context, limit int) ([]*model.ConnectorAccountPurge, error)
+	ConnectorAccountPurgeBacklog(ctx context.Context) (int, *time.Time, error)
+	GetConnectorSignIn(ctx context.Context, workspaceID, id string) (*model.ConnectorSignIn, error)
 	GetActiveConnectorSync(ctx context.Context, workspaceID, connectorID string) (*model.ConnectorSync, error)
 	GetConnectorSync(ctx context.Context, workspaceID, id string) (*model.ConnectorSync, error)
 	ListConnectorSyncs(ctx context.Context, workspaceID, connectorID string, limit int) ([]*model.ConnectorSync, error)
@@ -128,7 +140,7 @@ type ReadStore interface {
 	// Foundry loads and graph jobs, per ontology
 	GetOntologyVersionScope(ctx context.Context, ontologyID, versionID string) ([]string, error)
 	GetOntologyVersionMappings(ctx context.Context, ontologyID, versionID string) (string, error)
-	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, filter model.FoundryDocumentFilter,
+	ListFoundryOntologyDocuments(ctx context.Context, workspaceID, currentLoadID string, scope []string, heldSets *[]string, filter model.FoundryDocumentFilter,
 		pageToken string, limit int) ([]*model.FoundryDocument, string, error)
 	FoundryLoadHoldsDocument(ctx context.Context, loadID, documentID string) (bool, error)
 	ListPendingFoundryDocuments(ctx context.Context, loadID string) ([]*model.FoundryDocument, error)
@@ -145,10 +157,11 @@ type ReadStore interface {
 	SumFoundryGraphJobSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 	GetFoundryQuestion(ctx context.Context, ontologyID, id string) (*model.FoundryQuestion, error)
 	GetFoundryQuestionByClientToken(ctx context.Context, ontologyID, clientToken string) (*model.FoundryQuestion, error)
-	ListFoundryQuestions(ctx context.Context, ontologyID, threadID, pageToken string, limit int) ([]*model.FoundryQuestion, string, error)
+	ListFoundryQuestions(ctx context.Context, ontologyID, threadID, pageToken string, limit int, grantee *access.Principal) ([]*model.FoundryQuestion, string, error)
 	ListFoundryQuestionHistory(ctx context.Context, q *model.FoundryQuestion, limit int) ([]*model.FoundryQuestion, error)
 	ListFoundryQuestionEvents(ctx context.Context, questionID string, afterSeq, limit int) ([]model.FoundryQuestionEvent, error)
 	SumFoundryQuestionSpend(ctx context.Context, workspaceID string, since time.Time) (model.FoundryQuestionSpend, error)
+	SumFoundryGranteeQuestionSpend(ctx context.Context, workspaceID string, grantee access.Principal, since time.Time) (model.FoundryQuestionSpend, error)
 
 	// Foundry People enrichment: consent, each load's step, the ledger and the sweep
 	GetFoundryEnrichmentConsent(ctx context.Context, workspaceID string) (*model.FoundryEnrichmentConsent, error)
@@ -164,9 +177,31 @@ type ReadStore interface {
 	ListFoundryEnrichmentSweeps(ctx context.Context, callsBefore, supersededBefore, wholeBefore time.Time, limit int) ([]model.FoundryEnrichmentSweep, error)
 	ListFoundryEnrichmentPurges(ctx context.Context, maxAttempts, limit int) ([]*model.FoundryEnrichmentPurge, error)
 
+	// Foundry source grants and what current loads hold
+	ListFoundryAccessGrants(ctx context.Context, workspaceID string, principals []access.Principal) ([]model.FoundryAccessGrant, error)
+	ListFoundryCurrentLoadInputs(ctx context.Context, workspaceID string, ontologyIDs []string) (map[string]model.FoundryLoadInputs, error)
+	ListFoundryLoadInputs(ctx context.Context, workspaceID string, loadIDs []string) (map[string]model.FoundryLoadInputs, error)
+	FoundryLoadHoldings(ctx context.Context, workspaceID, loadID string) (access.Holdings, error)
+	SetFoundryQuestionSeen(ctx context.Context, questionID string, seen *access.Inputs) error
+	FoundryVersionInputs(ctx context.Context, workspaceID, ontologyID, versionID string) (access.Inputs, error)
+	IsFoundryMemberRestricted(ctx context.Context, workspaceID, userID string) (bool, error)
+	ListFoundryRestrictedMembers(ctx context.Context, workspaceID string) ([]string, error)
+	ListFoundryTeams(ctx context.Context, workspaceID string) ([]model.FoundryTeam, error)
+	FoundryTeamsOf(ctx context.Context, workspaceID, userID string) ([]string, error)
+	ListFoundryOntologiesHoldingDocument(ctx context.Context, workspaceID, documentID string) ([]string, error)
+
 	// Foundry model providers: the workspace's setting and its configs
 	GetFoundryAIView(ctx context.Context, workspaceID string) (model.FoundryAIView, error)
 	GetActiveFoundryAIConfig(ctx context.Context, workspaceID string) (*model.FoundryAIConfig, error)
+
+	// Foundry self-healing: an ontology's findings and the audits that
+	// found them (foundry_heal.go)
+	ListFoundryHealFindings(ctx context.Context, ontologyID string) ([]*model.FoundryHealFinding, error)
+	GetFoundryHealFinding(ctx context.Context, ontologyID, fingerprint string) (*model.FoundryHealFinding, error)
+	GetLatestFoundryHealRun(ctx context.Context, ontologyID string) (*model.FoundryHealRun, error)
+	GetLatestCompleteFoundryHealRun(ctx context.Context, ontologyID string) (*model.FoundryHealRun, error)
+	FoundryHealLoadChanged(ctx context.Context, runID, ontologyID, loadID string) (bool, error)
+	ListFoundryHealDocuments(ctx context.Context, loadID, after string, limit int) ([]string, error)
 }
 
 // Store is ReadStore plus every write.
@@ -180,6 +215,26 @@ type Store interface {
 	UpdateConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate) error
 	DeleteConnector(ctx context.Context, workspaceID, id string) error
 	DeleteWorkspaceConnectors(ctx context.Context, workspaceID string) error
+	// BreakConnectorAccounts marks every connector of the workspace whose
+	// account acts as userID as needing signing in again, for reason (a
+	// ports.Account* reason), and stops it syncing. Its host calls it in the
+	// transaction that removes the member.
+	BreakConnectorAccounts(ctx context.Context, workspaceID, userID, reason string) error
+	BreakConnectorAccount(ctx context.Context, workspaceID, connectorID string, generation int, reason string) (bool, error)
+	MarkConnectorAccountChecked(ctx context.Context, workspaceID, connectorID string) error
+	DeferConnectorAccountCheck(ctx context.Context, workspaceID, connectorID string, checkedAt time.Time) error
+	DeleteConnectorAccountPurge(ctx context.Context, id string) error
+	RetryConnectorAccountPurge(ctx context.Context, id, lastError string, after time.Duration) error
+	// Connector sign-ins (connector_sign_ins.go): started, authorized, then
+	// claimed by the one finish that ends them.
+	StartConnectorSignIn(ctx context.Context, start model.ConnectorSignInStart) (*model.ConnectorSignIn, error)
+	SetConnectorSignInVerifier(ctx context.Context, workspaceID, id string, ciphertext []byte, keyID string) error
+	AuthorizeConnectorSignIn(ctx context.Context, workspaceID, id string, ttl, stale time.Duration) error
+	ClaimConnectorSignIn(ctx context.Context, workspaceID, id string) error
+	SetConnectorSignInAccount(ctx context.Context, workspaceID, id, accountID string) error
+	FailConnectorSignIn(ctx context.Context, workspaceID, id string, end model.ConnectorSignInEnd) error
+	ConnectConnectorSignIn(ctx context.Context, c model.ConnectorSignInConnect) error
+	DeleteEndedConnectorSignIns(ctx context.Context, after time.Duration, limit int) (int, error)
 	EnqueueConnectorSync(ctx context.Context, sync *model.ConnectorSync) error
 	ClaimConnectorSync(ctx context.Context, workerID string, lease time.Duration) (*model.ConnectorSync, error)
 	RenewConnectorSyncLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -189,7 +244,7 @@ type Store interface {
 	TouchConnectorTable(ctx context.Context, connectorID, table, syncID string, reconciled bool, workerID string) error
 	PruneConnectorTables(ctx context.Context, workspaceID, connectorID string, keep []string, syncID, workerID string) ([]string, error)
 	QueueDueConnectorSyncs(ctx context.Context, limit int, eventsAfter time.Duration) (int, error)
-	UpdateConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage, syncID, workerID string) error
+	UpdateConnectorCursor(ctx context.Context, connectorID string, generation int, cursor json.RawMessage, syncID, workerID string) error
 	ListStrandedConnectorCursors(ctx context.Context, kinds []string, limit int) ([]*model.Connector, error)
 	ClearConnectorCursor(ctx context.Context, connectorID string, cursor json.RawMessage) error
 	DeleteReplacedSnapshot(ctx context.Context, id string) error
@@ -246,6 +301,13 @@ type Store interface {
 	RecordFoundryDocumentExtraction(ctx context.Context, jobID, workerID string, e *model.FoundryDocumentExtraction, keepExisting bool) error
 	RecordFoundryDocumentRemoval(ctx context.Context, jobID, workerID, documentID string) error
 	FinishFoundryGraphJob(ctx context.Context, jobID, workerID string, outcome model.FoundryGraphJobOutcome) (model.FoundryGraphJobFinish, error)
+	SetFoundryAccessGrants(ctx context.Context, workspaceID string, principal access.Principal, targets []access.Target, byUserID *string) error
+	DeleteFoundryAccessPrincipal(ctx context.Context, workspaceID string, principal access.Principal) error
+	SetFoundryMemberRestricted(ctx context.Context, workspaceID, userID string, restricted bool, byUserID *string) error
+	CreateFoundryTeam(ctx context.Context, team *model.FoundryTeam) error
+	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
+	DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error
+	RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error
 	CreateFoundryQuestion(ctx context.Context, q *model.FoundryQuestion, limits model.FoundryQuestionLimits) error
 	ClaimFoundryQuestion(ctx context.Context, workerID string, claim model.FoundryQuestionClaim) (*model.FoundryQuestion, error)
 	RenewFoundryQuestionLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -285,6 +347,15 @@ type Store interface {
 	DiscoverFoundrySampleFollowUps(ctx context.Context, from, to time.Time, limit int, newID func() string) (int, error)
 	ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error)
 	FinishFoundryNotification(ctx context.Context, id, token string, outcome model.FoundryNotificationOutcome) error
+
+	// Foundry self-healing: a person's dismissals, and the
+	// foundry-heal-worker's runs (foundry_heal.go)
+	DismissFoundryHealFinding(ctx context.Context, ontologyID, fingerprint, userID string) error
+	DueFoundryHealOntologies(ctx context.Context, every, retryAfter time.Duration, limit int) ([]model.FoundryHealDue, error)
+	StartFoundryHealRun(ctx context.Context, run *model.FoundryHealRun, lease time.Duration) error
+	RenewFoundryHealRun(ctx context.Context, id string, lease time.Duration) error
+	FinishFoundryHealRun(ctx context.Context, id string, status model.FoundryHealRunStatus, pages, cuts int) error
+	PublishFoundryHealRun(ctx context.Context, p model.FoundryHealPublish) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

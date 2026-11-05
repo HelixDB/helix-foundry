@@ -18,6 +18,8 @@ import { childActive } from "../../shell/nav";
 import type { NavChild } from "../../shell/types";
 import { RefreshFailed, useWorkspace } from "../../ui";
 import { OntologyDocumentsTree } from "../documents/explorer";
+import { suggestionQueries } from "../suggestions/api";
+import { loadVersion } from "./model";
 import { canManage, lastLoadBadge } from "./parts";
 import { ontologyQueries } from "./queries";
 import { ontologyName } from "./scope";
@@ -43,7 +45,7 @@ const DOCUMENTS_PAGE = /^\/ontology\/([^/]+)\/documents(?:\/([^/]+))?\/?$/;
 const LONG_LIST = 8;
 
 export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
-  const { id: ws, role } = useWorkspace(),
+  const { id: ws, role, grantee, partial } = useWorkspace(),
     { pathname } = useLocation(),
     manage = canManage(role);
   const match = ONTOLOGY_PAGE.exec(pathname),
@@ -56,6 +58,12 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
       ...ontologyQueries.ontology(ws, open),
       enabled: !!open,
     }).data?.ontology;
+  // Suggestions are the open ontology's page only where audits run, and no
+  // grantee's.
+  const heal = useQuery({
+    ...suggestionQueries.list(ws, open),
+    enabled: !!open && !grantee,
+  });
   // The open ontology's row, until the list names it (made in another tab).
   const listed = list.data?.ontologies || [],
     ontologies =
@@ -71,8 +79,10 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
   // Overview, which lists its schema versions and data loads (their pages,
   // and generating, are its own), then Documents: what it reads of the
   // workspace's documents (the Connectors area's), counted once the ontology
-  // is read, the list's page, with the documents as a file system under it.
-  // The Explorer and Ask, which read a load, are sections of their own.
+  // is read, the list's page, with the documents as a file system under it;
+  // then Suggestions, what audits of its current load found it lacks, where
+  // this Foundry audits loads. The Explorer and Ask, which read a load, are
+  // sections of their own.
   const overview: NavChild = {
     to: paths.ontology(open),
     label: "Overview",
@@ -85,7 +95,8 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     // Marked on its documents pages; current on the list (on a document's
     // page, the document's row is).
     onDocuments = !!documents && open !== "",
-    onDocumentsList = onDocuments && !documentId;
+    onDocumentsList = onDocuments && !documentId,
+    onSuggestions = open !== "" && pathname === paths.suggestions(open);
   return (
     <div className="on-panel">
       <div className="on-panel-head">
@@ -142,9 +153,13 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                   aria-current={here ? "true" : undefined}
                 >
                   <span className="on-panel-name">{ontologyName(o)}</span>
-                  <StatusDot status={load.status} label={load.label} />
+                  {!grantee && (
+                    <StatusDot status={load.status} label={load.label} />
+                  )}
                   <small>
-                    {o.databaseName || o.tenantId || "Not visible to you"}
+                    {grantee
+                      ? `${partial.includes(o.id) ? "Part shared with you" : "Shared with you"}${o.currentLoad ? ` · ${loadVersion(o.currentLoad)}` : ""}`
+                      : o.databaseName || o.tenantId || "Not visible to you"}
                   </small>
                 </Link>
                 {here && (
@@ -162,30 +177,48 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                         <span>{overview.label}</span>
                       </Link>
                     </li>
-                    <li>
-                      <Link
-                        to={paths.documents(open)}
-                        onClick={onNavigate}
-                        className={cx(
-                          "hf-subnav-link",
-                          onDocuments && "is-active",
-                        )}
-                        aria-current={onDocumentsList ? "page" : undefined}
-                      >
-                        <span>Documents</span>
-                        {own && (
-                          <span className="on-panel-count">
-                            {own.counts?.documents || 0}
-                          </span>
-                        )}
-                      </Link>
-                      <OntologyDocumentsTree
-                        key={open}
-                        ontologyId={open}
-                        documentId={documentId}
-                        onNavigate={onNavigate}
-                      />
-                    </li>
+                    {/* A grantee reads only Analyst and the schema. */}
+                    {!grantee && (
+                      <li>
+                        <Link
+                          to={paths.documents(open)}
+                          onClick={onNavigate}
+                          className={cx(
+                            "hf-subnav-link",
+                            onDocuments && "is-active",
+                          )}
+                          aria-current={onDocumentsList ? "page" : undefined}
+                        >
+                          <span>Documents</span>
+                          {own && (
+                            <span className="on-panel-count">
+                              {own.counts?.documents || 0}
+                            </span>
+                          )}
+                        </Link>
+                        <OntologyDocumentsTree
+                          key={open}
+                          ontologyId={open}
+                          documentId={documentId}
+                          onNavigate={onNavigate}
+                        />
+                      </li>
+                    )}
+                    {!grantee && heal.data?.enabled && (
+                      <li>
+                        <Link
+                          to={paths.suggestions(open)}
+                          onClick={onNavigate}
+                          className={cx(
+                            "hf-subnav-link",
+                            onSuggestions && "is-active",
+                          )}
+                          aria-current={onSuggestions ? "page" : undefined}
+                        >
+                          <span>Suggestions</span>
+                        </Link>
+                      </li>
+                    )}
                   </ul>
                 )}
               </li>

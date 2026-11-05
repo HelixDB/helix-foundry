@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditRequest",
+  "description": "A request to audit one page of a load's documents.",
+  "type": "object",
+  "properties": {
+    "database": {
+      "description": "The graph read.",
+      "type": "string"
+    },
+    "doc_ids": {
+      "description": "The documents audited, up to 1,000 ids, each once: a page of the load's documents with\nreviews. An id the load doesn't hold is skipped. None only with `rows`.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "helix": {
+      "description": "Where the graph is read: the backend's read-only proxy.",
+      "$ref": "#/$defs/HelixTarget"
+    },
+    "load": {
+      "description": "The load audited.",
+      "$ref": "#/$defs/LoadId"
+    },
+    "mappings_toml": {
+      "description": "The load's version's `mappings.toml`, whose routes say what each document set's\ndocuments may state.",
+      "type": "string"
+    },
+    "ontology_toml": {
+      "description": "The load's version's `ontology.toml`, which types what it holds.",
+      "type": "string"
+    },
+    "ontology_version": {
+      "description": "The version the load records; a load of another version is `load_mismatch`.",
+      "type": "string"
+    },
+    "request_id": {
+      "description": "The idempotency key; an audit writes nothing, so a retry simply reads again.",
+      "type": "string"
+    },
+    "rows": {
+      "description": "What the load's ingest report gave of its rows' errors, and its sources' drift, to audit\nonce a run: send it with one call (the first page's, or alone), so each row finding is\ncounted once. Without it the row kinds go unmeasured (`rows: unmeasured`), as for a load\nwhose report keeps no row errors.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RowsReported"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "database",
+    "load",
+    "ontology_toml",
+    "ontology_version",
+    "mappings_toml",
+    "helix"
+  ],
+  "$defs": {
+    "HelixTarget": {
+      "description": "Where the graph is written: the backend's proxy for one Helix database.",
+      "type": "object",
+      "properties": {
+        "max_request_bytes": {
+          "description": "The largest request body the proxy takes; a write past it is refused before it is sent.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "timeout_secs": {
+          "description": "How long one request may take, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1
+        },
+        "token": {
+          "description": "The job's bearer token for the proxy.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The proxy's base URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token",
+        "max_request_bytes",
+        "timeout_secs"
+      ]
+    },
+    "LoadId": {
+      "description": "One load of an approved version into a graph: the id of the backend job that creates it, such as a ULID. One or more printable ASCII characters, no space.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[!-~]+$"
+    },
+    "MappingDrift": {
+      "description": "How one mapping's source changed since the load's version was written, as Foundry saw it.",
+      "type": "object",
+      "properties": {
+        "added": {
+          "description": "Fields the source gained.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "mapping": {
+          "description": "The mapping, as the load's version names it.",
+          "type": "string"
+        },
+        "removed": {
+          "description": "Fields it lost.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mapping"
+      ]
+    },
+    "MappingErrors": {
+      "description": "One mapping's row errors, as the load's ingest report gave them (its `row_errors`): how\nmany, and some of their texts.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Rows, or parts of rows, that compiled to nothing.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "examples": {
+          "description": "Some of their texts, no more than `count`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "mapping": {
+          "description": "The mapping, as the load's version names it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mapping",
+        "count"
+      ]
+    },
+    "RowsReported": {
+      "description": "What the caller sends of a load's rows: its ingest report's row errors and its sources'\ndrift. A load whose report keeps no row errors (one an older version wrote) has none to\nsend, and its row kinds go unmeasured.",
+      "type": "object",
+      "properties": {
+        "row_errors": {
+          "description": "By mapping.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MappingErrors"
+          }
+        },
+        "source_drift": {
+          "description": "By mapping.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MappingDrift"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

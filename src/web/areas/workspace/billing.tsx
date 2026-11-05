@@ -37,7 +37,7 @@ import {
 } from "./plan";
 
 // Settings → Plan & billing: the workspace's Foundry plan (Free, Pro or Max)
-// as Autumn reports it, buying Pro or Max through Stripe Checkout, switching
+// as Autumn reports it, buying Pro or Max (on Stripe Checkout, or at once with a card on file), switching
 // between them, cancelling and resuming at the period end, and the hosted
 // billing portal. Checkout returns here (the WFE's return URL is
 // /settings/billing), and the page keeps reading the plan until the plan it
@@ -135,7 +135,7 @@ function PlanTag({ s }: { s: PlanSummary }) {
 }
 
 // From Free: pick Pro or Max (helix-foundry's ChoiceCard radios), add a
-// promotion code, and pay on Stripe Checkout.
+// promotion code, and pay on Stripe Checkout, or at once with a card on file.
 function UpgradeDialog({
   initial,
   onClose,
@@ -154,7 +154,7 @@ function UpgradeDialog({
   return (
     <Dialog
       title="Upgrade Foundry"
-      description={`Pick a plan for ${name}. You’ll pay on a secure Stripe page.`}
+      description={`Choose a plan for ${name}. A saved payment method may be charged immediately. Otherwise, you’ll complete payment on Stripe.`}
       onClose={onClose}
     >
       <form
@@ -234,7 +234,7 @@ function UpgradeDialog({
         <div className="hf-form-actions">
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" pending={pending}>
-            Continue to payment
+            Upgrade to {TIER_NAME[tier]}
           </Button>
         </div>
       </form>
