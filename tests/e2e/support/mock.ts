@@ -212,6 +212,19 @@ export async function signInToNewWorkspace(
   ).toBeVisible();
 }
 
+/**
+ * Creates `name` from Acme's workspace switcher: the Create a workspace
+ * dialog, which says why when the WFE refuses it.
+ */
+export async function createWorkspace(page: Page, name: string) {
+  await page.getByRole("button", { name: "Workspace: Acme" }).click();
+  await page.getByRole("menuitem", { name: "Create workspace" }).click();
+  const dialog = page.getByRole("dialog", { name: "Create a workspace" });
+  await dialog.getByLabel("Workspace name").fill(name);
+  await dialog.getByRole("button", { name: "Create workspace" }).click();
+  return dialog;
+}
+
 /** Opens /ontology/new and names the ontology: the database step shows. */
 export async function startOntology(page: Page, name: string) {
   await page.goto("/ontology/new");
@@ -278,7 +291,10 @@ export const CONTRACT = readFileSync(
   new URL("../../../mock/fixtures/contract.md", import.meta.url),
 );
 
-/** Makes Customer contracts' version 3, the contracts draft, current from its page. */
+/**
+ * Makes Customer contracts' version 3, the contracts draft, current from
+ * its page.
+ */
 export async function makeContractsCurrent(page: Page) {
   await page.goto("/ontology/ont_acme_contracts/versions/ver_seed_3");
   await page.getByRole("button", { name: "Make current" }).click();
@@ -368,6 +384,42 @@ export async function csrfToken(page: Page): Promise<string> {
   const res = await page.request.get("/papi/csrf");
   expect(res.status()).toBe(200);
   return (await res.json()).token;
+}
+
+/**
+ * A POST to the WFE through the BFF, as the app makes it, that must answer
+ * 200: its JSON.
+ */
+export async function postToWfe(page: Page, path: string, data: object) {
+  const res = await page.request.post(`/papi${path}`, {
+    data,
+    headers: {
+      origin: new URL(page.url()).origin,
+      "x-helix-csrf": await csrfToken(page),
+    },
+  });
+  expect(res.status(), await res.text()).toBe(200);
+  return res.json();
+}
+
+/**
+ * Adds Billing replica, Acme's second PostgreSQL connection, through the
+ * BFF as its form does: its id.
+ */
+export async function addBillingReplica(page: Page): Promise<string> {
+  return (
+    await postToWfe(page, "/v1/workspaces/ws_acme/foundry/connectors", {
+      name: "Billing replica",
+      config: {
+        postgres: {
+          host: "billing.acme.example.com",
+          database: "billing",
+          user: "ro",
+          password: "pw",
+        },
+      },
+    })
+  ).connector.id;
 }
 
 export const sessionCookie = async (page: Page) =>
