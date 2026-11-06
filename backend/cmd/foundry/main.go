@@ -14,6 +14,10 @@
 //
 // writes the install's secrets that dir lacks, once (secrets.go), and exits.
 // The image's entrypoint passes --config first; the subcommand ignores it.
+//
+//	foundry check-agent [--addr 127.0.0.1:50051]
+//
+// checks the local agent contract without running a model or reading data.
 package main
 
 import (
@@ -31,14 +35,21 @@ func main() {
 		os.Exit(2)
 	}
 	if args := flags.Args(); len(args) > 0 {
-		if args[0] != "init-secrets" {
+		switch args[0] {
+		case "init-secrets":
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With("command", "init-secrets")
+			if err := runInitSecrets(args[1:], os.Getenv, logger); err != nil {
+				fmt.Fprintln(os.Stderr, "init-secrets:", err)
+				os.Exit(1)
+			}
+		case "check-agent":
+			if err := runCheckAgent(args[1:], os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, "check-agent:", err)
+				os.Exit(1)
+			}
+		default:
 			fmt.Fprintf(os.Stderr, "foundry: unknown command %q\n", args[0])
 			os.Exit(2)
-		}
-		logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With("command", "init-secrets")
-		if err := runInitSecrets(args[1:], os.Getenv, logger); err != nil {
-			fmt.Fprintln(os.Stderr, "init-secrets:", err)
-			os.Exit(1)
 		}
 		return
 	}
