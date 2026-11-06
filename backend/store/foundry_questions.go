@@ -460,16 +460,7 @@ func (s *mysqlDB) queryFoundryQuestions(ctx context.Context, query string, args 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.FoundryQuestion
-	for rows.Next() {
-		q, err := scanFoundryQuestion(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, q)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryQuestion)
 }
 
 func scanFoundryQuestion(scanner rowScanner) (*model.FoundryQuestion, error) {

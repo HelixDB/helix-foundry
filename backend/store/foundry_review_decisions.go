@@ -122,16 +122,7 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.FoundryReviewDecision
-	for rows.Next() {
-		d, err := scanFoundryReviewDecision(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryReviewDecision)
 }
 
 func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error {

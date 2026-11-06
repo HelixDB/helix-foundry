@@ -65,16 +65,8 @@ func (s *mysqlDB) ListFoundryOntologies(ctx context.Context, workspaceID, pageTo
 	if err != nil {
 		return nil, "", err
 	}
-	defer rows.Close()
-	var out []*model.FoundryOntology
-	for rows.Next() {
-		o, err := scanFoundryOntology(rows)
-		if err != nil {
-			return nil, "", err
-		}
-		out = append(out, o)
-	}
-	if err := rows.Err(); err != nil {
+	out, err := scanAll(rows, scanFoundryOntology)
+	if err != nil {
 		return nil, "", err
 	}
 	if len(out) <= limit {
@@ -336,14 +328,5 @@ WHERE refresh_due_at <= NOW(6) AND deleted_at IS NULL`+after+` ORDER BY refresh_
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.FoundryOntology
-	for rows.Next() {
-		o, err := scanFoundryOntology(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryOntology)
 }

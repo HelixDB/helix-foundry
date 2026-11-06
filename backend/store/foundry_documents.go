@@ -209,8 +209,7 @@ func (s *mysqlDB) listFoundryDocuments(ctx context.Context, join string, conds [
 	if err != nil {
 		return nil, "", err
 	}
-	defer rows.Close()
-	out, err := scanFoundryDocuments(rows)
+	out, err := scanAll(rows, scanFoundryDocument)
 	if err != nil {
 		return nil, "", err
 	}
@@ -348,16 +347,7 @@ FROM foundry_ontologies WHERE workspace_id=? AND deleted_at IS NULL ORDER BY cre
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.FoundryOntology
-	for rows.Next() {
-		o, err := scanFoundryOntology(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryOntology)
 }
 
 // fanOutFoundryDocuments has every ontology that reads set setID read ids,
@@ -548,8 +538,7 @@ ORDER BY `+foundryDocumentNewest+` DESC, d.id DESC LIMIT ?`, append(append([]any
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanFoundryDocuments(rows)
+	return scanAll(rows, scanFoundryDocument)
 }
 
 // mediaTypeArgs are types as query arguments.
@@ -620,8 +609,7 @@ func (s *mysqlDB) ListPendingFoundryDocuments(ctx context.Context, loadID string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanFoundryDocuments(rows)
+	return scanAll(rows, scanFoundryDocument)
 }
 
 // countWaitingFoundryDocuments counts the documents a load still waits for.
@@ -684,18 +672,6 @@ func (s *mysqlDB) FoundryLoadHoldsDocument(ctx context.Context, loadID, document
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_load_documents WHERE load_id=? AND document_id=?`, loadID, documentID).Scan(&n)
 	return n > 0, err
-}
-
-func scanFoundryDocuments(rows *sql.Rows) ([]*model.FoundryDocument, error) {
-	var out []*model.FoundryDocument
-	for rows.Next() {
-		d, err := scanFoundryDocument(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
 }
 
 func scanFoundryDocument(scanner rowScanner) (*model.FoundryDocument, error) {

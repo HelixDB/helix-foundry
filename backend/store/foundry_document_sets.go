@@ -116,16 +116,7 @@ WHERE s.workspace_id=? AND s.live_key=1 AND`+foundrySetOwnerLive+` ORDER BY s.cr
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.FoundryDocumentSet
-	for rows.Next() {
-		set, err := scanFoundryDocumentSet(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, set)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryDocumentSet)
 }
 
 // UpdateFoundryDocumentSet renames a live set or changes its description. A

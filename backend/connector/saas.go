@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -69,6 +70,20 @@ var retryBackoff = func(attempt int, retryAfter string) time.Duration {
 func fetch(ctx context.Context, client *http.Client, build func() (*http.Request, error)) (int, []byte, error) {
 	status, _, body, err := fetchWithHeader(ctx, client, build)
 	return status, body, err
+}
+
+// fetchGet is fetch of one GET of target with query, under a copy of header.
+func fetchGet(ctx context.Context, client *http.Client, target string, query url.Values, header http.Header) (int, []byte, error) {
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	return fetch(ctx, client, func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, target, nil)
+		if err == nil {
+			req.Header = header.Clone()
+		}
+		return req, err
+	})
 }
 
 // fetchWithHeader is fetch that also returns the final response's header. A
