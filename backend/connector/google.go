@@ -29,6 +29,9 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/jwt"
 	"golang.org/x/time/rate"
+
+	"github.com/helixdb/helix-foundry/backend/config"
+	documentread "github.com/helixdb/helix-foundry/backend/document/read"
 )
 
 var _ PassKind = (*googleKind)(nil)
@@ -39,6 +42,7 @@ const (
 	googleFutureDays = 30
 	maxGooglePages   = 10_000
 	googleDocType    = "application/vnd.google-apps.document"
+	googlePDFType    = "application/pdf"
 	googleFolderType = "application/vnd.google-apps.folder"
 	// googleFileFieldList are the fields of a file a Drive listing or
 	// change feed asks for: Drive returns only id, name and mimeType of each
@@ -59,6 +63,13 @@ const (
 	// failing, not the Docs.
 	googleExportFailures = 3
 )
+
+// Google Drive PDFs use the same text reader and limits as uploaded PDFs.
+// The reader's single-instance pool keeps concurrent connector reads bounded.
+var googlePDFReader = documentread.PDFs{
+	PDFium: documentread.NewPDFium(documentread.PDFMemoryLimit),
+	Limits: documentread.PDFLimits{MaxPages: 150, MaxTextBytes: 1 << 20},
+}
 
 var (
 	// googleImageData is a reference definition Drive's Markdown export
@@ -127,7 +138,8 @@ var googleForeignKeys = map[string][]ForeignKey{
 var googleDocsStream = Stream{Name: "docs", Table: "files", Title: "Docs", Format: Markdown,
 	Description: "Each Google Doc the connection's user can open and download in Drive, as Markdown: its title, owner, last " +
 		"modified time and file id, then the Doc's text as Drive exports it, with its headings, lists, tables and links; its " +
-		"images are left out, keeping their alt text, and a Doc whose export is over Drive's 10 MB limit is its plain text."}
+		"images are left out, keeping their alt text, and a Doc whose export is over Drive's 10 MB limit is its plain text. " +
+		"Downloadable PDFs are read as text; scans and files over the PDF limits are marked without OCR."}
 
 var (
 	// errUnreadable is an API the connection can't read; its refusal's
@@ -750,6 +762,9 @@ type googleDoc struct {
 	id, name, owner, link, version string
 	modified                       time.Time
 	withheld                       bool
+	pdf                            bool
+	size                           int64
+	unreadable                     string
 }
 
 // googleFile is a listed file's row and, for a Doc, its document's parts;
@@ -768,7 +783,8 @@ func googleFile(id string, f map[string]any) (map[string]any, *googleDoc, error)
 		"created_at": googleTime(f["createdTime"]), "modified_at": googleTime(f["modifiedTime"]), "size": size,
 		"web_view_link": f["webViewLink"], "shared": f["shared"] == true, "starred": f["starred"] == true,
 	}
-	if f["mimeType"] != googleDocType {
+	pdf := f["mimeType"] == googlePDFType
+	if f["mimeType"] != googleDocType && !pdf {
 		return row, nil, nil
 	}
 	raw, _ := f["modifiedTime"].(string)
@@ -782,6 +798,21 @@ func googleFile(id string, f map[string]any) (map[string]any, *googleDoc, error)
 	version, _ := f["version"].(string)
 	shown := sha256.Sum256([]byte(doc.name + "\x00" + doc.owner + "\x00" + doc.link))
 	doc.version = "1|" + raw + "|" + version + "|" + hex.EncodeToString(shown[:8])
+	doc.pdf = pdf
+	if pdf {
+		doc.version = "pdf|" + raw + "|" + version + "|" + fmt.Sprint(f["size"]) + "|" + hex.EncodeToString(shown[:8])
+		if size, ok := f["size"].(string); ok {
+			parsed, err := strconv.ParseInt(size, 10, 64)
+			if err == nil && parsed >= 0 {
+				doc.size = parsed
+			}
+		}
+		if doc.size == 0 {
+			doc.unreadable = "Drive did not provide a usable PDF size"
+		} else if doc.size > config.MaxDocumentBytes {
+			doc.unreadable = fmt.Sprintf("PDF is %s; Foundry reads PDFs up to %s", FormatBytes(doc.size), FormatBytes(config.MaxDocumentBytes))
+		}
+	}
 	if capabilities, _ := f["capabilities"].(map[string]any); capabilities["canDownload"] == false {
 		doc.withheld = true
 		return row, doc, nil
@@ -876,7 +907,13 @@ func (e *googleExporter) offer(ctx context.Context, doc googleDoc) error {
 	if !e.docs.Want(googleDocsStream.Name, doc.id, doc.version) {
 		return nil
 	}
-	export, err := e.c.export(ctx, doc.id, "text/markdown")
+	var export string
+	var err error
+	if doc.pdf {
+		export, err = e.c.pdfText(ctx, doc)
+	} else {
+		export, err = e.c.export(ctx, doc.id, "text/markdown")
+	}
 	if errors.Is(err, errUnreachable) {
 		if e.failed++; e.failed == googleExportFailures {
 			return err
@@ -903,6 +940,34 @@ func (e *googleExporter) offer(ctx context.Context, doc googleDoc) error {
 	}
 	return e.docs.Put(ctx, googleDocsStream.Name, Document{ExternalID: doc.id, Version: doc.version, At: doc.modified,
 		Title: name, URL: doc.link, Text: []byte(text.String())})
+}
+
+// pdfText downloads and extracts only a bounded, downloadable Drive PDF.
+// An unreadable PDF remains explicit in the document stream; it is never
+// represented as successfully read content.
+func (c *googleClient) pdfText(ctx context.Context, doc googleDoc) (string, error) {
+	if doc.unreadable != "" {
+		return doc.unreadable, nil
+	}
+	target := "/drive/v3/files/" + url.PathEscape(doc.id) + "?alt=media"
+	status, body, err := c.get(ctx, c.exports, googleDrive, target)
+	if err != nil {
+		return "", err
+	}
+	if err := c.status(status, body, googleDrive, target); err != nil {
+		return "", err
+	}
+	if int64(len(body)) != doc.size {
+		return "", fmt.Errorf("google /drive/v3/files: PDF %s returned %d bytes, Drive listed %d", doc.id, len(body), doc.size)
+	}
+	text, _, bad, err := googlePDFReader.Text(ctx, body)
+	if err != nil {
+		return "", err
+	}
+	if bad != nil {
+		return bad.Error.Message, nil
+	}
+	return text, nil
 }
 
 // export is Doc id's text as Drive exports it as mediaType, under

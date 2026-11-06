@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -18,12 +19,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/helixdb/helix-foundry/backend/config"
+	documentread "github.com/helixdb/helix-foundry/backend/document/read"
 )
 
 const googleSubject = "ada@acme.com"
@@ -1483,6 +1488,112 @@ func TestGoogleDocuments(t *testing.T) {
 		docs := &granolaDocs{want: map[string]bool{"docs": true}}
 		if _, err := kind.SyncDocuments(ctx, googleSource(), Table{Name: "files"}, &rowSink{}, docs); err != nil || len(docs.puts) != 3 {
 			t.Fatalf("SyncDocuments = %v, puts = %v", err, docs.putNames())
+		}
+	})
+}
+
+// googleTextPDF makes the small, single-page files used by Drive PDF tests.
+func googleTextPDF(line string) []byte {
+	content := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET\n", strings.NewReplacer(`\\`, `\\\\`, `(`, `\\(`, `)`, `\\)`).Replace(line))
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+	}
+	var out bytes.Buffer
+	out.WriteString("%PDF-1.7\n")
+	offsets := make([]int, len(objects))
+	for i, object := range objects {
+		offsets[i] = out.Len()
+		fmt.Fprintf(&out, "%d 0 obj\n%s\nendobj\n", i+1, object)
+	}
+	xref := out.Len()
+	fmt.Fprintf(&out, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets {
+		fmt.Fprintf(&out, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&out, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return out.Bytes()
+}
+
+func TestGoogleDrivePDFs(t *testing.T) {
+	file := func(name, version string, size int) string {
+		return fmt.Sprintf(`{"files":[{"id":"pdf1","name":%q,"mimeType":"application/pdf","size":%q,"modifiedTime":"2026-11-06T10:00:00Z","webViewLink":"https://drive.google.com/file/d/pdf1/view","version":%q,"capabilities":{"canDownload":true}}]}`, name, strconv.Itoa(size), version)
+	}
+	drives := func(t *testing.T) func(*http.Request) (int, string) {
+		return googleDrivesRoute(t, map[string]string{"": `{"drives":[]}`})
+	}
+	passPDF := func(t *testing.T, fileJSON string, pdf []byte, canDownload bool) (*googleWorkspace, *granolaDocs, error) {
+		routes := map[string]func(*http.Request) (int, string){
+			"/drive/v3/files":  func(*http.Request) (int, string) { return http.StatusOK, fileJSON },
+			"/drive/v3/drives": drives(t),
+			"/drive/v3/files/pdf1": func(r *http.Request) (int, string) {
+				if r.URL.Query().Get("alt") != "media" {
+					t.Errorf("download query = %s, want alt=media", r.URL.RawQuery)
+				}
+				return http.StatusOK, string(pdf)
+			},
+		}
+		if !canDownload {
+			routes["/drive/v3/files"] = func(*http.Request) (int, string) {
+				return http.StatusOK, strings.Replace(fileJSON, `"canDownload":true`, `"canDownload":false`, 1)
+			}
+		}
+		w := &googleWorkspace{routes: routes}
+		docs := &granolaDocs{want: map[string]bool{"docs": true}}
+		kind := googleAt(t, w)
+		tables := []Table{{Name: "files"}}
+		rows := map[string]RowWriter{"files": &rowSink{}}
+		written, err := kind.SyncPass(context.Background(), googleSource(), tables, rows, docs)
+		if fmt.Sprint(written) != fmt.Sprint(tables) {
+			t.Errorf("SyncPass wrote %v, want %v", written, tables)
+		}
+		return w, docs, err
+	}
+
+	t.Run("reads Drive PDF text and re-reads a replaced version", func(t *testing.T) {
+		first := googleTextPDF("Invoice 1042")
+		w, docs, err := passPDF(t, file("Invoice.pdf", "4", len(first)), first, true)
+		if err != nil || len(docs.puts) != 1 {
+			t.Fatalf("SyncPass = %v, puts = %v", err, docs.putNames())
+		}
+		if !strings.HasPrefix(docs.puts[0].doc.Version, "pdf|2026-11-06T10:00:00Z|4|") ||
+			!strings.Contains(string(docs.puts[0].doc.Text), "Invoice 1042\n") ||
+			len(w.requested("/drive/v3/files/pdf1")) != 1 {
+			t.Fatalf("version = %q, text = %q, downloads = %v", docs.puts[0].doc.Version, docs.puts[0].doc.Text, w.requested("/drive/v3/files/pdf1"))
+		}
+		second := googleTextPDF("Invoice 1043")
+		_, replaced, err := passPDF(t, file("Invoice.pdf", "5", len(second)), second, true)
+		if err != nil || len(replaced.puts) != 1 || replaced.puts[0].doc.Version == docs.puts[0].doc.Version ||
+			!strings.Contains(string(replaced.puts[0].doc.Text), "Invoice 1043\n") {
+			t.Fatalf("replacement SyncPass = %v, puts = %v", err, replaced.putNames())
+		}
+	})
+
+	t.Run("marks scanned PDFs without OCR", func(t *testing.T) {
+		scan := googleTextPDF("")
+		w, docs, err := passPDF(t, file("Scan.pdf", "1", len(scan)), scan, true)
+		if err != nil || len(docs.puts) != 1 || !strings.Contains(string(docs.puts[0].doc.Text), documentread.ScannedPDF) ||
+			len(w.requested("/drive/v3/files/pdf1")) != 1 {
+			t.Fatalf("SyncPass = %v, puts = %v, downloads = %v", err, docs.putNames(), w.requested("/drive/v3/files/pdf1"))
+		}
+	})
+
+	t.Run("does not download an over-limit PDF", func(t *testing.T) {
+		w, docs, err := passPDF(t, file("Large.pdf", "1", int(config.MaxDocumentBytes+1)), nil, true)
+		if err != nil || len(docs.puts) != 1 || !strings.Contains(string(docs.puts[0].doc.Text), "up to") ||
+			len(w.requested("/drive/v3/files/pdf1")) != 0 {
+			t.Fatalf("SyncPass = %v, puts = %v, downloads = %v", err, docs.putNames(), w.requested("/drive/v3/files/pdf1"))
+		}
+	})
+
+	t.Run("does not offer a PDF Drive will not let the user download", func(t *testing.T) {
+		pdf := googleTextPDF("Invoice 1042")
+		w, docs, err := passPDF(t, file("Invoice.pdf", "4", len(pdf)), pdf, false)
+		if err != nil || len(docs.puts) != 0 || len(docs.offers) != 0 || len(w.requested("/drive/v3/files/pdf1")) != 0 {
+			t.Fatalf("SyncPass = %v, offers = %v, downloads = %v", err, docs.offers, w.requested("/drive/v3/files/pdf1"))
 		}
 	})
 }
