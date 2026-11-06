@@ -9,6 +9,7 @@ import {
   FOUNDRY_LOAD,
   FOUNDRY_NODES as N,
 } from "../../src/shared/foundry-labels";
+import { createHash } from "node:crypto";
 import { fail, id, now, ok, type MockRoute } from "../http";
 import {
   decisionFits,
@@ -63,7 +64,12 @@ function propValue(v: unknown): v is FoundryPropValue {
 function valid(b: unknown): b is FoundryReviewChoice {
   if (!isRecord(b)) return false;
   if ("release" in b)
-    return b.release === true && !("resolve" in b) && !("prop" in b);
+    return (
+      typeof (b.release as { statementHash?: unknown } | undefined)
+        ?.statementHash === "string" &&
+      !("resolve" in b) &&
+      !("prop" in b)
+    );
   if ("prop" in b) return !("resolve" in b) && propValue(b.prop);
   if (!isRecord(b.resolve)) return false;
   const r = b.resolve;
@@ -150,11 +156,21 @@ export const reviewRoutes: MockRoute[] = [
             "this review requires a release decision",
           );
         const docId = text(r.doc_id),
-          claimKey = text(r.claim_key);
-        if (!docId || !/^[0-9a-f]{64}$/.test(claimKey))
+          claimKey = text(r.claim_key),
+          link = text(r.suggested_link),
+          stored = text(r.statement);
+        if (!docId || !/^[0-9a-f]{64}$/.test(claimKey) || !link || !stored)
           return fail(
             "FAILED_PRECONDITION",
             "this review is missing its identity; start a new load before settling it",
+          );
+        const statementHash = createHash("sha256")
+          .update(`${link}\u001f${stored}`)
+          .digest("hex");
+        if (choice.release.statementHash !== statementHash)
+          return fail(
+            "FAILED_PRECONDITION",
+            "this claim reads differently now; reload the review and approve what it says",
           );
         return ok(
           save(
@@ -167,6 +183,7 @@ export const reviewRoutes: MockRoute[] = [
               claimSection: Number(r.section),
               claimStart: Number(r.start),
               claimEnd: Number(r.end),
+              statementHash,
             },
             req.principal.user.id,
           ) satisfies ReviewDecisionResponse,

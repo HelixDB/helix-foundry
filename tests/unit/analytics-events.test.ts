@@ -79,7 +79,10 @@ const cases: [string, () => Promise<unknown>, unknown[]][] = [
   ],
   [
     "an approved held claim",
-    () => settleReview("ws", "o", "r1", { decision: { release: true } }),
+    () =>
+      settleReview("ws", "o", "r1", {
+        decision: { release: { statementHash: "a".repeat(64) } },
+      }),
     ["review_settled", { kind: "release" }],
   ],
   [

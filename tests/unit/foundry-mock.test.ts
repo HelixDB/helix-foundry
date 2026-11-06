@@ -2801,15 +2801,29 @@ describe("review decisions", () => {
       reason: "low_confidence",
       type: "",
       claim_key: key,
+      suggested_link: "signed_with",
+      statement: "{}",
     });
-    expect(refusal(await settle(held(""), { release: true }))).toEqual([
+    const release = { release: { statementHash: "0".repeat(64) } };
+    expect(refusal(await settle(held(""), release))).toEqual([
       400,
       "this review is missing its identity; start a new load before settling it",
     ]);
     expect(
-      refusal(await settle({ reason: "unresolved" }, { release: true })),
-    ).toEqual([400, "this review requires a resolve decision"]);
-    expect(refusal(await settle(held(), { release: false }))).toEqual([
+      refusal(await settle({ ...held(), statement: "" }, release)),
+    ).toEqual([
+      400,
+      "this review is missing its identity; start a new load before settling it",
+    ]);
+    expect(refusal(await settle(held(), release))).toEqual([
+      400,
+      "this claim reads differently now; reload the review and approve what it says",
+    ]);
+    expect(refusal(await settle({ reason: "unresolved" }, release))).toEqual([
+      400,
+      "this review requires a resolve decision",
+    ]);
+    expect(refusal(await settle(held(), { release: true }))).toEqual([
       400,
       "choose a candidate, not in data, or a property value",
     ]);

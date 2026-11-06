@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { ListReviewDecisionsResponse } from "../../src/shared/wfe";
 import {
   APP_ORIGIN,
   choose,
@@ -227,7 +228,9 @@ test("approves a held claim, and the next load writes it as a fact", async ({
   );
   await held.getByRole("button", { name: "Approve", exact: true }).click();
   expect((await settled).postDataJSON()).toEqual({
-    decision: { release: true },
+    decision: {
+      release: { statementHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    },
   });
   await expect(held.getByRole("status")).toContainText(
     "Decision saved. Reload to apply.",
@@ -235,6 +238,31 @@ test("approves a held claim, and the next load writes it as a fact", async ({
   await expect(
     held.getByRole("button", { name: "Approve", exact: true }),
   ).toHaveCount(0);
+  // An approval of what the claim said before doesn't stand: the card asks again.
+  const decisions = /\/review-decisions(\?|$)/;
+  await page.route(decisions, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as ListReviewDecisionsResponse;
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        decisions: body.decisions?.map((d) => ({
+          ...d,
+          statementHash: "0".repeat(64),
+        })),
+      },
+    });
+  });
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "reads differently from what was approved",
+  );
+  await page.unroute(decisions);
+  await held.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(held.getByRole("status")).toContainText(
+    "Decision saved. Reload to apply.",
+  );
   // The next load writes it, and has no review of it.
   const next = await loadVersion3(page);
   expect(next).not.toBe(old);

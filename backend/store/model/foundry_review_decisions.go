@@ -2,8 +2,12 @@ package model
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/BurntSushi/toml"
+	"golang.org/x/text/unicode/norm"
 	"math"
 	"slices"
 	"strconv"
@@ -11,9 +15,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/BurntSushi/toml"
-	"golang.org/x/text/unicode/norm"
 )
 
 // FoundryReviewDecisionKind selects one of the decision shapes.
@@ -29,9 +30,10 @@ const (
 // load. Resolve identifies a document name; a nil EntityKey means not in data.
 // Prop identifies an entity property and carries a JSON scalar (including null).
 // Release identifies one review of a document holding a claim back, by its
-// ClaimKey and ClaimSpan: a person's word that what it states holds. It names no
-// type, as what it writes is the engine's to read from the document. Validate
-// guards this sum type at every storage boundary.
+// ClaimKey and ClaimSpan: a person's word that what it states holds, bound by
+// StatementHash to what they read. It names no type, as what it writes is the
+// engine's to read from the document. Validate guards this sum type at every
+// storage boundary.
 type FoundryReviewDecision struct {
 	ID              string
 	OntologyID      string
@@ -44,6 +46,7 @@ type FoundryReviewDecision struct {
 	Value           json.RawMessage
 	ClaimKey        *string
 	ClaimSpan       *FoundryClaimSpan
+	StatementHash   *string
 	DecidedByUserID string
 	DecidedAt       time.Time
 	// DocumentIDs are the documents the review quoted, which a prop
@@ -58,13 +61,13 @@ func (d FoundryReviewDecision) Validate() error {
 		return fmt.Errorf("decision identity and actor are required")
 	}
 	if d.Kind == FoundryReviewRelease {
-		if d.Type != "" || !nonempty(d.DocID) || !FoundryClaimKey(d.ClaimKey) || d.ClaimSpan == nil || d.ClaimSpan.Start >= d.ClaimSpan.End ||
+		if d.Type != "" || !nonempty(d.DocID) || !foundrySHA256(d.ClaimKey) || !foundrySHA256(d.StatementHash) || d.ClaimSpan == nil || d.ClaimSpan.Start >= d.ClaimSpan.End ||
 			d.NormName != nil || d.EntityKey != nil || d.Prop != nil || len(d.Value) != 0 {
 			return fmt.Errorf("invalid release decision")
 		}
 		return nil
 	}
-	if d.Type == "" || d.ClaimKey != nil || d.ClaimSpan != nil {
+	if d.Type == "" || d.ClaimKey != nil || d.ClaimSpan != nil || d.StatementHash != nil {
 		return fmt.Errorf("decision identity and actor are required")
 	}
 	switch d.Kind {
@@ -96,14 +99,23 @@ type FoundryClaimSpan struct {
 	Section, Start, End uint32
 }
 
-// FoundryClaimKey reports whether key is one the engine takes
-// (held::ClaimKey::parse): 64 lowercase hexadecimal digits. One it doesn't
-// fails the whole Extract, so none is stored.
-func FoundryClaimKey(key *string) bool {
-	if key == nil || len(*key) != 64 {
+// FoundryStatementHash is what binds a release to the claim a person read: the
+// SHA-256, in lowercase hexadecimal, of the review's link and stored statement,
+// which the card shows. The engine reads the same (held::Statement::hash), and
+// so does the site (reviews/model.ts statementHash).
+func FoundryStatementHash(link, statement string) string {
+	sum := sha256.Sum256([]byte(link + "\x1f" + statement))
+	return hex.EncodeToString(sum[:])
+}
+
+// foundrySHA256 reports whether hash is one the engine takes
+// (held::ClaimKey::parse, held::StatementHash::parse): 64 lowercase hexadecimal
+// digits. One it doesn't fails the whole Extract, so none is stored.
+func foundrySHA256(hash *string) bool {
+	if hash == nil || len(*hash) != 64 {
 		return false
 	}
-	return strings.IndexFunc(*key, func(r rune) bool {
+	return strings.IndexFunc(*hash, func(r rune) bool {
 		return !('0' <= r && r <= '9' || 'a' <= r && r <= 'f')
 	}) < 0
 }

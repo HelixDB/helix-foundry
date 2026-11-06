@@ -7090,6 +7090,16 @@
       "default": "FOUNDRY_READ_KIND_UNSPECIFIED",
       "description": "FoundryReadKind is how ontologies read a type of document.\n\n - FOUNDRY_READ_KIND_TEXT: Markdown, MDX and plain text: extracted as text through routes.\n - FOUNDRY_READ_KIND_TABLE: CSV, TSV, JSON, JSONL and Parquet: read once, at upload, as a table of\nits own, which mappings name by the document's id.\n - FOUNDRY_READ_KIND_PDF: PDF: read once, at upload, to its text (each page's, a form feed\nbetween pages), then extracted as that text through routes. One with no\ntext layer (a scan), encrypted or damaged can't be read."
     },
+    "v1FoundryReleaseChoice": {
+      "type": "object",
+      "properties": {
+        "statementHash": {
+          "type": "string",
+          "description": "SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit\nseparator (0x1f) and its stored statement."
+        }
+      },
+      "description": "A release of the statement a person read. A review that reads otherwise now\nis refused, and so is a load that reads it otherwise."
+    },
     "v1FoundryResolveChoice": {
       "type": "object",
       "properties": {
@@ -7112,8 +7122,8 @@
           "$ref": "#/definitions/v1FoundryPropValue"
         },
         "release": {
-          "type": "boolean",
-          "description": "Must be true. A person's word that what the review holds back holds:\nthe next load writes what it states as a fact."
+          "$ref": "#/definitions/v1FoundryReleaseChoice",
+          "description": "A person's word that what the review holds back holds: the next load\nwrites what it states as a fact."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7155,7 +7165,7 @@
         },
         "claimKey": {
           "type": "string",
-          "description": "The review a release decision releases, as it stores them: its claim's\nkey, and its quote's section and byte range in the section."
+          "description": "The review a release decision releases, as it stores them: its claim's\nkey, its quote's section and byte range in the section, and the hash of\nthe statement the person read."
         },
         "claimSection": {
           "type": "integer",
@@ -7168,6 +7178,9 @@
         "claimEnd": {
           "type": "integer",
           "format": "int64"
+        },
+        "statementHash": {
+          "type": "string"
         }
       },
       "description": "A durable ontology-wide override; applies from the next load."

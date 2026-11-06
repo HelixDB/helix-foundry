@@ -145,7 +145,12 @@ export function decisionFits(
   types: DecisionTypes,
 ): boolean {
   if (d.kind === "release")
-    return !!d.docId.trim() && !!d.claimKey && d.claimStart < d.claimEnd;
+    return (
+      !!d.docId.trim() &&
+      !!d.claimKey &&
+      !!d.statementHash &&
+      d.claimStart < d.claimEnd
+    );
   const t = types[d.type];
   if (!t) return false;
   const key = d.entityKey;

@@ -153,19 +153,21 @@ type ExtractRequest struct {
 // value a prop decision overwrites keeps them. Who decided never leaves the
 // BFF.
 type ExtractDecision struct {
-	Kind       model.FoundryReviewDecisionKind `json:"kind"`
-	Type       string                          `json:"type"`
-	DocID      string                          `json:"doc_id,omitempty"`
-	NormName   string                          `json:"norm_name,omitempty"`
-	EntityKey  *string                         `json:"entity_key"`
-	Prop       string                          `json:"prop,omitempty"`
-	Value      json.RawMessage                 `json:"value,omitempty"`
-	ClaimKey   string                          `json:"claim_key,omitempty"`
-	Section    uint32                          `json:"section,omitempty"`
-	Start      uint32                          `json:"start,omitempty"`
-	End        uint32                          `json:"end,omitempty"`
-	DecisionID string                          `json:"decision_id"`
-	DecidedAt  time.Time                       `json:"decided_at"`
+	Kind      model.FoundryReviewDecisionKind `json:"kind"`
+	Type      string                          `json:"type"`
+	DocID     string                          `json:"doc_id,omitempty"`
+	NormName  string                          `json:"norm_name,omitempty"`
+	EntityKey *string                         `json:"entity_key"`
+	Prop      string                          `json:"prop,omitempty"`
+	Value     json.RawMessage                 `json:"value,omitempty"`
+	ClaimKey  string                          `json:"claim_key,omitempty"`
+	Section   uint32                          `json:"section,omitempty"`
+	Start     uint32                          `json:"start,omitempty"`
+	End       uint32                          `json:"end,omitempty"`
+	// StatementHash binds a release to what the person read.
+	StatementHash string    `json:"statement_hash,omitempty"`
+	DecisionID    string    `json:"decision_id"`
+	DecidedAt     time.Time `json:"decided_at"`
 }
 
 // MarshalJSON writes a release without the fields it refuses: the engine reads
@@ -179,9 +181,10 @@ func (d ExtractDecision) MarshalJSON() ([]byte, error) {
 			Section    uint32                          `json:"section"`
 			Start      uint32                          `json:"start"`
 			End        uint32                          `json:"end"`
+			Hash       string                          `json:"statement_hash"`
 			DecisionID string                          `json:"decision_id"`
 			DecidedAt  time.Time                       `json:"decided_at"`
-		}{d.Kind, d.DocID, d.ClaimKey, d.Section, d.Start, d.End, d.DecisionID, d.DecidedAt})
+		}{d.Kind, d.DocID, d.ClaimKey, d.Section, d.Start, d.End, d.StatementHash, d.DecisionID, d.DecidedAt})
 	}
 	type plain ExtractDecision
 	return json.Marshal(plain(d))

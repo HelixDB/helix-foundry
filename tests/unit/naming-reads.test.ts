@@ -271,7 +271,7 @@ describe("the names of entities a page knows by type and id", () => {
       );
       return own;
     };
-    const keys = ["name", "company_name"];
+    const keys = ["company_name"];
     const reads = [
       documentRequest(SCOPE, "doc_1", keys),
       entityRequest(SCOPE, { type: "Customer", key: "c" }, keys),

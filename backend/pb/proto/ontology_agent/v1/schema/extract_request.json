@@ -261,6 +261,11 @@
               "type": "integer",
               "format": "uint32",
               "minimum": 0
+            },
+            "statement_hash": {
+              "description": "The hash of what the review stated when the person read it: its `suggested_link`, a\nunit separator and its `statement`, as stored.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
             }
           },
           "additionalProperties": false,
@@ -271,6 +276,7 @@
             "section",
             "start",
             "end",
+            "statement_hash",
             "decision_id",
             "decided_at"
           ]

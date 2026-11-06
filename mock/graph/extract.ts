@@ -1074,6 +1074,11 @@ export function extractDocument(
       const claim = JSON.stringify({ link: "signed_with", about });
       const claimKey = sha256(`${doc.id}\u001f${claim}`);
       const place = quote(first.s, first.i);
+      const statement = JSON.stringify({
+        subject: { type: "Contract", name: g.node(contract!)!.props.name },
+        object: { type: g.node(e.id)!.label, name: e.name || first.surface },
+        props: {},
+      });
       const released = decisions.some(
         (d) =>
           d.kind === "release" &&
@@ -1081,7 +1086,8 @@ export function extractDocument(
           d.claimKey === claimKey &&
           d.claimSection === first.s.ordinal &&
           d.claimStart === place.start &&
-          d.claimEnd === place.end,
+          d.claimEnd === place.end &&
+          d.statementHash === sha256(`signed_with\u001f${statement}`),
       );
       if (!released) {
         const r = g.addNode(N.Review, {
@@ -1092,14 +1098,7 @@ export function extractDocument(
           reason: "low_confidence",
           claim_key: claimKey,
           claim,
-          statement: JSON.stringify({
-            subject: { type: "Contract", name: g.node(contract!)!.props.name },
-            object: {
-              type: g.node(e.id)!.label,
-              name: e.name || first.surface,
-            },
-            props: {},
-          }),
+          statement,
           suggested_link: "signed_with",
           confidence: 0.72,
         });

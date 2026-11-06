@@ -3180,10 +3180,10 @@ func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 	h := newHarness(t)
 	ptr := func(s string) *string { return &s }
 	settled := time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)
-	key := strings.Repeat("ab", 32)
+	key, read := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
 	release := func(id, doc string) *model.FoundryReviewDecision {
 		return &model.FoundryReviewDecision{ID: id, OntologyID: "ont-1", Kind: model.FoundryReviewRelease,
-			DocID: ptr(doc), ClaimKey: &key, ClaimSpan: &model.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, DecidedByUserID: "user", DecidedAt: settled}
+			DocID: ptr(doc), ClaimKey: &key, ClaimSpan: &model.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &read, DecidedByUserID: "user", DecidedAt: settled}
 	}
 	h.store.decisions = []*model.FoundryReviewDecision{release("1", "doc-a"), release("2", "doc-b")}
 	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), "", []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
@@ -3191,7 +3191,7 @@ func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := json.Marshal(decisions)
-	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"decision_id":"1","decided_at":"2026-10-17T08:02:03Z"}]`
+	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03Z"}]`
 	if string(got) != want {
 		t.Fatalf("decisions = %s, want %s", got, want)
 	}

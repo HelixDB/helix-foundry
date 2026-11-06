@@ -168,8 +168,10 @@ export type Settle =
       section: number;
       start: number;
       end: number;
-      link?: string;
-      statement?: Statement;
+      link: string;
+      statement: Statement;
+      /** The statement as the review stores it, which its hash reads. */
+      stored: string;
       named: boolean;
       differs?: boolean;
     }
@@ -257,9 +259,15 @@ export function settleable(
     const docId = text(r.doc_id),
       claimKey = text(r.claim_key),
       link = text(r.suggested_link),
-      stated = statement(r.statement),
+      stored = text(r.statement),
+      stated = statement(stored),
       { section, start, end } = r;
+    // An approval is of what its card shows: a review of a load before
+    // statements shows nothing to approve.
     if (
+      !link ||
+      !stored ||
+      !stated ||
       !reviewId ||
       !docId ||
       !claimKey ||
@@ -278,8 +286,9 @@ export function settleable(
         section,
         start,
         end,
-        ...(link ? { link } : {}),
-        ...(stated ? { statement: stated } : {}),
+        link,
+        statement: stated,
+        stored,
         named: ends(r.claim) >= 2,
       },
     };
@@ -308,6 +317,26 @@ export function settleable(
 }
 
 /**
+ * What binds an approval to the claim a person read: the SHA-256 of what its
+ * card shows, as the backend and the engine hash it (held::Statement::hash).
+ *
+ * @example
+ * await statementHash("partner_of", stored); // 64 lowercase hexadecimal digits
+ */
+export async function statementHash(
+  link: string,
+  stored: string,
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${link}\u001f${stored}`),
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
  * Marks the held claims of `reviews` that share a place and a key but state
  * different things: the engine refuses them, as no approval says which.
  *
@@ -321,7 +350,7 @@ export function markDiffering<T extends Settleable>(reviews: T[]): T[] {
   for (const { settle: s } of reviews) {
     if (s?.kind !== "release") continue;
     const seen = stated.get(place(s)) ?? new Set<string>();
-    stated.set(place(s), seen.add(JSON.stringify(s.statement ?? null)));
+    stated.set(place(s), seen.add(s.stored));
   }
   return reviews.map((r) => {
     const s = r.settle;

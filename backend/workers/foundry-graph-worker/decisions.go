@@ -63,7 +63,7 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 				if !sent[*d.DocID] {
 					continue
 				}
-				decision.DocID, decision.ClaimKey = *d.DocID, *d.ClaimKey
+				decision.DocID, decision.ClaimKey, decision.StatementHash = *d.DocID, *d.ClaimKey, *d.StatementHash
 				decision.Section, decision.Start, decision.End = d.ClaimSpan.Section, d.ClaimSpan.Start, d.ClaimSpan.End
 			}
 			out = append(out, decision)

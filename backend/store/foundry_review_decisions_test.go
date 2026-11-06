@@ -61,17 +61,20 @@ func TestFoundryReleaseDecisions(t *testing.T) {
 	f.currentLoad(t, "REL-load", customerTOML)
 	key := strings.Repeat("ab", 32)
 	place := &model.FoundryClaimSpan{Section: 0, Start: 4, End: 20}
-	release := &model.FoundryReviewDecision{ID: id26("REL-1"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewRelease, DocID: ptr("doc-1"), ClaimKey: &key, ClaimSpan: place, DecidedByUserID: id26("user")}
+	read, moved := strings.Repeat("0a", 32), strings.Repeat("0b", 32)
+	release := &model.FoundryReviewDecision{ID: id26("REL-1"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewRelease, DocID: ptr("doc-1"), ClaimKey: &key, ClaimSpan: place, StatementHash: &read, DecidedByUserID: id26("user")}
 	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, release))
 	assert.Equal(t, key, *release.ClaimKey)
 	assert.Equal(t, place, release.ClaimSpan)
+	assert.Equal(t, read, *release.StatementHash)
 	assert.Empty(t, release.Type)
 	again := *release
-	again.ID = id26("REL-2")
+	again.ID, again.StatementHash = id26("REL-2"), &moved
 	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, &again))
 	assert.Equal(t, release.ID, again.ID, "a second approval is the first")
+	assert.Equal(t, moved, *again.StatementHash, "of what the claim says now")
 	otherKey := strings.Repeat("cd", 32)
-	other := &model.FoundryReviewDecision{ID: id26("REL-3"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewRelease, DocID: ptr("doc-1"), ClaimKey: &otherKey, ClaimSpan: place, DecidedByUserID: id26("user")}
+	other := &model.FoundryReviewDecision{ID: id26("REL-3"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewRelease, DocID: ptr("doc-1"), ClaimKey: &otherKey, ClaimSpan: place, StatementHash: &read, DecidedByUserID: id26("user")}
 	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, other))
 	assert.NotEqual(t, release.ID, other.ID)
 	// One claim at another place is another review, and another decision.
@@ -97,6 +100,12 @@ func TestFoundryReleaseDecisions(t *testing.T) {
 	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_end=NULL WHERE id=?`, release.ID)
 	require.Error(t, err)
 	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_end=claim_start WHERE id=?`, release.ID)
+	require.Error(t, err)
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET statement_hash=NULL WHERE id=?`, release.ID)
+	require.Error(t, err)
+	// No other decision takes a hash.
+	_, err = testDB.ExecContext(ctx, `INSERT INTO foundry_review_decisions (id, ontology_id, kind, type, doc_id, norm_name, statement_hash, decided_by_user_id)
+ VALUES (?, ?, 'resolve', 'Customer', 'doc-9', 'n', ?, ?)`, id26("REL-6"), f.ontology.ID, read, id26("user"))
 	require.Error(t, err)
 	// No other decision takes a key.
 	_, err = testDB.ExecContext(ctx, `INSERT INTO foundry_review_decisions (id, ontology_id, kind, type, doc_id, norm_name, claim_key, decided_by_user_id)

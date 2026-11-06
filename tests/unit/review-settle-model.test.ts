@@ -75,6 +75,7 @@ const release = {
     object: { type: "Account", name: "Acme Ltd" },
     props: { due_on: "2027-01-01" },
   },
+  stored: held.statement,
   named: true,
 } as const;
 const decided = {
@@ -85,6 +86,7 @@ const decided = {
   claimSection: 1,
   claimStart: 4,
   claimEnd: 20,
+  statementHash: "b".repeat(64),
 } as const;
 describe("a held claim", () => {
   it.each(["low_confidence", "unverified"])(
@@ -154,11 +156,24 @@ describe("a held claim", () => {
       "an end with no name",
       '{"subject":{"type":"A"},"object":{"type":"B","name":"b"}}',
     ],
-  ])("whose statement is %s shows its link and quote", (_, stated) => {
-    const { statement: _s, ...simple } = release;
+  ])("whose statement is %s is loaded again", (_, stated) => {
     expect(model.settleable({ ...held, statement: stated }, []).settle).toEqual(
-      simple,
+      { kind: "stale" },
     );
+  });
+  it("with no link is loaded again", () => {
+    const { suggested_link: _, ...linkless } = held;
+    expect(model.settleable(linkless, []).settle).toEqual({ kind: "stale" });
+  });
+  it("is hashed as the backend and the engine hash it", async () => {
+    // The value held::Statement::hash and FoundryStatementHash are tested to give.
+    const stored =
+      '{"subject":{"type":"Company","name":"Zoë Ltd"},"object":{"type":"Company","name":"Acme"},"props":{"since":"2024"}}';
+    const hash = await model.statementHash("partner_of", stored);
+    expect(hash).toBe(
+      "2c785db79d066c94d16e140edb1a8708834d7ecb12dda32c2f71dcdcc0ab0654",
+    );
+    expect(await model.statementHash("rival_of", stored)).not.toBe(hash);
   });
 });
 

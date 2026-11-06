@@ -2502,7 +2502,7 @@ export type FoundryReviewChoice =
       release?: never;
     }
   | { prop: FoundryPropValue; resolve?: never; release?: never }
-  | { release: true; resolve?: never; prop?: never };
+  | { release: { statementHash: string }; resolve?: never; prop?: never };
 export type ReviewDecision =
   | {
       kind: "resolve";
@@ -2529,6 +2529,8 @@ export type ReviewDecision =
       claimSection: number;
       claimStart: number;
       claimEnd: number;
+      // What the person read, hashed (reviews/model.ts statementHash).
+      statementHash: string;
     };
 export type FoundryReviewDecision = ReviewDecision & {
   id: string;

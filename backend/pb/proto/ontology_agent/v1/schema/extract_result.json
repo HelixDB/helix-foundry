@@ -220,7 +220,7 @@
           "minimum": 0
         },
         "release_refused": {
-          "description": "Reviews a person released that stay held: an end no rung resolves, statements that differ\nat one place, a value another statement disputes, a `block` constraint it would break, or\na review a release can't write.",
+          "description": "Reviews a person released that stay held: an end no rung resolves, statements that differ\nat one place, a statement other than the one approved, a value another statement disputes,\na `block` constraint it would break, or a review a release can't write.",
           "type": "integer",
           "format": "uint",
           "minimum": 0

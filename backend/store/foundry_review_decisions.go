@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, decided_by_user_id, decided_at"
+const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, decided_at"
 
 // SettleFoundryReviewDecision replaces the choice for this identity atomically.
 // It preserves the id of an existing choice. Under the ontology's lock it
@@ -56,11 +56,11 @@ JOIN foundry_ontology_versions v ON v.id = l.version_id WHERE l.id=?`, *o.Curren
 			section, start, end = span.Section, span.Start, span.End
 		}
 		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
- (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, decided_by_user_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?)
- ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), value=VALUES(value),
+ (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)
+ ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash),
  decided_by_user_id=VALUES(decided_by_user_id), decided_at=NOW(6)`,
-			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.DecidedByUserID)
+			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID)
 		if err != nil {
 			return err
 		}
@@ -135,10 +135,10 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, i
 
 func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, error) {
 	var d model.FoundryReviewDecision
-	var doc, name, entity, prop, claim sql.NullString
+	var doc, name, entity, prop, claim, hash sql.NullString
 	var section, start, end sql.NullInt64
 	var value []byte
-	err := row.Scan(&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &claim, &section, &start, &end, &d.DecidedByUserID, &d.DecidedAt)
+	err := row.Scan(&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &claim, &section, &start, &end, &hash, &d.DecidedByUserID, &d.DecidedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -159,6 +159,9 @@ func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, er
 	}
 	if claim.Valid {
 		d.ClaimKey = &claim.String
+	}
+	if hash.Valid {
+		d.StatementHash = &hash.String
 	}
 	if section.Valid && start.Valid && end.Valid {
 		d.ClaimSpan = &model.FoundryClaimSpan{Section: uint32(section.Int64), Start: uint32(start.Int64), End: uint32(end.Int64)}

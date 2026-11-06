@@ -216,7 +216,9 @@ function walk(
 // the whole read fails, however the rows would have read.
 const selected = (keys: string[]) => {
   const twice = keys.find((k, i) => keys.indexOf(k) !== i);
-  return twice === undefined ? keys : refuse(`property ${twice} selected twice`);
+  return twice === undefined
+    ? keys
+    : refuse(`property ${twice} selected twice`);
 };
 
 const row = (scope: Scope, el: El, keys: string[]) =>

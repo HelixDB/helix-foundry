@@ -138,15 +138,26 @@ func propBoolean(b bool) *foundryv1.FoundryPropValue {
 func propNull() *foundryv1.FoundryPropValue {
 	return &foundryv1.FoundryPropValue{Value: &foundryv1.FoundryPropValue_Null{}}
 }
-func releaseChoice(release bool) *foundryv1.FoundryReviewChoice {
-	return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Release{Release: release}}
+func releaseChoice(hash string) *foundryv1.FoundryReviewChoice {
+	return &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Release{Release: &foundryv1.FoundryReleaseChoice{StatementHash: hash}}}
 }
 
-var testClaimKey = strings.Repeat("ab", 32)
+const testStatement = `{"subject":{"type":"Commitment","name":"support"},"object":{"type":"Account","name":"Acme"},"props":{}}`
+
+var (
+	testClaimKey = strings.Repeat("ab", 32)
+	testRead     = foundrymodel.FoundryStatementHash("promised_to", testStatement)
+)
 
 // heldReview is a held claim of reason, as the load stores it, at a place.
 func heldReview(reason, claimKey string) string {
-	return `{"items":[{"reason":"` + reason + `","doc_id":"doc-a","claim_key":"` + claimKey + `","section":2,"start":10,"end":25}]}`
+	return heldStatement(reason, claimKey, testStatement)
+}
+
+// heldStatement is a held claim stating statement.
+func heldStatement(reason, claimKey, statement string) string {
+	stored, _ := json.Marshal(statement)
+	return `{"items":[{"reason":"` + reason + `","doc_id":"doc-a","claim_key":"` + claimKey + `","section":2,"start":10,"end":25,"suggested_link":"promised_to","statement":` + string(stored) + `}]}`
 }
 
 func settleRequest(choice *foundryv1.FoundryReviewChoice) *foundryv1.SettleFoundryReviewRequest {
@@ -212,11 +223,14 @@ func TestSettleFoundryReview(t *testing.T) {
 func TestSettleHeldClaim(t *testing.T) {
 	for _, reason := range []string{"low_confidence", "unverified"} {
 		s, db, queries := reviewService(t, heldReview(reason, testClaimKey))
-		out, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(releaseChoice(true)))
+		out, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(releaseChoice(testRead)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		d := out.Decision
+		if d.GetStatementHash() != testRead {
+			t.Fatalf("not bound to what was read: %+v", d)
+		}
 		if len(db.saved) != 1 || d.Kind != "release" || d.GetType() != "" || d.GetDocId() != "doc-a" || d.GetClaimKey() != testClaimKey || d.EntityKey != nil {
 			t.Fatalf("%+v saved %v", d, db.saved)
 		}
@@ -237,16 +251,21 @@ func TestSettleHeldClaimValidation(t *testing.T) {
 	}{
 		"a resolve of a held claim": {heldReview("low_confidence", testClaimKey), noneChoice(), codes.InvalidArgument},
 		"a value of a held claim":   {heldReview("low_confidence", testClaimKey), propChoice(propText("x")), codes.InvalidArgument},
-		"release false":             {heldReview("low_confidence", testClaimKey), releaseChoice(false), codes.InvalidArgument},
-		"a release of a name":       {`{"items":[{"reason":"unresolved","type":"Customer","doc_id":"a","norm_name":"a"}]}`, releaseChoice(true), codes.InvalidArgument},
-		"a release of a conflict":   {`{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name"}]}`, releaseChoice(true), codes.InvalidArgument},
-		"written before claim keys": {`{"items":[{"reason":"low_confidence","doc_id":"doc-a"}]}`, releaseChoice(true), codes.FailedPrecondition},
-		"a key the engine refuses":  {heldReview("low_confidence", "ABC"), releaseChoice(true), codes.FailedPrecondition},
-		"no place":                  {`{"items":[{"reason":"low_confidence","doc_id":"doc-a","claim_key":"` + testClaimKey + `"}]}`, releaseChoice(true), codes.FailedPrecondition},
-		"a value's hold":            {heldReview("attribute_low_confidence", testClaimKey), releaseChoice(true), codes.FailedPrecondition},
-		"a conflict":                {heldReview("conflict", testClaimKey), releaseChoice(true), codes.FailedPrecondition},
-		"a constraint's":            {heldReview("violation", testClaimKey), releaseChoice(true), codes.FailedPrecondition},
-		"an identity":               {heldReview("identity", testClaimKey), releaseChoice(true), codes.FailedPrecondition},
+		"no release":                {heldReview("low_confidence", testClaimKey), &foundryv1.FoundryReviewChoice{Choice: &foundryv1.FoundryReviewChoice_Release{}}, codes.InvalidArgument},
+		"no hash":                   {heldReview("low_confidence", testClaimKey), releaseChoice(""), codes.FailedPrecondition},
+		"a card read before a load": {heldStatement("low_confidence", testClaimKey, `{"other":"reading"}`), releaseChoice(testRead), codes.FailedPrecondition},
+		"another link":              {strings.Replace(heldReview("low_confidence", testClaimKey), "promised_to", "partner_of", 1), releaseChoice(testRead), codes.FailedPrecondition},
+		"no statement":              {heldStatement("low_confidence", testClaimKey, ""), releaseChoice(foundrymodel.FoundryStatementHash("promised_to", "")), codes.FailedPrecondition},
+		"no link":                   {strings.Replace(heldReview("low_confidence", testClaimKey), `"suggested_link":"promised_to",`, "", 1), releaseChoice(foundrymodel.FoundryStatementHash("", testStatement)), codes.FailedPrecondition},
+		"a release of a name":       {`{"items":[{"reason":"unresolved","type":"Customer","doc_id":"a","norm_name":"a"}]}`, releaseChoice(testRead), codes.InvalidArgument},
+		"a release of a conflict":   {`{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name"}]}`, releaseChoice(testRead), codes.InvalidArgument},
+		"written before claim keys": {`{"items":[{"reason":"low_confidence","doc_id":"doc-a"}]}`, releaseChoice(testRead), codes.FailedPrecondition},
+		"a key the engine refuses":  {heldReview("low_confidence", "ABC"), releaseChoice(testRead), codes.FailedPrecondition},
+		"no place":                  {`{"items":[{"reason":"low_confidence","doc_id":"doc-a","claim_key":"` + testClaimKey + `"}]}`, releaseChoice(testRead), codes.FailedPrecondition},
+		"a value's hold":            {heldReview("attribute_low_confidence", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
+		"a conflict":                {heldReview("conflict", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
+		"a constraint's":            {heldReview("violation", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
+		"an identity":               {heldReview("identity", testClaimKey), releaseChoice(testRead), codes.FailedPrecondition},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, db, _ := reviewService(t, tc.review)

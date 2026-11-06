@@ -103,9 +103,9 @@ func ExampleFoundryNormName() {
 }
 
 func TestFoundryReleaseDecision(t *testing.T) {
-	doc, key := "doc-1", strings.Repeat("ab", 32)
+	doc, key, read := "doc-1", strings.Repeat("ab", 32), strings.Repeat("cd", 32)
 	release := FoundryReviewDecision{ID: "d", OntologyID: "o", Kind: FoundryReviewRelease, DocID: &doc, ClaimKey: &key,
-		ClaimSpan: &FoundryClaimSpan{Start: 1, End: 9}, DecidedByUserID: "u"}
+		ClaimSpan: &FoundryClaimSpan{Start: 1, End: 9}, StatementHash: &read, DecidedByUserID: "u"}
 	if err := release.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +122,9 @@ func TestFoundryReleaseDecision(t *testing.T) {
 		"upper case":   func(d *FoundryReviewDecision) { d.ClaimKey = &upper },
 		"too short":    func(d *FoundryReviewDecision) { d.ClaimKey = &short },
 		"no place":     func(d *FoundryReviewDecision) { d.ClaimSpan = nil },
+		"no hash":      func(d *FoundryReviewDecision) { d.StatementHash = nil },
+		"a short hash": func(d *FoundryReviewDecision) { d.StatementHash = &short },
+		"upper hash":   func(d *FoundryReviewDecision) { d.StatementHash = &upper },
 		"an empty one": func(d *FoundryReviewDecision) { d.ClaimSpan = &FoundryClaimSpan{Start: 9, End: 9} },
 		"a name":       func(d *FoundryReviewDecision) { d.NormName = &doc },
 		"an entity":    func(d *FoundryReviewDecision) { d.EntityKey = &doc },
@@ -143,6 +146,22 @@ func TestFoundryReleaseDecision(t *testing.T) {
 	resolve.ClaimKey, resolve.ClaimSpan = nil, &FoundryClaimSpan{End: 1}
 	if resolve.Validate() == nil {
 		t.Fatal("a resolve took a place")
+	}
+	resolve.ClaimSpan, resolve.StatementHash = nil, &read
+	if resolve.Validate() == nil {
+		t.Fatal("a resolve took a statement's hash")
+	}
+}
+
+// The engine's own value (held::Statement::hash), and the site's: a hash that
+// drifted would refuse every approval.
+func TestFoundryStatementHash(t *testing.T) {
+	stored := `{"subject":{"type":"Company","name":"Zoë Ltd"},"object":{"type":"Company","name":"Acme"},"props":{"since":"2024"}}`
+	if got := FoundryStatementHash("partner_of", stored); got != "2c785db79d066c94d16e140edb1a8708834d7ecb12dda32c2f71dcdcc0ab0654" {
+		t.Fatalf("hash %s", got)
+	}
+	if FoundryStatementHash("partner_of", stored) == FoundryStatementHash("rival_of", stored) {
+		t.Fatal("the link is what the card shows too")
 	}
 }
 

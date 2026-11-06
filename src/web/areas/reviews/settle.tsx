@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   FoundryLoad,
   FoundryReviewChoice,
@@ -18,6 +18,7 @@ import {
   loadRead,
   matchesReview,
   propValueText,
+  statementHash,
   type Candidate,
   type Settle,
   type Settleable,
@@ -49,22 +50,15 @@ function Candidates({
 /** What approving a held claim writes: its ends in order, its link, its properties. */
 function ClaimWritten({ settle }: { settle: ReleaseSettle }) {
   const { link, statement: s, named, differs } = settle;
-  const props = Object.entries(s?.props ?? {});
+  const props = Object.entries(s.props);
   return (
     <>
-      {s ? (
-        <p>
-          Approving writes: <strong>{s.subject.name}</strong> ({s.subject.type}){" "}
-          <span aria-label="to">→</span> {link && <code>{link}</code>}{" "}
-          <span aria-label="to">→</span> <strong>{s.object.name}</strong> (
-          {s.object.type})
-        </p>
-      ) : (
-        <p>
-          Approving writes this sentence’s {link ? <code>{link}</code> : "link"}{" "}
-          as a fact.
-        </p>
-      )}
+      <p>
+        Approving writes: <strong>{s.subject.name}</strong> ({s.subject.type}){" "}
+        <span aria-label="to">→</span> <code>{link}</code>{" "}
+        <span aria-label="to">→</span> <strong>{s.object.name}</strong> (
+        {s.object.type})
+      </p>
       {props.length > 0 && (
         <ul aria-label="Written with it">
           {props.map(([name, value]) => (
@@ -112,6 +106,12 @@ export function SettleReview({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const s = review.settle;
+  const held = s?.kind === "release" ? s : undefined;
+  const read = useQuery({
+    queryKey: ["statement-hash", held?.link, held?.stored],
+    queryFn: held ? () => statementHash(held.link, held.stored) : skipToken,
+    staleTime: Infinity,
+  });
   if (!s || s.kind === "stale")
     return (
       <>
@@ -146,6 +146,12 @@ export function SettleReview({
           });
   const editable = !!load?.current;
   const saved = query.data?.find((d) => matchesReview(d, s));
+  // An approval of what this claim said before: the engine refuses it, and the
+  // person is to read what it says now.
+  const moved =
+    saved?.kind === "release" &&
+    !!read.data &&
+    saved.statementHash !== read.data;
   // A decision of this place under another key: the claim's key moved, so the
   // load found no review of it (the engine's release_missed).
   const earlier =
@@ -213,7 +219,13 @@ export function SettleReview({
       {!editable && (
         <p className="on-muted">Open the current load to settle this review.</p>
       )}
-      {saved && (
+      {moved && (
+        <p role="status">
+          This claim reads differently from what was approved, so it stays held.
+          Read it again before approving it.
+        </p>
+      )}
+      {saved && !moved && (
         <p role="status">
           {!editable
             ? "A decision is saved for this review."
@@ -230,29 +242,37 @@ export function SettleReview({
           changed since. Read it again before approving it.
         </p>
       )}
-      {canManage(role) && editable && isRelease && !saved && !s.differs && (
-        <div className="on-stack">
-          <p className="on-muted">
-            On your word, from this sentence alone. Applies from the next load.
-            Reload to apply.
-          </p>
-          {(error || query.error) && (
-            <p role="alert" className="hf-form-error">
-              {error || query.error?.message}
+      {canManage(role) &&
+        editable &&
+        isRelease &&
+        (!saved || moved) &&
+        !s.differs && (
+          <div className="on-stack">
+            <p className="on-muted">
+              On your word, from this sentence alone. Applies from the next
+              load. Reload to apply.
             </p>
-          )}
-          <div className="hf-form-actions">
-            <Button
-              size="sm"
-              disabled={pending}
-              pending={pending}
-              onClick={() => void save({ release: true })}
-            >
-              Approve
-            </Button>
+            {(error || query.error) && (
+              <p role="alert" className="hf-form-error">
+                {error || query.error?.message}
+              </p>
+            )}
+            <div className="hf-form-actions">
+              <Button
+                size="sm"
+                disabled={pending || !read.data}
+                pending={pending}
+                onClick={() =>
+                  void (
+                    read.data && save({ release: { statementHash: read.data } })
+                  )
+                }
+              >
+                Approve
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
       {canManage(role) && editable && !isRelease && (
         <form
           className="on-stack"

@@ -1372,10 +1372,17 @@ message FoundryReviewChoice {
   oneof choice {
     FoundryResolveChoice resolve = 1;
     FoundryPropValue prop = 3;
-    // Must be true. A person's word that what the review holds back holds:
-    // the next load writes what it states as a fact.
-    bool release = 4;
+    // A person's word that what the review holds back holds: the next load
+    // writes what it states as a fact.
+    FoundryReleaseChoice release = 4;
   }
+}
+// A release of the statement a person read. A review that reads otherwise now
+// is refused, and so is a load that reads it otherwise.
+message FoundryReleaseChoice {
+  // SHA-256, in lowercase hexadecimal, of the review's suggested_link, a unit
+  // separator (0x1f) and its stored statement.
+  string statement_hash = 1;
 }
 // A prop decision's value: null removes the property; any other must be of
 // the kind the property's type takes, as the engine reads it (no coercion).
@@ -1416,11 +1423,13 @@ message FoundryReviewDecision {
   string decided_by_user_id = 9;
   google.protobuf.Timestamp decided_at = 10;
   // The review a release decision releases, as it stores them: its claim's
-  // key, and its quote's section and byte range in the section.
+  // key, its quote's section and byte range in the section, and the hash of
+  // the statement the person read.
   optional string claim_key = 12;
   optional uint32 claim_section = 13;
   optional uint32 claim_start = 14;
   optional uint32 claim_end = 15;
+  optional string statement_hash = 16;
 }
 
 // Helix Foundry model providers: where a workspace's model calls go
