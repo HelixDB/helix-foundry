@@ -727,6 +727,30 @@ func TestGenerator(t *testing.T) {
 		}
 	})
 
+	// INTERNAL is the agent's own bug on this input (a panic it caught),
+	// whenever it comes: retried, marked for the worker's cap, worded for
+	// the customer with its code and description kept in Err only.
+	t.Run("marks the agent's internal error, before or after events", func(t *testing.T) {
+		const description = "the turn failed: a panic at crates/x.rs:1:2: boom"
+		for name, events := range map[string][]string{"before events": nil, "after events": testEvents[:1]} {
+			h := newHarness(t, func(stream agentv1.Agent_TurnServer) error {
+				if err := send(stream, events, ""); err != nil {
+					return err
+				}
+				return status.Error(codes.Internal, description)
+			})
+			_, err := h.generator.Run(ctx, generation())
+			f := asFailure(t, err)
+			if f.Permanent || !f.Internal || f.Message != "the ontology agent failed to draft this ontology on this input; Helix will retry once" ||
+				strings.Contains(f.Message, description) || strings.Contains(f.Message, "panic") {
+				t.Fatalf("%s: failure %+v", name, f)
+			}
+			if s := status.Convert(f.Err); s.Code() != codes.Internal || s.Message() != description {
+				t.Fatalf("%s: the cause was lost: %v", name, f.Err)
+			}
+		}
+	})
+
 	// Readers fetch a version through gRPC clients with a 4 MiB limit.
 	t.Run("fails a draft too large to store", func(t *testing.T) {
 		big := strings.Replace(testResult(`"done"`, 1), `"summary":"built a draft"`, `"summary":"`+strings.Repeat("x", maxDefinitionBytes)+`"`, 1)
@@ -887,6 +911,47 @@ func TestGenerator(t *testing.T) {
 			t.Fatalf("cache holds %v", entries)
 		}
 	})
+}
+
+// turnFailure keeps every code's class: the agent's refusals and a draft too
+// large fail for good, INTERNAL is retried as the agent's internal error
+// before or after events, and the rest is retried as an unavailable agent.
+func TestTurnFailure(t *testing.T) {
+	const unavailable = "the ontology agent is unavailable; Helix will retry"
+	panicked := status.Error(codes.Internal, "the turn failed: a panic at crates/x.rs:1:2: boom")
+	internal := ontologygen.Failure{Message: "the ontology agent failed to draft this ontology on this input; Helix will retry once", Internal: true}
+	for name, tc := range map[string]struct {
+		err         error
+		afterEvents bool
+		want        ontologygen.Failure
+	}{
+		"internal before events":    {panicked, false, internal},
+		"internal after events":     {panicked, true, internal},
+		"unavailable":               {status.Error(codes.Unavailable, "shutting down"), false, ontologygen.Failure{Message: unavailable}},
+		"busy":                      {status.Error(codes.ResourceExhausted, "busy"), false, ontologygen.Failure{Message: unavailable}},
+		"a deadline":                {status.Error(codes.DeadlineExceeded, "deadline"), true, ontologygen.Failure{Message: unavailable}},
+		"unknown":                   {status.Error(codes.Unknown, "?"), true, ontologygen.Failure{Message: unavailable}},
+		"a stream without a result": {ErrNoResult, true, ontologygen.Failure{Message: unavailable}},
+		"past the client's limit": {status.Error(codes.ResourceExhausted, "too large"), true,
+			ontologygen.Failure{Message: "the ontology agent's draft is larger than 32 MiB", Permanent: true}},
+		"past the agent's limit": {status.Error(codes.OutOfRange, "too large"), false,
+			ontologygen.Failure{Message: "the ontology agent's draft is larger than 32 MiB", Permanent: true}},
+		"invalid argument": {status.Error(codes.InvalidArgument, "no"), false, ontologygen.Failure{Message: "the ontology agent refused the request", Permanent: true}},
+		"unpriced models": {status.Error(codes.FailedPrecondition, "no"), false,
+			ontologygen.Failure{Message: "the ontology agent can't draft on these models", Permanent: true}},
+		"unimplemented": {status.Error(codes.Unimplemented, "no"), false, ontologygen.Failure{Message: "the ontology agent does not serve turns", Permanent: true}},
+	} {
+		f := asFailure(t, turnFailure(tc.err, tc.afterEvents))
+		if f.Message != tc.want.Message || f.Permanent != tc.want.Permanent || f.Internal != tc.want.Internal || f.Err != tc.err {
+			t.Fatalf("%s: failure %+v, want %+v", name, f, tc.want)
+		}
+	}
+}
+
+// InternalMessage names the step and the one retry, nothing of the cause.
+func ExampleInternalMessage() {
+	fmt.Println(InternalMessage("extract the documents"))
+	// Output: the ontology agent failed to extract the documents on this input; Helix will retry once
 }
 
 // TestSnapshotCacheBudget bounds the snapshots one attempt unpacks: the

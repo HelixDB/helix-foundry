@@ -95,12 +95,14 @@ type documentStore interface {
 // failure is why an attempt did not succeed, worded for the customer.
 // Permanent ends the job; Budget ends it as budget_exhausted; anything else
 // is retried with backoff, and an Uncounted one (the database still building
-// an index) gives its attempt back.
+// an index) gives its attempt back. An Internal one (the agent's own error,
+// gRPC INTERNAL) is retried within ontologyagent.InternalAttempts attempts.
 type failure struct {
 	Message   string
 	Permanent bool
 	Budget    bool
 	Uncounted bool
+	Internal  bool
 	// Unsupported is an apply the agent can't do in place (unsupported).
 	Unsupported bool
 	Err         error
@@ -1372,7 +1374,8 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 // may get through on another attempt, and the agent skips what is already
 // stored or deleted. FAILED_PRECONDITION is Extract on models the agent
 // can't run (a provider it doesn't call, a model it can't price): no retry
-// fixes that.
+// fixes that. INTERNAL is the agent's own bug on this input: retried within
+// ontologyagent.InternalAttempts.
 func callFailure(what string, err error) error {
 	var f *failure
 	if errors.As(err, &f) {
@@ -1387,6 +1390,8 @@ func callFailure(what string, err error) error {
 		return permanent("the ontology agent can't run these models, so it can't "+what, err)
 	case codes.Aborted:
 		return retry("another job is writing this database; Helix will retry", err)
+	case codes.Internal:
+		return &failure{Message: ontologyagent.InternalMessage(what), Internal: true, Err: err}
 	}
 	return retry("the ontology agent is unavailable; Helix will retry", err)
 }

@@ -29,7 +29,10 @@ type Result struct {
 type Failure struct {
 	Message   string
 	Permanent bool
-	Err       error
+	// Internal is the ontology agent's own error (gRPC INTERNAL): retried,
+	// within ontologyagent.InternalAttempts attempts in all.
+	Internal bool
+	Err      error
 }
 
 func (f *Failure) Error() string {
