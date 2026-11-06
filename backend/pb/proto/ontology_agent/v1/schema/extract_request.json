@@ -218,6 +218,62 @@
             "prop",
             "value"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "claim_key": {
+              "description": "The claim's key, as the review stores it.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "decided_at": {
+              "description": "When it was settled.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "decision_id": {
+              "description": "The decision's id, as the backend keeps it.",
+              "type": "string"
+            },
+            "doc_id": {
+              "description": "The document whose review holds the claim.",
+              "type": "string"
+            },
+            "end": {
+              "description": "Where the review's quote ends in its section, after `start`.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "release"
+            },
+            "section": {
+              "description": "The section of the review's quote, as the review stores it.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "start": {
+              "description": "Where the review's quote starts in its section, as the review stores it.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "doc_id",
+            "claim_key",
+            "section",
+            "start",
+            "end",
+            "decision_id",
+            "decided_at"
+          ]
         }
       ]
     },

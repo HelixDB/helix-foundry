@@ -73,7 +73,7 @@ var testEntityKey = "scus_1"
 
 // testCounts are a document's counts as the agent sends them.
 const testCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":1,` +
-	`"prop_conflicts":1,"created":1,"identifiers_unverified":2,"attributes_over_entries":3,` +
+	`"prop_conflicts":1,"created":1,"identifiers_unverified":2,"attributes_over_entries":3,"released":0,"release_refused":0,"release_missed":0,` +
 	`"resolved":{"user":0,"adjudicated":0,"identifier":1,"name":1,"alias":0,"created":1}}`
 
 func TestGraphContract(t *testing.T) {
@@ -306,7 +306,7 @@ func TestGraphContract(t *testing.T) {
 		counts := `"counts":` + testCounts
 		usage := `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`
 		events := []string{
-			`{"event":"extract_started","contract_version":"4.9.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
+			`{"event":"extract_started","contract_version":"4.11.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
 			`{"event":"artifact","doc_id":"doc-1","key":"abc_DEF-1","json":"{\"sections\":[]}"}`,
 			`{"event":"document","doc_id":"doc-1","outcome":{"kind":"ingested"},"text_bytes":120,"sections":2,` + counts + `,` + usage + `}`,
 			`{"event":"document","doc_id":"doc-2","outcome":{"kind":"duplicate","of":"doc-1"},"text_bytes":120,"sections":0,` + counts + `,` + usage + `}`,
@@ -382,7 +382,7 @@ func TestGraphContract(t *testing.T) {
 	t.Run("ingest events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "ingest_event.json")
 		for _, raw := range []string{
-			`{"event":"ingest_started","contract_version":"4.9.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.11.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":1000}}`, `{"event":"sweep_page","entities":50}`,
 			`{"event":"ingest_finished"}`,
 		} {
@@ -433,7 +433,7 @@ func TestDeleteLoadContract(t *testing.T) {
 	t.Run("delete load events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "delete_load_event.json")
 		for _, raw := range []string{
-			`{"event":"delete_started","contract_version":"4.9.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
+			`{"event":"delete_started","contract_version":"4.11.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
 			`{"event":"deleted","label":"Customer","element":"node","count":3}`, `{"event":"delete_finished"}`,
 		} {
 			if err := contracttest.Validate(t, schema, []byte(raw)); err != nil {

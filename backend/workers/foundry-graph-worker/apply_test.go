@@ -22,7 +22,7 @@ func applyJob() *model.FoundryGraphJob {
 // ingestApplied ends an Ingest done, the diff having changed one row and added another.
 func ingestApplied(req string, stream agentv1.Agent_IngestServer) error {
 	return ingestEvents(stream, []string{
-		`{"event":"ingest_started","contract_version":"4.9.0"}`,
+		`{"event":"ingest_started","contract_version":"4.11.0"}`,
 		`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2,"outcome":"loaded"},"diff":{"added":1,"changed":1,"removed":0,"unchanged":0}}`,
 		`{"event":"ingest_finished"}`,
 	}, `{"status":"done","report":{"mappings":[]},"applied":[{"stream":"customers","snapshot":"s1","change_seq":7,"added":1,"changed":1,"removed":0}]}`)
