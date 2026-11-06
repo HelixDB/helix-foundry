@@ -1,7 +1,17 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { dataTree, expect, explorer, mock, signIn, test } from "./support/mock";
+import {
+  CONTRACT,
+  dataTree,
+  expect,
+  file,
+  loadVersion3,
+  makeContractsCurrent,
+  mock,
+  signIn,
+  test,
+  uploadInData,
+} from "./support/mock";
 
 // Every main page in both themes: a screenshot of each for review, saved in
 // test-results/themes/<page>.<theme>.png, and a check that its text keeps
@@ -116,42 +126,9 @@ test("every main page in both themes", async ({ page }, info) => {
   await signIn(page);
 
   // A current agent draft, a document and a load, so every page has data.
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto("/data");
-  await explorer(page)
-    .getByLabel("Choose documents")
-    .setInputFiles({
-      name: "contract.md",
-      mimeType: "text/markdown",
-      buffer: readFileSync(
-        new URL("../../mock/fixtures/contract.md", import.meta.url),
-      ),
-    });
-  await expect(
-    page.getByRole("list", { name: "Uploads" }).getByRole("listitem").first(),
-  ).toContainText("Uploaded");
-  await page.goto(`${O}#loads`);
-  await page
-    .getByRole("main")
-    .getByRole("button", { name: "Load data" })
-    .first()
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  // On the load's page: the overview's "isn’t loaded yet" would pass for
-  // "Loaded", and leaving it would drop the load before it is created.
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
+  await makeContractsCurrent(page);
+  await uploadInData(page, [file("contract.md", CONTRACT)]);
+  await loadVersion3(page);
   const load = new URL(page.url()).pathname;
 
   await visit("data", "/data");

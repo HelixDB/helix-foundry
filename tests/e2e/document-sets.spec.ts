@@ -1,11 +1,12 @@
-import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import {
+  CONTRACT,
   choose,
   createdOntology,
   dataTree,
   expect,
   file,
+  makeContractsCurrent,
   mock,
   signIn,
   signInToNewWorkspace,
@@ -31,9 +32,6 @@ import {
 
 const O = "/ontology/ont_acme_contracts",
   R = "/ontology/ont_acme_renewals";
-const CONTRACT = readFileSync(
-  new URL("../../mock/fixtures/contract.md", import.meta.url),
-);
 // A set on the Data page: what it holds and which ontologies read it.
 const card = (page: Page, name: string) =>
   page
@@ -47,18 +45,6 @@ const row = (page: Page, name: string) =>
     .getByRole("grid", { name: "Documents" })
     .getByRole("row")
     .filter({ hasText: name });
-
-// Makes the contracts draft (version 3) current: its scope and route read
-// General.
-async function makeContractsCurrent(page: Page) {
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-}
 
 // Loads an ontology's current version from its overview, to the end.
 async function load(page: Page, o: string, dialog: string) {

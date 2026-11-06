@@ -1,5 +1,11 @@
 import type { Page } from "@playwright/test";
-import { expect, mock, signIn, test } from "./support/mock";
+import {
+  expect,
+  makeContractsCurrent,
+  mock,
+  signIn,
+  test,
+} from "./support/mock";
 
 // Suggestions: what audits of the current load found the ontology lacks,
 // opened from the ontology's pages, each with its kind, support, examples
@@ -20,15 +26,7 @@ const UNDO = 6_000;
 // once more. It returns once the load is made: the page may then go
 // anywhere, as the load goes on in the mock.
 async function load(page: Page, again = false) {
-  if (!again) {
-    await page.goto(`${O}/versions/ver_seed_3`);
-    await page.getByRole("button", { name: "Make current" }).click();
-    await page
-      .getByRole("dialog", { name: "Make version 3 current?" })
-      .getByRole("button", { name: "Make current" })
-      .click();
-    await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  }
+  if (!again) await makeContractsCurrent(page);
   await page.goto(`${O}#loads`);
   await page
     .getByRole("main")

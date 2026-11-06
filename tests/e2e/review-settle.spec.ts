@@ -4,10 +4,13 @@ import {
   choose,
   csrfToken,
   expect,
-  explorer,
+  file,
+  loadVersion3,
+  makeContractsCurrent,
   mock,
   signIn,
   test,
+  uploadInData,
 } from "./support/mock";
 
 const O = "/ontology/ont_acme_contracts",
@@ -16,51 +19,15 @@ const VARIANT =
   "# Variant contract\n\nGlobexx Corporation signed. The Agreement runs for 24 months.\n";
 const entity = (type: string, identity: string) =>
   `${X}/entities/${Buffer.from(`${type}\0${identity}`).toString("base64url")}`;
-async function load(page: Page) {
-  await page.goto(`${O}#loads`);
-  await page
-    .getByRole("button", { name: "Load data", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 30_000 });
-  return /\/loads\/([^/?]+)/.exec(page.url())![1]!;
-}
 async function setup(
   page: Page,
   files = [{ name: "variant.md", text: VARIANT }],
 ) {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current", exact: true }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current", exact: true })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto("/data");
-  for (const f of files) {
-    await explorer(page)
-      .getByLabel("Choose documents")
-      .setInputFiles({
-        name: f.name,
-        mimeType: "text/markdown",
-        buffer: Buffer.from(f.text),
-      });
-    await expect(
-      page
-        .getByRole("list", { name: "Uploads" })
-        .getByRole("listitem", { name: f.name }),
-    ).toContainText("Uploaded");
-  }
-  return load(page);
+  await makeContractsCurrent(page);
+  for (const f of files) await uploadInData(page, [file(f.name, f.text)]);
+  return loadVersion3(page);
 }
 async function openDocument(page: Page) {
   await page.goto(`${O}/documents`);
@@ -72,6 +39,15 @@ async function openDocument(page: Page) {
 }
 const reviews = (page: Page) =>
   page.getByRole("list", { name: "Needs review" });
+/** Settles the open document's review as Not in data, from its Needs review tab. */
+async function settleNotInData(page: Page) {
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await choose(page.getByLabel("Link this name to"), "Not in data");
+  await page.getByRole("button", { name: "Settle review" }).click();
+  await expect(
+    page.getByText("Decision saved. Reload to apply."),
+  ).toBeVisible();
+}
 
 test("settles a suggested candidate, reloads linked, and removes the saved decision", async ({
   page,
@@ -115,7 +91,7 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
   await expect(reviews(page)).toContainText(
     "Names something that isn’t in your data",
   );
-  await load(page);
+  await loadVersion3(page);
   await page.goto(doc);
   await page.getByRole("tab", { name: /^Entities/ }).click();
   await expect(page.getByText("Linked by a person")).toBeVisible();
@@ -146,7 +122,7 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
   await expect(
     page.getByText("Decision removed. Reload to apply."),
   ).toBeVisible();
-  await load(page);
+  await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
   await expect(page.getByLabel("Link this name to")).toBeVisible();
 });
@@ -156,13 +132,8 @@ test("settles not-in-data without creating an entity or link", async ({
 }) => {
   await setup(page);
   const doc = await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
-  await load(page);
+  await settleNotInData(page);
+  await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
   await expect(
@@ -220,7 +191,7 @@ test("picks a property conflict value and keeps its quotes after reload", async 
   ).toBeVisible();
   await page.getByRole("tab", { name: /^Overview/ }).click();
   await expect(page.locator(".ex-props")).toContainText("No value");
-  await load(page);
+  await loadVersion3(page);
   await page.goto(at);
   await expect(page.locator(".ex-props")).toContainText("36");
   await expect(page.locator(".ex-props")).toContainText("24");
@@ -248,7 +219,7 @@ test("links an adjudicated mention to its review and undoes the link on reload",
   await expect(
     page.getByText("Decision saved. Reload to apply."),
   ).toBeVisible();
-  await load(page);
+  await loadVersion3(page);
   await page.goto(`${doc}?tab=entities`);
   await expect(
     page.getByRole("region", { name: "Customer", exact: true }),
@@ -262,12 +233,7 @@ test("members can read candidate reviews but cannot settle or remove decisions",
 }) => {
   await setup(page);
   const doc = await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
+  await settleNotInData(page);
   await page.context().clearCookies();
   await signIn(page, "alan@example.com");
   await page.goto(`${doc}?tab=review`);
@@ -288,12 +254,7 @@ test("reconciles a decision removed elsewhere without keeping the saved status",
 }) => {
   await setup(page);
   await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
+  await settleNotInData(page);
   const decisions = page.getByRole("list", { name: "Saved decisions" });
   await expect(decisions).toContainText("Not in data");
   // Other failures leave the saved row available to retry.
@@ -450,7 +411,7 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
   await expect(
     review.getByText("Decision saved. Reload to apply."),
   ).toBeVisible();
-  await load(page);
+  await loadVersion3(page);
   await page.goto(globex);
   await expect(page.locator(".ex-props")).toContainText("GBP");
   await page.getByRole("tab", { name: /^Needs review/ }).click();

@@ -1,6 +1,11 @@
-import { readFileSync } from "node:fs";
 import type { Browser, Page } from "@playwright/test";
-import { expect, explorer, mock, signIn, test } from "./support/mock";
+import {
+  expect,
+  mock,
+  signIn,
+  test,
+  uploadAndLoadContract,
+} from "./support/mock";
 
 // Settings › Access and restricted mode: an owner makes an agent's key and
 // gives it sources, then sees what it can read; restricts a member, who
@@ -17,47 +22,6 @@ const O = "/ontology/ont_acme_contracts";
 /** A customer's id in an entity page's address. */
 const customer = (key: string) =>
   Buffer.from(`Customer\0k:${key}`).toString("base64url");
-const CONTRACT = readFileSync(
-  new URL("../../mock/fixtures/contract.md", import.meta.url),
-);
-
-// Uploads the contract into General, makes version 3 current and loads it:
-// Customer contracts' current load reads Stripe's customers and invoices
-// and General.
-async function loadContract(page: Page) {
-  await page.goto("/data");
-  await explorer(page).getByLabel("Choose documents").setInputFiles({
-    name: "contract.md",
-    mimeType: "text/markdown",
-    buffer: CONTRACT,
-  });
-  await expect(
-    page
-      .getByRole("list", { name: "Uploads" })
-      .getByRole("listitem", { name: "contract.md" }),
-  ).toContainText("Uploaded");
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-}
 
 /** Opens a principal's sources from its row on Settings › Access. */
 async function openSources(page: Page, tab: string, name: string) {
@@ -96,7 +60,7 @@ test("an agent's key reads the ontologies its sources cover", async ({
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.goto("/settings/access");
   await expect(page.getByRole("tab", { name: "Agents" })).toHaveAttribute(
     "aria-selected",
@@ -157,7 +121,7 @@ test("a restricted member sees only what their sources cover", async ({
 }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   // Eve is restricted; Alan queries databases, so he can't be.
   await page.goto("/settings/access?tab=people");
   const eve = page.getByRole("switch", { name: "Restrict Eve Adler" });
@@ -335,7 +299,7 @@ test("a member who can't query reads only what their sources cover", async ({
 }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   // Alan can't query databases: he reads through what he is given.
   await mock.configure({ memberQueryRead: false });
   const sources = await openSources(page, "people", "Alan Turing");
@@ -404,7 +368,7 @@ test("a member who can't query names only what their sources fill", async ({
 }) => {
   await mock.configure({ loadStepMs: 200, invoiceOnlyCustomers: 90 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await mock.configure({ memberQueryRead: false });
   const sources = await openSources(page, "people", "Alan Turing");
   await sources
@@ -448,7 +412,7 @@ test("taking every source away takes the ontology away", async ({
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
   const sources = await openSources(page, "people", "Eve Adler");
   await sources.getByRole("checkbox", { name: /^Stripe/ }).uncheck();
@@ -486,7 +450,7 @@ test("someone whose sources hold part of an ontology reads that part", async ({
     invoiceOnlyCustomers: 90,
   });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const sources = await openSources(page, "people", "Eve Adler");
   await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
   await sources
@@ -615,7 +579,7 @@ test("someone who reads part of an ontology is told plainly that its past isn't 
     askOutcome: "cannot_answer",
   });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const sources = await openSources(page, "people", "Eve Adler");
   await sources.getByRole("checkbox", { name: /^General/ }).uncheck();
   await sources
@@ -660,7 +624,7 @@ test("someone who holds all of an ontology reads an uncovered time as the load's
     askOutcome: "cannot_answer",
   });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
   await page.close();
 
@@ -705,7 +669,7 @@ test("someone whose sources hold all of a type pages past the first read", async
 }) => {
   await mock.configure({ loadStepMs: 200, invoiceOnlyCustomers: 150 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
   await page.close();
 
@@ -735,7 +699,7 @@ test("someone who holds a type whole pages it, beside one they hold part of", as
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   // Stripe without the documents: invoices are whole; a customer's currency,
   // which documents may state too, isn't.
   const sources = await openSources(page, "people", "Eve Adler");
@@ -770,7 +734,7 @@ test("a busy or paused database reads as what it is, through grants", async ({
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
   await page.close();
 
@@ -798,7 +762,7 @@ test("access changed elsewhere shows on coming back to the tab", async ({
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
   const as = await asEve(browser);
   await expect(as).toHaveURL(/\/ask\/ont_acme_contracts/);
@@ -823,7 +787,7 @@ test("offers a grantee nothing of the sample or of getting into production", asy
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
   await page.close();
 
@@ -863,7 +827,7 @@ test("a member reading through grants isn't sent to query the database", async (
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await mock.configure({ memberQueryRead: false });
   const sources = await openSources(page, "people", "Alan Turing");
   await sources.getByRole("checkbox", { name: /^Stripe/ }).check();
@@ -953,7 +917,7 @@ test("giving a member sources restricts them, and taking them away widens nothin
 }) => {
   await mock.configure({ loadStepMs: 200, memberQueryRead: false });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.goto("/settings/access?tab=people");
   const row = page.getByRole("listitem", { name: "Alan Turing" }),
     alan = page.getByRole("switch", { name: "Restrict Alan Turing" });
@@ -1158,7 +1122,7 @@ test("a team's confirmation still asks when its members can't be read", async ({
 test("nothing changes for anyone with no grants", async ({ page, browser }) => {
   await mock.configure({ loadStepMs: 200, invoiceOnlyCustomers: 90 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.close();
 
   const before = (await mock.stats()).requests.length;
@@ -1185,7 +1149,7 @@ test("nothing changes for anyone with no grants", async ({ page, browser }) => {
 test("asks before a change that would cut a grantee off", async ({ page }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
 
   // Version 2 reads the Shop database, which Eve isn't given: making it
@@ -1275,7 +1239,7 @@ test("asks before making an older load current cuts a grantee off", async ({
 test("says who would keep part of what a change takes", async ({ page }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await shareWithEve(page);
   // Without Stripe, Eve's General is still part of Customer contracts.
   await page.goto("/data/connections/conn_acme_stripe");

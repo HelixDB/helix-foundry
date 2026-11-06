@@ -1,9 +1,9 @@
 import type { Browser, Page } from "@playwright/test";
 import {
-  csrfToken,
   dataTree,
   expect,
   mock,
+  postToWfe,
   signIn,
   signInToNewWorkspace,
   test,
@@ -17,23 +17,29 @@ import {
 const dialog = (page: Page) => page.locator("dialog[open]");
 const SYNCED = { timeout: 15_000 };
 
-/** A POST to the WFE through the BFF, as an agent's MCP call makes it. */
-async function post(page: Page, path: string, data: object) {
-  const res = await page.request.post(`/papi${path}`, {
-    data,
-    headers: {
-      origin: new URL(page.url()).origin,
-      "x-helix-csrf": await csrfToken(page),
-    },
-  });
-  expect(res.status(), await res.text()).toBe(200);
-  return res.json();
-}
-
 /** Starts a sign-in as the signed-in user, as the agent's tool does. */
 async function agentSignIn(page: Page, ws: string, body: object) {
-  return (await post(page, `/v1/workspaces/${ws}/foundry/sign-ins`, body))
+  return (await postToWfe(page, `/v1/workspaces/${ws}/foundry/sign-ins`, body))
     .signIn as { id: string };
+}
+
+/**
+ * Opens the link an agent's GitHub sign-in in Globex, the new workspace,
+ * sends its user to, the sign-in made with `config`: Data's form over the
+ * wizard. The workspace's id and the sign-in.
+ */
+async function openGlobexGitHubLink(page: Page, config?: object) {
+  const ws = (
+    (await (await page.request.get("/papi/v1/workspaces")).json())
+      .workspaces as { id: string; displayName: string }[]
+  ).find((w) => w.displayName === "Globex")!.id;
+  const s = await agentSignIn(page, ws, {
+    kind: "github",
+    name: "Globex GitHub",
+    config,
+  });
+  await page.goto(`/data?add=github&sign_in=${s.id}&workspace=${ws}`);
+  return { ws, s };
 }
 
 /** The provider's consent page: Authorize (as `account`) or Cancel. */
@@ -274,16 +280,9 @@ test("opens an agent's link during onboarding and comes back to the wizard with 
   page,
 }) => {
   await signInToNewWorkspace(page);
-  const ws = (
-    (await (await page.request.get("/papi/v1/workspaces")).json())
-      .workspaces as { id: string; displayName: string }[]
-  ).find((w) => w.displayName === "Globex")!.id;
-  const s = await agentSignIn(page, ws, {
-    kind: "github",
-    name: "Globex GitHub",
-    config: { github: { repos: ["globex/api"], reviewDays: 30 } },
+  const { ws, s } = await openGlobexGitHubLink(page, {
+    github: { repos: ["globex/api"], reviewDays: 30 },
   });
-  await page.goto(`/data?add=github&sign_in=${s.id}&workspace=${ws}`);
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(dialog(page)).toContainText(
     "Your agent asked to connect GitHub to Globex.",
@@ -633,7 +632,7 @@ test("comes back to an ontology's setup with what it chose", async ({
   page,
 }) => {
   await signIn(page);
-  const { ontology } = await post(
+  const { ontology } = await postToWfe(
     page,
     "/v1/workspaces/ws_acme/foundry/ontologies",
     { name: "Billing", tenantId: "ten_acme_sandbox", clientToken: "billing-1" },
@@ -877,15 +876,7 @@ test("stops a sign-in from the wizard at GitHub's install step, and comes back t
 }) => {
   await signInToNewWorkspace(page);
   await mock.configure({ githubInstalled: false });
-  const ws = (
-    (await (await page.request.get("/papi/v1/workspaces")).json())
-      .workspaces as { id: string; displayName: string }[]
-  ).find((w) => w.displayName === "Globex")!.id;
-  const s = await agentSignIn(page, ws, {
-    kind: "github",
-    name: "Globex GitHub",
-  });
-  await page.goto(`/data?add=github&sign_in=${s.id}&workspace=${ws}`);
+  await openGlobexGitHubLink(page);
   await dialog(page)
     .getByRole("button", { name: "Connect with GitHub" })
     .click();
@@ -923,15 +914,7 @@ test("skips GitHub's install step back to the wizard, and says what an owner was
 }) => {
   await signInToNewWorkspace(page);
   await mock.configure({ githubInstalled: false });
-  const ws = (
-    (await (await page.request.get("/papi/v1/workspaces")).json())
-      .workspaces as { id: string; displayName: string }[]
-  ).find((w) => w.displayName === "Globex")!.id;
-  const s = await agentSignIn(page, ws, {
-    kind: "github",
-    name: "Globex GitHub",
-  });
-  await page.goto(`/data?add=github&sign_in=${s.id}&workspace=${ws}`);
+  await openGlobexGitHubLink(page);
   await dialog(page)
     .getByRole("button", { name: "Connect with GitHub" })
     .click();

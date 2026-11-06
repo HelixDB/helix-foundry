@@ -1,10 +1,13 @@
 import type { Page } from "@playwright/test";
 import {
+  addBillingReplica,
   createFirstOntology,
+  createWorkspace,
   csrfToken,
   dataTree as tree,
   expect,
   mock,
+  postToWfe,
   signIn,
   signInToNewWorkspace,
   startFirstOntology,
@@ -778,37 +781,12 @@ test("finds connections and tables, and keeps Data routes on the allowlist", asy
   expect((await mock.stats()).requests.join("\n")).not.toMatch(/PUT|secret/);
 });
 
-// A second PostgreSQL connection, created through the BFF as the form does.
-async function addPostgres(page: Page, name: string) {
-  const created = await page.request.post(
-    "/papi/v1/workspaces/ws_acme/foundry/connectors",
-    {
-      data: {
-        name,
-        config: {
-          postgres: {
-            host: "billing.acme.example.com",
-            database: "billing",
-            user: "ro",
-            password: "pw",
-          },
-        },
-      },
-      headers: {
-        origin: new URL(page.url()).origin,
-        "x-helix-csrf": await csrfToken(page),
-      },
-    },
-  );
-  expect(created.status()).toBe(200);
-}
-
 test("lists connections in a folder per kind that keeps closed", async ({
   page,
 }) => {
   await signIn(page);
   await page.goto("/data");
-  await addPostgres(page, "Billing replica");
+  await addBillingReplica(page);
   await page.reload();
   // Folders in the kinds' order, connections as they were created, then
   // the documents.
@@ -1310,21 +1288,12 @@ test("keeps a stored S3 role when role access or the kinds are missing, and rena
   page,
 }) => {
   await signIn(page);
-  const created = await page.request.post(
-    "/papi/v1/workspaces/ws_acme/foundry/connectors",
-    {
-      data: {
-        name: "Exports",
-        config: { s3: { bucket: "acme-exports", role: { roleArn: ROLE } } },
-      },
-      headers: {
-        origin: new URL(page.url()).origin,
-        "x-helix-csrf": await csrfToken(page),
-      },
-    },
-  );
-  expect(created.status()).toBe(200);
-  const id = (await created.json()).connector.id;
+  const id = (
+    await postToWfe(page, "/v1/workspaces/ws_acme/foundry/connectors", {
+      name: "Exports",
+      config: { s3: { bucket: "acme-exports", role: { roleArn: ROLE } } },
+    })
+  ).connector.id;
   const edit = page.getByRole("dialog", { name: "Edit Exports" });
   const openEdit = async () => {
     await page.goto(`/data/connections/${id}`);
@@ -1462,11 +1431,7 @@ test("opens a connector's form from a link to its workspace", async ({
 
   // A workspace without an ontology has no Data pages: a link of its own
   // opens the form over its onboarding wizard, and the wizard stays.
-  await page.getByRole("button", { name: "Workspace: Acme" }).click();
-  await page.getByRole("menuitem", { name: "Create workspace" }).click();
-  const create = page.getByRole("dialog", { name: "Create a workspace" });
-  await create.getByLabel("Workspace name").fill("Initech");
-  await create.getByRole("button", { name: "Create workspace" }).click();
+  await createWorkspace(page, "Initech");
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(
     page.getByRole("heading", { level: 1, name: "Get started" }),

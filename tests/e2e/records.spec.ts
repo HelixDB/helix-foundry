@@ -1,15 +1,15 @@
-import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
 import {
   choose,
   createdOntology,
   expect,
-  explorer,
+  file,
   finishOntology,
   mock,
   signIn,
   startOntology,
   test,
+  uploadAndLoadContract,
 } from "./support/mock";
 
 // An ontology's records, by type, beside the Explorer's graph, and the
@@ -22,55 +22,6 @@ import {
 
 const O = "/ontology/ont_acme_contracts",
   X = "/explore/ont_acme_contracts";
-const CONTRACT = readFileSync(
-  new URL("../../mock/fixtures/contract.md", import.meta.url),
-);
-
-async function makeCurrent(page: Page, version: 1 | 3) {
-  await page.goto(`${O}/versions/ver_seed_${version}`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: `Make version ${version} current?` })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(
-    page.getByText(`Version ${version} is now current.`),
-  ).toBeVisible();
-}
-
-// Uploads the seeded contract (and any other markdown documents), then
-// loads version 3 and waits for the end.
-async function load(page: Page, more: { name: string; text: string }[] = []) {
-  await page.goto("/data");
-  const files = [
-    { name: "contract.md", buffer: CONTRACT },
-    ...more.map((d) => ({ name: d.name, buffer: Buffer.from(d.text) })),
-  ];
-  await explorer(page)
-    .getByLabel("Choose documents")
-    .setInputFiles(files.map((f) => ({ ...f, mimeType: "text/markdown" })));
-  for (const f of files)
-    await expect(
-      page
-        .getByRole("list", { name: "Uploads" })
-        .getByRole("listitem", { name: f.name }),
-    ).toContainText("Uploaded");
-  await makeCurrent(page, 3);
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-}
 
 // Where the Explorer's bar sits: its title, the Ontology and Load pickers
 // and the Graph/Records switch.
@@ -119,7 +70,7 @@ test("pages, searches, sorts and filters records, and opens one in the graph", a
       .getByRole("complementary", { name: "Explorer panel" })
       .getByRole("region", { name: "Load" }),
   ).toContainText("Nothing loaded yet");
-  await load(page);
+  await uploadAndLoadContract(page);
 
   // From the Explorer's graph, the switch opens Records.
   await page
@@ -328,7 +279,7 @@ test("pages, searches, sorts and filters records, and opens one in the graph", a
 test("names what a load holds by the load's version", async ({ page }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await load(page);
+  await uploadAndLoadContract(page);
 
   // Version 3 names customers by their company and invoices by their key.
   await page.goto(X);
@@ -354,7 +305,13 @@ test("names what a load holds by the load's version", async ({ page }) => {
 
   // Making version 1 current changes no load: the load still reads by the
   // version it wrote, in the graph and in Records.
-  await makeCurrent(page, 1);
+  await page.goto(`${O}/versions/ver_seed_1`);
+  await page.getByRole("button", { name: "Make current" }).click();
+  await page
+    .getByRole("dialog", { name: "Make version 1 current?" })
+    .getByRole("button", { name: "Make current" })
+    .click();
+  await expect(page.getByText("Version 1 is now current.")).toBeVisible();
   await page.goto(`${X}?node=${link}`);
   await expect(inspector.locator(".ex-subject-title")).toHaveText("Hooli Inc", {
     timeout: 15_000,
@@ -411,7 +368,7 @@ test("says when it couldn't read the load's version, and reads it again", async 
   const version =
     "**/papi/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts/versions/ver_seed_3";
   await signIn(page);
-  await load(page);
+  await uploadAndLoadContract(page);
   await page.route(version, (route) =>
     route.fulfill({
       status: 503,
@@ -437,10 +394,10 @@ test("says how many more quotes a document has than the drawer shows", async ({
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
   // Notes that name Initech five times, over two sections.
-  await load(page, [
-    {
-      name: "notes.md",
-      text: [
+  await uploadAndLoadContract(page, [
+    file(
+      "notes.md",
+      [
         "# Initech call notes",
         "",
         "Initech LLC called on Monday. Initech asked about the renewal.",
@@ -450,7 +407,7 @@ test("says how many more quotes a document has than the drawer shows", async ({
         "Initech agreed to the terms. Initech paid the first invoice.",
         "",
       ].join("\n"),
-    },
+    ),
   ]);
   await page.goto(`${X}/records?type=Customer&q=initech`);
   await firstRow(page, "Customer").click();
