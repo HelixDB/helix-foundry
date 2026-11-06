@@ -16,18 +16,22 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// FoundryReviewDecisionKind selects one of the two decision shapes.
+// FoundryReviewDecisionKind selects one of the decision shapes.
 type FoundryReviewDecisionKind string
 
 const (
 	FoundryReviewResolve FoundryReviewDecisionKind = "resolve"
 	FoundryReviewProp    FoundryReviewDecisionKind = "prop"
+	FoundryReviewRelease FoundryReviewDecisionKind = "release"
 )
 
 // FoundryReviewDecision is an ontology-wide override, applied from the next
 // load. Resolve identifies a document name; a nil EntityKey means not in data.
 // Prop identifies an entity property and carries a JSON scalar (including null).
-// Validate guards this sum type at every storage boundary.
+// Release identifies one review of a document holding a claim back, by its
+// ClaimKey and ClaimSpan: a person's word that what it states holds. It names no
+// type, as what it writes is the engine's to read from the document. Validate
+// guards this sum type at every storage boundary.
 type FoundryReviewDecision struct {
 	ID              string
 	OntologyID      string
@@ -38,6 +42,8 @@ type FoundryReviewDecision struct {
 	EntityKey       *string
 	Prop            *string
 	Value           json.RawMessage
+	ClaimKey        *string
+	ClaimSpan       *FoundryClaimSpan
 	DecidedByUserID string
 	DecidedAt       time.Time
 	// DocumentIDs are the documents the review quoted, which a prop
@@ -48,7 +54,17 @@ type FoundryReviewDecision struct {
 
 func (d FoundryReviewDecision) Validate() error {
 	nonempty := func(s *string) bool { return s != nil && *s != "" }
-	if d.ID == "" || d.OntologyID == "" || d.Type == "" || d.DecidedByUserID == "" {
+	if d.ID == "" || d.OntologyID == "" || d.DecidedByUserID == "" {
+		return fmt.Errorf("decision identity and actor are required")
+	}
+	if d.Kind == FoundryReviewRelease {
+		if d.Type != "" || !nonempty(d.DocID) || !FoundryClaimKey(d.ClaimKey) || d.ClaimSpan == nil || d.ClaimSpan.Start >= d.ClaimSpan.End ||
+			d.NormName != nil || d.EntityKey != nil || d.Prop != nil || len(d.Value) != 0 {
+			return fmt.Errorf("invalid release decision")
+		}
+		return nil
+	}
+	if d.Type == "" || d.ClaimKey != nil || d.ClaimSpan != nil {
 		return fmt.Errorf("decision identity and actor are required")
 	}
 	switch d.Kind {
@@ -72,6 +88,24 @@ func (d FoundryReviewDecision) Validate() error {
 		return fmt.Errorf("unknown decision kind %q", d.Kind)
 	}
 	return nil
+}
+
+// FoundryClaimSpan is where a review's quote is in its document, as the engine
+// keeps it: its section, and its byte range in the section.
+type FoundryClaimSpan struct {
+	Section, Start, End uint32
+}
+
+// FoundryClaimKey reports whether key is one the engine takes
+// (held::ClaimKey::parse): 64 lowercase hexadecimal digits. One it doesn't
+// fails the whole Extract, so none is stored.
+func FoundryClaimKey(key *string) bool {
+	if key == nil || len(*key) != 64 {
+		return false
+	}
+	return strings.IndexFunc(*key, func(r rune) bool {
+		return !('0' <= r && r <= '9' || 'a' <= r && r <= 'f')
+	}) < 0
 }
 
 // FoundryPropType is a property's declared type in an ontology's TOML
@@ -112,6 +146,9 @@ func FoundryDecisionTypes(ontologyTOML string) (map[string]FoundryDecisionType, 
 // parses as the prop's type. A version that changes a prop's type, or a
 // type's key, leaves decisions that no longer fit.
 func (d FoundryReviewDecision) Fits(types map[string]FoundryDecisionType) bool {
+	if d.Kind == FoundryReviewRelease {
+		return d.Validate() == nil
+	}
 	ty, ok := types[d.Type]
 	if !ok || d.Validate() != nil || d.EntityKey != nil && !ty.Identifies(*d.EntityKey) {
 		return false
