@@ -13,14 +13,13 @@ import {
   formatDate,
 } from "../../kit";
 import { trackBeforeLeaving } from "../../analytics";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { connectorKindsQuery } from "../data/data-api";
 import {
   PAID_TIERS,
   PLAN_PRICE,
   TIER_NAME,
   billingPortalUrl,
-  canManage,
   cancelPlan,
   checkoutFailure,
   forgetCheckout,

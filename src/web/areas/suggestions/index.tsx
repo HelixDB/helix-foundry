@@ -22,9 +22,8 @@ import {
   useTitle,
 } from "../../kit";
 import { paths } from "../../paths";
-import { RefreshFailed, useWorkspace } from "../../ui";
+import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import { documentSetQueries } from "../documents/documents-api";
-import { canManage } from "../ontology/parts";
 import { ontologyName, useOntology } from "../ontology/scope";
 import { dismissSuggestion, suggestionQueries } from "./api";
 import {

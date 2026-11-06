@@ -7,6 +7,9 @@ import { Button } from "./kit";
 
 // The open workspace and the signed-in user, for every page in the shell.
 export type WorkspaceRole = "owner" | "admin" | "member";
+/** Owners and admins manage the workspace: its ontologies, connectors,
+ *  members and billing (workspace.*.manage). Members only read. */
+export const canManage = (role: WorkspaceRole) => role !== "member";
 export type ShellWorkspace = {
   id: string;
   slug: string;

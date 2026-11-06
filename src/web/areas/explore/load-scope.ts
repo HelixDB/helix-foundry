@@ -1,6 +1,10 @@
 import { FOUNDRY_LOAD } from "../../../shared/foundry-labels";
-import type { DynamicQueryRequest } from "./database-query";
-import type { JsonValue } from "./explorer/lib/types";
+import {
+  readRequest,
+  type Ast,
+  type DynamicQueryRequest,
+} from "./database-query";
+import { isRecord } from "../../../shared/json";
 
 // Which part of an ontology's database a read covers: one load. Every node
 // and edge a load writes carries the load's id as `foundry_load`
@@ -14,8 +18,6 @@ import type { JsonValue } from "./explorer/lib/types";
 
 /** What a read covers: the load with this id. */
 export type Scope = { id: string };
-
-type Ast = { [key: string]: JsonValue };
 
 /** `$label == "<label>"`, the label a constant. */
 const labelIs = (label: string): Ast => ({
@@ -74,40 +76,21 @@ export function loadCountRequests(
   const batches: (typeof all)[] = [];
   for (let i = 0; i < all.length; i += MAX_COUNTS)
     batches.push(all.slice(i, i + MAX_COUNTS));
-  return batches.map((batch) => {
-    const names = batch.map((_, i) => `count_${i}`);
-    return {
-      request: {
-        request_type: "read",
-        query_name: "foundry_load_counts",
-        query: {
-          read: {
-            entries: batch.map(({ source, label }, i) => ({
-              query: {
-                name: names[i]!,
-                root: {
-                  count: {
-                    input: {
-                      [source]: { predicate: scopedLabel(scope, label) },
-                    },
-                  },
-                },
-              },
-            })),
-            returns: names,
+  return batches.map((batch) => ({
+    request: readRequest(
+      "foundry_load_counts",
+      batch.map(({ source, label }, i) => ({
+        name: `count_${i}`,
+        root: {
+          count: {
+            input: { [source]: { predicate: scopedLabel(scope, label) } },
           },
         },
-        parameters: {},
-        parameter_types: {},
-      },
-      nodes: batch
-        .filter((b) => b.source === "nodes_where")
-        .map((b) => b.label),
-      edges: batch
-        .filter((b) => b.source === "edges_where")
-        .map((b) => b.label),
-    };
-  });
+      })),
+    ),
+    nodes: batch.filter((b) => b.source === "nodes_where").map((b) => b.label),
+    edges: batch.filter((b) => b.source === "edges_where").map((b) => b.label),
+  }));
 }
 
 /** Each label's count from loadCountRequests' answers; null when missing. */
@@ -119,10 +102,7 @@ export function parseLoadLabelCounts(
     edges = new Map<string, number | null>();
   batches.forEach((batch, b) => {
     const body = bodies[b];
-    const data =
-      body && typeof body === "object" && !Array.isArray(body)
-        ? (body as Record<string, unknown>)
-        : {};
+    const data = isRecord(body) ? body : {};
     const n = (i: number) => {
       const v = data[`count_${i}`];
       return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;

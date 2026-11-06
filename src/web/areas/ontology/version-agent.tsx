@@ -24,7 +24,7 @@ import {
   plural,
 } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { documentSetQueries } from "../documents/documents-api";
 import { enrichmentQuery } from "../workspace/enrichment-api";
 import {
@@ -42,7 +42,6 @@ import {
   type Graph,
   type SourceCell,
 } from "./model";
-import { canManage } from "./parts";
 import { Prose } from "./prose";
 import { useOntology } from "./scope";
 import type { Sources } from "./sources";

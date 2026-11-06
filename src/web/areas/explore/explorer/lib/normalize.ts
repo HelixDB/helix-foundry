@@ -6,6 +6,7 @@ import type {
   NodeFetchShape,
   ValueKind,
 } from "./types";
+import { isRecord } from "../../../../../shared/json";
 
 /**
  * Turns v3 response rows into explorer graph elements. Every parser here is
@@ -65,10 +66,6 @@ export function nodeKey(dbId: number): string {
 
 export function edgeKey(dbId: number): string {
   return `e:${dbId}`;
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** v3 ids are u64 sent as JSON numbers; anything else is not an id. */

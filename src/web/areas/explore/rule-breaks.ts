@@ -3,10 +3,15 @@ import {
   FOUNDRY_NODES as N,
 } from "../../../shared/foundry-labels";
 import type { EntityRef } from "../../../shared/foundry-read";
-import type { DynamicQueryRequest, JsonValue } from "./database-query";
+import {
+  readRequest,
+  type Ast,
+  type DynamicQueryRequest,
+} from "./database-query";
 import { MAX_COUNTS, scopedPredicates } from "./load-scope";
 import { entityRow, type EntityRow } from "./model";
 import { namingKeys, readable, type Naming } from "./naming";
+import { isRecord } from "../../../shared/json";
 
 // A load's rule breaks: the FoundryViolation records its sweeps and commits
 // keep, one per open violation of a constraint, -FOUNDRY_CONCERNS
@@ -31,7 +36,6 @@ export const RULE_BREAK_LIMITS = Object.freeze({
   counts: MAX_COUNTS,
 });
 
-type Ast = { [key: string]: JsonValue };
 const constant = (property: string, value: string): Ast => ({
   eq: { left: { property }, right: { constant: { string: value } } },
 });
@@ -50,31 +54,6 @@ const breaksOf = (loadId: string, constraint: string, ...more: Ast[]): Ast => ({
 });
 const v = (name: string): Ast => ({ nodes: { reference: { var: name } } });
 
-function request(
-  name: string,
-  entries: { name: string; root: Ast; returned?: boolean }[],
-  params: Record<string, { value: JsonValue; type: JsonValue }> = {},
-): DynamicQueryRequest {
-  return {
-    request_type: "read",
-    query_name: name,
-    query: {
-      read: {
-        entries: entries.map((e) => ({
-          query: { name: e.name, root: e.root },
-        })),
-        returns: entries.filter((e) => e.returned !== false).map((e) => e.name),
-      },
-    },
-    parameters: Object.fromEntries(
-      Object.entries(params).map(([k, p]) => [k, p.value]),
-    ),
-    parameter_types: Object.fromEntries(
-      Object.entries(params).map(([k, p]) => [k, p.type]),
-    ),
-  };
-}
-
 /**
  * The count of each constraint's breaks in the load, in requests of at most
  * RULE_BREAK_LIMITS.counts constraints.
@@ -87,7 +66,7 @@ export function ruleBreakCountRequests(
   for (let i = 0; i < constraints.length; i += RULE_BREAK_LIMITS.counts) {
     const batch = constraints.slice(i, i + RULE_BREAK_LIMITS.counts);
     out.push({
-      request: request(
+      request: readRequest(
         "foundry_rule_break_counts",
         batch.map((c, k) => ({
           name: `count_${k}`,
@@ -108,10 +87,7 @@ export function parseRuleBreakCounts(
   const counts = new Map<string, number | null>();
   batches.forEach((batch, b) => {
     const body = bodies[b];
-    const data =
-      body && typeof body === "object" && !Array.isArray(body)
-        ? (body as Record<string, unknown>)
-        : {};
+    const data = isRecord(body) ? body : {};
     batch.constraints.forEach((c, k) => {
       const n = data[`count_${k}`];
       counts.set(
@@ -147,7 +123,7 @@ export function ruleBreakPageRequest(
         },
       ]
     : [];
-  return request(
+  return readRequest(
     "foundry_rule_breaks",
     [
       {
@@ -220,20 +196,13 @@ export type RuleBreakPage = {
 
 type Row = Record<string, unknown>;
 const rows = (v: unknown): Row[] =>
-  Array.isArray(v)
-    ? v.filter(
-        (r): r is Row => !!r && typeof r === "object" && !Array.isArray(r),
-      )
-    : [];
+  Array.isArray(v) ? v.filter(isRecord) : [];
 const int = (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) ? v : undefined;
 
 /** Reads ruleBreakPageRequest's answer; nothing in it is trusted. */
 export function parseRuleBreakPage(body: unknown): RuleBreakPage {
-  const data =
-    body && typeof body === "object" && !Array.isArray(body)
-      ? (body as Row)
-      : {};
+  const data: Row = isRecord(body) ? body : {};
   const ends = new Map<number, EntityRow>();
   for (const r of rows(data.ends)) {
     const e = entityRow(r);
@@ -288,7 +257,7 @@ export function entityNamesRequest(
   }
   if (!byType.size) return null;
   const types = [...byType];
-  return request(
+  return readRequest(
     "foundry_entity_names",
     types.map(([type], i) => ({
       name: `t_${i}`,
@@ -340,10 +309,7 @@ export function parseEntityNames(
   body: unknown,
   naming: Naming,
 ): Map<string, string> {
-  const data =
-    body && typeof body === "object" && !Array.isArray(body)
-      ? (body as Row)
-      : {};
+  const data: Row = isRecord(body) ? body : {};
   const names = new Map<string, string>();
   for (const [k, v] of Object.entries(data)) {
     if (!k.startsWith("t_")) continue;

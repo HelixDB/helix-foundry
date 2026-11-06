@@ -1,14 +1,9 @@
-// Friendly wording for failed dock runs. The transport has already sorted the
+// Friendly wording for failed reads. The transport has already sorted the
 // four error layers (papi, WFE, gateway, database) into a kind plus the stable
 // code; this maps them to a title and a next step. The raw code and message
 // are always shown next to it, so nothing here needs to be exhaustive.
-//
-// A write that fails after it may have reached the database must never be
-// described as safe to run again: running it twice can apply it twice.
 
 import { queriesPaused, type DatabaseQueryResult } from "../../database-query";
-
-import type { QueryMode } from "./types";
 
 export type QueryFailure = Extract<DatabaseQueryResult, { ok: false }>;
 
@@ -87,62 +82,9 @@ const DATABASE_CODES: Record<string, FailureDescription> = {
     hint: "The database was failing over. Try again shortly.",
     tone: "amber",
   },
-  WRITE_OUTCOME_UNKNOWN: {
-    title: "Write outcome unknown",
-    hint: "The write may or may not have been applied. Check the data before running it again.",
-    tone: "red",
-  },
 };
 
-const WRITE_OUTCOME_UNKNOWN = DATABASE_CODES.WRITE_OUTCOME_UNKNOWN;
-
-/**
- * Write failures where nothing says whether the write was applied: the
- * database or gateway said so (`retryable: false` is only sent when the commit
- * outcome is unknown), the connection failed, the broker or a proxy failed or
- * timed out (it may have forwarded the write first), or the broker answered
- * 2xx with a body that couldn't be read.
- */
-export function isWriteOutcomeUnknown(failure: QueryFailure): boolean {
-  // The transport flags these itself; the checks below cover failures it didn't flag.
-  if (
-    failure.outcomeUnknown ||
-    failure.retryable === false ||
-    failure.code === "WRITE_OUTCOME_UNKNOWN"
-  )
-    return true;
-  switch (failure.kind) {
-    case "network":
-    case "malformed":
-      return true;
-    case "unavailable":
-      // 405 is papi refusing the route: the write never left the dashboard.
-      return failure.status >= 500;
-    case "database":
-      // A 5xx without the database's own error code came from something in between.
-      return failure.status >= 500 && failure.code === null;
-    default:
-      return false;
-  }
-}
-
-export function describeFailure(
-  failure: QueryFailure,
-  mode: QueryMode,
-): FailureDescription {
-  if (
-    mode === "write" &&
-    failure.kind !== "aborted" &&
-    isWriteOutcomeUnknown(failure)
-  ) {
-    if (failure.kind === "network") {
-      return {
-        ...WRITE_OUTCOME_UNKNOWN,
-        hint: "The connection failed, so the write may or may not have been applied. Check the data before running it again.",
-      };
-    }
-    return WRITE_OUTCOME_UNKNOWN;
-  }
+export function describeFailure(failure: QueryFailure): FailureDescription {
   switch (failure.kind) {
     case "starting":
       return {
@@ -151,13 +93,7 @@ export function describeFailure(
         tone: "neutral",
       };
     case "aborted":
-      return mode === "write"
-        ? {
-            title: "Write cancelled",
-            hint: "The database may still apply it. Check the data before running it again.",
-            tone: "amber",
-          }
-        : { title: "Query cancelled", hint: null, tone: "neutral" };
+      return { title: "Query cancelled", hint: null, tone: "neutral" };
     case "network":
       return {
         title: "Couldn't reach Helix",
@@ -173,7 +109,7 @@ export function describeFailure(
     case "forbidden":
       return {
         title: "You don't have query access to this database",
-        hint: `Ask a workspace admin for database.query.${mode} on this project.`,
+        hint: "Ask a workspace admin for database.query.read on this project.",
         tone: "red",
       };
     case "not_found":
@@ -198,13 +134,6 @@ export function describeFailure(
           }
         : DATABASE_CODES.tenant_disabled;
     case "too_large":
-      if (mode === "write" && failure.status !== 413) {
-        return {
-          title: "Request or response too large",
-          hint: "If the response was the part over the limit, the write already ran. Check the data before running it again, and return less.",
-          tone: "amber",
-        };
-      }
       return {
         title: "Request or response too large",
         hint: "Responses are capped at about 4 MB. Add a limit or return fewer properties.",

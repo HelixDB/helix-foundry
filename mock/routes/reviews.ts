@@ -21,6 +21,7 @@ import { tenantGraph } from "./databases";
 import { currentLoadId, currentLoadVersionId } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
 import { ontologyVersion } from "./ontology";
+import { isRecord } from "../../src/shared/json";
 
 // Review decisions, as the backend serves them
 // (api/review_decisions.go): settling reads the
@@ -34,15 +35,13 @@ import { ontologyVersion } from "./ontology";
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const PAGE = 100;
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 /**
  * A FoundryPropValue in the JSON form the WFE writes one: exactly one arm,
  * of its JSON kind, an int64 as its digits in a string. (Protobuf's JSON
  * also reads "NULL_VALUE" and an int64 as a number; the mock doesn't.)
  */
 function propValue(v: unknown): v is FoundryPropValue {
-  if (!isObject(v) || Object.keys(v).length !== 1) return false;
+  if (!isRecord(v) || Object.keys(v).length !== 1) return false;
   const [[arm, x]] = Object.entries(v) as [[string, unknown]];
   switch (arm) {
     case "null":
@@ -62,9 +61,9 @@ function propValue(v: unknown): v is FoundryPropValue {
 
 /** The mock enforces protobuf's oneofs, including an explicit false refusal. */
 function valid(b: unknown): b is FoundryReviewChoice {
-  if (!isObject(b)) return false;
+  if (!isRecord(b)) return false;
   if ("prop" in b) return !("resolve" in b) && propValue(b.prop);
-  if (!isObject(b.resolve)) return false;
+  if (!isRecord(b.resolve)) return false;
   const r = b.resolve;
   return (
     (r.notInData === true && !("entityKey" in r)) ||

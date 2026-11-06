@@ -17,6 +17,7 @@ import { plural } from "../../kit/util";
 import { setFolders, type SetFolder } from "../data/model";
 import type { Span } from "../explore/model";
 import { isSampleSet } from "../ontology/sample";
+import { isRecord } from "../../../shared/json";
 
 // The documents' logic, kept apart from their components so it is tested
 // on its own: what may be uploaded and how a document or set may be named,
@@ -1078,11 +1079,7 @@ export function jsonlPreview(text: string): TablePreview {
     if (!line.trim()) return [];
     try {
       const v: unknown = JSON.parse(line);
-      return [
-        v && typeof v === "object" && !Array.isArray(v)
-          ? (v as Record<string, unknown>)
-          : { value: v },
-      ];
+      return [isRecord(v) ? v : { value: v }];
     } catch {
       failed.push(i + 1);
       return [];

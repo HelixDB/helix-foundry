@@ -1,4 +1,5 @@
 import type { OntologyQuery } from "./wfe";
+import { isRecord } from "./json";
 
 // The ontology agent's Read contract (contract/ontology_agent/read_request.json
 // and read_result.json), as the WFE carries it: POST
@@ -304,8 +305,6 @@ export type ReadResult = {
 };
 
 type Row = Record<string, unknown>;
-const isRow = (v: unknown): v is Row =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 const count = (v: unknown) =>
@@ -317,7 +316,7 @@ const severity = (v: unknown): Severity | undefined =>
 const basis = (v: unknown): Basis | undefined =>
   v === "derived" || v === "both" ? v : undefined;
 const isKind = (v: unknown, kind: string): v is Row =>
-  isRow(v) && v.kind === kind;
+  isRecord(v) && v.kind === kind;
 /** A holder: `link:<l>` as the link's name, null as null, else undefined. */
 const holderOf = (v: unknown): string | null | undefined => {
   if (v === null) return null;
@@ -327,7 +326,7 @@ const holderOf = (v: unknown): string | null | undefined => {
 
 /** An EntityRef, or undefined when `v` isn't one. */
 export function entityRef(v: unknown): EntityRef | undefined {
-  if (!isRow(v)) return undefined;
+  if (!isRecord(v)) return undefined;
   const type = str(v.type),
     id = str(v.id);
   return type && id ? { type, id } : undefined;
@@ -353,7 +352,7 @@ const MALFORMED: ReadFailure = {
  * parseFailure({ code: "budget", message: "m" }); // { code: "invalid", message: "The read failed." }
  */
 export function parseFailure(v: unknown): ReadFailure {
-  if (!isRow(v)) return MALFORMED;
+  if (!isRecord(v)) return MALFORMED;
   const message = str(v.message) || "The read failed.",
     limit = count(v.limit),
     n = count(v.count);
@@ -392,15 +391,18 @@ export function parseReadResult(json: string): ReadResult | undefined {
   } catch {
     return undefined;
   }
-  if (!isRow(body) || !Array.isArray(body.results)) return undefined;
-  const stats = isRow(body.stats) ? body.stats : {};
+  if (!isRecord(body) || !Array.isArray(body.results)) return undefined;
+  const stats = isRecord(body.stats) ? body.stats : {};
   return {
     asOf: str(body.as_of) || "",
     results: body.results.map(
       (r): Outcome<unknown> =>
-        isRow(r) && "ok" in r
+        isRecord(r) && "ok" in r
           ? { ok: true, value: r.ok }
-          : { ok: false, error: parseFailure(isRow(r) ? r.error : undefined) },
+          : {
+              ok: false,
+              error: parseFailure(isRecord(r) ? r.error : undefined),
+            },
     ),
     stats: {
       instances: count(stats.instances) ?? 0,
@@ -432,11 +434,11 @@ export function outcomeOf<T>(
 /** An entity read's `ok`: its derived facts, flags, live violations and failed parts. */
 export function parseEntityResult(ok: unknown): EntityResult | undefined {
   const entity = isKind(ok, "entity") ? entityRef(ok.entity) : undefined;
-  if (!isRow(ok) || !entity) return undefined;
+  if (!isRecord(ok) || !entity) return undefined;
   return {
     entity,
     derived: list(ok.derived).flatMap((d): DerivedFact[] => {
-      if (!isRow(d)) return [];
+      if (!isRecord(d)) return [];
       const pred = parsePred(d.pred),
         holder = holderOf(d.holder),
         args = refs(d.args),
@@ -446,11 +448,11 @@ export function parseEntityResult(ok: unknown): EntityResult | undefined {
         : [];
     }),
     flags: list(ok.flags).flatMap((f): Flag[] => {
-      const name = isRow(f) ? str(f.name) : undefined;
-      return isRow(f) && name ? [{ name, rules: strings(f.rules) }] : [];
+      const name = isRecord(f) ? str(f.name) : undefined;
+      return isRecord(f) && name ? [{ name, rules: strings(f.rules) }] : [];
     }),
     violations: list(ok.violations).flatMap((v): LiveViolation[] => {
-      if (!isRow(v)) return [];
+      if (!isRecord(v)) return [];
       const constraint = str(v.constraint),
         s = severity(v.severity),
         entities = refs(v.entities);
@@ -459,7 +461,7 @@ export function parseEntityResult(ok: unknown): EntityResult | undefined {
         : [];
     }),
     errors: list(ok.errors).flatMap((e): PartError[] => {
-      if (!isRow(e)) return [];
+      if (!isRecord(e)) return [];
       const part = e.pred === "violations" ? "violations" : parsePred(e.pred),
         failure = parseFailure(e);
       // An entity read's parts fail only by `budget`, `hub` or `invalid`.
@@ -478,7 +480,7 @@ export function parsePatternResult(ok: unknown): PatternResult | undefined {
   if (!isKind(ok, "pattern")) return undefined;
   return {
     rows: list(ok.rows).flatMap((r): PatternRow[] => {
-      if (!isRow(r)) return [];
+      if (!isRecord(r)) return [];
       const args = refs(r.args),
         holder = holderOf(r.holder),
         b = r.basis === "stated" ? "stated" : basis(r.basis);
@@ -522,7 +524,7 @@ export function parseExplainResult(ok: unknown): ExplainResult | undefined {
   if (!isKind(ok, "explain") || !Array.isArray(ok.steps)) return undefined;
   const steps: ExplainStep[] = [];
   for (const s of ok.steps) {
-    if (!isRow(s) || !Array.isArray(s.args)) return undefined;
+    if (!isRecord(s) || !Array.isArray(s.args)) return undefined;
     const pred = parseStepPred(s.pred),
       via = parseVia(s.via),
       args = s.args.map((a) =>
@@ -570,7 +572,7 @@ export function parseViolationsResult(
   if (!isKind(ok, "violations")) return undefined;
   return {
     records: list(ok.records).flatMap((v): ViolationRecord[] => {
-      if (!isRow(v)) return [];
+      if (!isRecord(v)) return [];
       const key = str(v.violation_key),
         constraint = str(v.constraint),
         s = severity(v.severity),
@@ -597,7 +599,7 @@ export function parseEvidenceResult(ok: unknown): EvidenceResult | undefined {
   if (!isKind(ok, "evidence")) return undefined;
   return {
     items: list(ok.items).flatMap((e): EvidenceItem[] => {
-      if (!isRow(e)) return [];
+      if (!isRecord(e)) return [];
       const confidence = typeof e.confidence === "number" ? e.confidence : 0;
       if (e.kind === "row") {
         const source = str(e.source),
@@ -664,9 +666,9 @@ export function parseQueryResult(ok: unknown): QueryResult | undefined {
   const total = count(r.total);
   if (total === undefined) return undefined;
   const edge = (e: unknown): QueryEdge[] => {
-    const step = isRow(e) ? count(e.step) : undefined;
-    if (!isRow(e) || step === undefined) return [];
-    if (isRow(e.fact)) {
+    const step = isRecord(e) ? count(e.step) : undefined;
+    if (!isRecord(e) || step === undefined) return [];
+    if (isRecord(e.fact)) {
       const link = str(e.fact.link),
         subject = entityRef(e.fact.subject),
         object = entityRef(e.fact.object);
@@ -674,14 +676,14 @@ export function parseQueryResult(ok: unknown): QueryResult | undefined {
         ? [{ step, fact: { link, subject, object } }]
         : [];
     }
-    const pred = isRow(e.derived) ? str(e.derived.pred) : undefined,
-      args = isRow(e.derived) ? refs(e.derived.args) : undefined;
+    const pred = isRecord(e.derived) ? str(e.derived.pred) : undefined,
+      args = isRecord(e.derived) ? refs(e.derived.args) : undefined;
     return pred && args ? [{ step, derived: { pred, args } }] : [];
   };
   return {
     kind: "rows",
     rows: r.rows.flatMap((row) =>
-      isRow(row) && Array.isArray(row.cells)
+      isRecord(row) && Array.isArray(row.cells)
         ? [{ cells: row.cells, edges: list(row.edges).flatMap(edge) }]
         : [],
     ),

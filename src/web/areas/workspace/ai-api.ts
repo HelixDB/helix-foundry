@@ -177,9 +177,6 @@ export const ROLES: Record<FoundryAiRole, string> = {
 };
 export const ROLE_IDS = Object.keys(ROLES) as FoundryAiRole[];
 
-/** The phrase failure copy names the AI settings by, which pages link. */
-export const SETTINGS_LINK = "Settings › AI models";
-
 /**
  * A text cut where it names the AI settings: the odd parts are the phrase,
  * which pages render as a link.

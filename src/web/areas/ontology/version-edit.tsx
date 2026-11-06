@@ -13,7 +13,7 @@ import * as toml from "smol-toml";
 import type * as wfe from "../../../shared/wfe";
 import { Button, ButtonLink, Select, Tag } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { enrichmentQuery } from "../workspace/enrichment-api";
 import {
   CREDITS_PER_PROFILE,
@@ -22,7 +22,6 @@ import {
   type ProfileField,
 } from "./enrichment-fields";
 import { cluesText, type AgentBundle } from "./model";
-import { canManage } from "./parts";
 import {
   CardFields,
   EnrichmentNotes,

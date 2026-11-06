@@ -14,7 +14,7 @@ import { useLocation } from "react-router-dom";
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderPlus, Plus, Upload } from "lucide-react";
 import { paths } from "../../paths";
-import { RefreshFailed, useWorkspace } from "../../ui";
+import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import {
   Button,
   ButtonLink,
@@ -37,7 +37,6 @@ import {
   type DocumentsNode,
   type RootKey,
 } from "./layout";
-import { canManage } from "./model";
 import { DataTree, NewFolderDialog } from "./tree";
 import { useDataUpload } from "./upload";
 import { useDataTree } from "./use-tree";

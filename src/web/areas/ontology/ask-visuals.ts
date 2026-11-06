@@ -8,6 +8,7 @@ import type {
 } from "../../../shared/wfe";
 import { formatNumber, plural } from "../../kit/util";
 import { AGGREGATE_FN, queryNames, queryText } from "./ask-model";
+import { isRecord } from "../../../shared/json";
 
 // How Ask draws a query's recorded output (contract 3.11.0): helix-foundry's
 // Analyst approach, read from the output's shape rather than from anything
@@ -68,9 +69,6 @@ export type VisualPlan = { title: string; note: string } & (
   | { kind: "table"; table: VisualTable }
 );
 
-const isObj = (x: unknown): x is Record<string, unknown> =>
-  !!x && typeof x === "object" && !Array.isArray(x);
-
 /**
  * A value as the page shows it. With `entity` (a column without a prop) an
  * object with a string type, id and name is that entity; `{"untrusted": …}`
@@ -93,13 +91,13 @@ export function cellOf(v: unknown, entity = false): VisualCell {
     return { kind: "text", text: String(v), untrusted: false };
   if (
     entity &&
-    isObj(v) &&
+    isRecord(v) &&
     typeof v.type === "string" &&
     typeof v.id === "string" &&
     typeof v.name === "string"
   )
     return { kind: "entity", ref: { type: v.type, id: v.id }, name: v.name };
-  if (isObj(v) && Object.keys(v).length === 1 && "untrusted" in v)
+  if (isRecord(v) && Object.keys(v).length === 1 && "untrusted" in v)
     return {
       kind: "text",
       text:

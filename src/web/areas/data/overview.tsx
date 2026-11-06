@@ -4,7 +4,7 @@ import { Cable, Folder, Plus, Upload } from "lucide-react";
 import type { Connector } from "../../../shared/wfe";
 import { number } from "../../api";
 import { paths } from "../../paths";
-import { RefreshFailed, useWorkspace } from "../../ui";
+import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import {
   Button,
   DataGrid,
@@ -30,7 +30,7 @@ import { FORMAT_NAMES, readersText, setLabel } from "../documents/model";
 import { useOntologyNames } from "../documents/sets";
 import { ConnectData } from "./connect-data";
 import { connectorsQuery } from "./data-api";
-import { canManage, connectorBadge, lastSyncedAt, rowTotal } from "./model";
+import { connectorBadge, lastSyncedAt, rowTotal } from "./model";
 import { useDataUpload } from "./upload";
 
 // The Connectors page (/data): what the workspace holds at a glance. Its totals, its

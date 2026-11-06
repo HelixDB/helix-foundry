@@ -28,7 +28,7 @@ import {
   plural,
   useTabParam,
 } from "../../kit";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { shellRoles } from "../../workspaces";
 import { connectorsQuery } from "../data/data-api";
 import { documentSetQueries } from "../documents/documents-api";
@@ -66,7 +66,6 @@ import {
 } from "./access-model";
 import { membersQuery } from "./members";
 import { initials, roleLabel } from "./people";
-import { canManage } from "./plan";
 
 // Settings › Access (hosted, owners and admins): what agents, people and
 // teams may read through source grants. A grant gives a connection (its

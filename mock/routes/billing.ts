@@ -157,6 +157,23 @@ const returnUrl = () =>
     process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI || "http://localhost:3000",
   ).toString();
 
+// Cancel and resume: whether the tier held ends with its period.
+const endsWithPeriod =
+  (cancel: boolean): MockRoute["handle"] =>
+  ({ body, principal: { user } }) => {
+    const req = (body || {}) as Partial<FoundryPlanChangeRequest>;
+    const workspaceId = billingManager(req.workspaceId, user.id);
+    if (typeof workspaceId !== "string") return workspaceId;
+    const p = held(workspaceId);
+    if (!p)
+      return fail(
+        "FAILED_PRECONDITION",
+        "the workspace is not on Foundry Pro or Max",
+      );
+    p.cancelAtPeriodEnd = cancel;
+    return ok({ plan: view(p) } satisfies FoundryPlanResponse);
+  };
+
 export const billingRoutes: MockRoute[] = [
   {
     method: "GET",
@@ -230,36 +247,12 @@ export const billingRoutes: MockRoute[] = [
   {
     method: "POST",
     path: "/v1/foundry/plan:cancel",
-    handle: ({ body, principal: { user } }) => {
-      const req = (body || {}) as Partial<FoundryPlanChangeRequest>;
-      const workspaceId = billingManager(req.workspaceId, user.id);
-      if (typeof workspaceId !== "string") return workspaceId;
-      const p = held(workspaceId);
-      if (!p)
-        return fail(
-          "FAILED_PRECONDITION",
-          "the workspace is not on Foundry Pro or Max",
-        );
-      p.cancelAtPeriodEnd = true;
-      return ok({ plan: view(p) } satisfies FoundryPlanResponse);
-    },
+    handle: endsWithPeriod(true),
   },
   {
     method: "POST",
     path: "/v1/foundry/plan:resume",
-    handle: ({ body, principal: { user } }) => {
-      const req = (body || {}) as Partial<FoundryPlanChangeRequest>;
-      const workspaceId = billingManager(req.workspaceId, user.id);
-      if (typeof workspaceId !== "string") return workspaceId;
-      const p = held(workspaceId);
-      if (!p)
-        return fail(
-          "FAILED_PRECONDITION",
-          "the workspace is not on Foundry Pro or Max",
-        );
-      p.cancelAtPeriodEnd = false;
-      return ok({ plan: view(p) } satisfies FoundryPlanResponse);
-    },
+    handle: endsWithPeriod(false),
   },
   {
     method: "POST",
