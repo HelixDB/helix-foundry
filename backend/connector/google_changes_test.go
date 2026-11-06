@@ -376,7 +376,9 @@ func TestGoogleChanges(t *testing.T) {
 	t.Run("writes a changed file's row, exports a changed Doc and deletes a gone file", func(t *testing.T) {
 		routes := unchanged()
 		edited := googleChangeFile("doc1", googleDocType, "2026-10-29T08:00:00Z", "43", "")
-		pdf := googleChangeFile("pdf1", "application/pdf", "2026-10-29T09:00:00Z", "4", `,"driveId":"drv2"`)
+		pdfBody := googleTextPDF("Change feed invoice")
+		pdf := googleChangeFile("pdf1", "application/pdf", "2026-10-29T09:00:00Z", "4",
+			fmt.Sprintf(`,"driveId":"drv2","size":"%d"`, len(pdfBody)))
 		doc5 := func(extra string) string {
 			return googleChangeFile("doc5", googleDocType, "2026-10-29T10:00:00Z", "2", extra)
 		}
@@ -400,6 +402,7 @@ func TestGoogleChanges(t *testing.T) {
 		for _, id := range []string{"doc1", "doc4"} {
 			routes["/drive/v3/files/"+id+"/export"] = func(*http.Request) (int, string) { return http.StatusOK, "## " + id + "\n\nEdited." }
 		}
+		routes["/drive/v3/files/pdf1"] = func(*http.Request) (int, string) { return http.StatusOK, string(pdfBody) }
 		w := &googleWorkspace{routes: routes}
 		got, next := changes(t, w, []Table{{Name: "files"}}, cursor, map[string]string{"doc1": "1|2026-10-20T15:30:00.250Z|42|old"})
 		want := []string{"upsert files doc1", "delete files sheet1", "delete files fold1", "upsert files doc4", "upsert files pdf1",
@@ -416,7 +419,7 @@ func TestGoogleChanges(t *testing.T) {
 		// The Docs are exported once every feed is read, newest first; doc5, in the trash since, is not.
 		asked := w.requested("/drive/")
 		if i := slices.IndexFunc(asked, func(a string) bool { return strings.Contains(a, "driveId=drv1") }); i < 0 ||
-			fmt.Sprint(asked[i+1:]) != "[/drive/v3/files/doc4/export?mimeType=text%2Fmarkdown /drive/v3/files/doc1/export?mimeType=text%2Fmarkdown]" {
+			fmt.Sprint(asked[i+1:]) != "[/drive/v3/files/doc4/export?mimeType=text%2Fmarkdown /drive/v3/files/pdf1?alt=media /drive/v3/files/doc1/export?mimeType=text%2Fmarkdown]" {
 			t.Fatalf("asked %v", asked)
 		}
 		// Its row is the full read's.
@@ -426,8 +429,10 @@ func TestGoogleChanges(t *testing.T) {
 			"size": nil, "web_view_link": "https://docs.google.com/document/d/doc1/edit", "shared": false, "starred": false}) {
 			t.Fatalf("row = %v", row)
 		}
-		if len(got.puts) != 2 || got.puts[1].ExternalID != "doc1" || !strings.HasPrefix(got.puts[1].Version, "1|2026-10-29T08:00:00Z|43|") ||
-			string(got.puts[1].Text) != "# File doc1\n\nOwner: ada@acme.com\nLast modified: 2026-10-29 08:00 UTC\nFile id: doc1\n\n## doc1\n\nEdited.\n" ||
+		if len(got.puts) != 3 || got.puts[1].ExternalID != "pdf1" ||
+			!strings.Contains(string(got.puts[1].Text), "Change feed invoice\n") ||
+			got.puts[2].ExternalID != "doc1" || !strings.HasPrefix(got.puts[2].Version, "1|2026-10-29T08:00:00Z|43|") ||
+			string(got.puts[2].Text) != "# File doc1\n\nOwner: ada@acme.com\nLast modified: 2026-10-29 08:00 UTC\nFile id: doc1\n\n## doc1\n\nEdited.\n" ||
 			got.puts[0].ExternalID != "doc4" {
 			t.Fatalf("puts = %+v", got.puts)
 		}
