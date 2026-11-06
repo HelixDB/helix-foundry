@@ -75,11 +75,11 @@ A read stopped at a cap fails its step, which says which cap and its value, and 
 | `too broad: the query would read … matches into memory, more than limits.read.scan_entities, 100000, allows` | `foundry.ask.read_scan_entities`                                     |
 | `the store did not answer within 30s: each graph request ends at helix.timeout_secs`                         | `foundry.ask.helix_timeout_secs`                                     |
 
-To change one, add its variable to foundry's `environment` in `local/compose.yaml` (`HELIX_FOUNDRY__ASK__READ_WALL_MS`, `HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES`, `HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS`) and run `docker compose up -d` again. A read's wall time past the Helix timeout helps only a read of several requests, so raise both together. The question's lease, `foundry.ask.lease` (3 minutes), must stay at least twice the Helix timeout, or foundry won't start: past 90 s, raise it too (`HELIX_FOUNDRY__ASK__LEASE`, such as `5m`). More matches take more memory, and the answer to one Helix request is at most 32 MiB. These caps need a `foundry` image and an `ontology-agent` newer than the release's: `foundry` 0.1.1 and `ontology-agent` 0.1.0 read every question with the agent's own caps.
+To change one, add its variable to foundry's `environment` in `local/compose.yaml` (`HELIX_FOUNDRY__ASK__READ_WALL_MS`, `HELIX_FOUNDRY__ASK__READ_SCAN_ENTITIES`, `HELIX_FOUNDRY__ASK__HELIX_TIMEOUT_SECS`) and run `docker compose up -d` again. A read's wall time past the Helix timeout helps only a read of several requests, so raise both together. The question's lease, `foundry.ask.lease` (3 minutes), must stay at least twice the Helix timeout, or foundry won't start: past 90 s, raise it too (`HELIX_FOUNDRY__ASK__LEASE`, such as `5m`). More matches take more memory, and the answer to one Helix request is at most 32 MiB. These caps need `foundry` 0.1.2 and `ontology-agent` 0.1.1 or newer: older images read every question with the agent's own caps.
 
 ## Images
 
-`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.2, `foundry` 0.1.1 and `ontology-agent` 0.1.0. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.3, `foundry` 0.1.2 and `ontology-agent` 0.1.1. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
 
 ## Back up and restore
 
@@ -151,7 +151,7 @@ The site must stay on `http://localhost:3000` and the store on `http://localhost
 
 ## Connect your agent
 
-These need images newer than the ones `docker compose up` pulls today (`foundry` 0.1.1 and `foundry-site` 0.1.2, which have no MCP and no **Set up with your agent**). Until a release moves those, run both built from this checkout, as [Images](#images) says. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't publish the port for an image that prints 404, which serves its probes and metrics there without a token.
+These need `foundry` 0.1.2 and `foundry-site` 0.1.3 or newer, the images `docker compose up` pulls: older ones have no MCP and no **Set up with your agent**. `docker compose exec -T foundry curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/mcp` prints 401 where the MCP is served, and 404 where it isn't: don't publish the port for an image that prints 404, which serves its probes and metrics there without a token.
 
 The MCP and HTTP Ask aren't published until you ask, so a port taken here never stops the app. From `local/`:
 
