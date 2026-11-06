@@ -1,11 +1,13 @@
 package foundryontologyworker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -19,6 +21,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/helixgateway"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
 	"github.com/helixdb/helix-foundry/backend/store"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -397,6 +400,40 @@ func TestReviseWorker(t *testing.T) {
 				t.Fatalf("refusal lost: %s", got.ReviseResult)
 			}
 		})
+	}
+}
+
+// The agent's internal error in a revision is its bug on this input, as in
+// a draft's turn: retried once, whatever max_attempts says, then failed,
+// logged as an error with its code and description, which the stored error
+// never holds.
+func TestReviseInternalError(t *testing.T) {
+	const description = "the revision failed: a panic at crates/x.rs:1:2: boom"
+	const says = "the ontology agent failed to revise this ontology on this input; Helix will retry once"
+	for _, tc := range []struct {
+		attempt int
+		retried bool
+		says    string
+	}{
+		{1, true, says},
+		{2, false, says + " (gave up after 2 attempts)"},
+	} {
+		f, task, q := newRevisionFixture(t)
+		f.err = status.Error(codes.Internal, description)
+		task.cfg.MaxAttempts = 5
+		gen := q.pending[0]
+		gen.Attempts = tc.attempt
+		var logs bytes.Buffer
+		task.process(log.Into(context.Background(), slog.New(slog.NewJSONHandler(&logs, nil))), gen)
+		got := q.outcomes["revise"]
+		if got.Error != tc.says || (got.RetryAt != nil) != tc.retried || (got.Status == model.OntologyGenerationFailed) == tc.retried ||
+			got.Result != nil || strings.Contains(got.Error, description) || strings.Contains(got.Error, "panic") {
+			t.Fatalf("attempt %d: outcome %+v", tc.attempt, got)
+		}
+		if logged := logs.String(); !strings.Contains(logged, `"level":"ERROR","msg":"ontology generation attempt failed"`) ||
+			!strings.Contains(logged, `"code":"Internal","description":"`+description+`"`) {
+			t.Fatalf("attempt %d: logged %s", tc.attempt, logged)
+		}
 	}
 }
 

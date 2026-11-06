@@ -7,6 +7,7 @@ import "./data.css";
 import { Route, Routes, useParams } from "react-router-dom";
 import { NotFound } from "../../shell/ErrorBoundary";
 import { ConnectCallbackPage } from "./connect-callback";
+import { ConnectGitHubPage } from "./github-install-step";
 import { ConnectionDetail } from "./connection";
 import { DataDocumentPage } from "./document";
 import { DataOverview } from "./overview";
@@ -42,6 +43,11 @@ export function DocumentPage() {
 // signing in, outside /data so the onboarding offers it too (main.tsx).
 export function ConnectCallback() {
   return <ConnectCallbackPage />;
+}
+// /connect/github: where GitHub returns once Helix Foundry's GitHub App is
+// installed (its Setup URL), outside /data for the same reason.
+export function ConnectGitHub() {
+  return <ConnectGitHubPage />;
 }
 // /data/*: the Data area's route table (main.tsx delegates the whole
 // prefix). The Data explorer is the section's panel beside the sidebar

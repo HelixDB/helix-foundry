@@ -180,7 +180,9 @@ func TestSignedInGitHub(t *testing.T) {
 			Guard{AllowPrivate: true}, S3Options{}, EventsOptions{})
 		_, err := kindOf(t, c, "github").Discover(context.Background(), signedIn)
 		var invalidErr *InvalidError
-		if !errors.As(err, &invalidErr) || !strings.Contains(invalidErr.Message, "https://github.com/apps/helix-foundry/installations/new") ||
+		// The site offers its install step on these opening words.
+		if !errors.As(err, &invalidErr) || !strings.HasPrefix(invalidErr.Message, "Helix Foundry can't see ") ||
+			!strings.Contains(invalidErr.Message, "https://github.com/apps/helix-foundry/installations/new") ||
 			!strings.Contains(invalidErr.Message, "Sync now") {
 			t.Fatalf("Discover error = %v, want the install link", err)
 		}

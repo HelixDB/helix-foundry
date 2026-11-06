@@ -1072,6 +1072,42 @@ func TestRetries(t *testing.T) {
 		}
 	})
 
+	// The agent's internal error is its bug on this question: retried once,
+	// whatever max_attempts says, so a raised max_attempts can't charge a
+	// panic's cap more often, and logged as an error with its code and
+	// description; the stored copy is any stopped attempt's. Other codes
+	// still retry to max_attempts, warned of.
+	t.Run("retries the agent's internal error once", func(t *testing.T) {
+		const description = "the ask failed: a panic at crates/x.rs:1:2: boom"
+		const says = "the question stopped before an answer; Helix will retry"
+		for name, tc := range map[string]struct {
+			code             codes.Code
+			attempt          int
+			retried          bool
+			says, level, not string
+		}{
+			"an internal error on the first attempt":     {codes.Internal, 1, true, says, "ERROR", "WARN"},
+			"an internal error on the second attempt":    {codes.Internal, 2, false, says + " (gave up after 2 attempts)", "ERROR", "WARN"},
+			"an unavailable agent on the second attempt": {codes.Unavailable, 2, true, says, "WARN", "ERROR"},
+			"an unknown error on the second attempt":     {codes.Unknown, 2, true, says, "WARN", "ERROR"},
+			"an unavailable agent on the last attempt":   {codes.Unavailable, 5, false, says + " (gave up after 5 attempts)", "WARN", "ERROR"},
+		} {
+			h := newHarness(t)
+			h.task.cfg.MaxAttempts = 5
+			h.agent.ask = func(string, agentv1.Agent_AskServer) error { return status.Error(tc.code, description) }
+			settled, logged := h.runLogged(t, question(tc.attempt))
+			if len(settled) != 1 || settled[0].Error != tc.says || (settled[0].RetryAt != nil) != tc.retried ||
+				(settled[0].Status == model.FoundryQuestionFailed) == tc.retried || settled[0].Uncounted {
+				t.Fatalf("%s: settled %+v", name, settled)
+			}
+			if !strings.Contains(logged, `"level":"`+tc.level+`","msg":"question attempt failed"`) ||
+				strings.Contains(logged, `"level":"`+tc.not+`","msg":"question attempt failed"`) ||
+				strings.Contains(logged, `"code":"Internal","description":"`+description+`"`) != (tc.code == codes.Internal) {
+				t.Fatalf("%s: logged %s", name, logged)
+			}
+		}
+	})
+
 	// A failed flush keeps its events for the next one, so none is lost or reordered.
 	t.Run("keeps events a flush failed to store", func(t *testing.T) {
 		h := newHarness(t)

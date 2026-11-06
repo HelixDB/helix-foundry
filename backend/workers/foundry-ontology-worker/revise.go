@@ -140,6 +140,10 @@ func (r *reviser) run(ctx context.Context, gen *model.OntologyGeneration) (revis
 		// The agent shutting down or at its two revisions, or reading the load
 		// failed in a way a retry may clear: no result, so the attempts retry it.
 		return out, &ontologygen.Failure{Message: "the ontology agent could not finish the revision; Helix will retry", Err: err}
+	case codes.Internal:
+		// The agent's own bug on this input: retried within
+		// ontologyagent.InternalAttempts, as a draft's turn is.
+		return out, &ontologygen.Failure{Message: ontologyagent.InternalMessage("revise this ontology"), Internal: true, Err: err}
 	default:
 		return out, err
 	}

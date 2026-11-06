@@ -411,7 +411,9 @@ func (k *githubKind) installedRepos(ctx context.Context, token string) ([]github
 }
 
 // installWhere says to install Helix Foundry's GitHub App on where, with
-// its link when there is one.
+// its link when there is one. Every message that says to install it opens
+// with "Helix Foundry can't see ": the site knows an install problem by
+// those words (src/web/areas/data/github-install.ts), so keep them.
 func (k *githubKind) installWhere(where string) string {
 	if k.install == "" {
 		return "install Helix Foundry's GitHub App on " + where

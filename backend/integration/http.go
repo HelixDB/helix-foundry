@@ -301,7 +301,7 @@ func writeHTTPErrorCode(w http.ResponseWriter, err error, requestID string) (int
 		w.Header().Set("WWW-Authenticate", "Bearer")
 	case "not_found":
 		statusCode, message = http.StatusNotFound, "resource not found"
-	case "failed_precondition", "foundry_pro_required":
+	case "failed_precondition", "foundry_pro_required", "account_needs_sign_in":
 		statusCode = http.StatusPreconditionFailed
 	case "already_exists":
 		statusCode = http.StatusConflict

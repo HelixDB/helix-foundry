@@ -95,9 +95,11 @@ const DataRoutes = area(data, "DataRoutes"),
   OntologyRoutes = area(ontology, "OntologyRoutes"),
   ExploreRoutes = area(ontology, "ExploreRoutes"),
   AskRoutes = area(ontology, "AskRoutes");
-// Where a provider returns from connecting a source by signing in, and the
+// Where a provider returns from connecting a source by signing in, where
+// GitHub returns once Helix Foundry's GitHub App is installed, and the
 // shell's notice of connectors that need signing in again: the Data area's.
 const ConnectCallback = area(data, "ConnectCallback"),
+  ConnectGitHub = area(data, "ConnectGitHub"),
   AccountBreaks = lazy(() =>
     import("./areas/data/account-breaks").then((m) => ({
       default: m.AccountBreaks,
@@ -165,6 +167,7 @@ function WorkspaceRoutes({
       <Route path="/ask/*" element={offered(<AskRoutes />)} />
       <Route path="/settings/*" element={<SettingsRoutes />} />
       <Route path="/connect/callback" element={<ConnectCallback />} />
+      <Route path="/connect/github" element={<ConnectGitHub />} />
       <Route path="*" element={offered(<NotFound />)} />
     </Routes>
   );

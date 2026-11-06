@@ -120,6 +120,9 @@ export const mock = {
       string,
       "member_left" | "access_revoked" | "expired" | "account_missing"
     >;
+    // false: Helix Foundry's GitHub App is installed nowhere, so a signed-in
+    // GitHub connector naming no repository reads none until true.
+    githubInstalled?: boolean;
     // Suggestions: foundry.heal.enabled off; the current load's audit not
     // complete; an audit superseding a finding as it is dismissed.
     healEnabled?: boolean;

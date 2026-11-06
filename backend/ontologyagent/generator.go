@@ -434,10 +434,32 @@ func tokens(result *ontologygen.Result, u Usage) {
 	result.InputTokens, result.OutputTokens = int(u.Input+u.CacheRead+u.CacheWrite), int(u.Output)
 }
 
+// InternalAttempts is the most attempts a generation, graph job or question
+// gets when the agent ends its call with INTERNAL, whatever the worker's
+// max_attempts: INTERNAL is the agent's own bug (a panic it caught) on this
+// input, so one retry covers a fluke and more would only repeat it.
+const InternalAttempts = 2
+
+// InternalMessage words a call to `what` that the agent ended with INTERNAL
+// for the customer: the agent failed on this input, it isn't unavailable,
+// and Helix retries once. The status's code and description (engine paths
+// and panic text) are Helix's to read, never the customer's: they stay in
+// the failure's Err and the worker's error log. grpc-go also ends a stream
+// INTERNAL on a transport fault (a reset or unreadable stream), rare over
+// the sidecar's loopback; that gets the same words and the same one retry.
+//
+//	InternalMessage("extract the documents")
+//	// the ontology agent failed to extract the documents on this input; Helix will retry once
+func InternalMessage(what string) string {
+	return "the ontology agent failed to " + what + " on this input; Helix will retry once"
+}
+
 // turnFailure classifies a failed call. A result past the agent's 32 MiB
 // limit is OUT_OF_RANGE: the agent (tonic) refuses to encode it and ends the
 // stream with that status. The client's own limit gives RESOURCE_EXHAUSTED
-// after events; the agent's busy refusal comes before any event.
+// after events; the agent's busy refusal comes before any event. INTERNAL,
+// before or after events, is the agent's own bug: retried within
+// InternalAttempts.
 func turnFailure(err error, afterEvents bool) error {
 	switch code := status.Code(err); {
 	case code == codes.OutOfRange, code == codes.ResourceExhausted && afterEvents:
@@ -449,6 +471,8 @@ func turnFailure(err error, afterEvents bool) error {
 		return &ontologygen.Failure{Message: "the ontology agent can't draft on these models", Permanent: true, Err: err}
 	case code == codes.Unimplemented:
 		return &ontologygen.Failure{Message: "the ontology agent does not serve turns", Permanent: true, Err: err}
+	case code == codes.Internal:
+		return &ontologygen.Failure{Message: InternalMessage("draft this ontology"), Internal: true, Err: err}
 	}
 	// UNAVAILABLE, RESOURCE_EXHAUSTED before any event, a dropped stream, a
 	// deadline: another attempt may get through.
