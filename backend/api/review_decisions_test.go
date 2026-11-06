@@ -205,6 +205,7 @@ func TestSettleFoundryReviewValidation(t *testing.T) {
 		"wrong resolve kind":       {`{"items":[{"reason":"unresolved","type":"Customer","doc_id":"a","norm_name":"variant"}]}`, propChoice(propText("name")), codes.InvalidArgument},
 		"wrong prop kind":          {`{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name"}]}`, noneChoice(), codes.InvalidArgument},
 		"unsupported reason":       {`{"items":[{"reason":"low_confidence","type":"Customer"}]}`, noneChoice(), codes.InvalidArgument},
+		"a 4.9.0 identity review":  {`{"items":[{"reason":"identity","type":"Customer"}]}`, noneChoice(), codes.InvalidArgument},
 		"missing review":           {`{"items":[]}`, noneChoice(), codes.NotFound},
 		"missing type":             {`{"items":[{"reason":"unresolved"}]}`, noneChoice(), codes.FailedPrecondition},
 		"missing name":             {`{"items":[{"reason":"unresolved","type":"Customer","doc_id":"a"}]}`, noneChoice(), codes.FailedPrecondition},

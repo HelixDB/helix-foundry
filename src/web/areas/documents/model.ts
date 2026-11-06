@@ -1446,6 +1446,7 @@ export type ReviewReason =
   | "prop_conflict"
   | "attribute_low_confidence"
   | "identifier_conflict"
+  | "identity"
   | "adjudicated";
 
 const reviews: Record<ReviewReason, { title: string; text: string }> = {
@@ -1496,6 +1497,10 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
   identifier_conflict: {
     title: "Its identifiers point at different entities",
     text: "The text quotes identifiers of more than one entity for one name, so it wasn’t linked to any.",
+  },
+  identity: {
+    title: "Its identifier and its names point at different entities",
+    text: "A verified identifier leads to one entity and the names to another, so the claim was held back and nothing was stored.",
   },
 };
 /** A review's reason as a title and a sentence for people who didn't build the ontology. */
