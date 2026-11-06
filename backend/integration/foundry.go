@@ -493,9 +493,14 @@ type FoundryReviewDecisionOutput struct {
 	EntityKey string `json:"entity_key,omitempty"`
 	Prop      string `json:"prop,omitempty"`
 	// Value is a prop decision's value, in settle_review's shape.
-	Value           map[string]any `json:"value,omitempty"`
-	DecidedByUserID string         `json:"decided_by_user_id"`
-	DecidedAt       string         `json:"decided_at"`
+	Value map[string]any `json:"value,omitempty"`
+	// ClaimKey and its place name the review a release decision released.
+	ClaimKey        string  `json:"claim_key,omitempty"`
+	ClaimSection    *uint32 `json:"claim_section,omitempty"`
+	ClaimStart      *uint32 `json:"claim_start,omitempty"`
+	ClaimEnd        *uint32 `json:"claim_end,omitempty"`
+	DecidedByUserID string  `json:"decided_by_user_id"`
+	DecidedAt       string  `json:"decided_at"`
 }
 
 type ListFoundryReviewDecisionsOutput struct {
@@ -1839,7 +1844,8 @@ func FoundryDocument(doc *foundryv1.FoundryDocument) FoundryDocumentOutput {
 func FoundryReviewDecision(d *foundryv1.FoundryReviewDecision) FoundryReviewDecisionOutput {
 	out := FoundryReviewDecisionOutput{
 		ID: d.GetId(), Kind: d.GetKind(), Type: d.GetType(), DocID: d.GetDocId(), NormName: d.GetNormName(), EntityKey: d.GetEntityKey(),
-		Prop: d.GetProp(), DecidedByUserID: d.GetDecidedByUserId(), DecidedAt: protoTimestamp(d.GetDecidedAt()),
+		Prop: d.GetProp(), ClaimKey: d.GetClaimKey(), ClaimSection: d.ClaimSection, ClaimStart: d.ClaimStart, ClaimEnd: d.ClaimEnd,
+		DecidedByUserID: d.GetDecidedByUserId(), DecidedAt: protoTimestamp(d.GetDecidedAt()),
 	}
 	switch value := d.GetValue().GetValue().(type) {
 	case *foundryv1.FoundryPropValue_Null:

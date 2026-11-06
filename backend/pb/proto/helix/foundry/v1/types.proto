@@ -1372,6 +1372,9 @@ message FoundryReviewChoice {
   oneof choice {
     FoundryResolveChoice resolve = 1;
     FoundryPropValue prop = 3;
+    // Must be true. A person's word that what the review holds back holds:
+    // the next load writes what it states as a fact.
+    bool release = 4;
   }
 }
 // A prop decision's value: null removes the property; any other must be of
@@ -1412,6 +1415,12 @@ message FoundryReviewDecision {
   FoundryPropValue value = 11;
   string decided_by_user_id = 9;
   google.protobuf.Timestamp decided_at = 10;
+  // The review a release decision releases, as it stores them: its claim's
+  // key, and its quote's section and byte range in the section.
+  optional string claim_key = 12;
+  optional uint32 claim_section = 13;
+  optional uint32 claim_start = 14;
+  optional uint32 claim_end = 15;
 }
 
 // Helix Foundry model providers: where a workspace's model calls go

@@ -12,7 +12,7 @@ import (
 const maxExtractDecisions = 10000
 
 // decisions are the load's decisions for docs: every prop decision and the
-// resolve decisions of docs. One the loaded version no longer takes
+// resolve and release decisions of docs. One the loaded version no longer takes
 // (model.FoundryReviewDecision.Extractable: its type or prop is gone, or a
 // prop decision's key or value no longer fits) is left out, before the cap.
 // A resolve whose chosen entity the type's changed key no longer reads goes:
@@ -59,6 +59,12 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 				decision.DocID, decision.NormName = *d.DocID, *d.NormName
 			case model.FoundryReviewProp:
 				decision.Prop, decision.Value = *d.Prop, d.Value
+			case model.FoundryReviewRelease:
+				if !sent[*d.DocID] {
+					continue
+				}
+				decision.DocID, decision.ClaimKey = *d.DocID, *d.ClaimKey
+				decision.Section, decision.Start, decision.End = d.ClaimSpan.Section, d.ClaimSpan.Start, d.ClaimSpan.End
 			}
 			out = append(out, decision)
 			if len(out) > maxExtractDecisions {

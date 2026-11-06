@@ -76,6 +76,7 @@ const cases: [string, () => Promise<unknown>, unknown[]][] = [
     () =>
       settleReview("ws", "o", "r1", { decision: { prop: { boolean: false } } }),
     ["review_settled", { kind: "prop" }],
+    ["review_settled", { kind: "release" }],
   ],
   [
     "a removed decision",

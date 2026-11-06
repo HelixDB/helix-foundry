@@ -63,6 +63,8 @@ func testExtractRequest() ExtractRequest {
 				DecisionID: "01JDDEC0000000000000000001", DecidedAt: decidedAt},
 			{Kind: model.FoundryReviewProp, Type: "Customer", EntityKey: &testEntityKey, Prop: "tier", Value: json.RawMessage(`"gold"`),
 				DecisionID: "01JDDEC0000000000000000002", DecidedAt: decidedAt.Add(time.Minute)},
+			{Kind: model.FoundryReviewRelease, DocID: "doc-1", ClaimKey: strings.Repeat("ab", 32), Start: 4, End: 20,
+				DecisionID: "01JDDEC0000000000000000003", DecidedAt: decidedAt.Add(2 * time.Minute)},
 		},
 	}
 }
@@ -140,14 +142,22 @@ func TestGraphContract(t *testing.T) {
 				}
 			}
 		}
-		// Neither is a decision as earlier contracts sent it, which the agent still takes.
+		// Neither is a decision as earlier contracts sent it, which the agent still takes,
+		// but for a release, which is always named.
 		var request map[string]any
 		raw, _ := json.Marshal(testExtractRequest())
 		_ = json.Unmarshal(raw, &request)
+		unnamed := []any{}
 		for _, d := range request["decisions"].([]any) {
-			delete(d.(map[string]any), "decision_id")
-			delete(d.(map[string]any), "decided_at")
+			decision := d.(map[string]any)
+			if decision["kind"] == string(model.FoundryReviewRelease) {
+				continue
+			}
+			delete(decision, "decision_id")
+			delete(decision, "decided_at")
+			unnamed = append(unnamed, decision)
 		}
+		request["decisions"] = unnamed
 		raw, _ = json.Marshal(request)
 		if err := contracttest.Validate(t, schema, raw); err != nil {
 			t.Fatalf("decisions named by neither: %v", err)
@@ -521,6 +531,9 @@ func TestExtractDecisionWire(t *testing.T) {
 			`{"kind":"resolve","type":"Customer","doc_id":"doc","norm_name":"variant","entity_key":null,` + named + `}`},
 		{ExtractDecision{Kind: model.FoundryReviewProp, Type: "Customer", EntityKey: &key, Prop: "name", Value: json.RawMessage(`null`), DecisionID: "01JDDEC", DecidedAt: decidedAt},
 			`{"kind":"prop","type":"Customer","entity_key":"customer-1","prop":"name","value":null,` + named + `}`},
+		// A release carries nothing else: the engine refuses a field it doesn't name.
+		{ExtractDecision{Kind: model.FoundryReviewRelease, DocID: "doc", ClaimKey: "abc", End: 9, DecisionID: "01JDDEC", DecidedAt: decidedAt},
+			`{"kind":"release","doc_id":"doc","claim_key":"abc","section":0,"start":0,"end":9,` + named + `}`},
 	} {
 		got, err := json.Marshal(tc.decision)
 		if err != nil || string(got) != tc.want {

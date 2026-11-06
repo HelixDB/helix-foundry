@@ -43,6 +43,61 @@ const prop = {
   candidates: [],
 };
 
+const held = {
+  review_key: "held-key",
+  reason: "low_confidence",
+  doc_id: "doc",
+  claim_key: "a".repeat(64),
+  claim: JSON.stringify({ about: [{ type: "Contract" }, { type: "Customer" }] }),
+};
+describe("a held claim", () => {
+  it.each(["low_confidence", "unverified"])(
+    "is approved by its key: %s",
+    (reason) => {
+      const review = model.settleable({ ...held, reason }, []);
+      const settle = {
+        kind: "release",
+        reviewId: "held-key",
+        docId: "doc",
+        claimKey: held.claim_key,
+      } as const;
+      expect(review.settle).toEqual(settle);
+      const decision: ReviewDecision = {
+        kind: "release",
+        type: "",
+        docId: "doc",
+        claimKey: held.claim_key,
+      };
+      expect(model.matchesReview(decision, settle)).toBe(true);
+      const other = { ...decision, claimKey: "b".repeat(64) };
+      expect(model.matchesReview(other, settle)).toBe(false);
+      expect(
+        model.matchesReview({ ...decision, docId: "other" }, settle),
+      ).toBe(false);
+    },
+  );
+  it("written before claims had keys is loaded again", () => {
+    const { claim_key: _, ...legacy } = held;
+    expect(model.settleable(legacy, []).settle).toEqual({ kind: "stale" });
+  });
+  it.each([
+    ["one end", JSON.stringify({ about: [{ type: "Contract" }] })],
+    ["no end", JSON.stringify({ about: [] })],
+    ["no ends listed", "{}"],
+    ["text that doesn't read", "{"],
+    ["nothing", undefined],
+  ])("that names %s waits for its names", (_, claim) => {
+    const review = model.settleable({ ...held, claim }, []);
+    expect(review.settle).toEqual({ kind: "names" });
+    expect(
+      model.matchesReview(
+        { kind: "release", type: "", docId: "doc", claimKey: held.claim_key },
+        review.settle!,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("what settles a review", () => {
   it.each([
     "unresolved",
@@ -103,8 +158,6 @@ describe("what settles a review", () => {
     ).toEqual([]);
   });
   it.each([
-    "low_confidence",
-    "unverified",
     "violation",
     "unmatched",
     "identity",
@@ -224,7 +277,7 @@ describe("review choices", () => {
   it("offers nothing for a stale review or one nothing settles", () => {
     const stale = model.settleable({ ...name, type: undefined }, []);
     expect(model.decisionFor(stale, { entityKey: null })).toBeUndefined();
-    const other = model.settleable({ ...name, reason: "unverified" }, []);
+    const other = model.settleable({ ...name, reason: "conflict" }, []);
     expect(model.decisionFor(other, { entityKey: null })).toBeUndefined();
   });
   it("matches overrides by ontology identity, not review or load id", () => {

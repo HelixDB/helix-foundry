@@ -7110,6 +7110,10 @@
         },
         "prop": {
           "$ref": "#/definitions/v1FoundryPropValue"
+        },
+        "release": {
+          "type": "boolean",
+          "description": "Must be true. A person's word that what the review holds back holds:\nthe next load writes what it states as a fact."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7148,6 +7152,22 @@
         "decidedAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "claimKey": {
+          "type": "string",
+          "description": "The review a release decision releases, as it stores them: its claim's\nkey, and its quote's section and byte range in the section."
+        },
+        "claimSection": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimStart": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "claimEnd": {
+          "type": "integer",
+          "format": "int64"
         }
       },
       "description": "A durable ontology-wide override; applies from the next load."

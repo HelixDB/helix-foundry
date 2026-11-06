@@ -46,7 +46,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	if !load.Status.Servable() {
 		return nil, status.Error(codes.FailedPrecondition, "the load is not ready")
 	}
-	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop", "values"})
+	rows, err := s.foundryDecisionRead(ctx, o, load.ID, map[string]string{"$label": "FoundryReview", "review_key": req.GetReviewId()}, []string{"reason", "type", "doc_id", "norm_name", "entity_key", "prop", "values", "claim_key", "section", "start", "end"})
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +56,15 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 	review := rows[0]
 	text := func(key string) string { var s string; _ = json.Unmarshal(review[key], &s); return s }
 	d := &foundrymodel.FoundryReviewDecision{ID: id.New(), OntologyID: o.ID, Type: text("type"), DecidedByUserID: actor(ctx).UserID}
+	// A held claim names no type: the engine reads what it states from its
+	// document.
+	switch text("reason") {
+	case "low_confidence", "unverified":
+		if err := settleHeldClaim(req, d, review); err != nil {
+			return nil, err
+		}
+		return s.saveFoundryReviewDecision(ctx, o, d)
+	}
 	if d.Type == "" {
 		return nil, status.Error(codes.FailedPrecondition, "this review is missing its identity; start a new load before settling it")
 	}
@@ -169,6 +178,34 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 			return nil, status.Error(codes.InvalidArgument, "the chosen entity is not in this load")
 		}
 	}
+	return s.saveFoundryReviewDecision(ctx, o, d)
+}
+
+// settleHeldClaim makes d the release of the one review it reads, by its
+// claim's key and its quote's place. The engine writes what the review states
+// once its ends resolve, and keeps it held if a name no rung resolved is yet to
+// be settled. A review written before claims had keys is released by a new
+// load's.
+func settleHeldClaim(req *foundryv1.SettleFoundryReviewRequest, d *foundrymodel.FoundryReviewDecision, review map[string]json.RawMessage) error {
+	if !req.GetDecision().GetRelease() {
+		return status.Error(codes.InvalidArgument, "this review requires a release decision")
+	}
+	var doc, claimKey string
+	var span foundrymodel.FoundryClaimSpan
+	_ = json.Unmarshal(review["doc_id"], &doc)
+	_ = json.Unmarshal(review["claim_key"], &claimKey)
+	_ = json.Unmarshal(review["section"], &span.Section)
+	_ = json.Unmarshal(review["start"], &span.Start)
+	_ = json.Unmarshal(review["end"], &span.End)
+	d.Kind, d.Type, d.DocID, d.ClaimKey, d.ClaimSpan = foundrymodel.FoundryReviewRelease, "", &doc, &claimKey, &span
+	if err := d.Validate(); err != nil {
+		return status.Error(codes.FailedPrecondition, "this review is missing its identity; start a new load before settling it")
+	}
+	return nil
+}
+
+// saveFoundryReviewDecision stores d, whose identity the review gave.
+func (s *Service) saveFoundryReviewDecision(ctx context.Context, o *foundrymodel.FoundryOntology, d *foundrymodel.FoundryReviewDecision) (*foundryv1.FoundryReviewDecisionResponse, error) {
 	if err := s.deps.DB.SettleFoundryReviewDecision(ctx, o.WorkspaceID, d); err != nil {
 		if errors.Is(err, foundrystore.ErrConflict) {
 			return nil, status.Error(codes.FailedPrecondition, "the current load's version no longer has this review's type or property; reload the review and try again")
@@ -256,7 +293,10 @@ func (s *Service) DeleteFoundryReviewDecision(ctx context.Context, req *foundryv
 }
 
 func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv1.FoundryReviewDecision {
-	out := &foundryv1.FoundryReviewDecision{Id: d.ID, Kind: string(d.Kind), Type: d.Type, DocId: d.DocID, NormName: d.NormName, EntityKey: d.EntityKey, Prop: d.Prop, DecidedByUserId: d.DecidedByUserID, DecidedAt: timestamppb.New(d.DecidedAt)}
+	out := &foundryv1.FoundryReviewDecision{Id: d.ID, Kind: string(d.Kind), Type: d.Type, DocId: d.DocID, NormName: d.NormName, EntityKey: d.EntityKey, Prop: d.Prop, ClaimKey: d.ClaimKey, DecidedByUserId: d.DecidedByUserID, DecidedAt: timestamppb.New(d.DecidedAt)}
+	if span := d.ClaimSpan; span != nil {
+		out.ClaimSection, out.ClaimStart, out.ClaimEnd = &span.Section, &span.Start, &span.End
+	}
 	if len(d.Value) == 0 {
 		return out
 	}

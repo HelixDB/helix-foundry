@@ -1332,6 +1332,10 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		return nil
 	}
 	c, u := event.Counts, event.Usage
+	if c.ReleaseRefused+c.ReleaseMissed > 0 {
+		log.From(ctx).Warn("graph job: an approved claim wasn't written", "job", job.ID, "document", event.DocID,
+			"refused", c.ReleaseRefused, "missed", c.ReleaseMissed)
+	}
 	extraction := &model.FoundryDocumentExtraction{
 		DocumentID: event.DocID, Status: model.FoundryExtractionExtracted,
 		Counts: model.FoundryExtractionCounts{
