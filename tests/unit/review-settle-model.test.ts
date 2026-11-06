@@ -107,6 +107,7 @@ describe("what settles a review", () => {
     "unverified",
     "violation",
     "unmatched",
+    "identity",
     undefined,
   ])("nothing settles a %s review", (reason) => {
     expect(model.settleable({ ...name, reason }, [globex])).toEqual({

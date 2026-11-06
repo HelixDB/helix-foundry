@@ -662,6 +662,7 @@ describe("document states", () => {
       "conflict",
       "violation",
       "unmatched",
+      "identity",
     ] as const) {
       const copy = reviewCopy(reason);
       expect(copy.title.length).toBeGreaterThan(5);
@@ -669,6 +670,15 @@ describe("document states", () => {
     }
     expect(reviewCopy(undefined)).toEqual(reviewCopy("unverified"));
     expect(reviewCopy("something new")).toEqual(reviewCopy("unverified"));
+  });
+
+  it("says why a 4.9.0 identity review was held, not that a model couldn't confirm it", () => {
+    const copy = reviewCopy("identity");
+    expect(copy).not.toEqual(reviewCopy("unverified"));
+    expect(copy.title).toBe(
+      "Its identifier and its names point at different entities",
+    );
+    expect(copy.text).toContain("A verified identifier");
   });
 
   it("formats sizes and costs", () => {

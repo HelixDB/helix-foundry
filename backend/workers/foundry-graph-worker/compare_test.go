@@ -2,6 +2,7 @@ package foundrygraphworker
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/helixdb/helix-foundry/backend/ontologyagent/contracttest"
 	agentv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/ontology_agent/v1"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
@@ -40,6 +42,28 @@ func rebuildJob(h *harness, appliedAt *time.Time) *model.FoundryGraphJob {
 	return job
 }
 
+// compared is a Compare result as a 4.9.0 agent writes it: a Plane entity
+// label and a held claims label, equal, then these kinds as given.
+func compared(t *testing.T, kinds ...string) string {
+	t.Helper()
+	result := `{"equal":` + fmt.Sprint(len(kinds) == 0) + `,"kinds":[` +
+		`{"kind":"entity","label":"Plane","a_count":2,"b_count":2,"equal":true,"a_hash":"h","b_hash":"h","differing":[]},` +
+		`{"kind":"held","label":"held","a_count":1,"b_count":1,"equal":true,"a_hash":"k","b_hash":"k","differing":[]}`
+	for _, k := range kinds {
+		result += "," + k
+	}
+	result += "]}"
+	if err := contracttest.Validate(t, contracttest.Schema(t, "compare_result.json"), []byte(result)); err != nil {
+		t.Fatalf("not the contract's: %v\n%s", err, result)
+	}
+	return result
+}
+
+const (
+	factDiffers = `{"kind":"fact","label":"operated_by","a_count":3,"b_count":2,"equal":false,"a_hash":"x","b_hash":"y","differing":["F1"]}`
+	heldDiffers = `{"kind":"held","label":"held","a_count":1,"b_count":2,"equal":false,"a_hash":"k","b_hash":"m","differing":["C2"]}`
+)
+
 func TestRebuildDrift(t *testing.T) {
 	// A rebuild of a load applies kept up to date is what that load should
 	// hold; each label that differs is drift, counted and named in the log.
@@ -47,11 +71,8 @@ func TestRebuildDrift(t *testing.T) {
 		h := newHarness(t)
 		applied := time.Now()
 		job := rebuildJob(h, &applied)
-		h.agent.compare = func(string) string {
-			return `{"equal":false,"kinds":[` +
-				`{"kind":"entity","label":"Plane","a_count":2,"b_count":2,"equal":true,"a_hash":"h","b_hash":"h","differing":[]},` +
-				`{"kind":"fact","label":"operated_by","a_count":3,"b_count":2,"equal":false,"a_hash":"x","b_hash":"y","differing":["F1"]}]}`
-		}
+		answer := compared(t, factDiffers)
+		h.agent.compare = func(string) string { return answer }
 		drifted, facts := testutil.ToFloat64(rebuilds.WithLabelValues("drifted")), testutil.ToFloat64(applyDrift.WithLabelValues("fact"))
 		outcome := h.run(t, job)
 		if outcome.Status != model.FoundryGraphJobSucceeded {
@@ -68,6 +89,51 @@ func TestRebuildDrift(t *testing.T) {
 			t.Fatalf("drifted facts = %v", got)
 		}
 	})
+
+	// Held claims write nothing to the graph, and a load stored before 4.9.0
+	// keys them otherwise: a rebuild that differs only there is held, not
+	// drifted, and one that differs in the graph too is drifted.
+	for name, c := range map[string]struct {
+		kinds   []string
+		outcome string
+	}{
+		"only held claims":          {[]string{heldDiffers}, "held"},
+		"held claims, then facts":   {[]string{heldDiffers, factDiffers}, "drifted"},
+		"facts, then held claims":   {[]string{factDiffers, heldDiffers}, "drifted"},
+		"nothing (equal, by kinds)": {nil, "equal"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			applied := time.Now()
+			job := rebuildJob(h, &applied)
+			answer := compared(t, c.kinds...)
+			h.agent.compare = func(string) string { return answer }
+			before := map[string]float64{}
+			for _, o := range []string{"equal", "drifted", "held", "failed"} {
+				before[o] = testutil.ToFloat64(rebuilds.WithLabelValues(o))
+			}
+			held := testutil.ToFloat64(applyDrift.WithLabelValues("held"))
+			if outcome := h.run(t, job); outcome.Status != model.FoundryGraphJobSucceeded {
+				t.Fatalf("outcome = %+v", outcome)
+			}
+			for o, was := range before {
+				want := 0.0
+				if o == c.outcome {
+					want = 1
+				}
+				if got := testutil.ToFloat64(rebuilds.WithLabelValues(o)) - was; got != want {
+					t.Fatalf("%s rebuilds = %v, want %v", o, got, want)
+				}
+			}
+			wantHeld := 0.0
+			if len(c.kinds) > 0 {
+				wantHeld = 1
+			}
+			if got := testutil.ToFloat64(applyDrift.WithLabelValues("held")) - held; got != wantHeld {
+				t.Fatalf("differing held labels = %v, want %v", got, wantHeld)
+			}
+		})
+	}
 
 	// A load no apply touched is a fresh load already: nothing to compare.
 	t.Run("leaves a rebuild of an unapplied load alone", func(t *testing.T) {
