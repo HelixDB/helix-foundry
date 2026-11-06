@@ -87,10 +87,18 @@ export function reviewValues(raw: unknown): ReviewValue[] {
   });
 }
 
+const isOffset = (v: unknown): v is number =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isScalar = (v: unknown): v is string | number | boolean =>
   typeof v === "string" ||
   typeof v === "boolean" ||
   (typeof v === "number" && Number.isFinite(v));
+
+/** The reasons a person's release settles: a verifier doubted the claim. */
+const RELEASE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
+  "low_confidence",
+  "unverified",
+]);
 
 /** The reasons a resolve decision settles; `prop_conflict` takes a value. */
 const RESOLVE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
@@ -108,6 +116,15 @@ const RESOLVE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
  */
 export type Candidate = { key: string; entity?: EntityRow };
 
+/** An end of what a held claim states, as the document names it. */
+export type StatedEnd = { type: string; name: string };
+/** What approving a held claim writes: its ends in order, and its properties. */
+export type Statement = {
+  subject: StatedEnd;
+  object: StatedEnd;
+  props: Record<string, string | number | boolean>;
+};
+
 /**
  * What a person can settle a review with:
  * - `resolve`: link the document's name to a candidate, or say it is not in
@@ -116,6 +133,12 @@ export type Candidate = { key: string; entity?: EntityRow };
  *   differently. `table` is the value stored for it, if any: only a table
  *   row's value survives a conflict, so it is the table's, and a
  *   chosen document value replaces it in every later load;
+ * - `release`: approve one review of a claim code holds back, so the next
+ *   load writes what it states as a fact. `statement` is what that is; a
+ *   review of an older load keeps none, and shows its link and quote. `named`
+ *   is whether the review names both its ends: if not, an end isn't in the
+ *   graph yet. `differs` is whether another review at its place states
+ *   something else: no approval says which, so the engine refuses both;
  * - `stale`: a reason a decision settles, on a review written without the
  *   identity the backend reads (a load from before decisions) or whose
  *   entity this read doesn't find. A new load writes it again.
@@ -137,6 +160,19 @@ export type Settle =
       values: ReviewValue[];
       table?: string | number | boolean;
     }
+  | {
+      kind: "release";
+      reviewId: string;
+      docId: string;
+      claimKey: string;
+      section: number;
+      start: number;
+      end: number;
+      link?: string;
+      statement?: Statement;
+      named: boolean;
+      differs?: boolean;
+    }
   | { kind: "stale" };
 
 /** A review's candidates and what settles it (none for a reason no decision settles). */
@@ -148,6 +184,37 @@ const isEntity = (e: EntityRow, type: string, key: string) =>
   e.type === type &&
   ("key" in e.identity ? e.identity.key : e.identity.name) === key;
 
+/** How many entities a held claim's stored JSON (`claim`) names; none if it doesn't read. */
+function ends(claim: unknown): number {
+  try {
+    const about = (JSON.parse(String(claim)) as { about?: unknown }).about;
+    return Array.isArray(about) ? about.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** A review's stored `statement`, nothing in which is trusted. */
+function statement(raw: unknown): Statement | undefined {
+  let parsed: Partial<Statement> | null;
+  try {
+    parsed = JSON.parse(String(raw)) as Partial<Statement> | null;
+  } catch {
+    return undefined;
+  }
+  const end = (e?: StatedEnd) =>
+    e && text(e.type) && text(e.name)
+      ? { type: e.type, name: e.name }
+      : undefined;
+  const subject = end(parsed?.subject),
+    object = end(parsed?.object);
+  if (!subject || !object) return undefined;
+  const props = Object.fromEntries(
+    Object.entries(parsed?.props ?? {}).filter(([, v]) => isScalar(v)),
+  );
+  return { subject, object, props };
+}
+
 /**
  * Reads a FoundryReview record, given the entities it concerns
  * (FOUNDRY_CONCERNS: a resolve review's candidates and a fact's ends, a
@@ -157,7 +224,9 @@ const isEntity = (e: EntityRow, type: string, key: string) =>
  * settleable({ review_key: "r", reason: "unresolved", type: "Customer", doc_id: "d", norm_name: "globexx", candidates: ["scus_1"] }, []);
  * // { candidates: [{ key: "scus_1" }], settle: { kind: "resolve", reviewId: "r", type: "Customer", docId: "d", normName: "globexx" } }
  * settleable({ review_key: "r", reason: "unresolved", candidates: [] }, []).settle; // { kind: "stale" }
- * settleable({ reason: "low_confidence" }, []).settle; // undefined
+ * settleable({ review_key: "r", reason: "low_confidence", doc_id: "d", claim_key: "k", section: 0, start: 4, end: 9, claim: '{"about":[1,2]}' }, []).settle;
+ * // { kind: "release", reviewId: "r", docId: "d", claimKey: "k", section: 0, start: 4, end: 9, named: true }
+ * settleable({ reason: "low_confidence" }, []).settle; // { kind: "stale" }
  */
 export function settleable(
   r: Record<string, unknown>,
@@ -184,6 +253,37 @@ export function settleable(
           : { kind: "stale" },
     };
   }
+  if (reason && RELEASE_REASONS.has(reason)) {
+    const docId = text(r.doc_id),
+      claimKey = text(r.claim_key),
+      link = text(r.suggested_link),
+      stated = statement(r.statement),
+      { section, start, end } = r;
+    if (
+      !reviewId ||
+      !docId ||
+      !claimKey ||
+      !isOffset(section) ||
+      !isOffset(start) ||
+      !isOffset(end)
+    )
+      return { candidates, settle: { kind: "stale" } };
+    return {
+      candidates,
+      settle: {
+        kind: "release",
+        reviewId,
+        docId,
+        claimKey,
+        section,
+        start,
+        end,
+        ...(link ? { link } : {}),
+        ...(stated ? { statement: stated } : {}),
+        named: ends(r.claim) >= 2,
+      },
+    };
+  }
   if (reason !== "prop_conflict") return { candidates };
   const entityKey = text(r.entity_key),
     prop = text(r.prop),
@@ -205,6 +305,30 @@ export function settleable(
       ...(isScalar(stored) ? { table: stored } : {}),
     },
   };
+}
+
+/**
+ * Marks the held claims of `reviews` that share a place and a key but state
+ * different things: the engine refuses them, as no approval says which.
+ *
+ * @example
+ * markDiffering([one, sameKeyAndPlaceOtherStatement]); // both settle with `differs: true`
+ */
+export function markDiffering<T extends Settleable>(reviews: T[]): T[] {
+  const place = (s: Extract<Settle, { kind: "release" }>) =>
+    [s.claimKey, s.section, s.start, s.end].join("\u001f");
+  const stated = new Map<string, Set<string>>();
+  for (const { settle: s } of reviews) {
+    if (s?.kind !== "release") continue;
+    const seen = stated.get(place(s)) ?? new Set<string>();
+    stated.set(place(s), seen.add(JSON.stringify(s.statement ?? null)));
+  }
+  return reviews.map((r) => {
+    const s = r.settle;
+    return s?.kind === "release" && (stated.get(place(s))?.size ?? 0) > 1
+      ? { ...r, settle: { ...s, differs: true } }
+      : r;
+  });
 }
 
 /**
@@ -261,6 +385,15 @@ export function matchesReview(d: ReviewDecision, s: Settle) {
         d.type === s.type &&
         d.entityKey === s.entityKey &&
         d.prop === s.prop
+      );
+    case "release":
+      return (
+        d.kind === "release" &&
+        d.docId === s.docId &&
+        d.claimKey === s.claimKey &&
+        d.claimSection === s.section &&
+        d.claimStart === s.start &&
+        d.claimEnd === s.end
       );
     case "stale":
       return false;

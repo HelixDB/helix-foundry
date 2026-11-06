@@ -13,7 +13,7 @@ import {
 } from "./database-query";
 import { scopedPredicates, type Scope } from "./load-scope";
 
-import { settleable, type Settleable } from "../reviews/model";
+import { markDiffering, settleable, type Settleable } from "../reviews/model";
 import { isRecord } from "../../../shared/json";
 
 // What the website reads from an ontology's database, as v3 dynamic read
@@ -365,6 +365,10 @@ export function documentRequest(
           "$id",
           "reason",
           "review_key",
+          "claim_key",
+          "claim",
+          "statement",
+          "section",
           "type",
           "doc_id",
           "norm_name",
@@ -518,7 +522,7 @@ export function parseDocument(body: unknown): DocumentGraph {
     sections,
     mentions,
     evidence,
-    reviews,
+    reviews: markDiffering(reviews),
     entities: [...entities.values()].sort(byEntity),
   };
 }
@@ -771,6 +775,9 @@ export function entityRequest(
           "quote",
           "reason",
           "review_key",
+          "claim_key",
+          "claim",
+          "statement",
           "type",
           "norm_name",
           "entity_key",
@@ -1016,7 +1023,7 @@ export function parseEntity(body: unknown): EntityGraph {
       : null,
     facts,
     mentions,
-    reviews: reviews.slice(0, LIMITS.reviews),
+    reviews: markDiffering(reviews.slice(0, LIMITS.reviews)),
     violations: rows(data.violations).flatMap((r): Violation[] => {
       const constraint = str(r.constraint);
       return constraint

@@ -212,6 +212,13 @@ function walk(
     );
 }
 
+// Helix's planner refuses a property selected twice (DuplicatePropertySelection):
+// the whole read fails, however the rows would have read.
+const selected = (keys: string[]) => {
+  const twice = keys.find((k, i) => keys.indexOf(k) !== i);
+  return twice === undefined ? keys : refuse(`property ${twice} selected twice`);
+};
+
 const row = (scope: Scope, el: El, keys: string[]) =>
   Object.fromEntries(
     keys.flatMap((k) => {
@@ -336,14 +343,16 @@ function run(scope: Scope, ast: Ast): Result {
         .sort((x, y) => String(x.value).localeCompare(String(y.value)))
         .map((c) => ({ [a.property]: c.value, count: c.count }));
     }
-    case "values":
-      return input().map((e) => row(scope, e, a.properties));
-    case "value_map":
+    case "values": {
+      const keys = selected(a.properties);
+      return input().map((e) => row(scope, e, keys));
+    }
+    case "value_map": {
+      const keys = a.properties && selected(a.properties);
       return input().map((e) =>
-        a.properties
-          ? row(scope, e, ["$id", "$label", ...a.properties])
-          : everything(scope, e),
+        keys ? row(scope, e, ["$id", "$label", ...keys]) : everything(scope, e),
       );
+    }
     case "edge_properties":
       return input()
         .filter((e) => e.kind === "edge")

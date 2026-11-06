@@ -1063,6 +1063,53 @@ export function extractDocument(
           : resolvedBy === "name"
             ? 0.93
             : 0.81;
+    // A hedged sentence is a claim a verifier doubts: held, until a person
+    // releases it by its key, the same in every load.
+    const [from, to] = sentenceAt(first.s.text, first.i);
+    if (/\bmay\b/.test(first.s.text.slice(from, to))) {
+      const about = [
+        g.node(contract!)!.props.norm_name,
+        g.node(e.id)!.props.entity_key ?? g.node(e.id)!.props.norm_name,
+      ];
+      const claim = JSON.stringify({ link: "signed_with", about });
+      const claimKey = sha256(`${doc.id}\u001f${claim}`);
+      const place = quote(first.s, first.i);
+      const released = decisions.some(
+        (d) =>
+          d.kind === "release" &&
+          d.docId === doc.id &&
+          d.claimKey === claimKey &&
+          d.claimSection === first.s.ordinal &&
+          d.claimStart === place.start &&
+          d.claimEnd === place.end,
+      );
+      if (!released) {
+        const r = g.addNode(N.Review, {
+          review_key: sha256(`${doc.id}\u001f${claimKey}`),
+          doc_id: doc.id,
+          section: first.s.ordinal,
+          ...place,
+          reason: "low_confidence",
+          claim_key: claimKey,
+          claim,
+          statement: JSON.stringify({
+            subject: { type: "Contract", name: g.node(contract!)!.props.name },
+            object: {
+              type: g.node(e.id)!.label,
+              name: e.name || first.surface,
+            },
+            props: {},
+          }),
+          suggested_link: "signed_with",
+          confidence: 0.72,
+        });
+        g.addEdge(E.FROM_SECTION, r, first.s.node);
+        g.addEdge(E.CONCERNS, r, contract!);
+        g.addEdge(E.CONCERNS, r, e.id);
+        counts.reviews += 1;
+        continue;
+      }
+    }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
     );

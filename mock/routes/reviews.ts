@@ -62,6 +62,8 @@ function propValue(v: unknown): v is FoundryPropValue {
 /** The mock enforces protobuf's oneofs, including an explicit false refusal. */
 function valid(b: unknown): b is FoundryReviewChoice {
   if (!isRecord(b)) return false;
+  if ("release" in b)
+    return b.release === true && !("resolve" in b) && !("prop" in b);
   if ("prop" in b) return !("resolve" in b) && propValue(b.prop);
   if (!isRecord(b.resolve)) return false;
   const r = b.resolve;
@@ -74,15 +76,40 @@ function valid(b: unknown): b is FoundryReviewChoice {
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 /** The decision for the same identity, which settling again replaces. */
 const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
-  a.kind === "resolve"
-    ? b.kind === "resolve" &&
-      a.type === b.type &&
+  a.kind === "release"
+    ? b.kind === "release" &&
       a.docId === b.docId &&
-      a.normName === b.normName
-    : b.kind === "prop" &&
-      a.type === b.type &&
-      a.entityKey === b.entityKey &&
-      a.prop === b.prop;
+      a.claimKey === b.claimKey &&
+      a.claimSection === b.claimSection &&
+      a.claimStart === b.claimStart &&
+      a.claimEnd === b.claimEnd
+    : a.kind === "resolve"
+      ? b.kind === "resolve" &&
+        a.type === b.type &&
+        a.docId === b.docId &&
+        a.normName === b.normName
+      : b.kind === "prop" &&
+        a.type === b.type &&
+        a.entityKey === b.entityKey &&
+        a.prop === b.prop;
+
+/** Saves `decision`, replacing the one of its identity, as settling again does. */
+function save(
+  ontology: string,
+  decision: ReviewDecision,
+  user: string,
+): ReviewDecisionResponse {
+  const own = decisions.get(ontology) || [];
+  const previous = own.find((d) => sameIdentity(d, decision));
+  const saved = {
+    ...decision,
+    id: previous?.id || id("decision"),
+    decidedByUserId: user,
+    decidedAt: now(),
+  };
+  decisions.set(ontology, [...own.filter((d) => d.id !== saved.id), saved]);
+  return { decision: saved };
+}
 
 export const reviewRoutes: MockRoute[] = [
   {
@@ -114,6 +141,37 @@ export const reviewRoutes: MockRoute[] = [
       if (found.length !== 1)
         return fail("NOT_FOUND", "review not found in the current load");
       const r = found[0]!.props;
+      // A held claim names no type: the engine reads what it states from its
+      // document.
+      if (["low_confidence", "unverified"].includes(text(r.reason))) {
+        if (!choice.release)
+          return fail(
+            "INVALID_ARGUMENT",
+            "this review requires a release decision",
+          );
+        const docId = text(r.doc_id),
+          claimKey = text(r.claim_key);
+        if (!docId || !/^[0-9a-f]{64}$/.test(claimKey))
+          return fail(
+            "FAILED_PRECONDITION",
+            "this review is missing its identity; start a new load before settling it",
+          );
+        return ok(
+          save(
+            s.o.id,
+            {
+              kind: "release",
+              type: "",
+              docId,
+              claimKey,
+              claimSection: Number(r.section),
+              claimStart: Number(r.start),
+              claimEnd: Number(r.end),
+            },
+            req.principal.user.id,
+          ) satisfies ReviewDecisionResponse,
+        );
+      }
       const type = text(r.type);
       if (!type)
         return fail(
@@ -213,16 +271,13 @@ export const reviewRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "the current load's version no longer has this review's type or property; reload the review and try again",
         );
-      const own = decisions.get(s.o.id) || [];
-      const previous = own.find((d) => sameIdentity(d, decision));
-      const saved = {
-        ...decision,
-        id: previous?.id || id("decision"),
-        decidedByUserId: req.principal.user.id,
-        decidedAt: now(),
-      };
-      decisions.set(s.o.id, [...own.filter((d) => d.id !== saved.id), saved]);
-      return ok({ decision: saved } satisfies ReviewDecisionResponse);
+      return ok(
+        save(
+          s.o.id,
+          decision,
+          req.principal.user.id,
+        ) satisfies ReviewDecisionResponse,
+      );
     },
   },
   {

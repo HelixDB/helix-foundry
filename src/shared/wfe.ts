@@ -2499,8 +2499,10 @@ export type FoundryReviewChoice =
         | { entityKey: string; notInData?: never }
         | { notInData: true; entityKey?: never };
       prop?: never;
+      release?: never;
     }
-  | { prop: FoundryPropValue; resolve?: never };
+  | { prop: FoundryPropValue; resolve?: never; release?: never }
+  | { release: true; resolve?: never; prop?: never };
 export type ReviewDecision =
   | {
       kind: "resolve";
@@ -2515,6 +2517,18 @@ export type ReviewDecision =
       entityKey: string;
       prop: string;
       value: FoundryPropValue;
+    }
+  // A person's word on one review of a document holding a claim back: by its
+  // claim's key and its quote's place. Its `type` is always empty: the engine
+  // reads what it states from the document.
+  | {
+      kind: "release";
+      type: "";
+      docId: string;
+      claimKey: string;
+      claimSection: number;
+      claimStart: number;
+      claimEnd: number;
     };
 export type FoundryReviewDecision = ReviewDecision & {
   id: string;

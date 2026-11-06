@@ -52,6 +52,7 @@ import {
   type DocFact,
   type DocumentGraph,
   type Span,
+  snippet,
 } from "../explore/model";
 import { readQueries, startingOf } from "../explore/reads";
 import { DatabaseStarting } from "../explore/starting";
@@ -1107,7 +1108,13 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                   })}
                 </ul>
               )}
-              <SavedDecisions documentId={documentId} />
+              <SavedDecisions
+                documentId={documentId}
+                quoteOf={(section, start, end) => {
+                  const s = x?.sections.find((s) => s.ordinal === section);
+                  return s && snippet(s.text, start, end).match;
+                }}
+              />
             </TabPanel>
             <TabPanel id="details" value={tab} idPrefix="tab">
               <KeyValue

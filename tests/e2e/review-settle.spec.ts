@@ -202,6 +202,49 @@ test("picks a property conflict value and keeps its quotes after reload", async 
   ).toContainText("term_months: 36");
 });
 
+test("approves a held claim, and the next load writes it as a fact", async ({
+  page,
+}) => {
+  const old = await setup(page, [
+    {
+      name: "variant.md",
+      text: "# Hedged deal\n\nGlobex Corporation may have signed.\n",
+    },
+  ]);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  const held = reviews(page).getByRole("listitem").filter({
+    hasText: "The model wasn’t sure",
+  });
+  await expect(held).toContainText("Globex Corporation may have signed");
+  // The card says what gets written, ends in order, before anyone approves.
+  await expect(held).toContainText(
+    "Approving writes: Hedged deal (Contract) → signed_with → Globex Corporation (Customer)",
+  );
+  await expect(held).toContainText("from this sentence alone");
+  const settled = page.waitForRequest(
+    (r) => r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url()),
+  );
+  await held.getByRole("button", { name: "Approve", exact: true }).click();
+  expect((await settled).postDataJSON()).toEqual({
+    decision: { release: true },
+  });
+  await expect(held.getByRole("status")).toContainText(
+    "Decision saved. Reload to apply.",
+  );
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+  // The next load writes it, and has no review of it.
+  const next = await loadVersion3(page);
+  expect(next).not.toBe(old);
+  await page.goto(`${doc}?tab=review`);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+});
+
 test("links an adjudicated mention to its review and undoes the link on reload", async ({
   page,
 }) => {

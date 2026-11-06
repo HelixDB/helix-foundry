@@ -2797,29 +2797,19 @@ describe("review decisions", () => {
     expect(
       refusal(await settle({ reason: "unverified" }, body.decision)),
     ).toEqual([400, "this review requires a release decision"]);
-    const held = (claim: string, key = "a".repeat(64)) => ({
+    const held = (key = "a".repeat(64)) => ({
       reason: "low_confidence",
       type: "",
       claim_key: key,
-      claim,
     });
-    const both = JSON.stringify({ about: [1, 2] });
-    expect(
-      refusal(await settle(held(both, ""), { release: true })),
-    ).toEqual([
+    expect(refusal(await settle(held(""), { release: true }))).toEqual([
       400,
       "this review is missing its identity; start a new load before settling it",
     ]);
     expect(
-      refusal(await settle(held('{"about":[1]}'), { release: true })),
-    ).toEqual([
-      400,
-      "this claim names an entity the load doesn't hold; settle its names first",
-    ]);
-    expect(
       refusal(await settle({ reason: "unresolved" }, { release: true })),
     ).toEqual([400, "this review requires a resolve decision"]);
-    expect(refusal(await settle(held(both), { release: false }))).toEqual([
+    expect(refusal(await settle(held(), { release: false }))).toEqual([
       400,
       "choose a candidate, not in data, or a property value",
     ]);

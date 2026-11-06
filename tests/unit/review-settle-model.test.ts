@@ -48,53 +48,117 @@ const held = {
   reason: "low_confidence",
   doc_id: "doc",
   claim_key: "a".repeat(64),
-  claim: JSON.stringify({ about: [{ type: "Contract" }, { type: "Customer" }] }),
+  section: 1,
+  start: 4,
+  end: 20,
+  suggested_link: "promised_to",
+  claim: JSON.stringify({
+    about: [{ type: "Contract" }, { type: "Customer" }],
+  }),
+  statement: JSON.stringify({
+    subject: { type: "Commitment", name: "24-hour support" },
+    object: { type: "Account", name: "Acme Ltd" },
+    props: { due_on: "2027-01-01", nested: {} },
+  }),
 };
+const release = {
+  kind: "release",
+  reviewId: "held-key",
+  docId: "doc",
+  claimKey: held.claim_key,
+  section: 1,
+  start: 4,
+  end: 20,
+  link: "promised_to",
+  statement: {
+    subject: { type: "Commitment", name: "24-hour support" },
+    object: { type: "Account", name: "Acme Ltd" },
+    props: { due_on: "2027-01-01" },
+  },
+  named: true,
+} as const;
+const decided = {
+  kind: "release",
+  type: "",
+  docId: "doc",
+  claimKey: held.claim_key,
+  claimSection: 1,
+  claimStart: 4,
+  claimEnd: 20,
+} as const;
 describe("a held claim", () => {
   it.each(["low_confidence", "unverified"])(
-    "is approved by its key: %s",
+    "is approved at its place, with what it writes: %s",
     (reason) => {
-      const review = model.settleable({ ...held, reason }, []);
-      const settle = {
-        kind: "release",
-        reviewId: "held-key",
-        docId: "doc",
-        claimKey: held.claim_key,
-      } as const;
-      expect(review.settle).toEqual(settle);
-      const decision: ReviewDecision = {
-        kind: "release",
-        type: "",
-        docId: "doc",
-        claimKey: held.claim_key,
-      };
-      expect(model.matchesReview(decision, settle)).toBe(true);
-      const other = { ...decision, claimKey: "b".repeat(64) };
-      expect(model.matchesReview(other, settle)).toBe(false);
-      expect(
-        model.matchesReview({ ...decision, docId: "other" }, settle),
-      ).toBe(false);
+      expect(model.settleable({ ...held, reason }, []).settle).toEqual(release);
+      expect(model.matchesReview(decided, release)).toBe(true);
     },
   );
-  it("written before claims had keys is loaded again", () => {
-    const { claim_key: _, ...legacy } = held;
-    expect(model.settleable(legacy, []).settle).toEqual({ kind: "stale" });
+  it("is matched by its key and place", () => {
+    for (const other of [
+      { claimKey: "b".repeat(64) },
+      { docId: "other" },
+      { claimSection: 2 },
+      { claimStart: 5 },
+      { claimEnd: 21 },
+    ])
+      expect(model.matchesReview({ ...decided, ...other }, release)).toBe(
+        false,
+      );
+  });
+  it("says when reviews at one place state different things", () => {
+    const review = (name: string) =>
+      model.settleable(
+        {
+          ...held,
+          statement: JSON.stringify({
+            subject: { type: "Commitment", name },
+            object: { type: "Account", name: "Acme Ltd" },
+          }),
+        },
+        [],
+      );
+    const [one, other, alone] = model.markDiffering([
+      review("support"),
+      review("training"),
+      model.settleable({ ...held, section: 2 }, []),
+    ]);
+    expect(one!.settle).toMatchObject({ kind: "release", differs: true });
+    expect(other!.settle).toMatchObject({ kind: "release", differs: true });
+    expect(alone!.settle).not.toHaveProperty("differs");
+    const same = model.markDiffering([review("support"), review("support")]);
+    expect(same[0]!.settle).not.toHaveProperty("differs");
+  });
+  it("written before claims had keys or a place is loaded again", () => {
+    const { claim_key: _, ...keyless } = held;
+    expect(model.settleable(keyless, []).settle).toEqual({ kind: "stale" });
+    const { section: __, ...placeless } = held;
+    expect(model.settleable(placeless, []).settle).toEqual({ kind: "stale" });
   });
   it.each([
     ["one end", JSON.stringify({ about: [{ type: "Contract" }] })],
     ["no end", JSON.stringify({ about: [] })],
-    ["no ends listed", "{}"],
     ["text that doesn't read", "{"],
     ["nothing", undefined],
-  ])("that names %s waits for its names", (_, claim) => {
-    const review = model.settleable({ ...held, claim }, []);
-    expect(review.settle).toEqual({ kind: "names" });
-    expect(
-      model.matchesReview(
-        { kind: "release", type: "", docId: "doc", claimKey: held.claim_key },
-        review.settle!,
-      ),
-    ).toBe(false);
+  ])("that names %s can be approved, and says so", (_, claim) => {
+    expect(model.settleable({ ...held, claim }, []).settle).toEqual({
+      ...release,
+      named: false,
+    });
+  });
+  it.each([
+    ["nothing", undefined],
+    ["text that doesn't read", "{"],
+    ["no ends", "{}"],
+    [
+      "an end with no name",
+      '{"subject":{"type":"A"},"object":{"type":"B","name":"b"}}',
+    ],
+  ])("whose statement is %s shows its link and quote", (_, stated) => {
+    const { statement: _s, ...simple } = release;
+    expect(model.settleable({ ...held, statement: stated }, []).settle).toEqual(
+      simple,
+    );
   });
 });
 
@@ -157,19 +221,17 @@ describe("what settles a review", () => {
       model.settleable({ ...name, candidates: "a" }, []).candidates,
     ).toEqual([]);
   });
-  it.each([
-    "violation",
-    "unmatched",
-    "identity",
-    undefined,
-  ])("nothing settles a %s review", (reason) => {
-    expect(model.settleable({ ...name, reason }, [globex])).toEqual({
-      candidates: [
-        { key: "scus_GLOBEX01", entity: globex },
-        { key: "scus_GLOBAL02" },
-      ],
-    });
-  });
+  it.each(["violation", "unmatched", "identity", undefined])(
+    "nothing settles a %s review",
+    (reason) => {
+      expect(model.settleable({ ...name, reason }, [globex])).toEqual({
+        candidates: [
+          { key: "scus_GLOBEX01", entity: globex },
+          { key: "scus_GLOBAL02" },
+        ],
+      });
+    },
+  );
   it("a row conflict carries the table's value it would replace", () => {
     expect(model.settleable(prop, [globex])).toEqual({
       candidates: [],

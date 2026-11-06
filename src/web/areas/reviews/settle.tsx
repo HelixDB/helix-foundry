@@ -19,8 +19,11 @@ import {
   matchesReview,
   propValueText,
   type Candidate,
+  type Settle,
   type Settleable,
 } from "./model";
+
+type ReleaseSettle = Extract<Settle, { kind: "release" }>;
 
 /** A review's candidates, each by name and linked to its page when the read found it. */
 function Candidates({
@@ -41,6 +44,51 @@ function Candidates({
       )}
     </Fragment>
   ));
+}
+
+/** What approving a held claim writes: its ends in order, its link, its properties. */
+function ClaimWritten({ settle }: { settle: ReleaseSettle }) {
+  const { link, statement: s, named, differs } = settle;
+  const props = Object.entries(s?.props ?? {});
+  return (
+    <>
+      {s ? (
+        <p>
+          Approving writes: <strong>{s.subject.name}</strong> ({s.subject.type}){" "}
+          <span aria-label="to">→</span> {link && <code>{link}</code>}{" "}
+          <span aria-label="to">→</span> <strong>{s.object.name}</strong> (
+          {s.object.type})
+        </p>
+      ) : (
+        <p>
+          Approving writes this sentence’s {link ? <code>{link}</code> : "link"}{" "}
+          as a fact.
+        </p>
+      )}
+      {props.length > 0 && (
+        <ul aria-label="Written with it">
+          {props.map(([name, value]) => (
+            <li key={name}>
+              {name}: {valueText(value)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {differs && (
+        <p role="note">
+          This sentence is read more than one way, and no approval can say
+          which, so it stays held.
+        </p>
+      )}
+      {!named && !differs && (
+        <p className="on-muted">
+          An end isn’t in the graph yet: approving creates it if the ontology
+          lets documents create it. If it’s a name your data doesn’t hold, the
+          claim stays held until that name is settled.
+        </p>
+      )}
+    </>
+  );
 }
 
 /**
@@ -78,14 +126,15 @@ export function SettleReview({
         )}
       </>
     );
-  const isProp = s.kind === "prop";
+  const isProp = s.kind === "prop",
+    isRelease = s.kind === "release";
   const field = !isProp
     ? "Link this name to"
     : s.table !== undefined
       ? "Replace the table’s value with"
       : "Keep value";
   const decision =
-    choice === ""
+    isRelease || choice === ""
       ? undefined
       : isProp
         ? decisionFor(review, {
@@ -97,6 +146,18 @@ export function SettleReview({
           });
   const editable = !!load?.current;
   const saved = query.data?.find((d) => matchesReview(d, s));
+  // A decision of this place under another key: the claim's key moved, so the
+  // load found no review of it (the engine's release_missed).
+  const earlier =
+    isRelease &&
+    query.data?.some(
+      (d) =>
+        d.kind === "release" &&
+        d.docId === s.docId &&
+        d.claimSection === s.section &&
+        d.claimStart === s.start &&
+        d.claimEnd === s.end,
+    );
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
     setPending(true);
@@ -123,7 +184,8 @@ export function SettleReview({
   };
   return (
     <div className="on-stack">
-      {!isProp && review.candidates.length > 0 && (
+      {isRelease && <ClaimWritten settle={s} />}
+      {!isProp && !isRelease && review.candidates.length > 0 && (
         <p>
           Suggestions only:{" "}
           <Candidates candidates={review.candidates} link={link} />
@@ -156,11 +218,42 @@ export function SettleReview({
           {!editable
             ? "A decision is saved for this review."
             : loadRead(saved, load?.createdAt)
-              ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
+              ? isRelease
+                ? "This load read the approval, and the claim stays held: a name in it isn’t in your data, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
+                : "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
               : "Decision saved. Reload to apply."}
         </p>
       )}
-      {canManage(role) && editable && (
+      {isRelease && !saved && earlier && (
+        <p role="status">
+          An earlier approval of this sentence didn’t apply: the claim has
+          changed since. Read it again before approving it.
+        </p>
+      )}
+      {canManage(role) && editable && isRelease && !saved && !s.differs && (
+        <div className="on-stack">
+          <p className="on-muted">
+            On your word, from this sentence alone. Applies from the next load.
+            Reload to apply.
+          </p>
+          {(error || query.error) && (
+            <p role="alert" className="hf-form-error">
+              {error || query.error?.message}
+            </p>
+          )}
+          <div className="hf-form-actions">
+            <Button
+              size="sm"
+              disabled={pending}
+              pending={pending}
+              onClick={() => void save({ release: true })}
+            >
+              Approve
+            </Button>
+          </div>
+        </div>
+      )}
+      {canManage(role) && editable && !isRelease && (
         <form
           className="on-stack"
           onSubmit={async (e) => {
@@ -236,10 +329,24 @@ export function SettleReview({
 /** Saved overrides stay available to remove after their review disappears. */
 export function SavedDecisions({
   documentId,
+  quoteOf,
   entity,
 }:
-  | { documentId: string; entity?: never }
-  | { entity: { type: string; key: string }; documentId?: never }) {
+  | {
+      documentId: string;
+      /** The text a release decision's place holds, if the page has it. */
+      quoteOf?: (
+        section: number,
+        start: number,
+        end: number,
+      ) => string | undefined;
+      entity?: never;
+    }
+  | {
+      entity: { type: string; key: string };
+      documentId?: never;
+      quoteOf?: never;
+    }) {
   const { id: ws, role } = useWorkspace(),
     { id: o } = useOntology();
   const qc = useQueryClient();
@@ -249,8 +356,11 @@ export function SavedDecisions({
   const [error, setError] = useState("");
   const relevant = (d: ReviewDecision) =>
     documentId
-      ? d.kind === "resolve" && d.docId === documentId
-      : entity && d.type === entity.type && d.entityKey === entity.key;
+      ? (d.kind === "resolve" || d.kind === "release") && d.docId === documentId
+      : entity &&
+        d.kind !== "release" &&
+        d.type === entity.type &&
+        d.entityKey === entity.key;
   const own = query.data?.filter((d) => relevant(d)) || [];
   return (
     <div className="on-stack">
@@ -266,10 +376,13 @@ export function SavedDecisions({
             {own.map((d) => (
               <li key={d.id} className="dc-review">
                 <p>
-                  {d.type} ·{" "}
-                  {d.kind === "resolve"
-                    ? `${d.normName} → ${d.entityKey ?? "Not in data"}`
-                    : `${d.prop}: ${propValueText(d.value)}`}
+                  {d.kind === "release"
+                    ? `Approved: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
+                    : `${d.type} · ${
+                        d.kind === "resolve"
+                          ? `${d.normName} → ${d.entityKey ?? "Not in data"}`
+                          : `${d.prop}: ${propValueText(d.value)}`
+                      }`}
                 </p>
                 {canManage(role) && (
                   <Button
