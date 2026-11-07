@@ -163,7 +163,8 @@ type Knobs = {
     | "legal_form"
     | "differs"
     | "unverified"
-    | "one_end";
+    | "one_end"
+    | "no_statement";
   deleteOutcome?: "succeed" | "fail";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.

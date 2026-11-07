@@ -54,7 +54,8 @@ export const mock = {
       | "legal_form"
       | "differs"
       | "unverified"
-      | "one_end";
+      | "one_end"
+      | "no_statement";
     // A load's delete fails for good (delete_failed).
     deleteOutcome?: "succeed" | "fail";
     // The next n presigned PUTs fail as a busy bucket does.

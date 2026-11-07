@@ -273,6 +273,18 @@ test("approves a held claim, and the next load writes it as a fact", async ({
   ).toContainText("Approved: “Globex Corporation may have signed.”");
 });
 
+/** Serves the contracts ontology with signed_with holding one value. */
+async function oneValued(page: Page) {
+  await page.route(/\/versions\/[^/?]+(\?|$)/, async (route) => {
+    const response = await route.fetch();
+    const text = (await response.text()).replace(
+      /(\[links\.signed_with\].*?cardinality = \\")many/g,
+      "$1one",
+    );
+    await route.fulfill({ response, body: text });
+  });
+}
+
 /** A document with one hedged claim, opened on its reviews, and its card. */
 async function hedged(
   page: Page,
@@ -309,11 +321,13 @@ test("says why a load kept an approved claim held", async ({ page }) => {
   ).toContainText("Approved, not written: “");
 });
 
-test("names the name a legal form linked when it holds an approved claim", async ({
+test("names the name a legal form linked when it holds a one-valued claim", async ({
   page,
 }) => {
+  await oneValued(page);
   await mock.configure({ documentHeld: "legal_form" });
   const { doc, held } = await hedged(page);
+  await expect(held).toContainText("Settle that name too");
   await approve(held);
   await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
@@ -324,6 +338,46 @@ test("names the name a legal form linked when it holds an approved claim", async
     "isn’t in your data",
   );
   await expect(reviews(page)).toContainText("Linked by its legal form");
+});
+
+test("doesn't blame a legal form for a many-valued claim that stays held", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "legal_form" });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held.getByRole("status")).toContainText(
+    "This load read the approval, and the claim stays held",
+  );
+  await expect(held.getByRole("status")).not.toContainText(
+    "“globex corporation”",
+  );
+});
+
+test("sends a review with no statement to a new load, or to the current one", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "no_statement" });
+  const old = await setup(page, [
+    {
+      name: "variant.md",
+      text: "# Hedged deal\n\nGlobex Corporation may have signed.\n",
+    },
+  ]);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  const stale = reviews(page).getByRole("listitem").filter({
+    hasText: "The model wasn’t sure",
+  });
+  await expect(stale).toContainText("Load again to settle this review.");
+  await loadVersion3(page);
+  await page.goto(`${doc}?load=${old}&tab=review`);
+  await expect(stale).toContainText(
+    "Open the current load to settle this review.",
+  );
+  await expect(stale).not.toContainText("Load again");
 });
 
 test("offers no approval of a sentence read two ways", async ({ page }) => {
@@ -373,14 +427,7 @@ test("doesn't tell one claim of a sentence about another's approval", async ({
 });
 
 test("promises no edge on a link that holds one value", async ({ page }) => {
-  await page.route(/\/versions\/[^/?]+(\?|$)/, async (route) => {
-    const response = await route.fetch();
-    const text = (await response.text()).replace(
-      /(\[links\.signed_with\].*?cardinality = \\")many/g,
-      "$1one",
-    );
-    await route.fulfill({ response, body: text });
-  });
+  await oneValued(page);
   const { held } = await hedged(page);
   await expect(held).toContainText("Approving states:");
   await expect(held).not.toContainText("Approving writes:");

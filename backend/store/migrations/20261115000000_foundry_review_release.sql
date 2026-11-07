@@ -16,17 +16,20 @@
 -- binary, not the schema, so nothing here deletes a row, and the columns stay:
 -- an older binary neither reads nor writes them. It can't read a row of kind
 -- release, though: its Validate knows only resolve and prop, so its
--- ListFoundryReviewDecisions, the prune in SetCurrentOntologyVersion and every
--- Extract of that ontology fail. So before going back to a binary older than
--- this one, once anyone has approved a claim, a person must run on the database:
+-- ListFoundryReviewDecisions, the prune in SetCurrentOntologyVersion and any
+-- Extract sending a document with such a row in its load's snapshot fail. So
+-- before going back to a binary older than this one, once anyone has approved a
+-- claim, a person must run on the database:
 --
 --   DELETE FROM foundry_load_decisions WHERE kind='release';
 --   DELETE FROM foundry_review_decisions WHERE kind='release';
 --
 -- That takes the approvals, not what they wrote: a load keeps its facts, and a
 -- later load holds those claims again until someone approves them. The Down is
--- for a local database and refuses while such a row is left, as the old CHECK
--- has no arm for one.
+-- for a local database and deletes nothing. A release row left in
+-- foundry_review_decisions stops it, as the old CHECK has no arm for one; one
+-- left in foundry_load_decisions doesn't, as that table has no CHECK, and an
+-- older binary then fails on it. Run both DELETEs first.
 SET @drop_review_decisions_shape_chk = (
   SELECT COALESCE(
     CONCAT(
@@ -72,9 +75,9 @@ ALTER TABLE foundry_load_decisions
 
 -- +goose Down
 -- Deletes nothing: see the rollback note above. The new CHECK goes first, by
--- prefix, and foundry_load_decisions last, so a release row left stops this at
--- the old CHECK with both tables' columns in place, and it runs again once the
--- rows are gone.
+-- prefix, and foundry_load_decisions last, so a release row left in
+-- foundry_review_decisions stops this at the old CHECK with both tables' columns
+-- in place, and it runs again once the rows are gone.
 SET @drop_review_decisions_shape_chk = (
   SELECT COALESCE(
     CONCAT(

@@ -137,6 +137,7 @@ export function SettleReview({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const s = review.settle;
+  const editable = !!load?.current;
   const held = s?.kind === "release" ? s : undefined;
   const read = useQuery({
     queryKey: ["statement-hash", held?.link, held?.stored],
@@ -153,7 +154,11 @@ export function SettleReview({
           </p>
         )}
         {s && canManage(role) && (
-          <p className="on-muted">Load again to settle this review.</p>
+          <p className="on-muted">
+            {editable
+              ? "Load again to settle this review."
+              : "Open the current load to settle this review."}
+          </p>
         )}
       </>
     );
@@ -175,7 +180,8 @@ export function SettleReview({
         : decisionFor(review, {
             entityKey: choice === "none" ? null : choice.slice(4),
           });
-  const editable = !!load?.current;
+  // Also when the version isn't known: a card promises no edge it can't.
+  const single = isRelease && (!naming.version || naming.oneValued.has(s.link));
   const approval = isRelease
     ? approvalOf(query.data ?? [], s, read.data, editable)
     : undefined;
@@ -208,12 +214,7 @@ export function SettleReview({
   };
   return (
     <div className="on-stack">
-      {isRelease && (
-        <ClaimWritten
-          settle={s}
-          single={!naming.version || naming.oneValued.has(s.link)}
-        />
-      )}
+      {isRelease && <ClaimWritten settle={s} single={single} />}
       {!isProp && !isRelease && review.candidates.length > 0 && (
         <p>
           Suggestions only:{" "}
@@ -255,7 +256,7 @@ export function SettleReview({
             ? "A decision is saved for this review."
             : loadRead(saved, load?.createdAt)
               ? isRelease
-                ? s.formed
+                ? s.formed && single
                   ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
                   : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
                 : "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."

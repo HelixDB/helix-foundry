@@ -703,8 +703,15 @@ export function extractDocument(
   // "refused" holds it however it's approved; "legal_form" too, with its name
   // linked by form; "differs" gives its place a review stating something else,
   // and refuses it; "unverified" is one no verifier judged, written at no
-  // confidence; "one_end" names one of its ends.
-  held?: "refused" | "legal_form" | "differs" | "unverified" | "one_end",
+  // confidence; "one_end" names one of its ends; "no_statement" is one an
+  // older load held, with no statement to approve.
+  held?:
+    | "refused"
+    | "legal_form"
+    | "differs"
+    | "unverified"
+    | "one_end"
+    | "no_statement",
   // The models that read and check it.
   readers: { model: string; verifier: string } = {
     model: MODEL,
@@ -1113,7 +1120,7 @@ export function extractDocument(
           reason: held === "unverified" ? "unverified" : "low_confidence",
           claim_key: claimKey,
           claim,
-          statement,
+          ...(held === "no_statement" ? {} : { statement }),
           suggested_link: "signed_with",
           ...(held === "unverified" ? {} : { confidence: 0.72 }),
         });

@@ -211,6 +211,30 @@ func TestFoundryKeptFailedRow(t *testing.T) {
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1",
 		failed(empty, model.FoundryExtractionCounts{}), false))
 
+	// A second attempt stops too, having counted nothing, as it found the
+	// document held: what the first counted stands, and what it spent adds.
+	again := failed(counted, model.FoundryExtractionCounts{})
+	again.USDMicros, again.InputTokens, again.OutputTokens = 5, 7, 9
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", again, false))
+	rows, err := f.db.ListFoundryDocumentExtractions(ctx, job.LoadID, []string{counted})
+	require.NoError(t, err)
+	stopped := rows[counted]
+	require.NotNil(t, stopped)
+	assert.Equal(t, model.FoundryExtractionFailed, stopped.Status)
+	require.NotNil(t, stopped.Error)
+	assert.Equal(t, 3, stopped.Counts.Entities, "a second failure lowers nothing")
+	assert.Equal(t, 5, stopped.Counts.Facts)
+	assert.Equal(t, 2, stopped.Counts.Reviews)
+	assert.Equal(t, int64(250_005), stopped.USDMicros, "its spend adds")
+	assert.Equal(t, int64(1_007), stopped.InputTokens)
+	assert.Equal(t, int64(109), stopped.OutputTokens)
+
+	// A failure over a row that isn't one replaces it, as any write does.
+	done := f.uploaded(t, "done")
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", extracted(done), false))
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1",
+		failed(done, model.FoundryExtractionCounts{Sections: 1}), false))
+
 	retried := func(doc string, released int) *model.FoundryDocumentExtraction {
 		e := extracted(doc)
 		e.USDMicros, e.InputTokens, e.OutputTokens = 0, 0, 0
@@ -220,7 +244,7 @@ func TestFoundryKeptFailedRow(t *testing.T) {
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", retried(counted, 1), true))
 	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", retried(empty, 1), true))
 
-	rows, err := f.db.ListFoundryDocumentExtractions(ctx, job.LoadID, []string{counted, empty})
+	rows, err = f.db.ListFoundryDocumentExtractions(ctx, job.LoadID, []string{counted, empty})
 	require.NoError(t, err)
 	kept := rows[counted]
 	require.NotNil(t, kept)
@@ -230,12 +254,18 @@ func TestFoundryKeptFailedRow(t *testing.T) {
 	assert.Equal(t, 4, kept.Counts.Mentions)
 	assert.Equal(t, 6, kept.Counts.Facts, "with what the retry released")
 	assert.Equal(t, 1, kept.Counts.Reviews, "less what it released")
+	assert.Equal(t, int64(250_005), kept.USDMicros)
 	nothing := rows[empty]
 	require.NotNil(t, nothing)
 	assert.Equal(t, model.FoundryExtractionExtracted, nothing.Status)
 	assert.Equal(t, 0, nothing.Counts.Entities)
 	assert.Equal(t, 1, nothing.Counts.Facts)
 	assert.Equal(t, 0, nothing.Counts.Reviews, "never below none")
+	rows, err = f.db.ListFoundryDocumentExtractions(ctx, job.LoadID, []string{done})
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryExtractionFailed, rows[done].Status)
+	assert.Equal(t, 0, rows[done].Counts.Entities)
+	assert.Equal(t, int64(250_000), rows[done].USDMicros)
 }
 
 func TestFoundryDocuments(t *testing.T) {
