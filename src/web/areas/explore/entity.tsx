@@ -802,7 +802,7 @@ function Entity({
                               {provenanceText(f.provenance)}
                             </Tag>
                           )}
-                          {f.confidence !== undefined && f.confidence < 1 && (
+                          {!!f.confidence && f.confidence < 1 && (
                             <span className="on-muted">
                               {Math.round(f.confidence * 100)}% confident
                             </span>
@@ -1020,6 +1020,7 @@ function Entity({
                     <SettleReview
                       review={rv}
                       link={link}
+                      naming={naming}
                       load={
                         selection.choice.kind === "load"
                           ? selection.choice.load

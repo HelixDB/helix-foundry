@@ -273,6 +273,134 @@ test("approves a held claim, and the next load writes it as a fact", async ({
   ).toContainText("Approved: “Globex Corporation may have signed.”");
 });
 
+/** A document with one hedged claim, opened on its reviews, and its card. */
+async function hedged(
+  page: Page,
+  text = "Globex Corporation may have signed.",
+) {
+  await setup(page, [
+    { name: "variant.md", text: `# Hedged deal\n\n${text}\n` },
+  ]);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  const held = reviews(page)
+    .getByRole("listitem")
+    .filter({
+      hasText: /The model wasn’t sure|couldn’t confirm/,
+    });
+  return { doc, held };
+}
+const approve = async (card: ReturnType<Page["locator"]>) => {
+  await card.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(card.getByRole("status")).toContainText("Decision saved");
+};
+
+test("says why a load kept an approved claim held", async ({ page }) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held.getByRole("status")).toContainText(
+    "This load read the approval, and the claim stays held",
+  );
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved, not written: “");
+});
+
+test("names the name a legal form linked when it holds an approved claim", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "legal_form" });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held.getByRole("status")).toContainText(
+    "“globex corporation” is linked only by its legal form",
+  );
+  await expect(held.getByRole("status")).not.toContainText(
+    "isn’t in your data",
+  );
+  await expect(reviews(page)).toContainText("Linked by its legal form");
+});
+
+test("offers no approval of a sentence read two ways", async ({ page }) => {
+  await mock.configure({ documentHeld: "differs" });
+  const { held } = await hedged(page);
+  await expect(held).toContainText("read more than one way");
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("says an end isn't in the graph yet", async ({ page }) => {
+  await mock.configure({ documentHeld: "one_end" });
+  const { held } = await hedged(page);
+  await expect(held).toContainText("An end isn’t in the graph yet");
+});
+
+test("shows no percentage on a claim no verifier judged", async ({ page }) => {
+  await mock.configure({ documentHeld: "unverified" });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(doc);
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByText("signed_with").first()).toBeVisible();
+  await expect(page.getByText(/\b0% confident/)).toHaveCount(0);
+});
+
+test("doesn't tell one claim of a sentence about another's approval", async ({
+  page,
+}) => {
+  const { doc, held } = await hedged(
+    page,
+    "Globex Corporation and Initech may have signed.",
+  );
+  await expect(held).toHaveCount(2);
+  await approve(held.first());
+  await expect(held.last()).not.toContainText("earlier approval");
+  await expect(
+    held.last().getByRole("button", { name: "Approve", exact: true }),
+  ).toBeVisible();
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held).toHaveCount(1);
+  await expect(held).not.toContainText("earlier approval");
+  await expect(held).not.toContainText("reads differently");
+});
+
+test("promises no edge on a link that holds one value", async ({ page }) => {
+  await page.route(/\/versions\/[^/?]+(\?|$)/, async (route) => {
+    const response = await route.fetch();
+    const text = (await response.text()).replace(
+      /(\[links\.signed_with\].*?cardinality = \\")many/g,
+      "$1one",
+    );
+    await route.fulfill({ response, body: text });
+  });
+  const { held } = await hedged(page);
+  await expect(held).toContainText("Approving states:");
+  await expect(held).not.toContainText("Approving writes:");
+  await expect(held).toContainText("This link holds one value");
+});
+
+test("hides Approve from a member", async ({ page }) => {
+  const { doc, held } = await hedged(page);
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toBeVisible();
+  await page.context().clearCookies();
+  await signIn(page, "alan@example.com");
+  await page.goto(`${doc}?tab=review`);
+  await expect(held).toContainText("Approving writes:");
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("links an adjudicated mention to its review and undoes the link on reload", async ({
   page,
 }) => {

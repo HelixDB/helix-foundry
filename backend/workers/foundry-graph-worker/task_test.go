@@ -3139,6 +3139,48 @@ func TestExtractReviewDecisions(t *testing.T) {
 // left out and the rest go. A resolve whose chosen entity the changed key no
 // longer reads goes too: the engine counts it stale and reviews its name
 // again, where left out the name would be matched another way.
+// A release takes its review out of the graph after the commit counted it, so a
+// document's stored counts are what the load holds: one review fewer, one fact
+// more. An already_ingested document's event has zero counts, however many it
+// released, and its stored row stays.
+func TestExtractRecordsWhatAReleaseMoved(t *testing.T) {
+	released := func(reviews, facts, written int, outcome string) string {
+		c := strings.Replace(counts, `"reviews":1`, fmt.Sprintf(`"reviews":%d`, reviews), 1)
+		c = strings.Replace(c, `"facts":1`, fmt.Sprintf(`"facts":%d`, facts), 1)
+		c = strings.Replace(c, `"released":0`, fmt.Sprintf(`"released":%d`, written), 1)
+		return `{"event":"document","doc_id":"doc-a","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + c + `,` + noUsage + `}`
+	}
+	for name, tc := range map[string]struct {
+		event          string
+		reviews, facts int
+		kept           bool
+	}{
+		"a review released":    {released(2, 3, 1, `{"kind":"ingested"}`), 1, 4, false},
+		"all of them":          {released(1, 0, 1, `{"kind":"ingested"}`), 0, 1, false},
+		"none":                 {released(2, 3, 0, `{"kind":"ingested"}`), 2, 3, false},
+		"a held document":      {released(0, 0, 1, `{"kind":"already_ingested"}`), 0, 1, true},
+		"more than it reviews": {released(1, 0, 3, `{"kind":"ingested"}`), 0, 3, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+				events := []string{extracted[0], tc.event}
+				for _, doc := range []string{"doc-b", "doc-c", "doc-d"} {
+					events = append(events, documentEvent(doc, `{"kind":"out_of_scope"}`, noUsage))
+				}
+				return extractEvents(stream, append(events, `{"event":"extract_finished"}`), `{"status":"done","totals":`+totals+`}`)
+			}
+			if outcome := h.run(t, extractJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+				t.Fatalf("%+v", outcome)
+			}
+			got := h.store.extractions["doc-a"]
+			if got == nil || got.Counts.Reviews != tc.reviews || got.Counts.Facts != tc.facts || h.store.kept["doc-a"] != tc.kept {
+				t.Fatalf("recorded %+v", got)
+			}
+		})
+	}
+}
+
 func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 	h := newHarness(t)
 	ptr := func(s string) *string { return &s }

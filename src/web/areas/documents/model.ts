@@ -1486,7 +1486,7 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
   },
   legal_form: {
     title: "Linked by its legal form",
-    text: "This name carries a legal form its row lacks, and no other row fits, so it was linked to that row, without the document’s values for it. Link it to the row to store them, or undo the link; the next load then leaves the name unlinked.",
+    text: "This name and its row differ only in a legal form, such as Ltd and Limited, and no other row fits, so it was linked to that row, without the document’s values for it. Link it to the row to store them, or undo the link; the next load then leaves the name unlinked.",
   },
   prop_conflict: {
     title: "Disagrees on a value",
@@ -1514,7 +1514,7 @@ const oneCandidate = {
 // A reason a newer engine gives: nothing is known of it but that it waits.
 const newReason = {
   title: "Held for a person to check",
-  text: "This load held something back here. Open the document to see what it says.",
+  text: "This load held something back here, and this page can’t say why.",
 };
 
 /**

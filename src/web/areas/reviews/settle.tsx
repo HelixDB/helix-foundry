@@ -13,13 +13,16 @@ import { canManage, useWorkspace } from "../../ui";
 import { useOntology } from "../ontology/scope";
 import { valueText } from "../explore/model";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
+import type { Naming } from "../explore/naming";
 import {
+  approvalOf,
   decisionFor,
   loadRead,
   matchesReview,
   propValueText,
   statementHash,
   type Candidate,
+  type ReleaseStatus,
   type Settle,
   type Settleable,
 } from "./model";
@@ -47,23 +50,48 @@ function Candidates({
   ));
 }
 
-/** What approving a held claim writes: its ends in order, its link, its properties. */
-function ClaimWritten({ settle }: { settle: ReleaseSettle }) {
-  const { link, statement: s, named, differs } = settle;
+/**
+ * What approving a held claim does: its ends in order, its link, its
+ * properties as stored. On a link that holds one value (`single`, also when
+ * the version isn't known) a date decides, so it promises no edge and hides no
+ * replacement.
+ */
+function ClaimWritten({
+  settle,
+  single,
+}: {
+  settle: ReleaseSettle;
+  single: boolean;
+}) {
+  const { link, statement: s, named, differs, formed } = settle;
   const props = Object.entries(s.props);
   return (
     <>
       <p>
-        Approving writes: <strong>{s.subject.name}</strong> ({s.subject.type}){" "}
+        {single ? "Approving states" : "Approving writes"}:{" "}
+        <strong>{s.subject.name}</strong> ({s.subject.type}){" "}
         <span aria-label="to">→</span> <code>{link}</code>{" "}
         <span aria-label="to">→</span> <strong>{s.object.name}</strong> (
         {s.object.type})
       </p>
+      {single && (
+        <p role="note">
+          This link holds one value, and the latest dated statement wins. If
+          this one is newest it replaces what the link holds now; if not, it’s
+          kept as evidence and no link is written.
+        </p>
+      )}
+      {single && formed && (
+        <p role="note">
+          “{formed}” is linked only by its legal form. Settle that name too, or
+          this stays held.
+        </p>
+      )}
       {props.length > 0 && (
         <ul aria-label="Written with it">
           {props.map(([name, value]) => (
             <li key={name}>
-              {name}: {valueText(value)}
+              {name}: {value}
             </li>
           ))}
         </ul>
@@ -93,10 +121,13 @@ export function SettleReview({
   review,
   load,
   link,
+  naming,
 }: {
   review: Settleable & { reason: string };
   load?: FoundryLoad;
   link: (path: string) => string;
+  // The rules of the page's version: which links hold one value.
+  naming: Naming;
 }) {
   const { id: ws, role } = useWorkspace();
   const { id: o } = useOntology();
@@ -145,25 +176,12 @@ export function SettleReview({
             entityKey: choice === "none" ? null : choice.slice(4),
           });
   const editable = !!load?.current;
-  const saved = query.data?.find((d) => matchesReview(d, s));
-  // An approval of what this claim said before: the engine refuses it, and the
-  // person is to read what it says now.
-  const moved =
-    saved?.kind === "release" &&
-    !!read.data &&
-    saved.statementHash !== read.data;
-  // A decision of this place under another key: the claim's key moved, so the
-  // load found no review of it (the engine's release_missed).
-  const earlier =
-    isRelease &&
-    query.data?.some(
-      (d) =>
-        d.kind === "release" &&
-        d.docId === s.docId &&
-        d.claimSection === s.section &&
-        d.claimStart === s.start &&
-        d.claimEnd === s.end,
-    );
+  const approval = isRelease
+    ? approvalOf(query.data ?? [], s, read.data, editable)
+    : undefined;
+  const saved = approval?.saved ?? query.data?.find((d) => matchesReview(d, s));
+  const moved = !!approval?.moved,
+    earlier = !!approval?.earlier;
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
     setPending(true);
@@ -190,7 +208,12 @@ export function SettleReview({
   };
   return (
     <div className="on-stack">
-      {isRelease && <ClaimWritten settle={s} />}
+      {isRelease && (
+        <ClaimWritten
+          settle={s}
+          single={!naming.version || naming.oneValued.has(s.link)}
+        />
+      )}
       {!isProp && !isRelease && review.candidates.length > 0 && (
         <p>
           Suggestions only:{" "}
@@ -232,15 +255,17 @@ export function SettleReview({
             ? "A decision is saved for this review."
             : loadRead(saved, load?.createdAt)
               ? isRelease
-                ? "This load read the approval, and the claim stays held: a name in it isn’t in your data, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
+                ? s.formed
+                  ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
+                  : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
                 : "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
               : "Decision saved. Reload to apply."}
         </p>
       )}
       {isRelease && !saved && earlier && (
         <p role="status">
-          An earlier approval of this sentence didn’t apply: the claim has
-          changed since. Read it again before approving it.
+          An earlier approval of this statement didn’t apply: what’s known of
+          the names in it has changed since. Approve it again to write it.
         </p>
       )}
       {canManage(role) &&
@@ -348,10 +373,19 @@ export function SettleReview({
   );
 }
 
+// A saved approval, as what became of it reads.
+const APPROVED: Record<ReleaseStatus, string> = {
+  written: "Approved",
+  unknown: "Approved",
+  held: "Approved, not written",
+  no_link: "Approved, no link written, as a later statement holds it",
+};
+
 /** Saved overrides stay available to remove after their review disappears. */
 export function SavedDecisions({
   documentId,
   quoteOf,
+  statusOf,
   entity,
 }:
   | {
@@ -362,12 +396,17 @@ export function SavedDecisions({
         start: number,
         end: number,
       ) => string | undefined;
+      /** What became of a release decision, if the page's reads say. */
+      statusOf?: (
+        d: Extract<ReviewDecision, { kind: "release" }>,
+      ) => ReleaseStatus;
       entity?: never;
     }
   | {
       entity: { type: string; key: string };
       documentId?: never;
       quoteOf?: never;
+      statusOf?: never;
     }) {
   const { id: ws, role } = useWorkspace(),
     { id: o } = useOntology();
@@ -399,7 +438,7 @@ export function SavedDecisions({
               <li key={d.id} className="dc-review">
                 <p>
                   {d.kind === "release"
-                    ? `Approved: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
+                    ? `${APPROVED[statusOf?.(d) ?? "unknown"]}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
                     : `${d.type} · ${
                         d.kind === "resolve"
                           ? `${d.normName} → ${d.entityKey ?? "Not in data"}`

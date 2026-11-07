@@ -699,6 +699,12 @@ export function extractDocument(
   scope: Scope,
   decisions: ReviewDecision[] = [],
   adjudicate?: "adjudicated" | "legal_form",
+  // What the engine would make of a hedged claim, for a page to show:
+  // "refused" holds it however it's approved; "legal_form" too, with its name
+  // linked by form; "differs" gives its place a review stating something else,
+  // and refuses it; "unverified" is one no verifier judged, written at no
+  // confidence; "one_end" names one of its ends.
+  held?: "refused" | "legal_form" | "differs" | "unverified" | "one_end",
   // The models that read and check it.
   readers: { model: string; verifier: string } = {
     model: MODEL,
@@ -1066,14 +1072,19 @@ export function extractDocument(
             ? 0.93
             : 0.81;
     // A hedged sentence is a claim a verifier doubts: held, until a person
-    // releases it by its key, the same in every load.
+    // releases it by its key, the same in every load, and written at the
+    // verifier's confidence.
+    let stated = confidence;
     const [from, to] = sentenceAt(first.s.text, first.i);
     if (/\bmay\b/.test(first.s.text.slice(from, to))) {
       const about = [
         g.node(contract!)!.props.norm_name,
         g.node(e.id)!.props.entity_key ?? g.node(e.id)!.props.norm_name,
       ];
-      const claim = JSON.stringify({ link: "signed_with", about });
+      const claim = JSON.stringify({
+        link: "signed_with",
+        about: held === "one_end" ? about.slice(1) : about,
+      });
       const claimKey = sha256(`${doc.id}\u001f${claim}`);
       const place = quote(first.s, first.i);
       const statement = JSON.stringify({
@@ -1091,25 +1102,61 @@ export function extractDocument(
           d.claimEnd === place.end &&
           d.statementHash === sha256(`signed_with\u001f${statement}`),
       );
-      if (!released) {
+      const refused =
+        held === "refused" || held === "legal_form" || held === "differs";
+      if (!released || refused) {
         const r = g.addNode(N.Review, {
           review_key: sha256(`${doc.id}\u001f${claimKey}`),
           doc_id: doc.id,
           section: first.s.ordinal,
           ...place,
-          reason: "low_confidence",
+          reason: held === "unverified" ? "unverified" : "low_confidence",
           claim_key: claimKey,
           claim,
           statement,
           suggested_link: "signed_with",
-          confidence: 0.72,
+          ...(held === "unverified" ? {} : { confidence: 0.72 }),
         });
         g.addEdge(E.FROM_SECTION, r, first.s.node);
         g.addEdge(E.CONCERNS, r, contract!);
         g.addEdge(E.CONCERNS, r, e.id);
         counts.reviews += 1;
+        if (held === "differs") {
+          const other = g.addNode(N.Review, {
+            review_key: sha256(`${doc.id}\u001f${claimKey}\u001fother`),
+            doc_id: doc.id,
+            section: first.s.ordinal,
+            ...place,
+            reason: "conflict",
+            claim_key: claimKey,
+            claim,
+            statement: statement.replace('"props":{}', '"props":{"term":"24"}'),
+            suggested_link: "signed_with",
+          });
+          g.addEdge(E.FROM_SECTION, other, first.s.node);
+          g.addEdge(E.CONCERNS, other, e.id);
+          counts.reviews += 1;
+        }
+        if (held === "legal_form") {
+          const key = String(g.node(e.id)!.props.entity_key);
+          const linked = g.addNode(N.Review, {
+            review_key: sha256(`${doc.id}\u001f${claimKey}\u001fform`),
+            doc_id: doc.id,
+            section: first.s.ordinal,
+            ...place,
+            reason: "legal_form",
+            type: "Customer",
+            norm_name: normName(e.name || first.surface),
+            entity_key: key,
+            candidates: [key],
+          });
+          g.addEdge(E.FROM_SECTION, linked, first.s.node);
+          g.addEdge(E.CONCERNS, linked, e.id);
+          counts.reviews += 1;
+        }
         continue;
       }
+      stated = held === "unverified" ? 0 : 0.72;
     }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
@@ -1121,7 +1168,7 @@ export function extractDocument(
       g.addEdge("signed_with", contract!, e.id, {
         fact_key: factKey,
         provenance: "extracted",
-        confidence,
+        confidence: stated,
         evidence_count: 1,
         ontology_version: doc.ontologyVersion,
       });
@@ -1133,7 +1180,7 @@ export function extractDocument(
       model,
       verifier,
       prompt_version: PROMPT_VERSION,
-      confidence,
+      confidence: stated,
     });
     g.addEdge(E.FROM_SECTION, ev, first.s.node);
     counts.facts += 1;

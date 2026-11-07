@@ -48,6 +48,13 @@ export const mock = {
     documentAdjudicated?: boolean;
     // Seeds the same variant linked by legal form, with its review.
     documentLegalForm?: boolean;
+    // What the engine would make of a hedged claim (mock/graph/extract.ts).
+    documentHeld?:
+      | "refused"
+      | "legal_form"
+      | "differs"
+      | "unverified"
+      | "one_end";
     // A load's delete fails for good (delete_failed).
     deleteOutcome?: "succeed" | "fail";
     // The next n presigned PUTs fail as a busy bucket does.

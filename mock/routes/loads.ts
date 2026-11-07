@@ -158,6 +158,12 @@ type Knobs = {
   documentOutcome?: "succeed" | "fail";
   documentAdjudicated?: boolean;
   documentLegalForm?: boolean;
+  documentHeld?:
+    | "refused"
+    | "legal_form"
+    | "differs"
+    | "unverified"
+    | "one_end";
   deleteOutcome?: "succeed" | "fail";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
@@ -309,6 +315,7 @@ onReset(() => {
   delete knobs.documentOutcome;
   delete knobs.documentAdjudicated;
   delete knobs.documentLegalForm;
+  delete knobs.documentHeld;
   delete knobs.deleteOutcome;
   delete knobs.readErrors;
   delete knobs.readsBusy;
@@ -1062,6 +1069,7 @@ function read(j: StoredJob, documentId: string, at: string) {
       : knobs.documentAdjudicated
         ? "adjudicated"
         : undefined,
+    knobs.documentHeld,
     {
       model: aiModel(j.workspaceId, "extract") || MODEL,
       verifier: aiModel(j.workspaceId, "verify") || VERIFIER,

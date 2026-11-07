@@ -5,7 +5,8 @@ import type {
   ReviewDecision,
 } from "../../../shared/wfe";
 import type { ReviewReason } from "../documents/model";
-import type { EntityRow } from "../explore/model";
+import type { DocFact, EntityRow } from "../explore/model";
+import { normalizeName } from "../explore/naming";
 
 // What a FoundryReview lets a person settle, read once
 // from the stored record, and the choice the backend's SettleFoundryReview takes. The
@@ -119,11 +120,14 @@ export type Candidate = { key: string; entity?: EntityRow };
 
 /** An end of what a held claim states, as the document names it. */
 export type StatedEnd = { type: string; name: string };
-/** What approving a held claim writes: its ends in order, and its properties. */
+/**
+ * What approving a held claim states: its ends in order, and its properties,
+ * each as stored, to the digit: it is what the engine writes.
+ */
 export type Statement = {
   subject: StatedEnd;
   object: StatedEnd;
-  props: Record<string, string | number | boolean>;
+  props: Record<string, string>;
 };
 
 /**
@@ -135,11 +139,13 @@ export type Statement = {
  *   row's value survives a conflict, so it is the table's, and a
  *   chosen document value replaces it in every later load;
  * - `release`: approve one review of a claim code holds back, so the next
- *   load writes what it states as a fact. `statement` is what that is; a
- *   review of an older load keeps none, and shows its link and quote. `named`
- *   is whether the review names both its ends: if not, an end isn't in the
- *   graph yet. `differs` is whether another review at its place states
- *   something else: no approval says which, so the engine refuses both;
+ *   load writes what it states as a fact. `statement` is what that is, and
+ *   `stored` it as the review keeps it, which its hash reads. `named` is
+ *   whether the review names both its ends: if not, an end isn't in the graph
+ *   yet. `differs` is whether another review at its place states something
+ *   else: no approval says which, so the engine refuses both. `formed` is an
+ *   end's name a legal form linked, which a person settles before a link that
+ *   holds one value is written;
  * - `stale`: a reason a decision settles, on a review written without the
  *   identity the backend reads (a load from before decisions) or whose
  *   entity this read doesn't find. A new load writes it again.
@@ -175,11 +181,20 @@ export type Settle =
       stored: string;
       named: boolean;
       differs?: boolean;
+      formed?: string;
     }
   | { kind: "stale" };
 
-/** A review's candidates and what settles it (none for a reason no decision settles). */
-export type Settleable = { candidates: Candidate[]; settle?: Settle };
+/**
+ * A review's candidates and what settles it (none for a reason no decision
+ * settles). `claim` is the place and statement of a review of a held claim,
+ * whatever its reason: the engine compares all of them at a release.
+ */
+export type Settleable = {
+  candidates: Candidate[];
+  settle?: Settle;
+  claim?: { place: string; stored?: string };
+};
 
 const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
 /** Whether an entity row is the graph's entity of this type and stored identity. */
@@ -197,11 +212,18 @@ function ends(claim: unknown): number {
   }
 }
 
-/** A review's stored `statement`, nothing in which is trusted. */
-function statement(raw: unknown): Statement | undefined {
+/**
+ * A review's stored `statement`, nothing in which is trusted. Each property
+ * reads as stored: a number from its JSON text, as a parsed one may round.
+ */
+function statement(raw: string): Statement | undefined {
   let parsed: Partial<Statement> | null;
+  let exact: Partial<Statement> | null;
   try {
-    parsed = JSON.parse(String(raw)) as Partial<Statement> | null;
+    parsed = JSON.parse(raw) as Partial<Statement> | null;
+    exact = JSON.parse(raw, (_, v: unknown, context?: { source?: string }) =>
+      typeof v === "number" ? (context?.source ?? String(v)) : v,
+    ) as Partial<Statement> | null;
   } catch {
     return undefined;
   }
@@ -213,7 +235,10 @@ function statement(raw: unknown): Statement | undefined {
     object = end(parsed?.object);
   if (!subject || !object) return undefined;
   const props = Object.fromEntries(
-    Object.entries(parsed?.props ?? {}).filter(([, v]) => isScalar(v)),
+    Object.entries(parsed?.props ?? {}).map(([name, v]) => [
+      name,
+      isScalar(v) ? String(exact?.props?.[name]) : JSON.stringify(v),
+    ]),
   );
   return { subject, object, props };
 }
@@ -232,6 +257,25 @@ function statement(raw: unknown): Statement | undefined {
  * settleable({ reason: "low_confidence" }, []).settle; // { kind: "stale" }
  */
 export function settleable(
+  r: Record<string, unknown>,
+  concerned: readonly EntityRow[],
+): Settleable {
+  const settled = settleOf(r, concerned),
+    claimKey = text(r.claim_key),
+    { section, start, end } = r;
+  if (!claimKey || !isOffset(section) || !isOffset(start) || !isOffset(end))
+    return settled;
+  const stored = text(r.statement);
+  return {
+    ...settled,
+    claim: {
+      place: [claimKey, section, start, end].join("\u001f"),
+      ...(stored ? { stored } : {}),
+    },
+  };
+}
+
+function settleOf(
   r: Record<string, unknown>,
   concerned: readonly EntityRow[],
 ): Settleable {
@@ -261,7 +305,7 @@ export function settleable(
       claimKey = text(r.claim_key),
       link = text(r.suggested_link),
       stored = text(r.statement),
-      stated = statement(stored),
+      stated = stored ? statement(stored) : undefined,
       { section, start, end } = r;
     // An approval is of what its card shows: a review of a load before
     // statements shows nothing to approve.
@@ -338,25 +382,46 @@ export async function statementHash(
 }
 
 /**
- * Marks the held claims of `reviews` that share a place and a key but state
- * different things: the engine refuses them, as no approval says which.
+ * Marks the held claims of `reviews` whose approval the engine would refuse or
+ * hold: those that share a place and a key with a review of any reason that
+ * states something else, as no approval says which (`differs`), and those
+ * naming an entity by a name a legal form linked (`formed`).
  *
  * @example
  * markDiffering([one, sameKeyAndPlaceOtherStatement]); // both settle with `differs: true`
  */
-export function markDiffering<T extends Settleable>(reviews: T[]): T[] {
-  const place = (s: Extract<Settle, { kind: "release" }>) =>
-    [s.claimKey, s.section, s.start, s.end].join("\u001f");
+export function markDiffering<T extends Settleable & { reason?: string }>(
+  reviews: T[],
+): T[] {
   const stated = new Map<string, Set<string>>();
-  for (const { settle: s } of reviews) {
-    if (s?.kind !== "release") continue;
-    const seen = stated.get(place(s)) ?? new Set<string>();
-    stated.set(place(s), seen.add(s.stored));
+  for (const { claim } of reviews) {
+    if (!claim) continue;
+    const seen = stated.get(claim.place) ?? new Set<string>();
+    stated.set(claim.place, seen.add(claim.stored ?? ""));
   }
+  const linked = new Set(
+    reviews.flatMap((r) =>
+      r.reason === "legal_form" && r.settle?.kind === "resolve"
+        ? [r.settle.normName]
+        : [],
+    ),
+  );
   return reviews.map((r) => {
     const s = r.settle;
-    return s?.kind === "release" && (stated.get(place(s))?.size ?? 0) > 1
-      ? { ...r, settle: { ...s, differs: true } }
+    if (s?.kind !== "release") return r;
+    const differs = (stated.get(r.claim?.place ?? "")?.size ?? 0) > 1,
+      formed = [s.statement.subject, s.statement.object]
+        .map((end) => normalizeName(end.name))
+        .find((name) => linked.has(name));
+    return differs || formed
+      ? {
+          ...r,
+          settle: {
+            ...s,
+            ...(differs ? { differs } : {}),
+            ...(formed ? { formed } : {}),
+          },
+        }
       : r;
   });
 }
@@ -428,6 +493,79 @@ export function matchesReview(d: ReviewDecision, s: Settle) {
     case "stale":
       return false;
   }
+}
+
+/**
+ * How a person's saved approvals stand toward a held claim's card, `read`
+ * being the hash of what it shows. `saved` is the approval of this review.
+ * On the load a person can settle, `moved` is that it approved what the claim
+ * said before: the engine refuses it. `earlier` is that this statement was
+ * approved at this place under another key, which it held before: a sibling
+ * claim of the sentence states something else. An older load's statement may
+ * not be the current one, so it says neither.
+ *
+ * @example
+ * approvalOf([], release, "abc", true); // { saved: undefined, moved: false, earlier: false }
+ */
+export function approvalOf<D extends ReviewDecision>(
+  decisions: readonly D[],
+  s: Extract<Settle, { kind: "release" }>,
+  read: string | undefined,
+  editable: boolean,
+): { saved?: D; moved: boolean; earlier: boolean } {
+  const saved = decisions.find((d) => matchesReview(d, s));
+  return {
+    saved,
+    moved:
+      editable &&
+      !!read &&
+      saved?.kind === "release" &&
+      saved.statementHash !== read,
+    earlier:
+      editable &&
+      !!read &&
+      !saved &&
+      decisions.some(
+        (d) =>
+          d.kind === "release" &&
+          d.docId === s.docId &&
+          d.claimKey !== s.claimKey &&
+          d.claimSection === s.section &&
+          d.claimStart === s.start &&
+          d.claimEnd === s.end &&
+          d.statementHash === read,
+      ),
+  };
+}
+
+/** What became of a release decision, as far as a page's reads say. */
+export type ReleaseStatus = "written" | "no_link" | "held" | "unknown";
+
+/**
+ * What became of `d` on a document's page, from its reviews and its facts:
+ * its review is still held, or its quote stands with an edge, or without one,
+ * as a later statement holds that link. Otherwise the reads don't say.
+ *
+ * @example
+ * releaseStatus(decision, reviews, facts); // "held"
+ */
+export function releaseStatus(
+  d: Extract<ReviewDecision, { kind: "release" }>,
+  reviews: readonly Settleable[],
+  facts: readonly DocFact[],
+): ReleaseStatus {
+  const here = (at: { section: number; start: number; end: number }) =>
+    at.section === d.claimSection &&
+    at.start === d.claimStart &&
+    at.end === d.claimEnd;
+  const held = reviews.some(
+    ({ settle: s }) =>
+      s?.kind === "release" && s.claimKey === d.claimKey && here(s),
+  );
+  if (held) return "held";
+  const fact = facts.find((f) => !f.unread && f.quotes.some(here));
+  if (!fact) return "unknown";
+  return fact.from ? "written" : "no_link";
 }
 
 /**

@@ -537,6 +537,8 @@ export type DocFact = {
   confidence?: number;
   evidenceCount?: number;
   quotes: DocEvidence[];
+  // Past what a read takes: whether it has an edge isn't known.
+  unread?: boolean;
 };
 
 /** The facts behind a document's quotes, by fact key (index-backed). Null when it has none. */
@@ -574,11 +576,18 @@ export function parseDocumentFacts(
   const data = isRecord(body) ? body : {};
   const byKey = new Map<string, DocFact>();
   const entities = new Map(doc.entities.map((e) => [e.dbId, e]));
+  const read = new Set(
+    [...new Set(doc.evidence.map((e) => e.factKey))].slice(
+      0,
+      LIMITS.documentFacts,
+    ),
+  );
   for (const e of doc.evidence) {
     const f = byKey.get(e.factKey) || {
       link: e.link,
       factKey: e.factKey,
       quotes: [],
+      ...(read.has(e.factKey) ? {} : { unread: true }),
     };
     f.quotes.push(e);
     byKey.set(e.factKey, f);
