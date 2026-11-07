@@ -336,21 +336,27 @@ describe("a claim at the same place", () => {
         props: {},
       }),
     };
-    const [claim] = model.markDiffering([
-      { reason: "low_confidence", ...model.settleable(named, []) },
-      {
-        reason: "legal_form",
-        candidates: [],
-        settle: {
-          kind: "resolve",
-          reviewId: "r",
-          type: "Customer",
-          docId: "doc",
-          normName: "halvorsen freight ltd",
+    const formed = (type: string, docId: string) =>
+      model.markDiffering([
+        { reason: "low_confidence", ...model.settleable(named, []) },
+        {
+          reason: "legal_form",
+          candidates: [],
+          settle: {
+            kind: "resolve",
+            reviewId: "r",
+            type,
+            docId,
+            normName: "halvorsen freight ltd",
+          },
         },
-      },
-    ]);
-    expect(claim!.settle).toMatchObject({ formed: "halvorsen freight ltd" });
+      ])[0]!.settle;
+    expect(formed("A", "doc")).toMatchObject({
+      formed: "halvorsen freight ltd",
+    });
+    // A name resolves per document and type, so a link elsewhere holds nothing.
+    expect(formed("A", "other-doc")).not.toHaveProperty("formed");
+    expect(formed("B", "doc")).not.toHaveProperty("formed");
   });
 });
 

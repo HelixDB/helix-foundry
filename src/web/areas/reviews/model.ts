@@ -385,7 +385,7 @@ export async function statementHash(
  * Marks the held claims of `reviews` whose approval the engine would refuse or
  * hold: those that share a place and a key with a review of any reason that
  * states something else, as no approval says which (`differs`), and those
- * naming an entity by a name a legal form linked (`formed`).
+ * naming an entity by a name a legal form linked in that document (`formed`).
  *
  * @example
  * markDiffering([one, sameKeyAndPlaceOtherStatement]); // both settle with `differs: true`
@@ -399,10 +399,13 @@ export function markDiffering<T extends Settleable & { reason?: string }>(
     const seen = stated.get(claim.place) ?? new Set<string>();
     stated.set(claim.place, seen.add(claim.stored ?? ""));
   }
+  // A name resolves per document and type, so a link in another holds nothing.
+  const end = (docId: string, type: string, name: string) =>
+    JSON.stringify([docId, type, name]);
   const linked = new Set(
     reviews.flatMap((r) =>
       r.reason === "legal_form" && r.settle?.kind === "resolve"
-        ? [r.settle.normName]
+        ? [end(r.settle.docId, r.settle.type, r.settle.normName)]
         : [],
     ),
   );
@@ -411,8 +414,8 @@ export function markDiffering<T extends Settleable & { reason?: string }>(
     if (s?.kind !== "release") return r;
     const differs = (stated.get(r.claim?.place ?? "")?.size ?? 0) > 1,
       formed = [s.statement.subject, s.statement.object]
-        .map((end) => normalizeName(end.name))
-        .find((name) => linked.has(name));
+        .map(({ type, name }) => ({ type, name: normalizeName(name) }))
+        .find(({ type, name }) => linked.has(end(s.docId, type, name)))?.name;
     return differs || formed
       ? {
           ...r,
