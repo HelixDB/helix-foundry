@@ -2,9 +2,20 @@ name: CI
 on: [push, pull_request]
 permissions:
   contents: read
+# Each job also runs on a Crucible runner while it is tried, as
+# `<job> (crucible)`: the required checks keep their names on GitHub's
+# runners, and a Crucible failure never cancels them.
 jobs:
   check:
-    runs-on: ubuntu-latest
+    name: check${{ matrix.suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: crucible-4vcpu-arm
+            suffix: " (crucible)"
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -17,7 +28,15 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
   e2e:
-    runs-on: ubuntu-latest
+    name: e2e${{ matrix.suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: crucible-4vcpu-arm
+            suffix: " (crucible)"
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -32,7 +51,7 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: playwright-report
+          name: playwright-report${{ matrix.suffix }}
           path: |
             playwright-report
             test-results
