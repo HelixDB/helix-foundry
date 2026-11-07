@@ -195,6 +195,7 @@ export function SettleReview({
         <p>
           Suggestions only:{" "}
           <Candidates candidates={review.candidates} link={link} />
+          <span className="on-muted"> · for the name “{s.normName}”</span>
         </p>
       )}
       {isProp && s.table !== undefined && (
@@ -321,7 +322,8 @@ export function SettleReview({
             </p>
           )}
           <div className="hf-form-actions">
-            {review.reason === "adjudicated" && (
+            {(review.reason === "adjudicated" ||
+              review.reason === "legal_form") && (
               <Button
                 size="sm"
                 disabled={pending}

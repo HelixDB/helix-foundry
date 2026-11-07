@@ -184,6 +184,7 @@ describe("what settles a review", () => {
     "collision",
     "identifier_conflict",
     "adjudicated",
+    "legal_form",
   ])("a %s review with its identity takes a resolve choice", (reason) => {
     expect(model.settleable({ ...name, reason }, [globex])).toEqual({
       candidates: [

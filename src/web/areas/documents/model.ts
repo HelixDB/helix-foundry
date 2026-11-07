@@ -1444,7 +1444,8 @@ export type ReviewReason =
   | "attribute_low_confidence"
   | "identifier_conflict"
   | "identity"
-  | "adjudicated";
+  | "adjudicated"
+  | "legal_form";
 
 const reviews: Record<ReviewReason, { title: string; text: string }> = {
   unresolved: {
@@ -1483,6 +1484,10 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
     title: "Matched by the model",
     text: "The model linked this name to an entity. Undo the link if it’s wrong; the next load leaves the name unlinked.",
   },
+  legal_form: {
+    title: "Linked by its legal form",
+    text: "This name carries a legal form its row lacks, and no other row fits, so it was linked to that row, without the document’s values for it. Link it to the row to store them, or undo the link; the next load then leaves the name unlinked.",
+  },
   prop_conflict: {
     title: "Disagrees on a value",
     text: "Documents state different values for this property, or one the tables don’t hold, so the stored value is the table’s or none.",
@@ -1500,6 +1505,27 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
     text: "A verified identifier leads to one entity and the names to another, so the claim was held back and nothing was stored.",
   },
 };
-/** A review's reason as a title and a sentence for people who didn't build the ontology. */
-export const reviewCopy = (reason?: string) =>
-  reviews[(reason || "unverified") as ReviewReason] || reviews.unverified;
+// An ambiguous review offering one row: a link too weak for this fact, not a
+// name several entities share.
+const oneCandidate = {
+  title: "May be this entity",
+  text: "The name points at one entity, but not firmly enough to store this fact on it. Link the name to store it.",
+};
+// A reason a newer engine gives: nothing is known of it but that it waits.
+const newReason = {
+  title: "Held for a person to check",
+  text: "This load held something back here. Open the document to see what it says.",
+};
+
+/**
+ * A review's reason as a title and a sentence for people who didn't build the
+ * ontology. `candidates` is how many entities it offers.
+ *
+ * @example
+ * reviewCopy("ambiguous", 2).title; // "Could mean more than one entity"
+ * reviewCopy("ambiguous", 1).title; // "May be this entity"
+ */
+export const reviewCopy = (reason?: string, candidates?: number) => {
+  if (reason === "ambiguous" && candidates === 1) return oneCandidate;
+  return reviews[(reason || "unverified") as ReviewReason] || newReason;
+};

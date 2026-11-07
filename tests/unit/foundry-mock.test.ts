@@ -3019,6 +3019,26 @@ describe("review decisions", () => {
     });
   });
 
+  it("lists a legal form review's choice only, and settles it by a name", async () => {
+    Object.assign(config, { documentLegalForm: true });
+    await uploaded("variant.md", variant);
+    const g = await loaded("first"),
+      rv = reviews(g)[0]!;
+    expect(rv.props).toMatchObject({
+      reason: "legal_form",
+      entity_key: "cus_GLOBEX01",
+      candidates: ["cus_GLOBEX01"],
+    });
+    expect(
+      [...g.nodes()].some((n) => n.props.resolved_by === "legal_form"),
+    ).toBe(true);
+    const key = String(rv.props.review_key);
+    const settled = await call("POST", `${O}/reviews/${key}:settle`, {
+      decision: { resolve: { notInData: true } },
+    });
+    expect(settled.status).toBe(200);
+  });
+
   it("reads into a load the decisions saved when it was created, catch-up extracts included", async () => {
     await uploaded("contract.md", CONTRACT);
     await uploaded(

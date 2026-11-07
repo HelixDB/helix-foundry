@@ -211,6 +211,7 @@ export const reviewRoutes: MockRoute[] = [
         case "collision":
         case "identifier_conflict":
         case "adjudicated":
+        case "legal_form":
           if (!choice.resolve)
             return fail(
               "INVALID_ARGUMENT",

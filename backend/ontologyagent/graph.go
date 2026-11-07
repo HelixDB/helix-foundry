@@ -521,14 +521,17 @@ type DocumentCounts struct {
 }
 
 // ResolvedCounts are a document's entities by how each resolved to the
-// load's: by a verified identifier, by name or alias, or created.
+// load's: by a verified identifier, by name, alias or legal form, or created.
 type ResolvedCounts struct {
 	User        uint64 `json:"user"`
 	Adjudicated uint64 `json:"adjudicated"`
 	Identifier  uint64 `json:"identifier"`
 	Name        uint64 `json:"name"`
 	Alias       uint64 `json:"alias"`
-	Created     uint64 `json:"created"`
+	// LegalForm is read off the event and stored nowhere: a document's stored
+	// counts have no column for it.
+	LegalForm uint64 `json:"legal_form"`
+	Created   uint64 `json:"created"`
 }
 
 // DocumentUsage is what one document spent.

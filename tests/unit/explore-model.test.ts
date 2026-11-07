@@ -1126,6 +1126,7 @@ describe("an entity's page, laid out", () => {
     expect(resolvedByText("created")).toBe("Created from the text");
     expect(resolvedByText("user")).toBe("Linked by a person");
     expect(resolvedByText("adjudicated")).toBe("Matched by the model");
+    expect(resolvedByText("legal_form")).toBe("By its legal form");
     for (const r of ["name", "key", undefined, "later"])
       expect(resolvedByText(r)).toBeUndefined();
   });

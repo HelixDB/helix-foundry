@@ -1029,7 +1029,8 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                               .filter(
                                 (m) =>
                                   m.entity.id === e.id &&
-                                  m.resolvedBy === "adjudicated",
+                                  (m.resolvedBy === "adjudicated" ||
+                                    m.resolvedBy === "legal_form"),
                               )
                               .map((m) => (
                                 <Link
@@ -1062,7 +1063,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
               ) : (
                 <ul className="dc-doc-list" aria-label="Needs review">
                   {reviews.map((r, i) => {
-                    const copy = reviewCopy(r.reason),
+                    const copy = reviewCopy(r.reason, r.candidates.length),
                       item = `review-${i}`;
                     return (
                       <li

@@ -220,7 +220,7 @@ func writeThroughProxy(request string) error {
 const (
 	// documentCounts are what each document of the fixtures put in the graph.
 	documentCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":3,` +
-		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"released":0,"release_refused":0,"release_missed":0,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"created":1}}`
+		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"released":0,"release_refused":0,"release_missed":0,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"legal_form":3,"created":1}}`
 	totals   = `{"ingested":1,"out_of_scope":0,"already_ingested":1,"duplicate":1,"failed":1,"counts":` + documentCounts + `,"swept":0,"unchecked":0,"stale_decisions":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80}`
 	counts   = `"counts":` + documentCounts
 	usage    = `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`

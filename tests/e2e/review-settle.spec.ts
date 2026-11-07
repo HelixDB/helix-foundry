@@ -299,6 +299,35 @@ test("links an adjudicated mention to its review and undoes the link on reload",
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
 });
 
+test("links a mention by legal form to its review and undoes the link on reload", async ({
+  page,
+}) => {
+  await mock.configure({ documentLegalForm: true });
+  await setup(page);
+  const doc = await openDocument(page);
+  await page.getByRole("tab", { name: /^Entities/ }).click();
+  await expect(page.getByText("By its legal form")).toBeVisible();
+  await page.getByRole("link", { name: "Review link" }).click();
+  await expect(
+    page.getByRole("tab", { name: /^Needs review/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(reviews(page)).toContainText("Linked by its legal form");
+  await expect(reviews(page)).toContainText("Suggestions only:");
+  await expect(reviews(page)).toContainText("for the name “");
+  await expect(reviews(page)).not.toContainText("couldn’t confirm");
+  await page.getByRole("button", { name: "Undo link", exact: true }).click();
+  await expect(
+    page.getByText("Decision saved. Reload to apply."),
+  ).toBeVisible();
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=entities`);
+  await expect(
+    page.getByRole("region", { name: "Customer", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+});
+
 test("members can read candidate reviews but cannot settle or remove decisions", async ({
   page,
 }) => {

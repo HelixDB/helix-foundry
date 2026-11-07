@@ -1205,6 +1205,8 @@ export function resolvedByText(r?: string): string | undefined {
       return "Linked by a person";
     case "adjudicated":
       return "Matched by the model";
+    case "legal_form":
+      return "By its legal form";
     default:
       return undefined;
   }

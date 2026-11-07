@@ -46,6 +46,8 @@ export const mock = {
     documentOutcome?: "succeed" | "fail";
     // Seeds an adjudicated variant and its informational review (off by default).
     documentAdjudicated?: boolean;
+    // Seeds the same variant linked by legal form, with its review.
+    documentLegalForm?: boolean;
     // A load's delete fails for good (delete_failed).
     deleteOutcome?: "succeed" | "fail";
     // The next n presigned PUTs fail as a busy bucket does.

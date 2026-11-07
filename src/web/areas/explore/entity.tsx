@@ -910,7 +910,8 @@ function Entity({
                             {resolvedByText(m.resolvedBy) &&
                               ` · ${resolvedByText(m.resolvedBy)!.toLowerCase()}`}
                           </small>
-                          {m.resolvedBy === "adjudicated" && (
+                          {(m.resolvedBy === "adjudicated" ||
+                            m.resolvedBy === "legal_form") && (
                             <Link
                               to={
                                 link(
@@ -994,7 +995,7 @@ function Entity({
                 </li>
               ))}
               {reviews.map((rv, i) => {
-                const copy = reviewCopy(rv.reason);
+                const copy = reviewCopy(rv.reason, rv.candidates.length);
                 return (
                   <li key={i} className="dc-review">
                     <strong>

@@ -51,7 +51,7 @@ import type { LoadGraph, Props, Value } from "./store";
 //   candidates (stored customers sharing a word of it, by their stored
 //   identity) and the Contract. Text never creates a keyed entity. With
 //   `adjudicate`, its first candidate links it instead, and the review is
-//   "adjudicated", naming that one only.
+//   that rung's ("adjudicated" or "legal_form"), naming that one only.
 // - When the scope lets documents create Contracts, a document naming a
 //   company is a Contract {norm_name, name, foundry_part: "<load>:documents"}
 //   named by its first heading (or file name), signed_with every company it
@@ -698,7 +698,7 @@ export function extractDocument(
   ontology: ExtractOntology,
   scope: Scope,
   decisions: ReviewDecision[] = [],
-  adjudicate = false,
+  adjudicate?: "adjudicated" | "legal_form",
   // The models that read and check it.
   readers: { model: string; verifier: string } = {
     model: MODEL,
@@ -877,8 +877,8 @@ export function extractDocument(
       if (!e) return true;
       found.push({
         e,
-        hits: [{ s: u.s, i: u.i, surface: u.name, by: "adjudicated" }],
-        resolvedBy: "adjudicated",
+        hits: [{ s: u.s, i: u.i, surface: u.name, by: adjudicate! }],
+        resolvedBy: adjudicate!,
       });
       adjudicated.push(u);
       return false;
@@ -1058,7 +1058,9 @@ export function extractDocument(
     if (!linked) continue;
     const first = hits[0]!,
       confidence =
-        resolvedBy === "identifier" || resolvedBy === "adjudicated"
+        resolvedBy === "identifier" ||
+        resolvedBy === "adjudicated" ||
+        resolvedBy === "legal_form"
           ? 0.95
           : resolvedBy === "name"
             ? 0.93
@@ -1143,7 +1145,7 @@ export function extractDocument(
       doc_id: doc.id,
       section: u.s.ordinal,
       ...q,
-      reason: adjudicated.includes(u) ? "adjudicated" : "unresolved",
+      reason: adjudicated.includes(u) ? adjudicate! : "unresolved",
       ...(adjudicated.includes(u)
         ? {
             entity_key: String(

@@ -632,6 +632,12 @@
           "format": "uint",
           "minimum": 0
         },
+        "legal_form": {
+          "description": "By its fullest name without its legal form: a review lets a person overturn it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "name": {
           "description": "By its fullest name.",
           "type": "integer",
@@ -652,6 +658,7 @@
         "identifier",
         "name",
         "alias",
+        "legal_form",
         "created"
       ]
     }

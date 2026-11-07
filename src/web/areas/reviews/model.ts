@@ -107,6 +107,7 @@ const RESOLVE_REASONS: ReadonlySet<ReviewReason> = new Set<ReviewReason>([
   "collision",
   "identifier_conflict",
   "adjudicated",
+  "legal_form",
 ]);
 
 /**

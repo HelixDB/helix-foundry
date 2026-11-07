@@ -16,7 +16,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
   it("is 4.11.0, the engine that takes a person's release of a held claim", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.11.0 sha256:77dc1d434973bf20");
+    expect(AGENT_CONTRACT_VERSION).toBe("4.11.0 sha256:b12fc4cdd652fdc6");
   });
 
   it("checks a value against a schema or one of its definitions", () => {

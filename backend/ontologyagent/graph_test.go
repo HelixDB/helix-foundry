@@ -74,7 +74,7 @@ var testEntityKey = "scus_1"
 // testCounts are a document's counts as the agent sends them.
 const testCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":1,` +
 	`"prop_conflicts":1,"created":1,"identifiers_unverified":2,"attributes_over_entries":3,"released":0,"release_refused":0,"release_missed":0,` +
-	`"resolved":{"user":0,"adjudicated":0,"identifier":1,"name":1,"alias":0,"created":1}}`
+	`"resolved":{"user":0,"adjudicated":0,"identifier":1,"name":1,"alias":0,"legal_form":0,"created":1}}`
 
 func TestGraphContract(t *testing.T) {
 	// The requests the worker builds are ones the agent takes.

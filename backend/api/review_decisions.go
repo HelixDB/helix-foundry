@@ -85,7 +85,7 @@ func (s *Service) SettleFoundryReview(ctx context.Context, req *foundryv1.Settle
 		return nil, status.Error(codes.FailedPrecondition, "the review type is not in the loaded version")
 	}
 	switch text("reason") {
-	case "unresolved", "ambiguous", "collision", "identifier_conflict", "adjudicated":
+	case "unresolved", "ambiguous", "collision", "identifier_conflict", "adjudicated", "legal_form":
 		choice := req.GetDecision().GetResolve()
 		if choice == nil {
 			return nil, status.Error(codes.InvalidArgument, "this review requires a resolve decision")
