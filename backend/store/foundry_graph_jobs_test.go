@@ -188,6 +188,56 @@ func extracted(documentID string) *model.FoundryDocumentExtraction {
 	}
 }
 
+// A retryable failure that a retry finds held: the run stopped before the
+// document's release, so its row keeps what its commit counted, and takes what
+// the retry released from reviews to facts. A commit that landed and failed to
+// say so has a row of nothing, and stays so.
+func TestFoundryKeptFailedRow(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "KPT")
+	counted, empty := f.uploaded(t, "counted"), f.uploaded(t, "empty")
+	f.loadReading(t, "L1", generalSetID(f.ontology.ID))
+	job := f.liveJob(t)
+	require.NotNil(t, job)
+	f.claimed(t, "w1", job.ID)
+	failed := func(doc string, counts model.FoundryExtractionCounts) *model.FoundryDocumentExtraction {
+		e := extracted(doc)
+		e.Status, e.Counts = model.FoundryExtractionFailed, counts
+		e.Error = &model.FoundryExtractionError{Code: model.FoundryExtractionStore, Retryable: true}
+		return e
+	}
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1",
+		failed(counted, model.FoundryExtractionCounts{Sections: 2, Entities: 3, Mentions: 4, Facts: 5, Reviews: 2}), false))
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1",
+		failed(empty, model.FoundryExtractionCounts{}), false))
+
+	retried := func(doc string, released int) *model.FoundryDocumentExtraction {
+		e := extracted(doc)
+		e.USDMicros, e.InputTokens, e.OutputTokens = 0, 0, 0
+		e.Counts = model.FoundryExtractionCounts{Sections: 2, Facts: released}
+		return e
+	}
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", retried(counted, 1), true))
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, "w1", retried(empty, 1), true))
+
+	rows, err := f.db.ListFoundryDocumentExtractions(ctx, job.LoadID, []string{counted, empty})
+	require.NoError(t, err)
+	kept := rows[counted]
+	require.NotNil(t, kept)
+	assert.Equal(t, model.FoundryExtractionExtracted, kept.Status)
+	assert.Nil(t, kept.Error)
+	assert.Equal(t, 3, kept.Counts.Entities, "what the commit counted")
+	assert.Equal(t, 4, kept.Counts.Mentions)
+	assert.Equal(t, 6, kept.Counts.Facts, "with what the retry released")
+	assert.Equal(t, 1, kept.Counts.Reviews, "less what it released")
+	nothing := rows[empty]
+	require.NotNil(t, nothing)
+	assert.Equal(t, model.FoundryExtractionExtracted, nothing.Status)
+	assert.Equal(t, 0, nothing.Counts.Entities)
+	assert.Equal(t, 1, nothing.Counts.Facts)
+	assert.Equal(t, 0, nothing.Counts.Reviews, "never below none")
+}
+
 func TestFoundryDocuments(t *testing.T) {
 	// A retried POST must not make a second document, and the same bytes
 	// again find the first, in whatever set of the workspace it is.
