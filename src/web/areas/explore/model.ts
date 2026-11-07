@@ -13,7 +13,7 @@ import {
 } from "./database-query";
 import { scopedPredicates, type Scope } from "./load-scope";
 
-import { settleable, type Settleable } from "../reviews/model";
+import { markDiffering, settleable, type Settleable } from "../reviews/model";
 import { isRecord } from "../../../shared/json";
 
 // What the website reads from an ontology's database, as v3 dynamic read
@@ -365,6 +365,10 @@ export function documentRequest(
           "$id",
           "reason",
           "review_key",
+          "claim_key",
+          "claim",
+          "statement",
+          "section",
           "type",
           "doc_id",
           "norm_name",
@@ -518,7 +522,7 @@ export function parseDocument(body: unknown): DocumentGraph {
     sections,
     mentions,
     evidence,
-    reviews,
+    reviews: markDiffering(reviews),
     entities: [...entities.values()].sort(byEntity),
   };
 }
@@ -533,6 +537,8 @@ export type DocFact = {
   confidence?: number;
   evidenceCount?: number;
   quotes: DocEvidence[];
+  // Past what a read takes: whether it has an edge isn't known.
+  unread?: boolean;
 };
 
 /** The facts behind a document's quotes, by fact key (index-backed). Null when it has none. */
@@ -570,11 +576,18 @@ export function parseDocumentFacts(
   const data = isRecord(body) ? body : {};
   const byKey = new Map<string, DocFact>();
   const entities = new Map(doc.entities.map((e) => [e.dbId, e]));
+  const read = new Set(
+    [...new Set(doc.evidence.map((e) => e.factKey))].slice(
+      0,
+      LIMITS.documentFacts,
+    ),
+  );
   for (const e of doc.evidence) {
     const f = byKey.get(e.factKey) || {
       link: e.link,
       factKey: e.factKey,
       quotes: [],
+      ...(read.has(e.factKey) ? {} : { unread: true }),
     };
     f.quotes.push(e);
     byKey.set(e.factKey, f);
@@ -771,6 +784,9 @@ export function entityRequest(
           "quote",
           "reason",
           "review_key",
+          "claim_key",
+          "claim",
+          "statement",
           "type",
           "norm_name",
           "entity_key",
@@ -1016,7 +1032,7 @@ export function parseEntity(body: unknown): EntityGraph {
       : null,
     facts,
     mentions,
-    reviews: reviews.slice(0, LIMITS.reviews),
+    reviews: markDiffering(reviews.slice(0, LIMITS.reviews)),
     violations: rows(data.violations).flatMap((r): Violation[] => {
       const constraint = str(r.constraint);
       return constraint
@@ -1198,6 +1214,8 @@ export function resolvedByText(r?: string): string | undefined {
       return "Linked by a person";
     case "adjudicated":
       return "Matched by the model";
+    case "legal_form":
+      return "By its legal form";
     default:
       return undefined;
   }

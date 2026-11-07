@@ -1332,6 +1332,13 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		return nil
 	}
 	c, u := event.Counts, event.Usage
+	if c.ReleaseRefused+c.ReleaseMissed > 0 {
+		log.From(ctx).Warn("graph job: an approved claim wasn't written", "job", job.ID, "document", event.DocID,
+			"refused", c.ReleaseRefused, "missed", c.ReleaseMissed)
+	}
+	// A release moved these from the reviews the commit counted to the facts. An
+	// already_ingested event counts nothing, whatever it released.
+	moved := min(c.Released, c.Reviews)
 	extraction := &model.FoundryDocumentExtraction{
 		DocumentID: event.DocID, Status: model.FoundryExtractionExtracted,
 		Counts: model.FoundryExtractionCounts{
@@ -1340,8 +1347,8 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 			ResolvedUser: int(c.Resolved.User), ResolvedAdjudicated: int(c.Resolved.Adjudicated),
 			ResolvedIdentifier: int(c.Resolved.Identifier), ResolvedName: int(c.Resolved.Name),
 			ResolvedAlias: int(c.Resolved.Alias), ResolvedCreated: int(c.Resolved.Created),
-			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts),
-			Reviews: int(c.Reviews), Unresolved: int(c.Unresolved), Rejected: int(c.Rejected),
+			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts + c.Released),
+			Reviews: int(c.Reviews - moved), Unresolved: int(c.Unresolved), Rejected: int(c.Rejected),
 		},
 		USDMicros: int64(u.USDMicros), InputTokens: int64(u.InputTokens), OutputTokens: int64(u.OutputTokens),
 	}

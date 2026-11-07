@@ -166,7 +166,7 @@ func cluesOf(people ...ontologyagent.CluedEntity) func(string, agentv1.Agent_Clu
 	return func(_ string, stream agentv1.Agent_CluesServer) error {
 		page, _ := json.Marshal(map[string]any{"event": "clues", "entities": people})
 		done, _ := json.Marshal(map[string]any{"event": "done", "entities": len(people), "no_clue": 0, "no_name": 0, "conflicting": 0, "shared": 0})
-		return cluesEvents(stream, `{"event":"clues_started","contract_version":"4.9.0"}`, string(page), string(done))
+		return cluesEvents(stream, `{"event":"clues_started","contract_version":"4.11.0"}`, string(page), string(done))
 	}
 }
 
@@ -551,7 +551,7 @@ func TestPeopleEnrichment(t *testing.T) {
 		h := newHarness(t)
 		enrichingVersion(t, h)
 		h.agent.clues = func(_ string, stream agentv1.Agent_CluesServer) error {
-			return cluesEvents(stream, `{"event":"clues_started","contract_version":"4.9.0"}`,
+			return cluesEvents(stream, `{"event":"clues_started","contract_version":"4.11.0"}`,
 				`{"event":"invalid_mappings","errors":["mapping contacts: no source crm"]}`)
 		}
 		outcome := h.run(t, loadJob())
@@ -568,7 +568,7 @@ func TestPeopleEnrichment(t *testing.T) {
 		h := newHarness(t)
 		enrichingVersion(t, h)
 		h.agent.clues = func(_ string, stream agentv1.Agent_CluesServer) error {
-			return cluesEvents(stream, `{"event":"clues_started","contract_version":"4.9.0"}`, `{"event":"source_unavailable","source":"src_1"}`)
+			return cluesEvents(stream, `{"event":"clues_started","contract_version":"4.11.0"}`, `{"event":"source_unavailable","source":"src_1"}`)
 		}
 		outcome := h.run(t, loadJob())
 		if outcome.RetryAt == nil || outcome.Status != "" {

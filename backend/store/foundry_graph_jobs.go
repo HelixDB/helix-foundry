@@ -154,12 +154,40 @@ WHERE j.id=? AND j.status='running' AND j.lease_owner=?`,
 		string(update.Phase), p.ChunksDone, p.DocumentsDone, p.DocumentsTotal, *update.IngestViolations, id, workerID)
 }
 
+// extractionCounts are the columns of what a document put in the graph, and
+// extractionSpend those of what it spent.
+var (
+	extractionCounts = []string{"sections", "entities", "mentions", "facts", "reviews", "unresolved", "rejected", "attributes",
+		"attribute_reviews", "prop_conflicts", "created", "identifiers_unverified", "attributes_over_entries", "resolved_user",
+		"resolved_adjudicated", "resolved_identifier", "resolved_name", "resolved_alias", "resolved_created"}
+	extractionSpend = []string{"usd_micros", "input_tokens", "output_tokens"}
+)
+
+// extractionUpsert replaces a document's row. A failure over a failed row
+// lowers nothing it counted, as a later attempt that stopped counts nothing of
+// a commit the first reported, and adds what it spent. Assignments run in
+// order, so status comes after what reads it.
+var extractionUpsert = func() string {
+	const failedAgain = "status='failed' AND VALUES(status)='failed'"
+	var set []string
+	for _, c := range extractionCounts {
+		set = append(set, fmt.Sprintf("%[1]s=IF(%[2]s, GREATEST(%[1]s, VALUES(%[1]s)), VALUES(%[1]s))", c, failedAgain))
+	}
+	for _, c := range extractionSpend {
+		set = append(set, fmt.Sprintf("%[1]s=IF(%[2]s, %[1]s+VALUES(%[1]s), VALUES(%[1]s))", c, failedAgain))
+	}
+	return " ON DUPLICATE KEY UPDATE " + strings.Join(set, ", ") + `, job_id=VALUES(job_id), status=VALUES(status),
+  duplicate_of=VALUES(duplicate_of), error_code=VALUES(error_code), error_retryable=VALUES(error_retryable),
+  artifact_key=COALESCE(VALUES(artifact_key), artifact_key), finished_at=VALUES(finished_at)`
+}()
+
 // RecordFoundryDocumentExtraction stores how a document ended in the job's
 // load and adds what it spent to the job, in one transaction, while workerID
 // holds the lease: an attempt that lost its lease writes nothing. Writing the
-// same document into the same load again replaces its row; with keepExisting
-// (the load already held the document) a row already there stays, unless it
-// is a failure. Either way what it spent counts. A job no person requested
+// same document into the same load again replaces its row, though a failure
+// over a failed row lowers nothing it counted and adds what it spent; with keepExisting
+// (the load already held the document) a row already there stays, and a failed
+// one ends its failure and keeps its counts. Either way what it spent counts. A job no person requested
 // adds the spend, in the same transaction, to the month's row of the set
 // the document joined the load with (foundry_document_set_spend): the UTC
 // month the spend is recorded in, the first day of which is
@@ -200,16 +228,20 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			code, retryable = string(e.Error.Code), e.Error.Retryable
 		}
 		c := e.Counts
-		verb, onDuplicate := "INSERT", ` ON DUPLICATE KEY UPDATE job_id=VALUES(job_id), status=VALUES(status),
-  duplicate_of=VALUES(duplicate_of), error_code=VALUES(error_code), error_retryable=VALUES(error_retryable),
-  sections=VALUES(sections), entities=VALUES(entities), mentions=VALUES(mentions), facts=VALUES(facts),
-  reviews=VALUES(reviews), unresolved=VALUES(unresolved), rejected=VALUES(rejected), usd_micros=VALUES(usd_micros),
-  input_tokens=VALUES(input_tokens), output_tokens=VALUES(output_tokens),
-  artifact_key=COALESCE(VALUES(artifact_key), artifact_key), attributes=VALUES(attributes), attribute_reviews=VALUES(attribute_reviews), prop_conflicts=VALUES(prop_conflicts), created=VALUES(created), identifiers_unverified=VALUES(identifiers_unverified), attributes_over_entries=VALUES(attributes_over_entries), resolved_user=VALUES(resolved_user), resolved_adjudicated=VALUES(resolved_adjudicated), resolved_identifier=VALUES(resolved_identifier), resolved_name=VALUES(resolved_name), resolved_alias=VALUES(resolved_alias), resolved_created=VALUES(resolved_created), finished_at=VALUES(finished_at)`
+		verb, onDuplicate := "INSERT", extractionUpsert
 		if keepExisting {
-			// A failed row is what the load held before, not what it holds now.
-			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_extractions WHERE load_id=? AND document_id=? AND status='failed'`,
-				loadID, e.DocumentID); err != nil {
+			// A failed row of a document the load holds after all ends the failure
+			// and keeps what it counted: a run that stopped before a release left
+			// what the commit wrote there, and its retry's facts are what it
+			// released (recordDocument), which were reviews. A commit that landed
+			// and failed to say so counted nothing.
+			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
+ SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=facts+?,
+  reviews=GREATEST(reviews-?, 0), usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?,
+  artifact_key=COALESCE(?, artifact_key), finished_at=NOW(6)
+ WHERE load_id=? AND document_id=? AND status='failed'`,
+				jobID, string(e.Status), c.Sections, c.Facts, c.Facts, e.USDMicros, e.InputTokens, e.OutputTokens,
+				e.ArtifactKey, loadID, e.DocumentID); err != nil {
 				return err
 			}
 			verb, onDuplicate = "INSERT IGNORE", ""

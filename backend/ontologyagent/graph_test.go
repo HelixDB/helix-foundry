@@ -63,6 +63,8 @@ func testExtractRequest() ExtractRequest {
 				DecisionID: "01JDDEC0000000000000000001", DecidedAt: decidedAt},
 			{Kind: model.FoundryReviewProp, Type: "Customer", EntityKey: &testEntityKey, Prop: "tier", Value: json.RawMessage(`"gold"`),
 				DecisionID: "01JDDEC0000000000000000002", DecidedAt: decidedAt.Add(time.Minute)},
+			{Kind: model.FoundryReviewRelease, DocID: "doc-1", ClaimKey: strings.Repeat("ab", 32), Start: 4, End: 20, StatementHash: strings.Repeat("cd", 32),
+				DecisionID: "01JDDEC0000000000000000003", DecidedAt: decidedAt.Add(2 * time.Minute)},
 		},
 	}
 }
@@ -71,8 +73,8 @@ var testEntityKey = "scus_1"
 
 // testCounts are a document's counts as the agent sends them.
 const testCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":1,` +
-	`"prop_conflicts":1,"created":1,"identifiers_unverified":2,"attributes_over_entries":3,` +
-	`"resolved":{"user":0,"adjudicated":0,"identifier":1,"name":1,"alias":0,"created":1}}`
+	`"prop_conflicts":1,"created":1,"identifiers_unverified":2,"attributes_over_entries":3,"released":0,"release_refused":0,"release_missed":0,` +
+	`"resolved":{"user":0,"adjudicated":0,"identifier":1,"name":1,"alias":0,"legal_form":0,"created":1}}`
 
 func TestGraphContract(t *testing.T) {
 	// The requests the worker builds are ones the agent takes.
@@ -140,14 +142,22 @@ func TestGraphContract(t *testing.T) {
 				}
 			}
 		}
-		// Neither is a decision as earlier contracts sent it, which the agent still takes.
+		// Neither is a decision as earlier contracts sent it, which the agent still takes,
+		// but for a release, which is always named.
 		var request map[string]any
 		raw, _ := json.Marshal(testExtractRequest())
 		_ = json.Unmarshal(raw, &request)
+		unnamed := []any{}
 		for _, d := range request["decisions"].([]any) {
-			delete(d.(map[string]any), "decision_id")
-			delete(d.(map[string]any), "decided_at")
+			decision := d.(map[string]any)
+			if decision["kind"] == string(model.FoundryReviewRelease) {
+				continue
+			}
+			delete(decision, "decision_id")
+			delete(decision, "decided_at")
+			unnamed = append(unnamed, decision)
 		}
+		request["decisions"] = unnamed
 		raw, _ = json.Marshal(request)
 		if err := contracttest.Validate(t, schema, raw); err != nil {
 			t.Fatalf("decisions named by neither: %v", err)
@@ -296,7 +306,7 @@ func TestGraphContract(t *testing.T) {
 		counts := `"counts":` + testCounts
 		usage := `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`
 		events := []string{
-			`{"event":"extract_started","contract_version":"4.9.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
+			`{"event":"extract_started","contract_version":"4.11.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
 			`{"event":"artifact","doc_id":"doc-1","key":"abc_DEF-1","json":"{\"sections\":[]}"}`,
 			`{"event":"document","doc_id":"doc-1","outcome":{"kind":"ingested"},"text_bytes":120,"sections":2,` + counts + `,` + usage + `}`,
 			`{"event":"document","doc_id":"doc-2","outcome":{"kind":"duplicate","of":"doc-1"},"text_bytes":120,"sections":0,` + counts + `,` + usage + `}`,
@@ -372,7 +382,7 @@ func TestGraphContract(t *testing.T) {
 	t.Run("ingest events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "ingest_event.json")
 		for _, raw := range []string{
-			`{"event":"ingest_started","contract_version":"4.9.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.11.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":1000}}`, `{"event":"sweep_page","entities":50}`,
 			`{"event":"ingest_finished"}`,
 		} {
@@ -423,7 +433,7 @@ func TestDeleteLoadContract(t *testing.T) {
 	t.Run("delete load events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "delete_load_event.json")
 		for _, raw := range []string{
-			`{"event":"delete_started","contract_version":"4.9.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
+			`{"event":"delete_started","contract_version":"4.11.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
 			`{"event":"deleted","label":"Customer","element":"node","count":3}`, `{"event":"delete_finished"}`,
 		} {
 			if err := contracttest.Validate(t, schema, []byte(raw)); err != nil {
@@ -521,6 +531,9 @@ func TestExtractDecisionWire(t *testing.T) {
 			`{"kind":"resolve","type":"Customer","doc_id":"doc","norm_name":"variant","entity_key":null,` + named + `}`},
 		{ExtractDecision{Kind: model.FoundryReviewProp, Type: "Customer", EntityKey: &key, Prop: "name", Value: json.RawMessage(`null`), DecisionID: "01JDDEC", DecidedAt: decidedAt},
 			`{"kind":"prop","type":"Customer","entity_key":"customer-1","prop":"name","value":null,` + named + `}`},
+		// A release carries nothing else: the engine refuses a field it doesn't name.
+		{ExtractDecision{Kind: model.FoundryReviewRelease, DocID: "doc", ClaimKey: "abc", End: 9, StatementHash: "def", DecisionID: "01JDDEC", DecidedAt: decidedAt},
+			`{"kind":"release","doc_id":"doc","claim_key":"abc","section":0,"start":0,"end":9,"statement_hash":"def",` + named + `}`},
 	} {
 		got, err := json.Marshal(tc.decision)
 		if err != nil || string(got) != tc.want {

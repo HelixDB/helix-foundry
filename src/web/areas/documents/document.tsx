@@ -52,6 +52,7 @@ import {
   type DocFact,
   type DocumentGraph,
   type Span,
+  snippet,
 } from "../explore/model";
 import { readQueries, startingOf } from "../explore/reads";
 import { DatabaseStarting } from "../explore/starting";
@@ -65,6 +66,7 @@ import {
   useLoadSelection,
 } from "../ontology/load-selection";
 import { POLL_MS, ontologyQueries } from "../ontology/queries";
+import { releaseStatus } from "../reviews/model";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { ontologyName, useOntology } from "../ontology/scope";
 import { DocumentView, PageBreak, PdfReadCallout } from "./document-view";
@@ -961,7 +963,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                         ))}
                         <small>
                           Section {q.section + 1}
-                          {f.confidence !== undefined &&
+                          {!!f.confidence &&
                             ` · ${Math.round(f.confidence * 100)}% confident`}
                           {(f.evidenceCount || 0) > 1 &&
                             ` · ${f.evidenceCount} sources`}
@@ -1028,7 +1030,8 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                               .filter(
                                 (m) =>
                                   m.entity.id === e.id &&
-                                  m.resolvedBy === "adjudicated",
+                                  (m.resolvedBy === "adjudicated" ||
+                                    m.resolvedBy === "legal_form"),
                               )
                               .map((m) => (
                                 <Link
@@ -1061,7 +1064,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
               ) : (
                 <ul className="dc-doc-list" aria-label="Needs review">
                   {reviews.map((r, i) => {
-                    const copy = reviewCopy(r.reason),
+                    const copy = reviewCopy(r.reason, r.candidates.length),
                       item = `review-${i}`;
                     return (
                       <li
@@ -1089,6 +1092,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                         <SettleReview
                           review={r}
                           link={link}
+                          naming={naming}
                           load={
                             selection.choice.kind === "load"
                               ? selection.choice.load
@@ -1107,7 +1111,18 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                   })}
                 </ul>
               )}
-              <SavedDecisions documentId={documentId} />
+              <SavedDecisions
+                documentId={documentId}
+                quoteOf={(section, start, end) => {
+                  const s = x?.sections.find((s) => s.ordinal === section);
+                  return s && snippet(s.text, start, end).match;
+                }}
+                statusOf={
+                  x
+                    ? (d) => releaseStatus(d, reviews, facts.data ?? [])
+                    : undefined
+                }
+              />
             </TabPanel>
             <TabPanel id="details" value={tab} idPrefix="tab">
               <KeyValue

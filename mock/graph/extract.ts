@@ -51,7 +51,7 @@ import type { LoadGraph, Props, Value } from "./store";
 //   candidates (stored customers sharing a word of it, by their stored
 //   identity) and the Contract. Text never creates a keyed entity. With
 //   `adjudicate`, its first candidate links it instead, and the review is
-//   "adjudicated", naming that one only.
+//   that rung's ("adjudicated" or "legal_form"), naming that one only.
 // - When the scope lets documents create Contracts, a document naming a
 //   company is a Contract {norm_name, name, foundry_part: "<load>:documents"}
 //   named by its first heading (or file name), signed_with every company it
@@ -698,7 +698,20 @@ export function extractDocument(
   ontology: ExtractOntology,
   scope: Scope,
   decisions: ReviewDecision[] = [],
-  adjudicate = false,
+  adjudicate?: "adjudicated" | "legal_form",
+  // What the engine would make of a hedged claim, for a page to show:
+  // "refused" holds it however it's approved; "legal_form" too, with its name
+  // linked by form; "differs" gives its place a review stating something else,
+  // and refuses it; "unverified" is one no verifier judged, written at no
+  // confidence; "one_end" names one of its ends; "no_statement" is one an
+  // older load held, with no statement to approve.
+  held?:
+    | "refused"
+    | "legal_form"
+    | "differs"
+    | "unverified"
+    | "one_end"
+    | "no_statement",
   // The models that read and check it.
   readers: { model: string; verifier: string } = {
     model: MODEL,
@@ -877,8 +890,8 @@ export function extractDocument(
       if (!e) return true;
       found.push({
         e,
-        hits: [{ s: u.s, i: u.i, surface: u.name, by: "adjudicated" }],
-        resolvedBy: "adjudicated",
+        hits: [{ s: u.s, i: u.i, surface: u.name, by: adjudicate! }],
+        resolvedBy: adjudicate!,
       });
       adjudicated.push(u);
       return false;
@@ -1058,11 +1071,100 @@ export function extractDocument(
     if (!linked) continue;
     const first = hits[0]!,
       confidence =
-        resolvedBy === "identifier" || resolvedBy === "adjudicated"
+        resolvedBy === "identifier" ||
+        resolvedBy === "adjudicated" ||
+        resolvedBy === "legal_form"
           ? 0.95
           : resolvedBy === "name"
             ? 0.93
             : 0.81;
+    // A hedged sentence is a claim a verifier doubts: held, until a person
+    // releases it by its key, the same in every load, and written at the
+    // verifier's confidence.
+    let stated = confidence;
+    const [from, to] = sentenceAt(first.s.text, first.i);
+    if (/\bmay\b/.test(first.s.text.slice(from, to))) {
+      const about = [
+        g.node(contract!)!.props.norm_name,
+        g.node(e.id)!.props.entity_key ?? g.node(e.id)!.props.norm_name,
+      ];
+      const claim = JSON.stringify({
+        link: "signed_with",
+        about: held === "one_end" ? about.slice(1) : about,
+      });
+      const claimKey = sha256(`${doc.id}\u001f${claim}`);
+      const place = quote(first.s, first.i);
+      const statement = JSON.stringify({
+        subject: { type: "Contract", name: g.node(contract!)!.props.name },
+        object: { type: g.node(e.id)!.label, name: e.name || first.surface },
+        props: {},
+      });
+      const released = decisions.some(
+        (d) =>
+          d.kind === "release" &&
+          d.docId === doc.id &&
+          d.claimKey === claimKey &&
+          d.claimSection === first.s.ordinal &&
+          d.claimStart === place.start &&
+          d.claimEnd === place.end &&
+          d.statementHash === sha256(`signed_with\u001f${statement}`),
+      );
+      const refused =
+        held === "refused" || held === "legal_form" || held === "differs";
+      if (!released || refused) {
+        const r = g.addNode(N.Review, {
+          review_key: sha256(`${doc.id}\u001f${claimKey}`),
+          doc_id: doc.id,
+          section: first.s.ordinal,
+          ...place,
+          reason: held === "unverified" ? "unverified" : "low_confidence",
+          claim_key: claimKey,
+          claim,
+          ...(held === "no_statement" ? {} : { statement }),
+          suggested_link: "signed_with",
+          ...(held === "unverified" ? {} : { confidence: 0.72 }),
+        });
+        g.addEdge(E.FROM_SECTION, r, first.s.node);
+        g.addEdge(E.CONCERNS, r, contract!);
+        g.addEdge(E.CONCERNS, r, e.id);
+        counts.reviews += 1;
+        if (held === "differs") {
+          const other = g.addNode(N.Review, {
+            review_key: sha256(`${doc.id}\u001f${claimKey}\u001fother`),
+            doc_id: doc.id,
+            section: first.s.ordinal,
+            ...place,
+            reason: "conflict",
+            claim_key: claimKey,
+            claim,
+            statement: statement.replace('"props":{}', '"props":{"term":"24"}'),
+            suggested_link: "signed_with",
+          });
+          g.addEdge(E.FROM_SECTION, other, first.s.node);
+          g.addEdge(E.CONCERNS, other, e.id);
+          counts.reviews += 1;
+        }
+        if (held === "legal_form") {
+          const key = String(g.node(e.id)!.props.entity_key);
+          const linked = g.addNode(N.Review, {
+            review_key: sha256(`${doc.id}\u001f${claimKey}\u001fform`),
+            doc_id: doc.id,
+            section: first.s.ordinal,
+            ...place,
+            reason: "legal_form",
+            type: "Customer",
+            norm_name: normName(e.name || first.surface),
+            entity_key: key,
+            candidates: [key],
+          });
+          g.addEdge(E.FROM_SECTION, linked, first.s.node);
+          g.addEdge(E.CONCERNS, linked, e.id);
+          counts.reviews += 1;
+        }
+        continue;
+      }
+      stated = held === "unverified" ? 0 : 0.72;
+    }
     const factKey = sha256(
       ["signed_with", String(contract), String(e.id)].join("\u001f"),
     );
@@ -1073,7 +1175,7 @@ export function extractDocument(
       g.addEdge("signed_with", contract!, e.id, {
         fact_key: factKey,
         provenance: "extracted",
-        confidence,
+        confidence: stated,
         evidence_count: 1,
         ontology_version: doc.ontologyVersion,
       });
@@ -1085,7 +1187,7 @@ export function extractDocument(
       model,
       verifier,
       prompt_version: PROMPT_VERSION,
-      confidence,
+      confidence: stated,
     });
     g.addEdge(E.FROM_SECTION, ev, first.s.node);
     counts.facts += 1;
@@ -1097,7 +1199,7 @@ export function extractDocument(
       doc_id: doc.id,
       section: u.s.ordinal,
       ...q,
-      reason: adjudicated.includes(u) ? "adjudicated" : "unresolved",
+      reason: adjudicated.includes(u) ? adjudicate! : "unresolved",
       ...(adjudicated.includes(u)
         ? {
             entity_key: String(

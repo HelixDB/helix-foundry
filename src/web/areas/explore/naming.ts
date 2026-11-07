@@ -32,6 +32,8 @@ export type Naming = {
   links: ReadonlySet<string>;
   // Each link's ends: the types it goes from and to.
   ends: ReadonlyMap<string, { from: string; to: string }>;
+  // The links that hold one value at a time.
+  oneValued: ReadonlySet<string>;
 };
 
 /** No version: every label keeps its raw label and id. */
@@ -40,6 +42,7 @@ export const NO_NAMING: Naming = {
   types: new Map(),
   links: new Set(),
   ends: new Map(),
+  oneValued: new Set(),
 };
 
 /**
@@ -67,6 +70,9 @@ export function namingOf(v?: OntologyVersion | null): Naming {
       ),
       links: new Set(o.links.map((l) => l.name)),
       ends: new Map(o.links.map((l) => [l.name, { from: l.from, to: l.to }])),
+      oneValued: new Set(
+        o.links.filter((l) => l.cardinality === "one").map((l) => l.name),
+      ),
     };
   }
   const view = readFoundry(v.definition);
@@ -87,6 +93,7 @@ export function namingOf(v?: OntologyVersion | null): Naming {
     ends: new Map(
       view.relationships.map((r) => [r.name, { from: r.from, to: r.to }]),
     ),
+    oneValued: new Set(),
   };
 }
 

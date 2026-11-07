@@ -45,7 +45,11 @@ export const settleReview = async (
     body,
   );
   trackEvent("review_settled", {
-    kind: body.decision.prop ? "prop" : "resolve",
+    kind: body.decision.prop
+      ? "prop"
+      : body.decision.release
+        ? "release"
+        : "resolve",
   });
   return r;
 };
