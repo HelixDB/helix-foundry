@@ -61,7 +61,7 @@ async function loaded(page: Page) {
   await signIn(page);
   await load(page);
   await openUntil(page, () =>
-    expect(cards(page)).toHaveCount(3, { timeout: 2000 }),
+    expect(cards(page)).toHaveCount(4, { timeout: 2000 }),
   );
 }
 
@@ -76,7 +76,7 @@ test("lists the current load's suggestions and dismisses one", async ({
 
   await load(page);
   await openUntil(page, () =>
-    expect(cards(page)).toHaveCount(3, { timeout: 2000 }),
+    expect(cards(page)).toHaveCount(4, { timeout: 2000 }),
   );
   await page.goto(O);
   await page
@@ -84,7 +84,7 @@ test("lists the current load's suggestions and dismisses one", async ({
     .getByRole("link", { name: "Suggestions" })
     .click();
   await expect(page).toHaveURL(new RegExp(`${O}/suggestions$`));
-  await expect(cards(page)).toHaveCount(3);
+  await expect(cards(page)).toHaveCount(4);
   const first = cards(page).first();
   await expect(first).toContainText(
     "Documents state “supplier of”, which no link covers",
@@ -123,7 +123,7 @@ test("lists the current load's suggestions and dismisses one", async ({
     "Documents state “supplier of”, which no link covers",
   );
   await dismiss.click();
-  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page)).toHaveCount(3);
   await expect(suggestions(page)).not.toContainText("supplier of");
   await expect(suggestions(page)).toContainText(
     "Rows of “customers” didn't load",
@@ -136,7 +136,91 @@ test("lists the current load's suggestions and dismisses one", async ({
   await page.clock.fastForward(UNDO);
   await expect(page.getByText("Suggestion dismissed.")).toBeHidden();
   await page.reload();
-  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page)).toHaveCount(3);
+});
+
+test("adds a link a suggestion says documents state, on Generate", async ({
+  page,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await loaded(page);
+  const none = cards(page).filter({
+      hasText: "Documents state “subsidiary of”",
+    }),
+    route = cards(page).first();
+  // A relationship no link covers that proposes nothing: a manager can
+  // still add a link for it, and is told what that gets them.
+  await expect(none).toContainText("Relationship no link covers");
+  await expect(none).toContainText("In document set “General”");
+  await expect(none).toContainText("9 reviews in 4 documents");
+  await expect(none).not.toContainText("Suggested:");
+  await expect(
+    none.getByText("Adding this link lets future loads store these 9 claims.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  // Only a relationship no link covers has one.
+  for (const other of ["“globex corp”", "Rows of “customers”"]) {
+    const card = cards(page).filter({ hasText: other });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByRole("link", { name: "Add this link" })).toHaveCount(
+      0,
+    );
+    await expect(card).not.toContainText("Adding this link");
+  }
+  // Named Add this link alone, described by its card's title: an accessible
+  // name may reach analytics.
+  const add = none.getByRole("link", { name: "Add this link", exact: true });
+  await expect(add).not.toHaveAttribute("aria-label");
+  await expect(add).toHaveAccessibleDescription(
+    "Documents state “subsidiary of”, which no link covers",
+  );
+  await add.click();
+  await expect(page).toHaveURL(new RegExp(`${O}/generate\\?goal=`));
+  await expect(page.getByLabel("Goal")).toHaveValue(
+    [
+      "Add a link for “subsidiary of”: documents of “General” state it.",
+      "For example:",
+      "“Globex Freight, a subsidiary of Globex, handles delivery.”",
+      "“Initech Labs is a wholly owned subsidiary of Initech.”",
+      "“Acme Freight signs as a subsidiary of Acme.”",
+    ].join("\n"),
+  );
+
+  // One that proposes something keeps its proposal, which fills the goal.
+  await page.goBack();
+  await expect(route).toContainText(
+    "Suggested: Let documents of “General” state “supplies”",
+  );
+  await expect(route).toContainText(
+    "Adding this link lets future loads store these 12 claims.",
+  );
+  await route.getByRole("link", { name: "Add this link", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`${O}/generate\\?goal=`));
+  await expect(page.getByLabel("Goal")).toHaveValue(
+    /^Let documents of “General” state “supplies”: documents state “supplier of”, also reported as “supplier of packaging”\.\nFor example:\n“Globex supplies Acme with steel under this agreement\.”\n/,
+  );
+});
+
+test("offers Add this link to managers only", async ({ page }) => {
+  await mock.configure({ loadStepMs: 200 });
+  await signIn(page);
+  await load(page);
+  await openUntil(page, () =>
+    expect(cards(page)).toHaveCount(4, { timeout: 2000 }),
+  );
+  // A member reads the suggestions, and can't act on them.
+  await page.context().clearCookies();
+  await signIn(page, "alan@example.com");
+  await page.goto(`${O}/suggestions`);
+  await expect(cards(page)).toHaveCount(4);
+  await expect(
+    suggestions(page).getByRole("link", { name: "Add this link" }),
+  ).toHaveCount(0);
+  await expect(suggestions(page)).not.toContainText("Adding this link");
+  await expect(
+    suggestions(page).getByRole("button", { name: "Dismiss" }),
+  ).toHaveCount(0);
 });
 
 test("takes a dismissal back with Undo, before it is sent", async ({
@@ -145,19 +229,19 @@ test("takes a dismissal back with Undo, before it is sent", async ({
   await mock.configure({ loadStepMs: 200 });
   await loaded(page);
   await dismissOf(cards(page).first()).click();
-  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page)).toHaveCount(3);
   await page
     .getByRole("status")
     .filter({ hasText: "Suggestion dismissed." })
     .getByRole("button", { name: "Undo" })
     .click();
-  await expect(cards(page)).toHaveCount(3);
+  await expect(cards(page)).toHaveCount(4);
   await expect(cards(page).first()).toContainText("supplier of");
   await expect(dismissOf(cards(page).first())).toBeFocused();
   // Nothing was sent: past the toast's time, a reload still lists it.
   await page.clock.fastForward(UNDO);
   await page.reload();
-  await expect(cards(page)).toHaveCount(3);
+  await expect(cards(page)).toHaveCount(4);
 });
 
 test("keeps every dismissal not sent yet hidden as the list refreshes", async ({
@@ -168,16 +252,16 @@ test("keeps every dismissal not sent yet hidden as the list refreshes", async ({
   // The second dismissal sends the first, whose refreshed list still holds
   // the second: it stays hidden, then is sent in its turn.
   await dismissOf(cards(page).first()).click();
-  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page)).toHaveCount(3);
   await dismissOf(cards(page).first()).click();
-  await expect(cards(page)).toHaveCount(1);
+  await expect(cards(page)).toHaveCount(2);
   await expect(suggestions(page)).toContainText("Rows of “customers”");
   await page.waitForTimeout(1000);
-  await expect(cards(page)).toHaveCount(1);
+  await expect(cards(page)).toHaveCount(2);
   await page.clock.fastForward(UNDO);
   await expect(page.getByText("Suggestion dismissed.")).toBeHidden();
   await page.reload();
-  await expect(cards(page)).toHaveCount(1);
+  await expect(cards(page)).toHaveCount(2);
 });
 
 test("puts a card back, focused, when its dismissal fails", async ({
@@ -187,12 +271,12 @@ test("puts a card back, focused, when its dismissal fails", async ({
   await loaded(page);
   await mock.configure({ healDismiss: "fails" });
   await dismissOf(cards(page).first()).click();
-  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page)).toHaveCount(3);
   await page.clock.fastForward(UNDO);
   await expect(
     page.getByText(/^Couldn’t dismiss the suggestion/),
   ).toBeVisible();
-  await expect(cards(page)).toHaveCount(3);
+  await expect(cards(page)).toHaveCount(4);
   await expect(dismissOf(cards(page).first())).toBeFocused();
 });
 
@@ -264,7 +348,7 @@ test("shows the suggestions once the current load's audit completes, unasked", a
   // The audit completes: the page's next poll shows it, with no reload.
   await mock.configure({ healRun: null });
   await page.clock.fastForward(16_000);
-  await expect(cards(page)).toHaveCount(3);
+  await expect(cards(page)).toHaveCount(4);
   await expect(page.getByText(/^Last audited/)).toBeVisible();
 });
 
@@ -282,7 +366,7 @@ test("marks another load's suggestions until the current load is audited", async
       cards(page).first().getByText("Another load", { exact: true }),
     ).toBeVisible({ timeout: 2000 }),
   );
-  await expect(cards(page)).toHaveCount(3);
+  await expect(cards(page)).toHaveCount(4);
   await expect(
     page
       .getByText(/^The last audit .*was of another load/)
@@ -303,6 +387,6 @@ test("drops a suggestion an audit superseded as it was dismissed", async ({
   await expect(
     page.getByText(/^Couldn’t dismiss the suggestion: .*superseded/),
   ).toBeVisible();
-  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page)).toHaveCount(3);
   await expect(suggestions(page)).not.toContainText("supplier of");
 });
