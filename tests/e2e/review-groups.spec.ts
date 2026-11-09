@@ -163,7 +163,9 @@ test("approves every held claim of a group at once, and says which couldn't be",
   });
   await approveAll.click();
   const dialog = page.getByRole("dialog", { name: "Approve 3 claims?" });
-  await expect(dialog).toContainText("The next load writes each one it can. Any it can't stays held, and its card says why.");
+  await expect(dialog).toContainText(
+    "The next load writes each one it can. Any it can't stays held, and its card says why.",
+  );
   await dialog.getByRole("button", { name: "Approve all" }).click();
   await expect(
     head.getByRole("status").filter({ hasText: "couldn’t be" }),
