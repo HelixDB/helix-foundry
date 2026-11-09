@@ -48,6 +48,8 @@ export const mock = {
     documentAdjudicated?: boolean;
     // Seeds the same variant linked by legal form, with its review.
     documentLegalForm?: boolean;
+    // Sentences stating a relationship no link covers are "unmatched" reviews.
+    documentUnmatched?: boolean;
     // What the engine would make of a hedged claim (mock/graph/extract.ts).
     documentHeld?:
       | "refused"

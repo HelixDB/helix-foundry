@@ -409,10 +409,14 @@ test("shows no percentage on a claim no verifier judged", async ({ page }) => {
 test("doesn't tell one claim of a sentence about another's approval", async ({
   page,
 }) => {
-  const { doc, held } = await hedged(
+  const { doc } = await hedged(
     page,
     "Globex Corporation and Initech may have signed.",
   );
+  // Its group's rows: the reason is said once, in the group's head.
+  const held = reviews(page)
+    .getByRole("list", { name: "The model wasn’t sure" })
+    .getByRole("listitem");
   await expect(held).toHaveCount(2);
   await approve(held.first());
   await expect(held.last()).not.toContainText("earlier approval");

@@ -100,6 +100,14 @@ const MONTHS = [
   "november",
   "december",
 ];
+/**
+ * Relationships the mock's ontologies have no link for, by what states one,
+ * and the link a model suggests for each, as it spells it.
+ */
+const UNMATCHED: [RegExp, string][] = [
+  [/\bsupplies\b/g, "supplier_of"],
+  [/\bcompetes with\b/g, "competitor of"],
+];
 const ATTRIBUTES: Record<
   string,
   { pattern: RegExp; value: (m: RegExpExecArray) => Value | undefined }
@@ -717,6 +725,9 @@ export function extractDocument(
     model: MODEL,
     verifier: VERIFIER,
   },
+  // Whether a sentence stating a relationship no link covers (UNMATCHED) is
+  // an "unmatched" review, as the engine reports one.
+  unmatched = false,
 ): ExtractOutcome {
   const { model, verifier } = readers;
   const contentHash = sha256(doc.text);
@@ -1224,5 +1235,26 @@ export function extractDocument(
     }
     counts.reviews += 1;
   });
+  // A review of the sentence, naming the link a model would suggest, which
+  // the version may not have: nothing it states is stored.
+  if (unmatched)
+    for (const s of sections)
+      for (const [pattern, link] of UNMATCHED)
+        for (const m of s.text.matchAll(pattern)) {
+          const q = quote(s, m.index);
+          const r = g.addNode(N.Review, {
+            review_key: sha256(
+              [doc.id, "unmatched", s.ordinal, q.start, link].join("\u001f"),
+            ),
+            doc_id: doc.id,
+            section: s.ordinal,
+            ...q,
+            reason: "unmatched",
+            suggested_link: link,
+            confidence: 0.8,
+          });
+          g.addEdge(E.FROM_SECTION, r, s.node);
+          counts.reviews += 1;
+        }
   return { kind: "ingested", counts };
 }

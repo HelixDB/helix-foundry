@@ -125,7 +125,9 @@ import { sourceId } from "./ontology-agent";
 // phase takes `loadStepMs` (one step per document). Test knobs through POST /__mock/config: `loadOutcome` "fail"
 // (the ingest fails), "sources_changed" (the tables were re-synced while the
 // load ran) or "budget_exhausted" (the spending cap stops it after one
-// document), `documentOutcome` "fail" (reading a document fails) and
+// document), `documentOutcome` "fail" (reading a document fails),
+// `documentUnmatched` (a sentence stating a relationship no link covers,
+// such as "supplies", is an "unmatched" review) and
 // `deleteOutcome` "fail" (a delete fails for good: delete_failed). A
 // database still starting (`startingQueries` in ./databases.ts) refuses an
 // ingest's first write: the attempt fails, and the load waits, queued with
@@ -158,6 +160,8 @@ type Knobs = {
   documentOutcome?: "succeed" | "fail";
   documentAdjudicated?: boolean;
   documentLegalForm?: boolean;
+  // Sentences stating a relationship no link covers are "unmatched" reviews.
+  documentUnmatched?: boolean;
   documentHeld?:
     | "refused"
     | "legal_form"
@@ -317,6 +321,7 @@ onReset(() => {
   delete knobs.documentAdjudicated;
   delete knobs.documentLegalForm;
   delete knobs.documentHeld;
+  delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
   delete knobs.readErrors;
   delete knobs.readsBusy;
@@ -1075,6 +1080,7 @@ function read(j: StoredJob, documentId: string, at: string) {
       model: aiModel(j.workspaceId, "extract") || MODEL,
       verifier: aiModel(j.workspaceId, "verify") || VERIFIER,
     },
+    knobs.documentUnmatched,
   );
   if (outcome.kind === "already_ingested") return;
   // Stored, not read: no model call, nothing spent.
