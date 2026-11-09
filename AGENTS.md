@@ -32,7 +32,7 @@ Run all four checks (`typecheck`, `lint`, `test`, `e2e`) before you finish. CI (
 
 Run `pnpm test` on Crucible (https://crucibl.sh), not locally. Crucible runs the Vitest suite only: `typecheck`, `lint`, `e2e` and the backend's Go checks stay local. The `crucible` MCP server is in `.mcp.json`: Claude Code asks once to trust it, then sign in with `/mcp` → `crucible` → Authenticate (Codex: `codex mcp add crucible --url https://mcp.crucibl.sh/mcp`). Run the tests locally only if Crucible is unavailable: no `crucible` tools, sign-in fails, or `status` shows no ready base for `HelixDB/helix-foundry`.
 
-1. `status`: take the `base.commit` of `HelixDB/helix-foundry`, then `git fetch origin main` so your clone has it.
+1. `status`: take the `base.commit` of `HelixDB/helix-foundry`, then `git fetch origin <base.commit>` so your clone has it (the base can lag behind `main`).
 2. `create_diff_upload(repo: "HelixDB/helix-foundry", base: "<base.commit>")`, then run the `command` it returns, as given, from the repo root. It uploads `git diff <base.commit>` (your commits and uncommitted edits) and prints one line. Don't print the diff yourself.
 3. `run_tests(repo: "HelixDB/helix-foundry", base: "<base.commit>", diff_upload: "<diff_upload>")`. For one test, add `filters: ["<test name>"]`. An upload runs once: repeat steps 2 and 3 for each run.
 4. A `{"status":"running","job_id":…}` answer: call `get_job(id: "<job_id>", wait_seconds: 45)` until it finishes.
