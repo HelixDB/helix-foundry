@@ -4,9 +4,10 @@ import type {
   FoundryReviewDecision,
   ReviewDecision,
 } from "../../../shared/wfe";
-import type { ReviewReason } from "../documents/model";
+import { reviewCopy, type ReviewReason } from "../documents/model";
 import type { DocFact, EntityRow } from "../explore/model";
 import { normalizeName } from "../explore/naming";
+import { MAX_GOAL } from "../ontology/model";
 
 // What a FoundryReview lets a person settle, read once
 // from the stored record, and the choice the backend's SettleFoundryReview takes. The
@@ -427,6 +428,174 @@ export function markDiffering<T extends Settleable & { reason?: string }>(
         }
       : r;
   });
+}
+
+/**
+ * Needs review's groups in order: held claims to approve, names linked by
+ * legal form, values in conflict, then links the ontology doesn't have. Any
+ * other reason follows, in the order it first appears.
+ */
+const GROUP_ORDER: readonly string[] = [
+  "low_confidence",
+  "unverified",
+  "legal_form",
+  "prop_conflict",
+  "unmatched",
+];
+
+/**
+ * Reviews whose cards say the same of their reason: its title and
+ * explanation, and each review with its index in the list it came from.
+ * `reason` is its first review's.
+ */
+export type ReviewGroup<R> = {
+  reason: string;
+  title: string;
+  text: string;
+  items: { review: R; index: number }[];
+};
+
+/**
+ * Groups reviews by what their card says of their reason (documents' reviewCopy),
+ * so an ambiguous name with one candidate is apart from one with several, and
+ * every reason this site doesn't know is one group. Groups go in GROUP_ORDER,
+ * then as they first appear; a group keeps its reviews' order.
+ *
+ * @example
+ * reviewGroups([
+ *   { reason: "unresolved", candidates: [] },
+ *   { reason: "unmatched", candidates: [] },
+ *   { reason: "low_confidence", candidates: [] },
+ * ]).map((g) => [g.reason, g.items.map((i) => i.index)]);
+ * // [["low_confidence", [2]], ["unmatched", [1]], ["unresolved", [0]]]
+ */
+export function reviewGroups<
+  R extends { reason: string; candidates: readonly unknown[] },
+>(reviews: readonly R[]): ReviewGroup<R>[] {
+  const groups = new Map<string, ReviewGroup<R>>();
+  reviews.forEach((review, index) => {
+    const copy = reviewCopy(review.reason, review.candidates.length);
+    const group = groups.get(copy.title) ?? {
+      reason: review.reason,
+      ...copy,
+      items: [],
+    };
+    // Appended in place: a copy per review would be quadratic in a long document.
+    group.items.push({ review, index });
+    groups.set(copy.title, group);
+  });
+  const rank = ({ reason }: ReviewGroup<R>) =>
+    GROUP_ORDER.includes(reason)
+      ? GROUP_ORDER.indexOf(reason)
+      : GROUP_ORDER.length;
+  // Array sort is stable: groups of the same rank keep their first appearance.
+  return [...groups.values()].sort((a, b) => rank(a) - rank(b));
+}
+
+/**
+ * The held claims of `reviews` that Approve all approves: each settled by a
+ * release a person could approve on its card now, with no decision saved for
+ * it (not even one of what it said before: that card asks to be read again),
+ * not read two ways (`differs`), and not naming a name only a legal form
+ * linked on a link that holds one value (`single`), which stays held until
+ * that name is settled. A stale review settles by no release, so it's never
+ * one of them.
+ *
+ * @example
+ * approvable([held, readTwoWays, alreadyApproved], decisions, () => false); // [held.settle]
+ */
+export function approvable(
+  reviews: readonly Settleable[],
+  decisions: readonly ReviewDecision[],
+  single: (link: string) => boolean,
+): Extract<Settle, { kind: "release" }>[] {
+  return reviews.flatMap(({ settle: s }) =>
+    s?.kind === "release" &&
+    !s.differs &&
+    !(s.formed && single(s.link)) &&
+    !decisions.some((d) => matchesReview(d, s))
+      ? [s]
+      : [],
+  );
+}
+
+const LINKS_GOAL = "Add links the documents state that the ontology lacks: ";
+/**
+ * The most a goal takes as a URL query value. Generate opens with it in its
+ * address, and a host refuses a long address (Vercel's limit is 14 KB): a
+ * goal of non-Latin text can take nine bytes a character once encoded.
+ */
+const MAX_GOAL_URL = 8000;
+
+/**
+ * The goal Add these links fills Generate with, from reviews of relationships
+ * the ontology doesn't have: each link they suggest once (spellings differing
+ * only in case, spaces, underscores or hyphens are one link, named as first
+ * spelled), the most suggested first, then up to two quotes each, every
+ * link's first before any second. It stays within MAX_GOAL characters (code
+ * points, as Generate counts them) and MAX_GOAL_URL encoded: links that don't
+ * fit are left out, and then quotes that don't. None when no review names a
+ * link.
+ *
+ * @example
+ * linksGoal([{ suggestedLink: "supplier_of", quote: "Globex supplies Initech." }]);
+ * // "Add links the documents state that the ontology lacks: supplier_of (“Globex supplies Initech.”)."
+ */
+export function linksGoal(
+  reviews: readonly { suggestedLink?: string; quote: string }[],
+): string | undefined {
+  const links = new Map<
+    string,
+    { name: string; quotes: string[]; count: number }
+  >();
+  for (const r of reviews) {
+    const name = r.suggestedLink?.trim();
+    if (!name) continue;
+    const key = name.toLowerCase().replace(/[\s_-]+/g, "_"),
+      quote = r.quote.replace(/\s+/g, " ").trim(),
+      link = links.get(key) ?? { name, quotes: [], count: 0 };
+    link.count += 1;
+    if (quote && link.quotes.length < 2 && !link.quotes.includes(quote))
+      link.quotes.push(quote);
+    links.set(key, link);
+  }
+  type Part = { name: string; quotes: string[] };
+  const goal = (parts: readonly Part[]) =>
+    `${LINKS_GOAL}${parts
+      .map(({ name, quotes }) =>
+        quotes.length
+          ? `${name} (${quotes.map((q) => `“${q}”`).join(", ")})`
+          : name,
+      )
+      .join(", ")}.`;
+  const fits = (parts: readonly Part[]) => {
+    const text = goal(parts);
+    return (
+      [...text].length <= MAX_GOAL &&
+      encodeURIComponent(text).length <= MAX_GOAL_URL
+    );
+  };
+  // Stable: links suggested as often keep their first appearance.
+  const ranked = [...links.values()].sort((a, b) => b.count - a.count);
+  // Every link that fits is named first; quotes take the room left.
+  const named = ranked.reduce<(Part & { from: string[] })[]>(
+    (parts, { name, quotes }) => {
+      const next = [...parts, { name, quotes: [], from: quotes }];
+      return fits(next) ? next : parts;
+    },
+    [],
+  );
+  const quoted = [0, 1]
+    .flatMap((k) => named.map((_, i) => [k, i] as const))
+    .reduce((parts, [k, i]) => {
+      const quote = parts[i]!.from[k];
+      if (!quote) return parts;
+      const next = parts.map((p, j) =>
+        j === i ? { ...p, quotes: [...p.quotes, quote] } : p,
+      );
+      return fits(next) ? next : parts;
+    }, named);
+  return quoted.length ? goal(quoted) : undefined;
 }
 
 /**
