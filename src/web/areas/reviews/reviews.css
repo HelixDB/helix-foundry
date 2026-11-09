@@ -1,0 +1,49 @@
+/* Needs review, grouped by reason: a group's head says it once, its rows are compact. */
+.dc-review-group {
+  gap: 8px;
+}
+.dc-review-head {
+  display: grid;
+  gap: 4px;
+}
+.dc-review-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--hf-text-sm);
+  font-weight: 600;
+}
+.dc-review-head p {
+  margin: 0;
+  color: var(--hf-text-2);
+  font-size: var(--hf-text-sm);
+}
+.dc-review-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: var(--hf-radius-pill);
+  background: var(--hf-sunken);
+  color: var(--hf-muted);
+  font-size: var(--hf-text-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.dc-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.dc-review-actions small {
+  flex: 1 1 200px;
+}
+/* The rows sit under their group's head. */
+.dc-review-group > .dc-doc-list {
+  margin-top: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--hf-border);
+}
