@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
-import type { FoundryLoad } from "../../../shared/wfe";
+import type { FoundryLoad, FoundryReviewDecision } from "../../../shared/wfe";
 import { Button, ButtonLink, ConfirmDialog, plural } from "../../kit";
 import { paths } from "../../paths";
 import { canManage, useWorkspace } from "../../ui";
@@ -74,7 +74,8 @@ export function ReviewGroups<R extends Review>({
  * Approves every held claim of a group a person could approve on its card now
  * (approvable), once they confirm, by the same settle call a card sends, each
  * bound to its own card's statement. Offered for two or more: one card has its
- * own Approve. A card that fails stays as it is, and the result says why.
+ * own Approve. Each approval saved shows on its card at once; one that fails
+ * leaves its card as it is, and the result says why.
  */
 function ApproveAll({
   reviews,
@@ -119,11 +120,21 @@ function ApproveAll({
       while (next < cards.length) {
         const s = cards[next++]!;
         try {
-          await settleReview(ws, o, s.reviewId, {
+          const { decision } = await settleReview(ws, o, s.reviewId, {
             decision: {
               release: { statementHash: await statementHash(s.link, s.stored) },
             },
           });
+          // Its card reads saved, and the count drops, as each one lands.
+          qc.setQueryData<FoundryReviewDecision[]>(
+            reviewQueries.list(ws, o).queryKey,
+            (saved) =>
+              saved &&
+              decision && [
+                ...saved.filter((d) => d.id !== decision.id),
+                decision,
+              ],
+          );
         } catch (e) {
           failed.push((e as Error).message);
         }
@@ -169,7 +180,7 @@ function ApproveAll({
       ) : (
         result && <p role="status">{result}</p>
       )}
-      {confirming && (
+      {confirming && ready.length > 0 && (
         <ConfirmDialog
           title={`Approve ${plural(ready.length, "claim")}?`}
           description="Each is written on the next load."

@@ -416,7 +416,7 @@ test("doesn't tell one claim of a sentence about another's approval", async ({
   // Its group's rows: the reason is said once, in the group's head.
   const held = reviews(page)
     .getByRole("list", { name: "The model wasn’t sure" })
-    .getByRole("listitem");
+    .locator(":scope > li");
   await expect(held).toHaveCount(2);
   await approve(held.first());
   await expect(held.last()).not.toContainText("earlier approval");

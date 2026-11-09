@@ -276,37 +276,77 @@ describe("the goal Add these links fills Generate with", () => {
       model.linksGoal([unmatched(undefined, "q."), unmatched(" ", "q.")]),
     ).toBeUndefined();
   });
-  it("leaves out links that would take it past MAX_GOAL characters", () => {
-    const reviews = Array.from({ length: 200 }, (_, i) =>
+  it("names every link that fits, the most suggested first, before any quote", () => {
+    const reviews = Array.from({ length: 400 }, (_, i) =>
       unmatched(`link_${i}`, `Quote number ${i} of the documents.`),
     );
     const goal = model.linksGoal(reviews)!;
     expect(length(goal)).toBeLessThanOrEqual(MAX_GOAL);
-    expect(goal).toMatch(/^Add links .*link_0 \(“Quote number 0/);
-    expect(goal).not.toContain("link_199");
+    const named = goal.slice(PREFIX.length, -1).split(", ");
+    // As many names as fit, in order, and no room left for another.
+    expect(named).toEqual(named.map((_, i) => `link_${i}`));
+    expect(
+      length(`${goal.slice(0, -1)}, link_${named.length}.`),
+    ).toBeGreaterThan(MAX_GOAL);
   });
-  it("gives a link fewer quotes, then none, before leaving it out", () => {
-    const long = "x".repeat(MAX_GOAL);
-    const goal = model.linksGoal([
-      unmatched("first", "Short."),
-      unmatched("first", long),
-      unmatched("second", long),
-      unmatched("third", "y".repeat(MAX_GOAL / 2)),
-      unmatched("x".repeat(MAX_GOAL), "Too long a name."),
-    ])!;
-    expect(goal.startsWith(`${PREFIX}first (“Short.”), second, third`)).toBe(
-      true,
-    );
-    expect(goal).not.toContain("Too long a name");
-    expect(length(goal)).toBeLessThanOrEqual(MAX_GOAL);
+  it("gives quotes the room the names leave, every link's first before any second", () => {
+    const room = MAX_GOAL - length(`${PREFIX}a (“”, “”).`);
+    const [first, second] = [
+      "x".repeat(Math.floor(room / 2)),
+      "y".repeat(Math.ceil(room / 2)),
+    ];
+    // Both of a's quotes would fill it, leaving b out.
+    expect(
+      model.linksGoal([
+        unmatched("a", first!),
+        unmatched("a", second!),
+        unmatched("b", "Short."),
+      ]),
+    ).toBe(`${PREFIX}a (“${first}”), b (“Short.”).`);
+    expect(
+      model.linksGoal([
+        unmatched("a", "q."),
+        unmatched("b", "r."),
+        unmatched("a", "s."),
+      ]),
+    ).toBe(`${PREFIX}a (“q.”, “s.”), b (“r.”).`);
+  });
+  it("takes a link's second quote alone when its first doesn't fit", () => {
+    expect(
+      model.linksGoal([
+        unmatched("a", "x".repeat(MAX_GOAL)),
+        unmatched("a", "Short."),
+      ]),
+    ).toBe(`${PREFIX}a (“Short.”).`);
+  });
+  it("leaves out a link whose name alone doesn't fit", () => {
+    expect(
+      model.linksGoal([
+        unmatched("x".repeat(MAX_GOAL), "q."),
+        unmatched("b", "r."),
+      ]),
+    ).toBe(`${PREFIX}b (“r.”).`);
+    expect(
+      model.linksGoal([unmatched("x".repeat(MAX_GOAL), "q.")]),
+    ).toBeUndefined();
   });
   it("counts characters as Generate does, by code point", () => {
     // Each 🔗 is two UTF-16 units but one character.
     const room = MAX_GOAL - length(`${PREFIX}l (“”).`);
-    const exact = model.linksGoal([unmatched("l", "🔗".repeat(room))])!;
+    const quote = (n: number) => "🔗".repeat(10) + "a".repeat(n - 10);
+    const exact = model.linksGoal([unmatched("l", quote(room))])!;
     expect(length(exact)).toBe(MAX_GOAL);
     expect(exact.length).toBeGreaterThan(MAX_GOAL);
-    expect(model.linksGoal([unmatched("l", "🔗".repeat(room + 1))])).toBe(
+    expect(model.linksGoal([unmatched("l", quote(room + 1))])).toBe(
+      `${PREFIX}l.`,
+    );
+  });
+  it("stays short enough to open Generate with, in any script", () => {
+    // Each あ is nine characters in a URL.
+    const fits = model.linksGoal([unmatched("l", "あ".repeat(700))])!;
+    expect(fits).toContain("あ");
+    expect(encodeURIComponent(fits).length).toBeLessThanOrEqual(8000);
+    expect(model.linksGoal([unmatched("l", "あ".repeat(1500))])).toBe(
       `${PREFIX}l.`,
     );
   });

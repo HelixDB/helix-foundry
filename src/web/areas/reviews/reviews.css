@@ -1,7 +1,4 @@
 /* Needs review, grouped by reason: a group's head says it once, its rows are compact. */
-.dc-review-group {
-  gap: 8px;
-}
 .dc-review-head {
   display: grid;
   gap: 4px;

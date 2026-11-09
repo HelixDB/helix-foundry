@@ -38,7 +38,8 @@ const group = (page: Page, title: string) => ({
   head: reviews(page)
     .getByRole("listitem")
     .filter({ has: page.getByRole("heading", { name: title }) }),
-  rows: reviews(page).getByRole("list", { name: title }).getByRole("listitem"),
+  // Its own rows, not the lists inside a row.
+  rows: reviews(page).getByRole("list", { name: title }).locator(":scope > li"),
 });
 const HELD = "The model wasn’t sure";
 
@@ -47,7 +48,9 @@ test("groups a document's reviews by reason, what a person can act on first", as
 }) => {
   await reviewed(
     page,
-    "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation is billed in GBP. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n",
+    // The mock reads a customer's currency from a section naming it, so
+    // billing has a section of its own.
+    "# Hedged deal\n\nUmbrella Holdings was copied. Globex Corporation and Initech may have signed. Globex Corporation supplies Initech. Initech competes with Globex Corporation.\n\n## Billing\n\nGlobex Corporation is billed in GBP.\n",
   );
   // Held claims, then a value in conflict, then links the ontology lacks,
   // then the rest; each says its reason once, with its count.

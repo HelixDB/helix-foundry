@@ -520,15 +520,22 @@ export function approvable(
 }
 
 const LINKS_GOAL = "Add links the documents state that the ontology lacks: ";
+/**
+ * The most a goal takes as a URL query value. Generate opens with it in its
+ * address, and a host refuses a long address (Vercel's limit is 14 KB): a
+ * goal of non-Latin text can take nine bytes a character once encoded.
+ */
+const MAX_GOAL_URL = 8000;
 
 /**
  * The goal Add these links fills Generate with, from reviews of relationships
  * the ontology doesn't have: each link they suggest once (spellings differing
  * only in case, spaces, underscores or hyphens are one link, named as first
- * spelled), the most suggested first, each with up to two of its quotes. A
- * link whose quotes would take the goal past MAX_GOAL characters (code points,
- * as Generate counts them) goes with fewer, and one that doesn't fit at all
- * is left out. None when no review names a link.
+ * spelled), the most suggested first, then up to two quotes each, every
+ * link's first before any second. It stays within MAX_GOAL characters (code
+ * points, as Generate counts them) and MAX_GOAL_URL encoded: links that don't
+ * fit are left out, and then quotes that don't. None when no review names a
+ * link.
  *
  * @example
  * linksGoal([{ suggestedLink: "supplier_of", quote: "Globex supplies Initech." }]);
@@ -552,20 +559,43 @@ export function linksGoal(
       link.quotes.push(quote);
     links.set(key, link);
   }
-  const goal = (parts: readonly string[]) =>
-    `${LINKS_GOAL}${parts.join(", ")}.`;
-  const parts = [...links.values()]
-    // Stable: links suggested as often keep their first appearance.
-    .sort((a, b) => b.count - a.count)
-    .reduce<string[]>((parts, { name, quotes }) => {
-      const part = [quotes, quotes.slice(0, 1), []]
-        .map((q) =>
-          q.length ? `${name} (${q.map((x) => `“${x}”`).join(", ")})` : name,
-        )
-        .find((p) => [...goal([...parts, p])].length <= MAX_GOAL);
-      return part ? [...parts, part] : parts;
-    }, []);
-  return parts.length ? goal(parts) : undefined;
+  type Part = { name: string; quotes: string[] };
+  const goal = (parts: readonly Part[]) =>
+    `${LINKS_GOAL}${parts
+      .map(({ name, quotes }) =>
+        quotes.length
+          ? `${name} (${quotes.map((q) => `“${q}”`).join(", ")})`
+          : name,
+      )
+      .join(", ")}.`;
+  const fits = (parts: readonly Part[]) => {
+    const text = goal(parts);
+    return (
+      [...text].length <= MAX_GOAL &&
+      encodeURIComponent(text).length <= MAX_GOAL_URL
+    );
+  };
+  // Stable: links suggested as often keep their first appearance.
+  const ranked = [...links.values()].sort((a, b) => b.count - a.count);
+  // Every link that fits is named first; quotes take the room left.
+  const named = ranked.reduce<(Part & { from: string[] })[]>(
+    (parts, { name, quotes }) => {
+      const next = [...parts, { name, quotes: [], from: quotes }];
+      return fits(next) ? next : parts;
+    },
+    [],
+  );
+  const quoted = [0, 1]
+    .flatMap((k) => named.map((_, i) => [k, i] as const))
+    .reduce((parts, [k, i]) => {
+      const quote = parts[i]!.from[k];
+      if (!quote) return parts;
+      const next = parts.map((p, j) =>
+        j === i ? { ...p, quotes: [...p.quotes, quote] } : p,
+      );
+      return fits(next) ? next : parts;
+    }, named);
+  return quoted.length ? goal(quoted) : undefined;
 }
 
 /**
