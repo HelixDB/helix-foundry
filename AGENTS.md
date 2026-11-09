@@ -28,6 +28,19 @@ Next.js 16 differs from older versions. Read the matching guide in `node_modules
 
 Run all four checks (`typecheck`, `lint`, `test`, `e2e`) before you finish. CI (`.github/workflows/ci.yml`) runs the same.
 
+## Tests on Crucible
+
+Run `pnpm test` on Crucible (https://crucibl.sh), not locally. Crucible runs the Vitest suite only: `typecheck`, `lint`, `e2e` and the backend's Go checks stay local. The `crucible` MCP server is in `.mcp.json`: Claude Code asks once to trust it, then sign in with `/mcp` → `crucible` → Authenticate (Codex: `codex mcp add crucible --url https://mcp.crucibl.sh/mcp`). Run the tests locally only if Crucible is unavailable: no `crucible` tools, sign-in fails, or `status` shows no ready base for `HelixDB/helix-foundry`.
+
+1. `status`: take the `base.commit` of `HelixDB/helix-foundry`, then `git fetch origin main` so your clone has it.
+2. `create_diff_upload(repo: "HelixDB/helix-foundry", base: "<base.commit>")`, then run the `command` it returns, as given, from the repo root. It uploads `git diff <base.commit>` (your commits and uncommitted edits) and prints one line. Don't print the diff yourself.
+3. `run_tests(repo: "HelixDB/helix-foundry", base: "<base.commit>", diff_upload: "<diff_upload>")`. For one test, add `filters: ["<test name>"]`. An upload runs once: repeat steps 2 and 3 for each run.
+4. A `{"status":"running","job_id":…}` answer: call `get_job(id: "<job_id>", wait_seconds: 45)` until it finishes.
+5. On a failure, read `failures`, then `get_job_logs(id: "<job_id>", grep: "FAIL|Error")`. Don't page through the whole log.
+6. Run once without `filters` before you finish.
+
+When a result looks wrong, an error is unclear, something is slow or missing, or something works well, call `send_feedback` (`kind`, `message`, `job_id`): what you expected and what happened. Never include secrets or source code.
+
 ## Layout
 
 | Path                      | Contents                                                                                                                                                     |
