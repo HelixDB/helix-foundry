@@ -10,6 +10,7 @@ import type {
   ListHealFindingsResponse,
 } from "../../../shared/wfe";
 import { isRecord } from "../../../shared/json";
+import { MAX_GOAL } from "../ontology/model";
 
 /** One review behind a finding: its document and the text it is about. */
 export type SuggestionExample = { docId: string; quote: string };
@@ -34,6 +35,9 @@ export type Suggestion = {
   spellings: string[];
   // What it proposes, in words; none for a finding that proposes nothing.
   proposal?: string;
+  // The goal Generate's form is filled with to add a link for it: only a
+  // relationship no link covers (`unmatched`) that names one has it.
+  goal?: string;
   // The load its support was counted over: another than the current one
   // until the current load is audited.
   loadId: string;
@@ -212,6 +216,9 @@ export function suggestion(
         .map((e) => ({ docId: text(e.doc_id), quote: text(e.quote) }))
         .filter((e) => e.quote)
     : texts(errors?.examples).map((quote) => ({ docId: "", quote }));
+  const proposal = proposed(record.proposal, set),
+    spellings = texts(signal.spellings),
+    canonical = kind === "unmatched" ? text(signal.canonical) : "";
   return {
     fingerprint: f.fingerprint,
     kind,
@@ -221,9 +228,72 @@ export function suggestion(
     documents: int64(f.sources),
     loadId: f.loadId || "",
     examples,
-    spellings: texts(signal.spellings),
-    proposal: proposed(record.proposal, set),
+    spellings,
+    proposal,
+    goal: canonical
+      ? linkGoal({
+          canonical,
+          spellings,
+          set: text(signal.set) ? set(text(signal.set)) : "",
+          proposal,
+          quotes: examples.map((e) => e.quote),
+        })
+      : undefined,
   };
+}
+
+// How many of a suggestion's quotes its goal gives.
+const GOAL_QUOTES = 3;
+
+/**
+ * The goal that asks Generate to add a link for a relationship no link
+ * covers: what the finding proposes when it proposes something, else a link
+ * for its canonical name, in words, with the other spellings it was
+ * reported as, then up to GOAL_QUOTES quotes, one a line, whitespace in
+ * each collapsed. At most MAX_GOAL code points (as the WFE counts): the
+ * most whole quotes that fit, else the first one, cut short with "…".
+ *
+ * @example
+ * linkGoal({ canonical: "supplier_of", spellings: ["supplier_of"], set: "“General”",
+ *   quotes: ["Globex supplies Acme."] });
+ * // "Add a link for “supplier of”: documents of “General” state it.\nFor example:\n“Globex supplies Acme.”"
+ */
+function linkGoal({
+  canonical,
+  spellings,
+  set,
+  proposal,
+  quotes,
+}: {
+  canonical: string;
+  spellings: string[];
+  // The documents' set, named; "" for none.
+  set: string;
+  proposal?: string;
+  quotes: string[];
+}): string {
+  const others = spellings.filter((s) => s !== canonical),
+    also = others.length
+      ? `, also reported as ${list(others.map((s) => quoted(words(s))))}`
+      : "",
+    name = quoted(words(canonical));
+  const head = proposal
+    ? `${proposal}: documents state ${name}${also}.`
+    : `Add a link for ${name}: ${set ? `documents of ${set}` : "documents"} state it${also}.`;
+  const shown = quotes
+    .map((q) => q.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, GOAL_QUOTES)
+    .map(quoted);
+  const goal = (n: number) =>
+    [head, ...(n ? ["For example:", ...shown.slice(0, n)] : [])].join("\n");
+  const fits = shown
+    .map((_, i) => shown.length - i)
+    .find((n) => [...goal(n)].length <= MAX_GOAL);
+  const chars = [...goal(fits ?? Math.min(1, shown.length))];
+  return chars.length <= MAX_GOAL
+    ? chars.join("")
+    : `${chars.slice(0, MAX_GOAL - 1).join("")}…`;
 }
 
 /**
