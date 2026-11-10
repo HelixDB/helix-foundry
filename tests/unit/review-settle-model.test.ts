@@ -599,6 +599,61 @@ describe("whether a load read a decision", () => {
   });
 });
 
+describe("an approval the current load has yet to apply", () => {
+  it("is one whose job hasn't said what became of it", () => {
+    const decisions = [
+      { id: "a", applied: { status: "pending" as const } },
+      { id: "b", applied: { status: "written" as const } },
+      { id: "c", applied: { status: "refused" as const, reason: "changed" } },
+      { id: "d", applied: { status: "" as const } },
+      { id: "e", applied: null },
+      { id: "f" },
+    ];
+    expect(model.waiting(decisions).map((d) => d.id)).toEqual(["a"]);
+    expect(model.waiting([])).toEqual([]);
+  });
+});
+
+describe("why a load kept an approved claim held", () => {
+  it("says what a person can do about each reason the engine gives", () => {
+    const said = (reason: string) => model.refusalText(reason);
+    expect(said("unresolved")).toContain("isn’t matched to one record");
+    expect(said("unresolved")).toContain("Settle that name and load again");
+    expect(said("changed")).toContain("reads differently now");
+    expect(said("differs")).toContain("read more than one way");
+    expect(said("conflict")).toContain("conflicts with what the graph holds");
+    expect(said("blocked")).toContain("break a rule");
+    expect(said("no_statement")).toContain("keeps nothing to write");
+    expect(said("not_stated")).toContain("no longer states it");
+    expect(said("too_large")).toContain("more held claims");
+  });
+  it("names the name a legal form linked, when the card knows it", () => {
+    expect(model.refusalText("legal_form", "globex corporation")).toBe(
+      "“globex corporation” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.",
+    );
+    expect(model.refusalText("legal_form")).toMatch(/^A name in it is linked/);
+  });
+  it("says what the backend found when the engine was never asked", () => {
+    expect(model.refusalText("not_replayed")).toContain(
+      "would cost a model call. Load again",
+    );
+    expect(model.refusalText("document_gone")).toContain("no longer in this");
+    expect(model.refusalText("document_failed")).toContain(
+      "couldn’t read its document again",
+    );
+    expect(model.refusalText("job_failed")).toContain(
+      "Approve it again to retry",
+    );
+  });
+  it("shows a reason it doesn't know as it came, and says so with none", () => {
+    expect(model.refusalText("a_later_reason")).toBe(
+      "The load kept it held (a_later_reason).",
+    );
+    expect(model.refusalText(undefined)).toBe("The load kept it held.");
+    expect(model.refusalText("")).toBe("The load kept it held.");
+  });
+});
+
 describe("stored property review quotes", () => {
   const raw = {
     value: 24,

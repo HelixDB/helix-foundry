@@ -1985,7 +1985,9 @@ export type JobPhase =
  * the documents; an extract, queued by an upload or a change of current load,
  * only reads documents into its load; a delete removes a load.
  */
-export type JobKind = "load" | "extract" | "delete";
+// A resend applies a person's approvals to its load: their documents, sent
+// again from their saved extractions.
+export type JobKind = "load" | "extract" | "delete" | "resend";
 
 /** v1FoundryGraphJob.progress */
 export type JobProgress = {
@@ -2667,10 +2669,25 @@ export type ReviewDecision =
       // What the person read, hashed (reviews/model.ts statementHash).
       statementHash: string;
     };
+/**
+ * What became of a release decision in the ontology's current load: `pending`
+ * while a job has yet to apply it, `written` once its claim is a fact,
+ * `refused` when it stays held (`reason` says why, in the engine's word or the
+ * backend's, and may be one this site doesn't know), `missed` when that load
+ * holds no review at its place, and empty when the load read it as it was
+ * created and no job has said what became of it.
+ */
+export type DecisionApplied = {
+  status?: "pending" | "written" | "refused" | "missed" | "";
+  reason?: string;
+  at?: string | null;
+};
 export type FoundryReviewDecision = ReviewDecision & {
   id: string;
   decidedByUserId?: string;
   decidedAt?: string | null;
+  // Unset for a decision the current load's list doesn't hold.
+  applied?: DecisionApplied | null;
 };
 export type SettleReviewRequest = { decision: FoundryReviewChoice };
 export type ReviewDecisionResponse = { decision: FoundryReviewDecision };

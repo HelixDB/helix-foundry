@@ -75,7 +75,8 @@ export function ReviewGroups<R extends Review>({
  * (approvable), once they confirm, by the same settle call a card sends, each
  * bound to its own card's statement. Offered for two or more: one card has its
  * own Approve. Each approval saved shows on its card at once; one that fails
- * leaves its card as it is, and the result says why.
+ * leaves its card as it is, and the result says why. The backend applies
+ * approvals that land together in one job, so the load writes them in one go.
  */
 function ApproveAll({
   reviews,
@@ -183,7 +184,7 @@ function ApproveAll({
       {confirming && ready.length > 0 && (
         <ConfirmDialog
           title={`Approve ${plural(ready.length, "claim")}?`}
-          description="The next load writes each one it can. Any it can't stays held, and its card says why."
+          description="This load writes each one it can, at once. Any it can't stays held, and its card says why."
           confirmLabel="Approve all"
           onConfirm={() => void run(ready)}
           onCancel={() => setConfirming(false)}

@@ -571,6 +571,20 @@ export function setExtraction(
   extractions.set(readKey(loadId, documentId), x);
   unresolvedNames.set(readKey(loadId, documentId), unresolved);
 }
+/**
+ * Counts a held claim a load wrote on a person's approval: one review of the
+ * document fewer, one fact more, and nothing else of its row changed.
+ */
+export function countRelease(loadId: string, documentId: string) {
+  const key = readKey(loadId, documentId),
+    x = extractions.get(key);
+  if (x)
+    extractions.set(key, {
+      ...x,
+      facts: (x.facts || 0) + 1,
+      reviews: Math.max((x.reviews || 0) - 1, 0),
+    });
+}
 /** Forgets what a deleted load held and read. */
 export function dropExtractions(loadId: string) {
   members.delete(loadId);
