@@ -147,20 +147,47 @@ type ExtractRequest struct {
 
 // ExtractDecision is one settled review, internally tagged by kind.
 // Resolve's entity_key is explicitly null for "not in data"; prop's value
-// preserves its JSON scalar, including null. Every decision names itself by
-// its id and when it was settled, which the contract takes both or neither
-// of: the version of a value a prop decision overwrites keeps them. Who
-// decided never leaves the BFF.
+// preserves its JSON scalar, including null. A release names one review, by
+// its document, claim and place, and nothing else. Every decision names itself by its id and when it
+// was settled, which the contract takes both or neither of: the version of a
+// value a prop decision overwrites keeps them. Who decided never leaves the
+// BFF.
 type ExtractDecision struct {
-	Kind       model.FoundryReviewDecisionKind `json:"kind"`
-	Type       string                          `json:"type"`
-	DocID      string                          `json:"doc_id,omitempty"`
-	NormName   string                          `json:"norm_name,omitempty"`
-	EntityKey  *string                         `json:"entity_key"`
-	Prop       string                          `json:"prop,omitempty"`
-	Value      json.RawMessage                 `json:"value,omitempty"`
-	DecisionID string                          `json:"decision_id"`
-	DecidedAt  time.Time                       `json:"decided_at"`
+	Kind      model.FoundryReviewDecisionKind `json:"kind"`
+	Type      string                          `json:"type"`
+	DocID     string                          `json:"doc_id,omitempty"`
+	NormName  string                          `json:"norm_name,omitempty"`
+	EntityKey *string                         `json:"entity_key"`
+	Prop      string                          `json:"prop,omitempty"`
+	Value     json.RawMessage                 `json:"value,omitempty"`
+	ClaimKey  string                          `json:"claim_key,omitempty"`
+	Section   uint32                          `json:"section,omitempty"`
+	Start     uint32                          `json:"start,omitempty"`
+	End       uint32                          `json:"end,omitempty"`
+	// StatementHash binds a release to what the person read.
+	StatementHash string    `json:"statement_hash,omitempty"`
+	DecisionID    string    `json:"decision_id"`
+	DecidedAt     time.Time `json:"decided_at"`
+}
+
+// MarshalJSON writes a release without the fields it refuses: the engine reads
+// a decision strictly, and a resolve's entity_key is written even when null.
+func (d ExtractDecision) MarshalJSON() ([]byte, error) {
+	if d.Kind == model.FoundryReviewRelease {
+		return json.Marshal(struct {
+			Kind       model.FoundryReviewDecisionKind `json:"kind"`
+			DocID      string                          `json:"doc_id"`
+			ClaimKey   string                          `json:"claim_key"`
+			Section    uint32                          `json:"section"`
+			Start      uint32                          `json:"start"`
+			End        uint32                          `json:"end"`
+			Hash       string                          `json:"statement_hash"`
+			DecisionID string                          `json:"decision_id"`
+			DecidedAt  time.Time                       `json:"decided_at"`
+		}{d.Kind, d.DocID, d.ClaimKey, d.Section, d.Start, d.End, d.StatementHash, d.DecisionID, d.DecidedAt})
+	}
+	type plain ExtractDecision
+	return json.Marshal(plain(d))
 }
 
 // IngestStatus is how an Ingest ended.
@@ -480,6 +507,12 @@ type DocumentCounts struct {
 	// IdentifiersUnverified are identifiers the verifier did not accept,
 	// which resolved nothing.
 	IdentifiersUnverified uint64 `json:"identifiers_unverified"`
+	// Released are reviews a person released that were written as facts;
+	// ReleaseRefused, those that stay held; ReleaseMissed, release decisions of
+	// a document this run committed that name no review of it.
+	Released       uint64 `json:"released"`
+	ReleaseRefused uint64 `json:"release_refused"`
+	ReleaseMissed  uint64 `json:"release_missed"`
 	// AttributesOverEntries are attributes left out because the commit had
 	// no entries left for them.
 	AttributesOverEntries uint64 `json:"attributes_over_entries"`
@@ -488,14 +521,17 @@ type DocumentCounts struct {
 }
 
 // ResolvedCounts are a document's entities by how each resolved to the
-// load's: by a verified identifier, by name or alias, or created.
+// load's: by a verified identifier, by name, alias or legal form, or created.
 type ResolvedCounts struct {
 	User        uint64 `json:"user"`
 	Adjudicated uint64 `json:"adjudicated"`
 	Identifier  uint64 `json:"identifier"`
 	Name        uint64 `json:"name"`
 	Alias       uint64 `json:"alias"`
-	Created     uint64 `json:"created"`
+	// LegalForm is read off the event and stored nowhere: a document's stored
+	// counts have no column for it.
+	LegalForm uint64 `json:"legal_form"`
+	Created   uint64 `json:"created"`
 }
 
 // DocumentUsage is what one document spent.

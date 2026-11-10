@@ -4,6 +4,7 @@ import type {
 } from "../../../shared/wfe";
 import { LOCAL } from "../../../shared/deployment";
 import { ApiError, api } from "../../api";
+import { isRecord } from "../../../shared/json";
 
 // Runs v3 dynamic read queries against an ontology's database with the
 // user's session, through the control plane's query broker (WFE POST
@@ -42,6 +43,46 @@ export interface DynamicQueryRequest {
   query: Record<string, JsonValue>;
   parameters?: Record<string, JsonValue>;
   parameter_types?: Record<string, JsonValue>;
+}
+
+/** A node of a read's query tree: a step, a predicate or a value. */
+export type Ast = { [key: string]: JsonValue };
+/** One named query of a read; `returned: false` keeps it out of the answer
+ *  (a variable the later ones read). */
+export type ReadEntry = { name: string; root: Ast; returned?: boolean };
+/** A parameter: its value and its type, which the request carries apart. */
+export type ReadParam = { value: JsonValue; type: JsonValue };
+
+/**
+ * The read `name` (as the database's logs call it): its entries in order,
+ * answered under their names, and their parameters.
+ *
+ * @example
+ * readRequest("count", [{ name: "n", root: { count: { input: x } } }]);
+ */
+export function readRequest(
+  name: string,
+  entries: ReadEntry[],
+  params: Record<string, ReadParam> = {},
+): DynamicQueryRequest {
+  return {
+    request_type: "read",
+    query_name: name,
+    query: {
+      read: {
+        entries: entries.map((e) => ({
+          query: { name: e.name, root: e.root },
+        })),
+        returns: entries.filter((e) => e.returned !== false).map((e) => e.name),
+      },
+    },
+    parameters: Object.fromEntries(
+      Object.entries(params).map(([k, p]) => [k, p.value]),
+    ),
+    parameter_types: Object.fromEntries(
+      Object.entries(params).map(([k, p]) => [k, p.type]),
+    ),
+  };
 }
 
 export type DatabaseQueryFailureKind =
@@ -88,8 +129,6 @@ type FailureFields = {
   message: string;
   /** The database said whether a retry is safe, when it said. */
   retryable?: boolean;
-  /** A write's outcome is unknown. Never set: reads only. */
-  outcomeUnknown?: boolean;
   /** The decoded error body, for "show details". */
   body?: unknown;
   elapsedMs: number;
@@ -180,10 +219,6 @@ export function decodeResponseJson(responseJson: string): string {
 }
 
 // ============ Response parsing ============
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 // An integer literal in value position with at least 16 digits: every
 // integer beyond Number.MAX_SAFE_INTEGER has one. Floats are excluded.

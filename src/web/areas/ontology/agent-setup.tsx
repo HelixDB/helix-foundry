@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy } from "lucide-react";
 import { LOCAL } from "../../../shared/deployment";
 import { Button, connectorLabel } from "../../kit";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { connectorKindsQuery, connectorsQuery } from "../data/data-api";
 import { isEventSource, setFolders } from "../data/model";
 import {
@@ -14,7 +14,6 @@ import { setLabel } from "../documents/model";
 import { promptDocuments, promptEventSource } from "./goal-prompt";
 import { isEventSourceSet } from "./model";
 import { onboardingPrompt, type OnboardingOntology } from "./onboarding-prompt";
-import { canManage } from "./parts";
 import { isSampleConnector, isSampleSet } from "./sample";
 
 // Set per stamp in next.config.ts.

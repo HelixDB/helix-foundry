@@ -147,6 +147,10 @@ type AuditFinding struct {
 	raw, signal map[string]json.RawMessage
 	// backing is the signal's reviews, nil for one backed by none (rows).
 	backing *auditBacking
+	// spellings, for a thin sum, are the spellings its pages gave (one
+	// document's), so the finding it becomes holds every form its reports
+	// took.
+	spellings json.RawMessage
 }
 
 // auditBacking is a signal's backing (Backing): reviews, their documents
@@ -242,30 +246,35 @@ func decodeAuditFinding(raw map[string]json.RawMessage) (AuditFinding, error) {
 // AuditSums sums a load's findings over its pages, by fingerprint, in the
 // order they were first found. A finding backed by reviews sums its
 // reviews and documents (pages partition the documents, so both are
-// exact), keeps the first MaxAuditExamples examples and every spelling
-// once it is whole (below); one backed by rows comes once a run and is
-// kept as found. The first proposal kept is kept: it follows from the
-// signal.
+// exact), keeps the first MaxAuditExamples examples once it is whole
+// (below) and every page's spellings; one backed by rows comes once a run
+// and is kept as found. The first proposal kept is kept: it follows from
+// the signal, but for a route's `gathered`, which Seen recomputes from
+// every page's spellings (regathered).
 //
 // Its memory follows the findings that matter, not the load: a finding
 // backed by fewer than model.FoundryHealMinSources documents so far is
-// held thin, its kind and counts alone, and becomes whole from the page
-// that backs it enough, its examples and spellings those of that page and
-// the pages after. Seen leaves out a finding still thin: it is no pattern,
-// and is neither stored nor shown.
+// held thin, its kind, counts and spellings alone (one document's forms),
+// and becomes whole from the page that backs it enough, its examples those
+// of that page and the pages after. Its spellings are every page's, since
+// a person reads them to tell whether its reports belong together and a
+// dismissal holds only for the spellings it was dismissed with
+// (model.FoundryHealFinding.Next). Seen leaves out a finding still thin:
+// it is no pattern, and is neither stored nor shown.
 type AuditSums struct {
 	order []string
 	by    map[string]*AuditFinding
 }
 
 // thin reports whether a sum holds a finding backed by too few documents
-// to keep whole yet: its kind and counts alone.
+// to keep whole yet: its kind, counts and spellings alone.
 func (f *AuditFinding) thin() bool { return f.raw == nil }
 
-// thinned is f held thin: its kind, and its backing's counts with no
-// example.
+// thinned is f held thin: its kind, its backing's counts with no example,
+// and its spellings.
 func (f *AuditFinding) thinned() *AuditFinding {
-	return &AuditFinding{Fingerprint: f.Fingerprint, Kind: f.Kind, backing: &auditBacking{Count: f.backing.Count, Sources: f.backing.Sources}}
+	return &AuditFinding{Fingerprint: f.Fingerprint, Kind: f.Kind, backing: &auditBacking{Count: f.backing.Count, Sources: f.backing.Sources},
+		spellings: f.signal["spellings"]}
 }
 
 // whole is f kept whole: its fields as sent, its signal and backing its
@@ -309,13 +318,17 @@ func (s *AuditSums) Add(findings []AuditFinding) error {
 			if sum.backing.Sources+f.backing.Sources < model.FoundryHealMinSources {
 				sum.backing.Count += f.backing.Count
 				sum.backing.Sources += f.backing.Sources
+				sum.spellings = unionSpellings(sum.spellings, f.signal["spellings"])
 				continue
 			}
-			// Backed enough: f stands for it from now on, its examples and
-			// spellings the first, with the thin sum's counts.
+			// Backed enough: f stands for it from now on, its examples the
+			// first, with the thin sum's counts and spellings.
 			whole := f.whole()
 			whole.backing.Count += sum.backing.Count
 			whole.backing.Sources += sum.backing.Sources
+			if spellings := unionSpellings(sum.spellings, whole.signal["spellings"]); spellings != nil {
+				whole.signal["spellings"] = spellings
+			}
 			s.by[f.Fingerprint] = whole
 			continue
 		}
@@ -367,6 +380,7 @@ func (s *AuditSums) Seen() ([]model.FoundryHealSeen, error) {
 		}
 		finding := cloneFields(f.raw)
 		finding["signal"] = encodedSignal
+		finding["proposal"] = regathered(finding["proposal"], f.signal)
 		if seen.Finding, err = json.Marshal(finding); err != nil {
 			return nil, err
 		}
@@ -395,8 +409,30 @@ func (f *AuditFinding) rowSupport() int64 {
 	return 1
 }
 
+// regathered is a route proposal with `gathered` recomputed from the
+// summed signal as the engine sets it on a page: whether a spelling isn't
+// the canonical name (contract 4.8.0). The engine sees one page, and a sum
+// holds every page's spellings, so the first page's flag can say a route's
+// reports weren't gathered when a later page's were. Any other proposal,
+// or a signal with no spellings, is as sent.
+func regathered(proposal json.RawMessage, signal map[string]json.RawMessage) json.RawMessage {
+	var route map[string]json.RawMessage
+	var kind, canonical string
+	var spellings []string
+	if json.Unmarshal(proposal, &route) != nil || json.Unmarshal(route["proposal"], &kind) != nil || kind != "route" ||
+		json.Unmarshal(signal["canonical"], &canonical) != nil || json.Unmarshal(signal["spellings"], &spellings) != nil || spellings == nil {
+		return proposal
+	}
+	route["gathered"], _ = json.Marshal(slices.ContainsFunc(spellings, func(s string) bool { return s != canonical }))
+	encoded, err := json.Marshal(route)
+	if err != nil {
+		return proposal
+	}
+	return encoded
+}
+
 // unionSpellings is both lists of spellings together, sorted, each once; a
-// list that doesn't read as one leaves the other.
+// list that doesn't read as one (or is missing, nil) leaves the other.
 func unionSpellings(a, b json.RawMessage) json.RawMessage {
 	var x, y []string
 	if json.Unmarshal(a, &x) != nil {

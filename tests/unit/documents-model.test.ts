@@ -662,13 +662,44 @@ describe("document states", () => {
       "conflict",
       "violation",
       "unmatched",
+      "identity",
     ] as const) {
       const copy = reviewCopy(reason);
       expect(copy.title.length).toBeGreaterThan(5);
       expect(copy.text).toMatch(/\.$/);
     }
     expect(reviewCopy(undefined)).toEqual(reviewCopy("unverified"));
-    expect(reviewCopy("something new")).toEqual(reviewCopy("unverified"));
+  });
+
+  it("says nothing false of a reason it doesn't know", () => {
+    expect(reviewCopy("something new")).not.toEqual(reviewCopy("unverified"));
+    expect(reviewCopy("something new").title).toBe(
+      "Held for a person to check",
+    );
+  });
+
+  it("doesn't call one candidate several entities", () => {
+    expect(reviewCopy("ambiguous", 2).text).toContain("several entities");
+    expect(reviewCopy("ambiguous", 0).text).toContain("several entities");
+    expect(reviewCopy("ambiguous", 1).text).not.toContain("several entities");
+    expect(reviewCopy("ambiguous", 1).title).toBe("May be this entity");
+    expect(reviewCopy("unresolved", 1)).toEqual(reviewCopy("unresolved"));
+  });
+
+  it("says a legal form linked the name, and how to undo it", () => {
+    const copy = reviewCopy("legal_form");
+    expect(copy.title).toBe("Linked by its legal form");
+    expect(copy.text).toContain("undo the link");
+    expect(copy).not.toEqual(reviewCopy("unverified"));
+  });
+
+  it("says why a 4.9.0 identity review was held, not that a model couldn't confirm it", () => {
+    const copy = reviewCopy("identity");
+    expect(copy).not.toEqual(reviewCopy("unverified"));
+    expect(copy.title).toBe(
+      "Its identifier and its names point at different entities",
+    );
+    expect(copy.text).toContain("A verified identifier");
   });
 
   it("formats sizes and costs", () => {

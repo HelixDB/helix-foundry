@@ -1,12 +1,14 @@
 import type { Page, Route } from "@playwright/test";
 import {
   APP_ORIGIN,
+  addBillingReplica,
   createdOntology,
   csrfToken,
   expect,
   expectGridFits,
   finishOntology,
   mock,
+  postToWfe,
   signIn,
   startOntology,
   test,
@@ -262,17 +264,11 @@ test("refuses to move a pointer someone else moved", async ({ page }) => {
     page.getByRole("button", { name: "Make current" }),
   ).toBeVisible();
   // Another tab makes version 2 current behind this page's back.
-  const moved = await page.request.post(
-    "/papi/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts:set-current",
-    {
-      data: { versionId: "ver_seed_2", expectedCurrentVersionId: "ver_seed_1" },
-      headers: {
-        origin: APP_ORIGIN,
-        "x-helix-csrf": await csrfToken(page),
-      },
-    },
+  await postToWfe(
+    page,
+    "/v1/workspaces/ws_acme/foundry/ontologies/ont_acme_contracts:set-current",
+    { versionId: "ver_seed_2", expectedCurrentVersionId: "ver_seed_1" },
   );
-  expect(moved.status()).toBe(200);
   // This page still saw version 1 as current, so the WFE refuses it.
   await page.getByRole("button", { name: "Make current" }).click();
   await page
@@ -397,29 +393,14 @@ test("nests a kind's connectors under one choice when it has several", async ({
   await signIn(page);
   await page.goto(O);
   // A second PostgreSQL database, synced.
-  const api = "/papi/v1/workspaces/ws_acme/foundry/connectors",
-    headers = { origin: APP_ORIGIN, "x-helix-csrf": await csrfToken(page) };
-  const created = await page.request.post(api, {
-    data: {
-      name: "Billing replica",
-      config: {
-        postgres: {
-          host: "billing.acme.example.com",
-          database: "billing",
-          user: "ro",
-          password: "pw",
-        },
-      },
-    },
-    headers,
-  });
-  const billing = (await created.json()).connector.id as string;
-  await page.request.post(`${api}/${billing}:sync`, { data: {}, headers });
+  const api = "/v1/workspaces/ws_acme/foundry/connectors";
+  const billing = await addBillingReplica(page);
+  await postToWfe(page, `${api}/${billing}:sync`, {});
   await expect
     .poll(
       async () =>
-        (await (await page.request.get(`${api}/${billing}`)).json()).connector
-          .lastSync?.status,
+        (await (await page.request.get(`/papi${api}/${billing}`)).json())
+          .connector.lastSync?.status,
       { timeout: 15_000 },
     )
     .toBe("CONNECTOR_SYNC_STATUS_SUCCEEDED");

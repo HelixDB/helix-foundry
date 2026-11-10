@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,67 @@ func (f foundryFixture) decisionIDs(t *testing.T) []string {
 }
 
 const customerTOML = "[types.Customer]\nprops = { name = \"string\", tier = \"string\" }"
+
+// A release is of a document and a claim, under no type: approving it again
+// replaces it, another claim of the document is another decision, and each
+// goes with the document's Extracts and into a load's snapshot.
+func TestFoundryReleaseDecisions(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "REL")
+	f.currentLoad(t, "REL-load", customerTOML)
+	key := strings.Repeat("ab", 32)
+	place := &model.FoundryClaimSpan{Section: 0, Start: 4, End: 20}
+	read, moved := strings.Repeat("0a", 32), strings.Repeat("0b", 32)
+	release := &model.FoundryReviewDecision{ID: id26("REL-1"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewRelease, DocID: ptr("doc-1"), ClaimKey: &key, ClaimSpan: place, StatementHash: &read, DecidedByUserID: id26("user")}
+	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, release))
+	assert.Equal(t, key, *release.ClaimKey)
+	assert.Equal(t, place, release.ClaimSpan)
+	assert.Equal(t, read, *release.StatementHash)
+	assert.Empty(t, release.Type)
+	again := *release
+	again.ID, again.StatementHash = id26("REL-2"), &moved
+	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, &again))
+	assert.Equal(t, release.ID, again.ID, "a second approval is the first")
+	assert.Equal(t, moved, *again.StatementHash, "of what the claim says now")
+	otherKey := strings.Repeat("cd", 32)
+	other := &model.FoundryReviewDecision{ID: id26("REL-3"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewRelease, DocID: ptr("doc-1"), ClaimKey: &otherKey, ClaimSpan: place, StatementHash: &read, DecidedByUserID: id26("user")}
+	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, other))
+	assert.NotEqual(t, release.ID, other.ID)
+	// One claim at another place is another review, and another decision.
+	elsewhere := *release
+	elsewhere.ID, elsewhere.ClaimSpan = id26("REL-5"), &model.FoundryClaimSpan{Section: 1, Start: 4, End: 20}
+	require.NoError(t, f.db.SettleFoundryReviewDecision(ctx, f.ontology.WorkspaceID, &elsewhere))
+	assert.Equal(t, id26("REL-5"), elsewhere.ID)
+	listed, err := f.db.ListFoundryReviewDecisions(ctx, f.ontology.ID, "", []string{"doc-1"}, 100)
+	require.NoError(t, err)
+	require.Len(t, listed, 3)
+	none, err := f.db.ListFoundryReviewDecisions(ctx, f.ontology.ID, "", []string{"doc-2"}, 100)
+	require.NoError(t, err)
+	assert.Empty(t, none, "another document's Extract doesn't send it")
+	// The database itself keeps a release's shape.
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET type='Customer' WHERE id=?`, release.ID)
+	require.Error(t, err)
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_key=NULL WHERE id=?`, release.ID)
+	require.Error(t, err)
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_section=NULL WHERE id=?`, release.ID)
+	require.Error(t, err)
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_start=NULL WHERE id=?`, release.ID)
+	require.Error(t, err)
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_end=NULL WHERE id=?`, release.ID)
+	require.Error(t, err)
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET claim_end=claim_start WHERE id=?`, release.ID)
+	require.Error(t, err)
+	_, err = testDB.ExecContext(ctx, `UPDATE foundry_review_decisions SET statement_hash=NULL WHERE id=?`, release.ID)
+	require.Error(t, err)
+	// No other decision takes a hash.
+	_, err = testDB.ExecContext(ctx, `INSERT INTO foundry_review_decisions (id, ontology_id, kind, type, doc_id, norm_name, statement_hash, decided_by_user_id)
+ VALUES (?, ?, 'resolve', 'Customer', 'doc-9', 'n', ?, ?)`, id26("REL-6"), f.ontology.ID, read, id26("user"))
+	require.Error(t, err)
+	// No other decision takes a key.
+	_, err = testDB.ExecContext(ctx, `INSERT INTO foundry_review_decisions (id, ontology_id, kind, type, doc_id, norm_name, claim_key, decided_by_user_id)
+ VALUES (?, ?, 'resolve', 'Customer', 'doc-9', 'n', ?, ?)`, id26("REL-4"), f.ontology.ID, key, id26("user"))
+	require.Error(t, err)
+}
 
 func TestFoundryReviewDecisions(t *testing.T) {
 	ctx := context.Background()

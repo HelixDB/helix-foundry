@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   expect,
   test as base,
@@ -12,8 +11,8 @@ import {
   explorer,
   file,
   startOntology,
+  uploadAndLoadContract,
   uploadCard,
-  uploadInData,
 } from "../support/mock";
 
 // A local build (src/shared/deployment.ts) against its own mock, which plays a
@@ -67,37 +66,6 @@ const test = base.extend<{ fresh: void }>({
     { auto: true },
   ],
 });
-
-const CONTRACT = readFileSync(
-  new URL("../../../mock/fixtures/contract.md", import.meta.url),
-);
-
-// Uploads the seeded contract, makes version 3 current and loads it, as
-// tests/e2e/ask.spec.ts does.
-async function loadContract(page: Page) {
-  await uploadInData(page, [file("contract.md", CONTRACT)]);
-  await page.goto("/ontology/ont_acme_contracts/versions/ver_seed_3");
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto("/ontology/ont_acme_contracts");
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-}
 
 // Creates Globex from the switcher: a new workspace, which opens on its
 // onboarding, the first ontology's wizard, until it has an ontology.
@@ -995,7 +963,7 @@ test("asks again once a provider is chosen after a refusal, and the gate goes", 
   context,
 }) => {
   await configure({ loadStepMs: 200, askStepMs: 100, aiProbeMs: 300 });
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.goto("/ask/ont_acme_contracts");
   const first = page.getByRole("form", { name: "Ask a question" });
   await first

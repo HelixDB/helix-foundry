@@ -1,16 +1,19 @@
-import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import {
   APP_ORIGIN,
+  CONTRACT,
   choose,
   csrfToken,
   dataTree,
   expect,
   explorer,
   file,
+  makeContractsCurrent,
   mock,
   signIn,
+  startContractsLoad,
   test,
+  uploadAndLoadContract,
   uploadCard as upload,
   uploadInData,
 } from "./support/mock";
@@ -25,9 +28,6 @@ import {
 // the contract's quote.
 
 const O = "/ontology/ont_acme_contracts";
-const CONTRACT = readFileSync(
-  new URL("../../mock/fixtures/contract.md", import.meta.url),
-);
 const row = (page: Page, name: string) =>
   page
     .getByRole("grid", { name: "Documents" })
@@ -54,37 +54,6 @@ async function drop(
       .getByRole("listitem", { name: "General" }),
   ).toHaveClass(/is-over/);
   await target.dispatchEvent("drop", { dataTransfer: data });
-}
-
-// Makes the contracts draft (version 3) current, through the UI.
-async function makeContractsCurrent(page: Page) {
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-}
-
-// Uploads the seeded contract, then loads version 3 and waits for the end.
-async function loadContract(page: Page) {
-  await uploadInData(page, [file("contract.md", CONTRACT)]);
-  await makeContractsCurrent(page);
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
 }
 
 test("uploads documents in Data, and lists what an ontology reads read only", async ({
@@ -389,16 +358,7 @@ test("shows an MDX document as written, with what a load read marked inside its 
   await expect(shown).toContainText("{props.renewsOn}");
 
   await makeContractsCurrent(page);
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
+  await startContractsLoad(page);
   // On the load's page: the overview's "isn’t loaded yet" would match too.
   await expect(page).toHaveURL(/\/loads\/load_/);
   await expect(
@@ -432,13 +392,7 @@ test("says nothing was read from a document a load couldn't read", async ({
   await signIn(page);
   await uploadInData(page, [file("notes.md", "# Notes\n\nGlobex renewed.\n")]);
   await makeContractsCurrent(page);
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page.getByRole("dialog").getByRole("button", { name: "Load" }).click();
+  await startContractsLoad(page);
   await expect(page).toHaveURL(/\/loads\/load_/);
   await page.goto(`${O}/documents`);
   await row(page, "notes.md").getByRole("link", { name: "notes.md" }).click();
@@ -455,7 +409,7 @@ test("explores the loaded database and opens an entity's page from it", async ({
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.getByRole("link", { name: "Open Explorer" }).click();
   await expect(
     page.getByRole("application", { name: /^Graph of contracts: \d+ nodes/ }),
@@ -483,7 +437,7 @@ test("hides Foundry's own records in the Explorer until they're shown", async ({
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.goto("/explore/ont_acme_contracts");
   const graph = page.getByRole("application", {
     name: /^Graph of contracts: \d+ nodes/,
@@ -551,16 +505,7 @@ test("says why a load failed: its tables were re-synced while it ran", async ({
   await mock.configure({ loadStepMs: 200, loadOutcome: "sources_changed" });
   await signIn(page);
   await makeContractsCurrent(page);
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
+  await startContractsLoad(page);
   const failed = page.getByRole("alert").filter({
     hasText: "The tables changed while it ran",
   });
@@ -588,16 +533,7 @@ test("shows a live load on the overview and stops at the spending cap", async ({
     file("notes.txt", "Initech asked for a discount."),
   ]);
   await makeContractsCurrent(page);
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
+  await startContractsLoad(page);
   await expect(page).toHaveURL(/\/loads\/load_/);
   await page.goto(O);
   const live = page

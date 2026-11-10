@@ -11,7 +11,7 @@ import {
 import type { FoundryLoad } from "../../../shared/wfe";
 import { Button, ButtonLink, EmptyState, FilterSelect } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { useReadAccess } from "../explore/graph-reader";
 import type { Scope } from "../explore/load-scope";
 import {
@@ -22,7 +22,7 @@ import {
   withLoad,
   type LoadChoice,
 } from "./model";
-import { Callout, canManage } from "./parts";
+import { Callout } from "./parts";
 import { ontologyQueries } from "./queries";
 import { ontologyName, useOntology } from "./scope";
 

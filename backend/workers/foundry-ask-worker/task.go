@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"go.uber.org/dig"
+	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/boost"
@@ -319,6 +320,9 @@ func (t *Task) renewLease(ctx context.Context, lost func(), id string) (stop fun
 // good, or a retry after RetryBackoff. An attempt that would be retried
 // while the worker is stopping was stopped, not failed, and one the agent
 // turned away for being busy did nothing: either gives its attempt back.
+// The agent's internal error is Helix's bug: it is logged as an error, for
+// on-call, and gets ontologyagent.InternalAttempts attempts at most, so a
+// raised max_attempts can't charge a deterministic failure's cap more often.
 func (t *Task) outcome(ctx context.Context, q *model.FoundryQuestion, a *attempt, err error, stopping bool) model.FoundryQuestionOutcome {
 	if err == nil {
 		return a.outcome
@@ -328,15 +332,22 @@ func (t *Task) outcome(ctx context.Context, q *model.FoundryQuestion, a *attempt
 	if !errors.As(err, &f) {
 		f = &failure{Message: "the question could not be answered; Helix will retry", Err: err}
 	}
-	log.From(ctx).Warn("question attempt failed", "question", q.ID, "attempt", q.Attempts, "permanent", f.Permanent, "stopping", stopping,
-		"err", err)
+	logger := log.From(ctx).With("question", q.ID, "attempt", q.Attempts, "permanent", f.Permanent, "stopping", stopping, "err", err)
+	maxAttempts := t.cfg.MaxAttempts
+	if f.Internal {
+		s := status.Convert(f.Err)
+		logger.Error("question attempt failed", "code", s.Code().String(), "description", s.Message())
+		maxAttempts = min(maxAttempts, ontologyagent.InternalAttempts)
+	} else {
+		logger.Warn("question attempt failed")
+	}
 	retryAt := t.now().Add(t.cfg.RetryBackoff)
 	switch {
 	case f.Permanent:
 		outcome.Status, outcome.Error = model.FoundryQuestionFailed, f.Message
 	case stopping || f.Uncounted:
 		outcome.Status, outcome.RetryAt, outcome.Uncounted, outcome.Error = model.FoundryQuestionQueued, &retryAt, true, f.Message
-	case q.Attempts < t.cfg.MaxAttempts:
+	case q.Attempts < maxAttempts:
 		outcome.Status, outcome.RetryAt, outcome.Error = model.FoundryQuestionQueued, &retryAt, f.Message
 	default:
 		outcome.Status, outcome.Error = model.FoundryQuestionFailed, fmt.Sprintf("%s (gave up after %d attempts)", f.Message, q.Attempts)

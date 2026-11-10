@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { expect, mock, signIn, test } from "./support/mock";
+import { expect, loadContracts, signIn, test } from "./support/mock";
 
 // The theme: System, Light or Dark from the account menu or the command
 // palette, kept per browser, applied before first paint on every page (the
@@ -145,31 +145,9 @@ test("redraws the explorer's canvas when the theme changes", async ({
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "light" });
-  await mock.configure({ loadStepMs: 100 });
   await signIn(page);
   // A load of version 3, for the explorer to draw.
-  const O = "/ontology/ont_acme_contracts";
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto(`${O}#loads`);
-  await page
-    .getByRole("main")
-    .getByRole("button", { name: "Load data" })
-    .first()
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
+  await loadContracts(page);
   // Counts the frames the page asks for.
   await page.addInitScript(() => {
     const w = window as unknown as { frames: number };

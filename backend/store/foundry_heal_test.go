@@ -188,6 +188,74 @@ func TestFoundryHealDismissalSpellings(t *testing.T) {
 	assert.Equal(t, model.FoundryHealDismissed, f.healRows(t)[fingerprint("aa")].Status, "the spellings it was dismissed with")
 }
 
+// The first complete audit on contract 4.8.0 re-keys the findings table
+// (docs/foundry-integration.md, "Re-keying the findings table"): reports
+// that had a finding per spelling share one, gathered under the declared
+// name they start with. It replaces them rather than summing old and new,
+// and a dismissal of an old spelling dismisses nothing new.
+func TestFoundryHealRekeyedAudit(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "HKEY")
+	v := f.currentLoad(t, "HKEY-1", customerTOML)
+	load := id26("FJ-HKEY-1")
+	// 4.7.0's findings, one per spelling and none with spellings: a1 and
+	// a2 open, b1 and b2 dismissed.
+	f.healRun(t, "k1", load, v.ID, true, unmatchedSeen("a1", 4, 2), unmatchedSeen("a2", 3, 2), unmatchedSeen("b1", 6, 3), unmatchedSeen("b2", 2, 2))
+	for _, tag := range []string{"b1", "b2"} {
+		require.NoError(t, f.db.DismissFoundryHealFinding(ctx, f.ontology.ID, fingerprint(tag), id26("user")))
+	}
+	b2 := f.healRows(t)[fingerprint("b2")]
+
+	// 4.8.0 gathers a2's reports under a1, and b2's under b1: each gathered
+	// finding has its old canonical spelling's fingerprint.
+	f.healRun(t, "k2", load, v.ID, true, unmatchedSeen("a1", 5, 4, "a1", "a2"), unmatchedSeen("b1", 8, 5, "b1", "b2"))
+	rows := f.healRows(t)
+	a1 := rows[fingerprint("a1")]
+	assert.Equal(t, model.FoundryHealOpen, a1.Status)
+	assert.Equal(t, [2]int64{5, 4}, [2]int64{a1.Support, a1.Sources}, "the run's support alone, not the old spellings' summed in")
+	assert.Equal(t, []string{"a1", "a2"}, model.FoundryHealSpellings(a1.Finding))
+	assert.Equal(t, model.FoundryHealSuperseded, rows[fingerprint("a2")].Status, "an old spelling's own finding goes")
+	// b1 was dismissed holding b1 alone: gathering b2 in reopens it, below
+	// twice its support, its dismissal gone.
+	b1 := rows[fingerprint("b1")]
+	assert.Equal(t, model.FoundryHealOpen, b1.Status)
+	assert.Nil(t, b1.Dismissal)
+	assert.Equal(t, int64(8), b1.Support)
+	// b2's dismissal matches nothing now: it stays as it was, unshown, and
+	// hides nothing of b1, which holds b2's reports.
+	assert.Equal(t, b2, rows[fingerprint("b2")])
+	shown, err := f.db.ListFoundryHealFindings(ctx, f.ontology.ID)
+	require.NoError(t, err)
+	var listed []string
+	for _, s := range shown {
+		listed = append(listed, s.Fingerprint)
+	}
+	assert.Equal(t, []string{fingerprint("b1"), fingerprint("a1")}, listed)
+
+	// Dismissed now, b1 holds for the spellings it gathers: found again
+	// with them, it stays dismissed.
+	require.NoError(t, f.db.DismissFoundryHealFinding(ctx, f.ontology.ID, fingerprint("b1"), id26("user")))
+	f.healRun(t, "k3", load, v.ID, true, unmatchedSeen("a1", 5, 4, "a1", "a2"), unmatchedSeen("b1", 9, 5, "b2", "b1"))
+	assert.Equal(t, model.FoundryHealDismissed, f.healRows(t)[fingerprint("b1")].Status)
+
+	// Links added for a2 and b2 move their reports out of a1 and b1, into
+	// findings of their own: neither the backing nor the dismissal of the
+	// finding they leave follows them. a2's is open again with its support
+	// alone; b2's is under the dismissal a person gave these same reports.
+	f.healRun(t, "k4", load, v.ID, true, unmatchedSeen("a1", 2, 2, "a1"), unmatchedSeen("a2", 3, 2, "a2"),
+		unmatchedSeen("b1", 6, 3, "b1"), unmatchedSeen("b2", 3, 2, "b2"))
+	rows = f.healRows(t)
+	assert.Equal(t, [2]int64{2, 2}, [2]int64{rows[fingerprint("a1")].Support, rows[fingerprint("a1")].Sources})
+	a2 := rows[fingerprint("a2")]
+	assert.Equal(t, model.FoundryHealOpen, a2.Status)
+	assert.Equal(t, [2]int64{3, 2}, [2]int64{a2.Support, a2.Sources})
+	assert.Equal(t, model.FoundryHealDismissed, rows[fingerprint("b1")].Status)
+	assert.Equal(t, int64(6), rows[fingerprint("b1")].Support)
+	assert.Equal(t, model.FoundryHealDismissed, rows[fingerprint("b2")].Status)
+	assert.Equal(t, b2.Dismissal, rows[fingerprint("b2")].Dismissal, "its own dismissal, not b1's")
+	assert.Equal(t, int64(3), rows[fingerprint("b2")].Support)
+}
+
 func TestFoundryHealSupersede(t *testing.T) {
 	f := newFoundryFixture(t, "HSUP")
 	v := f.currentLoad(t, "HSUP-1", customerTOML)

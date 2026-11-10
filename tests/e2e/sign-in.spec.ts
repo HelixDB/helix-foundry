@@ -1,9 +1,9 @@
 import type { Browser, Page } from "@playwright/test";
 import {
-  csrfToken,
   dataTree,
   expect,
   mock,
+  postToWfe,
   signIn,
   signInToNewWorkspace,
   test,
@@ -17,23 +17,29 @@ import {
 const dialog = (page: Page) => page.locator("dialog[open]");
 const SYNCED = { timeout: 15_000 };
 
-/** A POST to the WFE through the BFF, as an agent's MCP call makes it. */
-async function post(page: Page, path: string, data: object) {
-  const res = await page.request.post(`/papi${path}`, {
-    data,
-    headers: {
-      origin: new URL(page.url()).origin,
-      "x-helix-csrf": await csrfToken(page),
-    },
-  });
-  expect(res.status(), await res.text()).toBe(200);
-  return res.json();
-}
-
 /** Starts a sign-in as the signed-in user, as the agent's tool does. */
 async function agentSignIn(page: Page, ws: string, body: object) {
-  return (await post(page, `/v1/workspaces/${ws}/foundry/sign-ins`, body))
+  return (await postToWfe(page, `/v1/workspaces/${ws}/foundry/sign-ins`, body))
     .signIn as { id: string };
+}
+
+/**
+ * Opens the link an agent's GitHub sign-in in Globex, the new workspace,
+ * sends its user to, the sign-in made with `config`: Data's form over the
+ * wizard. The workspace's id and the sign-in.
+ */
+async function openGlobexGitHubLink(page: Page, config?: object) {
+  const ws = (
+    (await (await page.request.get("/papi/v1/workspaces")).json())
+      .workspaces as { id: string; displayName: string }[]
+  ).find((w) => w.displayName === "Globex")!.id;
+  const s = await agentSignIn(page, ws, {
+    kind: "github",
+    name: "Globex GitHub",
+    config,
+  });
+  await page.goto(`/data?add=github&sign_in=${s.id}&workspace=${ws}`);
+  return { ws, s };
 }
 
 /** The provider's consent page: Authorize (as `account`) or Cancel. */
@@ -274,16 +280,9 @@ test("opens an agent's link during onboarding and comes back to the wizard with 
   page,
 }) => {
   await signInToNewWorkspace(page);
-  const ws = (
-    (await (await page.request.get("/papi/v1/workspaces")).json())
-      .workspaces as { id: string; displayName: string }[]
-  ).find((w) => w.displayName === "Globex")!.id;
-  const s = await agentSignIn(page, ws, {
-    kind: "github",
-    name: "Globex GitHub",
-    config: { github: { repos: ["globex/api"], reviewDays: 30 } },
+  const { ws, s } = await openGlobexGitHubLink(page, {
+    github: { repos: ["globex/api"], reviewDays: 30 },
   });
-  await page.goto(`/data?add=github&sign_in=${s.id}&workspace=${ws}`);
   await expect(page).toHaveURL(/\/ontology\/new$/);
   await expect(dialog(page)).toContainText(
     "Your agent asked to connect GitHub to Globex.",
@@ -447,20 +446,22 @@ test("says what a new connection can't see, and lets only its member widen it", 
 }) => {
   await signIn(page);
   const id = await connectGitHub(page, "acme/api\nacme/missing");
-  const problem = page.getByRole("status").filter({
-    hasText: "Connected, but GitHub can’t read everything it names",
+  const step = page.getByRole("status").filter({
+    hasText: "Install Helix Foundry on GitHub",
   });
-  await expect(problem).toContainText(
-    "Helix Foundry can't see acme/missing: install it on acme",
+  await expect(step).toContainText(
+    "Helix Foundry can't see the GitHub repository acme/missing. It reads only where it is installed",
   );
   await expect(
-    problem.getByRole("link", { name: "Install Helix Foundry" }),
+    step.getByRole("link", { name: "Install on GitHub" }),
   ).toHaveAttribute("href", /^https:\/\/github\.com\/apps\//);
-  // Its first sync fails until the app is installed there.
-  await expect(page.locator(".dc-sync-error")).toContainText(
-    "The last sync failed. Helix Foundry can't see acme/missing",
-    SYNCED,
-  );
+  // Its first sync fails until the app is installed there, for the same
+  // reason: the one step says so.
+  await expect(
+    page.locator(".hf-page-header").getByText("Failed", { exact: true }),
+  ).toBeVisible(SYNCED);
+  await expect(step).toHaveCount(1);
+  await expect(page.locator(".dc-sync-error")).toHaveCount(0);
 
   // Another admin may narrow it, but not add a repository.
   await mock.configure({ alanRole: "WORKSPACE_ROLE_ADMIN" });
@@ -631,7 +632,7 @@ test("comes back to an ontology's setup with what it chose", async ({
   page,
 }) => {
   await signIn(page);
-  const { ontology } = await post(
+  const { ontology } = await postToWfe(
     page,
     "/v1/workspaces/ws_acme/foundry/ontologies",
     { name: "Billing", tenantId: "ten_acme_sandbox", clientToken: "billing-1" },
@@ -796,4 +797,143 @@ test("offers no sign-in where the stamp doesn't", async ({ page }) => {
   await expect(
     dialog(page).getByRole("button", { name: /Connect with GitHub/ }),
   ).toHaveCount(0);
+});
+
+// GitHub's install page, standing in: GitHub then returns through the app's
+// Setup URL, /connect/github, which a test visits as GitHub would.
+async function installOnGitHub(page: Page, step: ReturnType<Page["locator"]>) {
+  await page.route("https://github.com/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<h1>GitHub</h1>" }),
+  );
+  const install = step.getByRole("link", { name: "Install on GitHub" });
+  await expect(install).toHaveAttribute(
+    "href",
+    "https://github.com/apps/helix-foundry-dev/installations/new",
+  );
+  await install.click();
+  await expect(page).toHaveURL(/^https:\/\/github\.com\/apps\//);
+  await mock.configure({ githubInstalled: true });
+  await page.goto("/connect/github?installation_id=7&setup_action=install");
+}
+
+/** A connector's newest sync's status, read through the BFF. */
+async function lastSync(page: Page, id: string) {
+  const ws = (
+    (await (await page.request.get("/papi/v1/workspaces")).json())
+      .workspaces as { id: string }[]
+  )[0]!.id;
+  const res = await page.request.get(
+    `/papi/v1/workspaces/${ws}/foundry/connectors/${id}`,
+  );
+  return (await res.json()).connector.lastSync?.status as string | undefined;
+}
+
+test("installs Helix Foundry on GitHub where a new connection reads nothing, and syncs it on the way back", async ({
+  page,
+}) => {
+  await signIn(page);
+  await mock.configure({ githubInstalled: false });
+  const id = await connectGitHub(page);
+  const step = page.getByRole("status").filter({
+    hasText: "Install Helix Foundry on GitHub",
+  });
+  await expect(step).toContainText(
+    "Helix Foundry can't see any repository this GitHub sign-in reads. It reads only where it is installed, and only the repositories chosen there",
+  );
+  // Its first sync fails for want of the install.
+  await expect
+    .poll(() => lastSync(page, id), SYNCED)
+    .toBe("CONNECTOR_SYNC_STATUS_FAILED");
+
+  await installOnGitHub(page, step);
+  // Back on its page, syncing what the install chose.
+  await expect(page).toHaveURL(new RegExp(`/data/connections/${id}$`));
+  await expect(
+    page.getByText(
+      "Helix Foundry is installed on GitHub. Syncing its repositories now",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.locator(".hf-page-header").getByText("Synced", { exact: true }),
+  ).toBeVisible(SYNCED);
+  await expect(step).toHaveCount(0);
+  // The install is taken once: GitHub's return again syncs nothing.
+  const syncs = (await mock.stats()).requests.filter((r) =>
+    r.includes(":sync"),
+  ).length;
+  await page.goto("/connect/github?installation_id=7&setup_action=install");
+  await expect(
+    page.getByRole("heading", { name: "Helix Foundry is installed on GitHub" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Data" })).toBeVisible();
+  expect(
+    (await mock.stats()).requests.filter((r) => r.includes(":sync")),
+  ).toHaveLength(syncs);
+});
+
+test("stops a sign-in from the wizard at GitHub's install step, and comes back to the wizard with it chosen", async ({
+  page,
+}) => {
+  await signInToNewWorkspace(page);
+  await mock.configure({ githubInstalled: false });
+  await openGlobexGitHubLink(page);
+  await dialog(page)
+    .getByRole("button", { name: "Connect with GitHub" })
+    .click();
+  await consent(page, "Authorize");
+
+  // The wizard shows no connector's problems, so the step comes first.
+  await expect(page).toHaveURL(/\/connect\/callback$/);
+  const step = page.getByRole("status").filter({
+    hasText: "Install Helix Foundry on GitHub",
+  });
+  await expect(step).toContainText(
+    "Helix Foundry can't see any repository this GitHub sign-in reads",
+  );
+  await expect(
+    step.getByRole("button", { name: "Skip for now" }),
+  ).toBeVisible();
+
+  // A refresh reads the sign-in again and shows the same step.
+  await page.reload();
+  await expect(step).toContainText(
+    "Helix Foundry can't see any repository this GitHub sign-in reads",
+  );
+
+  await installOnGitHub(page, step);
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+  const row = page
+    .getByRole("list", { name: "Connectors" })
+    .getByRole("listitem")
+    .filter({ hasText: "Globex GitHub" });
+  await expect(row.getByRole("checkbox")).toBeChecked(SYNCED);
+});
+
+test("skips GitHub's install step back to the wizard, and says what an owner was asked", async ({
+  page,
+}) => {
+  await signInToNewWorkspace(page);
+  await mock.configure({ githubInstalled: false });
+  await openGlobexGitHubLink(page);
+  await dialog(page)
+    .getByRole("button", { name: "Connect with GitHub" })
+    .click();
+  await consent(page, "Authorize");
+  const step = page.getByRole("status").filter({
+    hasText: "Install Helix Foundry on GitHub",
+  });
+  await step.getByRole("button", { name: "Skip for now" }).click();
+  await expect(page).toHaveURL(/\/ontology\/new\?step=sources$/);
+
+  // Gone from the callback, the tab holds no sign-in any more.
+  await page.goto("/connect/callback");
+  await expect(
+    page.getByRole("heading", { name: "This tab didn’t start a sign-in" }),
+  ).toBeVisible();
+
+  // An organization member asks its owners instead: nothing to sync yet.
+  await page.goto("/connect/github?setup_action=request");
+  await expect(
+    page.getByRole("heading", { name: "Installation requested" }),
+  ).toBeVisible();
 });

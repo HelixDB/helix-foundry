@@ -24,7 +24,7 @@ import type {
 } from "../../../shared/wfe";
 import type { Status } from "../../kit";
 import { formatNumber, formatRelative, plural } from "../../kit/util";
-import type { WorkspaceRole } from "../../ui";
+import { isRecord } from "../../../shared/json";
 
 // The Data area's logic, kept apart from its components so it is tested on
 // its own: connector kinds, the Data page's tree of them and of the
@@ -70,9 +70,6 @@ export const isDatabase = (kind: string): kind is "postgres" | "mysql" =>
 export const hasTableChoice = (
   kind: string,
 ): kind is "postgres" | "mysql" | "s3" => isDatabase(kind) || kind === "s3";
-
-/** Owners and admins hold workspace.connectors.manage; members only read. */
-export const canManage = (role: WorkspaceRole) => role !== "member";
 
 // ---------------------------------------------------------------- Syncs
 
@@ -1359,9 +1356,7 @@ export function previewGrid(t: Pick<ConnectorTable, "columns" | "preview">): {
   const records = (t.preview || []).flatMap((row) => {
     try {
       const v: unknown = JSON.parse(row);
-      return v && typeof v === "object" && !Array.isArray(v)
-        ? [rawMembers(row)]
-        : [];
+      return isRecord(v) ? [rawMembers(row)] : [];
     } catch {
       return [];
     }

@@ -63,11 +63,14 @@ type resolver interface {
 
 // failure is why an attempt did not end with the agent's result, worded for
 // the user. Permanent fails the question; anything else is retried, and an
-// Uncounted one (the agent too busy to start) gives its attempt back.
+// Uncounted one (the agent too busy to start) gives its attempt back. An
+// Internal one (the agent's own error, gRPC INTERNAL) is retried within
+// ontologyagent.InternalAttempts attempts.
 type failure struct {
 	Message   string
 	Permanent bool
 	Uncounted bool
+	Internal  bool
 	Err       error
 }
 
@@ -613,6 +616,8 @@ var failureMessages = map[ontologyagent.AskFailure]string{
 // askFailure words a failed Ask call. A request the agent can't take, or an
 // agent that can't answer questions, won't change on a retry; an agent too
 // busy to start did nothing; an attempt past its time stopped for good.
+// INTERNAL is the agent's own bug on this input: retried within
+// ontologyagent.InternalAttempts, worded as any stopped attempt is.
 func askFailure(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return permanent("the question ran past its time limit", err)
@@ -622,6 +627,8 @@ func askFailure(ctx context.Context, err error) error {
 		return permanent("the ontology agent can't answer this question: "+status.Convert(err).Message(), err)
 	case codes.ResourceExhausted:
 		return &failure{Message: "the ontology agent is busy; Helix will retry", Uncounted: true, Err: err}
+	case codes.Internal:
+		return &failure{Message: "the question stopped before an answer; Helix will retry", Internal: true, Err: err}
 	}
 	return retry("the question stopped before an answer; Helix will retry", err)
 }

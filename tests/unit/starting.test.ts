@@ -8,10 +8,7 @@ import {
   startingRetryMs,
   type DatabaseQueryFailure,
 } from "@/web/areas/explore/database-query";
-import {
-  describeFailure,
-  isWriteOutcomeUnknown,
-} from "@/web/areas/explore/explorer/query/failure";
+import { describeFailure } from "@/web/areas/explore/explorer/query/failure";
 import {
   ReadFailed,
   ontologyDatabase,
@@ -142,19 +139,15 @@ describe("startingOr", () => {
 describe("describeFailure", () => {
   it("words a starting database calmly, not as a platform failure", () => {
     const f = startingOr(RATE_LIMIT, CREATED, T);
-    expect(describeFailure(f, "read")).toEqual({
+    expect(describeFailure(f)).toEqual({
       title: "Your new database is starting",
       hint: expect.stringMatching(/Try again shortly/),
       tone: "neutral",
     });
     // Its words also reach one-off actions, which nothing reads again.
     expect(f.message).not.toMatch(/by itself|automatically/);
-    expect(describeFailure(f, "read").hint).not.toMatch(
-      /by itself|automatically/,
-    );
-    // The gateway refuses before it forwards anything.
-    expect(isWriteOutcomeUnknown(f)).toBe(false);
-    expect(describeFailure(RATE_LIMIT, "read").title).toBe(
+    expect(describeFailure(f).hint).not.toMatch(/by itself|automatically/);
+    expect(describeFailure(RATE_LIMIT).title).toBe(
       "The database's gateway is refusing queries",
     );
   });

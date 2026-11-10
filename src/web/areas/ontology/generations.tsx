@@ -25,7 +25,7 @@ import {
   useNow,
 } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { connectorsQuery } from "../data/data-api";
 import { documentSetQueries } from "../documents/documents-api";
 import { SettingsLinked } from "../workspace/ai-gate";
@@ -36,7 +36,6 @@ import {
   ArrivalNotes,
   Callout,
   GenerationBadge,
-  canManage,
   retryText,
   sourcesText,
 } from "./parts";

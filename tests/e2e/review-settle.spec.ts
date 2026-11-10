@@ -1,13 +1,17 @@
 import type { Page } from "@playwright/test";
+import type { ListReviewDecisionsResponse } from "../../src/shared/wfe";
 import {
   APP_ORIGIN,
   choose,
   csrfToken,
   expect,
-  explorer,
+  file,
+  loadVersion3,
+  makeContractsCurrent,
   mock,
   signIn,
   test,
+  uploadInData,
 } from "./support/mock";
 
 const O = "/ontology/ont_acme_contracts",
@@ -16,51 +20,15 @@ const VARIANT =
   "# Variant contract\n\nGlobexx Corporation signed. The Agreement runs for 24 months.\n";
 const entity = (type: string, identity: string) =>
   `${X}/entities/${Buffer.from(`${type}\0${identity}`).toString("base64url")}`;
-async function load(page: Page) {
-  await page.goto(`${O}#loads`);
-  await page
-    .getByRole("button", { name: "Load data", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 30_000 });
-  return /\/loads\/([^/?]+)/.exec(page.url())![1]!;
-}
 async function setup(
   page: Page,
   files = [{ name: "variant.md", text: VARIANT }],
 ) {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current", exact: true }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current", exact: true })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto("/data");
-  for (const f of files) {
-    await explorer(page)
-      .getByLabel("Choose documents")
-      .setInputFiles({
-        name: f.name,
-        mimeType: "text/markdown",
-        buffer: Buffer.from(f.text),
-      });
-    await expect(
-      page
-        .getByRole("list", { name: "Uploads" })
-        .getByRole("listitem", { name: f.name }),
-    ).toContainText("Uploaded");
-  }
-  return load(page);
+  await makeContractsCurrent(page);
+  for (const f of files) await uploadInData(page, [file(f.name, f.text)]);
+  return loadVersion3(page);
 }
 async function openDocument(page: Page) {
   await page.goto(`${O}/documents`);
@@ -72,6 +40,15 @@ async function openDocument(page: Page) {
 }
 const reviews = (page: Page) =>
   page.getByRole("list", { name: "Needs review" });
+/** Settles the open document's review as Not in data, from its Needs review tab. */
+async function settleNotInData(page: Page) {
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await choose(page.getByLabel("Link this name to"), "Not in data");
+  await page.getByRole("button", { name: "Settle review" }).click();
+  await expect(
+    page.getByText("Decision saved. Reload to apply."),
+  ).toBeVisible();
+}
 
 test("settles a suggested candidate, reloads linked, and removes the saved decision", async ({
   page,
@@ -115,7 +92,7 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
   await expect(reviews(page)).toContainText(
     "Names something that isn’t in your data",
   );
-  await load(page);
+  await loadVersion3(page);
   await page.goto(doc);
   await page.getByRole("tab", { name: /^Entities/ }).click();
   await expect(page.getByText("Linked by a person")).toBeVisible();
@@ -146,7 +123,7 @@ test("settles a suggested candidate, reloads linked, and removes the saved decis
   await expect(
     page.getByText("Decision removed. Reload to apply."),
   ).toBeVisible();
-  await load(page);
+  await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
   await expect(page.getByLabel("Link this name to")).toBeVisible();
 });
@@ -156,13 +133,8 @@ test("settles not-in-data without creating an entity or link", async ({
 }) => {
   await setup(page);
   const doc = await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
-  await load(page);
+  await settleNotInData(page);
+  await loadVersion3(page);
   await page.goto(`${doc}?tab=review`);
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
   await expect(
@@ -220,7 +192,7 @@ test("picks a property conflict value and keeps its quotes after reload", async 
   ).toBeVisible();
   await page.getByRole("tab", { name: /^Overview/ }).click();
   await expect(page.locator(".ex-props")).toContainText("No value");
-  await load(page);
+  await loadVersion3(page);
   await page.goto(at);
   await expect(page.locator(".ex-props")).toContainText("36");
   await expect(page.locator(".ex-props")).toContainText("24");
@@ -229,6 +201,255 @@ test("picks a property conflict value and keeps its quotes after reload", async 
   await expect(
     page.getByRole("list", { name: "Saved decisions" }),
   ).toContainText("term_months: 36");
+});
+
+test("approves a held claim, and the next load writes it as a fact", async ({
+  page,
+}) => {
+  const old = await setup(page, [
+    {
+      name: "variant.md",
+      text: "# Hedged deal\n\nGlobex Corporation may have signed.\n",
+    },
+  ]);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  const held = reviews(page).getByRole("listitem").filter({
+    hasText: "The model wasn’t sure",
+  });
+  await expect(held).toContainText("Globex Corporation may have signed");
+  // The card says what gets written, ends in order, before anyone approves.
+  await expect(held).toContainText(
+    "Approving writes: Hedged deal (Contract) → signed_with → Globex Corporation (Customer)",
+  );
+  await expect(held).toContainText("from this sentence alone");
+  const settled = page.waitForRequest(
+    (r) => r.method() === "POST" && /\/reviews\/[^/]+:settle$/.test(r.url()),
+  );
+  await held.getByRole("button", { name: "Approve", exact: true }).click();
+  expect((await settled).postDataJSON()).toEqual({
+    decision: {
+      release: { statementHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    },
+  });
+  await expect(held.getByRole("status")).toContainText(
+    "Decision saved. Reload to apply.",
+  );
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+  // An approval of what the claim said before doesn't stand: the card asks again.
+  const decisions = /\/review-decisions(\?|$)/;
+  await page.route(decisions, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as ListReviewDecisionsResponse;
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        decisions: body.decisions?.map((d) => ({
+          ...d,
+          statementHash: "0".repeat(64),
+        })),
+      },
+    });
+  });
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "reads differently from what was approved",
+  );
+  await page.unroute(decisions);
+  await held.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(held.getByRole("status")).toContainText(
+    "Decision saved. Reload to apply.",
+  );
+  // The next load writes it, and has no review of it.
+  const next = await loadVersion3(page);
+  expect(next).not.toBe(old);
+  await page.goto(`${doc}?tab=review`);
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved: “Globex Corporation may have signed.”");
+});
+
+/** Serves the contracts ontology with signed_with holding one value. */
+async function oneValued(page: Page) {
+  await page.route(/\/versions\/[^/?]+(\?|$)/, async (route) => {
+    const response = await route.fetch();
+    const text = (await response.text()).replace(
+      /(\[links\.signed_with\].*?cardinality = \\")many/g,
+      "$1one",
+    );
+    await route.fulfill({ response, body: text });
+  });
+}
+
+/** A document with one hedged claim, opened on its reviews, and its card. */
+async function hedged(
+  page: Page,
+  text = "Globex Corporation may have signed.",
+) {
+  await setup(page, [
+    { name: "variant.md", text: `# Hedged deal\n\n${text}\n` },
+  ]);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  const held = reviews(page)
+    .getByRole("listitem")
+    .filter({
+      hasText: /The model wasn’t sure|couldn’t confirm/,
+    });
+  return { doc, held };
+}
+const approve = async (card: ReturnType<Page["locator"]>) => {
+  await card.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(card.getByRole("status")).toContainText("Decision saved");
+};
+
+test("says why a load kept an approved claim held", async ({ page }) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held.getByRole("status")).toContainText(
+    "This load read the approval, and the claim stays held",
+  );
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("Approved, not written: “");
+});
+
+test("names the name a legal form linked when it holds a one-valued claim", async ({
+  page,
+}) => {
+  await oneValued(page);
+  await mock.configure({ documentHeld: "legal_form" });
+  const { doc, held } = await hedged(page);
+  await expect(held).toContainText("Settle that name too");
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held.getByRole("status")).toContainText(
+    "“globex corporation” is linked only by its legal form",
+  );
+  await expect(held.getByRole("status")).not.toContainText(
+    "isn’t in your data",
+  );
+  await expect(reviews(page)).toContainText("Linked by its legal form");
+});
+
+test("doesn't blame a legal form for a many-valued claim that stays held", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "legal_form" });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held.getByRole("status")).toContainText(
+    "This load read the approval, and the claim stays held",
+  );
+  await expect(held.getByRole("status")).not.toContainText(
+    "“globex corporation”",
+  );
+});
+
+test("sends a review with no statement to a new load, or to the current one", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "no_statement" });
+  const old = await setup(page, [
+    {
+      name: "variant.md",
+      text: "# Hedged deal\n\nGlobex Corporation may have signed.\n",
+    },
+  ]);
+  const doc = await openDocument(page);
+  await page.goto(`${doc}?tab=review`);
+  const stale = reviews(page).getByRole("listitem").filter({
+    hasText: "The model wasn’t sure",
+  });
+  await expect(stale).toContainText("Load again to settle this review.");
+  await loadVersion3(page);
+  await page.goto(`${doc}?load=${old}&tab=review`);
+  await expect(stale).toContainText(
+    "Open the current load to settle this review.",
+  );
+  await expect(stale).not.toContainText("Load again");
+});
+
+test("offers no approval of a sentence read two ways", async ({ page }) => {
+  await mock.configure({ documentHeld: "differs" });
+  const { held } = await hedged(page);
+  await expect(held).toContainText("read more than one way");
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("says an end isn't in the graph yet", async ({ page }) => {
+  await mock.configure({ documentHeld: "one_end" });
+  const { held } = await hedged(page);
+  await expect(held).toContainText("An end isn’t in the graph yet");
+});
+
+test("shows no percentage on a claim no verifier judged", async ({ page }) => {
+  await mock.configure({ documentHeld: "unverified" });
+  const { doc, held } = await hedged(page);
+  await approve(held);
+  await loadVersion3(page);
+  await page.goto(doc);
+  await page.getByRole("tab", { name: /^Facts/ }).click();
+  await expect(page.getByText("signed_with").first()).toBeVisible();
+  await expect(page.getByText(/\b0% confident/)).toHaveCount(0);
+});
+
+test("doesn't tell one claim of a sentence about another's approval", async ({
+  page,
+}) => {
+  const { doc } = await hedged(
+    page,
+    "Globex Corporation and Initech may have signed.",
+  );
+  // Its group's rows: the reason is said once, in the group's head.
+  const held = reviews(page)
+    .getByRole("list", { name: "The model wasn’t sure" })
+    .locator(":scope > li");
+  await expect(held).toHaveCount(2);
+  await approve(held.first());
+  await expect(held.last()).not.toContainText("earlier approval");
+  await expect(
+    held.last().getByRole("button", { name: "Approve", exact: true }),
+  ).toBeVisible();
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=review`);
+  await expect(held).toHaveCount(1);
+  await expect(held).not.toContainText("earlier approval");
+  await expect(held).not.toContainText("reads differently");
+});
+
+test("promises no edge on a link that holds one value", async ({ page }) => {
+  await oneValued(page);
+  const { held } = await hedged(page);
+  await expect(held).toContainText("Approving states:");
+  await expect(held).not.toContainText("Approving writes:");
+  await expect(held).toContainText("This link holds one value");
+});
+
+test("hides Approve from a member", async ({ page }) => {
+  const { doc, held } = await hedged(page);
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toBeVisible();
+  await page.context().clearCookies();
+  await signIn(page, "alan@example.com");
+  await page.goto(`${doc}?tab=review`);
+  await expect(held).toContainText("Approving writes:");
+  await expect(
+    held.getByRole("button", { name: "Approve", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("links an adjudicated mention to its review and undoes the link on reload", async ({
@@ -248,7 +469,36 @@ test("links an adjudicated mention to its review and undoes the link on reload",
   await expect(
     page.getByText("Decision saved. Reload to apply."),
   ).toBeVisible();
-  await load(page);
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=entities`);
+  await expect(
+    page.getByRole("region", { name: "Customer", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+});
+
+test("links a mention by legal form to its review and undoes the link on reload", async ({
+  page,
+}) => {
+  await mock.configure({ documentLegalForm: true });
+  await setup(page);
+  const doc = await openDocument(page);
+  await page.getByRole("tab", { name: /^Entities/ }).click();
+  await expect(page.getByText("By its legal form")).toBeVisible();
+  await page.getByRole("link", { name: "Review link" }).click();
+  await expect(
+    page.getByRole("tab", { name: /^Needs review/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(reviews(page)).toContainText("Linked by its legal form");
+  await expect(reviews(page)).toContainText("Suggestions only:");
+  await expect(reviews(page)).toContainText("for the name “");
+  await expect(reviews(page)).not.toContainText("couldn’t confirm");
+  await page.getByRole("button", { name: "Undo link", exact: true }).click();
+  await expect(
+    page.getByText("Decision saved. Reload to apply."),
+  ).toBeVisible();
+  await loadVersion3(page);
   await page.goto(`${doc}?tab=entities`);
   await expect(
     page.getByRole("region", { name: "Customer", exact: true }),
@@ -262,12 +512,7 @@ test("members can read candidate reviews but cannot settle or remove decisions",
 }) => {
   await setup(page);
   const doc = await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
+  await settleNotInData(page);
   await page.context().clearCookies();
   await signIn(page, "alan@example.com");
   await page.goto(`${doc}?tab=review`);
@@ -288,12 +533,7 @@ test("reconciles a decision removed elsewhere without keeping the saved status",
 }) => {
   await setup(page);
   await openDocument(page);
-  await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await choose(page.getByLabel("Link this name to"), "Not in data");
-  await page.getByRole("button", { name: "Settle review" }).click();
-  await expect(
-    page.getByText("Decision saved. Reload to apply."),
-  ).toBeVisible();
+  await settleNotInData(page);
   const decisions = page.getByRole("list", { name: "Saved decisions" });
   await expect(decisions).toContainText("Not in data");
   // Other failures leave the saved row available to retry.
@@ -450,7 +690,7 @@ test("keeps a table's value over a document's, and replaces it only by choice", 
   await expect(
     review.getByText("Decision saved. Reload to apply."),
   ).toBeVisible();
-  await load(page);
+  await loadVersion3(page);
   await page.goto(globex);
   await expect(page.locator(".ex-props")).toContainText("GBP");
   await page.getByRole("tab", { name: /^Needs review/ }).click();

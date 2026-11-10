@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, clearCsrfToken } from "@/web/api";
+import { canManage } from "@/web/ui";
 import {
   CONFIRM_WINDOW_MS,
   PAID_TIERS,
@@ -7,7 +8,6 @@ import {
   TIER_NAME,
   billingPage,
   billingPortalUrl,
-  canManage,
   cancelPlan,
   checkoutFailure,
   forgetCheckout,

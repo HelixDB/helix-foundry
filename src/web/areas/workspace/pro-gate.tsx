@@ -4,8 +4,8 @@ import { Sparkles } from "lucide-react";
 import { trackEvent } from "../../analytics";
 import { ButtonLink, cx } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
-import { PLAN_PRICE, canManage } from "./plan";
+import { canManage, useWorkspace } from "../../ui";
+import { PLAN_PRICE } from "./plan";
 
 export { isProRequired } from "./plan";
 

@@ -2,9 +2,10 @@ import type { Locator, Page } from "@playwright/test";
 import {
   choose,
   createFirstOntology,
-  csrfToken,
+  createWorkspace,
   expect,
   mock,
+  postToWfe,
   signIn,
   signInToNewWorkspace,
   test,
@@ -26,22 +27,13 @@ const sectionNames = (nav: Locator) =>
 
 /** A second ontology of Acme's, Orders: the newest, so the list's first. */
 async function addOrders(page: Page): Promise<string> {
-  const res = await page.request.post(
-    "/papi/v1/workspaces/ws_acme/foundry/ontologies",
-    {
-      data: {
-        name: "Orders",
-        tenantId: "ten_acme_orders",
-        clientToken: "e2e-orders",
-      },
-      headers: {
-        origin: new URL(page.url()).origin,
-        "x-helix-csrf": await csrfToken(page),
-      },
-    },
-  );
-  expect(res.status()).toBe(200);
-  return (await res.json()).ontology.id;
+  return (
+    await postToWfe(page, "/v1/workspaces/ws_acme/foundry/ontologies", {
+      name: "Orders",
+      tenantId: "ten_acme_orders",
+      clientToken: "e2e-orders",
+    })
+  ).ontology.id;
 }
 
 test("a new user creates their first workspace", async ({ page }) => {
@@ -86,11 +78,7 @@ test("shows the WFE's reason when a workspace cannot be created", async ({
       }),
     });
   });
-  await page.getByRole("button", { name: "Workspace: Acme" }).click();
-  await page.getByRole("menuitem", { name: "Create workspace" }).click();
-  const dialog = page.getByRole("dialog", { name: "Create a workspace" });
-  await dialog.getByLabel("Workspace name").fill("Acme");
-  await dialog.getByRole("button", { name: "Create workspace" }).click();
+  const dialog = await createWorkspace(page, "Acme");
   await expect(dialog.getByRole("alert")).toContainText("already exists");
   expect(sent).toEqual(["acme", expect.stringMatching(/^acme-[a-z0-9]{4}$/)]);
 });
@@ -101,11 +89,7 @@ test("creates, switches and chooses workspaces", async ({ page }) => {
   const ask = page.getByRole("heading", { level: 1, name: "Analyst" });
   await expect(page).toHaveURL(new RegExp(`/ask/${CONTRACTS}$`));
   await expect(ask).toBeVisible();
-  await page.getByRole("button", { name: "Workspace: Acme" }).click();
-  await page.getByRole("menuitem", { name: "Create workspace" }).click();
-  const dialog = page.getByRole("dialog", { name: "Create a workspace" });
-  await dialog.getByLabel("Workspace name").fill("Initech");
-  await dialog.getByRole("button", { name: "Create workspace" }).click();
+  await createWorkspace(page, "Initech");
   // Without an ontology, Initech opens on its onboarding wizard.
   const wizard = page.getByRole("heading", { level: 1, name: "Get started" });
   await expect(wizard).toBeVisible();

@@ -174,7 +174,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.7.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.11.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -220,7 +220,7 @@ func writeThroughProxy(request string) error {
 const (
 	// documentCounts are what each document of the fixtures put in the graph.
 	documentCounts = `{"entities":2,"mentions":3,"facts":1,"reviews":1,"unresolved":1,"rejected":0,"attributes":4,"attribute_reviews":3,` +
-		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"created":1}}`
+		`"prop_conflicts":2,"created":1,"identifiers_unverified":5,"attributes_over_entries":6,"released":0,"release_refused":0,"release_missed":0,"resolved":{"user":7,"adjudicated":8,"identifier":9,"name":2,"alias":10,"legal_form":3,"created":1}}`
 	totals   = `{"ingested":1,"out_of_scope":0,"already_ingested":1,"duplicate":1,"failed":1,"counts":` + documentCounts + `,"swept":0,"unchecked":0,"stale_decisions":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80}`
 	counts   = `"counts":` + documentCounts
 	usage    = `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`
@@ -254,7 +254,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.7.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.11.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +265,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.7.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.11.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -1511,6 +1511,8 @@ func TestLoadOutcomes(t *testing.T) {
 		"a refused request":        {func(h *harness) { h.agent.ingest = refuseIngest(codes.InvalidArgument) }, failed, "refused"},
 		"an agent that can't load": {func(h *harness) { h.agent.ingest = refuseIngest(codes.Unimplemented) }, failed, ontologyagent.ContractVersion},
 		"a full agent":             {func(h *harness) { h.agent.ingest = refuseIngest(codes.ResourceExhausted) }, retried, "unavailable"},
+		"an agent's internal error": {func(h *harness) { h.agent.ingest = refuseIngest(codes.Internal) }, retried,
+			"the ontology agent failed to load the tables on this input; Helix will retry once"},
 		"models the agent can't run": {func(h *harness) {
 			h.agent.extract = func(string, agentv1.Agent_ExtractServer) error {
 				return status.Error(codes.FailedPrecondition, "this server extracts no documents")
@@ -1645,6 +1647,82 @@ func TestLoadOutcomes(t *testing.T) {
 		outcome = h.run(t, job)
 		if outcome.Status != model.FoundryGraphJobFailed || !strings.Contains(outcome.Error, "gave up after 5 attempts") {
 			t.Fatalf("outcome = %+v", outcome)
+		}
+	})
+
+	// The agent's internal error is its bug on this input: whichever call
+	// ends with it, the job is retried once, whatever max_attempts says, and
+	// then fails; the code and description are logged as an error, never
+	// stored for the customer.
+	t.Run("retries the agent's internal error once", func(t *testing.T) {
+		const description = "the call failed: a panic at crates/x.rs:1:2: boom"
+		panicked := status.Error(codes.Internal, description)
+		for name, tc := range map[string]struct {
+			job   func() *model.FoundryGraphJob
+			setup func(*testing.T, *harness)
+			what  string
+		}{
+			"ingest": {loadJob, func(_ *testing.T, h *harness) {
+				h.agent.ingest = func(string, agentv1.Agent_IngestServer) error { return panicked }
+			}, "load the tables"},
+			"extract": {extractJob, func(_ *testing.T, h *harness) {
+				h.agent.extract = func(string, agentv1.Agent_ExtractServer) error { return panicked }
+			}, "extract the documents"},
+			"delete load": {deleteJob, func(_ *testing.T, h *harness) {
+				h.agent.deleteLoad = func(string, agentv1.Agent_DeleteLoadServer) error { return panicked }
+			}, "delete a load"},
+			// People enrichment's Clues fails the load's attempt as Ingest would.
+			"clues": {loadJob, func(t *testing.T, h *harness) {
+				enrichingVersion(t, h)
+				h.agent.clues = func(string, agentv1.Agent_CluesServer) error { return panicked }
+			}, "read the people to look up"},
+		} {
+			says := "the ontology agent failed to " + tc.what + " on this input; Helix will retry once"
+			for _, step := range []struct {
+				attempt, maxAttempts int
+				retried              bool
+				says                 string
+			}{
+				{1, 5, true, says},
+				{2, 5, false, says + " (gave up after 2 attempts)"},
+				{1, 1, false, says + " (gave up after 1 attempts)"},
+				// The cap counts every attempt: an internal error after attempts that failed otherwise fails at once.
+				{3, 5, false, says + " (gave up after 3 attempts)"},
+			} {
+				h := newHarness(t)
+				tc.setup(t, h)
+				h.task.cfg.MaxAttempts = step.maxAttempts
+				job := tc.job()
+				job.Attempts = step.attempt
+				outcome, logged, _ := h.runLogged(t, job)
+				if outcome.Error != step.says || (outcome.RetryAt != nil) != step.retried ||
+					(outcome.Status == model.FoundryGraphJobFailed) == step.retried || outcome.Uncounted ||
+					strings.Contains(outcome.Error, description) || strings.Contains(outcome.Error, "panic") {
+					t.Fatalf("%s, attempt %d of %d: outcome = %+v", name, step.attempt, step.maxAttempts, outcome)
+				}
+				if !strings.Contains(logged, `"level":"ERROR","msg":"graph job attempt failed"`) ||
+					!strings.Contains(logged, `"code":"Internal","description":"`+description+`"`) {
+					t.Fatalf("%s, attempt %d of %d: logged %s", name, step.attempt, step.maxAttempts, logged)
+				}
+			}
+		}
+
+		// An unavailable agent is still retried past the cap, and warned of.
+		h := newHarness(t)
+		h.agent.ingest = refuseIngest(codes.Unavailable)
+		job := loadJob()
+		job.Attempts = 3
+		outcome, logged, _ := h.runLogged(t, job)
+		if outcome.RetryAt == nil || outcome.Error != "the ontology agent is unavailable; Helix will retry" ||
+			!strings.Contains(logged, `"level":"WARN","msg":"graph job attempt failed"`) || strings.Contains(logged, `"level":"ERROR","msg":"graph job attempt failed"`) {
+			t.Fatalf("outcome = %+v, logged %s", outcome, logged)
+		}
+
+		// A stopping worker's attempt is given back, internal error or not.
+		job.Attempts = 2
+		if outcome := h.task.outcome(context.Background(), job, &attempt{}, callFailure("load the tables", panicked), true); outcome.RetryAt == nil ||
+			!outcome.Uncounted || outcome.Error != "the ontology agent failed to load the tables on this input; Helix will retry once" {
+			t.Fatalf("outcome = %+v, want an uncounted retry", outcome)
 		}
 	})
 
@@ -3061,6 +3139,48 @@ func TestExtractReviewDecisions(t *testing.T) {
 // left out and the rest go. A resolve whose chosen entity the changed key no
 // longer reads goes too: the engine counts it stale and reviews its name
 // again, where left out the name would be matched another way.
+// A release takes its review out of the graph after the commit counted it, so a
+// document's stored counts are what the load holds: one review fewer, one fact
+// more. An already_ingested document's event has zero counts, however many it
+// released, and its stored row stays.
+func TestExtractRecordsWhatAReleaseMoved(t *testing.T) {
+	released := func(reviews, facts, written int, outcome string) string {
+		c := strings.Replace(counts, `"reviews":1`, fmt.Sprintf(`"reviews":%d`, reviews), 1)
+		c = strings.Replace(c, `"facts":1`, fmt.Sprintf(`"facts":%d`, facts), 1)
+		c = strings.Replace(c, `"released":0`, fmt.Sprintf(`"released":%d`, written), 1)
+		return `{"event":"document","doc_id":"doc-a","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + c + `,` + noUsage + `}`
+	}
+	for name, tc := range map[string]struct {
+		event          string
+		reviews, facts int
+		kept           bool
+	}{
+		"a review released":    {released(2, 3, 1, `{"kind":"ingested"}`), 1, 4, false},
+		"all of them":          {released(1, 0, 1, `{"kind":"ingested"}`), 0, 1, false},
+		"none":                 {released(2, 3, 0, `{"kind":"ingested"}`), 2, 3, false},
+		"a held document":      {released(0, 0, 1, `{"kind":"already_ingested"}`), 0, 1, true},
+		"more than it reviews": {released(1, 0, 3, `{"kind":"ingested"}`), 0, 3, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+				events := []string{extracted[0], tc.event}
+				for _, doc := range []string{"doc-b", "doc-c", "doc-d"} {
+					events = append(events, documentEvent(doc, `{"kind":"out_of_scope"}`, noUsage))
+				}
+				return extractEvents(stream, append(events, `{"event":"extract_finished"}`), `{"status":"done","totals":`+totals+`}`)
+			}
+			if outcome := h.run(t, extractJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+				t.Fatalf("%+v", outcome)
+			}
+			got := h.store.extractions["doc-a"]
+			if got == nil || got.Counts.Reviews != tc.reviews || got.Counts.Facts != tc.facts || h.store.kept["doc-a"] != tc.kept {
+				t.Fatalf("recorded %+v", got)
+			}
+		})
+	}
+}
+
 func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 	h := newHarness(t)
 	ptr := func(s string) *string { return &s }
@@ -3091,6 +3211,29 @@ func TestExtractReviewDecisionsLeftOutOnceStale(t *testing.T) {
 	want := `[{"kind":"resolve","type":"Customer","doc_id":"doc-a","norm_name":"helio inc","entity_key":"helio","decision_id":"4",` + at + `},` +
 		`{"kind":"prop","type":"Customer","entity_key":"sacme","prop":"tier","value":3,"decision_id":"3",` + at + `},` +
 		`{"kind":"resolve","type":"Customer","doc_id":"doc-a","norm_name":"acme corp","entity_key":null,"decision_id":"5",` + at + `}]`
+	if string(got) != want {
+		t.Fatalf("decisions = %s, want %s", got, want)
+	}
+}
+
+// A release goes with its document, as a resolve does, whichever version the
+// load is of, and names nothing the engine refuses.
+func TestExtractReleaseDecisionsGoWithTheirDocument(t *testing.T) {
+	h := newHarness(t)
+	ptr := func(s string) *string { return &s }
+	settled := time.Date(2026, 10, 17, 8, 2, 3, 0, time.UTC)
+	key, read := strings.Repeat("ab", 32), strings.Repeat("cd", 32)
+	release := func(id, doc string) *model.FoundryReviewDecision {
+		return &model.FoundryReviewDecision{ID: id, OntologyID: "ont-1", Kind: model.FoundryReviewRelease,
+			DocID: ptr(doc), ClaimKey: &key, ClaimSpan: &model.FoundryClaimSpan{Section: 1, Start: 2, End: 9}, StatementHash: &read, DecidedByUserID: "user", DecidedAt: settled}
+	}
+	h.store.decisions = []*model.FoundryReviewDecision{release("1", "doc-a"), release("2", "doc-b")}
+	decisions, err := h.task.runner.decisions(context.Background(), extractJob(), "", []ontologyagent.ExtractDocument{{DocID: "doc-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(decisions)
+	want := `[{"kind":"release","doc_id":"doc-a","claim_key":"` + key + `","section":1,"start":2,"end":9,"statement_hash":"` + read + `","decision_id":"1","decided_at":"2026-10-17T08:02:03Z"}]`
 	if string(got) != want {
 		t.Fatalf("decisions = %s, want %s", got, want)
 	}

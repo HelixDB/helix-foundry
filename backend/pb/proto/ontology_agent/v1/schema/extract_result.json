@@ -213,6 +213,24 @@
           "format": "uint",
           "minimum": 0
         },
+        "release_missed": {
+          "description": "Release decisions of a document this run committed that name no review of it: its claim\nhas another key or place now, or the commit held no such claim.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "release_refused": {
+          "description": "Reviews a person released that stay held: an end no rung resolves, statements that differ\nat one place, a statement other than the one approved, a value another statement disputes,\na `block` constraint it would break, or a review a release can't write.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "released": {
+          "description": "Reviews a person released that were written as facts.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "resolved": {
           "description": "How its entities resolved, by rung.",
           "$ref": "#/$defs/ResolvedCounts"
@@ -244,7 +262,10 @@
         "created",
         "identifiers_unverified",
         "attributes_over_entries",
-        "resolved"
+        "resolved",
+        "released",
+        "release_refused",
+        "release_missed"
       ]
     },
     "ExtractTotals": {
@@ -368,6 +389,12 @@
           "format": "uint",
           "minimum": 0
         },
+        "legal_form": {
+          "description": "By its fullest name without its legal form: a review lets a person overturn it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "name": {
           "description": "By its fullest name.",
           "type": "integer",
@@ -388,6 +415,7 @@
         "identifier",
         "name",
         "alias",
+        "legal_form",
         "created"
       ]
     }

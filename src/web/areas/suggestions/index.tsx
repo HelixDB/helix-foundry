@@ -2,16 +2,18 @@
 // ontology and mappings lack (self-healing), lazy-loaded by the Ontology
 // area's route table under /ontology/:ontologyId/suggestions. Each
 // suggestion shows its kind, its support, examples and what it proposes; a
-// manager may dismiss one. Nothing here changes the ontology. Where
+// manager may dismiss one, or open Generate to add a link for a relationship
+// no link covers. Nothing here changes the ontology. Where
 // foundry.heal.enabled is off, it says suggestions aren't turned on.
 import "./suggestions.css";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lightbulb } from "lucide-react";
+import { Lightbulb, Sparkles } from "lucide-react";
 import type { ListHealFindingsResponse } from "../../../shared/wfe";
 import {
   Button,
+  ButtonLink,
   EmptyState,
   Page,
   PageHeader,
@@ -22,9 +24,8 @@ import {
   useTitle,
 } from "../../kit";
 import { paths } from "../../paths";
-import { RefreshFailed, useWorkspace } from "../../ui";
+import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import { documentSetQueries } from "../documents/documents-api";
-import { canManage } from "../ontology/parts";
 import { ontologyName, useOntology } from "../ontology/scope";
 import { dismissSuggestion, suggestionQueries } from "./api";
 import {
@@ -257,25 +258,39 @@ function SuggestionCard({
     { id: o } = useOntology();
   const [all, setAll] = useState(false);
   const examples = all ? s.examples : s.examples.slice(0, SHOWN_EXAMPLES);
-  // The button is named Dismiss alone, described by the card's title: an
-  // accessible name may reach analytics, and the title quotes the data.
+  // Its buttons are named Add this link and Dismiss alone, described by the
+  // card's title: an accessible name may reach analytics, and the title
+  // quotes the data. Add this link opens Generate with the goal filled in.
   const titleId = `sg-title-${s.fingerprint}`,
-    examplesId = `sg-examples-${s.fingerprint}`;
+    examplesId = `sg-examples-${s.fingerprint}`,
+    manager = canManage(role);
   return (
     <Panel
       title={<span id={titleId}>{s.title}</span>}
       subtitle={s.detail}
       actions={
-        canManage(role) && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onDismiss(s.fingerprint)}
-            aria-describedby={titleId}
-            data-fingerprint={s.fingerprint}
-          >
-            Dismiss
-          </Button>
+        manager && (
+          <>
+            {s.goal && (
+              <ButtonLink
+                size="sm"
+                icon={Sparkles}
+                to={paths.generate(o, { goal: s.goal })}
+                aria-describedby={titleId}
+              >
+                Add this link
+              </ButtonLink>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onDismiss(s.fingerprint)}
+              aria-describedby={titleId}
+              data-fingerprint={s.fingerprint}
+            >
+              Dismiss
+            </Button>
+          </>
         )
       }
     >
@@ -290,6 +305,13 @@ function SuggestionCard({
           </span>
         </p>
         {s.proposal && <p>Suggested: {s.proposal}</p>}
+        {manager && s.goal && s.support > 0 && (
+          // Support is the reviews behind it: each a claim a document
+          // states that no link let a load store.
+          <p>
+            {`Adding this link lets future loads store ${s.support === 1 ? "this claim" : `these ${plural(s.support, "claim")}`}.`}
+          </p>
+        )}
         {s.spellings.length > 1 && (
           <p className="on-muted">
             Reported as {s.spellings.map((x) => `“${x}”`).join(", ")}: check the

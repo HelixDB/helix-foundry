@@ -76,11 +76,6 @@ const icons = {
   json: Braces,
 };
 
-// Builds typed grid columns from a dataset profile (DatasetProfile.columns).
-export const columnsFromProfile = (
-  columns: { name: string; type: string }[],
-): GridColumn[] => columns.map((c) => ({ key: c.name, type: c.type }));
-
 const HEADER = 36,
   OVERSCAN = 8;
 

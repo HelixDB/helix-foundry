@@ -207,6 +207,16 @@ export function ConnectionForm({
     unavailable = discovered?.unavailable || [],
     // Entries the source says why of ("name: reason") read as a list.
     reasons = unavailable.some((u) => u.includes(": "));
+  const cantRead = (
+    <div className="muted small">
+      Helix can’t read:
+      <ul className="dc-unavailable">
+        {unavailable.map((u) => (
+          <li key={u}>{u}</li>
+        ))}
+      </ul>
+    </div>
+  );
   const selection = choice
     ? discovered
       ? tableSelection(names, chosen)
@@ -851,16 +861,7 @@ export function ConnectionForm({
                 ? "Only selected tables are synced. Selecting every table also syncs tables added later."
                 : "No tables found. Check the schema and the user’s read permissions."}
             </p>
-            {!!unavailable.length && (
-              <div className="muted small">
-                Helix can’t read:
-                <ul className="dc-unavailable">
-                  {unavailable.map((u) => (
-                    <li key={u}>{u}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {!!unavailable.length && cantRead}
           </fieldset>
         )}
         {discovered && !choice && (
@@ -893,16 +894,7 @@ export function ConnectionForm({
                 !reasons &&
                 ` This key cannot read: ${unavailable.join(", ")}.`}
             </p>
-            {reasons && (
-              <div className="muted small">
-                Helix can’t read:
-                <ul className="dc-unavailable">
-                  {unavailable.map((u) => (
-                    <li key={u}>{u}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {reasons && cantRead}
           </fieldset>
         )}
         {!!discovered?.warnings?.length && (

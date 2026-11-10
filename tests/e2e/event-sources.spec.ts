@@ -3,10 +3,10 @@ import type { FoundryDocumentSet } from "@/shared/wfe";
 import {
   choose,
   createdOntology,
-  csrfToken,
   dataTree as tree,
   expect,
   mock,
+  postToWfe,
   signIn,
   signInToNewWorkspace,
   startFirstOntology,
@@ -70,18 +70,6 @@ const workspaceId = async (page: Page): Promise<string> =>
   (await (await page.request.get("/papi/v1/workspaces")).json()).workspaces[0]
     .id;
 
-/** A POST to the WFE through the BFF, as the app makes it; its JSON. */
-async function post(page: Page, path: string, data: object) {
-  const res = await page.request.post(`/papi${path}`, {
-    data,
-    headers: {
-      origin: new URL(page.url()).origin,
-      "x-helix-csrf": await csrfToken(page),
-    },
-  });
-  expect(res.status(), await res.text()).toBe(200);
-  return res.json();
-}
 const get = async (page: Page, path: string) =>
   (await page.request.get(`/papi${path}`)).json();
 
@@ -98,7 +86,7 @@ async function apiSource(
   textField?: string,
 ): Promise<string> {
   const id: string = (
-    await post(page, `/v1/workspaces/${ws}/foundry/connectors`, {
+    await postToWfe(page, `/v1/workspaces/${ws}/foundry/connectors`, {
       name,
       config: {
         events: { description: "", ...(textField ? { textField } : {}) },
@@ -150,7 +138,7 @@ async function piecesOf(
  * `source` by extraction alone, and makes it current: its id.
  */
 async function currentFrom(page: Page, source: string): Promise<string> {
-  const { generation } = await post(page, `${O}:generate`, {
+  const { generation } = await postToWfe(page, `${O}:generate`, {
     goal: "Support replies",
     noConnectors: true,
     eventSources: [{ connectorId: source, mode: EXTRACTION }],
@@ -168,7 +156,7 @@ async function currentFrom(page: Page, source: string): Promise<string> {
     )
     .toBe("ONTOLOGY_GENERATION_STATUS_SUCCEEDED");
   const { ontology } = await get(page, O);
-  await post(page, `${O}:set-current`, {
+  await postToWfe(page, `${O}:set-current`, {
     versionId,
     expectedCurrentVersionId: ontology.currentVersionId,
   });
@@ -606,18 +594,13 @@ test("shows a member an API source and its tokens without changes", async ({
   await signIn(page);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const source = await apiSource(page, "ws_acme", "Order lines", PIECES);
-  const token = await page.request.post(
-    `/papi/v1/workspaces/ws_acme/foundry/connectors/${source}/tokens`,
-    {
-      data: {},
-      headers: {
-        origin: new URL(page.url()).origin,
-        "x-helix-csrf": await csrfToken(page),
-      },
-    },
-  );
-  expect(token.status()).toBe(200);
-  const { prefix } = (await token.json()).token;
+  const { prefix } = (
+    await postToWfe(
+      page,
+      `/v1/workspaces/ws_acme/foundry/connectors/${source}/tokens`,
+      {},
+    )
+  ).token;
 
   await context.clearCookies();
   await signIn(page, "alan@example.com");
@@ -865,7 +848,7 @@ test("pauses an API source once its allowance is spent: its spend line says so, 
   await piecesOf(page, "ws_acme", source, 3);
   const versionId = await currentFrom(page, source);
   // A person's load of it reads the pieces, and is current.
-  const { load } = await post(page, `${O}/loads`, {
+  const { load } = await postToWfe(page, `${O}/loads`, {
     versionId,
     clientToken: crypto.randomUUID(),
   });

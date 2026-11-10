@@ -325,7 +325,7 @@ export function DatabaseExplorer({
   const notify = useCallback(
     (event: ExplorerNotifyEvent) => {
       const description = event.failure
-        ? `${describeFailure(event.failure, "read").title}. ${event.failure.message}`
+        ? `${describeFailure(event.failure).title}. ${event.failure.message}`
         : event.description;
       toast?.(
         description ? `${event.title}: ${description}` : event.title,

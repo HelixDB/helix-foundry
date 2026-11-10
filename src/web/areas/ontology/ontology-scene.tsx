@@ -1,58 +1,13 @@
 import type { CSSProperties } from "react";
 import { Check, Database } from "lucide-react";
 import { number } from "../../api";
-import { logoUrl } from "../../kit";
-import { useCurrentTheme, type Theme } from "../../shell/theme";
+import { connectorLabel, sourceMark } from "../../kit";
+import { useCurrentTheme } from "../../shell/theme";
 import "./ontology-scene.css";
 
 // helix-foundry's data feed (apps/web/src/ontology-scene.tsx): a job's steps
 // and the sources it reads, shown while a generation or load runs. It groups
 // items by `group` when set.
-
-const logos: Record<string, string> = {
-  planetscale: "planetscale",
-  workos: "workos",
-  posthog: "posthog",
-  github: "github",
-  linear: "linear",
-  calcom: "calcom",
-  granola: "granola",
-  slack: "slack",
-  notion: "notion",
-  google: "google",
-  stripe: "stripe",
-  s3: "s3",
-  postgresql: "postgresql",
-  postgres: "postgresql",
-  neon: "neon",
-  supabase: "supabase",
-};
-const labels: Record<string, string> = {
-  planetscale: "PlanetScale",
-  workos: "WorkOS",
-  posthog: "PostHog",
-  github: "GitHub",
-  linear: "Linear",
-  calcom: "Cal.com",
-  granola: "Granola",
-  slack: "Slack",
-  notion: "Notion",
-  google: "Google Workspace",
-  stripe: "Stripe",
-  s3: "Amazon S3",
-  postgresql: "PostgreSQL",
-  postgres: "PostgreSQL",
-  neon: "Neon",
-  supabase: "Supabase",
-  mysql: "MySQL",
-  neo4j: "Neo4j",
-  upload: "Uploads",
-  rest: "REST API",
-};
-const connectorLogo = (key: string, theme: Theme) =>
-  logos[key] ? logoUrl(logos[key], theme) : undefined;
-const sourceName = (key: string) =>
-  labels[key] || key.charAt(0).toUpperCase() + key.slice(1);
 
 export type FeedItem = {
   id: string;
@@ -65,10 +20,11 @@ export type FeedItem = {
 };
 export type FeedStep = { label: string; status: "pending" | "active" | "done" };
 
+// A logo, else (a wordmark or none) the database icon.
 function SourceMark({ source }: { source: string }) {
-  const src = connectorLogo(source, useCurrentTheme());
-  return src ? (
-    <img src={src} alt="" width={16} height={16} />
+  const { url, wordmark } = sourceMark(source, useCurrentTheme());
+  return url && !wordmark ? (
+    <img src={url} alt="" width={16} height={16} />
   ) : (
     <Database size={15} strokeWidth={1.7} aria-hidden="true" />
   );
@@ -133,7 +89,7 @@ export function DataFeed({
               <section key={key} className="feed-source">
                 <h4>
                   <SourceMark source={source} />
-                  <span>{rows[0]!.group ?? sourceName(source)}</span>
+                  <span>{rows[0]!.group ?? connectorLabel(source)}</span>
                   <small key={all ? "records" : "tables"}>
                     {all && counted
                       ? `${number(total)} ${total === 1 ? "record" : "records"}`

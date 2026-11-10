@@ -16,7 +16,9 @@ import {
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { Callout } from "../ontology/parts";
-import { finishSignIn, getSignIn } from "./data-api";
+import { connectorKindsQuery, finishSignIn, getSignIn } from "./data-api";
+import { GitHubInstallStep } from "./github-install-step";
+import { needsGitHubInstall, type PendingInstall } from "./github-install";
 import { useSignInStart, type SignedInArrival } from "./sign-in";
 import {
   codeStale,
@@ -45,6 +47,10 @@ import {
 // or Generate with the connector chosen (`connected`), else the connector's
 // page. Otherwise it says why, in Foundry's words for the failure's code,
 // with Try again on the same sign-in, so an agent waiting on it follows.
+// A GitHub sign-in going back to the wizard or Generate that reads nothing
+// for want of Helix Foundry's GitHub App stops here at the install step
+// first, since those pages don't show what a connector can't read; the
+// connector's own page shows the step itself.
 
 // How often a sign-in being finished is read, and for how long: the
 // backend gives a finish 60 s of its own.
@@ -71,6 +77,15 @@ type Phase =
   // `stale`: its code had outlived a code's 90 s when it came back.
   | { kind: "ended"; signIn: ConnectorSignIn; stale: boolean }
   | { kind: "refused"; message: string }
+  // Connected, but GitHub's app isn't installed where it reads: install it,
+  // or skip to `to`, where the sign-in goes back to.
+  | {
+      kind: "install";
+      problem: string;
+      installUrl: string;
+      install: Omit<PendingInstall, "at">;
+      skip: () => void;
+    }
   // This tab started no sign-in, or holds none any more.
   | { kind: "lost" };
 
@@ -169,17 +184,17 @@ export function ConnectCallbackPage() {
         trackEvent("connector_created", {
           kind: entry.kind as ConnectorKindName,
         });
-      forgetConnect(tabStorage());
       await Promise.all(
         ["connectors", "document-sets"].map((key) =>
           qc.invalidateQueries({ queryKey: [entry.workspaceId, key] }),
         ),
       );
-      notify(
-        entry.connectorId
-          ? `Signed in again. ${s.name || provider} syncs now`
-          : `Connected ${s.name || provider}. Its first sync is queued`,
-      );
+      if (answer)
+        notify(
+          entry.connectorId
+            ? `Signed in again. ${s.name || provider} syncs now`
+            : `Connected ${s.name || provider}. Its first sync is queued`,
+        );
       // The page's own picks go back to it, the new connector among them.
       const arrival: SignedInArrival & { picks?: ReturnPicks } = {
         ...(s.discoveryProblem ? { discoveryProblem: s.discoveryProblem } : {}),
@@ -188,10 +203,45 @@ export function ConnectCallbackPage() {
           ? { picks: withConnected(entry.picks, s.connectorId) }
           : {}),
       };
-      navigate(connectedPath(entry, s.connectorId, paths.connection), {
-        replace: true,
-        state: arrival,
-      });
+      // The entry is kept until the tab leaves the callback, so a reload of
+      // the install step reads the sign-in again and shows the step again.
+      const to = connectedPath(entry, s.connectorId, paths.connection),
+        go = () => {
+          forgetConnect(tabStorage());
+          navigate(to, { replace: true, state: arrival });
+        };
+      const toConnection =
+        new URL(to, "https://foundry.invalid").pathname ===
+        paths.connection(s.connectorId);
+      if (
+        entry.kind === "github" &&
+        !toConnection &&
+        needsGitHubInstall(s.discoveryProblem)
+      ) {
+        const kinds = await qc
+          .fetchQuery(connectorKindsQuery(entry.workspaceId))
+          .catch(() => undefined);
+        const installUrl = kinds?.kinds?.find((k) => k.kind === "github")
+          ?.github?.installUrl;
+        if (installUrl) {
+          // GitHub's return goes back with the page's picks, the new
+          // connector among them; the problem is the install's to fix.
+          const { discoveryProblem: _, ...state } = arrival;
+          return setPhase({
+            kind: "install",
+            problem: s.discoveryProblem!,
+            installUrl,
+            install: {
+              workspaceId: entry.workspaceId,
+              connectorId: s.connectorId,
+              to,
+              state,
+            },
+            skip: go,
+          });
+        }
+      }
+      go();
     })();
   }, []);
 
@@ -217,6 +267,14 @@ export function ConnectCallbackPage() {
           live
           title={`Finishing the sign-in with ${provider}…`}
           text="Foundry is saving the account and making the connection. This takes a few seconds."
+        />
+      ) : phase.kind === "install" ? (
+        <GitHubInstallStep
+          problem={phase.problem}
+          installUrl={phase.installUrl}
+          install={phase.install}
+          onInstall={() => forgetConnect(tabStorage())}
+          onSkip={phase.skip}
         />
       ) : phase.kind === "refused" ? (
         <Callout

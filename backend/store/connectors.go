@@ -58,16 +58,7 @@ FROM connectors WHERE workspace_id=? AND deleted_at IS NULL ORDER BY created_at,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.Connector
-	for rows.Next() {
-		c, err := scanConnector(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanConnector)
 }
 
 func (s *mysqlDB) UpdateConnector(ctx context.Context, workspaceID, id string, update model.ConnectorUpdate) error {

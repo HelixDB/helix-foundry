@@ -2792,8 +2792,41 @@ describe("review decisions", () => {
       "the review is missing its decision identity",
     ]);
     expect(
-      refusal(await settle({ reason: "unverified" }, body.decision)),
+      refusal(await settle({ reason: "violation" }, body.decision)),
     ).toEqual([400, "this review kind cannot be settled"]);
+    expect(
+      refusal(await settle({ reason: "unverified" }, body.decision)),
+    ).toEqual([400, "this review requires a release decision"]);
+    const held = (key = "a".repeat(64)) => ({
+      reason: "low_confidence",
+      type: "",
+      claim_key: key,
+      suggested_link: "signed_with",
+      statement: "{}",
+    });
+    const release = { release: { statementHash: "0".repeat(64) } };
+    expect(refusal(await settle(held(""), release))).toEqual([
+      400,
+      "this review is missing its identity; start a new load before settling it",
+    ]);
+    expect(
+      refusal(await settle({ ...held(), statement: "" }, release)),
+    ).toEqual([
+      400,
+      "this review is missing its identity; start a new load before settling it",
+    ]);
+    expect(refusal(await settle(held(), release))).toEqual([
+      400,
+      "this claim reads differently now; reload the review and approve what it says",
+    ]);
+    expect(refusal(await settle({ reason: "unresolved" }, release))).toEqual([
+      400,
+      "this review requires a resolve decision",
+    ]);
+    expect(refusal(await settle(held(), { release: true }))).toEqual([
+      400,
+      "choose a candidate, not in data, or a property value",
+    ]);
     expect(
       refusal(
         await settle({ reason: "ambiguous" }, { prop: { integer: "1" } }),
@@ -2984,6 +3017,26 @@ describe("review decisions", () => {
       entity_key: "cus_GLOBEX01",
       candidates: ["cus_GLOBEX01"],
     });
+  });
+
+  it("lists a legal form review's choice only, and settles it by a name", async () => {
+    Object.assign(config, { documentLegalForm: true });
+    await uploaded("variant.md", variant);
+    const g = await loaded("first"),
+      rv = reviews(g)[0]!;
+    expect(rv.props).toMatchObject({
+      reason: "legal_form",
+      entity_key: "cus_GLOBEX01",
+      candidates: ["cus_GLOBEX01"],
+    });
+    expect(
+      [...g.nodes()].some((n) => n.props.resolved_by === "legal_form"),
+    ).toBe(true);
+    const key = String(rv.props.review_key);
+    const settled = await call("POST", `${O}/reviews/${key}:settle`, {
+      decision: { resolve: { notInData: true } },
+    });
+    expect(settled.status).toBe(200);
   });
 
   it("reads into a load the decisions saved when it was created, catch-up extracts included", async () => {

@@ -17,6 +17,7 @@ import { Callout } from "./parts";
 import { ontologyQueries } from "./queries";
 import { useOntology } from "./scope";
 import type { Sources } from "./sources";
+import { isRecord } from "../../../shared/json";
 
 // Building blocks both formats' tabs use: type cards, property lists and the
 // line naming a synced table.
@@ -228,10 +229,9 @@ export function CardFields({ card }: { card: unknown }) {
 
 /** Preserve untyped engine fields, including unknown verdicts and measured counts. */
 export function EvidenceFields({ value }: { value: unknown }) {
-  const fields: [string, unknown][] =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? Object.entries(value)
-      : [["Result", value]];
+  const fields: [string, unknown][] = isRecord(value)
+    ? Object.entries(value)
+    : [["Result", value]];
   return (
     <dl className="hf-kv">
       {fields.map(([key, field]) => (

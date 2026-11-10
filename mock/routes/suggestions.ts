@@ -14,8 +14,11 @@ import { isScope, ontologyOf } from "./ontologies";
 // audited, and lists its open findings by support (backed by two documents,
 // or by rows), with its latest run; a manager dismisses an open one, which
 // then leaves the list. Each finding's JSON is the engine's Finding
-// (audit_result.json `$defs/Finding`), which the unit tests hold to the
-// vendored schema.
+// (audit_result.json `$defs/Finding`) as a 4.8.0 agent writes it, which the
+// unit tests hold to the vendored schema: two relationships no link covers
+// (one an existing link would, so it proposes a route; one no link would,
+// so it proposes nothing), a name that resolved to no one, and rows that
+// didn't load.
 //
 // Knobs, through POST /__mock/config: `healEnabled: false` (a Foundry
 // whose foundry.heal.enabled is off: no audit runs), `healRun: "running" |
@@ -60,6 +63,9 @@ export const SUGGESTION_FINDINGS: {
       signal: {
         kind: "unmatched",
         canonical: "supplier_of",
+        // 4.8.0 gathers a suggestion under the declared name it starts
+        // with: these reports took two forms.
+        spellings: ["supplier_of", "supplier_of_packaging"],
         set: ACME_GENERAL,
         backing: {
           count: 12,
@@ -86,7 +92,46 @@ export const SUGGESTION_FINDINGS: {
         set: ACME_GENERAL,
         links: ["supplies"],
         target: { count: "unmatched", canonicals: ["supplier_of"] },
+        gathered: true,
       },
+    },
+  },
+  {
+    support: 9,
+    sources: 4,
+    finding: {
+      fingerprint: fingerprint("d"),
+      // A relationship the ontology declares no link for: no proposal.
+      signal: {
+        kind: "unmatched",
+        canonical: "subsidiary_of",
+        spellings: ["subsidiary_of"],
+        set: ACME_GENERAL,
+        backing: {
+          count: 9,
+          sources: 4,
+          examples: [
+            {
+              doc_id: "doc_acme_msa",
+              quote:
+                "Globex Freight, a subsidiary of Globex,\nhandles delivery.",
+            },
+            {
+              doc_id: "doc_acme_sow",
+              quote: "Initech Labs is a wholly owned subsidiary of Initech.",
+            },
+            {
+              doc_id: "doc_acme_renewal",
+              quote: "Acme Freight signs as a subsidiary of Acme.",
+            },
+            {
+              doc_id: "doc_acme_order",
+              quote: "Orders may come from any subsidiary of Acme.",
+            },
+          ],
+        },
+      },
+      proposal: null,
     },
   },
   {
@@ -127,6 +172,7 @@ export const SUGGESTION_FINDINGS: {
         proposal: "draft",
         brief: { brief: "mapping", mapping: "customers" },
         target: { count: "row_errors", mapping: "customers" },
+        origin: "finding",
       },
     },
   },

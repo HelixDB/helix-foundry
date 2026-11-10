@@ -4,7 +4,6 @@
 export { cx as cn } from "../../../kit";
 
 export const MONO = "ex-mono";
-export const FOCUS_RING = "";
 export const ICON_BUTTON = "ex-icon-btn";
 export const SMALL_ICON_BUTTON = "ex-icon-btn is-sm";
 export const OUTLINE_BUTTON = "ex-btn";

@@ -125,7 +125,9 @@ import { sourceId } from "./ontology-agent";
 // phase takes `loadStepMs` (one step per document). Test knobs through POST /__mock/config: `loadOutcome` "fail"
 // (the ingest fails), "sources_changed" (the tables were re-synced while the
 // load ran) or "budget_exhausted" (the spending cap stops it after one
-// document), `documentOutcome` "fail" (reading a document fails) and
+// document), `documentOutcome` "fail" (reading a document fails),
+// `documentUnmatched` (a sentence stating a relationship no link covers,
+// such as "supplies", is an "unmatched" review) and
 // `deleteOutcome` "fail" (a delete fails for good: delete_failed). A
 // database still starting (`startingQueries` in ./databases.ts) refuses an
 // ingest's first write: the attempt fails, and the load waits, queued with
@@ -157,6 +159,16 @@ type Knobs = {
   loadOutcome?: Outcome;
   documentOutcome?: "succeed" | "fail";
   documentAdjudicated?: boolean;
+  documentLegalForm?: boolean;
+  // Sentences stating a relationship no link covers are "unmatched" reviews.
+  documentUnmatched?: boolean;
+  documentHeld?:
+    | "refused"
+    | "legal_form"
+    | "differs"
+    | "unverified"
+    | "one_end"
+    | "no_statement";
   deleteOutcome?: "succeed" | "fail";
   readErrors?: Record<string, "budget" | "hub" | "invalid">;
   // The next n reads find every read slot taken.
@@ -307,6 +319,9 @@ onReset(() => {
   delete knobs.loadOutcome;
   delete knobs.documentOutcome;
   delete knobs.documentAdjudicated;
+  delete knobs.documentLegalForm;
+  delete knobs.documentHeld;
+  delete knobs.documentUnmatched;
   delete knobs.deleteOutcome;
   delete knobs.readErrors;
   delete knobs.readsBusy;
@@ -1055,11 +1070,17 @@ function read(j: StoredJob, documentId: string, at: string) {
     ontology,
     scope,
     loadById(j.loadId)?.decisions || [],
-    knobs.documentAdjudicated === true,
+    knobs.documentLegalForm
+      ? "legal_form"
+      : knobs.documentAdjudicated
+        ? "adjudicated"
+        : undefined,
+    knobs.documentHeld,
     {
       model: aiModel(j.workspaceId, "extract") || MODEL,
       verifier: aiModel(j.workspaceId, "verify") || VERIFIER,
     },
+    knobs.documentUnmatched,
   );
   if (outcome.kind === "already_ingested") return;
   // Stored, not read: no model call, nothing spent.

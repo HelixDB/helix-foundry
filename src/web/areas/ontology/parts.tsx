@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -32,7 +32,7 @@ import {
 } from "../../kit";
 import { sentence } from "../../api";
 import { paths } from "../../paths";
-import { useWorkspace, type WorkspaceRole } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { SettingsLinked } from "../workspace/ai-gate";
 import { DASHBOARD_URL } from "../workspace/members";
 import {
@@ -52,10 +52,6 @@ import { ontologyName, useOntology } from "./scope";
 import { useAccessCheck } from "../workspace/access-guard";
 
 // Pieces several Ontology pages share.
-
-/** Owners and admins manage ontologies (workspace.ontology.manage). */
-export const canManage = (role: WorkspaceRole) =>
-  role === "owner" || role === "admin";
 
 const statuses: Record<string, Status> = {
   ONTOLOGY_GENERATION_STATUS_QUEUED: "queued",
@@ -428,12 +424,6 @@ export function GenerateButton({
       Generate
     </ButtonLink>
   );
-}
-
-/** A link to a version, by number. */
-export function VersionLink({ id, version }: { id: string; version?: number }) {
-  const { id: o } = useOntology();
-  return <Link to={paths.version(o, id)}>Version {version ?? "?"}</Link>;
 }
 
 /**

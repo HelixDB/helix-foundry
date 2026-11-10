@@ -221,7 +221,7 @@ func (k *stripeKind) eventsSince(ctx context.Context, header http.Header, since 
 // eventPage lists one page of events. Stripe refuses an ending_before event
 // it no longer lists with a 400 naming that parameter: the cursor expired.
 func (k *stripeKind) eventPage(ctx context.Context, header http.Header, query url.Values) (stripeEventPage, error) {
-	status, body, err := k.get(ctx, header, stripeEventsPath, query)
+	status, body, err := fetchGet(ctx, k.http, k.base+stripeEventsPath, query, header)
 	if err == nil && status == http.StatusBadRequest && query.Has("ending_before") {
 		var refusal struct {
 			Error struct {
@@ -245,7 +245,7 @@ func (k *stripeKind) eventPage(ctx context.Context, header http.Header, query ur
 // refetch upserts one changed object as the full read writes it, deleting it
 // when Stripe no longer has it. A parent's children are listed again in place of its old ones.
 func (k *stripeKind) refetch(ctx context.Context, header http.Header, table, id string, follow map[string]bool, w ChangeWriter) error {
-	status, body, err := k.get(ctx, header, "/v1/"+table+"/"+url.PathEscape(id), nil)
+	status, body, err := fetchGet(ctx, k.http, k.base+"/v1/"+table+"/"+url.PathEscape(id), nil, header)
 	if err == nil && status == http.StatusNotFound {
 		return removeStripe(w, follow, table, id)
 	}

@@ -198,7 +198,7 @@ export function LoadFailedState({
   stage?: "labels" | "sample";
   onRetry: () => void;
 }) {
-  const description = describeFailure(failure, "read");
+  const description = describeFailure(failure);
   const timeout = isTimeout(failure);
   if (
     stage === "labels" &&

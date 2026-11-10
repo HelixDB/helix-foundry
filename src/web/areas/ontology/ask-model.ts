@@ -29,6 +29,7 @@ import { ENRICHMENT_SOURCE } from "./enrichment-fields";
 import { versionFormat } from "./format";
 import { readAgentBundle, withLoad } from "./model";
 import { ontologyPaths } from "./paths";
+import { isRecord } from "../../../shared/json";
 
 // The Ask panel's logic: a question's events
 // folded into steps, a typed query as a readable path, an answer's blocks as
@@ -37,8 +38,6 @@ import { ontologyPaths } from "./paths";
 // ask_result.json) without trusting it: model and document text is only
 // ever text, never markup, links or images.
 
-const isObj = (x: unknown): x is Record<string, unknown> =>
-  !!x && typeof x === "object" && !Array.isArray(x);
 const str = (x: unknown) => (typeof x === "string" ? x : undefined);
 const num = (x: unknown) =>
   typeof x === "number" && Number.isFinite(x) ? x : undefined;
@@ -63,9 +62,9 @@ const json = (s: string): unknown => {
  * parseTarget({ link: "https://example.com" }); // undefined
  */
 export function parseTarget(x: unknown): CitationTarget | undefined {
-  if (!isObj(x)) return undefined;
+  if (!isRecord(x)) return undefined;
   const [kind, v] = Object.entries(x)[0] ?? [];
-  if (Object.keys(x).length !== 1 || !isObj(v)) return undefined;
+  if (Object.keys(x).length !== 1 || !isRecord(v)) return undefined;
   switch (kind) {
     case "entity": {
       const e = entityRef(v);
@@ -163,7 +162,7 @@ const isTime = (x: unknown): x is string =>
 export function parseValid(
   x: unknown,
 ): { from: string; to?: string; day?: string } | undefined {
-  if (!isObj(x)) return undefined;
+  if (!isRecord(x)) return undefined;
   const { from, to, day } = x;
   if (!isTime(from)) return undefined;
   if (to != null && !(isTime(to) && Date.parse(to) > Date.parse(from)))
@@ -185,9 +184,9 @@ export function parseValid(
  * parseVersionOf({ violation: { constraint: "c", key: "k" } }); // undefined: a record is `record`
  */
 function parseVersionOf(x: unknown): VersionOf | undefined {
-  if (!isObj(x)) return undefined;
+  if (!isRecord(x)) return undefined;
   const [kind, v] = Object.entries(x)[0] ?? [];
-  if (Object.keys(x).length !== 1 || !isObj(v)) return undefined;
+  if (Object.keys(x).length !== 1 || !isRecord(v)) return undefined;
   switch (kind) {
     case "entity":
     case "fact": {
@@ -225,7 +224,7 @@ const wheres = (x: unknown): QueryWhere[] | undefined => {
   if (x === undefined || x === null) return [];
   if (!Array.isArray(x)) return undefined;
   const list = x.map((w) =>
-    isObj(w) && str(w.prop) && OPS.has(w.op as QueryWhere["op"])
+    isRecord(w) && str(w.prop) && OPS.has(w.op as QueryWhere["op"])
       ? ({ prop: w.prop, op: w.op, value: w.value } as QueryWhere)
       : undefined,
   );
@@ -241,12 +240,13 @@ const position = (x: unknown) => {
  * shape isn't one: the page then shows its JSON only.
  */
 export function parseQuery(x: unknown): OntologyQuery | undefined {
-  if (!isObj(x) || !isObj(x.start) || !str(x.start.type)) return undefined;
+  if (!isRecord(x) || !isRecord(x.start) || !str(x.start.type))
+    return undefined;
   const startWhere = wheres(x.start.where);
   const steps = Array.isArray(x.steps ?? [])
     ? ((x.steps ?? []) as unknown[]).map((s) => {
-        const where = isObj(s) ? wheres(s.where) : undefined;
-        return isObj(s) &&
+        const where = isRecord(s) ? wheres(s.where) : undefined;
+        return isRecord(s) &&
           str(s.via) &&
           str(s.to) &&
           (s.dir === "out" || s.dir === "in") &&
@@ -257,8 +257,8 @@ export function parseQuery(x: unknown): OntologyQuery | undefined {
     : [undefined];
   const filters = Array.isArray(x.filters ?? [])
     ? ((x.filters ?? []) as unknown[]).map((f) => {
-        const at = isObj(f) ? position(f.at) : undefined;
-        if (!isObj(f) || at === undefined) return undefined;
+        const at = isRecord(f) ? position(f.at) : undefined;
+        if (!isRecord(f) || at === undefined) return undefined;
         for (const k of ["holds", "not_holds", "violates"] as const) {
           const name = str(f[k]);
           if (name)
@@ -289,10 +289,10 @@ export function parseQuery(x: unknown): OntologyQuery | undefined {
 }
 
 function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
-  if (!isObj(x)) return undefined;
-  if (isObj(x.rows) && Array.isArray(x.rows.columns)) {
+  if (!isRecord(x)) return undefined;
+  if (isRecord(x.rows) && Array.isArray(x.rows.columns)) {
     const columns = x.rows.columns.map((c) =>
-      isObj(c) && position(c.at) !== undefined
+      isRecord(c) && position(c.at) !== undefined
         ? {
             at: c.at as number,
             ...(str(c.prop) ? { prop: c.prop as string } : {}),
@@ -305,7 +305,7 @@ function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
       rows: {
         columns: columns as { at: number; prop?: string }[],
         order_by:
-          isObj(o) && position(o.at) !== undefined && str(o.prop)
+          isRecord(o) && position(o.at) !== undefined && str(o.prop)
             ? {
                 at: o.at as number,
                 prop: o.prop as string,
@@ -319,14 +319,14 @@ function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
     };
   }
   // A count at the last position leaves `distinct_at` out, or null.
-  if (isObj(x.count))
+  if (isRecord(x.count))
     return x.count.distinct_at === undefined || x.count.distinct_at === null
       ? { count: { distinct_at: null } }
       : position(x.count.distinct_at) !== undefined
         ? { count: { distinct_at: x.count.distinct_at as number } }
         : undefined;
   if (
-    isObj(x.group_count) &&
+    isRecord(x.group_count) &&
     position(x.group_count.at) !== undefined &&
     str(x.group_count.prop)
   )
@@ -341,7 +341,7 @@ function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
     };
   const a = x.aggregate;
   if (
-    isObj(a) &&
+    isRecord(a) &&
     ["sum", "avg", "min", "max"].includes(a.fn as string) &&
     position(a.at) !== undefined &&
     str(a.prop)
@@ -353,7 +353,7 @@ function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
         at: a.at as number,
         prop: a.prop as string,
         group_by:
-          isObj(g) && position(g.at) !== undefined && str(g.prop)
+          isRecord(g) && position(g.at) !== undefined && str(g.prop)
             ? { at: g.at as number, prop: g.prop as string }
             : null,
         ...(num(a.limit) !== undefined ? { limit: a.limit as number } : {}),
@@ -366,7 +366,7 @@ function parseReturn(x: unknown): OntologyQuery["return"] | undefined {
 /** One stored event's JSON as an AskEvent, or undefined when it isn't one. */
 export function parseAskEvent(eventJson: string): AskEvent | undefined {
   const x = json(eventJson);
-  if (!isObj(x)) return undefined;
+  if (!isRecord(x)) return undefined;
   switch (x.event) {
     case "started":
       return { event: "started", model: str(x.model) || "" };
@@ -415,14 +415,14 @@ const numberOrNull = (x: unknown) => (x === null ? null : num(x));
  * parseOutput({ kind: "rows", rows: "<table>" }); // undefined
  */
 export function parseOutput(x: unknown): QueryOutput | undefined {
-  if (!isObj(x)) return undefined;
+  if (!isRecord(x)) return undefined;
   const cut = str(x.cut) ? { cut: x.cut as string } : {};
   const list = <T>(
     items: unknown,
     item: (v: Record<string, unknown>) => T | undefined,
   ): T[] | undefined => {
     const all = Array.isArray(items)
-      ? items.map((v) => (isObj(v) ? item(v) : undefined))
+      ? items.map((v) => (isRecord(v) ? item(v) : undefined))
       : [undefined];
     return all.every((v) => v !== undefined) ? (all as T[]) : undefined;
   };
@@ -512,7 +512,7 @@ export function parseVisuals(
   blocks: number,
 ): AskVisual[] {
   const visuals = (Array.isArray(x) ? x : []).flatMap((v): AskVisual[] => {
-    if (!isObj(v) || !queries.has(str(v.evidence_id) ?? "")) return [];
+    if (!isRecord(v) || !queries.has(str(v.evidence_id) ?? "")) return [];
     const placed = v.after !== undefined && v.after !== null;
     const after = position(v.after);
     if (placed && (after === undefined || after >= blocks)) return [];
@@ -583,11 +583,11 @@ const FAILURES = new Set<AskFailure>([
  */
 export function parseAskResult(resultJson: string): AskResult | undefined {
   const x = json(resultJson);
-  if (!isObj(x)) return undefined;
+  if (!isRecord(x)) return undefined;
   const queries = (Array.isArray(x.queries) ? x.queries : []).flatMap((q) => {
-    const query = isObj(q) ? parseQuery(q.query) : undefined;
-    const output = isObj(q) ? parseOutput(q.output) : undefined;
-    return isObj(q) && str(q.evidence_id) && query
+    const query = isRecord(q) ? parseQuery(q.query) : undefined;
+    const output = isRecord(q) ? parseOutput(q.output) : undefined;
+    return isRecord(q) && str(q.evidence_id) && query
       ? [
           {
             evidence_id: q.evidence_id as string,
@@ -597,7 +597,7 @@ export function parseAskResult(resultJson: string): AskResult | undefined {
         ]
       : [];
   });
-  const u = isObj(x.usage) ? x.usage : {};
+  const u = isRecord(x.usage) ? x.usage : {};
   const common = {
     queries,
     usage: {
@@ -610,10 +610,10 @@ export function parseAskResult(resultJson: string): AskResult | undefined {
   };
   switch (x.status) {
     case "answered": {
-      const answer = isObj(x.answer) ? x.answer : {};
+      const answer = isRecord(x.answer) ? x.answer : {};
       const raw = Array.isArray(answer.blocks) ? answer.blocks : [];
       const read = raw.map((b): AskBlock | undefined => {
-        if (!isObj(b)) return undefined;
+        if (!isRecord(b)) return undefined;
         if (typeof b.para === "string") return { para: b.para };
         if (Array.isArray(b.list))
           return {
@@ -634,8 +634,8 @@ export function parseAskResult(resultJson: string): AskResult | undefined {
       );
       const citations = (Array.isArray(x.citations) ? x.citations : []).flatMap(
         (c): AskCitation[] => {
-          const target = isObj(c) ? parseTarget(c.target) : undefined;
-          return isObj(c) && str(c.marker) && str(c.evidence_id) && target
+          const target = isRecord(c) ? parseTarget(c.target) : undefined;
+          return isRecord(c) && str(c.marker) && str(c.evidence_id) && target
             ? [
                 {
                   marker: c.marker as string,
@@ -936,7 +936,7 @@ export const isEnding = (tool: string) =>
 export function stepHeading(step: AskStep): string {
   if (
     step.tool === "find_entities" &&
-    !str(isObj(step.input) ? step.input.type : undefined)
+    !str(isRecord(step.input) ? step.input.type : undefined)
   )
     return "Searched every type";
   if (step.result?.kind !== "ended") return toolLabel(step.tool);
@@ -1063,23 +1063,27 @@ export function knownOf(
     (s) => s.tool === "answer" && s.result?.kind === "ended",
   );
   const written =
-    isObj(answered?.input) && Array.isArray(answered.input.citations)
+    isRecord(answered?.input) && Array.isArray(answered.input.citations)
       ? answered.input.citations
       : [];
   const byMarker = new Map(citations.map((c) => [c.marker, c.target]));
   const handles = new Map(
     written
       .flatMap((w): [unknown, EntityRef | undefined][] => {
-        const t = isObj(w) ? byMarker.get(str(w.marker) ?? "") : undefined;
-        const x = isObj(w) && isObj(w.target) ? w.target : {};
+        const t = isRecord(w) ? byMarker.get(str(w.marker) ?? "") : undefined;
+        const x = isRecord(w) && isRecord(w.target) ? w.target : {};
         if (!t) return [];
         if ("entity" in t) return [[x.entity, t.entity]];
-        if ("fact" in t && isObj(x.fact))
+        if ("fact" in t && isRecord(x.fact))
           return [
             [x.fact.subject, t.fact.subject],
             [x.fact.object, t.fact.object],
           ];
-        if ("derived" in t && isObj(x.derived) && Array.isArray(x.derived.args))
+        if (
+          "derived" in t &&
+          isRecord(x.derived) &&
+          Array.isArray(x.derived.args)
+        )
           return x.derived.args.map((h, i) => [h, t.derived.args[i]]);
         return [];
       })
@@ -1092,7 +1096,7 @@ export function knownOf(
       const i =
         s.tool === "find_entities" &&
         s.result?.kind === "recorded" &&
-        isObj(s.input)
+        isRecord(s.input)
           ? s.input
           : {};
       // Every type's lookup is keyed by no type, which no type is.
@@ -1131,16 +1135,16 @@ const predName = (pred: string) => pred.slice(pred.indexOf(":") + 1);
  * record, or an entity or, with `prop`, one of its properties.
  */
 const targetText = (i: Record<string, unknown>, known: Known) => {
-  const t = isObj(i.target) ? i.target : {};
+  const t = isRecord(i.target) ? i.target : {};
   const prop = str(i.prop);
-  if (isObj(t.fact) && str(t.fact.link)) {
+  if (isRecord(t.fact) && str(t.fact.link)) {
     const s = known.entity(t.fact.subject),
       o = known.entity(t.fact.object);
     return s && o
       ? `${refText(s, known)} ${t.fact.link} ${refText(o, known)}`
       : `a ${t.fact.link} fact`;
   }
-  const c = isObj(t.record) ? str(t.record.constraint) : undefined;
+  const c = isRecord(t.record) ? str(t.record.constraint) : undefined;
   if (c) return `a break of ${c}`;
   const e = known.entity(t.entity);
   const who = e ? refText(e, known) : "an entity";
@@ -1163,7 +1167,7 @@ const targetText = (i: Record<string, unknown>, known: Known) => {
  * stepInput({ callId: "e", tool: "changes", input: { since: "2026-10-01T00:00:00Z", limit: 10 } }, NOTHING_KNOWN); // "Changes since “2026-10-01T00:00:00Z”"
  */
 export function stepInput(step: AskStep, known: Known): string | undefined {
-  const i = isObj(step.input) ? step.input : {};
+  const i = isRecord(step.input) ? step.input : {};
   const type = str(i.type);
   switch (step.tool) {
     case "describe_type":
@@ -1251,7 +1255,7 @@ export function stepInput(step: AskStep, known: Known): string | undefined {
  * graphQuery({ callId: "b", tool: "query", input: { query: {} } }); // undefined
  */
 export function graphQuery(step: AskStep): string | undefined {
-  const i = isObj(step.input) ? step.input : {};
+  const i = isRecord(step.input) ? step.input : {};
   return step.tool === "helix_query" && i.query !== undefined
     ? JSON.stringify(i.query, null, 2)
     : undefined;

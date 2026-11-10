@@ -5,10 +5,16 @@ import {
   FOUNDRY_PROP_PREFIX,
   isFoundryLabel,
 } from "../../../shared/foundry-labels";
-import type { DynamicQueryRequest, JsonValue } from "./database-query";
+import {
+  readRequest,
+  type Ast,
+  type DynamicQueryRequest,
+  type ReadEntry,
+} from "./database-query";
 import { scopedPredicates, type Scope } from "./load-scope";
 
-import { settleable, type Settleable } from "../reviews/model";
+import { markDiffering, settleable, type Settleable } from "../reviews/model";
+import { isRecord } from "../../../shared/json";
 
 // What the website reads from an ontology's database, as v3 dynamic read
 // queries over the ontology agent's graph layout (C3), run with the user's
@@ -123,10 +129,8 @@ export type EntityRow = {
 };
 
 type Row = Record<string, unknown>;
-const isRow = (v: unknown): v is Row =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 const rows = (v: unknown): Row[] =>
-  Array.isArray(v) ? v.filter(isRow) : isRow(v) ? [v] : [];
+  Array.isArray(v) ? v.filter(isRecord) : isRecord(v) ? [v] : [];
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 const num = (v: unknown) =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -163,7 +167,6 @@ export function entityRow(r: Row): EntityRow | undefined {
 
 // ---------------------------------------------------------------- Request AST
 
-type Ast = { [key: string]: JsonValue };
 const label = (name: string): Ast => ({
   eq: { left: { property: "$label" }, right: { constant: { string: name } } },
 });
@@ -205,12 +208,9 @@ const edgeProps = (input: Ast): Ast => ({ edge_properties: { input } });
 
 const ENTITY = ["$id", "$label", "name", "entity_key", "norm_name"];
 
-type Entry = { name: string; root: Ast; returned?: boolean };
-type Param = { value: JsonValue; type: JsonValue };
-
 // The entities `review_nodes` concern, every property each (a property
 // review's stored value, a candidate's name), and which review each is of.
-const concernedEntries: Entry[] = [
+const concernedEntries: ReadEntry[] = [
   {
     name: "review_concerns",
     root: edgeProps(step("out_e", v("review_nodes"), E.CONCERNS)),
@@ -220,31 +220,6 @@ const concernedEntries: Entry[] = [
     root: valueMap(dedup(step("out", v("review_nodes"), E.CONCERNS))),
   },
 ];
-
-function request(
-  name: string,
-  entries: Entry[],
-  params: Record<string, Param> = {},
-): DynamicQueryRequest {
-  return {
-    request_type: "read",
-    query_name: name,
-    query: {
-      read: {
-        entries: entries.map((e) => ({
-          query: { name: e.name, root: e.root },
-        })),
-        returns: entries.filter((e) => e.returned !== false).map((e) => e.name),
-      },
-    },
-    parameters: Object.fromEntries(
-      Object.entries(params).map(([k, p]) => [k, p.value]),
-    ),
-    parameter_types: Object.fromEntries(
-      Object.entries(params).map(([k, p]) => [k, p.type]),
-    ),
-  };
-}
 
 // ---------------------------------------------------------------- A document
 
@@ -301,7 +276,7 @@ export function documentRequest(
   documentId: string,
   names: string[] = [],
 ): DynamicQueryRequest {
-  return request(
+  return readRequest(
     "foundry_document",
     [
       {
@@ -390,6 +365,10 @@ export function documentRequest(
           "$id",
           "reason",
           "review_key",
+          "claim_key",
+          "claim",
+          "statement",
+          "section",
           "type",
           "doc_id",
           "norm_name",
@@ -445,7 +424,7 @@ function concernedBy(data: Row): Map<number, EntityRow[]> {
 
 /** Reads documentRequest's answer; nothing in it is trusted. */
 export function parseDocument(body: unknown): DocumentGraph {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const sections = rows(data.sections)
     .flatMap((r): DocSection[] => {
       const dbId = int(r.$id),
@@ -543,7 +522,7 @@ export function parseDocument(body: unknown): DocumentGraph {
     sections,
     mentions,
     evidence,
-    reviews,
+    reviews: markDiffering(reviews),
     entities: [...entities.values()].sort(byEntity),
   };
 }
@@ -558,6 +537,8 @@ export type DocFact = {
   confidence?: number;
   evidenceCount?: number;
   quotes: DocEvidence[];
+  // Past what a read takes: whether it has an edge isn't known.
+  unread?: boolean;
 };
 
 /** The facts behind a document's quotes, by fact key (index-backed). Null when it has none. */
@@ -569,7 +550,7 @@ export function documentFactsRequest(
     ...new Map(evidence.map((e) => [e.factKey, e.link])).entries(),
   ].slice(0, LIMITS.documentFacts);
   if (!facts.length) return null;
-  return request(
+  return readRequest(
     "foundry_document_facts",
     facts.map(([, link], i) => ({
       name: `fact_${i}`,
@@ -592,14 +573,21 @@ export function parseDocumentFacts(
   body: unknown,
   doc: DocumentGraph,
 ): DocFact[] {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const byKey = new Map<string, DocFact>();
   const entities = new Map(doc.entities.map((e) => [e.dbId, e]));
+  const read = new Set(
+    [...new Set(doc.evidence.map((e) => e.factKey))].slice(
+      0,
+      LIMITS.documentFacts,
+    ),
+  );
   for (const e of doc.evidence) {
     const f = byKey.get(e.factKey) || {
       link: e.link,
       factKey: e.factKey,
       quotes: [],
+      ...(read.has(e.factKey) ? {} : { unread: true }),
     };
     f.quotes.push(e);
     byKey.set(e.factKey, f);
@@ -705,7 +693,7 @@ export function entityRequest(
     "key" in identity
       ? ["entity_key", identity.key]
       : ["norm_name", identity.name];
-  const sides = (["out", "in"] as const).flatMap((side): Entry[] => {
+  const sides = (["out", "in"] as const).flatMap((side): ReadEntry[] => {
     const edges = step(`${side}_e`, v("e"));
     return [
       {
@@ -737,7 +725,7 @@ export function entityRequest(
       },
     ];
   });
-  return request(
+  return readRequest(
     "foundry_entity",
     [
       {
@@ -796,6 +784,9 @@ export function entityRequest(
           "quote",
           "reason",
           "review_key",
+          "claim_key",
+          "claim",
+          "statement",
           "type",
           "norm_name",
           "entity_key",
@@ -904,7 +895,7 @@ const LAYOUT_PROPS = new Set([
 
 /** Reads entityRequest's answer; nothing in it is trusted. */
 export function parseEntity(body: unknown): EntityGraph {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const self = rows(data.entity)[0];
   const row = self && entityRow(self);
   const facts = (["out", "in"] as const).flatMap((direction) => {
@@ -1041,7 +1032,7 @@ export function parseEntity(body: unknown): EntityGraph {
       : null,
     facts,
     mentions,
-    reviews: reviews.slice(0, LIMITS.reviews),
+    reviews: markDiffering(reviews.slice(0, LIMITS.reviews)),
     violations: rows(data.violations).flatMap((r): Violation[] => {
       const constraint = str(r.constraint);
       return constraint
@@ -1223,6 +1214,8 @@ export function resolvedByText(r?: string): string | undefined {
       return "Linked by a person";
     case "adjudicated":
       return "Matched by the model";
+    case "legal_form":
+      return "By its legal form";
     default:
       return undefined;
   }
@@ -1247,9 +1240,9 @@ export function factEvidenceRequest(
     ...new Set(facts.flatMap((f) => (f.factKey ? [f.factKey] : []))),
   ].slice(0, LIMITS.evidenceFacts);
   if (!keys.length) return null;
-  return request(
+  return readRequest(
     "foundry_fact_evidence",
-    keys.flatMap((_, i): Entry[] => [
+    keys.flatMap((_, i): ReadEntry[] => [
       {
         name: `ev_${i}`,
         root: limit(
@@ -1294,7 +1287,7 @@ export function factEvidenceRequest(
 
 /** Each fact key's evidence, from factEvidenceRequest's answer. */
 export function parseFactEvidence(body: unknown): Map<string, Evidence[]> {
-  const data = isRow(body) ? body : {};
+  const data = isRecord(body) ? body : {};
   const out = new Map<string, Evidence[]>();
   for (const name of Object.keys(data)) {
     const i = /^evidence_(\d+)$/.exec(name)?.[1];
