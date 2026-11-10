@@ -1181,11 +1181,11 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	for _, d := range documents {
 		sent[d.DocID] = true
 	}
-	// released is the statement each release decision was sent with.
-	released := map[string]string{}
+	// released is each release decision sent, by its id.
+	released := map[string]sentRelease{}
 	for _, d := range decisions {
 		if d.Kind == model.FoundryReviewRelease {
-			released[d.DecisionID] = d.StatementHash
+			released[d.DecisionID] = sentRelease{doc: d.DocID, hash: d.StatementHash}
 		}
 	}
 	artifacts := map[string]string{}
@@ -1253,6 +1253,10 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 		return false, retry("the database refused a write; Helix will retry", errors.New(result.Error))
 	}
 }
+
+// sentRelease is a release decision an Extract sent: its document, and the
+// statement it binds.
+type sentRelease struct{ doc, hash string }
 
 // recordRemoval forgets a document the agent took out of the job's load,
 // once: a lost lease ends the attempt, and any other failure leaves it for
@@ -1455,13 +1459,15 @@ func (r *runner) saveArtifact(ctx context.Context, job *model.FoundryGraphJob, e
 // didn't reach wait for the next load.
 //
 // What the run did with each release decision sent with the document
-// (released: the statement each was sent with) is recorded on the load's
-// decisions with it. A document a resend job sent ends its request too
-// (attempt.resends), and one the engine failed there is recorded nowhere: its
-// row says what its commit put in the load, which a failure to replay it
-// doesn't change, and resend ends its request once the run has.
+// (released) is recorded on the load's decisions with it. A document a resend
+// job sent ends its request too (attempt.resends), and one the engine failed
+// there is recorded nowhere: its row says what its commit put in the load,
+// which a failure to replay it doesn't change, and resend ends its request
+// once the run has. A decision a resend sent that the engine's event says
+// nothing of is refused as unanswered, so its card never waits for a word
+// that isn't coming.
 func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob, e json.RawMessage, sent map[string]bool,
-	artifacts map[string]string, released map[string]string, resolved ai.Resolved, a *attempt) error {
+	artifacts map[string]string, released map[string]sentRelease, resolved ai.Resolved, a *attempt) error {
 	event, err := ontologyagent.DecodeDocumentEvent(e)
 	if err != nil {
 		return permanent("the ontology agent sent a document Helix can't read", err)
@@ -1494,19 +1500,33 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 	if key, ok := artifacts[event.DocID]; ok {
 		extraction.ArtifactKey = &key
 	}
+	said := map[string]bool{}
 	for _, release := range event.Releases {
-		hash, ok := released[release.DecisionID]
-		if !ok {
-			log.From(ctx).Warn("graph job: the ontology agent said what became of a release Helix didn't send", "job", job.ID,
+		of, ok := released[release.DecisionID]
+		if !ok || of.doc != event.DocID {
+			log.From(ctx).Warn("graph job: the ontology agent said what became of a release Helix didn't send with the document", "job", job.ID,
 				"document", event.DocID, "decision", release.DecisionID)
 			continue
 		}
+		said[release.DecisionID] = true
 		releases.WithLabelValues(string(release.Outcome.Kind), release.Outcome.Reason).Inc()
 		extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
-			DecisionID: release.DecisionID, StatementHash: hash, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
+			DecisionID: release.DecisionID, StatementHash: of.hash, Kind: release.Outcome.Kind, Reason: release.Outcome.Reason,
 		})
 	}
 	owed := a.resends[event.DocID]
+	if owed != nil && event.Outcome.Kind != ontologyagent.OutcomeFailed {
+		for id, of := range released {
+			if of.doc != event.DocID || said[id] {
+				continue
+			}
+			log.From(ctx).Error("graph job: the ontology agent said nothing of a release sent with a document", "job", job.ID,
+				"document", event.DocID, "decision", id)
+			extraction.Releases = append(extraction.Releases, model.FoundryReleaseOutcome{
+				DecisionID: id, StatementHash: of.hash, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered,
+			})
+		}
+	}
 	if owed != nil && event.Outcome.Kind == ontologyagent.OutcomeFailed {
 		log.From(ctx).Warn("graph job: the ontology agent failed a document sent again", "job", job.ID, "document", event.DocID,
 			"code", event.Outcome.Code, "retryable", event.Outcome.Retryable)

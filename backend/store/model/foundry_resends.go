@@ -81,6 +81,9 @@ const (
 	FoundryReleaseDocumentFailed = "document_failed"
 	// FoundryReleaseJobFailed: the resend job ended failed.
 	FoundryReleaseJobFailed = "job_failed"
+	// FoundryReleaseUnanswered: the engine ended the document a resend sent
+	// and said nothing of this decision, which the contract has it do.
+	FoundryReleaseUnanswered = "unanswered"
 )
 
 // FoundryReleaseOutcomeKind is what the engine did with a release decision of
@@ -117,8 +120,9 @@ type FoundryReleaseOutcome struct {
 // which only a release does in place, so it was written, as when the event
 // that said so was lost; for a carried one no review of this load was ever
 // read, so the load holds none (missed); any other status is what an earlier
-// event said, and stays. ok is false for an outcome the backend doesn't know,
-// which changes nothing.
+// event said, and stays: ok is false, and nothing changes. An outcome the
+// backend doesn't know wrote nothing it can vouch for: the decision is
+// refused, with the outcome's name as its reason, so none waits for ever.
 func (s FoundryReleaseStatus) After(o FoundryReleaseOutcome) (status FoundryReleaseStatus, reason string, ok bool) {
 	switch o.Kind {
 	case FoundryReleaseOutcomeWritten:
@@ -134,8 +138,9 @@ func (s FoundryReleaseStatus) After(o FoundryReleaseOutcome) (status FoundryRele
 		case FoundryReleaseCarried:
 			return FoundryReleaseMissed, "", true
 		}
+		return s, "", false
 	}
-	return s, "", false
+	return FoundryReleaseRefused, string(o.Kind), true
 }
 
 // FoundryDecisionApplied is what became of a decision in the ontology's

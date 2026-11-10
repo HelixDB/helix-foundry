@@ -1484,8 +1484,8 @@ message FoundryDecisionApplied {
   // document, read again, no longer states it there), too_large,
   // not_allowed. The backend's: not_replayed (the document's saved
   // extraction didn't replay, so applying it would have cost a model call: a
-  // new load applies it), document_gone, document_failed, job_failed. A
-  // reader shows a reason it doesn't know as it is.
+  // new load applies it), document_gone, document_failed, job_failed,
+  // unanswered. A reader shows a reason it doesn't know as it is.
   string reason = 2;
   // When a job said so; unset while pending.
   google.protobuf.Timestamp at = 3;

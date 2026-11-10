@@ -8963,8 +8963,8 @@ type FoundryDecisionApplied struct {
 	// document, read again, no longer states it there), too_large,
 	// not_allowed. The backend's: not_replayed (the document's saved
 	// extraction didn't replay, so applying it would have cost a model call: a
-	// new load applies it), document_gone, document_failed, job_failed. A
-	// reader shows a reason it doesn't know as it is.
+	// new load applies it), document_gone, document_failed, job_failed,
+	// unanswered. A reader shows a reason it doesn't know as it is.
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	// When a job said so; unset while pending.
 	At *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=at,proto3" json:"at,omitempty"`

@@ -277,6 +277,33 @@ func TestResend(t *testing.T) {
 		}
 	})
 
+	// The engine ends a document and says nothing of a decision sent with it,
+	// which the contract has it do: the decision is refused as unanswered
+	// rather than left waiting, and what it did say of another stands.
+	t.Run("a decision the engine says nothing of is refused, not left waiting", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a")
+		second := approval("2", "doc-a", hashB)
+		second.ClaimSpan = &model.FoundryClaimSpan{Section: 1, Start: 0, End: 4}
+		h.store.decisions = []*model.FoundryReviewDecision{approval("1", "doc-a", hashA), second, approval("3", "doc-b", hashA)}
+		h.agent.extract = func(_ string, stream agentv1.Agent_ExtractServer) error {
+			return extractEvents(stream, []string{
+				extracted[0], resent("doc-a", 1, `[{"decision_id":"1","outcome":{"kind":"written"}},{"decision_id":"3","outcome":{"kind":"written"}}]`),
+				`{"event":"extract_finished"}`,
+			}, `{"status":"done","totals":`+totals+`}`)
+		}
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		want := []model.FoundryReleaseOutcome{
+			{DecisionID: "1", StatementHash: hashA, Kind: model.FoundryReleaseOutcomeWritten},
+			{DecisionID: "2", StatementHash: hashB, Kind: model.FoundryReleaseOutcomeRefused, Reason: model.FoundryReleaseUnanswered},
+		}
+		if got := h.store.extractions["doc-a"]; got == nil || !reflect.DeepEqual(got.Releases, want) {
+			t.Fatalf("recorded %+v", got)
+		}
+	})
+
 	// Another worker took the job: nothing more is recorded, and the attempt
 	// is retried, which the claim that took it makes moot.
 	t.Run("a lost lease ends the attempt", func(t *testing.T) {
