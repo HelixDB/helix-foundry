@@ -89,13 +89,20 @@ export const TRACKER = {
  * nothing of what it holds, so page views (paths masked, no title) and the
  * custom events only. No web vitals or errors (their paths are unmasked,
  * and an error may quote data), no outgoing links (a document's source),
- * no interactions (they name what was clicked) and no replay.
+ * no interactions (they name what was clicked) and no replay. Each is off
+ * by name, since the tracker script (a new one with each SDK) sets its
+ * own defaults.
  */
 export const LOCAL_TRACKER = {
   clientId: DATABUDDY_CLIENT_ID,
   maskPatterns: MASK_PATTERNS,
   filter: withoutTitle,
+  trackWebVitals: false,
+  trackErrors: false,
+  trackOutgoingLinks: false,
   trackInteractions: false,
+  trackAttributes: false,
+  replay: false,
 };
 
 /**

@@ -828,12 +828,17 @@ describe("a local install", () => {
   it("identifies no one, and tags events with the workspace's id alone", async () => {
     const a = await loadLocal();
     a.identifyUser("user_1", { email: "ada@example.com", name: "Ada" });
-    a.workspaceOpened("ws_1", "Acme");
-    expect(sdk.identify).not.toHaveBeenCalled();
-    expect(sdk.setGlobalProperties).toHaveBeenCalledWith({
-      workspace_id: "ws_1",
-      workspace_name: undefined,
+    a.workspaceOpened({
+      id: "ws_1",
+      slug: "acme",
+      name: "Acme",
+      role: "owner",
     });
+    expect(sdk.identify).not.toHaveBeenCalled();
+    // No email, name, slug or role, so no owner either.
+    expect(sdk.setGlobalProperties.mock.calls).toEqual([
+      [{ workspace_id: "ws_1", workspace_owner: undefined }],
+    ]);
   });
 
   it("loads a tracker that records page views and events only", async () => {
@@ -846,7 +851,12 @@ describe("a local install", () => {
       clientId: "client-local",
       maskPatterns: MASK_PATTERNS,
       filter: withoutTitle,
+      trackWebVitals: false,
+      trackErrors: false,
+      trackOutgoingLinks: false,
       trackInteractions: false,
+      trackAttributes: false,
+      replay: false,
     });
   });
 });
@@ -858,7 +868,12 @@ describe("stopSending", () => {
     a.trackEvent("onboarding_shown");
     a.jobStarted({ job: "load" }, "load_1");
     a.identifyUser("user_1", { email: "ada@example.com" });
-    a.workspaceOpened("ws_1", "Acme");
+    a.workspaceOpened({
+      id: "ws_1",
+      slug: "acme",
+      name: "Acme",
+      role: "owner",
+    });
     await a.signInStarted("github");
     expect(sent()).toEqual([]);
     expect(sdk.identify).not.toHaveBeenCalled();
