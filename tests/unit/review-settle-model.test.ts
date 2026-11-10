@@ -43,6 +43,323 @@ const prop = {
   candidates: [],
 };
 
+const held = {
+  review_key: "held-key",
+  reason: "low_confidence",
+  doc_id: "doc",
+  claim_key: "a".repeat(64),
+  section: 1,
+  start: 4,
+  end: 20,
+  suggested_link: "promised_to",
+  claim: JSON.stringify({
+    about: [{ type: "Contract" }, { type: "Customer" }],
+  }),
+  statement: JSON.stringify({
+    subject: { type: "Commitment", name: "24-hour support" },
+    object: { type: "Account", name: "Acme Ltd" },
+    props: { due_on: "2027-01-01", nested: {} },
+  }),
+};
+const release = {
+  kind: "release",
+  reviewId: "held-key",
+  docId: "doc",
+  claimKey: held.claim_key,
+  section: 1,
+  start: 4,
+  end: 20,
+  link: "promised_to",
+  statement: {
+    subject: { type: "Commitment", name: "24-hour support" },
+    object: { type: "Account", name: "Acme Ltd" },
+    props: { due_on: "2027-01-01", nested: "{}" },
+  },
+  stored: held.statement,
+  named: true,
+} as const;
+const decided = {
+  kind: "release",
+  type: "",
+  docId: "doc",
+  claimKey: held.claim_key,
+  claimSection: 1,
+  claimStart: 4,
+  claimEnd: 20,
+  statementHash: "b".repeat(64),
+} as const;
+describe("a held claim", () => {
+  it.each(["low_confidence", "unverified"])(
+    "is approved at its place, with what it writes: %s",
+    (reason) => {
+      expect(model.settleable({ ...held, reason }, []).settle).toEqual(release);
+      expect(model.matchesReview(decided, release)).toBe(true);
+    },
+  );
+  it("is matched by its key and place", () => {
+    for (const other of [
+      { claimKey: "b".repeat(64) },
+      { docId: "other" },
+      { claimSection: 2 },
+      { claimStart: 5 },
+      { claimEnd: 21 },
+    ])
+      expect(model.matchesReview({ ...decided, ...other }, release)).toBe(
+        false,
+      );
+  });
+  it("says when reviews at one place state different things", () => {
+    const review = (name: string) =>
+      model.settleable(
+        {
+          ...held,
+          statement: JSON.stringify({
+            subject: { type: "Commitment", name },
+            object: { type: "Account", name: "Acme Ltd" },
+          }),
+        },
+        [],
+      );
+    const [one, other, alone] = model.markDiffering([
+      review("support"),
+      review("training"),
+      model.settleable({ ...held, section: 2 }, []),
+    ]);
+    expect(one!.settle).toMatchObject({ kind: "release", differs: true });
+    expect(other!.settle).toMatchObject({ kind: "release", differs: true });
+    expect(alone!.settle).not.toHaveProperty("differs");
+    const same = model.markDiffering([review("support"), review("support")]);
+    expect(same[0]!.settle).not.toHaveProperty("differs");
+  });
+  it("shows what the approval writes to the digit", () => {
+    const stored =
+      '{"subject":{"type":"A","name":"a"},"object":{"type":"B","name":"b"},' +
+      '"props":{"rate":0.0425,"share":0.12345,"seats":9007199254740993,"on":true,"due":"2027-01-01"}}';
+    const settle = model.settleable({ ...held, statement: stored }, []).settle;
+    expect(settle).toMatchObject({
+      kind: "release",
+      statement: {
+        props: {
+          rate: "0.0425",
+          share: "0.12345",
+          seats: "9007199254740993",
+          on: "true",
+          due: "2027-01-01",
+        },
+      },
+    });
+  });
+  it("hides no property it would write", () => {
+    const stored =
+      '{"subject":{"type":"A","name":"a"},"object":{"type":"B","name":"b"},"props":{"many":[1,2]}}';
+    expect(
+      model.settleable({ ...held, statement: stored }, []).settle,
+    ).toMatchObject({
+      statement: { props: { many: "[1,2]" } },
+    });
+  });
+  it("written before claims had keys or a place is loaded again", () => {
+    const { claim_key: _, ...keyless } = held;
+    expect(model.settleable(keyless, []).settle).toEqual({ kind: "stale" });
+    const { section: __, ...placeless } = held;
+    expect(model.settleable(placeless, []).settle).toEqual({ kind: "stale" });
+  });
+  it.each([
+    ["one end", JSON.stringify({ about: [{ type: "Contract" }] })],
+    ["no end", JSON.stringify({ about: [] })],
+    ["text that doesn't read", "{"],
+    ["nothing", undefined],
+  ])("that names %s can be approved, and says so", (_, claim) => {
+    expect(model.settleable({ ...held, claim }, []).settle).toEqual({
+      ...release,
+      named: false,
+    });
+  });
+  it.each([
+    ["nothing", undefined],
+    ["text that doesn't read", "{"],
+    ["no ends", "{}"],
+    [
+      "an end with no name",
+      '{"subject":{"type":"A"},"object":{"type":"B","name":"b"}}',
+    ],
+  ])("whose statement is %s is loaded again", (_, stated) => {
+    expect(model.settleable({ ...held, statement: stated }, []).settle).toEqual(
+      { kind: "stale" },
+    );
+  });
+  it("with no link is loaded again", () => {
+    const { suggested_link: _, ...linkless } = held;
+    expect(model.settleable(linkless, []).settle).toEqual({ kind: "stale" });
+  });
+  it("is hashed as the backend and the engine hash it", async () => {
+    // The value held::Statement::hash and FoundryStatementHash are tested to give.
+    const stored =
+      '{"subject":{"type":"Company","name":"Zoë Ltd"},"object":{"type":"Company","name":"Acme"},"props":{"since":"2024"}}';
+    const hash = await model.statementHash("partner_of", stored);
+    expect(hash).toBe(
+      "2c785db79d066c94d16e140edb1a8708834d7ecb12dda32c2f71dcdcc0ab0654",
+    );
+    expect(await model.statementHash("rival_of", stored)).not.toBe(hash);
+  });
+});
+
+describe("how approvals stand toward a held claim", () => {
+  const settle = model.settleable(held, []).settle as Extract<
+    model.Settle,
+    { kind: "release" }
+  >;
+  const read = "b".repeat(64);
+  const saved = (over: Partial<typeof decided> = {}) => ({
+    ...decided,
+    id: "d1",
+    ...over,
+  });
+  const other = "c".repeat(64);
+
+  it("finds the approval of this review", () => {
+    const s = model.approvalOf([saved()], settle, read, true);
+    expect(s).toMatchObject({ moved: false, earlier: false });
+    expect(s.saved?.id).toBe("d1");
+  });
+  it("says an approval of what it said before no longer stands", () => {
+    const d = saved({ statementHash: other as never });
+    expect(model.approvalOf([d], settle, read, true).moved).toBe(true);
+  });
+  it("waits for the statement's hash before it says so", () => {
+    const d = saved({ statementHash: other as never });
+    expect(model.approvalOf([d], settle, undefined, true).moved).toBe(false);
+  });
+  it("says neither on an older load, whose statement may be another's", () => {
+    const moved = saved({ statementHash: other as never });
+    expect(model.approvalOf([moved], settle, read, false).moved).toBe(false);
+    const elsewhere = saved({ claimKey: "e".repeat(64) as never });
+    expect(model.approvalOf([elsewhere], settle, read, false).earlier).toBe(
+      false,
+    );
+  });
+  it("tells a sibling claim at the sentence from this one's key moving", () => {
+    // Another claim of the sentence, another statement: nothing of this one.
+    const sibling = saved({
+      claimKey: "e".repeat(64) as never,
+      statementHash: other as never,
+    });
+    expect(model.approvalOf([sibling], settle, read, true)).toMatchObject({
+      saved: undefined,
+      moved: false,
+      earlier: false,
+    });
+    // This statement under another key: the claim's key moved.
+    const keyed = saved({ claimKey: "e".repeat(64) as never });
+    expect(model.approvalOf([keyed], settle, read, true).earlier).toBe(true);
+  });
+  it("doesn't look at another place's approval", () => {
+    const d = saved({
+      claimKey: "e".repeat(64) as never,
+      claimStart: 40 as never,
+      claimEnd: 60 as never,
+    });
+    expect(model.approvalOf([d], settle, read, true).earlier).toBe(false);
+  });
+});
+
+describe("what became of an approval", () => {
+  const review = model.settleable(held, []);
+  const place = { section: 1, start: 4, end: 20 };
+  const fact = (from: unknown, unread = false) =>
+    ({
+      link: "promised_to",
+      factKey: "f",
+      quotes: [{ ...place, quote: "q", link: "promised_to", factKey: "f" }],
+      ...(from ? { from } : {}),
+      ...(unread ? { unread } : {}),
+    }) as never;
+  const decision = { ...decided } as never;
+
+  it("is still held while its review is", () => {
+    expect(model.releaseStatus(decision, [review], [])).toBe("held");
+  });
+  it("is written when its quote stands on an edge", () => {
+    expect(model.releaseStatus(decision, [], [fact({ id: "e" })])).toBe(
+      "written",
+    );
+  });
+  it("wrote no link when its quote stands on none", () => {
+    expect(model.releaseStatus(decision, [], [fact(undefined)])).toBe(
+      "no_link",
+    );
+  });
+  it("isn't known past what a read takes, or where nothing is left", () => {
+    expect(model.releaseStatus(decision, [], [fact(undefined, true)])).toBe(
+      "unknown",
+    );
+    expect(model.releaseStatus(decision, [], [])).toBe("unknown");
+  });
+});
+
+describe("a claim at the same place", () => {
+  const stated = (who: string) =>
+    JSON.stringify({
+      subject: { type: "A", name: who },
+      object: { type: "B", name: "b" },
+      props: {},
+    });
+  it("of another reason counts as a reading: the engine compares it too", () => {
+    const review = (reason: string, who: string) => ({
+      reason,
+      ...model.settleable({ ...held, reason, statement: stated(who) }, []),
+    });
+    const [approvable, conflict] = model.markDiffering([
+      review("low_confidence", "one"),
+      review("conflict", "other"),
+    ]);
+    expect(approvable!.settle).toMatchObject({ differs: true });
+    expect(conflict!.settle).toBeUndefined();
+  });
+  it("of another reason with no statement counts too", () => {
+    const { statement: _, ...none } = held;
+    const [approvable] = model.markDiffering([
+      { reason: "low_confidence", ...model.settleable(held, []) },
+      {
+        reason: "conflict",
+        ...model.settleable({ ...none, reason: "conflict" }, []),
+      },
+    ]);
+    expect(approvable!.settle).toMatchObject({ differs: true });
+  });
+  it("names an end a legal form linked", () => {
+    const named = {
+      ...held,
+      statement: JSON.stringify({
+        subject: { type: "A", name: "Halvorsen Freight Ltd." },
+        object: { type: "B", name: "b" },
+        props: {},
+      }),
+    };
+    const formed = (type: string, docId: string) =>
+      model.markDiffering([
+        { reason: "low_confidence", ...model.settleable(named, []) },
+        {
+          reason: "legal_form",
+          candidates: [],
+          settle: {
+            kind: "resolve",
+            reviewId: "r",
+            type,
+            docId,
+            normName: "halvorsen freight ltd",
+          },
+        },
+      ])[0]!.settle;
+    expect(formed("A", "doc")).toMatchObject({
+      formed: "halvorsen freight ltd",
+    });
+    // A name resolves per document and type, so a link elsewhere holds nothing.
+    expect(formed("A", "other-doc")).not.toHaveProperty("formed");
+    expect(formed("B", "doc")).not.toHaveProperty("formed");
+  });
+});
+
 describe("what settles a review", () => {
   it.each([
     "unresolved",
@@ -50,6 +367,7 @@ describe("what settles a review", () => {
     "collision",
     "identifier_conflict",
     "adjudicated",
+    "legal_form",
   ])("a %s review with its identity takes a resolve choice", (reason) => {
     expect(model.settleable({ ...name, reason }, [globex])).toEqual({
       candidates: [
@@ -102,20 +420,17 @@ describe("what settles a review", () => {
       model.settleable({ ...name, candidates: "a" }, []).candidates,
     ).toEqual([]);
   });
-  it.each([
-    "low_confidence",
-    "unverified",
-    "violation",
-    "unmatched",
-    undefined,
-  ])("nothing settles a %s review", (reason) => {
-    expect(model.settleable({ ...name, reason }, [globex])).toEqual({
-      candidates: [
-        { key: "scus_GLOBEX01", entity: globex },
-        { key: "scus_GLOBAL02" },
-      ],
-    });
-  });
+  it.each(["violation", "unmatched", "identity", undefined])(
+    "nothing settles a %s review",
+    (reason) => {
+      expect(model.settleable({ ...name, reason }, [globex])).toEqual({
+        candidates: [
+          { key: "scus_GLOBEX01", entity: globex },
+          { key: "scus_GLOBAL02" },
+        ],
+      });
+    },
+  );
   it("a row conflict carries the table's value it would replace", () => {
     expect(model.settleable(prop, [globex])).toEqual({
       candidates: [],
@@ -223,7 +538,7 @@ describe("review choices", () => {
   it("offers nothing for a stale review or one nothing settles", () => {
     const stale = model.settleable({ ...name, type: undefined }, []);
     expect(model.decisionFor(stale, { entityKey: null })).toBeUndefined();
-    const other = model.settleable({ ...name, reason: "unverified" }, []);
+    const other = model.settleable({ ...name, reason: "conflict" }, []);
     expect(model.decisionFor(other, { entityKey: null })).toBeUndefined();
   });
   it("matches overrides by ontology identity, not review or load id", () => {

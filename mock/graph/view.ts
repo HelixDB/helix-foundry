@@ -1,5 +1,6 @@
 import { parse, stringify } from "smol-toml";
 import type { OntologyQuery } from "../../src/shared/wfe";
+import { isRecord } from "../../src/shared/json";
 
 // What one reader may see of a load, as the ontology agent's `mapping::view`
 // works it out: a reader's Visibility (the sources it holds) and a version's
@@ -55,11 +56,9 @@ export type View = {
 type Table = Record<string, unknown>;
 type Writers = { held: boolean; notHeld: boolean };
 
-const isTable = (v: unknown): v is Table =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 const entries = (v: unknown): [string, Table][] =>
-  isTable(v)
-    ? Object.entries(v).filter((e): e is [string, Table] => isTable(e[1]))
+  isRecord(v)
+    ? Object.entries(v).filter((e): e is [string, Table] => isRecord(e[1]))
     : [];
 const texts = (v: unknown) =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -93,20 +92,20 @@ function written(mappings: Table, ontology: Table, visibility: Visibility) {
     for (const [, b] of entries(m.bind)) {
       const type = String(b.type);
       if (b.missing === "create") add(types, type, writer);
-      for (const prop of Object.keys(isTable(b.props) ? b.props : {}))
+      for (const prop of Object.keys(isRecord(b.props) ? b.props : {}))
         add(props, key(type, prop), writer);
     }
     for (const l of Array.isArray(m.links) ? m.links : [])
-      if (isTable(l)) add(links, String(l.link), writer);
+      if (isRecord(l)) add(links, String(l.link), writer);
   }
   // People enrichment's item: its profiles fill props and state its link.
   for (const [, e] of entries(mappings.enrichments)) {
     const writer = held(visibility.enrichment),
       type = String(e.type);
-    for (const prop of Object.keys(isTable(e.props) ? e.props : {}))
+    for (const prop of Object.keys(isRecord(e.props) ? e.props : {}))
       add(props, key(type, prop), writer);
     const history = e.work_history;
-    if (isTable(history)) add(links, String(history.link), writer);
+    if (isRecord(history)) add(links, String(history.link), writer);
   }
   for (const [, r] of entries(mappings.extractions)) {
     const writer = routeWriters(r, visibility);
@@ -180,7 +179,7 @@ export function viewOf(
   const props = new Map<string, Reach>();
   for (const [type, t] of typeTables)
     if (types.has(type))
-      for (const prop of Object.keys(isTable(t.props) ? t.props : {})) {
+      for (const prop of Object.keys(isRecord(t.props) ? t.props : {})) {
         const r = reachOf(writes.props.get(key(type, prop)));
         if (r && !withheld(type, prop)) props.set(key(type, prop), r);
       }
@@ -216,10 +215,12 @@ export function viewOf(
   // full, given which stay, until nothing changes.
   const propFull = (prop: string) =>
     typeTables
-      .filter(([, t]) => isTable(t.props) && prop in t.props)
+      .filter(([, t]) => isRecord(t.props) && prop in t.props)
       .every(([type]) => props.get(key(type, prop)) === "full");
   const declared = new Set(
-    typeTables.flatMap(([, t]) => Object.keys(isTable(t.props) ? t.props : {})),
+    typeTables.flatMap(([, t]) =>
+      Object.keys(isRecord(t.props) ? t.props : {}),
+    ),
   );
   const relationsKept = new Set(
     relationTables
@@ -323,7 +324,7 @@ export function viewOf(
   // The ontology without what the reader doesn't see.
   const out = structuredClone(ontology);
   const items = (section: string) =>
-    (isTable(out[section]) ? out[section] : {}) as Record<string, Table>;
+    (isRecord(out[section]) ? out[section] : {}) as Record<string, Table>;
   const outTypes = items("types");
   for (const type of Object.keys(outTypes)) {
     const t = outTypes[type]!;
@@ -331,13 +332,13 @@ export function viewOf(
       delete outTypes[type];
       continue;
     }
-    if (isTable(t.props))
+    if (isRecord(t.props))
       for (const prop of Object.keys(t.props))
         if (!props.has(key(type, prop))) delete t.props[prop];
     // A lookup by name or identifier tests the value: only what is whole.
     const whole_ = (p: string) => props.get(key(type, p)) === "full";
     if (Array.isArray(t.names)) t.names = texts(t.names).filter(whole_);
-    if (isTable(t.identifiers))
+    if (isRecord(t.identifiers))
       for (const p of Object.keys(t.identifiers))
         if (!whole_(p)) delete t.identifiers[p];
   }

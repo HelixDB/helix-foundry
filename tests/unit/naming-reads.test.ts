@@ -258,4 +258,24 @@ describe("the names of entities a page knows by type and id", () => {
     expect(names(LOAD, [partner])).toBe(false);
     expect(names(LOAD, [globex], NO_NAMING)).toBe(false);
   });
+
+  // Helix's planner refuses a whole read that selects a property twice
+  // (DuplicatePropertySelection), and the mock now does too.
+  it("selects no property twice", () => {
+    const repeats = (v: unknown): string[] => {
+      if (!v || typeof v !== "object") return [];
+      const own = Object.entries(v).flatMap(([k, x]) =>
+        k === "properties" && Array.isArray(x)
+          ? x.filter((p, i) => x.indexOf(p) !== i)
+          : repeats(x),
+      );
+      return own;
+    };
+    const keys = ["company_name"];
+    const reads = [
+      documentRequest(SCOPE, "doc_1", keys),
+      entityRequest(SCOPE, { type: "Customer", key: "c" }, keys),
+    ];
+    expect(reads.flatMap(repeats)).toEqual([]);
+  });
 });

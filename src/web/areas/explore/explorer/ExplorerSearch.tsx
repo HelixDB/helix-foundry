@@ -384,7 +384,7 @@ export function ExplorerSearch({
                     </div>
                     {current?.failure && (
                       <p className="ex-search-error">
-                        {describeFailure(current.failure, "read").title}.{" "}
+                        {describeFailure(current.failure).title}.{" "}
                         <span>{current.failure.message}</span>
                       </p>
                     )}

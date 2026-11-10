@@ -444,7 +444,29 @@ describe("authorizing and finishing", () => {
   it("connects a repository the app can't see, saying so", async () => {
     const s = await connectGitHub(["acme/missing"]);
     expect(s.discoveryProblem).toMatch(
-      /^Helix Foundry can't see acme\/missing: install it on acme \(https:\/\/github\.com\/apps\/.*\), then Sync now$/,
+      /^Helix Foundry can't see the GitHub repository acme\/missing: install Helix Foundry's GitHub App on acme \(https:\/\/github\.com\/apps\/.*\), then Sync now$/,
+    );
+  });
+
+  it("reads nothing where the app is installed nowhere, until it is", async () => {
+    Object.assign(config, { githubInstalled: false });
+    const s = await connectGitHub();
+    expect(s.discoveryProblem).toMatch(
+      /^Helix Foundry can't see any repository this GitHub sign-in reads: install Helix Foundry's GitHub App on an account or organization \(https:\/\/github\.com\/apps\/.*\), then Sync now$/,
+    );
+    // Its first sync fails the same way.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 5000);
+    expect(connector(s.connectorId!).lastSync).toMatchObject({
+      status: "CONNECTOR_SYNC_STATUS_FAILED",
+      error: expect.stringMatching(/^Helix Foundry can't see any repository/),
+    });
+    // Installed, the next sync reads it.
+    Object.assign(config, { githubInstalled: true });
+    ok(call("POST", `${base}/connectors/${s.connectorId}:sync`, {}));
+    vi.setSystemTime(Date.now() + 5000);
+    expect(connector(s.connectorId!).lastSync?.status).toBe(
+      "CONNECTOR_SYNC_STATUS_SUCCEEDED",
     );
   });
 });

@@ -196,7 +196,7 @@
           ]
         },
         {
-          "description": "Relationships no link covered, of any of these suggested links.",
+          "description": "Relationships no link covered, of any of these suggested links: spelled so, or begun by\none of them that is the longest declared name the suggestion starts with.",
           "type": "object",
           "properties": {
             "canonicals": {
@@ -803,6 +803,21 @@
       "description": "An Ollama model's digest: `sha256:` and 64 lowercase hex digits.",
       "type": "string"
     },
+    "Origin": {
+      "description": "Where a draft's proposal came from.",
+      "oneOf": [
+        {
+          "description": "A signal proposed it ([`propose`]), and its target is what the signal reported.",
+          "type": "string",
+          "const": "finding"
+        },
+        {
+          "description": "A person asked for it, no signal behind it.",
+          "type": "string",
+          "const": "asked"
+        }
+      ]
+    },
     "Price": {
       "description": "What a model's tokens cost.",
       "oneOf": [
@@ -851,6 +866,11 @@
           "description": "Add `links` to what the routes covering `set` let its documents state.",
           "type": "object",
           "properties": {
+            "gathered": {
+              "description": "Whether a report behind it was gathered under a declared name it only starts with\n([`crate::Relations`]). The gathering rule can be wrong (`country_of_residence` under\n`country`): a person's reading of the quotes is the only check, so layer 3's `Auto`\nmust leave such a route in the queue.",
+              "type": "boolean",
+              "default": false
+            },
             "links": {
               "description": "The links to add, each one the ontology declares and the set's routes lack.",
               "type": "array",
@@ -887,6 +907,11 @@
             "brief": {
               "description": "What the draft is to fix.",
               "$ref": "#/$defs/Brief"
+            },
+            "origin": {
+              "description": "Who it's for: which targets it may be held to depends on it ([`Proposal::aimed`]). A\nproposal that doesn't say is a finding's.",
+              "$ref": "#/$defs/Origin",
+              "default": "finding"
             },
             "proposal": {
               "type": "string",

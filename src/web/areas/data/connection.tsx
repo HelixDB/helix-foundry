@@ -14,7 +14,13 @@ import {
 import type { Connector, ConnectorSync } from "../../../shared/wfe";
 import { ApiError } from "../../api";
 import { paths } from "../../paths";
-import { Loading, RefreshFailed, useAction, useWorkspace } from "../../ui";
+import {
+  Loading,
+  RefreshFailed,
+  canManage,
+  useAction,
+  useWorkspace,
+} from "../../ui";
 import {
   Button,
   ButtonLink,
@@ -46,6 +52,13 @@ import { ProGate } from "../workspace/pro-gate";
 import { Modal } from "./connect-data";
 import { ConnectionForm } from "./connection-form";
 import { EventSourcePage } from "./event-source-page";
+import { GitHubInstallStep } from "./github-install-step";
+import {
+  inWorkspace,
+  installStorage,
+  needsGitHubInstall,
+  rememberInstall,
+} from "./github-install";
 import {
   connectorKindsQuery,
   connectorQuery,
@@ -55,7 +68,6 @@ import {
   syncConnector,
 } from "./data-api";
 import {
-  canManage,
   connectorBadge,
   isEventSource,
   isKnownKind,
@@ -93,8 +105,14 @@ function duration(s: ConnectorSync) {
 
 // What a connector's settings say, never its credential: one connected by
 // signing in says whose access it reads with instead, and for GitHub where
-// Helix Foundry reads (`installUrl`, the app's install page).
-function details(c: Connector, installUrl?: string): KeyValueItem[] {
+// Helix Foundry reads (`installUrl`, the app's install page). `onInstall`
+// (owners and admins) installs it in this tab, coming back here to sync;
+// anyone else's link opens GitHub beside the page.
+function details(
+  c: Connector,
+  installUrl?: string,
+  onInstall?: () => void,
+): KeyValueItem[] {
   const config = c.config,
     items: KeyValueItem[] = [
       { label: "Connector", value: connectorLabel(c.kind) },
@@ -107,10 +125,17 @@ function details(c: Connector, installUrl?: string): KeyValueItem[] {
       label: "GitHub App",
       value: installUrl ? (
         <>
-          Reads where Helix Foundry is installed.{" "}
-          <a href={installUrl} target="_blank" rel="noopener noreferrer">
-            Install it on an organization
-          </a>
+          Reads where Helix Foundry is installed, and only the repositories
+          chosen there.{" "}
+          {onInstall ? (
+            <a href={installUrl} onClick={onInstall}>
+              Install it or change its repositories
+            </a>
+          ) : (
+            <a href={installUrl} target="_blank" rel="noopener noreferrer">
+              Install it on an organization
+            </a>
+          )}
         </>
       ) : (
         "Reads where Helix Foundry is installed"
@@ -338,7 +363,26 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
     kind = kinds.data?.kinds?.find((k) => k.kind === c.kind),
     // A Pro connection on a workspace that left Pro: the WFE refuses its
     // syncs until it upgrades again.
-    gated = kind?.available === false;
+    gated = kind?.available === false,
+    installUrl = kind?.github?.installUrl,
+    // Installing Helix Foundry's GitHub App from here comes back here.
+    install = {
+      workspaceId: id,
+      connectorId: c.id,
+      to: inWorkspace(paths.connection(c.id), id),
+    },
+    // A signed-in GitHub connector's last sync read nothing for want of
+    // the app's install: owners and admins get the install step, unless
+    // the sign-in that just made it shows it already.
+    installAfterSync =
+      manage &&
+      !!installUrl &&
+      c.kind === "github" &&
+      !!c.account &&
+      current?.status === "CONNECTOR_SYNC_STATUS_FAILED" &&
+      needsGitHubInstall(current.error),
+    installShown =
+      installAfterSync && needsGitHubInstall(arrival.discoveryProblem);
   return (
     <Page>
       <PageHeader
@@ -421,9 +465,17 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
           className="dc-pro-gate"
         />
       )}
+      {installAfterSync && !installShown && (
+        <GitHubInstallStep
+          problem={current!.error!}
+          installUrl={installUrl!}
+          install={install}
+        />
+      )}
       {current?.status === "CONNECTOR_SYNC_STATUS_FAILED" &&
         current.error &&
-        !broken && (
+        !broken &&
+        !installAfterSync && (
           <p role="alert" className="error-box dc-sync-error">
             <strong>The last sync failed.</strong> {current.error}
           </p>
@@ -497,7 +549,15 @@ export function ConnectionDetail({ connectorId }: { connectorId: string }) {
           />
         </Panel>
         <Panel title="Details">
-          <KeyValue items={details(c, kind?.github?.installUrl)} />
+          <KeyValue
+            items={details(
+              c,
+              installUrl,
+              manage
+                ? () => rememberInstall(installStorage(), install)
+                : undefined,
+            )}
+          />
         </Panel>
       </div>
       <Section

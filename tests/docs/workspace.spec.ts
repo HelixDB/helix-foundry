@@ -11,6 +11,7 @@ import {
   ask,
   caption,
   click,
+  CONTRACTS,
   loadContract,
   poster,
   saveVideo,
@@ -21,7 +22,7 @@ import {
 
 // docs: foundry/start-here (sign in, workspaces, the main page and the
 // sidebar, a new workspace's first steps) and foundry/workspace (members,
-// plans and billing, AI models, usage).
+// access, plans and billing, AI models, usage).
 
 const signInPage = (page: Page) =>
   expect(
@@ -205,4 +206,73 @@ test("workspace: video", async ({ browser }) => {
   await poster(page, "workspace", "set-up-a-workspace");
   await page.waitForTimeout(1500);
   await saveVideo(page, "workspace", "set-up-a-workspace");
+});
+
+// Access: Customer contracts' current load reads Stripe's customers and
+// invoices and General; Eve, a member restricted to General, reads part of
+// it, and the Support agent's key is given all of it.
+test("workspace: access: share sources, restrict a member, see what they read", async ({
+  page,
+  browser,
+}) => {
+  await mock.configure({ loadStepMs: 200 });
+  await loadContract(page);
+
+  // The agent's key, given Stripe and General: it reads all of Customer
+  // contracts.
+  await page.goto("/settings/access?tab=agents");
+  await page.getByRole("button", { name: "Sources for Support agent" }).click();
+  const agent = page.getByRole("dialog", {
+    name: "Sources for Support agent",
+  });
+  await agent.getByRole("checkbox", { name: /^Stripe/ }).check();
+  await agent.getByRole("checkbox", { name: /^General/ }).check();
+  await agent.getByRole("button", { name: "Save" }).click();
+  await expect(
+    page.getByText("Saved what Support agent can read."),
+  ).toBeVisible();
+  await agent.getByRole("button", { name: "Close" }).first().click();
+  await expect(
+    page.getByRole("listitem", { name: "Support agent" }),
+  ).toContainText("Customer contracts");
+  await shot(page, "workspace", "access-agents");
+
+  // People: Eve is restricted to General.
+  await page.goto("/settings/access?tab=people");
+  await expect(
+    page.getByRole("switch", { name: "Restrict Eve Adler" }),
+  ).toBeChecked();
+  await shot(page, "workspace", "access-people");
+
+  // Her sources, and what of each ontology they hold.
+  await page.getByRole("button", { name: "Sources for Eve Adler" }).click();
+  const eve = page.getByRole("dialog", { name: "Sources for Eve Adler" });
+  await expect(eve.getByRole("checkbox", { name: /^General/ })).toBeChecked();
+  await expect(eve.getByRole("list", { name: "Can read" })).toContainText(
+    "Part of it",
+  );
+  await shot(page, "workspace", "access-sources");
+  await eve.getByRole("button", { name: "Close" }).first().click();
+
+  // Who each ontology is shared with.
+  await page.goto("/settings/access?tab=ontologies");
+  await expect(
+    page.getByRole("list", { name: "Ontologies" }).getByRole("listitem"),
+  ).not.toHaveCount(0);
+  await shot(page, "workspace", "access-ontologies");
+
+  // What Eve sees: only Analyst, Ontologies and the Explorer, and the part
+  // of Customer contracts General holds.
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    deviceScaleFactor: 2,
+  });
+  const as = await context.newPage();
+  await signIn(as, "eve@example.com");
+  await as.goto(CONTRACTS);
+  await expect(
+    as.getByText("You can read part of this ontology"),
+  ).toBeVisible();
+  await shot(as, "workspace", "access-restricted");
+  await context.close();
 });

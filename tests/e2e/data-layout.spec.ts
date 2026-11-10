@@ -1,5 +1,6 @@
 import type { Locator, Page, Response } from "@playwright/test";
 import {
+  addBillingReplica,
   choose,
   csrfToken,
   dataTree as tree,
@@ -84,36 +85,12 @@ async function newFolder(page: Page, name: string) {
   await put;
 }
 
-async function addPostgres(page: Page, name: string) {
-  const created = await page.request.post(
-    "/papi/v1/workspaces/ws_acme/foundry/connectors",
-    {
-      data: {
-        name,
-        config: {
-          postgres: {
-            host: "billing.acme.example.com",
-            database: "billing",
-            user: "ro",
-            password: "pw",
-          },
-        },
-      },
-      headers: {
-        origin: new URL(page.url()).origin,
-        "x-helix-csrf": await csrfToken(page),
-      },
-    },
-  );
-  expect(created.status()).toBe(200);
-}
-
 test("reorders by drag and from the keyboard, and keeps the order", async ({
   page,
 }) => {
   await signIn(page);
   await page.goto("/data");
-  await addPostgres(page, "Billing replica");
+  await addBillingReplica(page);
   await page.reload();
   const postgres = folder(page, "PostgreSQL");
   await expect(postgres.getByRole("link")).toHaveText([

@@ -4,6 +4,7 @@ import type {
   FoundryDocumentSet,
 } from "../../../shared/wfe";
 import type { SetFolder, TreeItem } from "./model";
+import { isRecord } from "../../../shared/json";
 
 // The Data tree's layout: how a workspace arranges its Data page, shared by
 // the team. The WFE keeps it as one JSON object per workspace (GET and PUT
@@ -78,9 +79,7 @@ export type ParsedLayout =
 const orders = (order: Layout["order"]) =>
   Object.entries(order) as [ContainerKey, readonly string[]][];
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === "object" && !Array.isArray(v);
-const entries = (v: unknown) => (isObject(v) ? Object.entries(v) : []);
+const entries = (v: unknown) => (isRecord(v) ? Object.entries(v) : []);
 const isContainerKey = (k: string): k is ContainerKey =>
   /^(?:root|documents|(?:kind|folder|set):.+)$/s.test(k);
 const isBuiltIn = (k: string): k is BuiltInKey =>
@@ -114,7 +113,7 @@ const storedName = (v: unknown) => {
  * //   order: { root: ["documents"] } } }
  */
 export function parseLayout(stored: unknown): ParsedLayout {
-  if (!isObject(stored)) return { version: "unknown" };
+  if (!isRecord(stored)) return { version: "unknown" };
   if (!Object.keys(stored).length) return { version: 1, layout: EMPTY_LAYOUT };
   if (stored.v !== LAYOUT_VERSION) return { version: "unknown" };
   const names = Object.fromEntries(
@@ -126,8 +125,8 @@ export function parseLayout(stored: unknown): ParsedLayout {
   const ids = new Set<string>();
   const folders = (Array.isArray(stored.folders) ? stored.folders : [])
     .flatMap((f): CustomFolder[] => {
-      const name = isObject(f) ? storedName(f.name) : undefined;
-      if (!isObject(f) || typeof f.id !== "string" || !f.id || !name) return [];
+      const name = isRecord(f) ? storedName(f.name) : undefined;
+      if (!isRecord(f) || typeof f.id !== "string" || !f.id || !name) return [];
       if (ids.has(f.id)) return [];
       ids.add(f.id);
       return [{ id: f.id, name }];

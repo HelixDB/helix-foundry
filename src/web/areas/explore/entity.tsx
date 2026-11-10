@@ -32,7 +32,8 @@ import {
 import { paths } from "../../paths";
 import { useWorkspace } from "../../ui";
 import { useDocumentNames } from "../documents/documents-api";
-import { reviewCopy, spanAnchor } from "../documents/model";
+import { spanAnchor } from "../documents/model";
+import { ReviewGroups } from "../reviews/groups";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { AskDrawer } from "../ontology/ask";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
@@ -802,7 +803,7 @@ function Entity({
                               {provenanceText(f.provenance)}
                             </Tag>
                           )}
-                          {f.confidence !== undefined && f.confidence < 1 && (
+                          {!!f.confidence && f.confidence < 1 && (
                             <span className="on-muted">
                               {Math.round(f.confidence * 100)}% confident
                             </span>
@@ -910,7 +911,8 @@ function Entity({
                             {resolvedByText(m.resolvedBy) &&
                               ` · ${resolvedByText(m.resolvedBy)!.toLowerCase()}`}
                           </small>
-                          {m.resolvedBy === "adjudicated" && (
+                          {(m.resolvedBy === "adjudicated" ||
+                            m.resolvedBy === "legal_form") && (
                             <Link
                               to={
                                 link(
@@ -952,6 +954,44 @@ function Entity({
         ) : (
           <Panel>
             <ul className="dc-doc-list" aria-label="Needs review">
+              <ReviewGroups
+                reviews={reviews}
+                naming={naming}
+                load={
+                  selection.choice.kind === "load"
+                    ? selection.choice.load
+                    : undefined
+                }
+                row={(rv, i) => (
+                  <li key={i} className="dc-review">
+                    {rv.prop && <strong>{rv.prop}</strong>}
+                    {rv.quote && <q className="ex-quote">{rv.quote}</q>}
+                    <small>
+                      <Link
+                        to={link(
+                          paths.document(o, rv.documentId, "review") +
+                            "#" +
+                            spanAnchor(rv.section, rv.start),
+                        )}
+                      >
+                        Open in {docName(rv.documentId)}
+                      </Link>
+                      {rv.suggestedLink &&
+                        ` · suggested link: ${rv.suggestedLink}`}
+                    </small>
+                    <SettleReview
+                      review={rv}
+                      link={link}
+                      naming={naming}
+                      load={
+                        selection.choice.kind === "load"
+                          ? selection.choice.load
+                          : undefined
+                      }
+                    />
+                  </li>
+                )}
+              />
               {page.violations.map((v, i) => {
                 const args = liveViolationOf(live, v)?.entities;
                 return (
@@ -993,41 +1033,6 @@ function Entity({
                   )}
                 </li>
               ))}
-              {reviews.map((rv, i) => {
-                const copy = reviewCopy(rv.reason);
-                return (
-                  <li key={i} className="dc-review">
-                    <strong>
-                      {copy.title}
-                      {rv.prop && `: ${rv.prop}`}
-                    </strong>
-                    <p>{copy.text}</p>
-                    {rv.quote && <q className="ex-quote">{rv.quote}</q>}
-                    <small>
-                      <Link
-                        to={link(
-                          paths.document(o, rv.documentId, "review") +
-                            "#" +
-                            spanAnchor(rv.section, rv.start),
-                        )}
-                      >
-                        Open in {docName(rv.documentId)}
-                      </Link>
-                      {rv.suggestedLink &&
-                        ` · suggested link: ${rv.suggestedLink}`}
-                    </small>
-                    <SettleReview
-                      review={rv}
-                      link={link}
-                      load={
-                        selection.choice.kind === "load"
-                          ? selection.choice.load
-                          : undefined
-                      }
-                    />
-                  </li>
-                );
-              })}
             </ul>
           </Panel>
         )}

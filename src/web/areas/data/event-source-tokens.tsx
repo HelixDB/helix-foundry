@@ -17,14 +17,13 @@ import {
   formatDate,
   formatRelative,
 } from "../../kit";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { membersQuery } from "../workspace/members";
 import {
   createEventToken,
   eventTokensQuery,
   revokeEventToken,
 } from "./data-api";
-import { canManage } from "./model";
 
 // An API source's send tokens, after helix-foundry's Ingestion API token
 // (connection-form.tsx): owners and admins make one, shown once in a

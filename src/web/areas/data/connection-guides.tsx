@@ -403,20 +403,26 @@ const signInGuides: Record<SignInKind, (installUrl?: string) => ReactNode> = {
   github: (installUrl) => (
     <ol>
       <li>
-        Choose the repositories to read below, or leave them blank, then click{" "}
-        <strong>Connect with GitHub</strong> and authorize Helix Foundry. It
-        reads metadata, issues and pull requests, never code, and can change
+        Click <strong>Connect with GitHub</strong> and authorize Helix Foundry.
+        It reads metadata, issues and pull requests, never code, and can change
         nothing.
       </li>
       <li>
-        It reads only where Helix Foundry is installed. For an organization’s
-        repositories, an owner of the organization installs it{" "}
+        It reads only where Helix Foundry is installed, and only the
+        repositories chosen there. If it isn’t installed on your account or
+        organization yet, Foundry asks you to install it next{" "}
         {installUrl ? (
           <External href={installUrl}>on GitHub</External>
         ) : (
           "on GitHub"
         )}
-        , choosing the repositories; then <strong>Sync now</strong> reads them.
+        , where you choose the repositories, and GitHub brings you back to sync
+        them. On an organization, an owner installs it; anyone else asks them
+        to.
+      </li>
+      <li>
+        Leave <strong>Repositories</strong> blank to read every one chosen
+        there, or name some of them to read only those.
       </li>
       <KeptBy provider="GitHub" instead="A personal access token" />
     </ol>

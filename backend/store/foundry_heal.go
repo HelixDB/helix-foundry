@@ -43,16 +43,7 @@ WHERE ontology_id=? AND status='open' AND (sources=0 OR sources>=?) ORDER BY sup
 	if err != nil {
 		return nil, fmt.Errorf("list heal findings: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var out []*model.FoundryHealFinding
-	for rows.Next() {
-		f, err := scanFoundryHealFinding(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryHealFinding)
 }
 
 // GetFoundryHealFinding is one of an ontology's findings by fingerprint.
@@ -231,6 +222,14 @@ WHERE load_id=? AND document_id>? AND status='extracted' AND reviews>0 ORDER BY 
 // changes nothing the run read: every page was read by then. A publish
 // that stops partway keeps the batches it committed and leaves the run
 // running: the caller ends it.
+//
+// A finding's fingerprint holds the name its reports are gathered under,
+// which moves with the ontology's links and moved once with contract
+// 4.8.0, so a complete run replaces what earlier runs found rather than
+// summing with it: a finding is written with the run's support alone, one
+// it didn't find is superseded, and a dismissal holds only for the
+// spellings it was dismissed with. A dismissal under a fingerprint the
+// run didn't find is left as it is: it hides nothing the run found.
 func (s *mysqlDB) PublishFoundryHealRun(ctx context.Context, p model.FoundryHealPublish) error {
 	found := make(map[string]bool, len(p.Findings))
 	first := true

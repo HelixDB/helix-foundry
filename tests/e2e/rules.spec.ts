@@ -1,6 +1,10 @@
-import { readFileSync } from "node:fs";
-import type { Page } from "@playwright/test";
-import { expect, explorer, mock, signIn, test } from "./support/mock";
+import {
+  expect,
+  mock,
+  signIn,
+  test,
+  uploadAndLoadContract,
+} from "./support/mock";
 
 // A load's rules, evaluated when they are read: the contracts draft says
 // customers named in one contract co-signed it (a symmetric relation),
@@ -10,57 +14,16 @@ import { expect, explorer, mock, signIn, test } from "./support/mock";
 // constraint found, and says what its checks leave out. A break an Ask
 // answer cites opens there, at its record, and its entity's page explains it.
 
-const O = "/ontology/ont_acme_contracts",
-  X = "/explore/ont_acme_contracts";
-const CONTRACT = readFileSync(
-  new URL("../../mock/fixtures/contract.md", import.meta.url),
-);
+const X = "/explore/ont_acme_contracts";
 const customer = (key: string) =>
   `${X}/entities/${Buffer.from(`Customer\0k:${key}`).toString("base64url")}`;
-
-// Uploads the seeded contract, makes version 3 current and loads it, ending
-// on the load's page.
-async function load(page: Page) {
-  await page.goto("/data");
-  await explorer(page).getByLabel("Choose documents").setInputFiles({
-    name: "contract.md",
-    mimeType: "text/markdown",
-    buffer: CONTRACT,
-  });
-  await expect(
-    page
-      .getByRole("list", { name: "Uploads" })
-      .getByRole("listitem", { name: "contract.md" }),
-  ).toContainText("Uploaded");
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-}
 
 test("shows what the rules derive about an entity, and why", async ({
   page,
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await load(page);
+  await uploadAndLoadContract(page);
   await page.goto(customer("cus_GLOBEX01"));
   await page.getByRole("tab", { name: /^Derived/ }).click();
   const flags = page.getByRole("list", { name: "Flags" });
@@ -115,7 +78,7 @@ test("lists a load's rule breaks with counts, what isn't checked, and why", asyn
 }) => {
   await mock.configure({ loadStepMs: 200 });
   await signIn(page);
-  await load(page);
+  await uploadAndLoadContract(page);
   await page.getByRole("link", { name: "Rule breaks" }).click();
   await expect(
     page.getByRole("heading", { name: "Rule breaks", level: 1 }),
@@ -165,7 +128,7 @@ test("follows a stored rule break from Ask to its record and its entity's Needs 
 }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
   await signIn(page);
-  await load(page);
+  await uploadAndLoadContract(page);
   // An answer cites the load's first stored break of invoice_under_contract.
   await page.getByRole("link", { name: "Analyst", exact: true }).click();
   const form = page.getByRole("form", { name: "Ask a question" });

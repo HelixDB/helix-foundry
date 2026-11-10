@@ -32,7 +32,7 @@ import type {
 } from "../../../shared/wfe";
 import { number, relative } from "../../api";
 import { paths } from "../../paths";
-import { useAction, useWorkspace } from "../../ui";
+import { canManage, useAction, useWorkspace } from "../../ui";
 import {
   Button,
   ConfirmDialog,
@@ -80,7 +80,6 @@ import {
   type TreeNode,
 } from "./layout";
 import {
-  canManage,
   connectorBadge,
   isEventSource,
   isLiveSync,

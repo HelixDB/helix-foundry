@@ -206,7 +206,7 @@ func (k *workosKind) events(ctx context.Context, header http.Header, c workosCur
 
 // eventPage lists one page of events, with the status WorkOS answered.
 func (k *workosKind) eventPage(ctx context.Context, header http.Header, query url.Values) ([]workosEvent, int, error) {
-	status, body, err := k.get(ctx, header, "/events", query)
+	status, body, err := fetchGet(ctx, k.http, k.base+"/events", query, header)
 	if err := workosRefusal(status, err, "/events"); err != nil {
 		return nil, status, err
 	}
@@ -329,7 +329,7 @@ func (k *workosKind) refetch(ctx context.Context, header http.Header, c *workosC
 			if !c.pending[o.name][id] {
 				continue
 			}
-			status, body, err := k.get(ctx, header, workosObjectPaths[o.name]+"/"+url.PathEscape(id), nil)
+			status, body, err := fetchGet(ctx, k.http, k.base+workosObjectPaths[o.name]+"/"+url.PathEscape(id), nil, header)
 			if err == nil && status == http.StatusNotFound {
 				if err := c.w.Delete(o.name, map[string]any{o.key: id}); err != nil {
 					return err

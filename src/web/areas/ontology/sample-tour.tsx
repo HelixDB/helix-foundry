@@ -17,7 +17,7 @@ import {
 } from "../../kit";
 import { trackEvent } from "../../analytics";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import {
   connectorsQuery,
   createConnector,
@@ -38,7 +38,7 @@ import { QuestionCard } from "./ask";
 import { askSuggestions } from "./ask-model";
 import { createDatabase, createProject, databasesQuery } from "./databases-api";
 import { agentGraph, newDatabase, readAgentBundle, slugify } from "./model";
-import { Callout, FlowStep, canManage } from "./parts";
+import { Callout, FlowStep } from "./parts";
 import {
   askQuestion,
   createLoad,

@@ -1,13 +1,16 @@
-import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import {
+  CONTRACT,
   choose,
   expect,
   expectGridFits,
-  explorer,
+  file,
+  loadVersion3,
+  makeContractsCurrent,
   mock,
   signIn,
   test,
+  uploadInData,
 } from "./support/mock";
 
 // Versioned loads (the load-versioning plan, section 3): each load writes a
@@ -18,50 +21,6 @@ import {
 
 const O = "/ontology/ont_acme_contracts",
   X = "/explore/ont_acme_contracts";
-const CONTRACT = readFileSync(
-  new URL("../../mock/fixtures/contract.md", import.meta.url),
-);
-
-async function makeContractsCurrent(page: Page) {
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-}
-
-/** Loads version 3 from the Loads page and waits for the end; the load's id. */
-async function loadVersion3(page: Page): Promise<string> {
-  await page.goto(`${O}#loads`);
-  await page
-    .getByRole("main")
-    .getByRole("button", { name: "Load data" })
-    .first()
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-  return new URL(page.url()).pathname.split("/").pop()!;
-}
-
-async function uploadContract(page: Page) {
-  await page.goto("/data");
-  await explorer(page).getByLabel("Choose documents").setInputFiles({
-    name: "contract.md",
-    mimeType: "text/markdown",
-    buffer: CONTRACT,
-  });
-  await expect(
-    page.getByRole("list", { name: "Uploads" }).getByRole("listitem").first(),
-  ).toContainText("Uploaded");
-}
 
 /**
  * Two loads of version 3: the first couldn't read the contract, the second
@@ -72,7 +31,7 @@ async function twoLoads(page: Page) {
   await mock.configure({ loadStepMs: 100, documentOutcome: "fail" });
   await signIn(page);
   await makeContractsCurrent(page);
-  await uploadContract(page);
+  await uploadInData(page, [file("contract.md", CONTRACT)]);
   const first = await loadVersion3(page);
   await mock.configure({ documentOutcome: "succeed" });
   const second = await loadVersion3(page);
@@ -284,7 +243,7 @@ test("opens a load on a connected first view, and shows more", async ({
   await mock.configure({ loadStepMs: 100 });
   await signIn(page);
   await makeContractsCurrent(page);
-  await uploadContract(page);
+  await uploadInData(page, [file("contract.md", CONTRACT)]);
   await loadVersion3(page);
   await page.goto(X);
   await expect(graph(page)).toBeVisible({ timeout: 15_000 });

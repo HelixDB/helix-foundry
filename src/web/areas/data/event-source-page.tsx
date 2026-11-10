@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import type { Connector, FoundryEventBatch } from "../../../shared/wfe";
 import { paths } from "../../paths";
-import { RefreshFailed, useAction, useWorkspace } from "../../ui";
+import { RefreshFailed, canManage, useAction, useWorkspace } from "../../ui";
 import {
   Button,
   ConfirmDialog,
@@ -58,7 +58,6 @@ import {
   useEventSends,
 } from "./event-source-send";
 import {
-  canManage,
   eventCapacity,
   eventSourceLine,
   eventsConfig,

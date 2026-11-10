@@ -11,9 +11,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Copy } from "lucide-react";
 import type { FoundryOntology } from "../../../shared/wfe";
 import { Button, ButtonLink, cx, readStorage, writeStorage } from "../../kit";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { MCP_URL } from "./agent-setup";
-import { canManage } from "./parts";
 import { ontologyPaths as paths } from "./paths";
 import {
   cardStartsMinimised,

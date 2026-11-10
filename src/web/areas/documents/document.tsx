@@ -52,6 +52,7 @@ import {
   type DocFact,
   type DocumentGraph,
   type Span,
+  snippet,
 } from "../explore/model";
 import { readQueries, startingOf } from "../explore/reads";
 import { DatabaseStarting } from "../explore/starting";
@@ -65,6 +66,8 @@ import {
   useLoadSelection,
 } from "../ontology/load-selection";
 import { POLL_MS, ontologyQueries } from "../ontology/queries";
+import { releaseStatus } from "../reviews/model";
+import { ReviewGroups } from "../reviews/groups";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { ontologyName, useOntology } from "../ontology/scope";
 import { DocumentView, PageBreak, PdfReadCallout } from "./document-view";
@@ -81,7 +84,6 @@ import {
   fileRead,
   formatBytes,
   formatUsd,
-  reviewCopy,
   segments,
   spanAnchor,
   spanOf,
@@ -750,6 +752,8 @@ export function DocumentPage({ documentId }: { documentId: string }) {
   const byType = [...new Set([...entities.values()].map((e) => e.type))].sort();
   const factList = facts.data || [],
     reviews = x?.reviews || [];
+  const shownLoad =
+    selection.choice.kind === "load" ? selection.choice.load : undefined;
   const run = x?.sections.find((s) => s.model);
   return (
     <Page width="wide">
@@ -961,7 +965,7 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                         ))}
                         <small>
                           Section {q.section + 1}
-                          {f.confidence !== undefined &&
+                          {!!f.confidence &&
                             ` · ${Math.round(f.confidence * 100)}% confident`}
                           {(f.evidenceCount || 0) > 1 &&
                             ` · ${f.evidenceCount} sources`}
@@ -1028,7 +1032,8 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                               .filter(
                                 (m) =>
                                   m.entity.id === e.id &&
-                                  m.resolvedBy === "adjudicated",
+                                  (m.resolvedBy === "adjudicated" ||
+                                    m.resolvedBy === "legal_form"),
                               )
                               .map((m) => (
                                 <Link
@@ -1060,54 +1065,65 @@ export function DocumentPage({ documentId }: { documentId: string }) {
                 </p>
               ) : (
                 <ul className="dc-doc-list" aria-label="Needs review">
-                  {reviews.map((r, i) => {
-                    const copy = reviewCopy(r.reason),
-                      item = `review-${i}`;
-                    return (
-                      <li
-                        key={item}
-                        id={item}
-                        className={cx(
-                          "dc-review",
-                          active === item && "is-active",
-                        )}
-                      >
-                        <strong>
-                          {copy.title}
-                          {r.prop && `: ${r.prop}`}
-                        </strong>
-                        <p>{copy.text}</p>
-                        {r.quote && (
-                          <button
-                            type="button"
-                            className="dc-quote"
-                            onClick={() => show(spanAnchor(r.section, r.start))}
-                          >
-                            “{r.quote}”
-                          </button>
-                        )}
-                        <SettleReview
-                          review={r}
-                          link={link}
-                          load={
-                            selection.choice.kind === "load"
-                              ? selection.choice.load
-                              : undefined
-                          }
-                        />
-                        <small>
-                          Section {r.section + 1}
-                          {r.suggestedLink &&
-                            ` · suggested link: ${r.suggestedLink}`}
-                          {r.confidence !== undefined &&
-                            ` · ${Math.round(r.confidence * 100)}% confident`}
-                        </small>
-                      </li>
-                    );
-                  })}
+                  <ReviewGroups
+                    reviews={reviews}
+                    naming={naming}
+                    load={shownLoad}
+                    row={(r, i) => {
+                      // Its index in the document's reviews, as its marks name it.
+                      const item = `review-${i}`;
+                      return (
+                        <li
+                          key={item}
+                          id={item}
+                          className={cx(
+                            "dc-review",
+                            active === item && "is-active",
+                          )}
+                        >
+                          {r.prop && <strong>{r.prop}</strong>}
+                          {r.quote && (
+                            <button
+                              type="button"
+                              className="dc-quote"
+                              onClick={() =>
+                                show(spanAnchor(r.section, r.start))
+                              }
+                            >
+                              “{r.quote}”
+                            </button>
+                          )}
+                          <small>
+                            Section {r.section + 1}
+                            {r.suggestedLink &&
+                              ` · suggested link: ${r.suggestedLink}`}
+                            {r.confidence !== undefined &&
+                              ` · ${Math.round(r.confidence * 100)}% confident`}
+                          </small>
+                          <SettleReview
+                            review={r}
+                            link={link}
+                            naming={naming}
+                            load={shownLoad}
+                          />
+                        </li>
+                      );
+                    }}
+                  />
                 </ul>
               )}
-              <SavedDecisions documentId={documentId} />
+              <SavedDecisions
+                documentId={documentId}
+                quoteOf={(section, start, end) => {
+                  const s = x?.sections.find((s) => s.ordinal === section);
+                  return s && snippet(s.text, start, end).match;
+                }}
+                statusOf={
+                  x
+                    ? (d) => releaseStatus(d, reviews, facts.data ?? [])
+                    : undefined
+                }
+              />
             </TabPanel>
             <TabPanel id="details" value={tab} idPrefix="tab">
               <KeyValue

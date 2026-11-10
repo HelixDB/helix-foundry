@@ -95,12 +95,14 @@ type documentStore interface {
 // failure is why an attempt did not succeed, worded for the customer.
 // Permanent ends the job; Budget ends it as budget_exhausted; anything else
 // is retried with backoff, and an Uncounted one (the database still building
-// an index) gives its attempt back.
+// an index) gives its attempt back. An Internal one (the agent's own error,
+// gRPC INTERNAL) is retried within ontologyagent.InternalAttempts attempts.
 type failure struct {
 	Message   string
 	Permanent bool
 	Budget    bool
 	Uncounted bool
+	Internal  bool
 	// Unsupported is an apply the agent can't do in place (unsupported).
 	Unsupported bool
 	Err         error
@@ -314,6 +316,12 @@ func (r *runner) run(ctx context.Context, job *model.FoundryGraphJob) (*attempt,
 // what an applied load should hold, so what differs is drift
 // (helix_foundry_graph_apply_drift_total). It runs before the refresh
 // finishes, while both loads are in the database, and never fails it.
+//
+// Held claims (contract 4.9.0's `held` kind) are reviews whose claims the
+// load doesn't hold, and a load stored before 4.9.0 keys them by review key
+// rather than claim key, so its first rebuild differs there whatever the
+// applies did. A rebuild that differs only in them is counted as held, not
+// drifted: it is no drift in what the graph holds.
 func (r *runner) compareRebuild(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
 	target ontologyagent.HelixTarget, ontologyVersion string) {
 	if job.RefreshesLoadID == nil {
@@ -348,15 +356,25 @@ func (r *runner) compareRebuild(ctx context.Context, job *model.FoundryGraphJob,
 		logger.Info("graph job: the rebuild holds what applies left", "applied", replaced.ID)
 		return
 	}
-	rebuilds.WithLabelValues("drifted").Inc()
+	outcome := "equal"
 	for _, k := range result.Kinds {
 		if k.Equal {
 			continue
 		}
 		applyDrift.WithLabelValues(k.Kind).Inc()
-		logger.Warn("graph job: applies drifted from a fresh load", "applied", replaced.ID, "kind", k.Kind, "label", k.Label,
-			"applied_count", k.ACount, "rebuilt_count", k.BCount, "differing", k.Differing)
+		attrs := []any{"applied", replaced.ID, "kind", k.Kind, "label", k.Label, "applied_count", k.ACount, "rebuilt_count", k.BCount,
+			"differing", k.Differing}
+		if k.Kind == "held" {
+			if outcome == "equal" {
+				outcome = "held"
+			}
+			logger.Info("graph job: the rebuild holds back other claims than the applied load", attrs...)
+			continue
+		}
+		outcome = "drifted"
+		logger.Warn("graph job: applies drifted from a fresh load", attrs...)
 	}
+	rebuilds.WithLabelValues(outcome).Inc()
 }
 
 func (r *runner) timeStep(step string, start time.Time) {
@@ -1314,6 +1332,13 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 		return nil
 	}
 	c, u := event.Counts, event.Usage
+	if c.ReleaseRefused+c.ReleaseMissed > 0 {
+		log.From(ctx).Warn("graph job: an approved claim wasn't written", "job", job.ID, "document", event.DocID,
+			"refused", c.ReleaseRefused, "missed", c.ReleaseMissed)
+	}
+	// A release moved these from the reviews the commit counted to the facts. An
+	// already_ingested event counts nothing, whatever it released.
+	moved := min(c.Released, c.Reviews)
 	extraction := &model.FoundryDocumentExtraction{
 		DocumentID: event.DocID, Status: model.FoundryExtractionExtracted,
 		Counts: model.FoundryExtractionCounts{
@@ -1322,8 +1347,8 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 			ResolvedUser: int(c.Resolved.User), ResolvedAdjudicated: int(c.Resolved.Adjudicated),
 			ResolvedIdentifier: int(c.Resolved.Identifier), ResolvedName: int(c.Resolved.Name),
 			ResolvedAlias: int(c.Resolved.Alias), ResolvedCreated: int(c.Resolved.Created),
-			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts),
-			Reviews: int(c.Reviews), Unresolved: int(c.Unresolved), Rejected: int(c.Rejected),
+			Sections: int(event.Sections), Entities: int(c.Entities), Mentions: int(c.Mentions), Facts: int(c.Facts + c.Released),
+			Reviews: int(c.Reviews - moved), Unresolved: int(c.Unresolved), Rejected: int(c.Rejected),
 		},
 		USDMicros: int64(u.USDMicros), InputTokens: int64(u.InputTokens), OutputTokens: int64(u.OutputTokens),
 	}
@@ -1372,7 +1397,8 @@ func (r *runner) recordDocument(ctx context.Context, job *model.FoundryGraphJob,
 // may get through on another attempt, and the agent skips what is already
 // stored or deleted. FAILED_PRECONDITION is Extract on models the agent
 // can't run (a provider it doesn't call, a model it can't price): no retry
-// fixes that.
+// fixes that. INTERNAL is the agent's own bug on this input: retried within
+// ontologyagent.InternalAttempts.
 func callFailure(what string, err error) error {
 	var f *failure
 	if errors.As(err, &f) {
@@ -1387,6 +1413,8 @@ func callFailure(what string, err error) error {
 		return permanent("the ontology agent can't run these models, so it can't "+what, err)
 	case codes.Aborted:
 		return retry("another job is writing this database; Helix will retry", err)
+	case codes.Internal:
+		return &failure{Message: ontologyagent.InternalMessage(what), Internal: true, Err: err}
 	}
 	return retry("the ontology agent is unavailable; Helix will retry", err)
 }

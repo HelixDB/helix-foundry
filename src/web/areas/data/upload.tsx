@@ -2,7 +2,7 @@ import { useRef, useState, type DragEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FoundryDocumentSet } from "../../../shared/wfe";
 import { ApiError } from "../../api";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import {
   createDocumentSet,
   documentSetQueries,
@@ -14,7 +14,6 @@ import {
 } from "../documents/model";
 import { useOntologyNames } from "../documents/sets";
 import { UploadCard, useUploads } from "../documents/uploads";
-import { canManage } from "./model";
 
 // Uploading documents from a Data surface (the explorer or the Data page):
 // with its Upload documents button or a set's, through a hidden file

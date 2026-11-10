@@ -13,9 +13,8 @@ import {
   SkeletonText,
 } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { readAccess } from "../workspace/access-model";
-import { canManage } from "./parts";
 import { deleteOntology, ontologyQueries } from "./queries";
 import { lastOntology, ontologyName, useOntology } from "./scope";
 

@@ -30,6 +30,9 @@ import { layout, type Listed } from "./data-files";
 //   or disputes. A PostHog key containing "multi" sees two projects. A GitHub
 //   token containing "nopr" cannot read pull requests or their reviews, and
 //   a repository named missing (acme/missing) is one the token can't read.
+//   Signed in, a GitHub connector reads where Helix Foundry's GitHub App is
+//   installed: `POST /__mock/config {"githubInstalled": false}` has it
+//   installed nowhere, so one naming no repository reads none until true.
 //   A Cal.com key containing "solo" belongs to an account with no teams, so
 //   teams and team memberships can't be read, and one containing "member"
 //   is warned that it isn't a team admin; a Granola key containing
@@ -1913,9 +1916,13 @@ const S3_REGION = "eu-west-2";
 // foundry.sync.max_connector_bytes: 20 GiB.
 const S3_MAX_BYTES = 20 * 2 ** 30;
 
-const knobs = config as typeof config & { s3RoleAccess?: boolean };
+const knobs = config as typeof config & {
+  s3RoleAccess?: boolean;
+  githubInstalled?: boolean;
+};
 onReset(() => {
   delete knobs.s3RoleAccess;
+  delete knobs.githubInstalled;
 });
 
 /** What a customer's role must trust; undefined where role access is off. */
@@ -2632,9 +2639,19 @@ export function discover(
     const missing = (s.github.repos || []).find((r) => /\/missing$/i.test(r));
     // Signed in, it reads where Helix Foundry is installed: a repository it
     // can't see is the app's install to make, not a credential to change.
+    // The backend's words (connector/github.go), which the site's install
+    // step knows by their opening.
     if (missing && src.signIn)
       return refused(
-        `Helix Foundry can't see ${missing}: install it on ${missing.split("/")[0]} (${GITHUB_APP_INSTALL_URL}), then Sync now`,
+        `Helix Foundry can't see the GitHub repository ${missing}: install Helix Foundry's GitHub App on ${missing.split("/")[0]} (${GITHUB_APP_INSTALL_URL}), then Sync now`,
+      );
+    if (
+      src.signIn &&
+      !s.github.repos?.length &&
+      knobs.githubInstalled === false
+    )
+      return invalid(
+        `Helix Foundry can't see any repository this GitHub sign-in reads: install Helix Foundry's GitHub App on an account or organization (${GITHUB_APP_INSTALL_URL}), then Sync now`,
       );
     if (missing)
       return invalid(

@@ -1,6 +1,7 @@
 import type { IndexCatalogEntry } from "./types";
 
-import { classifyValue, isRecord } from "./normalize";
+import { isRecord } from "../../../../../shared/json";
+import { classifyValue } from "./normalize";
 import type {
   ElementTarget,
   GraphData,

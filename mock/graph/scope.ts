@@ -1,4 +1,5 @@
 import { parse } from "smol-toml";
+import { isRecord } from "../../src/shared/json";
 
 // What a version lets documents of one set fill, as the ontology agent's
 // `Mappings::scope_for` builds it from mappings.toml's document routes:
@@ -19,8 +20,6 @@ export type TypeScope = { create: boolean; props: Set<string> };
 export type Scope = { types: Map<string, TypeScope>; links: Set<string> };
 
 type Table = Record<string, unknown>;
-const isTable = (v: unknown): v is Table =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 const strings = (v: unknown) =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
@@ -28,9 +27,9 @@ const strings = (v: unknown) =>
 function routes(mappingsToml: string): [string, Table][] {
   try {
     const doc: Table = parse(mappingsToml);
-    return isTable(doc.extractions)
+    return isRecord(doc.extractions)
       ? Object.entries(doc.extractions as Table).filter(
-          (e): e is [string, Table] => isTable(e[1]),
+          (e): e is [string, Table] => isRecord(e[1]),
         )
       : [];
   } catch {
@@ -63,9 +62,9 @@ export function scopeFor(
     links = new Set<string>();
   for (const [, r] of routes(mappingsToml)) {
     if (!reads(r, setId)) continue;
-    for (const [type, t] of Object.entries(isTable(r.types) ? r.types : {})) {
+    for (const [type, t] of Object.entries(isRecord(r.types) ? r.types : {})) {
       const scope = types.get(type) || { create: false, props: new Set() };
-      if (isTable(t)) {
+      if (isRecord(t)) {
         scope.create ||= t.create === true;
         for (const p of strings(t.props)) scope.props.add(p);
       }

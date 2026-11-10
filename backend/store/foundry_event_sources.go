@@ -601,16 +601,7 @@ WHERE t.connector_id=? AND t.workspace_id=? ORDER BY t.created_at DESC, t.id DES
 	if err != nil {
 		return nil, fmt.Errorf("list event source tokens: %w", err)
 	}
-	defer rows.Close()
-	var out []*model.FoundryEventSourceToken
-	for rows.Next() {
-		t, err := scanEventSourceToken(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanEventSourceToken)
 }
 
 // RevokeFoundryEventSourceToken revokes the token with all three ids and
@@ -777,16 +768,7 @@ func (s *mysqlDB) queryEventBatches(ctx context.Context, where string, args ...a
 	if err != nil {
 		return nil, fmt.Errorf("list event batches: %w", err)
 	}
-	defer rows.Close()
-	var out []*model.FoundryEventBatch
-	for rows.Next() {
-		b, err := scanEventBatch(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, b)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanEventBatch)
 }
 
 func scanEventBatch(scanner rowScanner) (*model.FoundryEventBatch, error) {

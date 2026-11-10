@@ -11,6 +11,17 @@
           "description": "The base's replay, the base asked again, and the draft.",
           "$ref": "#/$defs/Arms"
         },
+        "card": {
+          "description": "A description's that may: the question it asks whatever the numbers say, and what to weigh.\nNull for any other.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DescriptionCard"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "exempt_conflicts": {
           "description": "The conflicts of each mapping the base refused, which the gate can't judge: a key\nreading the wrong column merges entities there unseen, so the person approving sees\nthem.",
           "type": "array",
@@ -19,7 +30,7 @@
           }
         },
         "gate": {
-          "description": "Whether the draft moved its target, and nothing else, beyond the noise.",
+          "description": "Whether the draft may go to a person.",
           "$ref": "#/$defs/Gate"
         },
         "outcome": {
@@ -27,7 +38,7 @@
           "const": "done"
         },
         "shifts": {
-          "description": "What the draft did to each link whose facts it changed, the biggest loss first: the\ngate lets a new link take from its neighbours, and the person approving sees what.",
+          "description": "What the draft did to each link whose facts it changed, the biggest loss first: the\ngate lets a new link take from its neighbours, a description's card leaves all of it\nto a person, and the person approving sees what.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Shift"
@@ -44,6 +55,7 @@
         "outcome",
         "arms",
         "gate",
+        "card",
         "shifts",
         "exempt_conflicts",
         "usd_micros"
@@ -160,8 +172,204 @@
     }
   ],
   "$defs": {
+    "Advisory": {
+      "description": "What a person weighs on a description's card: it stops nothing.",
+      "oneOf": [
+        {
+          "description": "This check couldn't have refused harm to this link: too little of it in the documents read.",
+          "type": "object",
+          "properties": {
+            "advisory": {
+              "type": "string",
+              "const": "couldnt_detect"
+            },
+            "undetected": {
+              "description": "What it couldn't see.",
+              "$ref": "#/$defs/Undetected"
+            }
+          },
+          "required": [
+            "advisory",
+            "undetected"
+          ]
+        },
+        {
+          "description": "The draft's own words accept a quarter or more under what its link's name does, past one\nfact: it may describe something other than its link.",
+          "type": "object",
+          "properties": {
+            "advisory": {
+              "type": "string",
+              "const": "own_words_fell"
+            },
+            "by_name": {
+              "description": "The link's facts judged by its name.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "own_words": {
+              "description": "Judged by the draft's words.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "advisory",
+            "by_name",
+            "own_words"
+          ]
+        },
+        {
+          "description": "Its reports stopped past the noise, and only the draft's own words say something came of\nthem: the one judge that reads the draft. A draft that hushes part of a link while widening\nits words elsewhere reads the same.",
+          "type": "object",
+          "properties": {
+            "advisory": {
+              "type": "string",
+              "const": "own_words_rose"
+            },
+            "by_name": {
+              "description": "What came of them by name, past its noise: too little.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "own_words": {
+              "description": "What came of them in its own words, past its noise.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "stopped": {
+              "description": "The reports stopped past their noise.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "advisory",
+            "stopped",
+            "by_name",
+            "own_words"
+          ]
+        },
+        {
+          "description": "What the draft is held to didn't move as meant past its noise. Its link's facts read by\nname against the fresh arms, its reports against the replay.",
+          "type": "object",
+          "properties": {
+            "advisory": {
+              "type": "string",
+              "const": "target_held"
+            },
+            "base": {
+              "description": "Before the draft.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "draft": {
+              "description": "In the draft, by name.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "noise": {
+              "description": "Its noise.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "target": {
+              "description": "The target.",
+              "$ref": "#/$defs/Count"
+            }
+          },
+          "required": [
+            "advisory",
+            "target",
+            "base",
+            "draft",
+            "noise"
+          ]
+        },
+        {
+          "description": "Another count moved past its noise, in the draft by name: another link's facts against a\nnoise pooled over every link, reviews by reason, violations, or the link's own reports\nrising.",
+          "type": "object",
+          "properties": {
+            "advisory": {
+              "type": "string",
+              "const": "moved"
+            },
+            "base": {
+              "description": "In the base replay.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "count": {
+              "description": "The count.",
+              "$ref": "#/$defs/Count"
+            },
+            "draft": {
+              "description": "In the draft, by name.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "noise": {
+              "description": "Its noise.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "advisory",
+            "count",
+            "base",
+            "draft",
+            "noise"
+          ]
+        },
+        {
+          "description": "Relationships no link covered, but this link's, moved in total past their noise.",
+          "type": "object",
+          "properties": {
+            "advisory": {
+              "type": "string",
+              "const": "other_reports_moved"
+            },
+            "base": {
+              "description": "In the base replay.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "draft": {
+              "description": "In the draft.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "noise": {
+              "description": "Their noise.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "advisory",
+            "base",
+            "draft",
+            "noise"
+          ]
+        }
+      ]
+    },
     "Arms": {
-      "description": "A Check's three arms, over the same documents and row sample.",
+      "description": "A Check's arms, over the same documents and row sample.",
       "type": "object",
       "properties": {
         "base_fresh": {
@@ -175,11 +383,19 @@
         "draft": {
           "description": "The draft bundle, asking only the calls it changed.",
           "$ref": "#/$defs/Counts"
+        },
+        "more_fresh": {
+          "description": "The base bundle, asked again further times: a description's draft has\n[`FRESH_ARMS_OF_A_DESCRIPTION`] fresh arms in all, and any other draft one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Counts"
+          }
         }
       },
       "required": [
         "base_replay",
         "base_fresh",
+        "more_fresh",
         "draft"
       ]
     },
@@ -258,6 +474,16 @@
       "description": "A suggested link's canonical form (P5 D11): lowercased, each run of characters other than\nletters and digits one `_`, none at either end. Never empty.",
       "type": "string"
     },
+    "CardQuestion": {
+      "description": "What every description's card asks: nothing deterministic tells a draft that changed what its\nlink means from one that says it better, so a person is asked. Said as the question's text.",
+      "oneOf": [
+        {
+          "description": "Whether the link still means what it meant.",
+          "type": "string",
+          "const": "Does this link still mean what it meant? Confirm that the new description only says it better, and doesn't change what the link is for."
+        }
+      ]
+    },
     "Count": {
       "description": "One count of an arm's.",
       "oneOf": [
@@ -300,7 +526,7 @@
           ]
         },
         {
-          "description": "Relationships no link covered, of any of these suggested links.",
+          "description": "Relationships no link covered, of any of these suggested links: spelled so, or begun by\none of them that is the longest declared name the suggestion starts with.",
           "type": "object",
           "properties": {
             "canonicals": {
@@ -724,6 +950,64 @@
         }
       ]
     },
+    "DescriptionCard": {
+      "description": "What a description's card shows the person who decides.\n\n`Check` judges a changed link by its name, so a description can't vouch for what it asked for:\n`by_name`, [`Self::reviews`] and every [`Advisory`]'s draft read that way. The load after\napproval judges by the description: `own_words` is what it would hold. All of them count the\ndocuments the check read, a sample.",
+      "type": "object",
+      "properties": {
+        "advisories": {
+          "description": "What to weigh: what moved past its noise, and what the check couldn't see. It stops nothing.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Advisory"
+          }
+        },
+        "base": {
+          "description": "What the link held before the draft, and each number's noise.",
+          "$ref": "#/$defs/OwnBase"
+        },
+        "by_name": {
+          "description": "The link's facts each judged by its name.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "gathered": {
+          "description": "What was gathered under the link's name.",
+          "$ref": "#/$defs/GatheredReports"
+        },
+        "link": {
+          "description": "The link described.",
+          "type": "string"
+        },
+        "own_words": {
+          "description": "The link's facts each judged by the draft's description: what the load would hold.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "question": {
+          "description": "What the card asks the person to confirm.",
+          "$ref": "#/$defs/CardQuestion"
+        },
+        "reviews": {
+          "description": "Every review reason against its noise.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReviewsMoved"
+          }
+        }
+      },
+      "required": [
+        "link",
+        "question",
+        "by_name",
+        "own_words",
+        "base",
+        "advisories",
+        "reviews",
+        "gathered"
+      ]
+    },
     "Disallowed": {
       "description": "Why a draft can't go further as it is.",
       "oneOf": [
@@ -839,6 +1123,131 @@
         }
       ]
     },
+    "GatheredReport": {
+      "description": "One canonical form of the reports gathered under a name they only start with: what lets a\nperson see what was grouped (`country_of_residence` under `country`). Lowercased and\nnormalized: a suggestion's raw text isn't kept.",
+      "type": "object",
+      "properties": {
+        "canonical": {
+          "description": "The suggestion's canonical form.",
+          "$ref": "#/$defs/Canonical"
+        },
+        "count": {
+          "description": "How many reports had this form.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "doc_id": {
+          "description": "One of them: its document.",
+          "type": "string"
+        },
+        "quote": {
+          "description": "One of them: the text it is about.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "canonical",
+        "count",
+        "doc_id",
+        "quote"
+      ]
+    },
+    "GatheredReports": {
+      "description": "The reports gathered under a link's name, of the documents the check was sent: how many, and\nthe commonest forms of them. Empty for a finding spelled as it is.",
+      "type": "object",
+      "properties": {
+        "forms": {
+          "description": "How many canonical forms they took.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "shown": {
+          "description": "The commonest forms, at most [`GATHERED_SHOWN`], then by name.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GatheredReport"
+          }
+        },
+        "total": {
+          "description": "Every report gathered.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "forms",
+        "shown"
+      ]
+    },
+    "Origin": {
+      "description": "Where a draft's proposal came from.",
+      "oneOf": [
+        {
+          "description": "A signal proposed it ([`propose`]), and its target is what the signal reported.",
+          "type": "string",
+          "const": "finding"
+        },
+        {
+          "description": "A person asked for it, no signal behind it.",
+          "type": "string",
+          "const": "asked"
+        }
+      ]
+    },
+    "OwnBase": {
+      "description": "What a description's link held before the draft, each number with its noise: what `by_name` and\n`own_words` read against, and what says whether a hard refusal could have fired.",
+      "type": "object",
+      "properties": {
+        "fresh": {
+          "description": "Its facts in the base asked again, by name, the middle of those arms: what `by_name` reads\nagainst.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fresh_noise": {
+          "description": "Their noise: how far those arms spread, or how far a count of that size moves.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "replay": {
+          "description": "Its facts in the base's replay, judged by the base's words: what `own_words` reads against.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "replay_noise": {
+          "description": "Their noise: pooled from every other link and arm.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reports": {
+          "description": "Its reports in the base's replay.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reports_noise": {
+          "description": "Their noise.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "replay",
+        "replay_noise",
+        "fresh",
+        "fresh_noise",
+        "reports",
+        "reports_noise"
+      ]
+    },
     "Proposal": {
       "description": "A change to the bundle a finding proposes, only ever an addition (P5 D4): route links, or a\ndraft of a [`Brief`]; or the question a change only a person may make becomes.",
       "oneOf": [
@@ -846,6 +1255,11 @@
           "description": "Add `links` to what the routes covering `set` let its documents state.",
           "type": "object",
           "properties": {
+            "gathered": {
+              "description": "Whether a report behind it was gathered under a declared name it only starts with\n([`crate::Relations`]). The gathering rule can be wrong (`country_of_residence` under\n`country`): a person's reading of the quotes is the only check, so layer 3's `Auto`\nmust leave such a route in the queue.",
+              "type": "boolean",
+              "default": false
+            },
             "links": {
               "description": "The links to add, each one the ontology declares and the set's routes lack.",
               "type": "array",
@@ -872,7 +1286,8 @@
             "proposal",
             "set",
             "links",
-            "target"
+            "target",
+            "gathered"
           ]
         },
         {
@@ -882,6 +1297,11 @@
             "brief": {
               "description": "What the draft is to fix.",
               "$ref": "#/$defs/Brief"
+            },
+            "origin": {
+              "description": "Who it's for: which targets it may be held to depends on it ([`Proposal::aimed`]). A\nproposal that doesn't say is a finding's.",
+              "$ref": "#/$defs/Origin",
+              "default": "finding"
             },
             "proposal": {
               "type": "string",
@@ -896,7 +1316,8 @@
           "required": [
             "proposal",
             "brief",
-            "target"
+            "target",
+            "origin"
           ]
         },
         {
@@ -1068,6 +1489,40 @@
         }
       ]
     },
+    "ReviewsMoved": {
+      "description": "One reason's reviews against their noise, shown whichever way they went: a description's change\nre-asks every section, so they move, and only a person can say what that means here. The\ndraft's count is judged by name, as every paid arm's, and the base's replay by its words.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "In the base replay.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "draft": {
+          "description": "In the draft, by name.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "noise": {
+          "description": "Their noise.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reason": {
+          "description": "The reason.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "base",
+        "draft",
+        "noise"
+      ]
+    },
     "SetId": {
       "description": "The id of a document set, such as `set_01JDX4K2`: 1 to 64 ASCII letters, digits, `_` or `-`.",
       "type": "string",
@@ -1076,7 +1531,7 @@
       "pattern": "^[A-Za-z0-9_-]+$"
     },
     "Shift": {
-      "description": "What a draft did to a link's facts, for the person who approves it: for a new link's draft\nthe gate judges the other links as a total, and this says which of them lost what.",
+      "description": "What a draft did to a link's facts, for the person who approves it: a new link's draft is\njudged on the other links' total, and this says which of them lost what.",
       "type": "object",
       "properties": {
         "base": {
@@ -1109,8 +1564,28 @@
         "noise"
       ]
     },
+    "Undetected": {
+      "description": "Which hard refusal a check couldn't have made: its base held no more than its noise, so even\nlosing all of it moves nothing past the noise.",
+      "oneOf": [
+        {
+          "description": "Its link's own facts collapsing. A hush would still show in its reports.",
+          "type": "string",
+          "const": "collapse"
+        },
+        {
+          "description": "Its link's reports stopping. A hush would still show in its facts.",
+          "type": "string",
+          "const": "silence"
+        },
+        {
+          "description": "Either: a total hush of this link would reach a person unrefused.",
+          "type": "string",
+          "const": "hush"
+        }
+      ]
+    },
     "Why": {
-      "description": "The guard a draft failed, with the count's base (replayed), draft and noise.",
+      "description": "The guard a draft failed, with the count's base (replayed), draft and noise. [`Harm`] is the two\nof them that refuse a description's draft: the clear harm [`crate::described`] filters, in a\ntype of its own, so nothing advisory can stop a draft.",
       "oneOf": [
         {
           "description": "The target didn't move as meant beyond the noise.",

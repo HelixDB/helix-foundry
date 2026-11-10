@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, decided_by_user_id, decided_at"
+const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, decided_at"
 
 // SettleFoundryReviewDecision replaces the choice for this identity atomically.
 // It preserves the id of an existing choice. Under the ontology's lock it
@@ -48,23 +48,27 @@ JOIN foundry_ontology_versions v ON v.id = l.version_id WHERE l.id=?`, *o.Curren
 		if !d.Fits(types) {
 			return ErrConflict
 		}
-		var value any
+		var value, section, start, end any
 		if len(d.Value) > 0 {
 			value = string(d.Value)
 		}
+		if span := d.ClaimSpan; span != nil {
+			section, start, end = span.Section, span.Start, span.End
+		}
 		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
- (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, decided_by_user_id)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?)
- ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), value=VALUES(value),
+ (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)
+ ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash),
  decided_by_user_id=VALUES(decided_by_user_id), decided_at=NOW(6)`,
-			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.DecidedByUserID)
+			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID)
 		if err != nil {
 			return err
 		}
 		// <=> is NULL-safe equality; resolve's chosen entity is not its identity.
 		stored, err := scanFoundryReviewDecision(tx.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionColumns+`
  FROM foundry_review_decisions WHERE ontology_id=? AND kind=? AND type=? AND doc_id <=> ? AND norm_name <=> ?
- AND prop <=> ? AND (kind='resolve' OR entity_key <=> ?)`, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.Prop, d.EntityKey))
+ AND prop <=> ? AND claim_key <=> ? AND claim_section <=> ? AND claim_start <=> ? AND claim_end <=> ?
+ AND (kind='resolve' OR entity_key <=> ?)`, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.Prop, d.ClaimKey, section, start, end, d.EntityKey))
 		if err != nil {
 			return err
 		}
@@ -122,16 +126,7 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.FoundryReviewDecision
-	for rows.Next() {
-		d, err := scanFoundryReviewDecision(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryReviewDecision)
 }
 
 func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error {
@@ -140,9 +135,10 @@ func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, i
 
 func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, error) {
 	var d model.FoundryReviewDecision
-	var doc, name, entity, prop sql.NullString
+	var doc, name, entity, prop, claim, hash sql.NullString
+	var section, start, end sql.NullInt64
 	var value []byte
-	err := row.Scan(&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &d.DecidedByUserID, &d.DecidedAt)
+	err := row.Scan(&d.ID, &d.OntologyID, &d.Kind, &d.Type, &doc, &name, &entity, &prop, &value, &claim, &section, &start, &end, &hash, &d.DecidedByUserID, &d.DecidedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -160,6 +156,15 @@ func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, er
 	}
 	if prop.Valid {
 		d.Prop = &prop.String
+	}
+	if claim.Valid {
+		d.ClaimKey = &claim.String
+	}
+	if hash.Valid {
+		d.StatementHash = &hash.String
+	}
+	if section.Valid && start.Valid && end.Valid {
+		d.ClaimSpan = &model.FoundryClaimSpan{Section: uint32(section.Int64), Start: uint32(start.Int64), End: uint32(end.Int64)}
 	}
 	d.Value = value
 	if err := d.Validate(); err != nil {

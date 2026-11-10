@@ -21,7 +21,7 @@ import type {
 } from "../../../shared/wfe";
 import { ApiError } from "../../api";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import {
   Button,
   ButtonAnchor,
@@ -62,7 +62,6 @@ import { MoveDialog, useOntologyNames } from "../documents/sets";
 import { Callout } from "../ontology/parts";
 import { POLL_MS, ontologyQueries } from "../ontology/queries";
 import { connectorsQuery } from "./data-api";
-import { canManage } from "./model";
 
 // /data/documents/:documentId: one document of the workspace: what it
 // holds (as uploaded, from the WFE: the bucket lets a browser PUT, not GET),

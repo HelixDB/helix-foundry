@@ -9,6 +9,7 @@ import {
   FOUNDRY_LOAD,
   FOUNDRY_NODES as N,
 } from "../../src/shared/foundry-labels";
+import { createHash } from "node:crypto";
 import { fail, id, now, ok, type MockRoute } from "../http";
 import {
   decisionFits,
@@ -21,6 +22,7 @@ import { tenantGraph } from "./databases";
 import { currentLoadId, currentLoadVersionId } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
 import { ontologyVersion } from "./ontology";
+import { isRecord } from "../../src/shared/json";
 
 // Review decisions, as the backend serves them
 // (api/review_decisions.go): settling reads the
@@ -34,15 +36,13 @@ import { ontologyVersion } from "./ontology";
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const PAGE = 100;
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  !!v && typeof v === "object" && !Array.isArray(v);
 /**
  * A FoundryPropValue in the JSON form the WFE writes one: exactly one arm,
  * of its JSON kind, an int64 as its digits in a string. (Protobuf's JSON
  * also reads "NULL_VALUE" and an int64 as a number; the mock doesn't.)
  */
 function propValue(v: unknown): v is FoundryPropValue {
-  if (!isObject(v) || Object.keys(v).length !== 1) return false;
+  if (!isRecord(v) || Object.keys(v).length !== 1) return false;
   const [[arm, x]] = Object.entries(v) as [[string, unknown]];
   switch (arm) {
     case "null":
@@ -62,9 +62,16 @@ function propValue(v: unknown): v is FoundryPropValue {
 
 /** The mock enforces protobuf's oneofs, including an explicit false refusal. */
 function valid(b: unknown): b is FoundryReviewChoice {
-  if (!isObject(b)) return false;
+  if (!isRecord(b)) return false;
+  if ("release" in b)
+    return (
+      typeof (b.release as { statementHash?: unknown } | undefined)
+        ?.statementHash === "string" &&
+      !("resolve" in b) &&
+      !("prop" in b)
+    );
   if ("prop" in b) return !("resolve" in b) && propValue(b.prop);
-  if (!isObject(b.resolve)) return false;
+  if (!isRecord(b.resolve)) return false;
   const r = b.resolve;
   return (
     (r.notInData === true && !("entityKey" in r)) ||
@@ -75,15 +82,40 @@ function valid(b: unknown): b is FoundryReviewChoice {
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 /** The decision for the same identity, which settling again replaces. */
 const sameIdentity = (a: ReviewDecision, b: ReviewDecision) =>
-  a.kind === "resolve"
-    ? b.kind === "resolve" &&
-      a.type === b.type &&
+  a.kind === "release"
+    ? b.kind === "release" &&
       a.docId === b.docId &&
-      a.normName === b.normName
-    : b.kind === "prop" &&
-      a.type === b.type &&
-      a.entityKey === b.entityKey &&
-      a.prop === b.prop;
+      a.claimKey === b.claimKey &&
+      a.claimSection === b.claimSection &&
+      a.claimStart === b.claimStart &&
+      a.claimEnd === b.claimEnd
+    : a.kind === "resolve"
+      ? b.kind === "resolve" &&
+        a.type === b.type &&
+        a.docId === b.docId &&
+        a.normName === b.normName
+      : b.kind === "prop" &&
+        a.type === b.type &&
+        a.entityKey === b.entityKey &&
+        a.prop === b.prop;
+
+/** Saves `decision`, replacing the one of its identity, as settling again does. */
+function save(
+  ontology: string,
+  decision: ReviewDecision,
+  user: string,
+): ReviewDecisionResponse {
+  const own = decisions.get(ontology) || [];
+  const previous = own.find((d) => sameIdentity(d, decision));
+  const saved = {
+    ...decision,
+    id: previous?.id || id("decision"),
+    decidedByUserId: user,
+    decidedAt: now(),
+  };
+  decisions.set(ontology, [...own.filter((d) => d.id !== saved.id), saved]);
+  return { decision: saved };
+}
 
 export const reviewRoutes: MockRoute[] = [
   {
@@ -115,6 +147,48 @@ export const reviewRoutes: MockRoute[] = [
       if (found.length !== 1)
         return fail("NOT_FOUND", "review not found in the current load");
       const r = found[0]!.props;
+      // A held claim names no type: the engine reads what it states from its
+      // document.
+      if (["low_confidence", "unverified"].includes(text(r.reason))) {
+        if (!choice.release)
+          return fail(
+            "INVALID_ARGUMENT",
+            "this review requires a release decision",
+          );
+        const docId = text(r.doc_id),
+          claimKey = text(r.claim_key),
+          link = text(r.suggested_link),
+          stored = text(r.statement);
+        if (!docId || !/^[0-9a-f]{64}$/.test(claimKey) || !link || !stored)
+          return fail(
+            "FAILED_PRECONDITION",
+            "this review is missing its identity; start a new load before settling it",
+          );
+        const statementHash = createHash("sha256")
+          .update(`${link}\u001f${stored}`)
+          .digest("hex");
+        if (choice.release.statementHash !== statementHash)
+          return fail(
+            "FAILED_PRECONDITION",
+            "this claim reads differently now; reload the review and approve what it says",
+          );
+        return ok(
+          save(
+            s.o.id,
+            {
+              kind: "release",
+              type: "",
+              docId,
+              claimKey,
+              claimSection: Number(r.section),
+              claimStart: Number(r.start),
+              claimEnd: Number(r.end),
+              statementHash,
+            },
+            req.principal.user.id,
+          ) satisfies ReviewDecisionResponse,
+        );
+      }
       const type = text(r.type);
       if (!type)
         return fail(
@@ -137,6 +211,7 @@ export const reviewRoutes: MockRoute[] = [
         case "collision":
         case "identifier_conflict":
         case "adjudicated":
+        case "legal_form":
           if (!choice.resolve)
             return fail(
               "INVALID_ARGUMENT",
@@ -214,16 +289,13 @@ export const reviewRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "the current load's version no longer has this review's type or property; reload the review and try again",
         );
-      const own = decisions.get(s.o.id) || [];
-      const previous = own.find((d) => sameIdentity(d, decision));
-      const saved = {
-        ...decision,
-        id: previous?.id || id("decision"),
-        decidedByUserId: req.principal.user.id,
-        decidedAt: now(),
-      };
-      decisions.set(s.o.id, [...own.filter((d) => d.id !== saved.id), saved]);
-      return ok({ decision: saved } satisfies ReviewDecisionResponse);
+      return ok(
+        save(
+          s.o.id,
+          decision,
+          req.principal.user.id,
+        ) satisfies ReviewDecisionResponse,
+      );
     },
   },
   {

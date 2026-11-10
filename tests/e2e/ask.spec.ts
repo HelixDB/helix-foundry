@@ -1,7 +1,12 @@
-import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import type { FoundryQuestion } from "@/shared/wfe";
-import { expect, explorer, mock, signIn, test } from "./support/mock";
+import {
+  expect,
+  mock,
+  signIn,
+  test,
+  uploadAndLoadContract,
+} from "./support/mock";
 
 // Ask: a question about the loaded contract, its steps as they stream (each
 // input in words, the query as a readable path, and its JSON; a failed call
@@ -15,47 +20,7 @@ import { expect, explorer, mock, signIn, test } from "./support/mock";
 // recency; a new thread's question and suggestions; the composer pinned
 // under the conversation; and on a phone, the threads as the page.
 
-const O = "/ontology/ont_acme_contracts",
-  X = "/explore/ont_acme_contracts";
-const CONTRACT = readFileSync(
-  new URL("../../mock/fixtures/contract.md", import.meta.url),
-);
-
-// Uploads the seeded contract, makes version 3 current and loads it.
-async function loadContract(page: Page) {
-  await page.goto("/data");
-  await explorer(page).getByLabel("Choose documents").setInputFiles({
-    name: "contract.md",
-    mimeType: "text/markdown",
-    buffer: CONTRACT,
-  });
-  await expect(
-    page
-      .getByRole("list", { name: "Uploads" })
-      .getByRole("listitem", { name: "contract.md" }),
-  ).toContainText("Uploaded");
-  await page.goto(`${O}/versions/ver_seed_3`);
-  await page.getByRole("button", { name: "Make current" }).click();
-  await page
-    .getByRole("dialog", { name: "Make version 3 current?" })
-    .getByRole("button", { name: "Make current" })
-    .click();
-  await expect(page.getByText("Version 3 is now current.")).toBeVisible();
-  await page.goto(O);
-  await page
-    .getByRole("status")
-    .filter({ hasText: "Version 3 isn’t loaded yet" })
-    .getByRole("button", { name: "Load data" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Load version 3 into contracts?" })
-    .getByRole("button", { name: "Load" })
-    .click();
-  await expect(page).toHaveURL(/\/loads\/load_/);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Loaded" }).first(),
-  ).toBeVisible({ timeout: 20_000 });
-}
+const X = "/explore/ont_acme_contracts";
 
 async function ask(page: Page, question: string) {
   await page.getByRole("link", { name: "Analyst", exact: true }).click();
@@ -77,7 +42,7 @@ test("asks about a load: streamed steps, a plain-text answer, chips that open th
 }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 250, askMarkup: true });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
 
   const question = await ask(page, "Who signed the services agreement?");
   // The steps stream in as tool calls: each the tool's name, what it was
@@ -308,7 +273,7 @@ test("shows query results after the paragraphs that introduce them, as charts an
 }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 100, askMarkup: true });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const question = await ask(page, "How are the invoices doing?");
   const answer = question.getByRole("region", { name: "Answer" });
   // The breakdown follows the paragraph that counts the invoices, drawn
@@ -460,7 +425,7 @@ test("draws counts by day as a line on a time axis, every day there is", async (
     },
   );
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const question = await ask(page, "When were the invoices issued?");
   const byDay = question
     .getByRole("region", { name: "Answer" })
@@ -499,7 +464,7 @@ test("reads an answer from before visuals as text, its queries' results not kept
 }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 100, askVisuals: false });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const question = await ask(page, "Who signed the services agreement?");
   const answer = question.getByRole("region", { name: "Answer" });
   await expect(answer).toContainText("of the 65 invoices are", {
@@ -524,7 +489,7 @@ test("drafts a new version from a question the ontology can't answer", async ({
     askOutcome: "cannot_answer",
   });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const question = await ask(
     page,
     "Who signed each contract for the customer?",
@@ -559,7 +524,7 @@ test("drafts a new version from a question the ontology can't answer", async ({
 test("says why a question is refused, in the WFE's words", async ({ page }) => {
   await mock.configure({ loadStepMs: 200, askSpentUsdMicros: 29_600_000 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.getByRole("link", { name: "Analyst", exact: true }).click();
   const form = page.getByRole("form", { name: "Ask a question" });
   await form.getByRole("textbox", { name: /^Question/ }).fill("Who signed it?");
@@ -572,7 +537,7 @@ test("says why a question is refused, in the WFE's words", async ({ page }) => {
 test("asks about an entity from its page, in a drawer", async ({ page }) => {
   await mock.configure({ loadStepMs: 200, askStepMs: 100 });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   await page.goto(
     `${X}/entities/${Buffer.from("Customer\0k:cus_GLOBEX01").toString("base64url")}`,
   );
@@ -605,7 +570,7 @@ test("starts a thread from a suggestion, its composer pinned under the conversat
   // Without visuals, the steps' last disclosure is in view at the end.
   await mock.configure({ loadStepMs: 200, askStepMs: 150, askVisuals: false });
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   // The load's version was read on the way: its draft's competency
   // questions are suggestions, under a composer with nothing in it.
   await page.getByRole("link", { name: "Analyst", exact: true }).click();
@@ -929,7 +894,7 @@ test("shows valid time beside a citation's recording time", async ({
     },
   );
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const question = await ask(page, "What state was recorded?");
   // In UTC whatever the reader's zone; a malformed interval loses only its
   // text, never the citation.
@@ -975,7 +940,7 @@ test("labels a gap's kind and keeps its reason and draft action", async ({
     },
   );
   await signIn(page);
-  await loadContract(page);
+  await uploadAndLoadContract(page);
   const question = await ask(page, "What was true before this was recorded?");
   await expect(question).toContainText("This ontology can’t answer that");
   await expect(question.locator(".hf-tag")).toHaveText(

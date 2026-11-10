@@ -8,17 +8,17 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Braces, Check, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import type { Connector, ConnectorKindName } from "../../../shared/wfe";
-import { logoUrl } from "../../kit";
+import { sourceMark } from "../../kit";
 import { paths } from "../../paths";
 import { useCurrentTheme, type Theme } from "../../shell/theme";
-import { Loading, useWorkspace } from "../../ui";
+import { Loading, canManage, useWorkspace } from "../../ui";
 import { ProGate } from "../workspace/pro-gate";
 import { ConnectionForm } from "./connection-form";
 import { connectorKindsQuery, connectorsQuery, signInQuery } from "./data-api";
 import { EventSourceForm } from "./event-source-form";
-import { canManage, isEventSource, isKnownKind } from "./model";
+import { isEventSource, isKnownKind } from "./model";
 import { AgentSignIn, SignInReturn } from "./sign-in";
 
 // "Add data": helix-foundry's connector picker and per-kind form in its
@@ -77,22 +77,18 @@ const titles = Object.fromEntries(
     ([kind, title]) => [kind, title],
   ),
 ) as Record<ConnectorKindName, string>;
-const logo = (kind: ConnectorKindName, theme: Theme) =>
-  isEventSource(kind) ? (
-    <Braces />
-  ) : kind === "mysql" ? (
+function logo(kind: ConnectorKindName, theme: Theme) {
+  const { url, wordmark, Icon } = sourceMark(kind, theme);
+  return url ? (
     <img
-      className="connection-wordmark"
-      src={logoUrl("mysql-wordmark", theme)}
+      className={wordmark ? "connection-wordmark" : "connection-icon"}
+      src={url}
       alt=""
     />
   ) : (
-    <img
-      className="connection-icon"
-      src={logoUrl(kind === "postgres" ? "postgresql" : kind, theme)}
-      alt=""
-    />
+    <Icon />
   );
+}
 
 // helix-foundry's Modal (ui.tsx): a native dialog with its header.
 export function Modal({

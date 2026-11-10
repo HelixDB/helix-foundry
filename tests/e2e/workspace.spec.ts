@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import {
   APP_ORIGIN,
   choose,
+  createWorkspace,
   csrfToken,
   expect,
   mock,
@@ -499,11 +500,7 @@ test("creates workspaces only in a region the WFE accepts", async ({
 }) => {
   await mock.configure({ allowedRegions: ["us-east-1"] });
   await signIn(page);
-  await page.getByRole("button", { name: "Workspace: Acme" }).click();
-  await page.getByRole("menuitem", { name: "Create workspace" }).click();
-  const dialog = page.getByRole("dialog", { name: "Create a workspace" });
-  await dialog.getByLabel("Workspace name").fill("Initech");
-  await dialog.getByRole("button", { name: "Create workspace" }).click();
+  const dialog = await createWorkspace(page, "Initech");
   await expect(dialog.getByRole("alert")).toContainText(
     'region "us-east-2" is not enabled',
   );

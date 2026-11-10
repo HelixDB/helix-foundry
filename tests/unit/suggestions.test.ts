@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpMethod } from "@/shared/route-template";
 import { compileTemplate, matchTemplate } from "@/shared/route-template";
 import type { FoundryHealFinding } from "@/shared/wfe";
+import { MAX_GOAL } from "@/web/areas/ontology/model";
 import {
   auditPending,
   emptyText,
@@ -64,7 +65,7 @@ const stored = (
 
 describe("a suggestion's words", () => {
   it("reads every kind the contract has", () => {
-    const [unmatched, unresolved, rows] = SUGGESTION_FINDINGS.map((f) =>
+    const [unmatched, , unresolved, rows] = SUGGESTION_FINDINGS.map((f) =>
       suggestion(
         stored(f.finding, {
           support: String(f.support),
@@ -80,7 +81,7 @@ describe("a suggestion's words", () => {
       support: 12,
       documents: 5,
       proposal: "Let documents of set_acme_general state “supplies”",
-      spellings: [],
+      spellings: ["supplier_of", "supplier_of_packaging"],
     });
     expect(unmatched!.examples[0]).toEqual({
       docId: "doc_acme_msa",
@@ -181,6 +182,114 @@ describe("a suggestion's words", () => {
       }),
     ).toBe("A person decides what to change");
     expect(proposal({ proposal: "later" })).toBeUndefined();
+  });
+
+  it("fills Generate's goal to add a link for a relationship no link covers", () => {
+    const [route, none, unresolved, rows] = SUGGESTION_FINDINGS.map((f) =>
+      suggestion(stored(f.finding), [
+        { id: "set_acme_general", name: "General" },
+      ]),
+    );
+    // No proposal: a link for its name in words, in its set, with up to
+    // three quotes, one a line, whitespace collapsed.
+    expect(none!.goal).toBe(
+      [
+        "Add a link for “subsidiary of”: documents of “General” state it.",
+        "For example:",
+        "“Globex Freight, a subsidiary of Globex, handles delivery.”",
+        "“Initech Labs is a wholly owned subsidiary of Initech.”",
+        "“Acme Freight signs as a subsidiary of Acme.”",
+      ].join("\n"),
+    );
+    // A proposal: the goal is what it proposes, with the other spellings.
+    expect(route!.goal).toBe(
+      [
+        "Let documents of “General” state “supplies”: documents state “supplier of”, also reported as “supplier of packaging”.",
+        "For example:",
+        "“Globex supplies Acme with steel under this agreement.”",
+        "“Initech is Acme's supplier of packaging.”",
+        "“Globex will continue to supply Acme.”",
+      ].join("\n"),
+    );
+    // Only a relationship no link covers has one.
+    expect(unresolved!.goal).toBeUndefined();
+    expect(rows!.goal).toBeUndefined();
+    const goal = (signal: object, proposal: object | null = null) =>
+      suggestion(stored({ signal: { kind: "unmatched", ...signal }, proposal }))
+        .goal;
+    expect(goal({ set: "s" })).toBeUndefined();
+    expect(goal({ canonical: "", set: "s" })).toBeUndefined();
+    // Every other spelling, in words; no set, no quotes; quotes of only
+    // whitespace left out.
+    expect(
+      goal({
+        canonical: "supplier_of",
+        spellings: ["supplier_of", "supplier_of_packaging", "vendor_of"],
+        backing: {
+          count: 2,
+          sources: 2,
+          examples: [{ doc_id: "d", quote: " \n " }],
+        },
+      }),
+    ).toBe(
+      "Add a link for “supplier of”: documents state it, also reported as “supplier of packaging” and “vendor of”.",
+    );
+    expect(
+      goal(
+        { canonical: "born_in", set: "s" },
+        {
+          proposal: "draft",
+          brief: { brief: "description", link: "born_in__per__loc" },
+        },
+      ),
+    ).toBe(
+      "Describe “born_in__per__loc” so documents use it: documents state “born in”.",
+    );
+  });
+
+  it("keeps the goal within MAX_GOAL code points, whole quotes first", () => {
+    const goal = (quotes: string[], spellings = ["x"]) =>
+      suggestion(
+        stored({
+          signal: {
+            kind: "unmatched",
+            canonical: "x",
+            spellings,
+            backing: {
+              count: quotes.length,
+              sources: 2,
+              examples: quotes.map((quote) => ({ doc_id: "d", quote })),
+            },
+          },
+          proposal: null,
+        }),
+      ).goal!;
+    const chars = (s: string) => [...s].length;
+    const head = "Add a link for “x”: documents state it.\nFor example:\n";
+    // Three quotes that don't all fit: the first two, whole.
+    const long = ["a", "b", "c"].map((c) => c.repeat(900));
+    const two = goal(long);
+    expect(two).toBe(`${head}“${long[0]}”\n“${long[1]}”`);
+    expect(chars(two)).toBeLessThanOrEqual(MAX_GOAL);
+    // One that doesn't fit alone is cut short, to MAX_GOAL exactly, by code
+    // point: no emoji split in half.
+    const cut = goal(["😀".repeat(3000), "b"]);
+    expect(chars(cut)).toBe(MAX_GOAL);
+    expect(cut.length).toBeGreaterThan(MAX_GOAL);
+    expect(cut.startsWith(`${head}“😀`)).toBe(true);
+    expect(cut.endsWith("😀…")).toBe(true);
+    // Exactly MAX_GOAL fits as it is.
+    const room = MAX_GOAL - chars(head) - 2;
+    expect(goal(["q".repeat(room)])).toBe(`${head}“${"q".repeat(room)}”`);
+    expect(goal(["q".repeat(room + 1)]).endsWith("q…")).toBe(true);
+    // Spellings that outgrow it alone: cut, with no quote.
+    const many = goal(
+      ["a"],
+      Array.from({ length: 400 }, (_, i) => `spelling_${i}`),
+    );
+    expect(chars(many)).toBe(MAX_GOAL);
+    expect(many).not.toContain("For example:");
+    expect(many.endsWith("…")).toBe(true);
   });
 
   it("names a document set by its name, and by its id when it's unknown", () => {
@@ -425,7 +534,7 @@ describe("mock suggestions", () => {
     const loadId = await load();
     const listed = await call("GET", H);
     expect(listed.body.findings.map((f: FoundryHealFinding) => f.kind)).toEqual(
-      ["unmatched", "unresolved", "row_errors"],
+      ["unmatched", "unmatched", "unresolved", "row_errors"],
     );
     for (const f of listed.body.findings) {
       expect(f.loadId).toBe(loadId);

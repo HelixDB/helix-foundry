@@ -46,7 +46,7 @@ import {
   useNow,
 } from "../../kit";
 import { paths } from "../../paths";
-import { RefreshFailed, useWorkspace } from "../../ui";
+import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import {
   documentQueries,
   documentSetQueries,
@@ -92,7 +92,7 @@ import {
   withLoad,
 } from "./model";
 import { DataFeed, type FeedItem } from "./ontology-scene";
-import { Callout, canManage } from "./parts";
+import { Callout } from "./parts";
 import {
   createLoad,
   deleteLoad,

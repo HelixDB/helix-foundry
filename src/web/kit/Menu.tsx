@@ -72,6 +72,32 @@ function usePlacement(
   }, [open, anchor, pop, align, side]);
 }
 
+// The keys an open list answers, as a menu's do: Escape closes it and gives
+// the focus back, Tab closes it, the arrows move through its items (round
+// from the last to the first), Home and End go to its ends. Whether it
+// answered the key.
+function listKey(
+  e: KeyboardEvent,
+  list: HTMLElement[],
+  close: (refocus?: boolean) => void,
+) {
+  const i = list.indexOf(document.activeElement as HTMLElement);
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  } else if (e.key === "Tab") close(false);
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const step = e.key === "ArrowDown" ? 1 : -1;
+    list[(i + step + list.length) % list.length]?.focus();
+  } else if (e.key === "Home" || e.key === "End") {
+    e.preventDefault();
+    (e.key === "Home" ? list[0] : list[list.length - 1])?.focus();
+  } else return false;
+  return true;
+}
+
 // Button that opens a menu; closes on outside click, Escape, Tab or selection.
 // The menu sits in the top layer at a fixed position next to its trigger, so
 // overflow on any ancestor (sidebar, table, dialog) cannot clip it.
@@ -117,23 +143,7 @@ export function DropdownMenu({
     setOpen(false);
     if (refocus) button.current?.focus();
   };
-  const onKey = (e: KeyboardEvent) => {
-    const list = items(),
-      i = list.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    } else if (e.key === "Tab") close(false);
-    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      list[(i + step + list.length) % list.length]?.focus();
-    } else if (e.key === "Home" || e.key === "End") {
-      e.preventDefault();
-      (e.key === "Home" ? list[0] : list[list.length - 1])?.focus();
-    }
-  };
+  const onKey = (e: KeyboardEvent) => void listKey(e, items(), close);
   return (
     <div ref={root} className={cx("hf-menu", className)}>
       <button
@@ -353,19 +363,8 @@ export function Select<V extends string>({
   const onKey = (e: KeyboardEvent) => {
     const all = items(),
       i = all.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    } else if (e.key === "Tab") close(false);
-    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      all[(i + step + all.length) % all.length]?.focus();
-    } else if (e.key === "Home" || e.key === "End") {
-      e.preventDefault();
-      (e.key === "Home" ? all[0] : all[all.length - 1])?.focus();
-    } else if (
+    if (listKey(e, all, close)) return;
+    if (
       e.key.length === 1 &&
       e.key !== " " &&
       !e.ctrlKey &&

@@ -205,16 +205,7 @@ FROM foundry_ontology_versions WHERE ontology_id=? ORDER BY version DESC LIMIT ?
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.OntologyVersion
-	for rows.Next() {
-		v, err := scanOntologyVersion(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanOntologyVersion)
 }
 
 // SetCurrentOntologyVersion points a live ontology at versionID if it still

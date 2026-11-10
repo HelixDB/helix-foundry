@@ -17,7 +17,7 @@ import {
   Section,
 } from "../../kit";
 import { paths } from "../../paths";
-import { useWorkspace } from "../../ui";
+import { canManage, useWorkspace } from "../../ui";
 import { connectorsQuery } from "../data/data-api";
 import { SignInReturn } from "../data/sign-in";
 import { readPicks } from "../data/sign-ins";
@@ -38,7 +38,6 @@ import {
   startingEventSources,
   startingSets,
 } from "./model";
-import { canManage } from "./parts";
 import { generateOntology, isLive, ontologyQueries } from "./queries";
 import { isSampleConnector, isSampleSet } from "./sample";
 import { ontologyName, useOntology } from "./scope";

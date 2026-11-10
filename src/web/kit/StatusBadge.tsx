@@ -35,49 +35,6 @@ const meta: Record<Status, { label: string; tone: Tone; live?: boolean }> = {
   canceled: { label: "Canceled", tone: "neutral" },
   draft: { label: "Draft", tone: "neutral" },
 };
-export const statusTone = (s: Status) => meta[s].tone;
-export const statusLabel = (s: Status) => meta[s].label;
-export const isLive = (s: Status) => !!meta[s].live || s === "queued";
-
-// Maps raw job, run, proposal and sync states onto badge statuses.
-export function toStatus(raw?: string | null): Status {
-  switch (raw) {
-    case "queued":
-    case "waiting":
-      return "queued";
-    case "running":
-    case "starting":
-    case "publishing":
-      return "running";
-    case "checking":
-    case "syncing":
-    case "live":
-      return "syncing";
-    case "succeeded":
-    case "published":
-    case "complete":
-      return "succeeded";
-    case "ready":
-    case "healthy":
-      return "healthy";
-    case "awaiting_review":
-      return "review";
-    case "failed":
-    case "error":
-    case "retrying":
-      return "failed";
-    case "canceled":
-    case "cancelled":
-    case "rejected":
-      return "canceled";
-    case "paused":
-    case "stale":
-    case "draft":
-      return raw;
-    default:
-      return "draft";
-  }
-}
 
 export function StatusBadge({
   status,

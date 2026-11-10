@@ -222,16 +222,7 @@ WHERE l.ontology_id=? AND l.status<>'deleted' ORDER BY l.created_at DESC, l.id D
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.FoundryLoad
-	for rows.Next() {
-		l, err := scanFoundryLoad(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	return out, rows.Err()
+	return scanAll(rows, scanFoundryLoad)
 }
 
 // ListFoundryLoadJobs returns, for each of the given loads that has jobs,
@@ -254,17 +245,8 @@ WHERE load_id=? ORDER BY created_at DESC, id DESC LIMIT ?`, loadID, newest)
 		if err != nil {
 			return nil, err
 		}
-		var jobs []*model.FoundryGraphJob
-		for rows.Next() {
-			job, err := scanFoundryGraphJob(rows)
-			if err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			jobs = append(jobs, job)
-		}
-		_ = rows.Close()
-		if err := rows.Err(); err != nil {
+		jobs, err := scanAll(rows, scanFoundryGraphJob)
+		if err != nil {
 			return nil, err
 		}
 		if len(jobs) > 0 {

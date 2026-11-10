@@ -45,6 +45,7 @@ import { mayBeStarting } from "../explore/database-query";
 import { versionFormat } from "./format";
 import { EVENT_SOURCE_MODE_WORDS } from "./paths";
 import { isLive } from "./queries";
+import { isRecord } from "../../../shared/json";
 
 // Reads an ontology version's definition, in either stored format, into what
 // the Ontology area shows. Nothing here trusts the definition's shape: every
@@ -63,16 +64,14 @@ import { isLive } from "./queries";
 // ---------------------------------------------------------------- Helpers
 
 type Table = Record<string, unknown>;
-const isTable = (v: unknown): v is Table =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 const texts = (v: unknown) =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 const tables = (v: unknown): Table[] =>
-  Array.isArray(v) ? v.filter(isTable) : [];
+  Array.isArray(v) ? v.filter(isRecord) : [];
 const entries = (v: unknown): [string, Table][] =>
-  isTable(v)
-    ? Object.entries(v).filter((e): e is [string, Table] => isTable(e[1]))
+  isRecord(v)
+    ? Object.entries(v).filter((e): e is [string, Table] => isRecord(e[1]))
     : [];
 
 /** A parse that can fail: the error is what the parser said. */
@@ -166,7 +165,7 @@ export type FoundryView = {
 export function readFoundry(
   def?: Record<string, unknown> | FoundryDefinition | null,
 ): FoundryView {
-  const d = (isTable(def) ? def : {}) as Record<string, unknown>;
+  const d = (isRecord(def) ? def : {}) as Record<string, unknown>;
   const named = (t: Table) => !!text(t.name);
   return {
     entities: tables(d.entities)
@@ -174,7 +173,7 @@ export function readFoundry(
       .map((e) => ({
         name: text(e.name),
         description: text(e.description),
-        source: isTable(e.source)
+        source: isRecord(e.source)
           ? {
               connector_id: text(e.source.connector_id),
               table: text(e.source.table),
@@ -294,7 +293,7 @@ export type AgentOntology = {
 };
 
 const props = (v: unknown): Prop[] =>
-  isTable(v)
+  isRecord(v)
     ? Object.entries(v).map(([name, type]) => ({ name, type: text(type) }))
     : [];
 const traits = (t: Table) => [
@@ -328,7 +327,7 @@ export function parseAgentOntology(source: string): Parsed<AgentOntology> {
         props: props(t.props),
         key: texts(t.key),
         names: texts(t.names),
-        identifiers: (isTable(t.identifiers)
+        identifiers: (isRecord(t.identifiers)
           ? Object.entries(t.identifiers)
           : []
         )
@@ -404,16 +403,16 @@ export type AgentMapping = {
 
 function parseText(p: unknown): string | undefined {
   if (typeof p === "string") return p;
-  if (!isTable(p)) return undefined;
+  if (!isRecord(p)) return undefined;
   const [kind, spec] = Object.entries(p)[0] || [];
   if (!kind) return undefined;
   if (typeof spec === "string") return `${kind} ${spec}`;
-  if (isTable(spec) && kind === "datetime")
+  if (isRecord(spec) && kind === "datetime")
     return `datetime ${text(spec.format)}${spec.tz ? ` ${spec.tz}` : ""}`;
   return kind;
 }
 function fieldRef(v: unknown): FieldRef {
-  if (!isTable(v)) return { field: text(v), transform: [] };
+  if (!isRecord(v)) return { field: text(v), transform: [] };
   return {
     field: text(v.field),
     transform: texts(v.transform),
@@ -421,7 +420,7 @@ function fieldRef(v: unknown): FieldRef {
   };
 }
 const fieldPairs = (v: unknown): [string, FieldRef][] =>
-  isTable(v)
+  isRecord(v)
     ? Object.entries(v)
         .map(([k, f]): [string, FieldRef] => [k, fieldRef(f)])
         .sort((a, b) => a[0].localeCompare(b[0]))
@@ -453,7 +452,7 @@ export function parseAgentMappings(source: string): Parsed<AgentMapping[]> {
           })),
           bindings: entries(m.bind)
             .map(([alias, b]): AgentBinding => {
-              const identify: Identify = isTable(b.lookup)
+              const identify: Identify = isRecord(b.lookup)
                 ? {
                     kind: "lookup",
                     mapping: text(b.lookup.mapping),
@@ -574,7 +573,7 @@ export type AgentEnrichment = {
 };
 
 const fieldMap = (v: unknown): [string, string][] =>
-  (isTable(v) ? Object.entries(v) : []).filter(
+  (isRecord(v) ? Object.entries(v) : []).filter(
     (e): e is [string, string] => typeof e[1] === "string",
   );
 
@@ -592,8 +591,8 @@ export function parseAgentEnrichments(
   return parseToml(source, (doc) =>
     entries(doc.enrichments)
       .map(([name, e]): AgentEnrichment => {
-        const clues = isTable(e.clues) ? e.clues : {},
-          history = isTable(e.work_history) ? e.work_history : undefined;
+        const clues = isRecord(e.clues) ? e.clues : {},
+          history = isRecord(e.work_history) ? e.work_history : undefined;
         return {
           name,
           type: text(e.type),
@@ -637,7 +636,7 @@ export type EnrichmentClues = {
  * readEnrichmentClues({ people: 2, usable: 3 }); // undefined
  */
 export function readEnrichmentClues(v: unknown): EnrichmentClues | undefined {
-  if (!isTable(v)) return undefined;
+  if (!isRecord(v)) return undefined;
   const count = (x: unknown) =>
     typeof x === "number" && Number.isInteger(x) && x >= 0 ? x : undefined;
   const people = count(v.people),
@@ -1174,9 +1173,9 @@ const STATUSES: AgentTurnStatus[] = ["done", "needs_input", "budget_exhausted"];
 export function readAgentBundle(
   given?: Record<string, unknown> | null,
 ): AgentBundle {
-  const def: Table = isTable(given) ? given : {};
-  const draftView = isTable(def.draft) ? def.draft : {},
-    draft = isTable(draftView.draft) ? draftView.draft : {};
+  const def: Table = isRecord(given) ? given : {};
+  const draftView = isRecord(def.draft) ? def.draft : {},
+    draft = isRecord(draftView.draft) ? draftView.draft : {};
   const items: Record<string, AgentDraftItem> = Object.fromEntries(
     entries(draft.items)
       .filter(([, i]) => typeof i.toml === "string")
@@ -1187,7 +1186,7 @@ export function readAgentBundle(
   const questions = (
     Array.isArray(def.questions) ? def.questions : tables(draft.questions)
   )
-    .filter((q): q is Table => isTable(q) && !!text(q.text))
+    .filter((q): q is Table => isRecord(q) && !!text(q.text))
     .map((q) => ({
       id: text(q.id),
       items: texts(q.items),
@@ -1207,13 +1206,13 @@ export function readAgentBundle(
       .flatMap(([id, item]) => {
         const name = id.slice(kind.length + 1);
         const parsed = parseToml(item.toml, (doc) => {
-          const own = isTable(doc[kind]) ? doc[kind][name] : undefined;
-          return isTable(own) ? read(name, own) : undefined;
+          const own = isRecord(doc[kind]) ? doc[kind][name] : undefined;
+          return isRecord(own) ? read(name, own) : undefined;
         });
         return parsed.ok && parsed.value ? [parsed.value] : [];
       })
       .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-  const usage = isTable(def.usage) ? def.usage : {};
+  const usage = isRecord(def.usage) ? def.usage : {};
   const num = (v: unknown) => (typeof v === "number" ? v : 0);
   return {
     status: STATUSES.find((s) => s === def.status),
@@ -1542,7 +1541,7 @@ export function loadRefusal(
 
 /** Read the engine's uint32 counts. Missing or inconsistent counts cannot permit a load. */
 export function readRuleCounts(value: unknown): AgentRuleCounts | undefined {
-  if (!isTable(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const { count, evaluated } = value;
   if (
     typeof count !== "number" ||

@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.uber.org/dig"
+	"google.golang.org/grpc/status"
 
 	"github.com/helixdb/helix-foundry/backend/ai"
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -255,6 +256,8 @@ func sampleDraft(gen *model.OntologyGeneration) (ontologygen.Result, error) {
 
 // outcome decides what an attempt leaves behind: a draft version, a retry
 // after a backoff that doubles from a minute, or a failure for good. The
+// agent's internal error is Helix's bug: it is logged as an error, for
+// on-call, and gets ontologyagent.InternalAttempts attempts at most. The
 // version's scope is the sets the generation read: for a revision, its
 // parent version's scope and the sets its revised routes name (storing the
 // version keeps the live ones of the workspace). A first draft
@@ -296,9 +299,17 @@ func (t *Task) outcome(ctx context.Context, gen *model.OntologyGeneration, resul
 	if !errors.As(err, &failure) {
 		failure = &ontologygen.Failure{Message: "the generation failed; Helix will retry", Err: err}
 	}
-	log.From(ctx).Warn("ontology generation attempt failed", "generation", gen.ID, "workspace", gen.WorkspaceID,
+	logger := log.From(ctx).With("generation", gen.ID, "workspace", gen.WorkspaceID,
 		"attempt", gen.Attempts, "permanent", failure.Permanent, "err", err)
-	if !failure.Permanent && gen.Attempts < t.cfg.MaxAttempts {
+	maxAttempts := t.cfg.MaxAttempts
+	if failure.Internal {
+		s := status.Convert(failure.Err)
+		logger.Error("ontology generation attempt failed", "code", s.Code().String(), "description", s.Message())
+		maxAttempts = min(maxAttempts, ontologyagent.InternalAttempts)
+	} else {
+		logger.Warn("ontology generation attempt failed")
+	}
+	if !failure.Permanent && gen.Attempts < maxAttempts {
 		retryAt := t.now().Add(time.Minute << (gen.Attempts - 1))
 		usage.RetryAt, usage.Error = &retryAt, failure.Message
 		return usage
