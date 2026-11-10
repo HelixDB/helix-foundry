@@ -297,7 +297,13 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
       body: [
         `The draft is the version the generation made (its \`result_version_id\`)${o?.setup.step === "current" ? `: \`${draft}\`` : ""}. Read it with \`helix_foundry_get_version\` (\`{${ids}, "version_id": "${draft}"}\`), and the goal it was drafted from with \`helix_foundry_get_generation\` (its \`generation_id\`). Tell me in a few lines what it models: its main types, how they link and its rules, against the goal’s questions. Give me its \`url\` to look at it in Foundry. If it has a \`load_refusal\`, it can’t be loaded: tell me why, and ask me how to go on.`,
         "",
-        "If I want changes, ask me what, write the new goal with me, and generate again with `generate_ontology` from what that generation read (its `tables` and `document_set_ids`), then review the new draft. Once it’s right, ask me whether to make it current and load it: a load spends from the workspace’s monthly budget.",
+        "Then tell me what it leaves open and what it doesn’t read, before I decide anything:",
+        "",
+        "- its questions, the definition’s `questions`. They are open: a question’s `default` is the agent’s suggestion, and the draft doesn’t act on it. Ask me each one, with its suggestion;",
+        "- what it left out and why, the definition’s `left_out`. Each entry starts with the id of a table, a file or a document set;",
+        "- the document sets it was given but doesn’t read, `document_reads.unread_set_ids`, by the names `helix_foundry_get_ontology` gives its sets. A load stores their documents and I can search them, but nothing from them reaches the graph, so no answer drawn from the graph knows what they say.",
+        "",
+        "If I answer a question, or want something it left out or doesn’t read, or want other changes, write the new goal with me, my answers in it in plain words, and generate again with `generate_ontology` from what that generation read (its `tables` and `document_set_ids`), then review the new draft the same way. Once it’s right, ask me whether to make it current and load it: a load spends from the workspace’s monthly budget.",
       ],
     },
     current: {
@@ -314,6 +320,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
           : `1. \`create_load\`, target ${target}, payload \`{"version_id": "${o?.currentVersionId || "<version id>"}"}\`, the current version. Its result is the load.`,
         `2. Wait for it: \`helix_foundry_get_load\` with \`{${ids}, "load_id": "<load id>", "wait": true}\`, again until its status is ready, partial or failed. A load takes several minutes, and a new database can take up to 15 minutes to start first.`,
         "3. If it’s failed or partial, tell me each failed job’s `error`.",
+        "4. Tell me what it made of my documents, from its `documents` (absent when it holds none): how many it read of how many (`read` of `total`), how many its version doesn’t read (`not_read_by_version`, and which sets: those of `sets` with `read_by_version` false), the facts it wrote (`facts_written`), the items it held for my review instead of writing (`held_for_review`) and the names that matched no record (`names_unmatched`). A job’s `progress` counts a document as done whether or not it was read, so never report that as what was read. If most documents weren’t read, or few facts were written, say so plainly, and offer to generate again with a goal that covers what was left unread.",
       ],
     },
     finish: {
