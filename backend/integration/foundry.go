@@ -287,7 +287,7 @@ type FoundryVersionOutput struct {
 	DocumentReads *FoundryVersionReadsOutput `json:"document_reads,omitempty"`
 	// Tables names the synced tables an agent bundle's definition knows only by an id. Only
 	// get_version sets it.
-	Tables []FoundryVersionTableOutput `json:"tables,omitempty" jsonschema:"The synced tables its generation drafted from, each with the id (source_id, src_ and 16 hex digits) its definition names the table by: in mappings_toml, in a question's items and at the start of a left_out entry. Only helix_foundry_get_version returns it; absent for a version no generation drafted, one drafted from no synced table, and a caller who can't read its generation."`
+	Tables []FoundryVersionTableOutput `json:"tables,omitempty" jsonschema:"The synced tables its generation drafted from, each with the id (source_id, src_ and 16 hex digits) its definition names the table by, in mappings_toml and at the start of a left_out entry. Only helix_foundry_get_version returns it; absent for a version no generation drafted, one drafted from no synced table, and a caller who can't read its generation."`
 	// LoadRefusal is why create_load refuses the version, the backend's own words; empty
 	// when it would load it. Like the definition, it is set only on a version read whole
 	// (get_version, get_ontology's current_version, set_current_version's result): a listed
@@ -363,7 +363,7 @@ type GetFoundryLoadOutput struct {
 	Load         FoundryLoadOutput `json:"load"`
 	// Documents is what the load made of its documents. Absent says nothing was counted, not
 	// that nothing was left unread: see its description.
-	Documents *FoundryLoadDocumentsOutput `json:"documents,omitempty" jsonschema:"What the load made of the documents it holds. Absent in three cases, which a caller can't tell apart from this result alone: the load holds no documents (its version was given no document sets, or they hold no text document or PDF); the caller reads only part of the load through source grants; or the load was made before Foundry recorded which documents a load holds. So absence does not say nothing was left unread: when the load's version has document_set_ids, say the counts are unavailable and count from helix_foundry_list_documents."`
+	Documents *FoundryLoadDocumentsOutput `json:"documents,omitempty" jsonschema:"What the load made of the documents it holds. Absent in three cases, which a caller can't tell apart from this result alone: the load holds no documents (its version was given no document sets, or they hold no text document or PDF); the caller reads the load through source grants, in whole or in part; or the load was made before Foundry recorded which documents a load holds. So absence does not say nothing was left unread: when the load's version has document_set_ids, say the counts are unavailable and count from helix_foundry_list_documents."`
 	// Jobs are the load's newest jobs, newest first: at most 20.
 	Jobs []FoundryJobOutput `json:"jobs"`
 }
@@ -381,7 +381,7 @@ type FoundryLoadDocumentsOutput struct {
 	Duplicate        int32 `json:"duplicate" jsonschema:"Documents whose text repeats another document's."`
 	Failed           int32 `json:"failed" jsonschema:"Documents whose extraction failed."`
 	Waiting          int32 `json:"waiting" jsonschema:"Documents the load has not extracted yet."`
-	// FactsWritten is the engine's created plus updated facts, a document: not distinct facts.
+	// FactsWritten adds up each document's created and updated facts: not distinct facts.
 	FactsWritten int64 `json:"facts_written" jsonschema:"Fact writes by the documents: each document counts the facts it created and the stored facts it added its evidence to, so a fact two documents state counts twice. It is not the number of distinct facts in the graph."`
 	// LeftForReview is every review the documents left: Foundry counts a document's reviews in
 	// one number, whatever their kind, as of when the load last wrote the document.
