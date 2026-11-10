@@ -31,6 +31,35 @@ const DOCS = `${SOURCE}#readme`;
 const SETUP = `git clone ${SOURCE}.git
 cd helix-foundry && docker compose up -d --wait`;
 
+/**
+ * A phone's way on to a computer: the reminder form, Star on GitHub to find
+ * it later, and Helix Cloud for whoever starts now. Without reminders (no
+ * secret, src/server/reminders.ts) a line says to open the page on a
+ * computer in the form's place.
+ */
+function Handoff({ remind, id }: { remind: boolean; id?: string }) {
+  return (
+    <div className="handoff phone-only" id={id}>
+      {remind ? (
+        <Remind />
+      ) : (
+        <p className="handoff-note">
+          Foundry is built for a bigger screen: open this page on your computer
+          to start.
+        </p>
+      )}
+      <div className="row">
+        <a className="btn" href={SOURCE}>
+          Star on GitHub to find it later
+        </a>
+      </div>
+      <a className="handoff-now" href={SIGN_IN}>
+        Or start on Helix Cloud now
+      </a>
+    </div>
+  );
+}
+
 /** Where a visit came from that the page greets: ?via= on `/`. */
 export type Via = "email" | "github";
 
@@ -184,24 +213,7 @@ export async function Landing({
                   </span>
                 </button>
               </div>
-              <div className="handoff phone-only" id="remind">
-                {remind ? (
-                  <Remind />
-                ) : (
-                  <p className="handoff-note">
-                    Foundry is built for a bigger screen: open this page on your
-                    computer to start.
-                  </p>
-                )}
-                <div className="row">
-                  <a className="btn" href={SOURCE}>
-                    Star on GitHub to find it later
-                  </a>
-                </div>
-                <a className="handoff-now" href={SIGN_IN}>
-                  Or start on Helix Cloud now
-                </a>
-              </div>
+              <Handoff remind={remind} id="remind" />
               <pre id="setup-text" hidden>
                 {SETUP}
               </pre>
@@ -365,6 +377,13 @@ export async function Landing({
                 </p>
               </div>
             </section>
+
+            {/* A phone's last word before the footer: the hero's hand-off
+                again, for whoever read down to here. Not a section, so the
+                computer's last box keeps .box:last-of-type. */}
+            <div className="handoff-end phone-only">
+              <Handoff remind={remind} />
+            </div>
           </div>
         </main>
 

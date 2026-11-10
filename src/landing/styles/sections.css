@@ -325,11 +325,18 @@
     display: none;
   }
 }
+/* One column that may shrink below what the form's field would ask for. */
 .handoff {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   width: 100%;
   max-width: 30rem;
+}
+/* The hand-off again above a phone's footer: inset as in the hero, since
+   the boxes above it run to the column's edges. */
+.handoff-end {
+  padding: 0.5rem var(--gut) 0;
 }
 .handoff-note {
   color: var(--ink-2);
@@ -363,9 +370,12 @@
   display: flex;
   gap: 0.5rem;
 }
-/* 16px, so iOS doesn't zoom the page into the field. */
+/* 16px, so iOS doesn't zoom the page into the field. No width of its own:
+   a field's default one (its size, 20 characters) would hold the row, and
+   the card, wider than a phone's column. */
 .remind input {
   flex: 1;
+  width: 0;
   min-width: 0;
   height: 2.75rem;
   padding: 0 0.8rem;

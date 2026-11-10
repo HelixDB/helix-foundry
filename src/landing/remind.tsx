@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import { CONSENT, CONSENT_TEXT, REMIND_PATH } from "@/shared/reminders";
 import { trackEvent } from "@/web/analytics";
 import {
@@ -21,7 +21,10 @@ type State =
 // browser's time zone (src/shared/reminders.ts). The consent shows once
 // something is typed. Session replay leaves the form out (data-replay-block),
 // and analytics hears only that a reminder was set up, or why it wasn't.
+// The page shows it twice on a phone (the hero, and again above the footer),
+// so its ids are its own.
 export function Remind() {
+  const id = useId();
   const [email, setEmail] = useState("");
   const [state, setState] = useState<State>({ kind: "idle" });
   const sending = state.kind === "sending";
@@ -69,10 +72,10 @@ export function Remind() {
     <form
       className="remind"
       onSubmit={submit}
-      aria-labelledby="remind-title"
+      aria-labelledby={`${id}-title`}
       data-replay-block
     >
-      <p className="m" id="remind-title">
+      <p className="m" id={`${id}-title`}>
         Try it on your computer
       </p>
       <p className="remind-lead">
@@ -81,20 +84,31 @@ export function Remind() {
       </p>
       {state.kind !== "sent" && (
         <>
+          {/* What every platform's autofill reads: the type, name and
+              autocomplete token, which iOS Safari's suggestions, Android's
+              autofill (Chrome, Samsung Internet and the apps' in-app
+              browsers) and password managers fill from, and a label tied to
+              the field by its id, which managers that guess from labels
+              read. The keyboard is the email one, with no capital or
+              correction. */}
+          <label className="visually-hidden" htmlFor={`${id}-email`}>
+            Your email
+          </label>
           <div className="remind-row">
             <input
+              id={`${id}-email`}
               type="email"
               name="email"
               autoComplete="email"
               inputMode="email"
               autoCapitalize="none"
+              autoCorrect="off"
               spellCheck={false}
               enterKeyHint="send"
               required
               maxLength={254}
               placeholder="you@company.com"
-              aria-label="Your email"
-              aria-describedby="remind-consent"
+              aria-describedby={`${id}-consent`}
               value={email}
               onChange={(event) => {
                 setEmail(event.target.value);
@@ -105,7 +119,11 @@ export function Remind() {
               {sending ? "Sending" : "Remind me"}
             </button>
           </div>
-          <p id="remind-consent" className="remind-note" hidden={!email.trim()}>
+          <p
+            id={`${id}-consent`}
+            className="remind-note"
+            hidden={!email.trim()}
+          >
             {CONSENT_TEXT}
           </p>
         </>
