@@ -791,7 +791,11 @@ test("stores a document of a set its version reads but no route names", async ({
   await page
     .getByRole("link", { name: /Review version 4/ })
     .click({ timeout: 15_000 });
-  await expect(page.getByText("Reads Other")).toBeVisible();
+  // It was given Other and routes none of it: its header no longer says
+  // it reads the set.
+  await expect(
+    page.getByText("Reads none of its 1 document set"),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Make current" }).click();
   await page
     .getByRole("dialog", { name: "Make version 4 current?" })
@@ -809,7 +813,19 @@ test("stores a document of a set its version reads but no route names", async ({
   await expect(
     page.getByRole("status").filter({ hasText: "Loaded" }).first(),
   ).toBeVisible({ timeout: 20_000 });
-  await page.goto(`${O}/documents`);
+  // The load says what it made of the set, not only that a document is in.
+  const unread = page
+    .getByRole("status")
+    .filter({ hasText: "1 document set, 0 read into the graph" });
+  await expect(unread).toContainText(
+    "Its one document was not read for names and facts. 1 document in Other is stored and searchable, but no route of this version reads that set, so nothing from it is in the graph: to read it, generate a version whose goal covers it.",
+  );
+  const details = page.locator(".hf-panel").filter({ hasText: "Load ID" });
+  await expect(details).toContainText("Documents read for facts");
+  await expect(details.getByText("0 of 1", { exact: true })).toBeVisible();
+  await expect(details).toContainText("Not read by this version");
+  await unread.getByRole("link", { name: "See what wasn’t read" }).click();
+  await expect(page).toHaveURL(/\/documents\?.*status=out_of_scope/);
   await expect(row(page, "notes.md")).toContainText("Not read by its version");
   await row(page, "notes.md").getByRole("link", { name: "notes.md" }).click();
   await expect(
