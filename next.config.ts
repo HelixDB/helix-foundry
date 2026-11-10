@@ -18,7 +18,7 @@ if (mode && mode !== "local")
 // has "Foundry Local"'s, which its owner may turn off at run time
 // (src/server/telemetry.ts); a local build against the mock has none.
 const DATABUDDY = {
-  local: { clientId: "" },
+  local: { clientId: "a9289a6a-fb83-4fbb-80e3-41e080f65e13" },
   dev: {
     origin: "https://dev.foundry.helix-db.com",
     clientId: "a4288db1-0535-4fdd-8cae-bc525f19a172",
