@@ -230,7 +230,9 @@ func (s *accessStore) UpdateFoundryTeam(_ context.Context, workspaceID, teamID, 
 }
 
 // WithTx runs fn on the store itself: the fake has no transactions.
-func (s *accessStore) WithTx(_ context.Context, fn func(foundrystore.Store) error) error { return fn(s) }
+func (s *accessStore) WithTx(_ context.Context, fn func(foundrystore.Store) error) error {
+	return fn(s)
+}
 
 func (s *accessStore) LeaveOutFoundryTeamMembers(_ context.Context, workspaceID, teamID string, userIDs []string) error {
 	for i := range s.teams {

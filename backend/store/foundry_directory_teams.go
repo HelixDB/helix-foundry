@@ -200,12 +200,17 @@ WHERE workspace_id=? AND directory_id=?`, workspaceID, directoryID)
 
 // LeaveOutFoundryTeamMembers takes userIDs off a synced team, keeping them as
 // left out, before it is given grants that can't confine them. The next sync
-// puts them back once it holds none.
+// puts them back once it holds none. It takes the workspace's lock, which a
+// sync takes too, even for no one: inside a transaction, the members read
+// after it stay as they are until it commits.
 func (s *mysqlDB) LeaveOutFoundryTeamMembers(ctx context.Context, workspaceID, teamID string, userIDs []string) error {
-	if len(userIDs) == 0 {
-		return nil
-	}
 	return s.inTx(ctx, func(tx *mysqlDB) error {
+		if err := tx.workspaces.Lock(ctx, tx.db, workspaceID); err != nil {
+			return err
+		}
+		if len(userIDs) == 0 {
+			return nil
+		}
 		args := append([]any{teamID, workspaceID}, toAnySlice(userIDs)...)
 		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_team_members WHERE team_id=? AND workspace_id=? AND user_id IN (`+
 			idPlaceholders(len(userIDs))+`)`, args...); err != nil {
