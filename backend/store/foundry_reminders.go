@@ -19,8 +19,7 @@ const foundryReminderColumns = `id, email, time_zone, consent, status, sent, nex
 var ErrFoundryReminderLimit = errors.New("store: too many reminders were asked for in the past hour")
 
 // RequestFoundryReminder starts the reminders req asks for, or answers the
-// schedule its address already has, in a transaction of its own that locks
-// the address's row:
+// schedule its address already has:
 //   - a schedule running is answered as it is (Again), whatever req's zone,
 //     and counts nothing against the hour's cap;
 //   - otherwise a new schedule's first reminder goes at req.Schedule of the
@@ -30,10 +29,11 @@ var ErrFoundryReminderLimit = errors.New("store: too many reminders were asked f
 //     ended (done, stopped or failed) starts again in place, sent from 0,
 //     in req's zone and with req's consent.
 //
-// Two first requests of one address at once insert it once: the second
-// waits on the first's row and answers its schedule. The cap is counted
-// inside the transaction, but two transactions may count the same hour at
-// once, so it is about MaxNewPerHour, never far past it.
+// Two first requests of one address at once insert it once: the second's
+// insert fails on the first's row, and it answers that row's schedule. An
+// ended schedule starts again under its row's lock, so once. The cap's
+// count takes no lock, so requests counting the same hour at once may pass
+// it together: it is about MaxNewPerHour, never far past it.
 func (s *mysqlDB) RequestFoundryReminder(ctx context.Context, req model.FoundryReminderRequest) (model.FoundryReminderAnswer, error) {
 	if s.root == nil {
 		return model.FoundryReminderAnswer{}, fmt.Errorf("foundry reminder request requires a root database connection")
@@ -44,9 +44,9 @@ func (s *mysqlDB) RequestFoundryReminder(ctx context.Context, req model.FoundryR
 	for attempt := 0; ; attempt++ {
 		answer, err := s.requestFoundryReminder(ctx, req)
 		// A first request of the address that another inserted first, or
-		// one InnoDB rolled back to break a deadlock with it, is asked again:
-		// it then finds the other's row.
-		if attempt < 2 && (isDuplicateKey(err) || isDeadlock(err)) {
+		// one InnoDB rolled back to break a deadlock, is asked again: it then
+		// finds the other's row.
+		if attempt < 4 && (isDuplicateKey(err) || isDeadlock(err)) {
 			continue
 		}
 		// MySQL's duplicate-key message quotes the address, which no error
@@ -58,7 +58,26 @@ func (s *mysqlDB) RequestFoundryReminder(ctx context.Context, req model.FoundryR
 	}
 }
 
+// requestFoundryReminder is one try of RequestFoundryReminder. It never reads
+// a row that isn't there under a lock: a locking read of an address not yet
+// stored takes a gap lock, which other first requests of the address share,
+// and their inserts then wait on each other's gap locks until InnoDB breaks
+// the deadlock. So an address asked for the first time is one INSERT on its
+// own, which a racing first request fails with a duplicate key; only an
+// address whose schedule ended is read under a lock, by its id, to start it
+// again.
 func (s *mysqlDB) requestFoundryReminder(ctx context.Context, req model.FoundryReminderRequest) (_ model.FoundryReminderAnswer, err error) {
+	r, err := scanFoundryReminder(s.root.QueryRowContext(ctx, "SELECT "+foundryReminderColumns+` FROM foundry_reminders WHERE email=?`,
+		req.Email))
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return s.insertFoundryReminder(ctx, req)
+	case err != nil:
+		return model.FoundryReminderAnswer{}, fmt.Errorf("read foundry reminder: %w", err)
+	case r.Status == model.FoundryReminderScheduled && r.NextSendAt != nil:
+		return model.FoundryReminderAnswer{NextSendAt: *r.NextSendAt, Again: true}, nil
+	}
+
 	tx, err := s.root.BeginTx(ctx, nil)
 	if err != nil {
 		return model.FoundryReminderAnswer{}, fmt.Errorf("begin foundry reminder request: %w", err)
@@ -68,47 +87,65 @@ func (s *mysqlDB) requestFoundryReminder(ctx context.Context, req model.FoundryR
 			_ = tx.Rollback()
 		}
 	}()
-	r, err := scanFoundryReminder(tx.QueryRowContext(ctx, "SELECT "+foundryReminderColumns+` FROM foundry_reminders WHERE email=? FOR UPDATE`,
-		req.Email))
-	switch {
-	case errors.Is(err, ErrNotFound):
-		r = nil
-	case err != nil:
+	// The row exists: its primary key's record lock, and no gap.
+	r, err = scanFoundryReminder(tx.QueryRowContext(ctx, "SELECT "+foundryReminderColumns+` FROM foundry_reminders WHERE id=? FOR UPDATE`,
+		r.ID))
+	if err != nil {
 		return model.FoundryReminderAnswer{}, fmt.Errorf("read foundry reminder: %w", err)
-	case r.Status == model.FoundryReminderScheduled && r.NextSendAt != nil:
+	}
+	// Another request started it again since the read above.
+	if r.Status == model.FoundryReminderScheduled && r.NextSendAt != nil {
 		if err = tx.Commit(); err != nil {
 			return model.FoundryReminderAnswer{}, fmt.Errorf("commit foundry reminder request: %w", err)
 		}
 		return model.FoundryReminderAnswer{NextSendAt: *r.NextSendAt, Again: true}, nil
 	}
-	var started int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_reminders WHERE requested_at >= NOW(6) - INTERVAL 1 HOUR`).
-		Scan(&started); err != nil {
-		return model.FoundryReminderAnswer{}, fmt.Errorf("count foundry reminders: %w", err)
+	if err = s.underFoundryReminderLimit(ctx, tx, req.MaxNewPerHour); err != nil {
+		return model.FoundryReminderAnswer{}, err
 	}
-	if started >= req.MaxNewPerHour {
-		_ = tx.Rollback()
-		return model.FoundryReminderAnswer{}, ErrFoundryReminderLimit
-	}
-	var last *time.Time
-	if r != nil {
-		last = r.LastSentAt
-	}
-	next := req.Schedule(last).UTC()
-	if r == nil {
-		_, err = tx.ExecContext(ctx, `INSERT INTO foundry_reminders (id, email, time_zone, consent, next_send_at) VALUES (?, ?, ?, ?, ?)`,
-			req.ID, req.Email, req.TimeZone, req.Consent, next)
-	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE foundry_reminders SET status='scheduled', sent=0, next_send_at=?, attempts=0, last_error=NULL,
-  time_zone=?, consent=?, requested_at=NOW(6), stopped_at=NULL, stop_reason=NULL WHERE id=?`, next, req.TimeZone, req.Consent, r.ID)
-	}
-	if err != nil {
+	next := req.Schedule(r.LastSentAt).UTC()
+	if _, err = tx.ExecContext(ctx, `UPDATE foundry_reminders SET status='scheduled', sent=0, next_send_at=?, attempts=0, last_error=NULL,
+  time_zone=?, consent=?, requested_at=NOW(6), stopped_at=NULL, stop_reason=NULL WHERE id=?`, next, req.TimeZone, req.Consent, r.ID); err != nil {
 		return model.FoundryReminderAnswer{}, fmt.Errorf("schedule foundry reminder: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
 		return model.FoundryReminderAnswer{}, fmt.Errorf("commit foundry reminder request: %w", err)
 	}
 	return model.FoundryReminderAnswer{NextSendAt: next}, nil
+}
+
+// insertFoundryReminder starts the schedule of an address asked for the
+// first time: one INSERT, outside any transaction. A first request of the
+// same address that came first fails it with a duplicate key, which the
+// caller asks again, finding that request's row.
+func (s *mysqlDB) insertFoundryReminder(ctx context.Context, req model.FoundryReminderRequest) (model.FoundryReminderAnswer, error) {
+	if err := s.underFoundryReminderLimit(ctx, s.root, req.MaxNewPerHour); err != nil {
+		return model.FoundryReminderAnswer{}, err
+	}
+	next := req.Schedule(nil).UTC()
+	if _, err := s.root.ExecContext(ctx, `INSERT INTO foundry_reminders (id, email, time_zone, consent, next_send_at) VALUES (?, ?, ?, ?, ?)`,
+		req.ID, req.Email, req.TimeZone, req.Consent, next); err != nil {
+		return model.FoundryReminderAnswer{}, fmt.Errorf("schedule foundry reminder: %w", err)
+	}
+	return model.FoundryReminderAnswer{NextSendAt: next}, nil
+}
+
+// underFoundryReminderLimit is ErrFoundryReminderLimit once max schedules
+// started, or started again, within the hour. The count isn't locked, so
+// requests at the same moment may pass it together: the cap bounds a flood,
+// not the exact number.
+func (s *mysqlDB) underFoundryReminderLimit(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, max int) error {
+	var started int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM foundry_reminders WHERE requested_at >= NOW(6) - INTERVAL 1 HOUR`).
+		Scan(&started); err != nil {
+		return fmt.Errorf("count foundry reminders: %w", err)
+	}
+	if started >= max {
+		return ErrFoundryReminderLimit
+	}
+	return nil
 }
 
 // StopFoundryReminder stops email's schedule, if one is running, for

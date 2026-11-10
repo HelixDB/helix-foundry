@@ -124,10 +124,50 @@ func TestRequestFoundryReminder(t *testing.T) {
 		assert.WithinDuration(t, time.Now(), r.RequestedAt, time.Minute)
 	})
 	// Replicas of the API take the same address at once: it is stored once,
-	// one request starts its schedule, and every other answers it.
+	// one request starts its schedule, and every other answers it, with no
+	// deadlock between first requests (a locking read of a row not yet there
+	// would take the gap lock they deadlock on). Rounds of many, since a
+	// deadlock needs the timing.
 	t.Run("takes one address asked for at once", func(t *testing.T) {
 		db := newTestStore(t)
-		const n = 8
+		const rounds, n = 10, 16
+		for round := range rounds {
+			email := fmt.Sprintf("race-%d@example.com", round)
+			answers := make([]model.FoundryReminderAnswer, n)
+			errs := make([]error, n)
+			var wg sync.WaitGroup
+			for i := range n {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					req := reminderRequest(email, "UTC", first, 1000, nil)
+					req.ID = id26(fmt.Sprintf("RMD-RACE-%d-%d", round, i))
+					answers[i], errs[i] = db.RequestFoundryReminder(ctx, req)
+				}()
+			}
+			wg.Wait()
+			started := 0
+			for i := range n {
+				require.NoError(t, errs[i], "round %d, request %d", round, i)
+				assert.True(t, answers[i].NextSendAt.Equal(first))
+				if !answers[i].Again {
+					started++
+				}
+			}
+			assert.Equal(t, 1, started, "round %d", round)
+		}
+		var rows int
+		require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_reminders`).Scan(&rows))
+		assert.Equal(t, rounds, rows)
+	})
+	// An ended schedule asked for again by many at once starts again once.
+	t.Run("starts an ended schedule again once when asked for at once", func(t *testing.T) {
+		db := newTestStore(t)
+		_, err := db.RequestFoundryReminder(ctx, reminderRequest("ada@example.com", "UTC", first, 1000, nil))
+		require.NoError(t, err)
+		_, err = db.StopFoundryReminder(ctx, "ada@example.com", model.FoundryReminderStoppedSignedIn)
+		require.NoError(t, err)
+		const n = 16
 		answers := make([]model.FoundryReminderAnswer, n)
 		errs := make([]error, n)
 		var wg sync.WaitGroup
@@ -135,24 +175,19 @@ func TestRequestFoundryReminder(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				req := reminderRequest("ada@example.com", "UTC", first, 300, nil)
-				req.ID = id26(fmt.Sprintf("RMD-RACE-%d", i))
-				answers[i], errs[i] = db.RequestFoundryReminder(ctx, req)
+				answers[i], errs[i] = db.RequestFoundryReminder(ctx, reminderRequest("ada@example.com", "UTC", first, 1000, nil))
 			}()
 		}
 		wg.Wait()
 		started := 0
 		for i := range n {
 			require.NoError(t, errs[i])
-			assert.True(t, answers[i].NextSendAt.Equal(first))
 			if !answers[i].Again {
 				started++
 			}
 		}
 		assert.Equal(t, 1, started)
-		var rows int
-		require.NoError(t, testDB.QueryRow(`SELECT COUNT(*) FROM foundry_reminders`).Scan(&rows))
-		assert.Equal(t, 1, rows)
+		assert.Equal(t, "scheduled", readReminder(t, "ada@example.com").Status)
 	})
 }
 
