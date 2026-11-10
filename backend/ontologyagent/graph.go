@@ -557,6 +557,28 @@ type DocumentEvent struct {
 	Sections  uint64          `json:"sections"`
 	Counts    DocumentCounts  `json:"counts"`
 	Usage     DocumentUsage   `json:"usage"`
+	// Releases are what the run did with each release decision sent with the
+	// document, by the decision's id (contract 4.12.0). Counts counts reviews,
+	// of which one decision may name several.
+	Releases []DocumentRelease `json:"releases"`
+}
+
+// DocumentRelease is what a run did with one release decision of a document.
+type DocumentRelease struct {
+	DecisionID string         `json:"decision_id"`
+	Outcome    ReleaseOutcome `json:"outcome"`
+}
+
+// ReleaseOutcome is what became of a release decision: written; refused, its
+// reviews staying held for Reason (the engine's ReleaseRefusal, a word such as
+// unresolved, legal_form, changed, differs, conflict or blocked, kept as it
+// came: a later engine may give one this backend hasn't seen); missed (the run
+// committed the document, whose commit held no review at the decision's key
+// and place); or not_held (the load held the document already, with no such
+// review: one a release wrote before, or a claim this load never held there).
+type ReleaseOutcome struct {
+	Kind   model.FoundryReleaseOutcomeKind `json:"kind"`
+	Reason string                          `json:"reason,omitempty"`
 }
 
 // DecodeArtifact reads an artifact event.
@@ -619,6 +641,11 @@ func DecodeDocumentEvent(data []byte) (DocumentEvent, error) {
 	}
 	if e.DocID == "" {
 		return DocumentEvent{}, fmt.Errorf("document event names no document")
+	}
+	for _, r := range e.Releases {
+		if r.DecisionID == "" || r.Outcome.Kind == "" || (r.Outcome.Kind == model.FoundryReleaseOutcomeRefused) != (r.Outcome.Reason != "") {
+			return DocumentEvent{}, fmt.Errorf("document %s has a release that names no decision or outcome, or a refusal without its reason", e.DocID)
+		}
 	}
 	return e, nil
 }

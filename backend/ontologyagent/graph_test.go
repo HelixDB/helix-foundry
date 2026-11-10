@@ -306,15 +306,17 @@ func TestGraphContract(t *testing.T) {
 		counts := `"counts":` + testCounts
 		usage := `"usage":{"usd_micros":1500,"input_tokens":900,"output_tokens":80,"replayed":false,"phases":{"entity":{"calls":1,"replayed":0,"usd_micros":1500,"input_tokens":900,"output_tokens":80},"link":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"verify":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0},"adjudicate":{"calls":0,"replayed":0,"usd_micros":0,"input_tokens":0,"output_tokens":0}}}`
 		events := []string{
-			`{"event":"extract_started","contract_version":"4.11.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
+			`{"event":"extract_started","contract_version":"4.12.0","extractor":"claude-haiku-5-5","verifier":"gpt-6.1-sol","prompt_version":"7"}`,
 			`{"event":"artifact","doc_id":"doc-1","key":"abc_DEF-1","json":"{\"sections\":[]}"}`,
-			`{"event":"document","doc_id":"doc-1","outcome":{"kind":"ingested"},"text_bytes":120,"sections":2,` + counts + `,` + usage + `}`,
-			`{"event":"document","doc_id":"doc-2","outcome":{"kind":"duplicate","of":"doc-1"},"text_bytes":120,"sections":0,` + counts + `,` + usage + `}`,
-			`{"event":"document","doc_id":"doc-3","outcome":{"kind":"failed","code":"too_large","retryable":false},"text_bytes":0,"sections":0,` + counts + `,` + usage + `}`,
-			`{"event":"document","doc_id":"doc-4","outcome":{"kind":"already_ingested"},"text_bytes":10,"sections":1,` + counts + `,` + usage + `}`,
-			`{"event":"document","doc_id":"doc-5","outcome":{"kind":"out_of_scope"},"text_bytes":10,"sections":1,` + counts + `,` + usage + `}`,
+			`{"event":"document","doc_id":"doc-1","outcome":{"kind":"ingested"},"text_bytes":120,"sections":2,` + counts + `,` + usage + `,"releases":[]}`,
+			`{"event":"document","doc_id":"doc-2","outcome":{"kind":"duplicate","of":"doc-1"},"text_bytes":120,"sections":0,` + counts + `,` + usage + `,"releases":[]}`,
+			`{"event":"document","doc_id":"doc-3","outcome":{"kind":"failed","code":"too_large","retryable":false},"text_bytes":0,"sections":0,` + counts + `,` + usage + `,"releases":[]}`,
+			`{"event":"document","doc_id":"doc-4","outcome":{"kind":"already_ingested"},"text_bytes":10,"sections":1,` + counts + `,` + usage +
+				`,"releases":[{"decision_id":"dec-1","outcome":{"kind":"written"}},{"decision_id":"dec-2","outcome":{"kind":"refused","reason":"unresolved"}},` +
+				`{"decision_id":"dec-3","outcome":{"kind":"missed"}},{"decision_id":"dec-4","outcome":{"kind":"not_held"}}]}`,
+			`{"event":"document","doc_id":"doc-5","outcome":{"kind":"out_of_scope"},"text_bytes":10,"sections":1,` + counts + `,` + usage + `,"releases":[]}`,
 			`{"event":"document","doc_id":"doc-6","outcome":{"kind":"failed","code":"model","model_failure":"auth","retryable":true},"text_bytes":10,"sections":0,` +
-				counts + `,` + usage + `}`,
+				counts + `,` + usage + `,"releases":[]}`,
 			`{"event":"extract_finished"}`,
 		}
 		for _, raw := range events {
@@ -342,6 +344,16 @@ func TestGraphContract(t *testing.T) {
 		outOfScope, err := DecodeDocumentEvent([]byte(events[6]))
 		if err != nil || outOfScope.Outcome != (DocumentOutcome{Kind: OutcomeOutOfScope}) || outOfScope.DocID != "doc-5" {
 			t.Fatalf("out_of_scope = (%+v, %v)", outOfScope, err)
+		}
+		// A held document's event says what became of each release sent with it.
+		held, err := DecodeDocumentEvent([]byte(events[5]))
+		if err != nil || len(held.Releases) != 4 || held.Releases[0] != (DocumentRelease{DecisionID: "dec-1", Outcome: ReleaseOutcome{Kind: model.FoundryReleaseOutcomeWritten}}) ||
+			held.Releases[1].Outcome != (ReleaseOutcome{Kind: model.FoundryReleaseOutcomeRefused, Reason: "unresolved"}) ||
+			held.Releases[2].Outcome.Kind != model.FoundryReleaseOutcomeMissed || held.Releases[3].Outcome.Kind != model.FoundryReleaseOutcomeNotHeld {
+			t.Fatalf("held = (%+v, %v)", held, err)
+		}
+		if len(ingested.Releases) != 0 {
+			t.Fatalf("a document no release names lists %+v", ingested.Releases)
 		}
 		dup, err := DecodeDocumentEvent([]byte(events[3]))
 		if err != nil || dup.Outcome.Kind != OutcomeDuplicate || dup.Outcome.Of != "doc-1" {
@@ -382,7 +394,7 @@ func TestGraphContract(t *testing.T) {
 	t.Run("ingest events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "ingest_event.json")
 		for _, raw := range []string{
-			`{"event":"ingest_started","contract_version":"4.11.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.12.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":1000}}`, `{"event":"sweep_page","entities":50}`,
 			`{"event":"ingest_finished"}`,
 		} {
@@ -433,7 +445,7 @@ func TestDeleteLoadContract(t *testing.T) {
 	t.Run("delete load events are what the schema describes", func(t *testing.T) {
 		schema := contracttest.Schema(t, "delete_load_event.json")
 		for _, raw := range []string{
-			`{"event":"delete_started","contract_version":"4.11.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
+			`{"event":"delete_started","contract_version":"4.12.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":1000}`,
 			`{"event":"deleted","label":"Customer","element":"node","count":3}`, `{"event":"delete_finished"}`,
 		} {
 			if err := contracttest.Validate(t, schema, []byte(raw)); err != nil {
