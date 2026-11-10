@@ -11,7 +11,7 @@ It opens in your first workspace, **My workspace**, made as the install first st
 
 **Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data. Back it up with the data: [Back up and restore](#back-up-and-restore).
 
-**No analytics.** A local build loads no tracker and sends no usage data anywhere; only the hosted site, foundry.helix-db.com, records product analytics.
+**Usage analytics.** The site tells Helix, anonymously, how Foundry is used, and sends nothing of what Foundry holds. To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env`: [Usage analytics](#usage-analytics) says what is sent.
 
 **An install set up with `setup.sh`** (before 0.1.1) keeps its `local/.env`: its first start of this version copies the `FOUNDRY_*` secrets there into the volume, so MySQL's password and the key that sealed its credentials still match. Keep running it from `local/` if its `.env` sets `COMPOSE_PROFILES` or `COMPOSE_FILE` (Ollama in Docker, the GPU file): Compose reads those from the project's own `.env` only.
 
@@ -79,7 +79,9 @@ To change one, add its variable to foundry's `environment` in `local/compose.yam
 
 ## Images
 
-`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.3, `foundry` 0.1.2 and `ontology-agent` 0.1.1. To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+`docker compose up` pulls Foundry's release images: `foundry-site` 0.1.4, `foundry` 0.1.3 and `ontology-agent` 0.1.2. `foundry` and `ontology-agent` are released as a pair, on one agent contract (4.11.0 for these). To run the site and the backend built from this checkout instead, set `FOUNDRY_SITE_IMAGE=helix-foundry/site:local` and `FOUNDRY_IMAGE=helix-foundry/foundry:local` in `local/.env` and run `docker compose build` first.
+
+An older `FOUNDRY_IMAGE` or `FOUNDRY_AGENT_IMAGE` left in `local/.env` still starts, and then fails every draft, load and question with a contract mismatch (`the ontology agent speaks contract 4.7.0, not 4.11.0`). Remove the override, or set both to one release's images, and run `docker compose up -d` again.
 
 ## Back up and restore
 
