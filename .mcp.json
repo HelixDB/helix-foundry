@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "crucible": { "type": "http", "url": "https://mcp.crucibl.sh/mcp" }
+  }
+}
