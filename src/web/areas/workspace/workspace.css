@@ -121,6 +121,12 @@
   gap: var(--hf-space-1);
   margin-left: auto;
 }
+.wk-access .hf-toolbar.wk-access-filter {
+  margin-bottom: 0;
+}
+.wk-access .wk-member-text small.wk-access-note {
+  white-space: normal;
+}
 .wk-access-switch {
   margin: 0;
   font-size: var(--hf-text-sm);

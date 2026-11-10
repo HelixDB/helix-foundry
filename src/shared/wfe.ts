@@ -3184,13 +3184,31 @@ export type FoundryOntologyAccess = {
   partialReaders?: FoundryPrincipal[];
 };
 
-/** v1FoundryTeam: members hold the team's grants. Names are unique, 1 to 120 characters. */
+/**
+ * v1FoundryTeam: members hold the team's grants. Names are unique, 1 to 120
+ * characters. `directory` is set on a team synced from a directory group:
+ * its name and members are the group's, and only its grants change here.
+ */
 export type FoundryTeam = {
   id?: string;
   name?: string;
   memberUserIds?: string[];
   createdByUserId?: string;
   createdAt?: string;
+  directory?: FoundryTeamDirectory;
+};
+
+/**
+ * v1FoundryTeamDirectory: the directory group a synced team follows.
+ * `provider` names the directory as people know it ("Okta"); `leftOutUserIds`
+ * are the group's members the team leaves out while it holds grants (plain
+ * members with raw access, whom its grants can't confine).
+ */
+export type FoundryTeamDirectory = {
+  directoryId?: string;
+  groupId?: string;
+  provider?: string;
+  leftOutUserIds?: string[];
 };
 
 /**

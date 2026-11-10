@@ -18,11 +18,13 @@ import {
   Dialog,
   EmptyState,
   Panel,
+  Segmented,
   SkeletonText,
   SourceLogo,
   TabPanel,
   Tabs,
   Tag,
+  Toolbar,
   connectorLabel,
   formatRelative,
   plural,
@@ -46,9 +48,12 @@ import {
   updateTeam,
 } from "./access-api";
 import {
+  addsSources,
   grantKey,
   grantsOf,
   heldGrants,
+  leftOutBy,
+  leftOutText,
   missingText,
   principalKey,
   readings,
@@ -56,9 +61,11 @@ import {
   holdsRawAccess,
   newlyRestricted,
   restrictable,
+  restrictedHoldingNothing,
   setOwners,
   sourceState,
   sourceTree,
+  syncedFrom,
   targetsOf,
   toggle,
   type Grant,
@@ -256,7 +263,16 @@ function GrantsDialog({
       principal.kind === "KIND_TEAM" &&
       (data.members.isPending ||
         !!data.members.error ||
-        data.members.hasNextPage);
+        data.members.hasNextPage),
+    // A synced team leaves out whom new sources can't confine, so say that too.
+    leaving = addsSources(saved, chosen)
+      ? leftOutBy(access, data.people, principal)
+      : [],
+    restricts = restricting.length > 0 || unnamed;
+  const leavingText =
+    leaving.length > 0
+      ? `${leaving.map(nameOf).join(", ")} ${leaving.length > 1 ? "are" : "is"} left out of the team while it holds sources: they write a project or query its databases outside Foundry, which its sources can’t confine.`
+      : "";
   return (
     <>
       {confirming && (
@@ -266,14 +282,25 @@ function GrantsDialog({
               ? `Restrict ${name}?`
               : unnamed
                 ? `Restrict the members of ${name}?`
-                : `Restrict ${plural(restricting.length, "member")} of ${name}?`
+                : restricting.length > 0
+                  ? `Restrict ${plural(restricting.length, "member")} of ${name}?`
+                  : leaving.length === 1
+                    ? `Leave ${nameOf(leaving[0]!)} out of ${name}?`
+                    : `Leave ${plural(leaving.length, "member")} out of ${name}?`
           }
           description={
             principal.kind !== "KIND_TEAM"
               ? `They’ll see only what these sources hold. ${restrictionCost}`
-              : `${unnamed ? "Its members" : restricting.map(nameOf).join(", ")} will see only what the team’s sources hold. ${restrictionCost}`
+              : [
+                  restricts &&
+                    `${unnamed ? "Its members" : restricting.map(nameOf).join(", ")} will see only what the team’s sources hold.`,
+                  leavingText,
+                  restricts && restrictionCost,
+                ]
+                  .filter(Boolean)
+                  .join(" ")
           }
-          confirmLabel="Save and restrict"
+          confirmLabel={restricts ? "Save and restrict" : "Save"}
           pending={pending}
           onConfirm={() => void save()}
           onCancel={() => setConfirming(false)}
@@ -292,7 +319,7 @@ function GrantsDialog({
               pending={pending}
               disabled={!dirty}
               onClick={() =>
-                restricting.length > 0 || unnamed
+                restricts || leaving.length > 0
                   ? setConfirming(true)
                   : void save()
               }
@@ -460,18 +487,23 @@ function GrantsDialog({
   );
 }
 
-/** A row of a list of principals: who, what they read, and their actions. */
+/**
+ * A row of a list of principals: who, what they read, and their actions;
+ * `notes` are quiet lines under it, wrapped rather than cut short.
+ */
 function Row({
   icon,
   title,
   tags,
   lines,
+  notes,
   actions,
 }: {
   icon: ReactNode;
   title: string;
   tags?: ReactNode;
   lines: ReactNode;
+  notes?: string[];
   actions: ReactNode;
 }) {
   return (
@@ -485,6 +517,11 @@ function Row({
           {tags}
         </strong>
         <small>{lines}</small>
+        {notes?.filter(Boolean).map((n) => (
+          <small key={n} className="wk-access-note">
+            {n}
+          </small>
+        ))}
       </div>
       <div className="wk-access-actions">{actions}</div>
     </li>
@@ -800,11 +837,47 @@ function RestrictSwitch({
   );
 }
 
+/** Lifts a restriction in one click, for a member who holds no sources. */
+function LiftButton({ member }: { member: WorkspaceMember }) {
+  const { id, notify } = useWorkspace(),
+    qc = useQueryClient(),
+    [pending, setPending] = useState(false);
+  const name = nameOf(member);
+  const lift = async () => {
+    setPending(true);
+    try {
+      await setRestricted(id, member.user?.id || "", false);
+      await qc.invalidateQueries({ queryKey: accessQuery(id).queryKey });
+      notify(`${name} sees everything again.`);
+    } catch (e) {
+      notify((e as Error).message, true);
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <Button
+      size="sm"
+      data-track="access-lift"
+      aria-label={`Lift the restriction on ${name}`}
+      pending={pending}
+      onClick={() => void lift()}
+    >
+      Lift
+    </Button>
+  );
+}
+
+type PeopleFilter = "everyone" | "idle";
+
 function PeoplePanel({ data }: { data: AccessData }) {
   const { user } = useWorkspace(),
-    [editing, setEditing] = useState<WorkspaceMember>();
+    [editing, setEditing] = useState<WorkspaceMember>(),
+    [filter, setFilter] = useState<PeopleFilter>("everyone");
   const restricted = new Set(data.access.data?.restrictedUserIds || []);
-  const list = [...data.people].sort(
+  // Restricted with nothing left to read: what leaving a team keeps them.
+  const idle = restrictedHoldingNothing(data.access.data || {}, data.people);
+  const list = [...(filter === "idle" ? idle : data.people)].sort(
     (a, b) =>
       rank[roleOf(a)] - rank[roleOf(b)] || nameOf(a).localeCompare(nameOf(b)),
   );
@@ -814,6 +887,21 @@ function PeoplePanel({ data }: { data: AccessData }) {
   });
   return (
     <>
+      <Toolbar className="wk-access-filter">
+        <Segmented
+          label="Show"
+          value={filter}
+          onChange={(v) => setFilter(v as PeopleFilter)}
+          options={[
+            { value: "everyone", label: "Everyone" },
+            {
+              value: "idle",
+              label: "Restricted, holds nothing",
+              count: idle.length,
+            },
+          ]}
+        />
+      </Toolbar>
       <Panel
         title="People"
         subtitle="Giving a member sources restricts them to what those hold, in Analyst, Ontologies and Records, and hides everything else. Members who aren’t restricted see everything."
@@ -832,6 +920,29 @@ function PeoplePanel({ data }: { data: AccessData }) {
               Retry
             </Button>
           </div>
+        ) : filter === "idle" && !list.length ? (
+          <EmptyState
+            size="sm"
+            icon={Users}
+            title="No one to lift"
+            text="Everyone restricted holds sources, their own or a team’s."
+          />
+        ) : filter === "idle" ? (
+          <ul
+            className="wk-members"
+            aria-label="Restricted, holds nothing"
+            data-replay-block
+          >
+            {list.map((m, i) => (
+              <Row
+                key={m.id || m.user?.id || i}
+                icon={initials(nameOf(m))}
+                title={nameOf(m)}
+                lines="Restricted, with no sources of their own or a team’s, so reads nothing"
+                actions={<LiftButton member={m} />}
+              />
+            ))}
+          </ul>
         ) : (
           <ul className="wk-members" aria-label="People" data-replay-block>
             {list.map((m, i) => {
@@ -1087,7 +1198,7 @@ function TeamsPanel({ data }: { data: AccessData }) {
     <>
       <Panel
         title="Teams"
-        subtitle="Give a team sources once, and every member of it can read what they cover."
+        subtitle={`Give a team sources once, and every member of it can read what they cover.${teams.some((t) => t.directory) ? " Teams synced from a directory follow its groups." : ""}`}
         actions={
           <Button
             variant="primary"
@@ -1104,14 +1215,29 @@ function TeamsPanel({ data }: { data: AccessData }) {
           <ul className="wk-members" aria-label="Teams" data-replay-block>
             {teams.map((t) => {
               const who = (t.memberUserIds || []).map(
-                (u) => person.get(u) || "A former member",
-              );
+                  (u) => person.get(u) || "A former member",
+                ),
+                // A synced team's name and members are its directory group's.
+                provider = syncedFrom(t);
               return (
                 <Row
                   key={t.id}
                   icon={<Users size={15} />}
                   title={t.name || "Team"}
+                  tags={provider && <Tag>Synced from {provider}</Tag>}
                   lines={`${who.length ? who.join(", ") : "No members"} · ${readsLine(data, principal(t))}`}
+                  notes={
+                    provider
+                      ? [
+                          `Members come from ${provider}; change them there.`,
+                          leftOutText(
+                            (t.directory?.leftOutUserIds || []).map(
+                              (u) => person.get(u) || "A former member",
+                            ),
+                          ),
+                        ]
+                      : undefined
+                  }
                   actions={
                     <>
                       <Button
@@ -1122,22 +1248,26 @@ function TeamsPanel({ data }: { data: AccessData }) {
                       >
                         Sources
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Edit ${t.name}`}
-                        onClick={() => setChanging(t)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Delete ${t.name}`}
-                        onClick={() => setDeleting(t)}
-                      >
-                        Delete
-                      </Button>
+                      {!provider && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Edit ${t.name}`}
+                            onClick={() => setChanging(t)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Delete ${t.name}`}
+                            onClick={() => setDeleting(t)}
+                          >
+                            Delete
+                          </Button>
+                        </>
+                      )}
                     </>
                   }
                 />
