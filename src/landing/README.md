@@ -13,6 +13,32 @@ The figures are the local app's own components as they were at `00d7927`, before
 - **Connectors** is a grid of every connector and AI provider, each on a placard like the setup scene's tiles, `connect.tsx` and `styles/connect.css`. It uses the app's marks in `public/connectors` and `public/providers` and the site's own in `public/landing/connectors` and `public/landing/providers`, whose READMEs give their sources and licences.
 - All of them show **Loopwell**, the local app's old sample company, from the three files in `data`, exported by running that app's setup, a build and the Analyst in memory. The export ran in that app, which this repository no longer has, so the data is frozen.
 
+## On a phone
+
+At most 760px wide (`phone.ts`, mirrored by `.phone-only` and `.desktop-only` in `styles/base.css`), a screen gets a shorter page. Most phone visits come from social posts, and nothing on the full page can be done on a phone:
+
+- **The hero** keeps its heading and line, then offers the hand-off in place of the calls to action that need a computer:
+  - **Try it on your computer** (`remind.tsx`): an email, and Foundry reminds the visitor to try it on a computer. The first reminder goes at the next weekday 9am in the browser's time zone. The consent (`CONSENT_TEXT`, `src/shared/reminders.ts`) shows once something is typed. The form posts to `/remind` (`src/app/remind`, `src/server/reminders.ts`), which forwards to Foundry's door.
+  - **Star on GitHub to find it later**.
+  - **Or start on Helix Cloud now**.
+  - Without `FOUNDRY_REMINDERS_SECRET` (`remind` is false) the form gives way to a line saying to open the page on a computer.
+- **What stays below:** the Analyst, the shout (its call to action jumps back to the form), the connectors and the footer.
+- **What goes:**
+  - the field (`behaviours.tsx` never starts it, and the footer's copy of the graph is hidden);
+  - the schema and the Explorer, which the field draws for;
+  - the setup scene;
+  - the self-hosted box.
+
+  `figures.tsx` mounts those figures only on a wider screen (`useWide`), so their chunks never load on a phone. A phone turned wide enough mounts them and starts the field.
+
+## Coming back
+
+A reminder's links carry `?via=email`, and the repository README's carry `?via=github`. `src/app/(landing)/page.tsx` reads `via` into the markup:
+
+- On a computer, both put **Try the sample company** first (`/login?return_to=/ontology/sample`), with a line on why. A reminder's visit also gets a Welcome back.
+- `behaviours.tsx` counts the visit (`landing_returned`) and takes `via` off the address.
+- A signed-in visitor's redirect to the app drops it too.
+
 ## The field
 
 `field/field.ts` draws one fixed canvas behind the page. Its particles move through three formations as you scroll, each pinned to an element that registers with `attach()`:

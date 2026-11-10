@@ -125,6 +125,8 @@ describe("next.config.ts", () => {
         NEXT_PUBLIC_WORKOS_REDIRECT_URI: origin && `${origin}/login/callback`,
       });
       expect(env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toBe(id);
+      // BotID on the reminder form runs where Databuddy loads, and only there.
+      expect(env.NEXT_PUBLIC_BOTID).toBe(id ? "1" : "");
     },
   );
 

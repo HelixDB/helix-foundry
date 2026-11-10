@@ -86,6 +86,11 @@ const nextConfig: NextConfig = {
       mode !== "local" && databuddy && databuddy.origin === origin
         ? databuddy.clientId
         : "",
+    // Vercel BotID on the landing page's reminder form (src/app/remind,
+    // src/instrumentation-client.ts): only where Databuddy loads, a stamp's
+    // own build on Vercel, since anywhere else its checks can't pass.
+    NEXT_PUBLIC_BOTID:
+      mode !== "local" && databuddy && databuddy.origin === origin ? "1" : "",
   },
   async headers() {
     return [

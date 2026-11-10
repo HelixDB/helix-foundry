@@ -1,5 +1,5 @@
 import { getWorkOS, saveSession } from "@workos-inc/authkit-nextjs";
-import { type NextRequest, NextResponse } from "next/server";
+import { after, type NextRequest, NextResponse } from "next/server";
 import { authConfig } from "@/server/config";
 import { expireCookie, loginCookiePrefix } from "@/server/cookies";
 import {
@@ -7,6 +7,7 @@ import {
   loginFlowId,
   openLoginTransaction,
 } from "@/server/login-transaction";
+import { remindersConfig, stopReminders } from "@/server/reminders";
 import type {
   ExchangeAuthCodeRequest,
   ExchangeAuthCodeResponse,
@@ -17,7 +18,9 @@ export const runtime = "nodejs";
 
 // GET /login/callback?code&state from WorkOS. The WFE exchanges the code for
 // the pending login it started; the tokens become the sealed AuthKit session.
-// Every failure lands on the sign-in page with ?error=<reason>.
+// Every failure lands on the sign-in page with ?error=<reason>. Once signed in,
+// the landing page's reminders to that address stop (src/server/reminders.ts),
+// after the answer, so a sign-in never waits on them.
 
 type Failure = "callback" | "denied" | "verify" | "sso";
 
@@ -92,12 +95,15 @@ export async function GET(request: NextRequest) {
   const userId = accessToken ? subject(accessToken) : null;
   if (!accessToken || !refreshToken || !userId)
     return fail(request, "callback", cookie);
+  let email: string;
   try {
     const user = await getWorkOS().userManagement.getUser(userId);
     await saveSession({ accessToken, refreshToken, user }, request);
+    email = user.email;
   } catch {
     return fail(request, "callback", cookie);
   }
+  after(() => stopReminders(remindersConfig(), email));
 
   const response = NextResponse.redirect(
     new URL(transaction.returnPath, request.url),

@@ -295,6 +295,137 @@
   }
 }
 
+/* A visit from a reminder or the README: a welcome back over the heading,
+   and the sample company's line under it. */
+.hero-back {
+  margin-bottom: 0.9rem;
+  color: var(--mint);
+}
+.hero .hero-start {
+  margin-top: -0.6rem;
+  color: var(--ink);
+}
+
+/* A phone's hero: no field behind it, so no scrim and no height to fill,
+   and the hand-off in place of the calls to action. */
+@media (max-width: 760px) {
+  .hero .scrim {
+    display: none;
+  }
+  .hero .wrap {
+    min-height: 0;
+    padding-top: 3.5rem;
+    padding-bottom: 1.75rem;
+  }
+  /* The Analyst alone in its box: no rule over it. */
+  .split > .desktop-only + * {
+    border-top: 0;
+  }
+  .foot-graph {
+    display: none;
+  }
+}
+.handoff {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+  max-width: 30rem;
+}
+.handoff-note {
+  color: var(--ink-2);
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.handoff-now {
+  justify-self: start;
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+.handoff-now:hover {
+  color: var(--ink);
+}
+
+/* The reminder form (src/landing/remind.tsx): a card with its field and
+   button on one line, the consent under them once something is typed. */
+.remind {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+.remind-lead {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.remind-row {
+  display: flex;
+  gap: 0.5rem;
+}
+/* 16px, so iOS doesn't zoom the page into the field. */
+.remind input {
+  flex: 1;
+  min-width: 0;
+  height: 2.75rem;
+  padding: 0 0.8rem;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: var(--card-2);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+}
+.remind input::placeholder {
+  color: var(--ink-3);
+}
+.remind input:focus {
+  outline: none;
+  border-color: var(--mint);
+}
+.remind .btn {
+  height: 2.75rem;
+  flex: none;
+}
+.remind .btn:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+.remind-note,
+.remind-status {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+/* Empty, it stays in the page (a live region must be there before what it
+   announces) and takes back the gap it would leave. */
+.remind-status:empty {
+  margin-top: -0.75rem;
+}
+.remind-status:not([data-failed]) {
+  font-size: 1rem;
+  color: var(--ink);
+}
+.remind-status[data-failed] {
+  color: #ff9b8f;
+}
+.remind-again {
+  appearance: none;
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.875rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.remind-again:hover {
+  color: var(--ink);
+}
+
 /* The product: real views of it, not screenshots (schema.css, explorer.css). */
 
 .demo {

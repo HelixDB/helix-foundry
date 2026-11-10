@@ -195,6 +195,19 @@ code {
   gap: 0.5rem;
 }
 
+/* A phone's page and a computer's (src/landing/phone.ts holds the same
+   width): what only one of them shows. */
+@media (max-width: 760px) {
+  .desktop-only {
+    display: none !important;
+  }
+}
+@media (min-width: 761px) {
+  .phone-only {
+    display: none !important;
+  }
+}
+
 :focus-visible {
   outline: 1px solid var(--mint);
   outline-offset: 2px;

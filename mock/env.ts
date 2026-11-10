@@ -3,6 +3,10 @@
 // works anywhere but against the mock. WorkOS calls (JWKS, refresh, users,
 // logout) go to the mock too, through AuthKit's WORKOS_API_* settings.
 
+/** The landing page's reminders' secret, shared by the site and the mock's door. */
+export const MOCK_REMINDERS_SECRET =
+  "mock-only-reminders-secret-0123456789abcdef";
+
 export type MockPorts = { mock: number; app: number };
 
 export const devPorts: MockPorts = { mock: 4010, app: 3000 };
@@ -60,6 +64,10 @@ export function mockEnv({ mock, app }: MockPorts): Record<string, string> {
     HELIX_CSRF_SECRET: "mock-only-csrf-secret-0123456789abcdefghij",
     // Documentation addresses (RFC 5737), never a real stamp's.
     NEXT_PUBLIC_HELIX_EGRESS_IPS: "192.0.2.10,192.0.2.11",
+    // The landing page's reminders go to the mock's stand-in for Foundry's
+    // door (mock/reminders.ts), with its secret.
+    HELIX_INGEST_ORIGIN: mockOrigin,
+    FOUNDRY_REMINDERS_SECRET: MOCK_REMINDERS_SECRET,
     MOCK_PORT: String(mock),
     MOCK_ORIGIN: mockOrigin,
     NEXT_TELEMETRY_DISABLED: "1",
