@@ -273,6 +273,38 @@ WHERE load_id IN (`+idPlaceholders(len(loadIDs))+`) GROUP BY load_id`, toAnySlic
 	return out, rows.Err()
 }
 
+// ListFoundryLoadDocumentSets counts what a load made of its documents, by
+// the set each joined it with, in set id order: the load's members that are
+// still uploaded (a deleted document is on its way out of the load), by how
+// extracting each into the load ended, with what those extractions wrote. A
+// member with no extraction row waits for one. It reads the load's
+// membership and extractions by their primary keys, so it costs one pass
+// over the load's documents; a load with none returns none.
+func (s *mysqlDB) ListFoundryLoadDocumentSets(ctx context.Context, loadID string) ([]model.FoundryLoadDocumentSet, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT m.set_id, COUNT(*),
+  COALESCE(SUM(e.status='extracted'), 0), COALESCE(SUM(e.status='duplicate'), 0), COALESCE(SUM(e.status='failed'), 0),
+  COALESCE(SUM(e.status='out_of_scope'), 0), COALESCE(SUM(e.document_id IS NULL), 0),
+  COALESCE(SUM(e.facts), 0), COALESCE(SUM(e.reviews), 0), COALESCE(SUM(e.unresolved), 0)
+FROM foundry_load_documents m
+JOIN foundry_documents d ON d.id=m.document_id AND d.status='uploaded'
+LEFT JOIN foundry_load_extractions e ON e.load_id=m.load_id AND e.document_id=m.document_id
+WHERE m.load_id=? GROUP BY m.set_id ORDER BY m.set_id`, loadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sets []model.FoundryLoadDocumentSet
+	for rows.Next() {
+		var set model.FoundryLoadDocumentSet
+		if err := rows.Scan(&set.SetID, &set.Documents, &set.Read, &set.Duplicate, &set.Failed, &set.NotRead, &set.Waiting,
+			&set.Facts, &set.Reviews, &set.Unmatched); err != nil {
+			return nil, err
+		}
+		sets = append(sets, set)
+	}
+	return sets, rows.Err()
+}
+
 // SetCurrentFoundryLoad points the ontology's reads and uploads at a ready or
 // partial load (FoundryLoadNotServable otherwise) that applied no purged
 // People enrichment profiles (FoundryLoadPurged), under its lock. The load

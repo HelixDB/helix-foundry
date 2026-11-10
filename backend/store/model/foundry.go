@@ -115,6 +115,29 @@ type FoundryLoad struct {
 	AppliedAt *time.Time
 }
 
+// FoundryLoadDocumentSet is what a load made of the documents of one document
+// set: its uploaded documents that joined the load, by how extracting each
+// into the load ended, and what those extractions wrote. Documents is
+// Read + Duplicate + Failed + NotRead + Waiting.
+type FoundryLoadDocumentSet struct {
+	SetID     string
+	Documents int
+	// Read are those a model read for names and facts (extracted).
+	Read      int
+	Duplicate int
+	Failed    int
+	// NotRead are those no extraction route of the load's version reads
+	// (out_of_scope): stored with their sections, and read by no model.
+	NotRead int
+	// Waiting are those the load has not extracted yet.
+	Waiting int
+	// Facts are the facts its documents wrote, Reviews the items they left
+	// for a person's review, and Unmatched the names that matched no record.
+	Facts     int64
+	Reviews   int64
+	Unmatched int64
+}
+
 // OntologyVersion is the version the graph records the load under.
 func (l *FoundryLoad) OntologyVersion() string {
 	return fmt.Sprintf("foundry-v%d", l.Version)

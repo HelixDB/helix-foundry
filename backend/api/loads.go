@@ -14,6 +14,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/ontologyagent"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
+	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	foundrystore "github.com/helixdb/helix-foundry/backend/store"
 )
 
@@ -260,7 +261,44 @@ func (s *Service) foundryLoadResponse(ctx context.Context, o *foundrymodel.Found
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list load sources: %v", err)
 	}
-	return &foundryv1.FoundryLoadResponse{Load: foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID], sources[load.ID])}, nil
+	out := foundryLoadToProto(load, o, jobs[load.ID], steps[load.ID], sources[load.ID])
+	if out.DocumentSets, err = s.foundryLoadDocumentSets(ctx, load); err != nil {
+		return nil, err
+	}
+	return &foundryv1.FoundryLoadResponse{Load: out}, nil
+}
+
+// foundryLoadDocumentSets is what the load made of its documents, by set
+// (ListFoundryLoadDocumentSets), each saying whether an extraction route of
+// the load's version reads it: the count of what no route read is what a
+// caller can't see in the jobs' progress, which counts a stored document as
+// done. A version whose mappings can't be read routes nothing; that is
+// logged, not refused. A load with no documents reads no mappings.
+func (s *Service) foundryLoadDocumentSets(ctx context.Context, load *foundrymodel.FoundryLoad) ([]*foundryv1.FoundryLoadDocumentSet, error) {
+	sets, err := s.deps.DB.ListFoundryLoadDocumentSets(ctx, load.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count load documents: %v", err)
+	}
+	if len(sets) == 0 {
+		return nil, nil
+	}
+	mappings, err := s.deps.DB.GetOntologyVersionMappings(ctx, load.OntologyID, load.VersionID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get ontology version mappings: %v", err)
+	}
+	routes, err := ontologyagent.ParseDocumentRoutes(mappings)
+	if err != nil {
+		log.From(ctx).Warn("read document routes failed", "ontology", load.OntologyID, "version", load.VersionID, "err", err)
+	}
+	out := make([]*foundryv1.FoundryLoadDocumentSet, 0, len(sets))
+	for _, set := range sets {
+		out = append(out, &foundryv1.FoundryLoadDocumentSet{
+			SetId: set.SetID, Routed: routes.Routes(set.SetID), Documents: int32(set.Documents), Read: int32(set.Read),
+			Duplicate: int32(set.Duplicate), Failed: int32(set.Failed), NotRead: int32(set.NotRead), Waiting: int32(set.Waiting),
+			Facts: set.Facts, Reviews: set.Reviews, Unmatched: set.Unmatched,
+		})
+	}
+	return out, nil
 }
 
 // foundryLoadToProto is a load with its newest jobs, the snapshots it holds

@@ -1147,6 +1147,47 @@ message FoundryLoad {
   // The snapshot of each table it holds; empty for a load written before
   // Helix recorded them, or still writing its tables.
   repeated FoundryLoadSource sources = 15;
+  // What it made of its documents, by document set: one entry per set it
+  // holds documents of, by set id. Only a load read alone has it
+  // (GetFoundryLoad and the calls that answer with one load), never one in a
+  // list; empty for a load that holds no documents, and for a grantee, who
+  // may not see every set.
+  repeated FoundryLoadDocumentSet document_sets = 16;
+}
+
+// FoundryLoadDocumentSet is what a load made of the documents of one document
+// set: the uploaded text documents and PDFs of the set that joined the load,
+// counted from what extracting each into the load recorded
+// (FoundryDocumentExtraction).
+message FoundryLoadDocumentSet {
+  string set_id = 1;
+  // Whether an extraction route of the load's version reads the set. When
+  // false, the load stores the set's documents with their text, which stays
+  // searchable, and no model reads them: they add no entities or facts to the
+  // graph (not_read).
+  bool routed = 2;
+  // The set's documents the load holds:
+  // read + duplicate + failed + not_read + waiting.
+  int32 documents = 3;
+  // Those a model read for the names and facts they hold (extracted).
+  int32 read = 4;
+  // Those whose text repeats another document's (duplicate).
+  int32 duplicate = 5;
+  // Those whose extraction failed (failed).
+  int32 failed = 6;
+  // Those no route of the load's version reads (out_of_scope).
+  int32 not_read = 7;
+  // Those the load has not extracted yet.
+  int32 waiting = 8;
+  // The facts its documents wrote to the graph.
+  int64 facts = 9;
+  // The items its documents left for a person's review instead of writing:
+  // claims the verifier scored under the bar, names that matched no record
+  // or more than one, and values that conflict.
+  int64 reviews = 10;
+  // The names in its documents that matched no record of the load. A claim
+  // about one is not written as a fact.
+  int64 unmatched = 11;
 }
 
 // FoundryLoadSource is the snapshot of one synced table a load holds.

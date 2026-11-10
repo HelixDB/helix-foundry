@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/helixdb/helix-foundry/backend/config"
@@ -546,6 +548,47 @@ func (s *foundryStore) ListFoundryLoadEnrichments(context.Context, []string) (ma
 
 func (s *foundryStore) ListFoundryLoadSources(context.Context, []string) (map[string][]foundrymodel.FoundryLoadSource, error) {
 	return map[string][]foundrymodel.FoundryLoadSource{}, nil
+}
+
+// ListFoundryLoadDocumentSets counts the load's members that are still
+// uploaded, by set, as the provider does: each by how its extraction into
+// the load ended, a member with none waiting.
+func (s *foundryStore) ListFoundryLoadDocumentSets(_ context.Context, loadID string) ([]foundrymodel.FoundryLoadDocumentSet, error) {
+	bySet := map[string]*foundrymodel.FoundryLoadDocumentSet{}
+	for _, d := range s.documents {
+		if !slices.Contains(s.members[loadID], d.ID) || d.Status != foundrymodel.FoundryDocumentUploaded {
+			continue
+		}
+		set := bySet[d.SetID]
+		if set == nil {
+			set = &foundrymodel.FoundryLoadDocumentSet{SetID: d.SetID}
+			bySet[d.SetID] = set
+		}
+		set.Documents++
+		e, ok := s.extractions[loadID][d.ID]
+		if !ok {
+			set.Waiting++
+			continue
+		}
+		switch e.Status {
+		case foundrymodel.FoundryExtractionExtracted:
+			set.Read++
+		case foundrymodel.FoundryExtractionDuplicate:
+			set.Duplicate++
+		case foundrymodel.FoundryExtractionFailed:
+			set.Failed++
+		case foundrymodel.FoundryExtractionOutOfScope:
+			set.NotRead++
+		}
+		set.Facts += int64(e.Counts.Facts)
+		set.Reviews += int64(e.Counts.Reviews)
+		set.Unmatched += int64(e.Counts.Unresolved)
+	}
+	out := make([]foundrymodel.FoundryLoadDocumentSet, 0, len(bySet))
+	for _, id := range slices.Sorted(maps.Keys(bySet)) {
+		out = append(out, *bySet[id])
+	}
+	return out, nil
 }
 
 // ListFoundryLoadJobs lists each load's newest jobs, newest first, and
@@ -1897,6 +1940,119 @@ func TestFoundryLoadRPCs(t *testing.T) {
 		store.load(loadID).IngestViolations = nil
 		if got, _ := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID}); got.GetLoad().IngestViolations != nil {
 			t.Fatalf("an uncounted load shows %d violations", got.GetLoad().GetIngestViolations())
+		}
+	})
+
+	// A load says what it made of its documents, set by set: a caller who
+	// reads only its jobs sees every document "done", though a set no route
+	// of its version reads added nothing to the graph. Twelve sets of ten
+	// documents, two of them routed: the ten unrouted sets are told apart
+	// from the routed ones whether or not their documents were reached yet.
+	t.Run("counts what a load made of its documents by set", func(t *testing.T) {
+		s, store, _ := foundryService(t)
+		v := draft("done")
+		v.Definition, _ = json.Marshal(map[string]any{"format": "agent_bundle", "status": "done", "ontology_toml": "",
+			"mappings_toml": "[extractions.memos]\ndocuments = [\"set-01\", \"set-02\"]\n", "rules": map[string]int{"count": 0, "evaluated": 0}})
+		store.versions = append(store.versions, v)
+		created, err := load(s, "v-done", "load-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		loadID := created.GetLoad().GetId()
+		if created.GetLoad().GetDocumentSets() != nil {
+			t.Fatalf("a load with no documents counts %v", created.GetLoad().GetDocumentSets())
+		}
+		for set := 1; set <= 12; set++ {
+			for doc := range 10 {
+				d := &foundrymodel.FoundryDocument{ID: fmt.Sprintf("d-%02d-%d", set, doc), WorkspaceID: "ws-1", SetID: fmt.Sprintf("set-%02d", set),
+					Status: foundrymodel.FoundryDocumentUploaded}
+				store.documents = append(store.documents, d)
+				store.members[loadID] = append(store.members[loadID], d.ID)
+				e := &foundrymodel.FoundryDocumentExtraction{DocumentID: d.ID, Status: foundrymodel.FoundryExtractionOutOfScope}
+				switch {
+				case set == 12 && doc >= 4:
+					continue // not reached yet
+				case set == 1 && doc == 0:
+					e.Status = foundrymodel.FoundryExtractionFailed
+				case set == 1 && doc == 1:
+					e.Status = foundrymodel.FoundryExtractionDuplicate
+				case set <= 2:
+					e.Status = foundrymodel.FoundryExtractionExtracted
+					e.Counts = foundrymodel.FoundryExtractionCounts{Facts: 1, Reviews: 4, Unresolved: 2}
+				}
+				store.extracted(loadID, e)
+			}
+		}
+		// A deleted document is on its way out of the load, and counts nowhere.
+		gone := &foundrymodel.FoundryDocument{ID: "d-gone", WorkspaceID: "ws-1", SetID: "set-01", Status: foundrymodel.FoundryDocumentDeleted}
+		store.documents = append(store.documents, gone)
+		store.members[loadID] = append(store.members[loadID], gone.ID)
+		store.extracted(loadID, &foundrymodel.FoundryDocumentExtraction{DocumentID: gone.ID, Status: foundrymodel.FoundryExtractionExtracted,
+			Counts: foundrymodel.FoundryExtractionCounts{Facts: 100}})
+
+		got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sets := got.GetLoad().GetDocumentSets()
+		if len(sets) != 12 {
+			t.Fatalf("%d sets, want 12: %v", len(sets), sets)
+		}
+		want := map[string]*foundryv1.FoundryLoadDocumentSet{
+			"set-01": {SetId: "set-01", Routed: true, Documents: 10, Read: 8, Duplicate: 1, Failed: 1, Facts: 8, Reviews: 32, Unmatched: 16},
+			"set-02": {SetId: "set-02", Routed: true, Documents: 10, Read: 10, Facts: 10, Reviews: 40, Unmatched: 20},
+			"set-03": {SetId: "set-03", Documents: 10, NotRead: 10},
+			"set-12": {SetId: "set-12", Documents: 10, NotRead: 4, Waiting: 6},
+		}
+		routed, read, notRead := 0, int32(0), int32(0)
+		for i, set := range sets {
+			if set.GetSetId() != fmt.Sprintf("set-%02d", i+1) {
+				t.Fatalf("set %d is %s: sets come in id order", i, set.GetSetId())
+			}
+			if w, ok := want[set.GetSetId()]; ok && !proto.Equal(set, w) {
+				t.Fatalf("%s = %v, want %v", set.GetSetId(), set, w)
+			}
+			if set.GetDocuments() != set.GetRead()+set.GetDuplicate()+set.GetFailed()+set.GetNotRead()+set.GetWaiting() {
+				t.Fatalf("%s: its documents don't add up: %v", set.GetSetId(), set)
+			}
+			if set.GetRouted() {
+				routed++
+			}
+			read, notRead = read+set.GetRead(), notRead+set.GetNotRead()
+		}
+		if routed != 2 || read != 18 || notRead != 94 {
+			t.Fatalf("%d sets routed, %d documents read, %d not read; want 2, 18 and 94", routed, read, notRead)
+		}
+		// A list stays small: the Loads page polls it.
+		list, err := s.ListFoundryLoads(ctx, &foundryv1.ListFoundryLoadsRequest{WorkspaceId: "ws-1", OntologyId: "ont-1"})
+		if err != nil || len(list.GetLoads()) != 1 || list.GetLoads()[0].GetDocumentSets() != nil {
+			t.Fatalf("list = (%+v, %v)", list, err)
+		}
+	})
+
+	// A version whose mappings can't be read routes nothing: its load still
+	// counts its documents, and says no set is read.
+	t.Run("counts a load's documents when its version's routes can't be read", func(t *testing.T) {
+		s, store, _ := foundryService(t)
+		v := draft("done")
+		v.Definition, _ = json.Marshal(map[string]any{"format": "agent_bundle", "status": "done", "ontology_toml": "",
+			"mappings_toml": "[extractions.memos]\ndocuments = 7\n", "rules": map[string]int{"count": 0, "evaluated": 0}})
+		store.versions = append(store.versions, v)
+		created, err := load(s, "v-done", "load-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		loadID := created.GetLoad().GetId()
+		store.documents = append(store.documents, &foundrymodel.FoundryDocument{ID: "d-1", WorkspaceID: "ws-1", SetID: "set-01",
+			Status: foundrymodel.FoundryDocumentUploaded})
+		store.members[loadID] = []string{"d-1"}
+		got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := &foundryv1.FoundryLoadDocumentSet{SetId: "set-01", Documents: 1, Waiting: 1}
+		if sets := got.GetLoad().GetDocumentSets(); len(sets) != 1 || !proto.Equal(sets[0], want) {
+			t.Fatalf("sets = %v, want %v", sets, want)
 		}
 	})
 
