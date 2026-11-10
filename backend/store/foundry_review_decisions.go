@@ -137,6 +137,13 @@ func (s *mysqlDB) SettleFoundryReleases(ctx context.Context, workspaceID, loadID
 		if o.CurrentLoadID == nil || *o.CurrentLoadID != loadID {
 			return ErrConflict
 		}
+		// The live job's row before any decision's: a worker recording what
+		// became of a decision holds its job's row first, so the two never
+		// wait on each other.
+		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
+		if err != nil {
+			return err
+		}
 		var documents []string
 		for _, d := range decisions {
 			if err := tx.saveFoundryReviewDecision(ctx, d); err != nil {
@@ -162,10 +169,6 @@ ON DUPLICATE KEY UPDATE statement_hash=VALUES(statement_hash), decided_by_user_i
 			}
 		}
 		if err := tx.oweFoundryResends(ctx, loadID, model.FoundryResendApproval, documents); err != nil {
-			return err
-		}
-		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
-		if err != nil {
 			return err
 		}
 		switch {
@@ -230,16 +233,29 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 // DeleteFoundryReviewDecision removes a decision from those later loads
 // copy. A load that copied it keeps its copy, and what it wrote; the current
 // load's copy of one a resend has yet to apply goes with it, so a claim whose
-// approval was taken back before it was written stays held.
+// approval was taken back before it was written stays held. It holds the
+// ontology's lock, as every writer of a load's decisions does, so the current
+// load is the same throughout. ErrNotFound means the ontology has no such
+// decision.
 func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error {
 	return s.WithTx(ctx, func(db Store) error {
 		tx := db.(*mysqlDB)
+		var current sql.NullString
+		if err := tx.db.QueryRowContext(ctx, `SELECT current_load_id FROM foundry_ontologies WHERE id=? FOR UPDATE`, ontologyID).
+			Scan(&current); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNotFound
+			}
+			return err
+		}
 		if err := execOrNotFound(ctx, tx.db, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, ontologyID, id); err != nil {
 			return err
 		}
-		_, err := tx.db.ExecContext(ctx, `DELETE l FROM foundry_load_decisions l
-JOIN foundry_ontologies o ON o.id=? AND o.current_load_id=l.load_id
-WHERE l.id=? AND l.applied_status IN ('pending', 'carried')`, ontologyID, id)
+		if !current.Valid {
+			return nil
+		}
+		_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
+WHERE load_id=? AND id=? AND applied_status IN ('pending', 'carried')`, current.String, id)
 		return err
 	})
 }
