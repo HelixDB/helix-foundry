@@ -42,7 +42,8 @@ describe("next.config.ts", () => {
   // Databuddy's client id: each stamp's, only in a build for its own origin.
   // The "Foundry Dev" and "Foundry" sites in Databuddy.
   const DEV_ID = "a4288db1-0535-4fdd-8cae-bc525f19a172",
-    PROD_ID = "81ea8e9c-0f0f-4696-885f-2fb34405e69b";
+    PROD_ID = "81ea8e9c-0f0f-4696-885f-2fb34405e69b",
+    LOCAL_ID = "a9289a6a-fb83-4fbb-80e3-41e080f65e13";
   const DEV_ORIGIN = "https://dev.foundry.helix-db.com",
     PROD_ORIGIN = "https://foundry.helix-db.com";
   it.each([
@@ -110,10 +111,26 @@ describe("next.config.ts", () => {
       id: "",
     },
     {
+      // The Dockerfile's build: Foundry Local, whose site forwards the
+      // events (src/server/telemetry.ts).
+      name: "a local install's image",
+      appEnv: undefined,
+      mode: "local",
+      origin: undefined,
+      id: LOCAL_ID,
+    },
+    {
       name: "local mode on prod",
       appEnv: "prod",
       mode: "local",
       origin: PROD_ORIGIN,
+      id: LOCAL_ID,
+    },
+    {
+      name: "local mode against the mock",
+      appEnv: "mock",
+      mode: "local",
+      origin: undefined,
       id: "",
     },
   ])(
@@ -125,8 +142,9 @@ describe("next.config.ts", () => {
         NEXT_PUBLIC_WORKOS_REDIRECT_URI: origin && `${origin}/login/callback`,
       });
       expect(env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID).toBe(id);
-      // BotID on the reminder form runs where Databuddy loads, and only there.
-      expect(env.NEXT_PUBLIC_BOTID).toBe(id ? "1" : "");
+      // BotID on the reminder form runs where a stamp's own Databuddy site
+      // loads, and only there: never in a local build, which has its own.
+      expect(env.NEXT_PUBLIC_BOTID).toBe(id && mode !== "local" ? "1" : "");
     },
   );
 

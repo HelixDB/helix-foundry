@@ -27,6 +27,7 @@ import type { WhoamiResponse } from "../shared/wfe";
 import { signInPath } from "../shared/return-path";
 import {
   identifyUser,
+  pageViewed,
   signedIn,
   trackEvent,
   workspaceOpened,
@@ -231,6 +232,8 @@ function WorkspaceApp({
     () => workspaceOpened(current),
     [current.id, current.slug, current.name, current.role],
   );
+  // After workspaceOpened, so the first carries the workspace.
+  useEffect(() => pageViewed(), [location.pathname]);
   useEffect(() => {
     if (onboarding) trackEvent("onboarding_shown");
   }, [onboarding, current.id]);
