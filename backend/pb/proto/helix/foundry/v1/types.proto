@@ -1102,7 +1102,8 @@ message FoundryGraphJob {
   google.protobuf.Timestamp created_at  = 8;
   google.protobuf.Timestamp started_at  = 9;
   google.protobuf.Timestamp finished_at = 10;
-  // load, extract, apply or delete.
+  // load, extract, apply, delete or resend (a person's approvals applied to
+  // the load: their documents sent again from their saved extractions).
   string kind = 11;
   // The load it writes or deletes.
   string load_id = 12;
@@ -1426,8 +1427,11 @@ message FoundryReviewChoice {
   oneof choice {
     FoundryResolveChoice resolve = 1;
     FoundryPropValue prop = 3;
-    // A person's word that what the review holds back holds: the next load
-    // writes what it states as a fact.
+    // A person's word that what the review holds back holds. It applies to the
+    // current load at once: a job replays the claim's document from its saved
+    // extraction, at no model cost, and writes what the review states as a
+    // fact, or keeps it held and says why (FoundryReviewDecision.applied).
+    // Later loads write it too.
     FoundryReleaseChoice release = 4;
   }
 }
@@ -1461,7 +1465,35 @@ message FoundryResolveChoice {
   }
 }
 
-// A durable ontology-wide override; applies from the next load.
+// What became of a release decision in the ontology's current load.
+message FoundryDecisionApplied {
+  // pending (a job has yet to apply it), written (the claim is a fact),
+  // refused (it stays held: reason says why), missed (this load holds no
+  // review at the decision's key and place, so it has nothing to release), or
+  // empty: the load read the decision when it was created, and no job has
+  // said what became of it.
+  string status = 1;
+  // Why a refused claim stays held. The engine's reasons: unresolved (a name
+  // in it is matched to no one record: settle that name), legal_form (a name
+  // is linked only by its legal form, on a link that holds one value: settle
+  // that name), changed (the claim reads differently now from what was
+  // approved), differs (its sentence is read more than one way), conflict (it
+  // conflicts with what the load holds of its link), blocked (it would break
+  // a blocking rule, or checking that took more reading than a load allows),
+  // no_statement (its review keeps nothing to write), not_stated (the
+  // document, read again, no longer states it there), too_large,
+  // not_allowed. The backend's: not_replayed (the document's saved
+  // extraction didn't replay, so applying it would have cost a model call: a
+  // new load applies it), document_gone, document_failed, job_failed. A
+  // reader shows a reason it doesn't know as it is.
+  string reason = 2;
+  // When a job said so; unset while pending.
+  google.protobuf.Timestamp at = 3;
+}
+
+// A durable ontology-wide override. A resolve or prop decision applies from
+// the next load; a release applies to the current load at once, and to later
+// loads as they are made.
 message FoundryReviewDecision {
   string id = 1;
   string kind = 2;
@@ -1484,6 +1516,11 @@ message FoundryReviewDecision {
   optional uint32 claim_start = 14;
   optional uint32 claim_end = 15;
   optional string statement_hash = 16;
+  // A release decision's state in the ontology's current load; unset for
+  // other kinds, and when that load's decisions don't hold it yet (one saved
+  // while another load was current joins them when a job of the ontology next
+  // ends).
+  FoundryDecisionApplied applied = 17;
 }
 
 // Helix Foundry model providers: where a workspace's model calls go

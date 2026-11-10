@@ -276,6 +276,11 @@ type Store interface {
 	RenewOntologyGenerationLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	FinishOntologyGeneration(ctx context.Context, id, workerID string, outcome model.OntologyGenerationOutcome) error
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
+	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
+		resend *model.FoundryGraphJob) (queued bool, err error)
+	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
+	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
+	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error
 	UpdateFoundryDocumentSet(ctx context.Context, workspaceID, id string, update model.FoundryDocumentSetUpdate) error

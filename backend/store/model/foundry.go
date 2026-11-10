@@ -643,6 +643,10 @@ type FoundryDocumentExtraction struct {
 	// ArtifactKey is the saved model output the document was committed from.
 	ArtifactKey *string
 	FinishedAt  time.Time
+	// Releases are what the engine said of each release decision the job
+	// sent with the document, which RecordFoundryDocumentExtraction records
+	// on the load's decisions; nothing reads them back.
+	Releases []FoundryReleaseOutcome
 }
 
 // FoundryGraphJobKind is what a graph job does.
@@ -662,6 +666,12 @@ const (
 	// snapshots in place, writing only what changed, then extracts the
 	// documents it waits for. A refresh queues it instead of a new load.
 	FoundryGraphJobApply FoundryGraphJobKind = "apply"
+	// FoundryGraphJobResend sends documents its load already holds to the
+	// engine again, each with its saved extraction: those the load owes a
+	// resend (FoundryLoadResend). A person's approval of a held claim queues
+	// it, so the engine replays the claim's document and writes what the
+	// approval releases.
+	FoundryGraphJobResend FoundryGraphJobKind = "resend"
 )
 
 // FoundryGraphJobStatus is where a graph job is in its run.
@@ -845,6 +855,9 @@ type FoundryGraphJobOutcome struct {
 type FoundryGraphNext struct {
 	ExtractID string
 	DeleteID  string
+	// ResendID is the id of the resend job queued when the current load owes
+	// documents one (FoundryLoadResend) and nothing else goes first.
+	ResendID string
 	// RefreshID is the id of the full refresh load an apply queues: in its
 	// place when it failed before its tables were in, or after it when the
 	// load it brought up to date was built before RebuildBefore (a rebuild of

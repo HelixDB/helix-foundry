@@ -4207,7 +4207,7 @@
           "$ref": "#/definitions/v1FoundryReviewChoice"
         }
       },
-      "description": "Reads the current load's review. Stores a decision for the next load only."
+      "description": "Reads the current load's review and stores a decision. A resolve or prop\ndecision applies from the next load; a release applies to the current load\nat once (FoundryReviewChoice.release)."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",
@@ -5657,6 +5657,25 @@
       },
       "description": "FoundryDataLayoutResponse is how the workspace's Data tree is arranged."
     },
+    "v1FoundryDecisionApplied": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "pending (a job has yet to apply it), written (the claim is a fact),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key and place, so it has nothing to release), or\nempty: the load read the decision when it was created, and no job has\nsaid what became of it."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), changed (the claim reads differently now from what was\napproved), differs (its sentence is read more than one way), conflict (it\nconflicts with what the load holds of its link), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_failed, job_failed. A\nreader shows a reason it doesn't know as it is."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a job said so; unset while pending."
+        }
+      },
+      "description": "What became of a release decision in the ontology's current load."
+    },
     "v1FoundryDocument": {
       "type": "object",
       "properties": {
@@ -6304,7 +6323,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "load, extract, apply or delete."
+          "description": "load, extract, apply, delete or resend (a person's approvals applied to\nthe load: their documents sent again from their saved extractions)."
         },
         "loadId": {
           "type": "string",
@@ -7189,7 +7208,7 @@
         },
         "release": {
           "$ref": "#/definitions/v1FoundryReleaseChoice",
-          "description": "A person's word that what the review holds back holds: the next load\nwrites what it states as a fact."
+          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads write it too."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7247,9 +7266,13 @@
         },
         "statementHash": {
           "type": "string"
+        },
+        "applied": {
+          "$ref": "#/definitions/v1FoundryDecisionApplied",
+          "description": "A release decision's state in the ontology's current load; unset for\nother kinds, and when that load's decisions don't hold it yet (one saved\nwhile another load was current joins them when a job of the ontology next\nends)."
         }
       },
-      "description": "A durable ontology-wide override; applies from the next load."
+      "description": "A durable ontology-wide override. A resolve or prop decision applies from\nthe next load; a release applies to the current load at once, and to later\nloads as they are made."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",

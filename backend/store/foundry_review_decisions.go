@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/store/model"
+	"slices"
 	"strings"
 )
 
@@ -16,7 +17,9 @@ const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_
 // checks d against the version of the ontology's current load, the load whose
 // review it settles: ErrConflict means that version doesn't take d (its type,
 // prop or key changed, as a new load of another version may have done since
-// the review was read), or the ontology has no current load.
+// the review was read), or the ontology has no current load. It applies from
+// the next load; a release is settled by SettleFoundryReleases, which applies
+// it to the current one.
 func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID string, d *model.FoundryReviewDecision) error {
 	if err := d.Validate(); err != nil {
 		return err
@@ -48,46 +51,141 @@ JOIN foundry_ontology_versions v ON v.id = l.version_id WHERE l.id=?`, *o.Curren
 		if !d.Fits(types) {
 			return ErrConflict
 		}
-		var value, section, start, end any
-		if len(d.Value) > 0 {
-			value = string(d.Value)
-		}
-		if span := d.ClaimSpan; span != nil {
-			section, start, end = span.Section, span.Start, span.End
-		}
-		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
+		return tx.saveFoundryReviewDecision(ctx, d)
+	})
+}
+
+// saveFoundryReviewDecision writes d, or replaces the choice of its identity,
+// keeping that one's id, and reads it back into d. The caller holds the
+// ontology's lock and has checked d.
+func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.FoundryReviewDecision) error {
+	var value, section, start, end any
+	if len(d.Value) > 0 {
+		value = string(d.Value)
+	}
+	if span := d.ClaimSpan; span != nil {
+		section, start, end = span.Section, span.Start, span.End
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_review_decisions
  (id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id)
  VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE entity_key=VALUES(entity_key), value=VALUES(value), statement_hash=VALUES(statement_hash),
  decided_by_user_id=VALUES(decided_by_user_id), decided_at=NOW(6)`,
-			d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID)
-		if err != nil {
-			return err
-		}
-		// <=> is NULL-safe equality; resolve's chosen entity is not its identity.
-		stored, err := scanFoundryReviewDecision(tx.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionColumns+`
+		d.ID, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.EntityKey, d.Prop, value, d.ClaimKey, section, start, end, d.StatementHash, d.DecidedByUserID)
+	if err != nil {
+		return err
+	}
+	// <=> is NULL-safe equality; resolve's chosen entity is not its identity.
+	stored, err := scanFoundryReviewDecision(s.db.QueryRowContext(ctx, "SELECT "+foundryReviewDecisionColumns+`
  FROM foundry_review_decisions WHERE ontology_id=? AND kind=? AND type=? AND doc_id <=> ? AND norm_name <=> ?
  AND prop <=> ? AND claim_key <=> ? AND claim_section <=> ? AND claim_start <=> ? AND claim_end <=> ?
  AND (kind='resolve' OR entity_key <=> ?)`, d.OntologyID, d.Kind, d.Type, d.DocID, d.NormName, d.Prop, d.ClaimKey, section, start, end, d.EntityKey))
+	if err != nil {
+		return err
+	}
+	// Added to, never replaced: a load made before this settle copied the
+	// decision's earlier value, which came from the earlier documents.
+	if len(d.DocumentIDs) > 0 {
+		rows := strings.Repeat("(?, ?), ", len(d.DocumentIDs))
+		args := make([]any, 0, 2*len(d.DocumentIDs))
+		for _, doc := range d.DocumentIDs {
+			args = append(args, stored.ID, doc)
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_review_decision_documents (decision_id, document_id) VALUES `+
+			rows[:len(rows)-2], args...); err != nil {
+			return err
+		}
+	}
+	*d = *stored
+	return nil
+}
+
+// SettleFoundryReleases settles release decisions, each read from a review of
+// load loadID, and applies them to that load at once: under the ontology's
+// lock each is saved as SettleFoundryReviewDecision saves one, joins the
+// load's own list as pending (in place of any earlier decision the list holds
+// for its claim), and its document is owed a resend (oweFoundryResends).
+// Then, with no job live, resend is queued as a resend job of the load, due
+// after model.FoundryResendSettle; a queued resend of the load is put off by
+// as much instead, so approvals that come together go in one job; a live
+// delete gives way, as to a new load, and resumes after; any other live job's
+// end queues the resend (queueAfterFoundryGraphJob). queued reports a job
+// queued here. Each decision comes back as stored, with what the load holds
+// of it (Applied). ErrConflict means loadID is no longer the ontology's
+// current load, so its reviews are not the ones to settle; ErrNotFound that
+// the ontology is not live.
+func (s *mysqlDB) SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
+	resend *model.FoundryGraphJob) (queued bool, err error) {
+	if len(decisions) == 0 {
+		return false, nil
+	}
+	ontologyID := decisions[0].OntologyID
+	for _, d := range decisions {
+		if err := d.Validate(); err != nil {
+			return false, err
+		}
+		if d.Kind != model.FoundryReviewRelease || d.OntologyID != ontologyID {
+			return false, fmt.Errorf("decision %s is not a release of ontology %s", d.ID, ontologyID)
+		}
+	}
+	err = s.WithTx(ctx, func(db Store) error {
+		tx := db.(*mysqlDB)
+		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, ontologyID)
 		if err != nil {
 			return err
 		}
-		// Added to, never replaced: a load made before this settle copied the
-		// decision's earlier value, which came from the earlier documents.
-		if len(d.DocumentIDs) > 0 {
-			rows := strings.Repeat("(?, ?), ", len(d.DocumentIDs))
-			args := make([]any, 0, 2*len(d.DocumentIDs))
-			for _, doc := range d.DocumentIDs {
-				args = append(args, stored.ID, doc)
-			}
-			if _, err := tx.db.ExecContext(ctx, `INSERT IGNORE INTO foundry_review_decision_documents (decision_id, document_id) VALUES `+
-				rows[:len(rows)-2], args...); err != nil {
+		if o.CurrentLoadID == nil || *o.CurrentLoadID != loadID {
+			return ErrConflict
+		}
+		var documents []string
+		for _, d := range decisions {
+			if err := tx.saveFoundryReviewDecision(ctx, d); err != nil {
 				return err
 			}
+			span := d.ClaimSpan
+			// One decision a claim in a load's list: the engine refuses an
+			// Extract that lists a release twice.
+			if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
+WHERE load_id=? AND kind='release' AND doc_id=? AND claim_key=? AND claim_section=? AND claim_start=? AND claim_end=? AND id<>?`,
+				loadID, d.DocID, d.ClaimKey, span.Section, span.Start, span.End, d.ID); err != nil {
+				return err
+			}
+			if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
+SELECT ?, `+foundryReviewDecisionColumns+`, 'pending' FROM foundry_review_decisions WHERE ontology_id=? AND id=?
+ON DUPLICATE KEY UPDATE statement_hash=VALUES(statement_hash), decided_by_user_id=VALUES(decided_by_user_id),
+ decided_at=VALUES(decided_at), applied_status='pending', applied_reason=NULL, applied_at=NULL`, loadID, ontologyID, d.ID); err != nil {
+				return err
+			}
+			d.Applied = &model.FoundryDecisionApplied{Status: model.FoundryReleasePending}
+			if !slices.Contains(documents, *d.DocID) {
+				documents = append(documents, *d.DocID)
+			}
 		}
-		*d = *stored
-		return nil
+		if err := tx.oweFoundryResends(ctx, loadID, model.FoundryResendApproval, documents); err != nil {
+			return err
+		}
+		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
+		if err != nil {
+			return err
+		}
+		switch {
+		case live == nil:
+		case live.Kind == model.FoundryGraphJobDelete:
+			if err := tx.cancelLiveFoundryGraphJob(ctx, ontologyID, "an approval went first; the delete resumes after it"); err != nil {
+				return err
+			}
+		case live.Kind == model.FoundryGraphJobResend && live.LoadID == loadID && live.Status == model.FoundryGraphJobQueued:
+			_, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs
+SET next_attempt_at=GREATEST(next_attempt_at, NOW(6) + INTERVAL ? MICROSECOND) WHERE id=? AND status='queued'`,
+				model.FoundryResendSettle.Microseconds(), live.ID)
+			return err
+		default:
+			return nil
+		}
+		queued, err = tx.queueFoundryResend(ctx, o, resend, model.FoundryResendSettle)
+		return err
 	})
+	return queued, err
 }
 
 // ListFoundryReviewDecisions uses id keyset paging. A nil documentIDs lists all
@@ -129,8 +227,21 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 	return scanAll(rows, scanFoundryReviewDecision)
 }
 
+// DeleteFoundryReviewDecision removes a decision from those later loads
+// copy. A load that copied it keeps its copy, and what it wrote; the current
+// load's copy of one a resend has yet to apply goes with it, so a claim whose
+// approval was taken back before it was written stays held.
 func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error {
-	return execOrNotFound(ctx, s.db, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, ontologyID, id)
+	return s.WithTx(ctx, func(db Store) error {
+		tx := db.(*mysqlDB)
+		if err := execOrNotFound(ctx, tx.db, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, ontologyID, id); err != nil {
+			return err
+		}
+		_, err := tx.db.ExecContext(ctx, `DELETE l FROM foundry_load_decisions l
+JOIN foundry_ontologies o ON o.id=? AND o.current_load_id=l.load_id
+WHERE l.id=? AND l.applied_status IN ('pending', 'carried')`, ontologyID, id)
+		return err
+	})
 }
 
 func scanFoundryReviewDecision(row rowScanner) (*model.FoundryReviewDecision, error) {

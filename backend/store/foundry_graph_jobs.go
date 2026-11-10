@@ -187,7 +187,10 @@ var extractionUpsert = func() string {
 // same document into the same load again replaces its row, though a failure
 // over a failed row lowers nothing it counted and adds what it spent; with keepExisting
 // (the load already held the document) a row already there stays, and a failed
-// one ends its failure and keeps its counts. Either way what it spent counts. A job no person requested
+// one ends its failure and keeps its counts; what this run released of the
+// document moves from its reviews to its facts. Either way what it spent counts, and what the engine said of the
+// release decisions sent with it (e.Releases) is recorded on the load's
+// decisions (recordFoundryReleaseOutcomes). A job no person requested
 // adds the spend, in the same transaction, to the month's row of the set
 // the document joined the load with (foundry_document_set_spend): the UTC
 // month the spend is recorded in, the first day of which is
@@ -235,14 +238,31 @@ func (s *mysqlDB) RecordFoundryDocumentExtraction(ctx context.Context, jobID, wo
 			// what the commit wrote there, and its retry's facts are what it
 			// released (recordDocument), which were reviews. A commit that landed
 			// and failed to say so counted nothing.
-			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
+			ended, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
  SET job_id=?, status=?, error_code=NULL, error_retryable=NULL, sections=GREATEST(sections, ?), facts=facts+?,
   reviews=GREATEST(reviews-?, 0), usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?,
   artifact_key=COALESCE(?, artifact_key), finished_at=NOW(6)
  WHERE load_id=? AND document_id=? AND status='failed'`,
 				jobID, string(e.Status), c.Sections, c.Facts, c.Facts, e.USDMicros, e.InputTokens, e.OutputTokens,
-				e.ArtifactKey, loadID, e.DocumentID); err != nil {
+				e.ArtifactKey, loadID, e.DocumentID)
+			if err != nil {
 				return err
+			}
+			wasFailed, err := ended.RowsAffected()
+			if err != nil {
+				return err
+			}
+			// A row that isn't failed stays, and counts what this run released
+			// of the document: an approval settled after its commit moves a
+			// review to the facts (a resend's, mostly). A release sent again
+			// writes and counts nothing, so a retry adds nothing twice.
+			if wasFailed == 0 && (c.Facts > 0 || e.USDMicros > 0 || e.InputTokens > 0 || e.OutputTokens > 0) {
+				if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_extractions
+ SET facts=facts+?, reviews=GREATEST(reviews-?, 0), usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+?
+ WHERE load_id=? AND document_id=?`,
+					c.Facts, c.Facts, e.USDMicros, e.InputTokens, e.OutputTokens, loadID, e.DocumentID); err != nil {
+					return err
+				}
 			}
 			verb, onDuplicate = "INSERT IGNORE", ""
 		}
@@ -255,6 +275,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 			e.ArtifactKey, c.Attributes, c.AttributeReviews, c.PropConflicts, c.Created, c.IdentifiersUnverified, c.AttributesOverEntries, c.ResolvedUser, c.ResolvedAdjudicated, c.ResolvedIdentifier, c.ResolvedName, c.ResolvedAlias, c.ResolvedCreated,
 		); err != nil {
 			return fmt.Errorf("record foundry document extraction: %w", err)
+		}
+		if err := tx.recordFoundryReleaseOutcomes(ctx, loadID, e.Releases); err != nil {
+			return err
 		}
 		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs
 SET usd_micros=usd_micros+?, input_tokens=input_tokens+?, output_tokens=output_tokens+? WHERE id=?`,
@@ -297,6 +320,10 @@ ON DUPLICATE KEY UPDATE usd_micros=usd_micros+VALUES(usd_micros)`, utcMonth(time
 //     documents of its scope have joined it, while documents wait for it
 //     and the month has budget for work no one started (and is owed no
 //     more either way);
+//     failing that, a resend into the current load of the documents it owes
+//     one (queueFoundryResend), the approvals it hasn't read carried over
+//     first; a resend job that ended without succeeding ends what its load
+//     owed, so none follows it;
 //     failing that, a delete of the oldest load being deleted. A deleted
 //     ontology's job only queues the next delete, and with none left the
 //     ontology lets go of its database, unless a load whose delete failed
@@ -363,8 +390,10 @@ func (s *mysqlDB) FinishFoundryGraphJob(ctx context.Context, jobID, workerID str
 		if err := tx.endFoundryLoadWork(ctx, o, job, outcome.Status, outcome.IngestDone, outcome.HeldSets); err != nil {
 			return err
 		}
+		// A resend sends only what its load holds: uploads that came during
+		// it are the owed extract's, queued below.
 		if outcome.Status == model.FoundryGraphJobSucceeded && job.Kind != model.FoundryGraphJobDelete &&
-			o.CurrentLoadID != nil && *o.CurrentLoadID == job.LoadID {
+			job.Kind != model.FoundryGraphJobResend && o.CurrentLoadID != nil && *o.CurrentLoadID == job.LoadID {
 			unrecorded, err := tx.countUnrecordedFoundryDocuments(ctx, job.LoadID)
 			if err != nil {
 				return err
@@ -520,6 +549,11 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 				return err
 			}
 		}
+	case model.FoundryGraphJobResend:
+		// One that didn't succeed leaves no approval waiting for it.
+		if status != model.FoundryGraphJobSucceeded {
+			return s.failFoundryResends(ctx, job)
+		}
 	case model.FoundryGraphJobDelete:
 		if status == model.FoundryGraphJobFailed {
 			_, err := s.db.ExecContext(ctx, `UPDATE foundry_loads SET status='delete_failed' WHERE id=? AND status='deleting'`, job.LoadID)
@@ -539,6 +573,9 @@ WHERE id=? AND origin='refresh' AND status IN ('ready', 'partial')`, *replaced);
 			return err
 		}
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_access WHERE load_id=?`, job.LoadID); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_resends WHERE load_id=?`, job.LoadID); err != nil {
 			return err
 		}
 		_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_load_extractions WHERE load_id=?`, job.LoadID)
@@ -574,6 +611,11 @@ func (s *mysqlDB) queueAfterFoundryGraphJob(ctx context.Context, o *model.Foundr
 		if queued {
 			return nil
 		}
+	}
+	// What the current load owes the engine again: approvals saved since it
+	// copied its decisions, those a job that just ended kept waiting included.
+	if queued, err := s.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: next.ResendID}, 0); err != nil || queued {
+		return err
 	}
 	return s.queueNextFoundryDelete(ctx, o, next.DeleteID)
 }

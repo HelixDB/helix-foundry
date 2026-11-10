@@ -174,7 +174,7 @@ func deleteDone(req string, stream agentv1.Agent_DeleteLoadServer) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 	return deleteEvents(stream, []string{
-		`{"event":"delete_started","contract_version":"4.11.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
+		`{"event":"delete_started","contract_version":"4.12.0"}`, `{"event":"deleted","label":"OWNS","element":"edge","count":2}`,
 		`{"event":"deleted","label":"Customer","element":"node","count":1}`, `{"event":"delete_finished"}`,
 	}, `{"status":"done","nodes":1,"edges":2}`)
 }
@@ -229,7 +229,7 @@ const (
 )
 
 func documentEvent(doc, outcome, use string) string {
-	return `{"event":"document","doc_id":"` + doc + `","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + counts + `,` + use + `}`
+	return `{"event":"document","doc_id":"` + doc + `","outcome":` + outcome + `,"text_bytes":120,"sections":2,` + counts + `,` + use + `,"releases":[]}`
 }
 
 // ingestReport is the ingest crate's report of the customers mapping: its
@@ -254,7 +254,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 			return status.Error(codes.Internal, err.Error())
 		}
 		return ingestEvents(stream, []string{
-			`{"event":"ingest_started","contract_version":"4.11.0"}`, `{"event":"indexes_ready"}`,
+			`{"event":"ingest_started","contract_version":"4.12.0"}`, `{"event":"indexes_ready"}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"create","rows":2}}`,
 			`{"event":"chunk","report":{"mapping":"customers","pass":"resolve","rows":2}}`,
 			`{"event":"sweep_page","entities":2}`, `{"event":"ingest_finished"}`,
@@ -265,7 +265,7 @@ func ingestReporting(report string) func(string, agentv1.Agent_IngestServer) err
 // extracted ends doc-a ingested with an artifact, doc-b a duplicate of it,
 // doc-c failed retryably and doc-d already held.
 var extracted = []string{
-	`{"event":"extract_started","contract_version":"4.11.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
+	`{"event":"extract_started","contract_version":"4.12.0","extractor":"haiku","verifier":"sol","prompt_version":"7"}`,
 	`{"event":"artifact","doc_id":"doc-a","key":"key_a","json":"{\"sections\":[1]}"}`,
 	documentEvent("doc-a", `{"kind":"ingested"}`, usage),
 	documentEvent("doc-b", `{"kind":"duplicate","of":"doc-a"}`, noUsage),
@@ -378,6 +378,28 @@ type memStore struct {
 	// those RecordFoundryDocumentRemoval forgot, in order.
 	removed   []string
 	forgotten []string
+	// resends are the documents the job's load owes a resend
+	// (ListFoundryLoadResends), and ended the requests EndFoundryLoadResend
+	// ended, in order; endErr fails every end.
+	resends []*model.FoundryLoadResend
+	ended   []model.FoundryResendEnd
+	endErr  error
+}
+
+func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resends, nil
+}
+
+func (s *memStore) EndFoundryLoadResend(_ context.Context, _, _ string, end model.FoundryResendEnd) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.endErr != nil {
+		return s.endErr
+	}
+	s.ended = append(s.ended, end)
+	return nil
 }
 
 // spendRead is one FoundryDocumentSetSpend read.
