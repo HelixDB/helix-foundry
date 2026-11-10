@@ -976,6 +976,18 @@ func (u Unimplemented) RemoveFoundryAccessMember(context.Context, string, string
 	u.unimplemented("RemoveFoundryAccessMember")
 	return nil
 }
+func (u Unimplemented) SyncFoundryDirectoryTeams(context.Context, string, string, string, []model.FoundryDirectoryTeam) (model.FoundryDirectorySync, error) {
+	u.unimplemented("SyncFoundryDirectoryTeams")
+	return model.FoundryDirectorySync{}, nil
+}
+func (u Unimplemented) ReleaseFoundryDirectoryTeams(context.Context, string, string) error {
+	u.unimplemented("ReleaseFoundryDirectoryTeams")
+	return nil
+}
+func (u Unimplemented) LeaveOutFoundryTeamMembers(context.Context, string, string, []string) error {
+	u.unimplemented("LeaveOutFoundryTeamMembers")
+	return nil
+}
 func (u Unimplemented) ListFoundryHealFindings(context.Context, string) ([]*model.FoundryHealFinding, error) {
 	u.unimplemented("ListFoundryHealFindings")
 	return nil, nil

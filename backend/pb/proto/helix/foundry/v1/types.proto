@@ -1800,6 +1800,22 @@ message FoundryTeam {
   repeated string           member_user_ids    = 3;
   string                    created_by_user_id = 4;
   google.protobuf.Timestamp created_at         = 5;
+  // Set on a team synced from a directory group (SCIM, through the host's
+  // directory sync): its name and members are the group's, changed in the
+  // directory, and only its grants are the workspace's to change.
+  FoundryTeamDirectory      directory          = 6;
+}
+
+// FoundryTeamDirectory is the directory group a synced team follows.
+message FoundryTeamDirectory {
+  string          directory_id      = 1;
+  string          group_id          = 2;
+  // The directory's provider as people know it, for example "Okta".
+  string          provider          = 3;
+  // Members of the group the team leaves out while it holds grants: members
+  // who can write a project or query its databases outside Foundry, whom
+  // its grants can't confine.
+  repeated string left_out_user_ids = 4;
 }
 
 // Helix Foundry self-healing findings: what the ontology
