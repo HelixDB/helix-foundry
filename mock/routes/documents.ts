@@ -8,6 +8,7 @@ import type {
   DocumentBytesResponse,
   DocumentContentResponse,
   DocumentExtraction,
+  FoundryLoadDocumentSet,
   DocumentMediaType,
   DocumentOntology,
   DocumentRead,
@@ -371,6 +372,9 @@ const waking = new Set<string>();
 const extractions = new Map<string, DocumentExtraction>();
 const readKey = (loadId: string, documentId: string) =>
   `${loadId}\u001f${documentId}`;
+// The names each read matched to no record, by load and document id: no
+// document shows the count, and its load's totals add it up.
+const unresolvedNames = new Map<string, number>();
 // Each load's documents, with the set each joined with: a load reads a
 // document by the routes of that set.
 const members = new Map<string, Map<string, string>>();
@@ -554,17 +558,84 @@ export const loadDocumentIds = (loadId: string) => [
   ...(members.get(loadId)?.keys() || []),
 ];
 
-/** Records what a load read from a document. */
-export const setExtraction = (
+/**
+ * Records what a load read from a document, and how many names it matched
+ * to no record (`unresolved`).
+ */
+export function setExtraction(
   loadId: string,
   documentId: string,
   x: DocumentExtraction,
-) => extractions.set(readKey(loadId, documentId), x);
+  unresolved = 0,
+) {
+  extractions.set(readKey(loadId, documentId), x);
+  unresolvedNames.set(readKey(loadId, documentId), unresolved);
+}
 /** Forgets what a deleted load held and read. */
 export function dropExtractions(loadId: string) {
   members.delete(loadId);
   for (const key of [...extractions.keys()])
-    if (key.startsWith(`${loadId}\u001f`)) extractions.delete(key);
+    if (key.startsWith(`${loadId}\u001f`)) {
+      extractions.delete(key);
+      unresolvedNames.delete(key);
+    }
+}
+/**
+ * For ./loads.ts: what a load made of its documents, by the set each joined
+ * it with, in set id order, as the WFE counts them: its members that are
+ * still uploaded, each by how its read into the load ended (waiting until
+ * it has), with what the reads wrote. `routed` says whether the load's
+ * version reads a set.
+ */
+export function loadDocumentSets(
+  loadId: string,
+  routed: (setId: string) => boolean,
+): FoundryLoadDocumentSet[] {
+  const sets = new Map<
+    string,
+    Required<
+      Pick<
+        FoundryLoadDocumentSet,
+        "documents" | "read" | "duplicate" | "failed" | "notRead" | "waiting"
+      >
+    > & { facts: number; reviews: number; unmatched: number }
+  >();
+  for (const [documentId, setId] of members.get(loadId) || []) {
+    if (documents.get(documentId)?.status !== "uploaded") continue;
+    const set = sets.get(setId) || {
+      documents: 0,
+      read: 0,
+      duplicate: 0,
+      failed: 0,
+      notRead: 0,
+      waiting: 0,
+      facts: 0,
+      reviews: 0,
+      unmatched: 0,
+    };
+    sets.set(setId, set);
+    set.documents += 1;
+    const x = extractions.get(readKey(loadId, documentId));
+    if (x?.status === "extracted") set.read += 1;
+    else if (x?.status === "duplicate") set.duplicate += 1;
+    else if (x?.status === "failed") set.failed += 1;
+    else if (x?.status === "out_of_scope") set.notRead += 1;
+    else set.waiting += 1;
+    set.facts += x?.facts || 0;
+    set.reviews += x?.reviews || 0;
+    set.unmatched += unresolvedNames.get(readKey(loadId, documentId)) || 0;
+  }
+  // As protojson writes it: int64 counts as strings.
+  return [...sets.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([setId, set]) => ({
+      ...set,
+      setId,
+      routed: routed(setId),
+      facts: String(set.facts),
+      reviews: String(set.reviews),
+      unmatched: String(set.unmatched),
+    }));
 }
 
 /** For ./ontologies.ts: the uploaded documents its reading version's scope holds. */
@@ -1744,6 +1815,7 @@ onReset(() => {
   reads.clear();
   waking.clear();
   extractions.clear();
+  unresolvedNames.clear();
   members.clear();
   legacy = 0;
   delete knobs.documentUploadFailures;

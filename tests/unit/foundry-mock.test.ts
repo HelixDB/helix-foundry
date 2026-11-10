@@ -1133,7 +1133,9 @@ describe("mock document sets", () => {
       versionId: v,
       expectedCurrentVersionId: "ver_seed_1",
     });
-    await call("POST", `${O}/loads`, { versionId: v, clientToken: "l" });
+    const created = (
+      await call("POST", `${O}/loads`, { versionId: v, clientToken: "l" })
+    ).body.load;
     vi.setSystemTime(Date.now() + 10_000);
     const docs = (await call("GET", `${O}/documents`)).body.documents;
     expect(docs.map((d: { id: string }) => d.id)).toEqual([stored.id]);
@@ -1143,6 +1145,28 @@ describe("mock document sets", () => {
       entities: 0,
       usdMicros: "0",
     });
+    expect(docs[0].extraction).not.toHaveProperty("unresolved");
+    // The load says so itself, by set: its job counts the document as done.
+    const load = (await call("GET", `${O}/loads/${created.id}`)).body.load;
+    expect(load.jobs[0].progress).toMatchObject({ documentsDone: 1 });
+    expect(load.documentSets).toEqual([
+      {
+        setId: other,
+        routed: false,
+        documents: 1,
+        read: 0,
+        duplicate: 0,
+        failed: 0,
+        notRead: 1,
+        waiting: 0,
+        facts: "0",
+        reviews: "0",
+        unmatched: "0",
+      },
+    ]);
+    // The list, which pages poll, carries none.
+    const listed = (await call("GET", `${O}/loads`)).body.loads;
+    expect(listed.every((l: object) => !("documentSets" in l))).toBe(true);
     expect(
       (await call("GET", `${O}/documents?status=out_of_scope`)).body.documents,
     ).toHaveLength(1);
@@ -1639,6 +1663,19 @@ describe("mock documents and loads", () => {
       facts: 2,
       reviews: 1,
     });
+    // The load adds its documents up by set: read, and what the reads wrote.
+    expect(finished.documentSets).toMatchObject([
+      {
+        setId: doc.setId,
+        routed: true,
+        documents: 1,
+        read: 1,
+        notRead: 0,
+        waiting: 0,
+        facts: "2",
+        reviews: "1",
+      },
+    ]);
     const ontology = (await call("GET", O)).body.ontology;
     expect(ontology).toMatchObject({
       currentLoad: { id: load.id, version: "foundry-v3" },
@@ -2488,6 +2525,11 @@ describe("review decisions", () => {
       norm_name: "globexx corporation",
     });
     expect(rv.props.candidates).toContain("cus_GLOBEX01");
+    // A name that matched no record counts on the load, not on the document.
+    const counted = (await call("GET", `${O}/loads`)).body.loads[0].id;
+    expect(
+      (await call("GET", `${O}/loads/${counted}`)).body.load.documentSets,
+    ).toMatchObject([{ read: 1, unmatched: "1" }]);
     const at = `${O}/reviews/${rv.props.review_key}:settle`;
     const saved = (
       await call("POST", at, {

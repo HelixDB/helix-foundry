@@ -1939,6 +1939,37 @@ export type FoundryLoad = {
   ingestViolations?: string;
   // Its People enrichment step; unset when its version enriches no one.
   enrichment?: FoundryLoadEnrichment | null;
+  // What it made of its documents, by document set, in set id order. Only
+  // on a load read alone (not in the list); unset for a load that holds no
+  // documents, and for a grantee.
+  documentSets?: FoundryLoadDocumentSet[];
+};
+
+/**
+ * v1FoundryLoadDocumentSet: what a load made of one document set's
+ * documents (its uploaded text documents and PDFs that joined the load).
+ * `documents` is read + duplicate + failed + notRead + waiting.
+ */
+export type FoundryLoadDocumentSet = {
+  setId?: string;
+  // An extraction route of the load's version reads the set. Unset (false):
+  // the load stores its documents, which stay searchable, and no model
+  // reads them, so they add nothing to the graph.
+  routed?: boolean;
+  documents?: number;
+  // Those a model read for the names and facts they hold.
+  read?: number;
+  duplicate?: number;
+  failed?: number;
+  // Those no route of the load's version reads (out_of_scope).
+  notRead?: number;
+  // Those the load has not extracted yet.
+  waiting?: number;
+  // (int64) The facts its documents wrote, the items they left for a
+  // person's review, and the names that matched no record.
+  facts?: string;
+  reviews?: string;
+  unmatched?: string;
 };
 
 /**
