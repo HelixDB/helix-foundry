@@ -234,6 +234,14 @@ test("loads the current draft and reads the contract back from the database", as
   await expect(done).toContainText(
     "2 chunks of table rows and 1 document written into contracts; 1 item from your documents needs review.",
   );
+  // What it made of its documents: the set its version reads, read.
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "1 document set, 1 read into the graph" }),
+  ).toContainText(
+    "1 of 1 document was read for the names and facts it holds. The document read wrote 2 facts; 1 item waits for review.",
+  );
 
   // Its details link to what the ontology reads; Review documents opens
   // what needs review.
