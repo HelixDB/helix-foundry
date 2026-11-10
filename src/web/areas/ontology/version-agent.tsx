@@ -800,7 +800,7 @@ function Question({ q }: { q: AgentQuestion }) {
         </ul>
       )}
       {!q.options?.length && q.default && (
-        // The agent's suggestion: nothing applies it to the draft.
+        // The agent's suggestion, which no one has decided on.
         <p className="on-muted">Suggested answer: {q.default}</p>
       )}
       {(q.items?.length || 0) > 0 && (
@@ -836,7 +836,7 @@ export function AgentQuestions({
         <h2>Questions from the agent</h2>
         <p className="on-muted">
           {bundle.questions.length
-            ? "These are open: a suggested answer is the agent’s proposal, and nothing has applied it. To act on an answer, generate again with it in the goal."
+            ? "These are open: a suggested answer is the agent’s proposal, not a decision. To act on an answer, generate again with it in the goal."
             : "To act on an answer, generate again with it in the goal."}
         </p>
         {bundle.questions.length ? (

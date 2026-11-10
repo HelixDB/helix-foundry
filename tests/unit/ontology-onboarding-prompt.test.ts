@@ -596,7 +596,7 @@ describe("onboardingPrompt's review, load and failures", () => {
   // load, and report the load's own counts after.
   it("reports a draft's open questions and unread sets, and a load's document counts", () => {
     for (const line of [
-      "a question’s `default` is the agent’s suggestion, and the draft doesn’t act on it.",
+      "a question’s `default` is the agent’s suggestion, not something I decided, so don’t report it as done.",
       "what it left out and why, the definition’s `left_out`.",
       "the document sets it was given but doesn’t read, `document_reads.unread_set_ids`",
       "write the new goal with me, my answers in it in plain words, and generate again",

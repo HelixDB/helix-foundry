@@ -291,7 +291,7 @@ type FoundryVersionOutput struct {
 	LoadRefusal string `json:"load_refusal,omitempty"`
 	// The description keeps this schema an object: an any's schema without one marshals as true,
 	// which some clients refuse.
-	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names. An agent bundle's questions are the draft's open questions: a question's default is the agent's suggestion, which nothing applies. Its left_out lists what the draft left out of the sources it was given, each {what, reason}, what starting with the id of a table, file or document set."`
+	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names. An agent bundle's questions are the draft's open questions: a question's default is the agent's suggestion, not a decision, so read what the draft does from its files and document_reads. Its left_out lists what the draft left out of the sources it was given, each {what, reason}, what starting with the id of a table, file or document set."`
 	// definitionBytes is the size of Definition encoded, for get_version's cap.
 	definitionBytes int
 }
@@ -761,7 +761,7 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 			"Get one version of a Foundry ontology with its definition, such as a generation's draft before it is made current, and load_refusal: why create_load would refuse it, absent when it would load it. "+
 				"Only a version read whole has load_refusal (this tool, get_ontology's current_version, set_current_version's result), never one in a list. "+
 				"document_set_ids are the sets it was given; document_reads says which of them its routes read (read_set_ids) and which it only stores (unread_set_ids: searchable, with nothing extracted into the graph). "+
-				"An agent bundle comes without the agent's working draft, but with its open questions (definition.questions, whose default is a suggestion nothing applies) and what the draft left out of its sources (definition.left_out, each with the reason): "+
+				"An agent bundle comes without the agent's working draft, but with its open questions (definition.questions; a default is the agent's suggestion, not a decision) and what the draft left out of its sources (definition.left_out, each with the reason): "+
 				"to act on an answer, or to have it read what it left out, generate again with that in the goal. A definition past 256 KiB is refused, with its load_refusal."), s.GetFoundryVersion)
 		addFoundryTool(s, server, identity, tool(toolFoundryReadGuide,
 			"Describe the reads helix_foundry_read_graph takes: their kinds and JSON Schema."), s.FoundryReadGuide)

@@ -299,7 +299,7 @@ export function onboardingPrompt(input: OnboardingPromptInput): string {
         "",
         "Then tell me what it leaves open and what it doesn’t read, before I decide anything:",
         "",
-        "- its questions, the definition’s `questions`. They are open: a question’s `default` is the agent’s suggestion, and the draft doesn’t act on it. Ask me each one, with its suggestion;",
+        "- its questions, the definition’s `questions`. They are open: a question’s `default` is the agent’s suggestion, not something I decided, so don’t report it as done. Ask me each one, with its suggestion;",
         "- what it left out and why, the definition’s `left_out`. Each entry starts with the id of a table, a file or a document set;",
         "- the document sets it was given but doesn’t read, `document_reads.unread_set_ids`, by the names `helix_foundry_get_ontology` gives its sets. A load stores their documents and I can search them, but nothing from them reaches the graph, so no answer drawn from the graph knows what they say.",
         "",
