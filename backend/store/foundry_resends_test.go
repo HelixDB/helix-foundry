@@ -503,6 +503,7 @@ func TestFoundryReleaseOfAnotherLoad(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrConflict)
 	assert.Empty(t, f.decisionIDs(t))
 	assert.Nil(t, f.liveJob(t))
+	assert.Empty(t, f.applied(t, d), "a decision the load's list doesn't hold says nothing of it")
 	// Only releases are applied this way.
 	resolve := &model.FoundryReviewDecision{ID: id26("res"), OntologyID: f.ontology.ID, Kind: model.FoundryReviewResolve, Type: "Customer",
 		DocID: &f.a, NormName: ptr("acme"), DecidedByUserID: id26("user")}

@@ -247,10 +247,10 @@ WHERE load_id=? AND id=?`, string(status), why, loadID, o.DecisionID); err != ni
 	return nil
 }
 
-// ListFoundryDecisionsApplied returns what became of the given decisions in
-// the ontology's current load, by decision id; a decision that load's list
-// doesn't hold is absent, and one it holds that no job has reported on has
-// the empty status.
+// ListFoundryDecisionsApplied returns what became of the given release
+// decisions in the ontology's current load, by decision id; a decision that
+// load's list doesn't hold is absent, as is one of another kind, and one it
+// holds that no job has reported on has the empty status.
 func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error) {
 	out := map[string]model.FoundryDecisionApplied{}
 	if len(ids) == 0 {
@@ -258,7 +258,7 @@ func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID st
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT l.id, l.applied_status, l.applied_reason, l.applied_at FROM foundry_ontologies o
 JOIN foundry_load_decisions l ON l.load_id=o.current_load_id
-WHERE o.id=? AND l.id IN (`+idPlaceholders(len(ids))+`)`, append([]any{ontologyID}, toAnySlice(ids)...)...)
+WHERE o.id=? AND l.kind='release' AND l.id IN (`+idPlaceholders(len(ids))+`)`, append([]any{ontologyID}, toAnySlice(ids)...)...)
 	if err != nil {
 		return nil, err
 	}

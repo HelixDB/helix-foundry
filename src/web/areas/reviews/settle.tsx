@@ -194,10 +194,12 @@ export function SettleReview({
   const moved = !!approval?.moved,
     earlier = !!approval?.earlier;
   // What the current load made of a saved approval: nothing yet when its
-  // list doesn't hold it (saved while another load was current), which
-  // approving again changes at once.
+  // list doesn't hold it (saved while another load was current), and
+  // nothing to write when it found no claim at the approval's place. Either
+  // way approving this card binds it to this load's review, at once.
   const applied = isRelease && editable ? saved?.applied : undefined,
     unread = isRelease && editable && !!saved && !applied,
+    missed = applied?.status === "missed",
     retry = applied?.status === "refused" && applied.reason === "job_failed";
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
@@ -274,9 +276,11 @@ export function SettleReview({
                     ? `Approved, and this load kept it held. ${refusalText(applied.reason, s.formed)}`
                     : unread
                       ? "An approval of this is saved, and this load hasn’t read it. Approve it to write it now."
-                      : s.formed && single
-                        ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
-                        : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
+                      : missed
+                        ? "An approval of this is saved, and it found no claim at its place in this load. Approve it to write it now."
+                        : s.formed && single
+                          ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
+                          : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
               : loadRead(saved, load?.createdAt)
                 ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
                 : "Decision saved. Reload to apply."}
@@ -291,7 +295,7 @@ export function SettleReview({
       {canManage(role) &&
         editable &&
         isRelease &&
-        (!saved || moved || unread || retry) &&
+        (!saved || moved || unread || missed || retry) &&
         !s.differs && (
           <div className="on-stack">
             <p className="on-muted">
