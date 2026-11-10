@@ -263,7 +263,7 @@ func accessService(t *testing.T) (*Service, *accessStore) {
 	store.loads = append(store.loads, &foundrymodel.FoundryLoad{ID: "load-3", OntologyID: "ont-3", VersionID: "ver-3", Status: foundrymodel.FoundryLoadReady})
 	store.versions = append(store.versions,
 		&foundrymodel.OntologyVersion{ID: "ver-1", WorkspaceID: "ws-1", OntologyID: "ont-1", Format: foundrymodel.OntologyFormatAgentBundle,
-			Definition: json.RawMessage(`{"format":"agent_bundle","ontology_toml":"","draft":{"draft":{"items":{"Customer":{"card":{"rows":3}},"Plan":{}}}}}`)},
+			Definition: json.RawMessage(`{"format":"agent_bundle","ontology_toml":"","draft":{"draft":{"items":{"Customer":{"card":{"rows":3}},"Plan":{}},"left_out":[{"what":"src_02 hr.salaries","reason":"No question needs pay."}]}}}`)},
 		&foundrymodel.OntologyVersion{ID: "ver-0", WorkspaceID: "ws-1", OntologyID: "ont-1", Format: foundrymodel.OntologyFormatAgentBundle,
 			Definition: json.RawMessage(`{"format":"agent_bundle"}`)},
 		&foundrymodel.OntologyVersion{ID: "ver-3", WorkspaceID: "ws-1", OntologyID: "ont-3", Format: foundrymodel.OntologyFormatAgentBundle,
@@ -471,6 +471,10 @@ func TestGranteeAnswers(t *testing.T) {
 		if !got.GetVersion().GetEvidenceWithheld() || strings.Contains(fmt.Sprint(got.GetVersion().GetDefinition()), "card") {
 			t.Fatalf("%v", got.GetVersion().GetDefinition())
 		}
+		// What the draft left out names sources the load may not hold.
+		if strings.Contains(fmt.Sprint(got.GetVersion().GetDefinition()), "salaries") {
+			t.Fatalf("a grantee reads what the draft left out: %v", got.GetVersion().GetDefinition())
+		}
 		for _, id := range []string{"ver-0", "ver-404"} {
 			if _, err := client.GetOntologyVersion(ctx, &foundryv1.GetOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: id}); status.Code(err) != codes.NotFound {
 				t.Fatalf("%s: %v", id, err)
@@ -480,8 +484,9 @@ func TestGranteeAnswers(t *testing.T) {
 			t.Fatalf("current version: %v", err)
 		}
 		host, err := client.GetOntologyVersion(as(person), &foundryv1.GetOntologyVersionRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "ver-1"})
-		if err != nil || !strings.Contains(fmt.Sprint(host.GetVersion().GetDefinition()), "card") {
-			t.Fatalf("the host's caller keeps a draft's cards: %v", err)
+		if err != nil || !strings.Contains(fmt.Sprint(host.GetVersion().GetDefinition()), "card") ||
+			!strings.Contains(fmt.Sprint(host.GetVersion().GetDefinition()), "salaries") {
+			t.Fatalf("the host's caller keeps a draft's cards and what it left out: %v", err)
 		}
 	})
 	t.Run("the current load only, without its jobs", func(t *testing.T) {
@@ -493,9 +498,20 @@ func TestGranteeAnswers(t *testing.T) {
 		if l.GetId() != "load-1" || !l.GetCurrent() || l.GetJobs() != nil || l.GetUsdMicros() != 0 || l.GetSources() != nil {
 			t.Fatalf("%+v", l)
 		}
+		// What the load made of its documents counts every set it holds, which
+		// a grantee may not see: only the host's caller gets it.
+		documents, members := store.documents, store.members["load-1"]
+		defer func() { store.documents, store.members["load-1"] = documents, members }()
+		store.documents = append(slices.Clone(documents), &foundrymodel.FoundryDocument{ID: "doc-counted", WorkspaceID: "ws-1", SetID: "set-counted",
+			Status: foundrymodel.FoundryDocumentUploaded})
+		store.members["load-1"] = append(slices.Clone(members), "doc-counted")
 		one, err := client.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "load-1"})
-		if err != nil || one.GetLoad().GetId() != "load-1" {
+		if err != nil || one.GetLoad().GetId() != "load-1" || one.GetLoad().GetDocumentSets() != nil {
 			t.Fatalf("%+v, %v", one, err)
+		}
+		host, err := client.GetFoundryLoad(as(person), &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "load-1"})
+		if err != nil || len(host.GetLoad().GetDocumentSets()) == 0 {
+			t.Fatalf("the host's caller counts the load's documents: %+v, %v", host, err)
 		}
 		if _, err := client.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: "load-0"}); status.Code(err) != codes.NotFound {
 			t.Fatal(err)

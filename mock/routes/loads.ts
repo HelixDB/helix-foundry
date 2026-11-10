@@ -48,7 +48,7 @@ import {
   readsOf,
   sweepViolations,
 } from "../graph/rules";
-import { scopeFor } from "../graph/scope";
+import { isRouted, scopeFor } from "../graph/scope";
 import { viewOf, type View } from "../graph/view";
 import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
@@ -59,6 +59,7 @@ import { beforeRead, startingRefuses, tenantGraph } from "./databases";
 import {
   dropExtractions,
   joinLoad,
+  loadDocumentSets,
   loadDocuments,
   setExtraction,
   spentAllowance,
@@ -1083,16 +1084,6 @@ function read(j: StoredJob, documentId: string, at: string) {
     knobs.documentUnmatched,
   );
   if (outcome.kind === "already_ingested") return;
-  // Stored, not read: no model call, nothing spent.
-  if (outcome.kind === "out_of_scope") {
-    setExtraction(j.loadId, doc.id, {
-      status: "out_of_scope",
-      ...outcome.counts,
-      usdMicros: "0",
-      finishedAt: at,
-    });
-    return;
-  }
   if (outcome.kind === "duplicate") {
     setExtraction(j.loadId, doc.id, {
       status: "duplicate",
@@ -1103,13 +1094,30 @@ function read(j: StoredJob, documentId: string, at: string) {
     });
     return;
   }
+  // The names it matched to no record are no part of a document's row.
+  const { unresolved, ...counts } = outcome.counts;
+  // Stored, not read: no model call, nothing spent.
+  if (outcome.kind === "out_of_scope") {
+    setExtraction(j.loadId, doc.id, {
+      status: "out_of_scope",
+      ...counts,
+      usdMicros: "0",
+      finishedAt: at,
+    });
+    return;
+  }
   j.usdMicros += DOCUMENT_USD_MICROS;
-  setExtraction(j.loadId, doc.id, {
-    status: "extracted",
-    ...outcome.counts,
-    usdMicros: String(DOCUMENT_USD_MICROS),
-    finishedAt: at,
-  });
+  setExtraction(
+    j.loadId,
+    doc.id,
+    {
+      status: "extracted",
+      ...counts,
+      usdMicros: String(DOCUMENT_USD_MICROS),
+      finishedAt: at,
+    },
+    unresolved,
+  );
 }
 
 /**
@@ -1588,9 +1596,28 @@ const toLoad = (l: StoredLoad): FoundryLoad => {
 };
 
 /**
+ * A load read alone, as the WFE answers GetFoundryLoad: with what it made
+ * of its documents, by set, when it holds any. The list has none, and nor
+ * has the answer to a call that changes a load.
+ */
+const toLoadAlone = (l: StoredLoad): FoundryLoad => {
+  const mappings = String(
+    (
+      ontologyVersion(l.ontologyId, l.versionId)?.definition as
+        | Definition
+        | undefined
+    )?.mappings_toml || "",
+  );
+  const documentSets = loadDocumentSets(l.id, (setId) =>
+    isRouted(mappings, setId),
+  );
+  return documentSets.length ? { ...toLoad(l), documentSets } : toLoad(l);
+};
+
+/**
  * The load a grantee reads, as it may see it: which version it holds and
- * when it was written, without its jobs, their spend or its People
- * enrichment step.
+ * when it was written, without its jobs, their spend, its People
+ * enrichment step or what it made of its documents.
  */
 const granteeLoad = (l: StoredLoad): FoundryLoad => ({
   ...toLoad(l),
@@ -1722,7 +1749,7 @@ export const loadRoutes: MockRoute[] = [
       if (!l || (granted && l.id !== granted))
         return fail("NOT_FOUND", "load not found");
       return ok({
-        load: granted ? granteeLoad(l) : toLoad(l),
+        load: granted ? granteeLoad(l) : toLoadAlone(l),
       } satisfies LoadResponse);
     },
   },

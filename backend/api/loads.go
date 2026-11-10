@@ -154,7 +154,16 @@ func (s *Service) GetFoundryLoad(ctx context.Context, req *foundryv1.GetFoundryL
 		}
 		return &foundryv1.FoundryLoadResponse{Load: load}, nil
 	}
-	return s.foundryLoadResponse(ctx, o, req.GetId())
+	resp, err := s.foundryLoadResponse(ctx, o, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	// Only here: counting reads every document of the load, and the calls
+	// that change a load answer with it after the change is made.
+	if resp.Load.DocumentSets, err = s.foundryLoadDocumentSets(ctx, o.ID, resp.Load); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // granteeFoundryLoad is the load a grantee reads, as it may see it: which
