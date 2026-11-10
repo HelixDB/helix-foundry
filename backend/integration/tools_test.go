@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // everyTool is a user's identity on a host that grants everything, so every
@@ -607,4 +608,164 @@ func TestAGranteeGetsTheOntologyItsGrantsCover(t *testing.T) {
 	plain.IsGrantee = nil
 	_, err = get(&grantBackend{currentErr: status.Error(codes.PermissionDenied, "no")}, plain)
 	require.Error(t, err)
+}
+
+// reader is a user's identity on a host that grants every read.
+func reader() *Identity {
+	return &Identity{
+		User: true, HasPermission: func(Permission) bool { return true },
+		Authorize: func(context.Context, any, Grant, ...string) error { return nil },
+		Allows:    func(string, string, Grant) bool { return true },
+	}
+}
+
+// called is a tool's structured output, as a client reads it: the SDK checked it against the
+// tool's schema on the way.
+func called(t *testing.T, s *Service, name string, arguments map[string]any) map[string]any {
+	t.Helper()
+	result, err := connect(t, s, reader()).CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+	require.NoError(t, err)
+	require.False(t, result.IsError, "%v", result.Content)
+	raw, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(raw, &out))
+	return out
+}
+
+// loadBackend answers get_load with one load.
+type loadBackend struct {
+	foundryv1.FoundryServiceClient
+	load *foundryv1.FoundryLoad
+}
+
+func (b *loadBackend) GetFoundryLoad(context.Context, *foundryv1.GetFoundryLoadRequest, ...grpc.CallOption) (*foundryv1.FoundryLoadResponse, error) {
+	return &foundryv1.FoundryLoadResponse{Load: b.load}, nil
+}
+
+// A load's jobs count every document as done. What came of them is in documents: twelve sets
+// of which the version reads two, so most of what was uploaded added nothing to the graph, and
+// the caller is told how much, in all and set by set.
+func TestGetLoadCountsWhatItMadeOfItsDocuments(t *testing.T) {
+	load := &foundryv1.FoundryLoad{Id: "load-1", VersionId: "version-1", Status: "ready", Jobs: []*foundryv1.FoundryGraphJob{
+		{Id: "load-1", Kind: "load", Status: "succeeded", Progress: &foundryv1.FoundryGraphJobProgress{DocumentsDone: 121, DocumentsTotal: 121}},
+	}}
+	load.DocumentSets = append(load.DocumentSets,
+		&foundryv1.FoundryLoadDocumentSet{SetId: "set-01", Routed: true, Documents: 10, Read: 8, Duplicate: 1, Failed: 1, Reviews: 30},
+		&foundryv1.FoundryLoadDocumentSet{SetId: "set-02", Routed: true, Documents: 12, Read: 10, Waiting: 2, Facts: 3, Reviews: 37, Unmatched: 5})
+	for _, set := range []string{"03", "04", "05", "06", "07", "08", "09", "10", "11"} {
+		load.DocumentSets = append(load.DocumentSets, &foundryv1.FoundryLoadDocumentSet{SetId: "set-" + set, Documents: 10, NotRead: 10})
+	}
+	load.DocumentSets = append(load.DocumentSets, &foundryv1.FoundryLoadDocumentSet{SetId: "set-12", Documents: 9, NotRead: 9})
+	arguments := map[string]any{"workspace_id": "workspace-1", "ontology_id": "ontology-1", "load_id": "load-1"}
+
+	out := called(t, &Service{Foundry: &loadBackend{load: load}}, toolFoundryGetLoad, arguments)
+	documents, ok := out["documents"].(map[string]any)
+	require.True(t, ok, "%v", out)
+	for field, want := range map[string]float64{
+		"total": 121, "read": 18, "not_read_by_version": 99, "duplicate": 1, "failed": 1, "waiting": 2,
+		"facts_written": 3, "held_for_review": 67, "names_unmatched": 5,
+	} {
+		assert.Equal(t, want, documents[field], field)
+	}
+	sets := documents["sets"].([]any)
+	require.Len(t, sets, 12)
+	assert.Equal(t, map[string]any{
+		"set_id": "set-02", "read_by_version": true, "documents": 12.0, "read": 10.0, "facts_written": 3.0, "held_for_review": 37.0,
+		"names_unmatched": 5.0,
+	}, sets[1])
+	unread := 0
+	for _, set := range sets {
+		if !set.(map[string]any)["read_by_version"].(bool) {
+			unread++
+		}
+	}
+	assert.Equal(t, 10, unread, "the sets the version doesn't read are named")
+
+	// A load that holds no documents, or one read in part, says nothing of them.
+	out = called(t, &Service{Foundry: &loadBackend{load: &foundryv1.FoundryLoad{Id: "load-1", Status: "ready"}}}, toolFoundryGetLoad, arguments)
+	assert.NotContains(t, out, "documents")
+
+	// What the tool says of itself tells an agent to report them.
+	tools, err := connect(t, &Service{}, reader()).ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	for _, tool := range tools.Tools {
+		if tool.Name == toolFoundryGetLoad {
+			assert.Contains(t, tool.Description, "not_read_by_version")
+		}
+	}
+}
+
+// versionBackend answers get_version with one version.
+type versionBackend struct {
+	foundryv1.FoundryServiceClient
+	version *foundryv1.OntologyVersion
+}
+
+func (b *versionBackend) GetOntologyVersion(context.Context, *foundryv1.GetOntologyVersionRequest, ...grpc.CallOption) (*foundryv1.OntologyVersionResponse, error) {
+	return &foundryv1.OntologyVersionResponse{Version: b.version}, nil
+}
+
+// A draft given three sets that routes one of them reads one: the caller sees which, what the
+// draft says it left out and why, and its open questions, without the rest of its working draft.
+func TestGetVersionSaysWhatItLeavesUnread(t *testing.T) {
+	definition := func(mappings string, draft map[string]any) *structpb.Struct {
+		s, err := structpb.NewStruct(map[string]any{
+			"format": "agent_bundle", "status": "done", "ontology_toml": "", "mappings_toml": mappings, "summary": "Drafted memos.",
+			"questions": []any{map[string]any{"id": "Q1", "text": "Should the minutes be read too?", "default": "Yes", "blocking": false}},
+			"draft":     map[string]any{"ontology_toml": "", "mappings_toml": mappings, "draft": draft},
+		})
+		require.NoError(t, err)
+		return s
+	}
+	version := &foundryv1.OntologyVersion{
+		Id: "version-1", Version: 2, Format: foundryv1.OntologyFormat_ONTOLOGY_FORMAT_AGENT_BUNDLE, GenerationId: "generation-1",
+		DocumentSetIds: []string{"set-memos", "set-minutes", "set-calls"},
+		Definition: definition("[extractions.memos]\ndocuments = [\"set-memos\"]\n", map[string]any{
+			"rev":   3.0,
+			"items": map[string]any{"type.Memo": map[string]any{"toml": "[types.Memo]", "rationale": "The working notes."}},
+			"left_out": []any{
+				map[string]any{"what": "set-minutes", "reason": "No question needs the minutes."},
+				map[string]any{"what": "set-calls", "reason": "Waiting for an answer to Q1."},
+			},
+		}),
+	}
+	arguments := map[string]any{"workspace_id": "workspace-1", "ontology_id": "ontology-1", "version_id": "version-1"}
+
+	out := called(t, &Service{Foundry: &versionBackend{version: version}}, toolFoundryGetVersion, arguments)["version"].(map[string]any)
+	assert.Equal(t, []any{"set-memos", "set-minutes", "set-calls"}, out["document_set_ids"])
+	assert.Equal(t, map[string]any{"read_set_ids": []any{"set-memos"}, "unread_set_ids": []any{"set-minutes", "set-calls"}}, out["document_reads"])
+	got := out["definition"].(map[string]any)
+	assert.NotContains(t, got, "draft", "the working draft stays out")
+	assert.NotContains(t, mustJSON(t, got), "working notes")
+	assert.Equal(t, []any{
+		map[string]any{"what": "set-minutes", "reason": "No question needs the minutes."},
+		map[string]any{"what": "set-calls", "reason": "Waiting for an answer to Q1."},
+	}, got["left_out"])
+	assert.Len(t, got["questions"], 1)
+
+	// A route that reads every set reads the whole scope, and a draft that left nothing out says nothing.
+	version.Definition = definition("[extractions.all]\ndocuments = \"all\"\n", map[string]any{"rev": 1.0})
+	out = called(t, &Service{Foundry: &versionBackend{version: version}}, toolFoundryGetVersion, arguments)["version"].(map[string]any)
+	assert.Equal(t, map[string]any{"read_set_ids": []any{"set-memos", "set-minutes", "set-calls"}, "unread_set_ids": []any{}}, out["document_reads"])
+	assert.NotContains(t, out["definition"], "left_out")
+
+	// Mappings that can't be read route nothing: no set is called read.
+	version.Definition = definition("[extractions.memos]\ndocuments = 7\n", map[string]any{})
+	out = called(t, &Service{Foundry: &versionBackend{version: version}}, toolFoundryGetVersion, arguments)["version"].(map[string]any)
+	assert.Equal(t, map[string]any{"read_set_ids": []any{}, "unread_set_ids": []any{"set-memos", "set-minutes", "set-calls"}}, out["document_reads"])
+
+	// A listed version has no definition, so nothing is said of what it reads; nor of a Definition v1, which reads no documents.
+	listed := (&Service{}).FoundryVersion("workspace-1", "ontology-1", &foundryv1.OntologyVersion{Id: "version-1", DocumentSetIds: []string{"set-memos"}}, false)
+	assert.Nil(t, listed.DocumentReads)
+	v1, err := structpb.NewStruct(map[string]any{"entities": []any{}})
+	require.NoError(t, err)
+	assert.Nil(t, (&Service{}).FoundryVersion("workspace-1", "ontology-1", &foundryv1.OntologyVersion{Id: "version-0", Definition: v1}, true).DocumentReads)
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(raw)
 }

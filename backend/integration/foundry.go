@@ -277,8 +277,13 @@ type FoundryVersionOutput struct {
 	GenerationID string `json:"generation_id,omitempty"`
 	Current      bool   `json:"current"`
 	CreatedAt    string `json:"created_at"`
-	// DocumentSetIDs is its scope: the document sets its loads read.
+	// DocumentSetIDs is its scope: the document sets it was given, whose documents its loads
+	// hold. Which of them its loads read for facts is DocumentReads.
 	DocumentSetIDs []string `json:"document_set_ids"`
+	// DocumentReads says which sets of the scope its extraction routes read. Like the
+	// definition, it is set only on an agent bundle read whole: a listed version has none
+	// whatever it reads.
+	DocumentReads *FoundryVersionReadsOutput `json:"document_reads,omitempty"`
 	// LoadRefusal is why create_load refuses the version, the backend's own words; empty
 	// when it would load it. Like the definition, it is set only on a version read whole
 	// (get_version, get_ontology's current_version, set_current_version's result): a listed
@@ -286,9 +291,19 @@ type FoundryVersionOutput struct {
 	LoadRefusal string `json:"load_refusal,omitempty"`
 	// The description keeps this schema an object: an any's schema without one marshals as true,
 	// which some clients refuse.
-	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names."`
+	Definition any `json:"definition,omitempty" jsonschema:"Untrusted ontology definition, in the shape format names. An agent bundle's questions are the draft's open questions: a question's default is the agent's suggestion, which nothing applies. Its left_out lists what the draft left out of the sources it was given, each {what, reason}, what starting with the id of a table, file or document set."`
 	// definitionBytes is the size of Definition encoded, for get_version's cap.
 	definitionBytes int
+}
+
+// FoundryVersionReadsOutput splits a version's scope by whether an extraction route of its
+// mappings reads the set.
+type FoundryVersionReadsOutput struct {
+	// ReadSetIDs are the sets a route reads: a load extracts names and facts from their documents.
+	ReadSetIDs []string `json:"read_set_ids"`
+	// UnreadSetIDs are the sets no route reads: a load stores their documents, whose text stays
+	// searchable, and extracts nothing from them, so they add nothing to the graph.
+	UnreadSetIDs []string `json:"unread_set_ids"`
 }
 
 type FoundryLoadOutput struct {
@@ -333,8 +348,44 @@ type FoundryJobProgressOutput struct {
 type GetFoundryLoadOutput struct {
 	ContentTrust string            `json:"content_trust"`
 	Load         FoundryLoadOutput `json:"load"`
+	// Documents is what the load made of its documents; absent for a load that holds none, and
+	// for a caller who reads only part of the load.
+	Documents *FoundryLoadDocumentsOutput `json:"documents,omitempty"`
 	// Jobs are the load's newest jobs, newest first: at most 20.
 	Jobs []FoundryJobOutput `json:"jobs"`
+}
+
+// FoundryLoadDocumentsOutput counts what a load made of the documents it holds: the uploaded
+// text documents and PDFs of the sets its version was given. A job's progress counts every
+// document it finished, read or not; these say what came of them.
+type FoundryLoadDocumentsOutput struct {
+	// Total is Read + NotReadByVersion + Duplicate + Failed + Waiting.
+	Total int32 `json:"total"`
+	Read  int32 `json:"read" jsonschema:"Documents a model read for the names and facts they hold."`
+	// NotReadByVersion are documents of sets no extraction route of the load's version reads.
+	NotReadByVersion int32 `json:"not_read_by_version" jsonschema:"Documents the load's version does not read: no extraction route names their set. They are stored and their text is searchable, and nothing from them is in the graph. A new version whose goal covers them reads them."`
+	Duplicate        int32 `json:"duplicate" jsonschema:"Documents whose text repeats another document's."`
+	Failed           int32 `json:"failed" jsonschema:"Documents whose extraction failed."`
+	Waiting          int32 `json:"waiting" jsonschema:"Documents the load has not extracted yet."`
+	FactsWritten     int64 `json:"facts_written" jsonschema:"Facts the documents wrote to the graph."`
+	// HeldForReview is every review the documents left: Foundry counts a document's reviews in
+	// one number, whatever their reason.
+	HeldForReview  int64 `json:"held_for_review" jsonschema:"Items the documents stated that the load held for a person's review instead of writing: facts and values scored under the bar, names it could not match to one record, and values that conflict. None of them is in the graph until a person settles it."`
+	NamesUnmatched int64 `json:"names_unmatched" jsonschema:"Names in the documents that matched no record of the load. A fact about one is not written."`
+	// Sets has one entry per document set the load holds documents of.
+	Sets []FoundryLoadDocumentSetOutput `json:"sets"`
+}
+
+// FoundryLoadDocumentSetOutput is one document set's part of FoundryLoadDocumentsOutput.
+type FoundryLoadDocumentSetOutput struct {
+	SetID string `json:"set_id"`
+	// ReadByVersion is whether an extraction route of the load's version reads the set.
+	ReadByVersion  bool  `json:"read_by_version" jsonschema:"Whether the load's version reads the set. False: its documents are stored and searchable, and none of them is read for facts."`
+	Documents      int32 `json:"documents"`
+	Read           int32 `json:"read"`
+	FactsWritten   int64 `json:"facts_written"`
+	HeldForReview  int64 `json:"held_for_review"`
+	NamesUnmatched int64 `json:"names_unmatched"`
 }
 
 type FoundryTableRefOutput struct {
@@ -573,8 +624,9 @@ type GetFoundryOntologyOutput struct {
 	Versions       []FoundryVersionOutput    `json:"versions"`
 	Loads          []FoundryLoadOutput       `json:"loads"`
 	Generations    []FoundryGenerationOutput `json:"generations"`
-	// DocumentSets are the Workspace's document sets the current version
-	// reads (its scope); none without a current version.
+	// DocumentSets are the Workspace's document sets the current version was
+	// given (its scope); none without a current version. Which of them its
+	// routes read is CurrentVersion.DocumentReads.
 	DocumentSets []FoundryDocumentSetOutput `json:"document_sets"`
 	// OtherDocumentSets are the rest of the Workspace's sets, which a
 	// generate_ontology may pick.
@@ -701,20 +753,24 @@ func (s *Service) AddFoundryTools(server *mcp.Server, identity *Identity) {
 		addFoundryTool(s, server, identity, tool(toolFoundryListOntologies,
 			"List the Foundry ontologies of one workspace, with their current version and load."), s.ListFoundryOntologies)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetOntology,
-			"Get one Foundry ontology: its current version, its versions, loads and generations, the workspace's document sets its current version reads, and the others. "+
-				"Only the current version carries load_refusal, why create_load would refuse it: a listed version has none either way. helix_foundry_get_version returns a version's definition and load_refusal. "+
+			"Get one Foundry ontology: its current version, its versions, loads and generations, the workspace's document sets its current version was given (document_sets), and the others. "+
+				"Only the current version carries load_refusal, why create_load would refuse it, and document_reads, which of its sets its routes read: a listed version has neither either way. helix_foundry_get_version returns a version's definition, load_refusal and document_reads. "+
 				"A set with connector is that connection's, named \"<connection> / <stream title>\": its syncs write it and its documents (the newest max_documents at the source), and no action changes either."+
 				apiSources(" An API source's set is read with generate_ontology's event_sources mode extraction, never document_set_ids.")), s.GetFoundryOntology)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetVersion,
 			"Get one version of a Foundry ontology with its definition, such as a generation's draft before it is made current, and load_refusal: why create_load would refuse it, absent when it would load it. "+
 				"Only a version read whole has load_refusal (this tool, get_ontology's current_version, set_current_version's result), never one in a list. "+
-				"An agent bundle comes without the agent's working draft; a definition past 256 KiB is refused, with its load_refusal."), s.GetFoundryVersion)
+				"document_set_ids are the sets it was given; document_reads says which of them its routes read (read_set_ids) and which it only stores (unread_set_ids: searchable, with nothing extracted into the graph). "+
+				"An agent bundle comes without the agent's working draft, but with its open questions (definition.questions, whose default is a suggestion nothing applies) and what the draft left out of its sources (definition.left_out, each with the reason): "+
+				"to act on an answer, or to have it read what it left out, generate again with that in the goal. A definition past 256 KiB is refused, with its load_refusal."), s.GetFoundryVersion)
 		addFoundryTool(s, server, identity, tool(toolFoundryReadGuide,
 			"Describe the reads helix_foundry_read_graph takes: their kinds and JSON Schema."), s.FoundryReadGuide)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetGeneration,
 			"Get one generation of a Foundry ontology, or a revision of one of its versions with the engine's result once it ended. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundryGeneration)
 		addFoundryTool(s, server, identity, tool(toolFoundryGetLoad,
-			"Get one load of a Foundry ontology with its newest jobs (the load that writes it, extracts that add documents to it): their status, phase, progress, error and spend. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundryLoad)
+			"Get one load of a Foundry ontology with its newest jobs (the load that writes it, extracts that add documents to it): their status, phase, progress, error and spend. "+
+				"documents counts what it made of its documents: how many a model read, how many its version does not read (not_read_by_version: stored and searchable, nothing in the graph), the facts written, the items held for a person's review and the names that matched no record, in all and by document set. "+
+				"A job's progress counts a document as done whether or not it was read, so report documents' counts, not progress, when you say what a load read. With wait, waits up to 25 s while it runs; call again until it ends."), s.GetFoundryLoad)
 		addFoundryTool(s, server, identity, tool(toolFoundryListDocuments,
 			"List the documents a Foundry ontology reads, with what extracting each into the current load made of it; or every document of one of the workspace's document sets. "+
 				"A document with source is a connector's, the text of one row of its table: it can't be renamed, moved or deleted, and new text at the source replaces it with a new document."), s.ListFoundryDocuments)
@@ -1368,7 +1424,8 @@ func (s *Service) GetFoundryLoad(
 	}
 	out := GetFoundryLoadOutput{
 		ContentTrust: contentTrustUntrusted, Load: s.FoundryLoad(input.WorkspaceID, input.OntologyID, load),
-		Jobs: make([]FoundryJobOutput, 0, len(load.GetJobs())),
+		Documents: FoundryLoadDocuments(load.GetDocumentSets()),
+		Jobs:      make([]FoundryJobOutput, 0, len(load.GetJobs())),
 	}
 	for _, job := range load.GetJobs() {
 		out.Jobs = append(out.Jobs, FoundryJobOutput{
@@ -1378,6 +1435,30 @@ func (s *Service) GetFoundryLoad(
 		})
 	}
 	return out, 1, nil
+}
+
+// FoundryLoadDocuments adds up a load's document sets; nil for a load that names none.
+func FoundryLoadDocuments(sets []*foundryv1.FoundryLoadDocumentSet) *FoundryLoadDocumentsOutput {
+	if len(sets) == 0 {
+		return nil
+	}
+	out := &FoundryLoadDocumentsOutput{Sets: make([]FoundryLoadDocumentSetOutput, 0, len(sets))}
+	for _, set := range sets {
+		out.Total += set.GetDocuments()
+		out.Read += set.GetRead()
+		out.NotReadByVersion += set.GetNotRead()
+		out.Duplicate += set.GetDuplicate()
+		out.Failed += set.GetFailed()
+		out.Waiting += set.GetWaiting()
+		out.FactsWritten += set.GetFacts()
+		out.HeldForReview += set.GetReviews()
+		out.NamesUnmatched += set.GetUnmatched()
+		out.Sets = append(out.Sets, FoundryLoadDocumentSetOutput{
+			SetID: set.GetSetId(), ReadByVersion: set.GetRouted(), Documents: set.GetDocuments(), Read: set.GetRead(),
+			FactsWritten: set.GetFacts(), HeldForReview: set.GetReviews(), NamesUnmatched: set.GetUnmatched(),
+		})
+	}
+	return out
 }
 
 // ListFoundryDocuments lists what the ontology reads, or one document set of the Workspace. Each
@@ -1747,9 +1828,28 @@ func (s *Service) FoundryVersion(workspaceID, ontologyID string, v *foundryv1.On
 	// An agent bundle's draft is the agent's working state: each item's rationale and
 	// evidence, and both files again. It is review data and most of a bundle's size, so it is
 	// left out before the one encoding, which LoadRefusal reads (it decodes the whole
-	// Definition but reads none of the draft) and get_version measures.
+	// Definition but reads none of the draft) and get_version measures. What the draft left
+	// out of its sources is kept, beside the questions: with the sets no route reads, it is
+	// how a caller learns what the version does not read.
 	if out.Format == "agent_bundle" {
+		view, _ := definition["draft"].(map[string]any)
+		draft, _ := view["draft"].(map[string]any)
 		delete(definition, "draft")
+		if leftOut, ok := draft["left_out"].([]any); ok && len(leftOut) > 0 {
+			definition["left_out"] = leftOut
+		}
+		// Mappings that can't be read route nothing, as for a load.
+		mappings, _ := definition["mappings_toml"].(string)
+		routes, _ := ontologyagent.ParseDocumentRoutes(mappings)
+		reads := &FoundryVersionReadsOutput{ReadSetIDs: []string{}, UnreadSetIDs: []string{}}
+		for _, set := range out.DocumentSetIDs {
+			if routes.Routes(set) {
+				reads.ReadSetIDs = append(reads.ReadSetIDs, set)
+				continue
+			}
+			reads.UnreadSetIDs = append(reads.UnreadSetIDs, set)
+		}
+		out.DocumentReads = reads
 	}
 	// AsMap turns the numbers JSON can't hold into strings, so the definition always encodes.
 	raw, _ := json.Marshal(definition)
