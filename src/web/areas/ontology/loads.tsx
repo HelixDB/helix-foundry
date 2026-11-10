@@ -1256,7 +1256,8 @@ export function LoadPage({ loadId }: { loadId: string }) {
             title={loadSetsLine(totals)}
             text={loadDocumentsOutcome(
               totals,
-              scopeNames(totals.unreadSetIds, sets.data || []),
+              // Unnamed until the sets are read: an unknown id reads as deleted.
+              sets.data ? scopeNames(totals.unreadSetIds, sets.data) : [],
             )}
             action={
               totals.notRead > 0 &&

@@ -730,6 +730,21 @@ describe("what a load and a version read of their documents", () => {
     ).toBe(
       "None of its 3 documents was read for names and facts. Of the rest, 3 are not read yet.",
     );
+    // The sets' names aren't known yet: it still says how many it didn't read.
+    expect(
+      loadDocumentsOutcome(
+        loadDocumentTotals({
+          documentSets: [
+            { setId: "a", documents: 2, notRead: 2 },
+            { setId: "b", documents: 1, notRead: 1 },
+          ],
+        })!,
+        [],
+      ),
+    ).toBe(
+      "None of its 3 documents was read for names and facts. " +
+        "3 documents are stored and searchable, but no route of this version reads those sets, so nothing from them is in the graph: to read them, generate a version whose goal covers them.",
+    );
     // Everything read, nothing held back.
     expect(
       loadDocumentsOutcome(

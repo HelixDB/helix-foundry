@@ -1066,19 +1066,20 @@ const NAMED_SETS = 6;
 /**
  * What came of a load's documents, in sentences: how many were read for
  * facts; those its version doesn't read, with their sets' names
- * (`unreadNames`, as scopeNames gives them) and how to have them read; what
- * the read ones wrote, left for review and couldn't match; and those that
- * failed, repeat another or still wait.
+ * (`unreadNames`, as scopeNames gives them; none while the sets aren't
+ * known) and how to have them read; what the read ones wrote, left for
+ * review and couldn't match; and those that failed, repeat another or still
+ * wait.
  *
  * @example
  * loadDocumentsOutcome(
- *   { documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unmatched: 1 },
+ *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unmatched: 1 },
  *   ["Minutes"],
  * );
- * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The documents read wrote 4 facts; 2 items wait for review, and 1 name matched no record."
+ * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read wrote 4 facts; 2 items wait for review, and 1 name matched no record."
  */
 export function loadDocumentsOutcome(
-  t: Omit<LoadDocumentTotals, "sets" | "setsRead" | "unreadSetIds">,
+  t: Omit<LoadDocumentTotals, "sets" | "setsRead">,
   unreadNames: readonly string[],
 ): string {
   const named =
@@ -1088,6 +1089,7 @@ export function loadDocumentsOutcome(
           `${unreadNames.length - NAMED_SETS + 1} more`,
         ]
       : unreadNames;
+  const one = t.notRead === 1;
   const others = [
     t.failed ? `${formatNumber(t.failed)} failed` : "",
     t.duplicate
@@ -1105,7 +1107,7 @@ export function loadDocumentsOutcome(
         : `None of its ${plural(t.documents, "document")} was read for names and facts.`,
     ...(t.notRead
       ? [
-          `${plural(t.notRead, "document")}${named.length ? ` in ${andList(named)}` : ""} ${t.notRead === 1 ? "is" : "are"} stored and searchable, but no route of this version reads ${unreadNames.length === 1 ? "that set" : "those sets"}, so nothing from ${t.notRead === 1 ? "it" : "them"} is in the graph: to read ${t.notRead === 1 ? "it" : "them"}, generate a version whose goal covers ${t.notRead === 1 ? "it" : "them"}.`,
+          `${plural(t.notRead, "document")}${named.length ? ` in ${andList(named)}` : ""} ${one ? "is" : "are"} stored and searchable, but no route of this version reads ${t.unreadSetIds.length === 1 ? "that set" : "those sets"}, so nothing from ${one ? "it" : "them"} is in the graph: to read ${one ? "it" : "them"}, generate a version whose goal covers ${one ? "it" : "them"}.`,
         ]
       : []),
     ...(t.read
