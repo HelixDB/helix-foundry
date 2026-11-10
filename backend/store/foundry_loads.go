@@ -277,9 +277,13 @@ WHERE load_id IN (`+idPlaceholders(len(loadIDs))+`) GROUP BY load_id`, toAnySlic
 // the set each joined it with, in set id order: the load's members that are
 // still uploaded (a deleted document is on its way out of the load), by how
 // extracting each into the load ended, with what those extractions wrote. A
-// member with no extraction row waits for one. It reads the load's
-// membership and extractions by their primary keys, so it costs one pass
-// over the load's documents; a load with none returns none.
+// member with no extraction row waits for one, and one whose failed row a
+// later job replaced counts as that job left it. A document moved to another
+// set since counts under the set it joined with. It reads the load's
+// membership, documents and extractions by their primary keys: three row
+// reads a document, so a caller that polls keeps the answer a while
+// (api.loadDocumentSets). A load with no membership returns none: one that
+// holds no documents, or one made before membership was recorded.
 func (s *mysqlDB) ListFoundryLoadDocumentSets(ctx context.Context, loadID string) ([]model.FoundryLoadDocumentSet, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.set_id, COUNT(*),
   COALESCE(SUM(e.status='extracted'), 0), COALESCE(SUM(e.status='duplicate'), 0), COALESCE(SUM(e.status='failed'), 0),
@@ -297,7 +301,7 @@ WHERE m.load_id=? GROUP BY m.set_id ORDER BY m.set_id`, loadID)
 	for rows.Next() {
 		var set model.FoundryLoadDocumentSet
 		if err := rows.Scan(&set.SetID, &set.Documents, &set.Read, &set.Duplicate, &set.Failed, &set.NotRead, &set.Waiting,
-			&set.Facts, &set.Reviews, &set.Unmatched); err != nil {
+			&set.Facts, &set.Reviews, &set.Unresolved); err != nil {
 			return nil, err
 		}
 		sets = append(sets, set)

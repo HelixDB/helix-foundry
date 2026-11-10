@@ -117,7 +117,8 @@ type FoundryLoad struct {
 
 // FoundryLoadDocumentSet is what a load made of the documents of one document
 // set: its uploaded documents that joined the load, by how extracting each
-// into the load ended, and what those extractions wrote. Documents is
+// into the load ended, and what those extractions wrote. A document counts
+// under the set it joined with. Documents is
 // Read + Duplicate + Failed + NotRead + Waiting.
 type FoundryLoadDocumentSet struct {
 	SetID     string
@@ -131,11 +132,18 @@ type FoundryLoadDocumentSet struct {
 	NotRead int
 	// Waiting are those the load has not extracted yet.
 	Waiting int
-	// Facts are the facts its documents wrote, Reviews the items they left
-	// for a person's review, and Unmatched the names that matched no record.
-	Facts     int64
-	Reviews   int64
-	Unmatched int64
+	// Facts are its documents' fact writes: each document counts the facts
+	// it created and those it added its evidence to, so a fact two documents
+	// state counts twice.
+	Facts int64
+	// Reviews are the reviews its documents left when the load last wrote
+	// each, of every kind; one a person settled since stays counted until
+	// the load writes the decision.
+	Reviews int64
+	// Unresolved are the names the load matched to no one record (none,
+	// several, or identifiers that disagree). Nearly every one left a
+	// review too, so it overlaps Reviews.
+	Unresolved int64
 }
 
 // OntologyVersion is the version the graph records the load under.

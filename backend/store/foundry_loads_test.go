@@ -970,7 +970,20 @@ func TestListFoundryLoadDocumentSets(t *testing.T) {
 	sets, err = f.db.ListFoundryLoadDocumentSets(ctx, loadID)
 	require.NoError(t, err)
 	assert.Equal(t, []model.FoundryLoadDocumentSet{
-		{SetID: memos.ID, Documents: 5, Read: 2, Duplicate: 1, Failed: 1, Waiting: 1, Facts: 3, Reviews: 12, Unmatched: 6},
+		{SetID: memos.ID, Documents: 5, Read: 2, Duplicate: 1, Failed: 1, Waiting: 1, Facts: 3, Reviews: 12, Unresolved: 6},
+		{SetID: minutes.ID, Documents: 2, NotRead: 2},
+	}, sets)
+
+	// A document moved to another set since still counts under the set it
+	// joined the load with, which is the set the load read it as. A failed
+	// document a later attempt gets through counts once, as it ended.
+	_, _, err = f.db.MoveFoundryDocument(ctx, ws, read1, minutes.ID, f.fan("moved"))
+	require.NoError(t, err)
+	record(counted(failed, 2, 1, 0))
+	sets, err = f.db.ListFoundryLoadDocumentSets(ctx, loadID)
+	require.NoError(t, err)
+	assert.Equal(t, []model.FoundryLoadDocumentSet{
+		{SetID: memos.ID, Documents: 5, Read: 3, Duplicate: 1, Waiting: 1, Facts: 5, Reviews: 13, Unresolved: 6},
 		{SetID: minutes.ID, Documents: 2, NotRead: 2},
 	}, sets)
 

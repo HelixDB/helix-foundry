@@ -6501,7 +6501,7 @@
             "type": "object",
             "$ref": "#/definitions/v1FoundryLoadDocumentSet"
           },
-          "description": "What it made of its documents, by document set: one entry per set it\nholds documents of, by set id. Only a load read alone has it\n(GetFoundryLoad and the calls that answer with one load), never one in a\nlist; empty for a load that holds no documents, and for a grantee, who\nmay not see every set."
+          "description": "What it made of its documents, by document set: one entry per set it\nholds documents of, by set id. Only GetFoundryLoad fills it: a load in a\nlist has none, nor has the load another call answers with. Empty too\nfor a load that holds no documents, for one made before Foundry\nrecorded which documents a load holds, and for a grantee, who may not\nsee every set. While a job of the load runs, the counts may be a few\nseconds old."
         }
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
@@ -6542,7 +6542,7 @@
         },
         "routed": {
           "type": "boolean",
-          "description": "Whether an extraction route of the load's version reads the set. When\nfalse, the load stores the set's documents with their text, which stays\nsearchable, and no model reads them: they add no entities or facts to the\ngraph (not_read)."
+          "description": "Whether an extraction route of the load's version reads the set. When\nfalse, the load stores the set's documents with their text, which stays\nsearchable, and no model reads them: they add no entities or facts to the\ngraph (not_read). It says what the version's mappings route, not what\ncame of it: read says that. For a version whose mappings can't be read,\nit is whether the load read a document of the set."
         },
         "documents": {
           "type": "integer",
@@ -6577,20 +6577,20 @@
         "facts": {
           "type": "string",
           "format": "int64",
-          "description": "The facts its documents wrote to the graph."
+          "description": "Fact writes by its documents: each document counts the facts it created\nand the stored facts it added its evidence to, so a fact two documents\nstate counts twice. It is not the number of distinct facts in the graph."
         },
         "reviews": {
           "type": "string",
           "format": "int64",
-          "description": "The items its documents left for a person's review instead of writing:\nclaims the verifier scored under the bar, names that matched no record\nor more than one, and values that conflict."
+          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts."
         },
-        "unmatched": {
+        "unresolved": {
           "type": "string",
           "format": "int64",
-          "description": "The names in its documents that matched no record of the load. A claim\nabout one is not written as a fact."
+          "description": "The names in its documents the load matched to no one record: none\nmatched, several did, or its identifiers disagree. A statement about one\nis held, not written. Nearly every such name also left a review, counted\nin reviews: the two overlap."
         }
       },
-      "description": "FoundryLoadDocumentSet is what a load made of the documents of one document\nset: the uploaded text documents and PDFs of the set that joined the load,\ncounted from what extracting each into the load recorded\n(FoundryDocumentExtraction)."
+      "description": "FoundryLoadDocumentSet is what a load made of the documents of one document\nset: the uploaded text documents and PDFs of the set that joined the load,\ncounted from what writing each into the load last recorded\n(FoundryDocumentExtraction). A document counts under the set it joined\nthe load with, wherever it was moved since."
     },
     "v1FoundryLoadEnrichment": {
       "type": "object",

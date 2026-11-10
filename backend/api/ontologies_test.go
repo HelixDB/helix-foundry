@@ -582,7 +582,7 @@ func (s *foundryStore) ListFoundryLoadDocumentSets(_ context.Context, loadID str
 		}
 		set.Facts += int64(e.Counts.Facts)
 		set.Reviews += int64(e.Counts.Reviews)
-		set.Unmatched += int64(e.Counts.Unresolved)
+		set.Unresolved += int64(e.Counts.Unresolved)
 	}
 	out := make([]foundrymodel.FoundryLoadDocumentSet, 0, len(bySet))
 	for _, id := range slices.Sorted(maps.Keys(bySet)) {
@@ -1999,8 +1999,8 @@ func TestFoundryLoadRPCs(t *testing.T) {
 			t.Fatalf("%d sets, want 12: %v", len(sets), sets)
 		}
 		want := map[string]*foundryv1.FoundryLoadDocumentSet{
-			"set-01": {SetId: "set-01", Routed: true, Documents: 10, Read: 8, Duplicate: 1, Failed: 1, Facts: 8, Reviews: 32, Unmatched: 16},
-			"set-02": {SetId: "set-02", Routed: true, Documents: 10, Read: 10, Facts: 10, Reviews: 40, Unmatched: 20},
+			"set-01": {SetId: "set-01", Routed: true, Documents: 10, Read: 8, Duplicate: 1, Failed: 1, Facts: 8, Reviews: 32, Unresolved: 16},
+			"set-02": {SetId: "set-02", Routed: true, Documents: 10, Read: 10, Facts: 10, Reviews: 40, Unresolved: 20},
 			"set-03": {SetId: "set-03", Documents: 10, NotRead: 10},
 			"set-12": {SetId: "set-12", Documents: 10, NotRead: 4, Waiting: 6},
 		}
@@ -2030,29 +2030,130 @@ func TestFoundryLoadRPCs(t *testing.T) {
 		}
 	})
 
-	// A version whose mappings can't be read routes nothing: its load still
-	// counts its documents, and says no set is read.
+	// A version whose routes can't be read still has its documents counted,
+	// and nothing is refused: a set is then routed exactly when the load read
+	// a document of it, so no set says "not routed" over documents it read.
+	// The same holds when the version's mappings can't be read at all.
 	t.Run("counts a load's documents when its version's routes can't be read", func(t *testing.T) {
+		for name, lose := range map[string]func(*foundryStore){
+			"routes that don't parse": func(*foundryStore) {},
+			"a version that is gone":  func(store *foundryStore) { store.versions = nil },
+		} {
+			s, store, _ := foundryService(t)
+			v := draft("done")
+			v.Definition, _ = json.Marshal(map[string]any{"format": "agent_bundle", "status": "done", "ontology_toml": "",
+				"mappings_toml": "[extractions.memos]\ndocuments = 7\n", "rules": map[string]int{"count": 0, "evaluated": 0}})
+			store.versions = append(store.versions, v)
+			created, err := load(s, "v-done", "load-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			loadID := created.GetLoad().GetId()
+			for _, d := range []struct{ id, set string }{{"d-1", "set-01"}, {"d-2", "set-02"}, {"d-3", "set-02"}} {
+				store.documents = append(store.documents, &foundrymodel.FoundryDocument{ID: d.id, WorkspaceID: "ws-1", SetID: d.set,
+					Status: foundrymodel.FoundryDocumentUploaded})
+				store.members[loadID] = append(store.members[loadID], d.id)
+			}
+			store.extracted(loadID, &foundrymodel.FoundryDocumentExtraction{DocumentID: "d-2", Status: foundrymodel.FoundryExtractionExtracted,
+				Counts: foundrymodel.FoundryExtractionCounts{Facts: 2}})
+			lose(store)
+			got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			want := []*foundryv1.FoundryLoadDocumentSet{
+				{SetId: "set-01", Documents: 1, Waiting: 1},
+				{SetId: "set-02", Routed: true, Documents: 2, Read: 1, Waiting: 1, Facts: 2},
+			}
+			sets := got.GetLoad().GetDocumentSets()
+			if len(sets) != 2 || !proto.Equal(sets[0], want[0]) || !proto.Equal(sets[1], want[1]) {
+				t.Fatalf("%s: sets = %v, want %v", name, sets, want)
+			}
+		}
+	})
+
+	// The load's page and an MCP wait poll a running load every second or
+	// two, and counting reads every document it holds: while a job of the
+	// load is live its counts are kept a few seconds. Once its jobs end they
+	// are counted afresh, so the last counts a caller reads are final.
+	t.Run("keeps a busy load's document counts a few seconds", func(t *testing.T) {
 		s, store, _ := foundryService(t)
-		v := draft("done")
-		v.Definition, _ = json.Marshal(map[string]any{"format": "agent_bundle", "status": "done", "ontology_toml": "",
-			"mappings_toml": "[extractions.memos]\ndocuments = 7\n", "rules": map[string]int{"count": 0, "evaluated": 0}})
-		store.versions = append(store.versions, v)
+		now := time.Now()
+		s.loadDocuments.now = func() time.Time { return now }
+		store.versions = append(store.versions, draft("done"))
 		created, err := load(s, "v-done", "load-1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		loadID := created.GetLoad().GetId()
+		add := func(id string) {
+			store.documents = append(store.documents, &foundrymodel.FoundryDocument{ID: id, WorkspaceID: "ws-1", SetID: "set-01",
+				Status: foundrymodel.FoundryDocumentUploaded})
+			store.members[loadID] = append(store.members[loadID], id)
+		}
+		counted := func() int32 {
+			t.Helper()
+			got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var documents int32
+			for _, set := range got.GetLoad().GetDocumentSets() {
+				documents += set.GetDocuments()
+			}
+			return documents
+		}
+		add("d-1")
+		if got := counted(); got != 1 {
+			t.Fatalf("first read counts %d documents, want 1", got)
+		}
+		add("d-2")
+		if got := counted(); got != 1 {
+			t.Fatalf("a read within the keep counts %d documents, want the kept 1", got)
+		}
+		now = now.Add(loadDocumentSetsTTL)
+		if got := counted(); got != 2 {
+			t.Fatalf("a read past the keep counts %d documents, want 2", got)
+		}
+		// Its job ends between two polls: the next read is the final count,
+		// though the kept one is still fresh.
+		add("d-3")
+		ended(store, loadID, foundrymodel.FoundryLoadReady, true)
+		if got := counted(); got != 3 {
+			t.Fatalf("an ended load counts %d documents, want 3", got)
+		}
+		// A load with no live job is never kept.
+		add("d-4")
+		if got := counted(); got != 4 {
+			t.Fatalf("an ended load counts %d documents, want 4", got)
+		}
+	})
+
+	// Counting reads every document of the load, so only GetFoundryLoad
+	// does it: the calls that change a load answer without the counts, and
+	// can't fail on them after the change is made.
+	t.Run("only a read of a load counts its documents", func(t *testing.T) {
+		s, store, _ := foundryService(t)
+		store.versions = append(store.versions, draft("done"))
+		first, _ := load(s, "v-done", "load-1")
+		loadID := first.GetLoad().GetId()
 		store.documents = append(store.documents, &foundrymodel.FoundryDocument{ID: "d-1", WorkspaceID: "ws-1", SetID: "set-01",
 			Status: foundrymodel.FoundryDocumentUploaded})
 		store.members[loadID] = []string{"d-1"}
-		got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
-		if err != nil {
-			t.Fatal(err)
+		again, err := load(s, "v-done", "load-1")
+		if err != nil || again.GetLoad().GetId() != loadID || again.GetLoad().GetDocumentSets() != nil {
+			t.Fatalf("the same token's load = (%+v, %v), want it without document sets", again, err)
 		}
-		want := &foundryv1.FoundryLoadDocumentSet{SetId: "set-01", Documents: 1, Waiting: 1}
-		if sets := got.GetLoad().GetDocumentSets(); len(sets) != 1 || !proto.Equal(sets[0], want) {
-			t.Fatalf("sets = %v, want %v", sets, want)
+		ended(store, loadID, foundrymodel.FoundryLoadPartial, false)
+		current, err := s.SetCurrentFoundryLoad(ports.WithActor(ctx, person), &foundryv1.SetCurrentFoundryLoadRequest{
+			WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID,
+		})
+		if err != nil || !current.GetLoad().GetCurrent() || current.GetLoad().GetDocumentSets() != nil {
+			t.Fatalf("set current = (%+v, %v), want it without document sets", current, err)
+		}
+		got, err := s.GetFoundryLoad(ctx, &foundryv1.GetFoundryLoadRequest{WorkspaceId: "ws-1", OntologyId: "ont-1", Id: loadID})
+		if err != nil || len(got.GetLoad().GetDocumentSets()) != 1 {
+			t.Fatalf("get = (%+v, %v), want one document set", got, err)
 		}
 	})
 

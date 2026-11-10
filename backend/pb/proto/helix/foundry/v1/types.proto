@@ -1148,23 +1148,28 @@ message FoundryLoad {
   // Helix recorded them, or still writing its tables.
   repeated FoundryLoadSource sources = 15;
   // What it made of its documents, by document set: one entry per set it
-  // holds documents of, by set id. Only a load read alone has it
-  // (GetFoundryLoad and the calls that answer with one load), never one in a
-  // list; empty for a load that holds no documents, and for a grantee, who
-  // may not see every set.
+  // holds documents of, by set id. Only GetFoundryLoad fills it: a load in a
+  // list has none, nor has the load another call answers with. Empty too
+  // for a load that holds no documents, for one made before Foundry
+  // recorded which documents a load holds, and for a grantee, who may not
+  // see every set. While a job of the load runs, the counts may be a few
+  // seconds old.
   repeated FoundryLoadDocumentSet document_sets = 16;
 }
 
 // FoundryLoadDocumentSet is what a load made of the documents of one document
 // set: the uploaded text documents and PDFs of the set that joined the load,
-// counted from what extracting each into the load recorded
-// (FoundryDocumentExtraction).
+// counted from what writing each into the load last recorded
+// (FoundryDocumentExtraction). A document counts under the set it joined
+// the load with, wherever it was moved since.
 message FoundryLoadDocumentSet {
   string set_id = 1;
   // Whether an extraction route of the load's version reads the set. When
   // false, the load stores the set's documents with their text, which stays
   // searchable, and no model reads them: they add no entities or facts to the
-  // graph (not_read).
+  // graph (not_read). It says what the version's mappings route, not what
+  // came of it: read says that. For a version whose mappings can't be read,
+  // it is whether the load read a document of the set.
   bool routed = 2;
   // The set's documents the load holds:
   // read + duplicate + failed + not_read + waiting.
@@ -1179,15 +1184,23 @@ message FoundryLoadDocumentSet {
   int32 not_read = 7;
   // Those the load has not extracted yet.
   int32 waiting = 8;
-  // The facts its documents wrote to the graph.
+  // Fact writes by its documents: each document counts the facts it created
+  // and the stored facts it added its evidence to, so a fact two documents
+  // state counts twice. It is not the number of distinct facts in the graph.
   int64 facts = 9;
-  // The items its documents left for a person's review instead of writing:
-  // claims the verifier scored under the bar, names that matched no record
-  // or more than one, and values that conflict.
+  // The reviews its documents left when the load last wrote each, of every
+  // kind: statements held back instead of written as facts (scored under the
+  // bar, unverified, conflicting, breaking a rule), names matched to no one
+  // record, property values held back or in conflict, statements that fit no
+  // link, and links it did write that a person can undo. It is not the
+  // number of open reviews: a review a person settles stays counted until
+  // the load writes the decision, which moves a released statement to facts.
   int64 reviews = 10;
-  // The names in its documents that matched no record of the load. A claim
-  // about one is not written as a fact.
-  int64 unmatched = 11;
+  // The names in its documents the load matched to no one record: none
+  // matched, several did, or its identifiers disagree. A statement about one
+  // is held, not written. Nearly every such name also left a review, counted
+  // in reviews: the two overlap.
+  int64 unresolved = 11;
 }
 
 // FoundryLoadSource is the snapshot of one synced table a load holds.
