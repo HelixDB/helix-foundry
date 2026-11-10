@@ -883,6 +883,23 @@ func (u Unimplemented) FinishFoundryNotification(context.Context, string, string
 	return nil
 }
 
+func (u Unimplemented) RequestFoundryReminder(context.Context, model.FoundryReminderRequest) (model.FoundryReminderAnswer, error) {
+	u.unimplemented("RequestFoundryReminder")
+	return model.FoundryReminderAnswer{}, nil
+}
+func (u Unimplemented) StopFoundryReminder(context.Context, string, string) (bool, error) {
+	u.unimplemented("StopFoundryReminder")
+	return false, nil
+}
+func (u Unimplemented) ClaimFoundryReminder(context.Context, string, time.Duration) (*model.FoundryReminder, error) {
+	u.unimplemented("ClaimFoundryReminder")
+	return nil, nil
+}
+func (u Unimplemented) FinishFoundryReminder(context.Context, string, string, model.FoundryReminderOutcome) error {
+	u.unimplemented("FinishFoundryReminder")
+	return nil
+}
+
 func (u Unimplemented) ListFoundryAccessGrants(context.Context, string, []access.Principal) ([]model.FoundryAccessGrant, error) {
 	u.unimplemented("ListFoundryAccessGrants")
 	return nil, nil

@@ -21,19 +21,28 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	FoundryEventsService_SendFoundryEvents_FullMethodName               = "/helix.foundry.v1.FoundryEventsService/SendFoundryEvents"
 	FoundryEventsService_ValidateFoundryEventSourceToken_FullMethodName = "/helix.foundry.v1.FoundryEventsService/ValidateFoundryEventSourceToken"
+	FoundryEventsService_CreateFoundryReminder_FullMethodName           = "/helix.foundry.v1.FoundryEventsService/CreateFoundryReminder"
+	FoundryEventsService_StopFoundryReminders_FullMethodName            = "/helix.foundry.v1.FoundryEventsService/StopFoundryReminders"
 )
 
 // FoundryEventsServiceClient is the client API for FoundryEventsService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// FoundryEventsService is the internal half of event sources: the door that
-// takes an event source's sends calls it, for the sender holding the send
-// token (an Actor of SOURCE_EVENT_SOURCE). It has no REST routes.
+// FoundryEventsService is what Foundry's public door, the foundry-events
+// role, calls, as an Actor of SOURCE_EVENT_SOURCE: an event source's sends,
+// for the sender holding the send token, and the reminders people ask for on
+// the landing page, for the site. It has no REST routes.
 type FoundryEventsServiceClient interface {
 	// Helix Foundry event sources: connectors of kind events
 	SendFoundryEvents(ctx context.Context, in *SendFoundryEventsRequest, opts ...grpc.CallOption) (*SendFoundryEventsResponse, error)
 	ValidateFoundryEventSourceToken(ctx context.Context, in *ValidateFoundryEventSourceTokenRequest, opts ...grpc.CallOption) (*ValidateFoundryEventSourceTokenResponse, error)
+	// Reminders a person asks for on Foundry's landing page, from a phone, to
+	// try Foundry on a computer: the site sends them to the door with its
+	// secret, whose SHA-256 the door passes on and the API checks against
+	// foundry.reminders.secret_sha256. The foundry-notify-worker sends them.
+	CreateFoundryReminder(ctx context.Context, in *CreateFoundryReminderRequest, opts ...grpc.CallOption) (*CreateFoundryReminderResponse, error)
+	StopFoundryReminders(ctx context.Context, in *StopFoundryRemindersRequest, opts ...grpc.CallOption) (*StopFoundryRemindersResponse, error)
 }
 
 type foundryEventsServiceClient struct {
@@ -64,17 +73,44 @@ func (c *foundryEventsServiceClient) ValidateFoundryEventSourceToken(ctx context
 	return out, nil
 }
 
+func (c *foundryEventsServiceClient) CreateFoundryReminder(ctx context.Context, in *CreateFoundryReminderRequest, opts ...grpc.CallOption) (*CreateFoundryReminderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateFoundryReminderResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_CreateFoundryReminder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *foundryEventsServiceClient) StopFoundryReminders(ctx context.Context, in *StopFoundryRemindersRequest, opts ...grpc.CallOption) (*StopFoundryRemindersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopFoundryRemindersResponse)
+	err := c.cc.Invoke(ctx, FoundryEventsService_StopFoundryReminders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FoundryEventsServiceServer is the server API for FoundryEventsService service.
 // All implementations should embed UnimplementedFoundryEventsServiceServer
 // for forward compatibility.
 //
-// FoundryEventsService is the internal half of event sources: the door that
-// takes an event source's sends calls it, for the sender holding the send
-// token (an Actor of SOURCE_EVENT_SOURCE). It has no REST routes.
+// FoundryEventsService is what Foundry's public door, the foundry-events
+// role, calls, as an Actor of SOURCE_EVENT_SOURCE: an event source's sends,
+// for the sender holding the send token, and the reminders people ask for on
+// the landing page, for the site. It has no REST routes.
 type FoundryEventsServiceServer interface {
 	// Helix Foundry event sources: connectors of kind events
 	SendFoundryEvents(context.Context, *SendFoundryEventsRequest) (*SendFoundryEventsResponse, error)
 	ValidateFoundryEventSourceToken(context.Context, *ValidateFoundryEventSourceTokenRequest) (*ValidateFoundryEventSourceTokenResponse, error)
+	// Reminders a person asks for on Foundry's landing page, from a phone, to
+	// try Foundry on a computer: the site sends them to the door with its
+	// secret, whose SHA-256 the door passes on and the API checks against
+	// foundry.reminders.secret_sha256. The foundry-notify-worker sends them.
+	CreateFoundryReminder(context.Context, *CreateFoundryReminderRequest) (*CreateFoundryReminderResponse, error)
+	StopFoundryReminders(context.Context, *StopFoundryRemindersRequest) (*StopFoundryRemindersResponse, error)
 }
 
 // UnimplementedFoundryEventsServiceServer should be embedded to have
@@ -89,6 +125,12 @@ func (UnimplementedFoundryEventsServiceServer) SendFoundryEvents(context.Context
 }
 func (UnimplementedFoundryEventsServiceServer) ValidateFoundryEventSourceToken(context.Context, *ValidateFoundryEventSourceTokenRequest) (*ValidateFoundryEventSourceTokenResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ValidateFoundryEventSourceToken not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) CreateFoundryReminder(context.Context, *CreateFoundryReminderRequest) (*CreateFoundryReminderResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateFoundryReminder not implemented")
+}
+func (UnimplementedFoundryEventsServiceServer) StopFoundryReminders(context.Context, *StopFoundryRemindersRequest) (*StopFoundryRemindersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StopFoundryReminders not implemented")
 }
 func (UnimplementedFoundryEventsServiceServer) testEmbeddedByValue() {}
 
@@ -146,6 +188,42 @@ func _FoundryEventsService_ValidateFoundryEventSourceToken_Handler(srv interface
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryEventsService_CreateFoundryReminder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateFoundryReminderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).CreateFoundryReminder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_CreateFoundryReminder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).CreateFoundryReminder(ctx, req.(*CreateFoundryReminderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FoundryEventsService_StopFoundryReminders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopFoundryRemindersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryEventsServiceServer).StopFoundryReminders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryEventsService_StopFoundryReminders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryEventsServiceServer).StopFoundryReminders(ctx, req.(*StopFoundryRemindersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // FoundryEventsService_ServiceDesc is the grpc.ServiceDesc for FoundryEventsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -160,6 +238,14 @@ var FoundryEventsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ValidateFoundryEventSourceToken",
 			Handler:    _FoundryEventsService_ValidateFoundryEventSourceToken_Handler,
+		},
+		{
+			MethodName: "CreateFoundryReminder",
+			Handler:    _FoundryEventsService_CreateFoundryReminder_Handler,
+		},
+		{
+			MethodName: "StopFoundryReminders",
+			Handler:    _FoundryEventsService_StopFoundryReminders_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

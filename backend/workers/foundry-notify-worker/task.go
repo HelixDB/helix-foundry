@@ -5,7 +5,11 @@
 // watched the sample draft an ontology a day earlier and has brought no
 // data of their own since, to try Foundry on theirs. Each tick it finds the
 // emails due in the store (foundry_notifications), then claims and sends
-// each one through the host's mail (ports.Mail). It runs as a task of the
+// each one through the host's mail (ports.Mail). Then it sends the
+// reminders due that people asked for on the landing page, from a phone,
+// to try Foundry on a computer (foundry_reminders), on their own topic
+// (ports.TopicFoundryReminder), scheduling each address's next one
+// (package reminder) until its schedule ends. It runs as a task of the
 // foundry-sync-worker role where the host sends mail, never in a standalone
 // install, and serves no HTTP of its own.
 package foundrynotifyworker
@@ -23,6 +27,7 @@ import (
 	"github.com/helixdb/helix-foundry/backend/pkg/id"
 	"github.com/helixdb/helix-foundry/backend/pkg/log"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/reminder"
 	"github.com/helixdb/helix-foundry/backend/server/endpoint"
 	"github.com/helixdb/helix-foundry/backend/server/tasks"
 	"github.com/helixdb/helix-foundry/backend/store"
@@ -63,7 +68,8 @@ type Deps struct {
 	Mail ports.Mail `optional:"true"`
 }
 
-// outbox is foundry_notifications, and what the emails read.
+// outbox is foundry_notifications and foundry_reminders, and what the emails
+// read.
 type outbox interface {
 	DiscoverFoundryOntologyReady(ctx context.Context, since time.Time, limit int, newID func() string) (int, error)
 	DiscoverFoundrySampleFollowUps(ctx context.Context, from, to time.Time, limit int, newID func() string) (int, error)
@@ -74,17 +80,22 @@ type outbox interface {
 	GetOntologyGeneration(ctx context.Context, ontologyID, id string) (*model.OntologyGeneration, error)
 	GetFoundryGraphJobByClientToken(ctx context.Context, ontologyID, clientToken string) (*model.FoundryGraphJob, error)
 	GetFoundryLoad(ctx context.Context, ontologyID, id string) (*model.FoundryLoad, error)
+	ClaimFoundryReminder(ctx context.Context, token string, lease time.Duration) (*model.FoundryReminder, error)
+	FinishFoundryReminder(ctx context.Context, id, token string, outcome model.FoundryReminderOutcome) error
 }
 
 // Task finds the emails due and sends them one at a time.
 type Task struct {
-	deps   Deps
-	cfg    config.NotifyConfig
-	box    outbox
-	mail   ports.Mail
-	site   site
-	now    func() time.Time
-	worker tasks.Worker
+	deps Deps
+	cfg  config.NotifyConfig
+	// reminders is foundry.reminders: its gaps schedule each address's next
+	// reminder.
+	reminders config.RemindersConfig
+	box       outbox
+	mail      ports.Mail
+	site      site
+	now       func() time.Time
+	worker    tasks.Worker
 }
 
 // New is the worker on d's store and mail, which it needs both of, and
@@ -100,7 +111,10 @@ func New(d Deps) (*Task, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("foundry-notify-worker: %w", err)
 	}
-	return &Task{deps: d, cfg: cfg, box: d.DB, mail: d.Mail, site: site(cfg.SiteURL), now: time.Now}, nil
+	if err := d.Cfg.Foundry.Reminders.Validate(); err != nil {
+		return nil, fmt.Errorf("foundry-notify-worker: %w", err)
+	}
+	return &Task{deps: d, cfg: cfg, reminders: d.Cfg.Foundry.Reminders, box: d.DB, mail: d.Mail, site: site(cfg.SiteURL), now: time.Now}, nil
 }
 
 func (t *Task) Name() string { return Name }
@@ -116,11 +130,18 @@ func (t *Task) Start(ctx context.Context) error {
 
 func (t *Task) Stop(ctx context.Context) error { return t.worker.Stop(ctx) }
 
-// tick finds the emails due, then sends every one due until none is left.
-// A first draft's email is found while it ended within follow_up_window; a
-// sample run's follow-up once it ended follow_up_after ago, and no longer
-// past the window.
+// tick finds the emails due, then sends every one due until none is left,
+// then every reminder due. A first draft's email is found while it ended
+// within follow_up_window; a sample run's follow-up once it ended
+// follow_up_after ago, and no longer past the window.
 func (t *Task) tick(ctx context.Context) {
+	t.sendNotifications(ctx)
+	t.sendReminders(ctx)
+}
+
+// sendNotifications finds the emails due, then sends them one at a time
+// until none is left.
+func (t *Task) sendNotifications(ctx context.Context) {
 	now := t.now()
 	window := now.Add(-t.cfg.FollowUpWindow)
 	for _, d := range []struct {
@@ -151,6 +172,81 @@ func (t *Task) tick(ctx context.Context) {
 		}
 		t.deliver(ctx, n)
 	}
+}
+
+// sendReminders sends the reminders due, one at a time, until none is
+// left.
+func (t *Task) sendReminders(ctx context.Context) {
+	for ctx.Err() == nil {
+		r, err := t.box.ClaimFoundryReminder(ctx, id.New(), lease)
+		if err != nil {
+			log.From(ctx).Error("claim a reminder failed", "err", err)
+			return
+		}
+		if r == nil {
+			return
+		}
+		t.deliverReminder(ctx, r)
+	}
+}
+
+// deliverReminder sends one claimed reminder, then records how that went,
+// as deliver does an email.
+func (t *Task) deliverReminder(ctx context.Context, r *model.FoundryReminder) {
+	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendWait)
+	defer cancel()
+	outcome, label := t.sendReminder(sendCtx, r)
+	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), finishWait)
+	defer cancelFinish()
+	switch err := t.box.FinishFoundryReminder(finishCtx, r.ID, *r.ClaimToken, outcome); {
+	case errors.Is(err, store.ErrNotFound):
+		log.From(ctx).Warn("a reminder's claim lapsed, or its schedule stopped, before it was recorded", "reminder", r.ID, "outcome", label)
+		label = "lost"
+	case err != nil:
+		log.From(ctx).Warn("record a reminder failed; its claim lapses and it is tried again", "reminder", r.ID, "outcome", label, "err", err)
+		label = "unrecorded"
+	}
+	notifications.WithLabelValues(reminderKind, label).Inc()
+}
+
+// reminderKind labels the reminders in the emails' metric.
+const reminderKind = "reminder"
+
+// sendReminder sends r's reminder due, the (r.Sent+1)th of its schedule of
+// len(gap_days)+1, to its address, and says how it ended, with its metric's
+// label: sent, with when the next goes (its gap after now, the first
+// weekday 09:00 in the address's zone) or none after the last; or tried
+// again, or failed, as send does an email. A schedule asked for under more
+// gaps than foundry.reminders now has ends with the reminder due, as its
+// last. The host doesn't deliver it to an address that unsubscribed from
+// the topic. Nothing it logs quotes the address.
+func (t *Task) sendReminder(ctx context.Context, r *model.FoundryReminder) (model.FoundryReminderOutcome, string) {
+	retry := func(err error) (model.FoundryReminderOutcome, string) {
+		log.From(ctx).Warn("send a reminder failed", "reminder", r.ID, "attempt", r.Attempts, "err", err)
+		if r.Attempts >= t.cfg.MaxAttempts {
+			return model.FoundryReminderGiveUp{Error: fmt.Sprintf("%v (gave up after %d attempts)", err, r.Attempts)}, "failed"
+		}
+		wait := min(time.Minute<<min(max(r.Attempts-1, 0), 10), maxRetryBackoff)
+		return model.FoundryReminderRetry{At: t.now().Add(wait), Error: err.Error()}, "retried"
+	}
+	if r.Attempts > t.cfg.MaxAttempts {
+		return model.FoundryReminderGiveUp{Error: fmt.Sprintf("claimed %d times, past max_attempts, without an end recorded", r.Attempts)}, "failed"
+	}
+	n, gaps := r.Sent+1, t.reminders.GapDays
+	last := n > len(gaps)
+	email, err := render("", reminderEmail(n, last, t.site.home()))
+	if err != nil {
+		return retry(fmt.Errorf("render the reminder: %w", err))
+	}
+	if err := t.mail.Send(ctx, ports.Recipient{Email: r.Email}, email); err != nil {
+		return retry(fmt.Errorf("send: %w", err))
+	}
+	if last {
+		return model.FoundryReminderSent{}, "sent"
+	}
+	loc, _ := reminder.Zone(r.TimeZone)
+	next := reminder.After(t.now(), gaps[n-1], loc)
+	return model.FoundryReminderSent{Next: &next}, "sent"
 }
 
 // deliver sends one claimed email, then records how that went. A worker

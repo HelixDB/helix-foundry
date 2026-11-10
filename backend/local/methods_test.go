@@ -53,6 +53,8 @@ var refused = map[string]string{
 	foundry("ListFoundryEventBatches"):                                       noSenders,
 	"/helix.foundry.v1.FoundryEventsService/SendFoundryEvents":               noSenders,
 	"/helix.foundry.v1.FoundryEventsService/ValidateFoundryEventSourceToken": noSenders,
+	"/helix.foundry.v1.FoundryEventsService/CreateFoundryReminder":           noReminders,
+	"/helix.foundry.v1.FoundryEventsService/StopFoundryReminders":            noReminders,
 
 	foundry("ListFoundryAccess"):          noGrantees,
 	foundry("SetFoundryAccessGrants"):     noGrantees,
@@ -75,6 +77,7 @@ const (
 	noPlans        = "an install sells no plan"
 	noLookups      = "an install has no lookup provider"
 	noSenders      = "an API source's senders reach it through a door an install doesn't run"
+	noReminders    = "reminders come from the hosted site's landing page, through a door an install doesn't run"
 	noGrantees     = "an install has one owner, so no one to grant sources to"
 	notCalled      = "the local site doesn't call it"
 	noOntologySets = "documents are the workspace's: the site calls the workspace's routes"

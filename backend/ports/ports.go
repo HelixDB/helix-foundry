@@ -278,6 +278,13 @@ type Recipient struct {
 // didn't ask for, such as the follow-up a day after the sample.
 const TopicFoundryTips = "foundry-tips"
 
+// TopicFoundryReminder is the subscription topic of the reminders a person
+// asked for on Foundry's landing page, from a phone, to try Foundry on a
+// computer (foundry_reminders). It is a topic of its own, so leaving it
+// leaves Foundry's tips alone, and the reverse. The host's contact list must
+// hold it before Foundry sends on it.
+const TopicFoundryReminder = "foundry-reminder"
+
 // Email is one message Foundry sends: its subject and the same body as
 // plain text and as HTML.
 type Email struct {

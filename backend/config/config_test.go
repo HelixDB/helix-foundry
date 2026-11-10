@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,8 +120,9 @@ func TestValidateLocal(t *testing.T) {
 		"a kind left out":    {func(c *Config) { c.Billing.Plans[0].Kinds = []string{"stripe"} }, "lacks"},
 		"a load rate limit": {func(c *Config) { c.Foundry.Graph.LoadRateLimit = GraphLoadRateLimit{RequestsPerSecond: 1, Burst: 1} },
 			"no gateway to rate limit"},
-		"a door":         {func(c *Config) { c.Foundry.Events.Endpoint.PublicURL = "https://ingest.example.com" }, "no API sources HTTP door"},
-		"Ollama offered": {func(c *Config) { c.Foundry.AI.Kinds = []string{"ollama"} }, ""},
+		"a door":          {func(c *Config) { c.Foundry.Events.Endpoint.PublicURL = "https://ingest.example.com" }, "no API sources HTTP door"},
+		"reminders taken": {func(c *Config) { c.Foundry.Reminders.SecretSHA256 = strings.Repeat("a", 64) }, "takes no reminders"},
+		"Ollama offered":  {func(c *Config) { c.Foundry.AI.Kinds = []string{"ollama"} }, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := local()
@@ -610,5 +612,49 @@ func TestFoundryNotifyValidate(t *testing.T) {
 	c.Foundry.Notify.SiteURL = "http://localhost:3000"
 	if err := c.Validate(notify); err != nil {
 		t.Fatalf("a local site: %v", err)
+	}
+}
+
+// The reminders' settings are checked wherever Foundry runs: every part
+// reads them. Off (no secret) is valid.
+func TestFoundryRemindersValidate(t *testing.T) {
+	d := Defaults().Foundry.Reminders
+	if d.SecretSHA256 != "" || d.MaxNewPerHour != 300 || !slices.Equal(d.GapDays, []int{7, 14, 28}) || d.MinGapDays != 7 {
+		t.Fatalf("defaults = %+v", d)
+	}
+	on := func() Config {
+		c := Defaults()
+		c.Foundry.Reminders.SecretSHA256 = strings.Repeat("0123456789abcdef", 4)
+		return c
+	}
+	for name, c := range map[string]Config{"off": Defaults(), "on": on()} {
+		if err := c.Validate(Roles{}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	single := on()
+	single.Foundry.Reminders.GapDays = nil
+	if err := single.Validate(Roles{}); err != nil {
+		t.Fatalf("one reminder only: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*RemindersConfig)
+		want   string
+	}{
+		"a secret, not its hash": {func(r *RemindersConfig) { r.SecretSHA256 = "hunter2" }, "secret_sha256"},
+		"an upper-case hash":     {func(r *RemindersConfig) { r.SecretSHA256 = strings.Repeat("A", 64) }, "secret_sha256"},
+		"no new reminders":       {func(r *RemindersConfig) { r.MaxNewPerHour = 0 }, "max_new_per_hour"},
+		"no least gap":           {func(r *RemindersConfig) { r.MinGapDays = 0 }, "min_gap_days"},
+		"a gap of no days":       {func(r *RemindersConfig) { r.GapDays = []int{7, 0} }, "gap_days"},
+		"a gap past a year":      {func(r *RemindersConfig) { r.GapDays = []int{400} }, "gap_days"},
+		"too many gaps":          {func(r *RemindersConfig) { r.GapDays = make([]int, 11) }, "at most 10"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := on()
+			tc.mutate(&c.Foundry.Reminders)
+			if err := c.Validate(Roles{}); err == nil || !contains(err.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

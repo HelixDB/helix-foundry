@@ -42,6 +42,12 @@ func (s site) overview(workspaceID, ontologyID string) string {
 	return string(s) + "/ontology/" + url.PathEscape(ontologyID) + "?workspace=" + url.QueryEscape(workspaceID)
 }
 
+// home is the site's front page, marked as reached from a reminder
+// (?via=email), which the page welcomes back.
+func (s site) home() string {
+	return string(s) + "/?via=email"
+}
+
 // connect is where a new ontology starts from the workspace's own data.
 func (s site) connect(workspaceID string) string {
 	return string(s) + "/ontology/new?workspace=" + url.QueryEscape(workspaceID)
@@ -182,4 +188,45 @@ func sampleFollowUp(connect string) message {
 		{Text: "Connect your data:", Link: connect},
 		{Text: "If you get stuck, reply to this email and I'll help."},
 	}}
+}
+
+// reminderEmail is the nth reminder (from 1) a person asked for on the
+// landing page, from a phone, to try Foundry on a computer, linking home;
+// last says it is the schedule's last, which it then says. It goes under
+// ports.TopicFoundryReminder, so its person can leave the reminders and
+// keep Foundry's other emails.
+func reminderEmail(n int, last bool, home string) message {
+	m := message{topic: ports.TopicFoundryReminder}
+	switch {
+	case n == 1:
+		m.subject = "Your reminder to try Helix Foundry"
+		m.paragraphs = []paragraph{
+			{Text: "You asked for a reminder to try Helix Foundry on your computer, so here it is."},
+			{Text: "Foundry connects your company's data, from your database and apps to your documents, into one ontology you can explore and ask questions of."},
+			{Text: "The quickest way in is the sample company: Foundry turns its database and documents into an ontology in a couple of minutes, ready for your questions. Open Foundry on your computer:", Link: home},
+		}
+	case last:
+		m.subject = "One last reminder to try Helix Foundry"
+		m.paragraphs = []paragraph{
+			{Text: "Here's the last reminder you asked for to try Helix Foundry on your computer."},
+			{Text: "Whenever you have a few minutes at your computer, Foundry is here, with a sample company to try it on before you connect your own data:", Link: home},
+		}
+	case n == 2:
+		m.subject = "Still want to try Helix Foundry?"
+		m.paragraphs = []paragraph{
+			{Text: "You asked for a reminder to try Helix Foundry on your computer, and here's another."},
+			{Text: "Connect a database or an app, or upload documents, and Foundry drafts an ontology from them and loads it, in a few minutes. Or start with the sample company, which needs nothing of yours:", Link: home},
+		}
+	default:
+		m.subject = "A reminder to try Helix Foundry"
+		m.paragraphs = []paragraph{
+			{Text: "Here's your reminder to try Helix Foundry on your computer."},
+			{Text: "Ask Foundry about your own data in plain words, and get answers you can check: each one cites the rows and documents it read. Open Foundry:", Link: home},
+		}
+	}
+	if last {
+		m.paragraphs = append(m.paragraphs, paragraph{Text: "I won't send another reminder."})
+	}
+	m.paragraphs = append(m.paragraphs, paragraph{Text: "If you get stuck, reply to this email and I'll help."})
+	return m
 }

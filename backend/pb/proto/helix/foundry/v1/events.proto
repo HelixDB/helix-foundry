@@ -2,19 +2,60 @@ syntax = "proto3";
 
 package helix.foundry.v1;
 
+import "google/protobuf/timestamp.proto";
 import "helix/foundry/v1/types.proto";
 
 option go_package = "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1;foundryv1";
 
-// FoundryEventsService is the internal half of event sources: the door that
-// takes an event source's sends calls it, for the sender holding the send
-// token (an Actor of SOURCE_EVENT_SOURCE). It has no REST routes.
+// FoundryEventsService is what Foundry's public door, the foundry-events
+// role, calls, as an Actor of SOURCE_EVENT_SOURCE: an event source's sends,
+// for the sender holding the send token, and the reminders people ask for on
+// the landing page, for the site. It has no REST routes.
 service FoundryEventsService {
 
   // Helix Foundry event sources: connectors of kind events
   rpc SendFoundryEvents(SendFoundryEventsRequest) returns (SendFoundryEventsResponse);
   rpc ValidateFoundryEventSourceToken(ValidateFoundryEventSourceTokenRequest) returns (ValidateFoundryEventSourceTokenResponse);
+
+  // Reminders a person asks for on Foundry's landing page, from a phone, to
+  // try Foundry on a computer: the site sends them to the door with its
+  // secret, whose SHA-256 the door passes on and the API checks against
+  // foundry.reminders.secret_sha256. The foundry-notify-worker sends them.
+  rpc CreateFoundryReminder(CreateFoundryReminderRequest) returns (CreateFoundryReminderResponse);
+  rpc StopFoundryReminders(StopFoundryRemindersRequest) returns (StopFoundryRemindersResponse);
 }
+
+// CreateFoundryReminderRequest starts an address's reminders, or answers
+// the schedule it already has.
+message CreateFoundryReminderRequest {
+  // Lowercase hex SHA-256 of the bearer the site sent the door.
+  string secret_sha256 = 1;
+  // One plain address, at most 254 characters; kept trimmed and lowercased.
+  string email = 2;
+  // The IANA time zone the person's browser named, such as Europe/London;
+  // a zone Foundry doesn't know is UTC.
+  string time_zone = 3;
+  // The consent the person agreed to: remind-v1, the site's words "By
+  // sending, you're agreeing for us to use your email to remind you about
+  // Foundry".
+  string consent = 4;
+}
+message CreateFoundryReminderResponse {
+  // When the address's next reminder goes.
+  google.protobuf.Timestamp next_send_at = 1;
+  // The address already had a schedule running, which this request left as
+  // it was.
+  bool again = 2;
+}
+
+// StopFoundryRemindersRequest stops an address's reminders: its person has
+// signed in to Foundry, so they need no reminder to try it.
+message StopFoundryRemindersRequest {
+  // Lowercase hex SHA-256 of the bearer the site sent the door.
+  string secret_sha256 = 1;
+  string email = 2;
+}
+message StopFoundryRemindersResponse {}
 
 message SendFoundryEventsRequest {
   string       workspace_id = 2;
