@@ -71,6 +71,9 @@ services:
       HELIX_WFE_ORIGIN: http://pod:8081
       FOUNDRY_ORIGIN: http://localhost:3000
       FOUNDRY_LOCAL_TOKEN_FILE: /secrets/site-token
+      # Anonymous usage analytics, on unless turned off (local/README.md).
+      FOUNDRY_TELEMETRY: ${FOUNDRY_TELEMETRY:-}
+      DO_NOT_TRACK: ${DO_NOT_TRACK:-}
     volumes: ["secrets:/secrets:ro"]
     ports: ["127.0.0.1:3000:3000"]
     depends_on:

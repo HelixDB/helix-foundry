@@ -3,41 +3,23 @@
 import { useEffect, useState } from "react";
 import { setGlobalProperties } from "@databuddy/sdk";
 import dynamic from "next/dynamic";
-import { DATABUDDY_CLIENT_ID, trackingAllowed } from "./analytics";
+import { LOCAL } from "../shared/deployment";
+import { MASK_PATTERNS } from "../shared/usage";
+import { DATABUDDY_CLIENT_ID, stopSending, trackingAllowed } from "./analytics";
+import * as localUsage from "./local-usage";
 
 // Databuddy's tracker, on the hosted site's pages: the landing page, sign-in
-// and the app (both root layouts mount it). Without a client id (a local
-// build, the mock, e2e) the import below is dropped from the build.
-const Databuddy = DATABUDDY_CLIENT_ID
-  ? dynamic(
-      () => import("@databuddy/sdk/react").then((module) => module.Databuddy),
-      { ssr: false },
-    )
-  : null;
-
-/**
- * Paths hold ids and table names: these mask them, so Databuddy counts each
- * route as one page (every load's page as one). Databuddy never sends a
- * query string. The first pattern that matches is used, and a match keeps the
- * segments after it as they are, so a route's deeper ids come first; `**`
- * matches without masking, which keeps the wizard's and the sample's pages
- * apart from an ontology's.
- */
-export const MASK_PATTERNS = [
-  "/data/connections/*/tables/*",
-  "/data/connections/*",
-  "/data/documents/*",
-  "/ontology/new/**",
-  "/ontology/sample/**",
-  "/ontology/*/versions/*",
-  "/ontology/*/generations/*",
-  "/ontology/*/loads/*",
-  "/ontology/*/documents/*",
-  "/ontology/*",
-  "/explore/*/entities/*",
-  "/explore/*",
-  "/ask/*",
-];
+// and the app (both root layouts mount it). Without a client id (the mock,
+// e2e, `pnpm dev`), and in a local build, whose tracker would send nothing
+// from localhost (its events go through its site: ./local-usage.ts), the
+// import below is dropped from the build.
+const Databuddy =
+  DATABUDDY_CLIENT_ID && !LOCAL
+    ? dynamic(
+        () => import("@databuddy/sdk/react").then((module) => module.Databuddy),
+        { ssr: false },
+      )
+    : null;
 
 /**
  * The tracker sends document.title with every page view and page exit, and
@@ -83,13 +65,28 @@ export const TRACKER = {
 };
 
 /**
- * The tracker, once the page knows this browser may load it: not one of
- * Helix's own (analytics.ts trackingAllowed, which reads the URL and
- * storage, so only after the first render).
+ * Sending, once the page knows this browser may (after the first render: it
+ * reads the URL and storage): not one of Helix's own (analytics.ts
+ * trackingAllowed) and, on a local install, not turned off by its owner
+ * (GET /telemetry). The hosted site's pages then load the tracker, and a
+ * local install's post what waits (./local-usage.ts). Otherwise nothing is
+ * sent from this page on.
  */
 export function Telemetry() {
   const [allowed, setAllowed] = useState(false);
-  useEffect(() => setAllowed(trackingAllowed(location.search)), []);
+  useEffect(() => {
+    if (!DATABUDDY_CLIENT_ID) return;
+    if (!trackingAllowed(location.search)) return stopSending();
+    if (!LOCAL) return setAllowed(true);
+    if (localUsage.optedOut(navigator)) return stopSending();
+    fetch("/telemetry", { cache: "no-store" })
+      .then((r) => r.json())
+      .then(
+        (t: { enabled?: unknown }) => t.enabled === true,
+        () => false,
+      )
+      .then((enabled) => (enabled ? localUsage.start() : stopSending()));
+  }, []);
   if (!Databuddy || !allowed) return null;
   return <Databuddy {...TRACKER} />;
 }

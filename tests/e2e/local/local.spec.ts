@@ -167,8 +167,13 @@ test("opens a new install in its workspace's onboarding, never the workspace pic
 test("walks a new install through the sample company, from its database to Ask", async ({
   page,
 }) => {
-  // A local build loads no analytics tracker, nor the SDK's loader, and
-  // sends nothing (src/web/telemetry.tsx).
+  // A local build against the mock has no client id: it loads no analytics
+  // tracker, nor the SDK's loader, and sends nothing (src/web/telemetry.tsx).
+  // An image's would ask /telemetry first, which says yes unless the owner
+  // turned it off (src/server/telemetry.ts).
+  expect(await (await page.request.get("/telemetry")).json()).toEqual({
+    enabled: true,
+  });
   const tracked: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).hostname.endsWith("databuddy.cc"))
