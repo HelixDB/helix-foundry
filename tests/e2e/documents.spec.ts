@@ -240,7 +240,7 @@ test("loads the current draft and reads the contract back from the database", as
       .getByRole("status")
       .filter({ hasText: "1 document set, 1 read into the graph" }),
   ).toContainText(
-    "1 of 1 document was read for the names and facts it holds. The document read wrote 2 facts; 1 item waits for review, and 1 name matched no record.",
+    "1 of 1 document was read for the names and facts it holds. The document read made 2 fact writes (a fact counts once for each document that states it) and left 1 review. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision.",
   );
 
   // Its details link to what the ontology reads; Review documents opens

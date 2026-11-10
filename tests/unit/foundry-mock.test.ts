@@ -1161,12 +1161,14 @@ describe("mock document sets", () => {
         waiting: 0,
         facts: "0",
         reviews: "0",
-        unmatched: "0",
+        unresolved: "0",
       },
     ]);
-    // The list, which pages poll, carries none.
+    // The list, which pages poll, carries none, and nor did the answer to
+    // the call that made the load.
     const listed = (await call("GET", `${O}/loads`)).body.loads;
     expect(listed.every((l: object) => !("documentSets" in l))).toBe(true);
+    expect(created).not.toHaveProperty("documentSets");
     expect(
       (await call("GET", `${O}/documents?status=out_of_scope`)).body.documents,
     ).toHaveLength(1);
@@ -2529,7 +2531,7 @@ describe("review decisions", () => {
     const counted = (await call("GET", `${O}/loads`)).body.loads[0].id;
     expect(
       (await call("GET", `${O}/loads/${counted}`)).body.load.documentSets,
-    ).toMatchObject([{ read: 1, unmatched: "1" }]);
+    ).toMatchObject([{ read: 1, unresolved: "1" }]);
     const at = `${O}/reviews/${rv.props.review_key}:settle`;
     const saved = (
       await call("POST", at, {

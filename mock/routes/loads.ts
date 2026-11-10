@@ -1596,8 +1596,9 @@ const toLoad = (l: StoredLoad): FoundryLoad => {
 };
 
 /**
- * A load read alone, as the WFE answers every call for one load: with what
- * it made of its documents, by set, when it holds any (the list has none).
+ * A load read alone, as the WFE answers GetFoundryLoad: with what it made
+ * of its documents, by set, when it holds any. The list has none, and nor
+ * has the answer to a call that changes a load.
  */
 const toLoadAlone = (l: StoredLoad): FoundryLoad => {
   const mappings = String(
@@ -1715,7 +1716,7 @@ export const loadRoutes: MockRoute[] = [
         );
       const l = queueLoad(s.o, body.versionId || "", clientToken);
       return "clientToken" in l
-        ? ok({ load: toLoadAlone(l) } satisfies LoadResponse)
+        ? ok({ load: toLoad(l) } satisfies LoadResponse)
         : l;
     },
   },
@@ -1782,7 +1783,7 @@ export const loadRoutes: MockRoute[] = [
         else if (monthSpend(s.o.workspaceId) < MONTH_CAP_MICROS)
           create(s.o.id, l, "extract", "person");
       }
-      return ok({ load: toLoadAlone(l) } satisfies LoadResponse);
+      return ok({ load: toLoad(l) } satisfies LoadResponse);
     },
   },
   {
@@ -1864,7 +1865,7 @@ export const loadRoutes: MockRoute[] = [
         );
       if (l.status !== "deleting") l.status = "deleting";
       if (!jobsOf(s.o.id).some(live)) create(s.o.id, l, "delete", "person");
-      return ok({ load: toLoadAlone(l) } satisfies LoadResponse);
+      return ok({ load: toLoad(l) } satisfies LoadResponse);
     },
   },
 ];

@@ -1940,8 +1940,10 @@ export type FoundryLoad = {
   // Its People enrichment step; unset when its version enriches no one.
   enrichment?: FoundryLoadEnrichment | null;
   // What it made of its documents, by document set, in set id order. Only
-  // on a load read alone (not in the list); unset for a load that holds no
-  // documents, and for a grantee.
+  // GetFoundryLoad fills it (not the list, nor the answer to a change of a
+  // load); unset for a load that holds no documents, for one made before
+  // Foundry recorded a load's documents, and for a grantee. A few seconds
+  // old at most while a job of the load runs.
   documentSets?: FoundryLoadDocumentSet[];
 };
 
@@ -1952,7 +1954,8 @@ export type FoundryLoad = {
  */
 export type FoundryLoadDocumentSet = {
   setId?: string;
-  // An extraction route of the load's version reads the set. Unset (false):
+  // An extraction route of the load's version reads the set: what the
+  // version routes, not what came of it (`read` says that). Unset (false):
   // the load stores its documents, which stay searchable, and no model
   // reads them, so they add nothing to the graph.
   routed?: boolean;
@@ -1965,11 +1968,16 @@ export type FoundryLoadDocumentSet = {
   notRead?: number;
   // Those the load has not extracted yet.
   waiting?: number;
-  // (int64) The facts its documents wrote, the items they left for a
-  // person's review, and the names that matched no record.
+  // (int64) Its documents' fact writes: a fact counts once for each
+  // document that created it or added evidence to it.
   facts?: string;
+  // (int64) The reviews its documents left when the load last wrote each,
+  // of every kind. Not the open reviews: one settled since stays counted
+  // until the load writes the decision.
   reviews?: string;
-  unmatched?: string;
+  // (int64) The names matched to no one record (none, several, or
+  // identifiers that disagree). Nearly every one left a review too.
+  unresolved?: string;
 };
 
 /**

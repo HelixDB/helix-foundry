@@ -601,7 +601,11 @@ describe("onboardingPrompt's review, load and failures", () => {
       "the document sets it was given but doesn’t read, `document_reads.unread_set_ids`",
       "write the new goal with me, my answers in it in plain words, and generate again",
       "how many it read of how many (`read` of `total`), how many its version doesn’t read (`not_read_by_version`",
-      "the facts it wrote (`facts_written`), the items it held for my review instead of writing (`held_for_review`) and the names that matched no record (`names_unmatched`)",
+      "one about a synced table also has the table’s `connector_id` and `table`, so name the table, not the id;",
+      "its fact writes (`facts_written`: a fact counts once for each document that states it, so it is not the number of facts in the graph)",
+      "the reviews the documents left (`left_for_review`: counted as the load wrote each document, so it is not the number still open)",
+      "the names it matched to no one record (`names_unresolved`: they are among those reviews, so don’t add the two)",
+      "If `documents` is absent though the version was given document sets, say the counts aren’t available, not that nothing was left unread.",
       "A job’s `progress` counts a document as done whether or not it was read",
     ])
       expect(text).toContain(line);

@@ -818,7 +818,13 @@ export function AgentQuestions({
   sources: Sources;
 }) {
   const { id } = useWorkspace();
-  const sets = useQuery(documentSetQueries.list(id));
+  // The sets' names, for a left-out entry about one: read only when the
+  // draft left something out. A grantee's has no such list, and a grantee
+  // may not list the sets.
+  const sets = useQuery({
+    ...documentSetQueries.list(id),
+    enabled: bundle.leftOut.length > 0,
+  });
   const leftOut = bundle.leftOut.map((l) => {
     const { sourceId, rest } = splitSourceText(l.what);
     const info = sourceId ? sources.byAgentId(sourceId) : undefined;

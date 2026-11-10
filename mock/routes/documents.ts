@@ -584,8 +584,9 @@ export function dropExtractions(loadId: string) {
  * For ./loads.ts: what a load made of its documents, by the set each joined
  * it with, in set id order, as the WFE counts them: its members that are
  * still uploaded, each by how its read into the load ended (waiting until
- * it has), with what the reads wrote. `routed` says whether the load's
- * version reads a set.
+ * it has), with what the reads wrote: their fact writes, the reviews they
+ * left and the names matched to no one record, which are among the
+ * reviews. `routed` says whether the load's version reads a set.
  */
 export function loadDocumentSets(
   loadId: string,
@@ -598,7 +599,7 @@ export function loadDocumentSets(
         FoundryLoadDocumentSet,
         "documents" | "read" | "duplicate" | "failed" | "notRead" | "waiting"
       >
-    > & { facts: number; reviews: number; unmatched: number }
+    > & { facts: number; reviews: number; unresolved: number }
   >();
   for (const [documentId, setId] of members.get(loadId) || []) {
     if (documents.get(documentId)?.status !== "uploaded") continue;
@@ -611,7 +612,7 @@ export function loadDocumentSets(
       waiting: 0,
       facts: 0,
       reviews: 0,
-      unmatched: 0,
+      unresolved: 0,
     };
     sets.set(setId, set);
     set.documents += 1;
@@ -623,7 +624,7 @@ export function loadDocumentSets(
     else set.waiting += 1;
     set.facts += x?.facts || 0;
     set.reviews += x?.reviews || 0;
-    set.unmatched += unresolvedNames.get(readKey(loadId, documentId)) || 0;
+    set.unresolved += unresolvedNames.get(readKey(loadId, documentId)) || 0;
   }
   // As protojson writes it: int64 counts as strings.
   return [...sets.entries()]
@@ -634,7 +635,7 @@ export function loadDocumentSets(
       routed: routed(setId),
       facts: String(set.facts),
       reviews: String(set.reviews),
-      unmatched: String(set.unmatched),
+      unresolved: String(set.unresolved),
     }));
 }
 

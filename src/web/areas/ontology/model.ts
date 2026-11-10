@@ -1015,14 +1015,18 @@ export function scopeReadsText(
 /**
  * What a load made of its documents, added up over its document sets
  * (FoundryLoad.documentSets): the sets it holds documents of, how many of
- * them its version reads and which it doesn't, its documents by how each
- * ended, and what the read ones wrote. Undefined for a load that says
- * nothing of its documents: one from a list, one that holds none, or a
- * grantee's.
+ * them it read a document of (`setsRead`: what happened, not what its
+ * version routes) and which hold documents its version doesn't read
+ * (`unreadSetIds`), its documents by how each ended, and what the read ones
+ * wrote. `facts` counts a fact once for each document that states it;
+ * `reviews` are those the documents left when the load wrote them, settled
+ * since or not; `unresolved` are the names matched to no one record, nearly
+ * all of which are among the reviews. Undefined for a load that says nothing
+ * of its documents: one from a list, one that holds none, or a grantee's.
  *
  * @example
  * loadDocumentTotals({ documentSets: [{ setId: "a", routed: true, documents: 2, read: 2, facts: "3" }, { setId: "b", documents: 5, notRead: 5 }] });
- * // { sets: 2, setsRead: 1, unreadSetIds: ["b"], documents: 7, read: 2, notRead: 5, duplicate: 0, failed: 0, waiting: 0, facts: 3, reviews: 0, unmatched: 0 }
+ * // { sets: 2, setsRead: 1, unreadSetIds: ["b"], documents: 7, read: 2, notRead: 5, duplicate: 0, failed: 0, waiting: 0, facts: 3, reviews: 0, unresolved: 0 }
  */
 export function loadDocumentTotals(load: Pick<FoundryLoad, "documentSets">) {
   const sets = load.documentSets || [];
@@ -1031,8 +1035,10 @@ export function loadDocumentTotals(load: Pick<FoundryLoad, "documentSets">) {
     sets.reduce((n, s) => n + Number(of(s) || 0), 0);
   return {
     sets: sets.length,
-    setsRead: sets.filter((s) => s.routed).length,
-    unreadSetIds: sets.filter((s) => !s.routed).map((s) => s.setId || ""),
+    setsRead: sets.filter((s) => (s.read || 0) > 0).length,
+    unreadSetIds: sets
+      .filter((s) => (s.notRead || 0) > 0)
+      .map((s) => s.setId || ""),
     documents: sum((s) => s.documents),
     read: sum((s) => s.read),
     notRead: sum((s) => s.notRead),
@@ -1041,7 +1047,7 @@ export function loadDocumentTotals(load: Pick<FoundryLoad, "documentSets">) {
     waiting: sum((s) => s.waiting),
     facts: sum((s) => s.facts),
     reviews: sum((s) => s.reviews),
-    unmatched: sum((s) => s.unmatched),
+    unresolved: sum((s) => s.unresolved),
   };
 }
 export type LoadDocumentTotals = NonNullable<
@@ -1049,16 +1055,19 @@ export type LoadDocumentTotals = NonNullable<
 >;
 
 /**
- * A load's documents in a line: the sets it holds, and how many of them its
- * version read into the graph.
+ * A load's documents in a line: the sets it holds, and how many of them it
+ * has read a document of: "so far" while documents still wait, when the
+ * count can only grow. A set its version routes whose documents all failed
+ * or still wait is not read.
  *
  * @example
- * loadSetsLine({ sets: 12, setsRead: 2 }); // "12 document sets, 2 read into the graph"
+ * loadSetsLine({ sets: 12, setsRead: 2, waiting: 0 }); // "12 document sets, 2 read into the graph"
+ * loadSetsLine({ sets: 3, setsRead: 0, waiting: 40 }); // "3 document sets, 0 read into the graph so far"
  */
 export const loadSetsLine = (
-  t: Pick<LoadDocumentTotals, "sets" | "setsRead">,
+  t: Pick<LoadDocumentTotals, "sets" | "setsRead" | "waiting">,
 ) =>
-  `${plural(t.sets, "document set")}, ${formatNumber(t.setsRead)} read into the graph`;
+  `${plural(t.sets, "document set")}, ${formatNumber(t.setsRead)} read into the graph${t.waiting ? " so far" : ""}`;
 
 // The most sets a sentence names before it counts the rest.
 const NAMED_SETS = 6;
@@ -1067,16 +1076,16 @@ const NAMED_SETS = 6;
  * What came of a load's documents, in sentences: how many were read for
  * facts; those its version doesn't read, with their sets' names
  * (`unreadNames`, as scopeNames gives them; none while the sets aren't
- * known) and how to have them read; what the read ones wrote, left for
- * review and couldn't match; and those that failed, repeat another or still
- * wait.
+ * known) and how to have them read; what the read ones wrote and left for
+ * review, as counted when the load wrote them; and those that failed,
+ * repeat another or still wait. While documents wait, none read is "yet".
  *
  * @example
  * loadDocumentsOutcome(
- *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unmatched: 1 },
+ *   { unreadSetIds: ["m"], documents: 3, read: 1, notRead: 2, duplicate: 0, failed: 0, waiting: 0, facts: 4, reviews: 2, unresolved: 1 },
  *   ["Minutes"],
  * );
- * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read wrote 4 facts; 2 items wait for review, and 1 name matched no record."
+ * // "1 of 3 documents was read for the names and facts it holds. 2 documents in Minutes are stored and searchable, but no route of this version reads that set, so nothing from them is in the graph: to read them, generate a version whose goal covers them. The document read made 4 fact writes (a fact counts once for each document that states it) and left 2 reviews. 1 name matched no one record: its review is among them. A review settled since stays counted until this load writes the decision."
  */
 export function loadDocumentsOutcome(
   t: Omit<LoadDocumentTotals, "sets" | "setsRead">,
@@ -1099,12 +1108,13 @@ export function loadDocumentsOutcome(
       ? `${formatNumber(t.waiting)} ${t.waiting === 1 ? "is" : "are"} not read yet`
       : "",
   ].filter(Boolean);
+  const yet = t.waiting ? " yet" : "";
   return [
     t.read
       ? `${formatNumber(t.read)} of ${plural(t.documents, "document")} ${t.read === 1 ? "was" : "were"} read for the names and facts ${t.read === 1 ? "it holds" : "they hold"}.`
       : t.documents === 1
-        ? "Its one document was not read for names and facts."
-        : `None of its ${plural(t.documents, "document")} was read for names and facts.`,
+        ? `Its one document was not read for names and facts${yet}.`
+        : `None of its ${plural(t.documents, "document")} was read for names and facts${yet}.`,
     ...(t.notRead
       ? [
           `${plural(t.notRead, "document")}${named.length ? ` in ${andList(named)}` : ""} ${one ? "is" : "are"} stored and searchable, but no route of this version reads ${t.unreadSetIds.length === 1 ? "that set" : "those sets"}, so nothing from ${one ? "it" : "them"} is in the graph: to read ${one ? "it" : "them"}, generate a version whose goal covers ${one ? "it" : "them"}.`,
@@ -1112,7 +1122,19 @@ export function loadDocumentsOutcome(
       : []),
     ...(t.read
       ? [
-          `${t.read === 1 ? "The document read" : "The documents read"} wrote ${plural(t.facts, "fact")}; ${plural(t.reviews, "item")} ${t.reviews === 1 ? "waits" : "wait"} for review${t.unmatched ? `, and ${plural(t.unmatched, "name")} matched no record` : ""}.`,
+          `${t.read === 1 ? "The document read" : "The documents read"} made ${plural(t.facts, "fact write")} (a fact counts once for each document that states it) and left ${plural(t.reviews, "review")}.`,
+          ...(t.unresolved
+            ? [
+                `${plural(t.unresolved, "name")} matched no one record: ${t.unresolved === 1 ? "its review is" : "their reviews are"} among them.`,
+              ]
+            : []),
+          // True whether a settled review waits for the next load or is
+          // written to this one at once.
+          ...(t.reviews
+            ? [
+                "A review settled since stays counted until this load writes the decision.",
+              ]
+            : []),
         ]
       : []),
     ...(others.length ? [`Of the rest, ${andList(others)}.`] : []),

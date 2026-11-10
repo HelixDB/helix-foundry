@@ -981,8 +981,13 @@ export function LoadPage({ loadId }: { loadId: string }) {
   const j =
     l?.jobs?.find(isLiveJob) || l?.jobs?.find((x) => x.kind !== "delete");
   const documents = useQuery(documentQueries.list(id, o));
-  // The sets' names, for those the load's version doesn't read.
-  const sets = useQuery(documentSetQueries.list(id));
+  // The sets' names, for those the load's version doesn't read: read only
+  // when it has such documents. A grantee's load counts none, and a grantee
+  // may not list the sets.
+  const sets = useQuery({
+    ...documentSetQueries.list(id),
+    enabled: !!l?.documentSets?.some((s) => (s.notRead || 0) > 0),
+  });
   const now = useNow(tick(isLiveJob(j)));
   const version = useQuery({
     ...ontologyQueries.version(id, o, l?.versionId || ""),
@@ -1318,16 +1323,19 @@ export function LoadPage({ loadId }: { loadId: string }) {
                       value: formatNumber(totals.notRead),
                     },
                     {
-                      label: "Facts written from documents",
+                      // Once for each document that states the fact.
+                      label: "Fact writes from documents",
                       value: formatNumber(totals.facts),
                     },
                     {
-                      label: "Held for review",
+                      // As the load wrote each document, settled since or not.
+                      label: "Reviews left by documents",
                       value: formatNumber(totals.reviews),
                     },
                     {
-                      label: "Names unmatched",
-                      value: formatNumber(totals.unmatched),
+                      // Nearly all of them are among the reviews.
+                      label: "Names matched to no one record",
+                      value: formatNumber(totals.unresolved),
                     },
                   ]
                 : []),
