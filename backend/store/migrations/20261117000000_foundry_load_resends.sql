@@ -29,8 +29,9 @@
 -- queued or running job of kind 'resend' is claimed by an older binary as an
 -- extract of its load, which sends only the documents the load waits for and
 -- ends: the rows it owed stay owed, and nothing reads them. So nothing must be
--- deleted before going back. The Down is for a local database: it deletes the
--- resend jobs, which the old CHECK has no arm for, and then the rest.
+-- deleted before going back. The Down is for a local database and deletes
+-- nothing: a resend job left stops it at the old CHECK, which has no arm for
+-- one, until a person deletes those jobs.
 --
 -- A Vitess-based MySQL host may rename CHECK constraints, so the old one is
 -- dropped by prefix.
@@ -81,24 +82,18 @@ ALTER TABLE foundry_load_decisions
   ADD INDEX foundry_load_decisions_docs_idx (load_id, kind, doc_id);
 
 -- +goose Down
-ALTER TABLE foundry_load_decisions
-  DROP INDEX foundry_load_decisions_docs_idx,
-  DROP COLUMN applied_status,
-  DROP COLUMN applied_reason,
-  DROP COLUMN applied_at;
-
-DROP TABLE foundry_load_resends;
-
--- A resend job fails the old check: delete those rows first.
-DELETE FROM foundry_load_jobs WHERE kind = 'resend';
-
+-- Deletes nothing: see the rollback note above. The CHECK goes back first, by
+-- prefix, so a resend job left in foundry_load_jobs stops this there, with the
+-- table and the columns in place, and it runs again once a person has run
+--   DELETE FROM foundry_load_jobs WHERE kind = 'resend';
 SET @drop_load_jobs_kind_chk = (
   SELECT COALESCE(
     CONCAT(
       'ALTER TABLE foundry_load_jobs ',
-      GROUP_CONCAT(CONCAT('DROP CHECK `', REPLACE(constraint_name, '`', '``'), '`') SEPARATOR ', ')
+      GROUP_CONCAT(CONCAT('DROP CHECK `', REPLACE(constraint_name, '`', '``'), '`') SEPARATOR ', '),
+      ', ADD CONSTRAINT foundry_load_jobs_kind_chk CHECK (kind IN (''load'', ''extract'', ''delete'', ''apply''))'
     ),
-    'SELECT 1'
+    'ALTER TABLE foundry_load_jobs ADD CONSTRAINT foundry_load_jobs_kind_chk CHECK (kind IN (''load'', ''extract'', ''delete'', ''apply''))'
   )
   FROM information_schema.table_constraints
   WHERE constraint_schema = DATABASE()
@@ -110,5 +105,10 @@ PREPARE drop_load_jobs_kind_chk FROM @drop_load_jobs_kind_chk;
 EXECUTE drop_load_jobs_kind_chk;
 DEALLOCATE PREPARE drop_load_jobs_kind_chk;
 
-ALTER TABLE foundry_load_jobs
-  ADD CONSTRAINT foundry_load_jobs_kind_chk CHECK (kind IN ('load', 'extract', 'delete', 'apply'));
+ALTER TABLE foundry_load_decisions
+  DROP INDEX foundry_load_decisions_docs_idx,
+  DROP COLUMN applied_status,
+  DROP COLUMN applied_reason,
+  DROP COLUMN applied_at;
+
+DROP TABLE foundry_load_resends;
