@@ -7,13 +7,17 @@ on:
   pull_request:
 permissions:
   contents: read
+# A newer push to the same pull request cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 defaults:
   run:
     working-directory: backend
 jobs:
   # A branch protection check: named apart from the site CI's `check`.
   backend-check:
-    runs-on: ubuntu-latest
+    runs-on: crucible-4vcpu-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
