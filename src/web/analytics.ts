@@ -27,24 +27,27 @@ import type { PaidTier, Tier } from "./areas/workspace/plan";
 import type { SignInError } from "./sign-in";
 import type { ShellWorkspace, WorkspaceRole } from "./ui";
 import type { SignInFailureCode } from "./areas/data/sign-ins";
+import * as localUsage from "./local-usage";
 
-// Product analytics, in Databuddy (./telemetry.tsx loads its tracker).
-// next.config.ts sets the client id only in a build for a stamp's own origin
-// (the hosted site), or a local install's image ("Foundry Local"), so the
-// mock, e2e and `pnpm dev` have none: they load no tracker, and nothing here
-// sends.
+// Product analytics, in Databuddy. next.config.ts sets the client id only in
+// a build for a stamp's own origin (the hosted site, whose pages load the
+// tracker: ./telemetry.tsx), or a local install's image ("Foundry Local",
+// whose pages post their events to its site: ./local-usage.ts), so the mock,
+// e2e and `pnpm dev` have none: nothing here sends.
 export const DATABUDDY_CLIENT_ID =
   process.env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID || "";
 
-// Set once ./telemetry.tsx finds this browser won't load the tracker (one of
-// Helix's own, or a local install whose owner turned it off): nothing is sent
-// or kept from then on. Until it knows, calls wait in the SDK's queue.
+// Set once ./telemetry.tsx finds this browser may not send (one of Helix's
+// own, or a local install whose owner turned it off): nothing is sent or kept
+// from then on. Until it knows, calls wait in the SDK's queue (a local
+// build's in ./local-usage.ts).
 let stopped = false;
 const sending = () => !!DATABUDDY_CLIENT_ID && !stopped;
 
-/** This browser loads no tracker: stop sending (./telemetry.tsx). */
+/** This browser sends nothing: stop sending (./telemetry.tsx). */
 export function stopSending() {
   stopped = true;
+  localUsage.stop();
 }
 
 /** Where a generation's draft comes from: the ontology agent, or the sample's ready-made one. */
@@ -185,6 +188,10 @@ export type AnalyticsEvents = {
   // which names the feature, never data), or a page that crashed.
   pro_gate_shown: { feature: string };
   page_crashed: { cause: "stale_build" | "error" };
+
+  // A local install's page views (pageViewed), its path masked: the hosted
+  // tracker records its own.
+  page_viewed: undefined;
 };
 
 export type AnalyticsEventName = keyof AnalyticsEvents;
@@ -205,7 +212,23 @@ export function trackEvent<Name extends AnalyticsEventName>(
   // Without a client id the tracker never loads, and queued calls would only
   // expire into console warnings.
   if (!sending()) return;
+  // A local page loads no tracker: its site forwards the event, with the
+  // global properties the tracker would add.
+  if (LOCAL)
+    return localUsage.report(
+      name,
+      { ...globals, ...properties },
+      location.pathname,
+    );
   track(name, properties);
+}
+
+/**
+ * The SPA's page changed (main.tsx): a local install's page view, which no
+ * tracker records there. The hosted tracker records its own.
+ */
+export function pageViewed() {
+  if (LOCAL) trackEvent("page_viewed");
 }
 
 // How long a page about to leave waits for the tracker to load.
@@ -250,6 +273,12 @@ export async function trackBeforeLeavingAt<Name extends AnalyticsEventName>(
   ...properties: EventArgs<Name>
 ): Promise<void> {
   if (!sending()) return;
+  // A local page's event goes to its own site at once, which outlives the
+  // page leaving (keepalive).
+  if (LOCAL) {
+    localUsage.report(name, { ...globals, ...properties[0] }, path);
+    return localUsage.flush();
+  }
   for (
     const end = Date.now() + LEAVE_WAIT_MS;
     !isTrackerAvailable() && Date.now() < end;
@@ -403,7 +432,9 @@ const setGlobals = (more: Omit<typeof globals, "workspace_owner">) => {
       ? `${next.workspace_slug} ${next.user_email}`
       : undefined;
   globals = next;
-  setGlobalProperties({ ...more, workspace_owner: next.workspace_owner });
+  // A local page loads no tracker: trackEvent adds them itself.
+  if (!LOCAL)
+    setGlobalProperties({ ...more, workspace_owner: next.workspace_owner });
 };
 
 /**
@@ -450,7 +481,9 @@ export async function signedOut(): Promise<void> {
 export function pageCrashed(error: Error, staleBuild: boolean) {
   if (!sending()) return;
   trackEvent("page_crashed", { cause: staleBuild ? "stale_build" : "error" });
-  trackError(error.message, { error_type: error.name, stack: error.stack });
+  // A local install sends no errors: a message may quote its data.
+  if (!LOCAL)
+    trackError(error.message, { error_type: error.name, stack: error.stack });
 }
 
 // ---------------------------------------------------------------- jobs

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseUsageBatch, type UsageBatch } from "@/shared/usage";
 
 // The hosted site's product analytics (src/web/analytics.ts): nothing is
 // sent or kept without a client id; a sign-in is reported when the tab that
@@ -743,9 +744,8 @@ describe("TRACKER", () => {
   it("records everything, replays with the tracker's path masks", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-test");
     vi.resetModules();
-    const { MASK_PATTERNS, TRACKER, withoutTitle } = await import(
-      "@/web/telemetry"
-    );
+    const { TRACKER, withoutTitle } = await import("@/web/telemetry");
+    const { MASK_PATTERNS } = await import("@/shared/usage");
     // replay.js masks the URLs it records with the tracker's maskPatterns.
     expect(TRACKER).toEqual({
       clientId: "client-test",
@@ -819,45 +819,203 @@ describe("Helix's own people", () => {
 });
 
 describe("a local install", () => {
-  /** analytics.ts in a local install's image. */
-  const loadLocal = async () => {
+  /**
+   * analytics.ts in a local install's image, its page at `pathname`, and
+   * what the page posts to its site (./local-usage.ts): Databuddy's tracker
+   * sends nothing from localhost.
+   */
+  const loadLocal = async (blocked = false) => {
     vi.stubEnv("NEXT_PUBLIC_FOUNDRY_MODE", "local");
-    return load();
-  };
-
-  it("identifies no one, and tags events with the workspace's id alone", async () => {
-    const a = await loadLocal();
-    a.identifyUser("user_1", { email: "ada@example.com", name: "Ada" });
-    a.workspaceOpened({
-      id: "ws_1",
-      slug: "acme",
-      name: "Acme",
-      role: "owner",
+    const a = await load("client-local", blocked);
+    const usage = await import("@/web/local-usage");
+    const posts: { url: string; init: RequestInit; body: UsageBatch }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        posts.push({ url, init, body: JSON.parse(init.body as string) });
+        return new Response(null, { status: 204 });
+      }),
+    );
+    const hidden: (() => void)[] = [];
+    vi.stubGlobal("addEventListener", (type: string, listener: () => void) => {
+      if (type === "pagehide") hidden.push(listener);
     });
-    expect(sdk.identify).not.toHaveBeenCalled();
-    // No email, name, slug or role, so no owner either.
-    expect(sdk.setGlobalProperties.mock.calls).toEqual([
-      [{ workspace_id: "ws_1", workspace_owner: undefined }],
+    return { a, usage, posts, hide: () => hidden.forEach((h) => h()) };
+  };
+  const at = (pathname: string) =>
+    vi.stubGlobal("location", { origin: "http://localhost:3000", pathname });
+  const names = (posts: { body: UsageBatch }[]) =>
+    posts.map((post) => post.body.events.map((event) => event.name));
+  const ACME = {
+    id: "ws_1",
+    slug: "acme",
+    name: "Acme",
+    role: "owner",
+  } as const;
+
+  it("identifies no one, tags events with the workspace's id alone, and never calls the SDK", async () => {
+    const { a, usage, posts } = await loadLocal();
+    a.identifyUser("user_1", { email: "ada@example.com", name: "Ada" });
+    a.workspaceOpened(ACME);
+    a.trackEvent("onboarding_shown");
+    a.pageCrashed(new Error("contract_42.pdf failed"), false);
+    usage.start();
+    // Exactly these: no email, name, slug, role or owner, and no error text.
+    expect(
+      posts
+        .flatMap((post) => post.body.events)
+        .map(({ name, properties }) => ({ name, properties })),
+    ).toEqual([
+      { name: "onboarding_shown", properties: { workspace_id: "ws_1" } },
+      {
+        name: "page_crashed",
+        properties: { workspace_id: "ws_1", cause: "error" },
+      },
+    ]);
+    for (const call of [
+      sdk.track,
+      sdk.identify,
+      sdk.setGlobalProperties,
+      sdk.trackError,
+      sdk.clearProfile,
+    ])
+      expect(call).not.toHaveBeenCalled();
+  });
+
+  it("holds events until its site says yes, then posts them as the contract reads them", async () => {
+    const { a, usage, posts } = await loadLocal();
+    at("/ontology/ont_1/loads/load_2");
+    a.pageViewed();
+    expect(posts).toEqual([]);
+    usage.start();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].url).toBe("/telemetry");
+    expect(posts[0].init).toMatchObject({ method: "POST", keepalive: true });
+    expect(parseUsageBatch(posts[0].body)).toEqual(posts[0].body);
+    expect(posts[0].body).toEqual({
+      visitor: local.values.get("foundry.usage.visitor"),
+      session: session.values.get("foundry.usage.session"),
+      events: [
+        {
+          id: expect.any(String),
+          name: "page_viewed",
+          properties: {},
+          path: "/ontology/*/loads/*",
+          at: expect.any(Number),
+        },
+      ],
+    });
+    // The visitor and session stay; each event is new.
+    a.pageViewed();
+    usage.flush();
+    expect(posts[1].body.visitor).toBe(posts[0].body.visitor);
+    expect(posts[1].body.session).toBe(posts[0].body.session);
+    expect(posts[1].body.events[0].id).not.toBe(posts[0].body.events[0].id);
+  });
+
+  it("posts 2 s after the first event, at once from 20, and when the page is hidden", async () => {
+    vi.useFakeTimers();
+    const { a, usage, posts, hide } = await loadLocal();
+    usage.start();
+    a.trackEvent("onboarding_shown");
+    a.trackEvent("onboarding_shown");
+    expect(posts).toEqual([]);
+    vi.advanceTimersByTime(2000);
+    expect(names(posts)).toEqual([["onboarding_shown", "onboarding_shown"]]);
+    for (let i = 0; i < 20; i++) a.trackEvent("onboarding_shown");
+    expect(posts).toHaveLength(2);
+    expect(posts[1].body.events).toHaveLength(20);
+    a.pageViewed();
+    hide();
+    expect(names(posts)[2]).toEqual(["page_viewed"]);
+    vi.advanceTimersByTime(2000);
+    expect(posts).toHaveLength(3);
+  });
+
+  it("posts an event before the page leaves at once, its path masked", async () => {
+    const { a, usage, posts } = await loadLocal();
+    usage.start();
+    await a.trackBeforeLeavingAt("/data/connections/conn_1", "signed_out");
+    expect(posts[0].body.events).toMatchObject([
+      { name: "signed_out", path: "/data/connections/*" },
     ]);
   });
 
-  it("loads a tracker that records page views and events only", async () => {
-    vi.stubEnv("NEXT_PUBLIC_DATABUDDY_CLIENT_ID", "client-local");
-    vi.resetModules();
-    const { LOCAL_TRACKER, MASK_PATTERNS, withoutTitle } = await import(
-      "@/web/telemetry"
-    );
-    expect(LOCAL_TRACKER).toEqual({
-      clientId: "client-local",
-      maskPatterns: MASK_PATTERNS,
-      filter: withoutTitle,
-      trackWebVitals: false,
-      trackErrors: false,
-      trackOutgoingLinks: false,
-      trackInteractions: false,
-      trackAttributes: false,
-      replay: false,
+  it("drops a post its site can't take, and goes on", async () => {
+    const { a, usage } = await loadLocal();
+    const failing = vi.fn(async () => {
+      throw new TypeError("fetch failed");
     });
+    vi.stubGlobal("fetch", failing);
+    usage.start();
+    a.trackEvent("onboarding_shown");
+    usage.flush();
+    await vi.waitFor(() => expect(failing).toHaveBeenCalledOnce());
+    a.trackEvent("onboarding_shown");
+    usage.flush();
+    expect(failing).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps at most a post's worth while its site hasn't said", async () => {
+    const { a, usage, posts } = await loadLocal();
+    for (let i = 0; i < 60; i++) a.trackEvent("onboarding_shown");
+    usage.start();
+    expect(posts.map((post) => post.body.events.length)).toEqual([50]);
+  });
+
+  it("sends and keeps nothing once its owner turned reporting off", async () => {
+    const { a, usage, posts } = await loadLocal();
+    a.trackEvent("onboarding_shown");
+    a.stopSending();
+    usage.start();
+    a.trackEvent("onboarding_shown");
+    a.pageViewed();
+    usage.flush();
+    expect(posts).toEqual([]);
+    expect(local.values.size).toBe(0);
+    expect(session.values.size).toBe(0);
+  });
+
+  it("keeps the visitor and session an earlier page of the browser made", async () => {
+    const { a, usage, posts } = await loadLocal();
+    local.values.set("foundry.usage.visitor", "visitor-1");
+    session.values.set("foundry.usage.session", "session-1");
+    usage.start();
+    a.trackEvent("onboarding_shown");
+    usage.flush();
+    expect(posts[0].body).toMatchObject({
+      visitor: "visitor-1",
+      session: "session-1",
+    });
+  });
+
+  it("names its visitor and session for the page alone with storage blocked", async () => {
+    const { a, usage, posts } = await loadLocal(true);
+    usage.start();
+    a.trackEvent("onboarding_shown");
+    usage.flush();
+    expect(posts[0].body.visitor).toMatch(/^[0-9a-f-]{36}$/);
+    expect(posts[0].body.session).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it.each([
+    [{ doNotTrack: "1" }, true],
+    [{ globalPrivacyControl: true }, true],
+    [{ doNotTrack: "0", globalPrivacyControl: false }, false],
+    [{ doNotTrack: null }, false],
+    [{}, false],
+  ])(
+    "reads a browser of %o as asking not to be tracked: %s",
+    async (browser, opted) => {
+      const { usage } = await loadLocal();
+      expect(usage.optedOut(browser)).toBe(opted);
+    },
+  );
+
+  it("is the hosted tracker's to count page views on the hosted site", async () => {
+    const a = await load();
+    a.pageViewed();
+    expect(sent()).toEqual([]);
   });
 });
 

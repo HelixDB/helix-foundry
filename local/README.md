@@ -140,7 +140,7 @@ Every volume goes back under its own name before the stack first starts, so on a
 
 ## Usage analytics
 
-The site tells Helix, anonymously, how Foundry is used, so we know what to fix: which pages are opened (their paths, with every id taken out) and the steps people take, such as an ontology generated, a load ready, a question answered, or why one failed, as fixed words. It sends nothing of what Foundry holds: no data, documents, questions, answers, names or emails, and no recording of the screen. It goes to Databuddy (databuddy.cc), from your browser.
+The site tells Helix, anonymously, how Foundry is used, so we know what to fix: which pages are opened (their paths, with every id taken out) and the steps people take, such as an ontology generated, a load ready, a question answered, or why one failed, as fixed words. It sends nothing of what Foundry holds: no data, documents, questions, answers, names or emails, and no recording of the screen. Your browser hands it to the site, which sends it on to Databuddy (databuddy.cc); no script of theirs runs in your browser.
 
 To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing either way.
 
