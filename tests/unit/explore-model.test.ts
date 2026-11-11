@@ -948,9 +948,9 @@ describe("a held claim's other end, on an entity's page", () => {
     // So Approve all leaves both out, as on the document's page; without
     // that read it would send both, and the engine would refuse both.
     expect(approvable(marked, [], () => false)).toEqual([]);
-    expect(approvable(markDiffering(page.reviews), [], () => false)).toHaveLength(
-      2,
-    );
+    expect(
+      approvable(markDiffering(page.reviews), [], () => false),
+    ).toHaveLength(2);
   });
 
   it("reads only the load's reviews of such links, and nothing with no held claim", () => {

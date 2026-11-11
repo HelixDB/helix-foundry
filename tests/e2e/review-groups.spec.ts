@@ -232,9 +232,7 @@ test("leaves claims held for a name out of Approve all, on the page of their oth
   );
   // Its way to the name's review leads to the document, at the name.
   await globex.getByRole("link", { name: "Review that name" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`${doc}\\?tab=review.*#s\\d+-\\d+$`),
-  );
+  await expect(page).toHaveURL(new RegExp(`${doc}\\?tab=review.*#s\\d+-\\d+$`));
   await expect(
     reviews(page).getByRole("list", { name: "Linked by part of a name" }),
   ).toContainText("Linked to:");

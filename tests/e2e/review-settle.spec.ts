@@ -889,7 +889,11 @@ test("keeps a link by part of a name, and the next load holds it as a person's",
 // which only a later load reads: the card says so before and after, and
 // leads to the name's own review, at the name.
 for (const [linked, how, title] of [
-  ["part_name", "linked only by part of a row’s name", "Linked by part of a name"],
+  [
+    "part_name",
+    "linked only by part of a row’s name",
+    "Linked by part of a name",
+  ],
   [
     "own_name",
     "linked only by a code the document calls it by",
@@ -920,9 +924,7 @@ for (const [linked, how, title] of [
     await expect(held.getByRole("status")).toContainText(
       `Approved, and this load kept it held. “Globex Corporation” is ${how}, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.`,
     );
-    await expect(held.getByRole("status")).not.toContainText(
-      "holds one value",
-    );
+    await expect(held.getByRole("status")).not.toContainText("holds one value");
     // Saved, it offers no approval this load would refuse again.
     await expect(
       held.getByRole("button", { name: "Approve", exact: true }),

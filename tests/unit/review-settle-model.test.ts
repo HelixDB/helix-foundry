@@ -875,9 +875,7 @@ describe("why a load kept an approved claim held", () => {
     expect(model.refusalText("legal_form")).toMatch(/^A name in it is linked/);
   });
   it("says a name linked by part of a name, or by an own-name identifier, is settled first", () => {
-    expect(
-      model.refusalText("part_name", [end("Westmere", "part_name")]),
-    ).toBe(
+    expect(model.refusalText("part_name", [end("Westmere", "part_name")])).toBe(
       "“Westmere” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
     );
     expect(
@@ -903,10 +901,7 @@ describe("why a load kept an approved claim held", () => {
       /^“Westmere” is linked only by part/,
     );
     expect(
-      model.refusalText("part_name", [
-        westmere,
-        end("Tarnwick", "part_name"),
-      ]),
+      model.refusalText("part_name", [westmere, end("Tarnwick", "part_name")]),
     ).toBe(
       "“Westmere” and “Tarnwick” are each linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle those names, and the next load writes this.",
     );

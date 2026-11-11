@@ -455,7 +455,11 @@ export async function statementHash(
 }
 
 /** A review as markDiffering reads it: what settles it, its reason and its place. */
-type Placed = Settleable & { reason?: string; section?: number; start?: number };
+type Placed = Settleable & {
+  reason?: string;
+  section?: number;
+  start?: number;
+};
 
 /**
  * Marks the held claims of `reviews` whose approval the engine would refuse or

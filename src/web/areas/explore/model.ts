@@ -907,7 +907,15 @@ export function nameLinksRequest(
             values: { param: "weak_links" },
           },
         }),
-        ["doc_id", "section", "start", "reason", "review_key", "type", "norm_name"],
+        [
+          "doc_id",
+          "section",
+          "start",
+          "reason",
+          "review_key",
+          "type",
+          "norm_name",
+        ],
       ),
     })),
     {
