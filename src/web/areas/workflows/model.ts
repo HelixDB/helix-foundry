@@ -279,3 +279,137 @@ export function workflowPrompt(p: {
     "Start a new run for each request; never reuse a finished run.",
   ].join("\n");
 }
+
+/** The engine's verdicts on a run, in the order they are listed. */
+export const VERDICTS = [
+  "essential",
+  "helpful",
+  "marginal",
+  "unused",
+  "misleading",
+] as const;
+export type Verdict = (typeof VERDICTS)[number];
+
+/** How a verdict reads, with the tone of its tag. */
+export const VERDICT_LABELS: Record<
+  Verdict,
+  { label: string; tone: "success" | "info" | "neutral" | "warning" | "danger" }
+> = {
+  essential: { label: "Essential", tone: "success" },
+  helpful: { label: "Helpful", tone: "info" },
+  marginal: { label: "Marginal", tone: "neutral" },
+  unused: { label: "Unused", tone: "warning" },
+  misleading: { label: "Misleading", tone: "danger" },
+};
+
+const SUPPORTS = ["supported", "unsupported", "contradicted"] as const;
+const GAP_KINDS = {
+  missing_type: "Missing type",
+  missing_link: "Missing link",
+  missing_property: "Missing property",
+  missing_data: "Missing data",
+  wrong_data: "Wrong data",
+  other: "Other",
+} as const;
+
+/** A run's assessment, as the page shows it. */
+export type Assessment = {
+  verdict: Verdict;
+  summary: string;
+  claims: {
+    text: string;
+    support: (typeof SUPPORTS)[number];
+    calls: number[];
+  }[];
+  gaps: { kind: string; label: string; what: string; calls: number[] }[];
+  suggestions: string[];
+};
+
+const isVerdict = (v: unknown): v is Verdict =>
+  typeof v === "string" && (VERDICTS as readonly string[]).includes(v);
+
+const callsOf = (v: unknown): number[] =>
+  Array.isArray(v)
+    ? v.filter((n): n is number => Number.isInteger(n) && n > 0)
+    : [];
+
+/**
+ * The engine's Assessment (assess_result.json `$defs/Assessment`), read
+ * without trust: null unless it has a verdict the contract names; claims and
+ * gaps without their text, and suggestions that aren't text, are left out.
+ *
+ *   assessmentOf('{"verdict":"helpful","summary":"s","claims":[],"gaps":[],"suggestions":["Add x."]}')
+ *   // { verdict: "helpful", summary: "s", claims: [], gaps: [], suggestions: ["Add x."] }
+ */
+export function assessmentOf(json: string | undefined): Assessment | null {
+  const a = parse(json);
+  if (!isObject(a) || !isVerdict(a.verdict)) return null;
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter(isObject) : []);
+  return {
+    verdict: a.verdict,
+    summary: typeof a.summary === "string" ? a.summary : "",
+    claims: list(a.claims).flatMap((c) =>
+      typeof c.text === "string" && c.text.trim()
+        ? [
+            {
+              text: c.text,
+              support: (SUPPORTS as readonly unknown[]).includes(c.support)
+                ? (c.support as (typeof SUPPORTS)[number])
+                : "unsupported",
+              calls: callsOf(c.calls),
+            },
+          ]
+        : [],
+    ),
+    gaps: list(a.gaps).flatMap((g) =>
+      typeof g.what === "string" && g.what.trim()
+        ? [
+            {
+              kind: typeof g.kind === "string" ? g.kind : "other",
+              label:
+                GAP_KINDS[g.kind as keyof typeof GAP_KINDS] ?? GAP_KINDS.other,
+              what: g.what,
+              calls: callsOf(g.calls),
+            },
+          ]
+        : [],
+    ),
+    suggestions: Array.isArray(a.suggestions)
+      ? a.suggestions.filter(
+          (s): s is string => typeof s === "string" && !!s.trim(),
+        )
+      : [],
+  };
+}
+
+/**
+ * A workflow's verdicts in words, the most first by the verdicts' order.
+ *
+ *   verdictsText([{ verdict: "helpful", runs: "3" }, { verdict: "unused", runs: "1" }])
+ *   // "3 helpful · 1 unused"
+ */
+export function verdictsText(
+  counts: { verdict: string; runs?: string }[] | undefined,
+): string {
+  return VERDICTS.flatMap((v) => {
+    const n = Number(counts?.find((c) => c.verdict === v)?.runs || 0);
+    return n > 0 ? [`${formatCount(n)} ${v}`] : [];
+  }).join(" · ");
+}
+
+const formatCount = (n: number) => n.toLocaleString("en-US");
+
+/**
+ * The goal a draft takes to act on a suggestion: the suggestion, then why,
+ * the run's gaps, within the goal's cap.
+ */
+export function suggestionGoal(
+  suggestion: string,
+  gaps: Assessment["gaps"],
+  max: number,
+): string {
+  const why = gaps.length
+    ? `\n\nAn agent's run lacked: ${gaps.map((g) => `${g.label.toLowerCase()}: ${g.what}`).join("; ")}.`
+    : "";
+  return [...(suggestion + why)].slice(0, max).join("");
+}

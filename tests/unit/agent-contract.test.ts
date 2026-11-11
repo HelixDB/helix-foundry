@@ -15,8 +15,8 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the vendored agent contract", () => {
-  it("is 4.14.0, the engine where a person's approval outranks commit order", () => {
-    expect(AGENT_CONTRACT_VERSION).toBe("4.14.0 sha256:c117af1a21583601");
+  it("is 4.15.0, the engine that assesses a workflow run", () => {
+    expect(AGENT_CONTRACT_VERSION).toBe("4.15.0 sha256:0000000000000000");
   });
 
   it("checks a value against a schema or one of its definitions", () => {

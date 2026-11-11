@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AssessResult",
+  "description": "What an assessment came to, and what it cost.",
+  "type": "object",
+  "properties": {
+    "outcome": {
+      "description": "The assessment, or how the call failed.",
+      "$ref": "#/$defs/AssessOutcome"
+    },
+    "usage": {
+      "description": "What the call spent, at the model's price.",
+      "$ref": "#/$defs/Usage"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "outcome",
+    "usage"
+  ],
+  "$defs": {
+    "AssessOutcome": {
+      "description": "What an assessment came to.",
+      "oneOf": [
+        {
+          "description": "The model assessed the run.",
+          "type": "object",
+          "properties": {
+            "assessed": {
+              "type": "object",
+              "properties": {
+                "assessment": {
+                  "description": "Its assessment.",
+                  "$ref": "#/$defs/Assessment"
+                },
+                "left_out": {
+                  "description": "The calls whose results were left out to fit the model's context ([`fit`]).",
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "assessment"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "assessed"
+          ]
+        },
+        {
+          "description": "The call failed.",
+          "type": "object",
+          "properties": {
+            "failed": {
+              "type": "object",
+              "properties": {
+                "failure": {
+                  "description": "How.",
+                  "$ref": "#/$defs/ModelFailure"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "failure"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "failed"
+          ]
+        }
+      ]
+    },
+    "Assessment": {
+      "description": "A run's assessment.",
+      "type": "object",
+      "properties": {
+        "claims": {
+          "description": "The answer's statements, the most important first, at most [`MAX_CLAIMS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Claim"
+          }
+        },
+        "gaps": {
+          "description": "What the ontology lacked, at most [`MAX_GAPS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Gap"
+          }
+        },
+        "suggestions": {
+          "description": "Changes that would close the gaps, at most [`MAX_SUGGESTIONS`].",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "summary": {
+          "description": "What the ontology gave the agent, and what it lacked, for a person.",
+          "type": "string"
+        },
+        "verdict": {
+          "description": "How much what the agent read made its answer.",
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "verdict",
+        "summary",
+        "claims",
+        "gaps",
+        "suggestions"
+      ]
+    },
+    "Claim": {
+      "description": "One of the answer's statements and the calls that bear on it.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "description": "The calls that bear on it, by `seq`.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "support": {
+          "description": "Whether the calls bear it out.",
+          "$ref": "#/$defs/Support"
+        },
+        "text": {
+          "description": "The statement.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "support",
+        "calls"
+      ]
+    },
+    "Gap": {
+      "description": "What the ontology lacked for the request.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "description": "The calls that show it, by `seq`.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "kind": {
+          "description": "Its kind.",
+          "$ref": "#/$defs/GapKind"
+        },
+        "what": {
+          "description": "What was missing or wrong, named as the ontology would.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "what",
+        "calls"
+      ]
+    },
+    "GapKind": {
+      "description": "What kind of thing the ontology lacked.",
+      "oneOf": [
+        {
+          "description": "A type it has none of.",
+          "type": "string",
+          "const": "missing_type"
+        },
+        {
+          "description": "A relationship it has no link for.",
+          "type": "string",
+          "const": "missing_link"
+        },
+        {
+          "description": "A property a type lacks.",
+          "type": "string",
+          "const": "missing_property"
+        },
+        {
+          "description": "Data its types should hold but didn't return.",
+          "type": "string",
+          "const": "missing_data"
+        },
+        {
+          "description": "Data that came back wrong.",
+          "type": "string",
+          "const": "wrong_data"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "ModelFailure": {
+      "description": "Why a model call failed for good, as the contract's model failures name it.",
+      "oneOf": [
+        {
+          "description": "The model declined the request.",
+          "type": "string",
+          "const": "refused"
+        },
+        {
+          "description": "The provider was unavailable, overloaded or broke off, retries included.",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "description": "The provider refused the API key.",
+          "type": "string",
+          "const": "auth"
+        },
+        {
+          "description": "The key may not use the model.",
+          "type": "string",
+          "const": "permission"
+        },
+        {
+          "description": "The provider has no such model.",
+          "type": "string",
+          "const": "not_found"
+        },
+        {
+          "description": "The provider kept limiting the rate of calls, retries included.",
+          "type": "string",
+          "const": "rate_limited"
+        },
+        {
+          "description": "The account is out of credit or quota.",
+          "type": "string",
+          "const": "quota"
+        },
+        {
+          "description": "The request is too long for the model.",
+          "type": "string",
+          "const": "context_too_long"
+        },
+        {
+          "description": "The model or endpoint can't do what the request asks (tool calls, structured answers),\nor refused it as invalid.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "The answer hit the output limit.",
+          "type": "string",
+          "const": "truncated"
+        },
+        {
+          "description": "The answer couldn't be read: not the JSON asked for, or a stream that broke its\nprotocol.",
+          "type": "string",
+          "const": "malformed"
+        },
+        {
+          "description": "The call ran out of time.",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The model's weights changed since it was tested.",
+          "type": "string",
+          "const": "model_changed"
+        },
+        {
+          "description": "The endpoint resolves to a private address.",
+          "type": "string",
+          "const": "private_host"
+        }
+      ]
+    },
+    "Support": {
+      "description": "Whether what the calls returned bears out one of the answer's statements.",
+      "oneOf": [
+        {
+          "description": "A call's result states it.",
+          "type": "string",
+          "const": "supported"
+        },
+        {
+          "description": "No call's result bears on it.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "A call's result says otherwise.",
+          "type": "string",
+          "const": "contradicted"
+        }
+      ]
+    },
+    "Usage": {
+      "description": "What a turn spent.",
+      "type": "object",
+      "properties": {
+        "cache_read": {
+          "description": "Input tokens read from the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cache_write": {
+          "description": "Input tokens written to the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input": {
+          "description": "Uncached input tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "description": "Output tokens.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "usd": {
+          "description": "The cost, in US dollars.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "usd"
+      ]
+    },
+    "Verdict": {
+      "description": "How much what the agent read of the ontology made its answer.",
+      "oneOf": [
+        {
+          "description": "The answer rests on what the calls returned.",
+          "type": "string",
+          "const": "essential"
+        },
+        {
+          "description": "The calls supported a real part of it.",
+          "type": "string",
+          "const": "helpful"
+        },
+        {
+          "description": "They added little.",
+          "type": "string",
+          "const": "marginal"
+        },
+        {
+          "description": "No call, or nothing they returned is in the answer.",
+          "type": "string",
+          "const": "unused"
+        },
+        {
+          "description": "Something they returned led the answer wrong.",
+          "type": "string",
+          "const": "misleading"
+        }
+      ]
+    }
+  }
+}

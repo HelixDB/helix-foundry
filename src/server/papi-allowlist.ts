@@ -515,6 +515,11 @@ export const papiRoutes = [
     method: "GET",
     path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}/accesses",
   },
+  {
+    area: "ontology",
+    method: "POST",
+    path: "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:assess",
+  },
 
   // Databases: the workspace's projects and their databases (tenants), and
   // creating either, as helix-website does, to bind an ontology to one. The

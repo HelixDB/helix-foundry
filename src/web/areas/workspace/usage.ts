@@ -52,6 +52,12 @@ const TASKS: readonly {
     hint: "Answering questions in the Analyst",
     within: false,
   },
+  {
+    task: "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS",
+    label: "Run assessments",
+    hint: "Assessing how much your ontologies helped your workflows’ runs",
+    within: false,
+  },
 ];
 
 /** From this share of a cap on, its bar warns. */

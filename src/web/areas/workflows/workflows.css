@@ -60,3 +60,29 @@
   padding: 0;
   list-style: none;
 }
+
+/* A run's assessment: its summary, claims, gaps and suggestions. */
+.wf-assessment {
+  display: grid;
+  gap: var(--hf-space-15);
+}
+.wf-assessment p {
+  margin: 0;
+}
+.wf-assessment h4 {
+  margin: 0 0 var(--hf-space-05);
+  font-size: var(--hf-text-sm);
+  color: var(--hf-muted);
+}
+.wf-assessment ul {
+  display: grid;
+  gap: var(--hf-space-05);
+  margin: 0;
+  padding-left: 1.2em;
+}
+/* The calls a claim or gap cites, linking to them above. */
+.wf-calls {
+  display: inline-flex;
+  gap: var(--hf-space-05);
+  font-size: var(--hf-text-sm);
+}

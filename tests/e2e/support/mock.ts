@@ -170,6 +170,11 @@ export const mock = {
     healDismiss?: "superseded" | "fails";
     // The current load's complete audit didn't check its rows.
     healRowsMeasured?: boolean;
+    // Workflow runs' assessments: off (finishing queues none), how long one
+    // runs, and one the model refuses or the month's budget skips.
+    assessEnabled?: boolean;
+    assessMs?: number;
+    assessOutcome?: "fail" | "skip";
   }) =>
     fetch(`${MOCK}/__mock/config`, {
       method: "POST",

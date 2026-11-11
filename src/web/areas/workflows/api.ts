@@ -1,5 +1,6 @@
 import type {
   CreateFoundryWorkflowRequest,
+  FoundryWorkflowRun,
   FoundryWorkflowResponse,
   FoundryWorkflowRunResponse,
   ListFoundryWorkflowRunAccessesResponse,
@@ -23,6 +24,11 @@ export const OPEN_RUN_POLL_MS = 3000;
 export const RUNS_POLL_MS = 10_000;
 
 const isOpen = (r?: { status?: string }) => r?.status === "open";
+// A run is live while it records, or while its assessment runs.
+const isLive = (r?: FoundryWorkflowRun) =>
+  isOpen(r) ||
+  r?.assessment?.status === "queued" ||
+  r?.assessment?.status === "running";
 
 export const workflowQueries = {
   list: (ws: string, o: string) => ({
@@ -39,14 +45,14 @@ export const workflowQueries = {
     queryFn: () => api<ListFoundryWorkflowRunsResponse>(runs(ws, o, w)),
     refetchInterval: (q: {
       state: { data?: ListFoundryWorkflowRunsResponse };
-    }) => (q.state.data?.runs?.some(isOpen) ? OPEN_RUN_POLL_MS : RUNS_POLL_MS),
+    }) => (q.state.data?.runs?.some(isLive) ? OPEN_RUN_POLL_MS : RUNS_POLL_MS),
   }),
   run: (ws: string, o: string, w: string, r: string) => ({
     queryKey: [ws, "ontology", o, "workflows", w, "runs", r],
     queryFn: () =>
       api<FoundryWorkflowRunResponse>(`${runs(ws, o, w)}/${enc(r)}`),
     refetchInterval: (q: { state: { data?: FoundryWorkflowRunResponse } }) =>
-      isOpen(q.state.data?.run) ? OPEN_RUN_POLL_MS : false,
+      isLive(q.state.data?.run) ? OPEN_RUN_POLL_MS : false,
   }),
   // Every call a run recorded, a page of 100 at a time.
   accesses: (ws: string, o: string, w: string, r: string) => ({
@@ -75,3 +81,7 @@ export const createWorkflow = (
 
 export const deleteWorkflow = (ws: string, o: string, w: string) =>
   api<object>(`${base(ws, o)}/${enc(w)}`, undefined, "DELETE");
+
+// Queues a finished run's assessment again (owners and admins).
+export const assessRun = (ws: string, o: string, w: string, r: string) =>
+  api<FoundryWorkflowRunResponse>(`${runs(ws, o, w)}/${enc(r)}:assess`, {});

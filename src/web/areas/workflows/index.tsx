@@ -10,8 +10,12 @@ import "./workflows.css";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Plus, Trash2, Workflow } from "lucide-react";
-import type { FoundryWorkflow, FoundryWorkflowRun } from "../../../shared/wfe";
+import { Copy, Plus, RefreshCw, Trash2, Workflow } from "lucide-react";
+import type {
+  FoundryWorkflow,
+  FoundryWorkflowAssessment,
+  FoundryWorkflowRun,
+} from "../../../shared/wfe";
 import { trackEvent } from "../../analytics";
 import {
   Button,
@@ -34,22 +38,29 @@ import {
 import { paths } from "../../paths";
 import { RefreshFailed, canManage, useWorkspace } from "../../ui";
 import { MCP_URL } from "../ontology/agent-setup";
+import { MAX_GOAL } from "../ontology/model";
 import { ontologyName, useOntology } from "../ontology/scope";
 import {
   OPEN_RUN_POLL_MS,
+  assessRun,
   createWorkflow,
   deleteWorkflow,
   workflowQueries,
 } from "./api";
 import {
+  VERDICT_LABELS,
   accessTitle,
   accessView,
+  assessmentOf,
   countsText,
   preview,
   readText,
   runDuration,
+  suggestionGoal,
+  verdictsText,
   workflowPrompt,
   type AccessView,
+  type Verdict,
 } from "./model";
 
 function useCrumbs(): Crumb[] {
@@ -68,6 +79,22 @@ function useCopy() {
       .writeText(text)
       .then(() => notify(`Copied the ${what}.`))
       .catch(() => notify(`Couldn’t copy the ${what}.`, true));
+}
+
+// A run's assessment in a cell: its verdict once done, else where it stands.
+function AssessmentCell({ a }: { a?: FoundryWorkflowAssessment }) {
+  if (!a) return <span className="on-muted">—</span>;
+  if (a.status === "done" && a.verdict && a.verdict in VERDICT_LABELS) {
+    const v = VERDICT_LABELS[a.verdict as Verdict];
+    return <Tag tone={v.tone}>{v.label}</Tag>;
+  }
+  const words: Record<string, string> = {
+    queued: "Assessing…",
+    running: "Assessing…",
+    failed: "Not assessed",
+    skipped: "Not assessed",
+  };
+  return <span className="on-muted">{words[a.status] || "—"}</span>;
 }
 
 const runStatus = (r: FoundryWorkflowRun) =>
@@ -388,7 +415,15 @@ export function WorkflowPage() {
           />
           <pre className="on-code wf-prompt">{prompt}</pre>
         </Panel>
-        <Panel title="Runs" subtitle="The newest first." padded={false}>
+        <Panel
+          title="Runs"
+          subtitle={
+            verdictsText(w.verdicts)
+              ? `Assessed: ${verdictsText(w.verdicts)}. The newest first.`
+              : "The newest first."
+          }
+          padded={false}
+        >
           <RefreshFailed query={runs} />
           {runs.isPending ? (
             <div className="on-pad">
@@ -429,6 +464,12 @@ export function WorkflowPage() {
                   label: "Status",
                   width: 120,
                   render: runStatus,
+                },
+                {
+                  key: "assessment",
+                  label: "Ontology",
+                  width: 140,
+                  render: (r) => <AssessmentCell a={r.assessment} />,
                 },
                 {
                   key: "counts",
@@ -604,6 +645,7 @@ export function WorkflowRunPage() {
             </p>
           )}
         </Panel>
+        {r.assessment && <AssessmentPanel run={r} workflowId={workflowId} />}
       </div>
     </Page>
   );
@@ -612,7 +654,11 @@ export function WorkflowRunPage() {
 function AccessItem({ view: v }: { view: AccessView }) {
   const { id: o } = useOntology();
   return (
-    <article className="wf-access" aria-label={`${v.seq}. ${accessTitle(v)}`}>
+    <article
+      className="wf-access"
+      id={`call-${v.seq}`}
+      aria-label={`${v.seq}. ${accessTitle(v)}`}
+    >
       <header>
         <span className="wf-seq">{v.seq}</span>
         <strong>{accessTitle(v)}</strong>
@@ -678,4 +724,154 @@ function pretty(json: string): string {
   } catch {
     return json;
   }
+}
+
+// What the assessment of a finished run says: how much the ontology helped,
+// which of the answer's claims the calls bear out, what the ontology lacked,
+// and changes to draft. An owner or admin asks for it again.
+function AssessmentPanel({
+  run: r,
+  workflowId,
+}: {
+  run: FoundryWorkflowRun;
+  workflowId: string;
+}) {
+  const { id: ws, role } = useWorkspace(),
+    { id: o } = useOntology(),
+    qc = useQueryClient();
+  const [pending, setPending] = useState(false),
+    [error, setError] = useState("");
+  const a = r.assessment!;
+  const assessment =
+    a.status === "done" ? assessmentOf(a.assessmentJson) : null;
+  const live = a.status === "queued" || a.status === "running";
+  const again = canManage(role) && !live && (
+    <Button
+      size="sm"
+      icon={RefreshCw}
+      pending={pending}
+      onClick={async () => {
+        setPending(true);
+        setError("");
+        try {
+          const done = await assessRun(ws, o, workflowId, r.id);
+          qc.setQueryData(
+            workflowQueries.run(ws, o, workflowId, r.id).queryKey,
+            done,
+          );
+        } catch (err) {
+          setError((err as Error).message);
+        } finally {
+          setPending(false);
+        }
+      }}
+    >
+      Assess again
+    </Button>
+  );
+  const calls = (seqs: number[]) =>
+    seqs.length > 0 && (
+      <span className="wf-calls">
+        {seqs.map((seq) => (
+          <a key={seq} href={`#call-${seq}`}>
+            #{seq}
+          </a>
+        ))}
+      </span>
+    );
+  const verdict = assessment && VERDICT_LABELS[assessment.verdict];
+  return (
+    <Panel
+      title="How much the ontology helped"
+      subtitle={
+        verdict ? <Tag tone={verdict.tone}>{verdict.label}</Tag> : undefined
+      }
+      actions={again}
+    >
+      {error && (
+        <p role="alert" className="on-error-text">
+          {error}
+        </p>
+      )}
+      {live ? (
+        <p className="on-muted" role="status">
+          Assessing the run: comparing its answer with what it read.
+        </p>
+      ) : !assessment ? (
+        <p className="on-muted">
+          {a.error || "The assessment couldn’t be read."}
+        </p>
+      ) : (
+        <div className="wf-assessment">
+          {assessment.summary && <p>{assessment.summary}</p>}
+          {!!assessment.claims.length && (
+            <section aria-label="Claims">
+              <h4>The answer’s claims</h4>
+              <ul>
+                {assessment.claims.map((c, i) => (
+                  <li key={i}>
+                    <Tag
+                      tone={
+                        c.support === "supported"
+                          ? "success"
+                          : c.support === "contradicted"
+                            ? "danger"
+                            : "warning"
+                      }
+                    >
+                      {c.support === "supported"
+                        ? "Supported"
+                        : c.support === "contradicted"
+                          ? "Contradicted"
+                          : "Unsupported"}
+                    </Tag>{" "}
+                    {c.text} {calls(c.calls)}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {!!assessment.gaps.length && (
+            <section aria-label="Gaps">
+              <h4>What the ontology lacked</h4>
+              <ul>
+                {assessment.gaps.map((g, i) => (
+                  <li key={i}>
+                    <Tag>{g.label}</Tag> {g.what} {calls(g.calls)}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {!!assessment.suggestions.length && (
+            <section aria-label="Suggestions">
+              <h4>Changes that would help</h4>
+              <ul>
+                {assessment.suggestions.map((s, i) => (
+                  <li key={i}>
+                    {s}{" "}
+                    {canManage(role) && (
+                      <Link
+                        to={paths.generate(o, {
+                          goal: suggestionGoal(s, assessment.gaps, MAX_GOAL),
+                        })}
+                      >
+                        Draft a version with this
+                      </Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {!!a.leftOut?.length && (
+            <p className="on-muted">
+              Left out to fit the model: the results of calls{" "}
+              {a.leftOut.map((n) => `#${n}`).join(", ")}.
+            </p>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
 }

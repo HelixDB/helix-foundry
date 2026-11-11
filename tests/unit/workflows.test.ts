@@ -4,7 +4,11 @@ import { compileTemplate, matchTemplate } from "@/shared/route-template";
 import type { FoundryWorkflowAccess } from "@/shared/wfe";
 import {
   MAX_ENTITIES,
+  VERDICTS,
   accessTitle,
+  assessmentOf,
+  suggestionGoal,
+  verdictsText,
   accessView,
   countsText,
   preview,
@@ -16,11 +20,17 @@ import {
   workflowPrompt,
   type AccessView,
 } from "@/web/areas/workflows/model";
+import { contractErrors } from "../../mock/agent-contract";
 import { ok, type MockReply, type MockRequest } from "../../mock/http";
 import { routes } from "../../mock/routes";
 import { sendPieces } from "../../mock/routes/event-sources";
-import { WORKFLOW_CAPS, tracked } from "../../mock/routes/workflows";
-import { db, resetState } from "../../mock/state";
+import {
+  ASSESSMENT_USD_MICROS,
+  WORKFLOW_CAPS,
+  mockAssessment,
+  tracked,
+} from "../../mock/routes/workflows";
+import { config, db, resetState } from "../../mock/state";
 
 // A run's reads and results are the engine's JSON, read without trust; the
 // mock serves workflows and records a run's calls as the backend does
@@ -565,5 +575,219 @@ describe("the mock's workflows", () => {
       .body;
     expect(first.accesses).toHaveLength(100);
     expect(first.more).toBe(true);
+  });
+});
+
+describe("a run's assessment, read without trust", () => {
+  const full = {
+    verdict: "helpful",
+    summary: "It read Globex's renewal.",
+    claims: [
+      { text: "Globex renews in March.", support: "supported", calls: [1, 2] },
+      { text: " ", support: "supported", calls: [] },
+      { text: "Initech renews too.", support: "maybe", calls: ["x", -1, 3] },
+    ],
+    gaps: [
+      { kind: "missing_property", what: "Customer.renewal_owner", calls: [2] },
+      { kind: "later_kind", what: "Something new", calls: [] },
+      { kind: "other", what: "" },
+    ],
+    suggestions: ["Add renewal_owner to Customer.", "", 7],
+  };
+  it("keeps what the contract names and drops the rest", () => {
+    expect(assessmentOf(JSON.stringify(full))).toEqual({
+      verdict: "helpful",
+      summary: "It read Globex's renewal.",
+      claims: [
+        {
+          text: "Globex renews in March.",
+          support: "supported",
+          calls: [1, 2],
+        },
+        { text: "Initech renews too.", support: "unsupported", calls: [3] },
+      ],
+      gaps: [
+        {
+          kind: "missing_property",
+          label: "Missing property",
+          what: "Customer.renewal_owner",
+          calls: [2],
+        },
+        {
+          kind: "later_kind",
+          label: "Other",
+          what: "Something new",
+          calls: [],
+        },
+      ],
+      suggestions: ["Add renewal_owner to Customer."],
+    });
+    expect(assessmentOf(JSON.stringify({ verdict: "great" }))).toBeNull();
+    expect(assessmentOf("not json")).toBeNull();
+    expect(assessmentOf(undefined)).toBeNull();
+    expect(assessmentOf('{"verdict":"unused"}')).toEqual({
+      verdict: "unused",
+      summary: "",
+      claims: [],
+      gaps: [],
+      suggestions: [],
+    });
+  });
+  it("counts a workflow's verdicts in their order", () => {
+    expect(
+      verdictsText([
+        { verdict: "unused", runs: "1" },
+        { verdict: "essential", runs: "1200" },
+        { verdict: "later", runs: "9" },
+        { verdict: "helpful", runs: "0" },
+      ]),
+    ).toBe("1,200 essential · 1 unused");
+    expect(verdictsText(undefined)).toBe("");
+    expect(VERDICTS).toHaveLength(5);
+  });
+  it("turns a suggestion into a draft's goal within its cap", () => {
+    const a = assessmentOf(JSON.stringify(full))!;
+    expect(suggestionGoal("Add renewal_owner.", a.gaps, 2000)).toBe(
+      "Add renewal_owner.\n\nAn agent's run lacked: missing property: Customer.renewal_owner; other: Something new.",
+    );
+    expect(suggestionGoal("Add renewal_owner.", [], 2000)).toBe(
+      "Add renewal_owner.",
+    );
+    expect([...suggestionGoal("é".repeat(50), a.gaps, 10)]).toHaveLength(10);
+  });
+});
+
+describe("the mock's assessments", () => {
+  const wrapped = (assessment: object) => ({
+    outcome: { assessed: { assessment } },
+    usage: { input: 1, cache_read: 0, cache_write: 0, output: 1, usd: 0.0042 },
+  });
+  it("are the engine's shapes, whatever the run read", () => {
+    const read = (resultJson: string, seq: number): FoundryWorkflowAccess => ({
+      seq,
+      read: { loadId: "l", readsJson: "[]", resultJson },
+    });
+    for (const accesses of [
+      [],
+      [read(JSON.stringify({ results: [{ ok: {} }] }), 1)],
+      [
+        read(
+          JSON.stringify({
+            results: [{ error: { code: "unknown_entity", message: "m" } }],
+          }),
+          1,
+        ),
+      ],
+      [
+        read(JSON.stringify({ results: [{ ok: {} }] }), 1),
+        { seq: 2, question: { loadId: "l", questionId: "q" } },
+      ],
+    ] as FoundryWorkflowAccess[][]) {
+      const assessment = mockAssessment({
+        output: "Globex renews in March. It pays monthly.",
+        accesses,
+      });
+      expect(contractErrors("assess_result", wrapped(assessment))).toEqual([]);
+    }
+    expect(
+      (mockAssessment({ accesses: [] }) as { verdict: string }).verdict,
+    ).toBe("unused");
+  });
+
+  const finishRun = async (input = "Who renews?") => {
+    const wf = (await call("POST", W, { name: "Triage" })).body.workflow.id;
+    const run = (await call("POST", `${W}/${wf}/runs`, { input })).body.run;
+    const done = (
+      await call("POST", `${W}/${wf}/runs/${run.id}:finish`, {
+        output: "Globex renews in March.",
+      })
+    ).body.run;
+    return { wf, run: done };
+  };
+  const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
+
+  it("queue on finish, and end with the mock agent's assessment", async () => {
+    const { wf, run } = await finishRun();
+    expect(run.assessment).toMatchObject({ status: "queued" });
+    later(500);
+    expect(
+      (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment
+        .status,
+    ).toBe("running");
+    later(2000);
+    const done = (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run
+      .assessment;
+    expect(done).toMatchObject({
+      status: "done",
+      verdict: "unused",
+      usdMicros: String(ASSESSMENT_USD_MICROS),
+    });
+    expect(JSON.parse(done.assessmentJson).verdict).toBe("unused");
+    expect((await call("GET", `${W}/${wf}`)).body.workflow.verdicts).toEqual([
+      { verdict: "unused", runs: "1" },
+    ]);
+    const usage = (await call("GET", "/v1/workspaces/ws_acme/foundry/usage"))
+      .body.usage;
+    expect(
+      usage.tasks.find(
+        (t: any) => t.task === "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS",
+      ),
+    ).toMatchObject({
+      spentUsdMicros: String(ASSESSMENT_USD_MICROS),
+      capUsdMicros: "20000000",
+    });
+
+    // Asked for again by a manager, once it ended; spend adds up.
+    expect(
+      (await call("POST", `${W}/${wf}/runs/${run.id}:assess`, {}, "usr_alan"))
+        .status,
+    ).toBe(403);
+    const again = await call("POST", `${W}/${wf}/runs/${run.id}:assess`, {});
+    expect(again.body.run.assessment.status).toBe("queued");
+    expect(
+      (await call("POST", `${W}/${wf}/runs/${run.id}:assess`, {})).status,
+    ).toBe(400);
+    later(2000);
+    expect(
+      (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment
+        .usdMicros,
+    ).toBe(String(2 * ASSESSMENT_USD_MICROS));
+  });
+
+  it("fail, skip, or aren't there, as the knobs say", async () => {
+    Object.assign(config, { assessOutcome: "fail" });
+    let { wf, run } = await finishRun();
+    later(2000);
+    expect(
+      (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment,
+    ).toMatchObject({
+      status: "failed",
+      error: "the model declined to assess this run",
+    });
+    Object.assign(config, { assessOutcome: "skip" });
+    ({ wf, run } = await finishRun("Another?"));
+    later(2000);
+    expect(
+      (await call("GET", `${W}/${wf}/runs/${run.id}`)).body.run.assessment
+        .status,
+    ).toBe("skipped");
+    Object.assign(config, { assessEnabled: false });
+    ({ wf, run } = await finishRun("A third?"));
+    expect(run.assessment).toBeUndefined();
+    expect(
+      (await call("POST", `${W}/${wf}/runs/${run.id}:assess`, {})).status,
+    ).toBe(400);
+  });
+
+  it("aren't asked for of an open run", async () => {
+    const wf = (await call("POST", W, { name: "Triage" })).body.workflow.id;
+    const run = (await call("POST", `${W}/${wf}/runs`, { input: "q" })).body
+      .run;
+    expect(
+      (await call("POST", `${W}/${wf}/runs/${run.id}:assess`, {})).status,
+    ).toBe(400);
+    expect((await call("POST", `${W}/${wf}/runs/nope:assess`, {})).status).toBe(
+      404,
+    );
   });
 });

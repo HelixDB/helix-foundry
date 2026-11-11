@@ -116,8 +116,27 @@ test("an agent's run shows its request, what it read and asked, and its answer",
     },
   );
   expect(finished.status).toBe(200);
-  await expect(page.getByText("Globex renews in March.")).toBeVisible();
+  await expect(
+    page.locator(".wf-text").getByText("Globex renews in March."),
+  ).toBeVisible();
   await expect(page.getByText("Finished")).toBeVisible();
+
+  // Its assessment follows: what it read and asked backs its answer.
+  await expect(page.getByText("How much the ontology helped")).toBeVisible();
+  await expect(page.getByText("Essential", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  const claims = page.getByRole("region", { name: "Claims" });
+  await expect(claims.getByText("Supported")).toBeVisible();
+  await expect(claims.getByRole("link", { name: "#1" })).toHaveAttribute(
+    "href",
+    "#call-1",
+  );
+  await page.getByRole("link", { name: "Renewal desk" }).click();
+  await expect(
+    page.getByText("Assessed: 1 essential.", { exact: false }),
+  ).toBeVisible();
+  await page.goBack();
 
   // Its question opens in Analyst.
   await calls.getByRole("link", { name: "Open it in Analyst" }).click();

@@ -400,7 +400,8 @@ export type FoundryUsageTask =
   | "FOUNDRY_USAGE_TASK_UNSPECIFIED"
   | "FOUNDRY_USAGE_TASK_LOADS"
   | "FOUNDRY_USAGE_TASK_API_SOURCES"
-  | "FOUNDRY_USAGE_TASK_QUESTIONS";
+  | "FOUNDRY_USAGE_TASK_QUESTIONS"
+  | "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS";
 
 /** v1FoundryUsageEntry: one task's month. */
 export type FoundryUsageEntry = {
@@ -2819,6 +2820,36 @@ export type FoundryWorkflow = {
   finishedRuns?: string;
   // When its newest run started; absent before any.
   lastRunAt?: string;
+  // Its runs' assessments that are done, by verdict; a verdict no run has
+  // is absent.
+  verdicts?: FoundryWorkflowVerdictCount[];
+};
+/** v1FoundryWorkflowVerdictCount. */
+export type FoundryWorkflowVerdictCount = {
+  verdict: string;
+  // int64 as a string.
+  runs?: string;
+};
+/**
+ * v1FoundryWorkflowAssessment: a finished run's assessment by the ontology
+ * agent's Assess (contract 4.12.0). `assessmentJson` is the engine's
+ * Assessment (assess_result.json `$defs/Assessment`): parse it without trust
+ * (areas/workflows/model.ts).
+ */
+export type FoundryWorkflowAssessment = {
+  // queued, running, done, failed or skipped (the month's budget spent).
+  status: string;
+  // Once done: essential, helpful, marginal, unused or misleading.
+  verdict?: string;
+  assessmentJson?: string;
+  // The calls whose results were left out to fit the model.
+  leftOut?: number[];
+  // Failed, skipped, or queued for a retry: why, for a person.
+  error?: string;
+  // int64 as a string, in millionths of a US dollar.
+  usdMicros?: string;
+  queuedAt?: string;
+  finishedAt?: string;
 };
 /** v1FoundryWorkflowRunCounts: what a run recorded, at most 1,000 calls. */
 export type FoundryWorkflowRunCounts = {
@@ -2847,6 +2878,8 @@ export type FoundryWorkflowRun = {
   startedAt?: string;
   finishedAt?: string;
   counts?: FoundryWorkflowRunCounts;
+  // Once it finished, where assessments are on.
+  assessment?: FoundryWorkflowAssessment;
 };
 /** v1FoundryWorkflowRead: a read of a load and what it returned. */
 export type FoundryWorkflowRead = {

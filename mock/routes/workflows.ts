@@ -3,6 +3,7 @@ import type {
   FinishFoundryWorkflowRunRequest,
   FoundryWorkflow,
   FoundryWorkflowAccess,
+  FoundryWorkflowAssessment,
   FoundryWorkflowResponse,
   FoundryWorkflowRun,
   FoundryWorkflowRunResponse,
@@ -20,7 +21,7 @@ import {
   type MockRequest,
   type MockRoute,
 } from "../http";
-import { onReset } from "../state";
+import { config, onReset } from "../state";
 import { isScope, ontologyOf } from "./ontologies";
 
 // Workflows, as the backend serves them (api/workflows.go): an agent's task
@@ -31,7 +32,10 @@ import { isScope, ontologyOf } from "./ontologies";
 // to an API source (the /__mock/event-sources stand-in's workflowRunId), with
 // the backend's caps and its once-per-question and once-per-send retries. A
 // grantee gets no workflow route (./access.ts names none) and records
-// nothing. Deleting the ontology leaves its workflows here, unread, as no
+// nothing. Finishing a run queues its assessment, which ends `assessMs` later
+// with the mock agent's assessment (mockAssessment), held to the engine's
+// assess_result.json in the unit tests; an owner or admin asks for one again
+// (:assess). Deleting the ontology leaves its workflows here, unread, as no
 // route reaches them.
 
 const BASE =
@@ -64,7 +68,31 @@ type StoredRun = FoundryWorkflowRun & {
   startedAt: string;
   resultBytes: number;
   accesses: (FoundryWorkflowAccess & { dedupe?: string })[];
+  // Its assessment once it finished, and when a live one ends.
+  assessment?: FoundryWorkflowAssessment & { startsAt: number; endsAt: number };
 };
+
+// Knobs, through POST /__mock/config: `assessEnabled: false` (the
+// deployment's foundry.workflows.assess.enabled off: finishing queues none),
+// `assessMs` (how long an assessment runs, 1500 by default), and
+// `assessOutcome: "fail" | "skip"` (the model refuses, or the month's
+// budget is spent).
+type Knobs = {
+  assessEnabled?: boolean;
+  assessMs?: number;
+  assessOutcome?: "fail" | "skip";
+};
+const knobs = config as typeof config & Knobs;
+onReset(() => {
+  delete knobs.assessEnabled;
+  delete knobs.assessMs;
+  delete knobs.assessOutcome;
+});
+
+/** What one assessment spends in the mock, in millionths of a dollar. */
+export const ASSESSMENT_USD_MICROS = 4200;
+/** The backend's default monthly budget for assessments. */
+export const ASSESSMENTS_CAP_MICROS = 20_000_000;
 
 const state = {
   workflows: [] as StoredWorkflow[],
@@ -77,8 +105,155 @@ onReset(() => {
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
+/**
+ * The engine's Assessment (assess_result.json `$defs/Assessment`) of a run,
+ * as the mock agent writes it from the run's calls: its reads that answered
+ * and its answered questions support the answer's first sentence; a read
+ * that failed, or a question the ontology couldn't answer, is a gap, with a
+ * suggestion to close it. No call is unused.
+ */
+export function mockAssessment(r: {
+  output?: string;
+  accesses: FoundryWorkflowAccess[];
+}): object {
+  const sentence =
+    (r.output || "")
+      .split(/(?<=[.!?])\s/)[0]
+      ?.trim()
+      .slice(0, 500) || "The answer";
+  const answered: number[] = [],
+    missing: number[] = [];
+  for (const a of r.accesses) {
+    if (a.read) {
+      const results =
+        (JSON.parse(a.read.resultJson || "{}") as { results?: object[] })
+          .results || [];
+      if (results.some((x) => "ok" in x)) answered.push(a.seq);
+      if (results.some((x) => "error" in x)) missing.push(a.seq);
+    } else if (a.question) answered.push(a.seq);
+  }
+  if (!r.accesses.length)
+    return {
+      verdict: "unused",
+      summary:
+        "The agent made no call to the ontology, so nothing in its answer came from it.",
+      claims: [{ text: sentence, support: "unsupported", calls: [] }],
+      gaps: [],
+      suggestions: [],
+    };
+  return {
+    verdict:
+      answered.length > 1
+        ? "essential"
+        : answered.length
+          ? "helpful"
+          : "marginal",
+    summary: answered.length
+      ? "What the agent read of the ontology backs its answer."
+      : "The agent read the ontology, but what it read doesn't bear on its answer.",
+    claims: [
+      {
+        text: sentence,
+        support: answered.length ? "supported" : "unsupported",
+        calls: answered,
+      },
+    ],
+    gaps: missing.length
+      ? [
+          {
+            kind: "missing_data",
+            what: "An entity the agent read for isn't in the load",
+            calls: missing,
+          },
+        ]
+      : [],
+    suggestions: missing.length
+      ? ["Load the source that holds the entities the agent looked for."]
+      : [],
+  };
+}
+
+/** Ends a live assessment whose time has come, as the worker would. */
+function settle(r: StoredRun) {
+  const a = r.assessment;
+  if (!a || (a.status !== "queued" && a.status !== "running")) return;
+  if (Date.now() < a.endsAt) {
+    // A worker claims it a third of the way in.
+    a.status = Date.now() >= a.startsAt ? "running" : "queued";
+    return;
+  }
+  const finishedAt = now();
+  if (knobs.assessOutcome === "skip") {
+    Object.assign(a, {
+      status: "skipped",
+      error:
+        "this workspace's $20.00 of run assessments for the month is spent",
+      finishedAt,
+    });
+    return;
+  }
+  if (knobs.assessOutcome === "fail") {
+    Object.assign(a, {
+      status: "failed",
+      error: "the model declined to assess this run",
+      finishedAt,
+      usdMicros: String(Number(a.usdMicros || 0) + 100),
+    });
+    return;
+  }
+  const assessment = mockAssessment(r) as { verdict: string };
+  Object.assign(a, {
+    status: "done",
+    verdict: assessment.verdict,
+    assessmentJson: JSON.stringify(assessment),
+    leftOut: r.accesses.filter((x) => x.read?.resultOmitted).map((x) => x.seq),
+    error: "",
+    finishedAt,
+    usdMicros: String(Number(a.usdMicros || 0) + ASSESSMENT_USD_MICROS),
+  });
+}
+
+/** Queues r's assessment, as finishing it or asking again does. */
+function queueAssessment(r: StoredRun) {
+  const ms = knobs.assessMs ?? 1500;
+  r.assessment = {
+    status: "queued",
+    queuedAt: now(),
+    usdMicros: r.assessment?.usdMicros || "0",
+    startsAt: Date.now() + ms / 3,
+    endsAt: Date.now() + ms,
+  };
+}
+
+/** What a workspace's assessments charged this month. */
+export function assessmentSpend(workspaceId: string): number {
+  const at = new Date(),
+    month = new Date(
+      Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1),
+    ).toISOString();
+  return state.runs
+    .filter(
+      (r) =>
+        r.workspaceId === workspaceId &&
+        (r.assessment?.finishedAt || "") >= month,
+    )
+    .reduce((n, r) => n + Number(r.assessment?.usdMicros || 0), 0);
+}
+
 function toWorkflow(w: StoredWorkflow): FoundryWorkflow {
   const runs = state.runs.filter((r) => r.workflowId === w.id);
+  runs.forEach(settle);
+  const verdicts = ["essential", "helpful", "marginal", "unused", "misleading"]
+    .map((verdict) => ({
+      verdict,
+      runs: String(
+        runs.filter(
+          (r) =>
+            r.assessment?.status === "done" && r.assessment.verdict === verdict,
+        ).length,
+      ),
+    }))
+    .filter((v) => v.runs !== "0");
   const last = runs
     .map((r) => r.startedAt)
     .sort()
@@ -93,12 +268,16 @@ function toWorkflow(w: StoredWorkflow): FoundryWorkflow {
     runs: String(runs.length),
     finishedRuns: String(runs.filter((r) => r.status === "finished").length),
     ...(last && { lastRunAt: last }),
+    ...(verdicts.length && { verdicts }),
   };
 }
 
 function toRun(r: StoredRun): FoundryWorkflowRun {
+  settle(r);
   const count = (k: keyof FoundryWorkflowAccess) =>
     r.accesses.filter((a) => a[k]).length;
+  const assessment =
+    r.assessment && (({ startsAt: _, endsAt: __, ...a }) => a)(r.assessment);
   return {
     id: r.id,
     workflowId: r.workflowId,
@@ -120,6 +299,7 @@ function toRun(r: StoredRun): FoundryWorkflowRun {
       ),
       resultsOmitted: r.accesses.filter((a) => a.read?.resultOmitted).length,
     },
+    ...(assessment && { assessment }),
   };
 }
 
@@ -476,6 +656,32 @@ export const workflowRoutes: MockRoute[] = [
         output,
         finishedAt: now(),
       });
+      if (knobs.assessEnabled !== false) queueAssessment(r);
+      return ok({ run: toRun(r) } satisfies FoundryWorkflowRunResponse);
+    },
+  },
+  {
+    method: "POST",
+    path: `${BASE}/{workflowId}/runs/{id}:assess`,
+    handle: (req) => {
+      if (knobs.assessEnabled === false)
+        return fail("FAILED_PRECONDITION", "run assessments are off here");
+      const s = ontologyOf(req, true);
+      if (!isScope(s)) return s;
+      const r = runOf(s.o.id, req.params.workflowId, req.params.id);
+      if (isReplyOf(r)) return r;
+      settle(r);
+      if (r.status !== "finished")
+        return fail(
+          "FAILED_PRECONDITION",
+          "the run is still open: it is assessed once it finishes",
+        );
+      if (
+        r.assessment?.status === "queued" ||
+        r.assessment?.status === "running"
+      )
+        return fail("FAILED_PRECONDITION", "the run is being assessed already");
+      queueAssessment(r);
       return ok({ run: toRun(r) } satisfies FoundryWorkflowRunResponse);
     },
   },
