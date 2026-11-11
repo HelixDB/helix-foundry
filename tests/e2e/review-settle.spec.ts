@@ -764,7 +764,7 @@ test("hides Approve from a member", async ({ page }) => {
 test("links an adjudicated mention to its review and undoes the link on reload", async ({
   page,
 }) => {
-  await mock.configure({ documentAdjudicated: true });
+  await mock.configure({ documentLinked: "adjudicated" });
   await setup(page);
   const doc = await openDocument(page);
   await page.getByRole("tab", { name: /^Entities/ }).click();
@@ -790,7 +790,7 @@ test("links an adjudicated mention to its review and undoes the link on reload",
 test("links a mention by legal form to its review and undoes the link on reload", async ({
   page,
 }) => {
-  await mock.configure({ documentLegalForm: true });
+  await mock.configure({ documentLinked: "legal_form" });
   await setup(page);
   const doc = await openDocument(page);
   await page.getByRole("tab", { name: /^Entities/ }).click();
@@ -800,7 +800,9 @@ test("links a mention by legal form to its review and undoes the link on reload"
     page.getByRole("tab", { name: /^Needs review/ }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(reviews(page)).toContainText("Linked by its legal form");
-  await expect(reviews(page)).toContainText("Suggestions only:");
+  // The row is one the load linked, not a suggestion.
+  await expect(reviews(page)).toContainText("Linked to:");
+  await expect(reviews(page)).not.toContainText("Suggestions only:");
   await expect(reviews(page)).toContainText("for the name “");
   await expect(reviews(page)).not.toContainText("couldn’t confirm");
   await page.getByRole("button", { name: "Undo link", exact: true }).click();
@@ -814,6 +816,103 @@ test("links a mention by legal form to its review and undoes the link on reload"
   ).toHaveCount(0);
   await page.getByRole("tab", { name: /^Needs review/ }).click();
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
+});
+
+// Contract 4.13.0: a name the load linked by part of a row's name, or by an
+// identifier the text uses as a name. Each has a review a person keeps or
+// overturns, and holds an approval at its end until then.
+for (const [linked, by, title] of [
+  ["part_name", "By part of its name", "Linked by part of a name"],
+  [
+    "own_name",
+    "By an identifier used as its name",
+    "Linked by an identifier used as its name",
+  ],
+] as const)
+  test(`links a mention by ${linked} to its review and undoes the link on reload`, async ({
+    page,
+  }) => {
+    await mock.configure({ documentLinked: linked });
+    await setup(page);
+    const doc = await openDocument(page);
+    await page.getByRole("tab", { name: /^Entities/ }).click();
+    await expect(page.getByText(by)).toBeVisible();
+    await page.getByRole("link", { name: "Review link" }).click();
+    await expect(
+      page.getByRole("tab", { name: /^Needs review/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    // What the load did, why a person is asked, and no model's confidence.
+    await expect(reviews(page)).toContainText(title);
+    await expect(reviews(page)).toContainText(
+      "can be wrong, so it waits for you",
+    );
+    await expect(reviews(page)).toContainText("Linked to:");
+    await expect(reviews(page)).not.toContainText("% confident");
+    await page.getByRole("button", { name: "Undo link", exact: true }).click();
+    await expect(
+      page.getByText("Decision saved. Reload to apply."),
+    ).toBeVisible();
+    await loadVersion3(page);
+    await page.goto(`${doc}?tab=entities`);
+    await expect(
+      page.getByRole("region", { name: "Customer", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("tab", { name: /^Needs review/ }).click();
+    await expect(page.getByText("Nothing needs review.")).toBeVisible();
+  });
+
+test("keeps a link by part of a name, and the next load holds it as a person's", async ({
+  page,
+}) => {
+  await mock.configure({ documentLinked: "part_name" });
+  await setup(page);
+  const doc = await openDocument(page);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(reviews(page)).toContainText("Linked by part of a name");
+  await choose(page.getByLabel("Link this name to"), "Globex Corporation");
+  await page.getByRole("button", { name: "Settle review" }).click();
+  await expect(
+    page.getByText("Decision saved. Reload to apply."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Saved decisions" }),
+  ).toContainText("globexx corporation → cus_GLOBEX01");
+  await loadVersion3(page);
+  await page.goto(`${doc}?tab=entities`);
+  await expect(page.getByText("Linked by a person")).toBeVisible();
+  await expect(page.getByText("By part of its name")).toHaveCount(0);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(page.getByText("Nothing needs review.")).toBeVisible();
+});
+
+test("sends an approval held for a name linked by part of a name to that name's review", async ({
+  page,
+}) => {
+  // On a link that holds many: unlike a legal form's, this holds any claim.
+  await mock.configure({ documentHeld: "part_name" });
+  const { held } = await hedged(page);
+  await expect(held).toContainText(
+    "“globex corporation” is linked only by part of a row’s name. Settle that name too, or this stays held.",
+  );
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText(
+    "Approved, and this load kept it held. “globex corporation” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+  );
+  await expect(held.getByRole("status")).not.toContainText("holds one value");
+  // The card leads to the name's own review, where the link is settled.
+  const toName = held
+    .getByRole("status")
+    .getByRole("link", { name: "Review that name" });
+  await expect(toName).toHaveAttribute("href", /tab=review.*#s\d+-\d+$/);
+  await toName.click();
+  await expect(page).toHaveURL(/#s\d+-\d+$/);
+  const name = reviews(page).getByRole("list", {
+    name: "Linked by part of a name",
+  });
+  await expect(name).toContainText("Linked to:");
+  await choose(name.getByLabel("Link this name to"), "Globex Corporation");
+  await name.getByRole("button", { name: "Settle review" }).click();
+  await expect(name).toContainText("Decision saved. Reload to apply.");
 });
 
 test("members can read candidate reviews but cannot settle or remove decisions", async ({

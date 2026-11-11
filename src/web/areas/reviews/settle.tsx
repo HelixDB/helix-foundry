@@ -13,6 +13,7 @@ import { ApiError } from "../../api";
 import { canManage, useWorkspace } from "../../ui";
 import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
+import { spanAnchor } from "../documents/model";
 import { valueText } from "../explore/model";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
 import type { Naming } from "../explore/naming";
@@ -21,12 +22,16 @@ import {
   decidedText,
   decisionFor,
   holdsDecided,
+  holdsRelease,
+  isUndoableLink,
+  isWeakLink,
   loadRead,
   matchesReview,
   propValueText,
   refusalText,
   statementHash,
   waitingText,
+  WEAK_LINK_TEXT,
   type Candidate,
   type ReleaseStatus,
   type Settle,
@@ -60,16 +65,19 @@ function Candidates({
  * What approving a held claim does: its ends in order, its link, its
  * properties as stored. On a link that holds one value (`single`, also when
  * the version isn't known) a date decides, so it promises no edge and hides no
- * replacement.
+ * replacement. An end whose name the load linked on less than a name, where
+ * that holds the claim, is named with the way to its review (`nameReview`).
  */
 function ClaimWritten({
   settle,
   single,
+  nameReview,
 }: {
   settle: ReleaseSettle;
   single: boolean;
+  nameReview?: string;
 }) {
-  const { link, statement: s, named, differs, formed } = settle;
+  const { link, statement: s, named, differs, unsettled } = settle;
   const props = Object.entries(s.props);
   return (
     <>
@@ -87,10 +95,16 @@ function ClaimWritten({
           kept as evidence and no link is written.
         </p>
       )}
-      {single && formed && (
+      {unsettled && holdsRelease(unsettled, single) && (
         <p role="note">
-          “{formed}” is linked only by its legal form. Settle that name too, or
-          this stays held.
+          “{unsettled.name}” is {WEAK_LINK_TEXT[unsettled.by]}. Settle that name
+          too, or this stays held.
+          {nameReview && (
+            <>
+              {" "}
+              <Link to={nameReview}>Review that name</Link>
+            </>
+          )}
         </p>
       )}
       {props.length > 0 && (
@@ -207,6 +221,15 @@ export function SettleReview({
           });
   // Also when the version isn't known: a card promises no edge it can't.
   const single = isRelease && (!naming.version || naming.oneValued.has(s.link));
+  // A name of the claim the load linked on less than a name, where that
+  // holds the claim, and where its own review is: the document's Needs
+  // review, at the name.
+  const unsettled =
+      isRelease && holdsRelease(s.unsettled, single) ? s.unsettled : undefined,
+    nameReview =
+      isRelease && unsettled?.at
+        ? `${link(paths.document(o, s.docId, "review"))}#${spanAnchor(unsettled.at.section, unsettled.at.start)}`
+        : undefined;
   const approval = isRelease
     ? approvalOf(query.data ?? [], s, read.data, editable)
     : undefined;
@@ -230,6 +253,16 @@ export function SettleReview({
       isRelease &&
       applied?.status !== "pending" &&
       applied?.status !== "written";
+  // Where a saved approval's status sends a person: the name's review, when
+  // the load holds the approval for a name linked on less than a name. It
+  // said so, or it read the approval and no job has said more.
+  const heldForName =
+    !moved &&
+    (applied?.status === "refused"
+      ? isWeakLink(applied.reason)
+      : !!applied && !applied.status)
+      ? nameReview
+      : undefined;
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
     setPending(true);
@@ -256,10 +289,12 @@ export function SettleReview({
   };
   return (
     <div className="on-stack">
-      {isRelease && <ClaimWritten settle={s} single={single} />}
+      {isRelease && (
+        <ClaimWritten settle={s} single={single} nameReview={nameReview} />
+      )}
       {!isProp && !isRelease && review.candidates.length > 0 && (
         <p>
-          Suggestions only:{" "}
+          {isUndoableLink(review.reason) ? "Linked to:" : "Suggestions only:"}{" "}
           <Candidates candidates={review.candidates} link={link} />
           <span className="on-muted"> · for the name “{s.normName}”</span>
         </p>
@@ -302,16 +337,16 @@ export function SettleReview({
                 : applied?.status === "written"
                   ? "Approved, and written to this load."
                   : applied?.status === "refused"
-                    ? `Approved, and this load kept it held. ${refusalText(applied.reason, s.formed)}`
+                    ? `Approved, and this load kept it held. ${refusalText(applied.reason, s.unsettled?.name)}`
                     : retry
                       ? "Approved, but the job that writes it failed before it said whether this was written. Approve it again to finish."
                       : unread
                         ? "An approval of this is saved, and this load hasn’t read it. Approve it to write it now."
                         : missed
                           ? "An approval of this is saved, and it found no claim at its place in this load. Approve it to write it now."
-                          : s.formed && single
-                            ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
-                            : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
+                          : unsettled
+                            ? `This load read the approval, and the claim stays held. ${refusalText(unsettled.by, unsettled.name)}`
+                            : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked on less than its name, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
               : saved.kind === "prop"
                 ? decidedText(
                     saved.applied,
@@ -321,6 +356,12 @@ export function SettleReview({
                 : loadRead(saved, load?.createdAt)
                   ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
                   : "Decision saved. Reload to apply."}
+          {heldForName && (
+            <>
+              {" "}
+              <Link to={heldForName}>Review that name</Link>
+            </>
+          )}
         </p>
       )}
       {isRelease && !saved && earlier && (
@@ -433,8 +474,7 @@ export function SettleReview({
             </p>
           )}
           <div className="hf-form-actions">
-            {(review.reason === "adjudicated" ||
-              review.reason === "legal_form") && (
+            {isUndoableLink(review.reason) && (
               <Button
                 size="sm"
                 disabled={pending}

@@ -2692,7 +2692,7 @@ describe("review decisions", () => {
   });
 
   it("seeds an opt-in adjudicated review and undoes it on the next load", async () => {
-    Object.assign(config, { documentAdjudicated: true });
+    Object.assign(config, { documentLinked: "adjudicated" });
     await uploaded("variant.md", variant);
     const g = await loaded("first"),
       rv = reviews(g)[0]!;
@@ -3097,7 +3097,7 @@ describe("review decisions", () => {
   });
 
   it("lists an adjudicated review's choice only", async () => {
-    Object.assign(config, { documentAdjudicated: true });
+    Object.assign(config, { documentLinked: "adjudicated" });
     await uploaded("variant.md", variant);
     const rv = reviews(await loaded("first"))[0]!;
     expect(rv.props).toMatchObject({
@@ -3108,7 +3108,7 @@ describe("review decisions", () => {
   });
 
   it("lists a legal form review's choice only, and settles it by a name", async () => {
-    Object.assign(config, { documentLegalForm: true });
+    Object.assign(config, { documentLinked: "legal_form" });
     await uploaded("variant.md", variant);
     const g = await loaded("first"),
       rv = reviews(g)[0]!;
@@ -3126,6 +3126,89 @@ describe("review decisions", () => {
     });
     expect(settled.status).toBe(200);
   });
+
+  // Contract 4.13.0's links, each with a review that names its row only
+  // and, as no model judged it, no confidence.
+  it.each(["part_name", "own_name"] as const)(
+    "links a name by %s with its review, keeps the link as a person's or undoes it",
+    async (linked) => {
+      Object.assign(config, { documentLinked: linked });
+      await uploaded("variant.md", variant);
+      const g = await loaded("first"),
+        rv = reviews(g)[0]!;
+      expect(rv.props).toMatchObject({
+        reason: linked,
+        type: "Customer",
+        norm_name: "globexx corporation",
+        entity_key: "cus_GLOBEX01",
+        candidates: ["cus_GLOBEX01"],
+      });
+      expect(rv.props).not.toHaveProperty("confidence");
+      const by = (load: typeof g, how: string) =>
+        [...load.nodes()].some((n) => n.props.resolved_by === how);
+      expect(by(g, linked)).toBe(true);
+      const settle = (resolve: object) =>
+        call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+          decision: { resolve },
+        });
+      // Kept: the next load's link is the person's, with no review.
+      const kept = await settle({ entityKey: "cus_GLOBEX01" });
+      expect(kept.status).toBe(200);
+      const next = await loaded("kept");
+      expect([by(next, linked), by(next, "user")]).toEqual([false, true]);
+      expect(reviews(next)).toHaveLength(0);
+      // Overturned: the load after leaves the name unlinked.
+      await call("DELETE", `${O}/review-decisions/${kept.body.decision.id}`);
+      const again = await loaded("again");
+      expect(by(again, linked)).toBe(true);
+      const undo = reviews(again)[0]!;
+      expect(
+        (
+          await call("POST", `${O}/reviews/${undo.props.review_key}:settle`, {
+            decision: { resolve: { notInData: true } },
+          })
+        ).status,
+      ).toBe(200);
+      const last = await loaded("undone");
+      expect([by(last, linked), by(last, "user")]).toEqual([false, false]);
+      expect(reviews(last)).toHaveLength(0);
+    },
+  );
+
+  it.each(["part_name", "own_name"] as const)(
+    "keeps a claim approved at a %s end held, in the engine's word, beside the name's review",
+    async (weak) => {
+      Object.assign(config, { documentHeld: weak });
+      await uploaded(
+        "variant.md",
+        Buffer.from("# Hedged deal\n\nGlobex Corporation may have signed.\n"),
+      );
+      const g = await loaded("first");
+      const rv = reviews(g).find((n) => n.props.reason === "low_confidence")!;
+      const name = reviews(g).find((n) => n.props.reason === weak)!;
+      expect(name.props).toMatchObject({
+        type: "Customer",
+        norm_name: "globex corporation",
+        candidates: ["cus_GLOBEX01"],
+      });
+      const statementHash = createHash("sha256")
+        .update(`signed_with\u001f${String(rv.props.statement)}`)
+        .digest("hex");
+      await call("POST", `${O}/reviews/${rv.props.review_key}:settle`, {
+        decision: { release: { statementHash } },
+      });
+      vi.setSystemTime(Date.now() + 10_000);
+      const [d] = (await call("GET", `${O}/review-decisions`)).body.decisions;
+      expect(d.applied).toEqual({
+        status: "refused",
+        reason: weak,
+        at: expect.any(String),
+      });
+      expect(
+        reviews(g).filter((n) => n.props.reason === "low_confidence"),
+      ).toHaveLength(1);
+    },
+  );
 
   it("applies an approval of a held claim to the current load at once", async () => {
     const hedged = Buffer.from(

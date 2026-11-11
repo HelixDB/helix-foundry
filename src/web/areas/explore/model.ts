@@ -1216,6 +1216,10 @@ export function resolvedByText(r?: string): string | undefined {
       return "Matched by the model";
     case "legal_form":
       return "By its legal form";
+    case "part_name":
+      return "By part of its name";
+    case "own_name":
+      return "By an identifier used as its name";
     default:
       return undefined;
   }
