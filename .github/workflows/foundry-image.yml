@@ -48,7 +48,7 @@ jobs:
         include:
           - architecture: amd64
             platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: crucible-4vcpu-x64
           - architecture: arm64
             platform: linux/arm64
             runner: crucible-4vcpu-arm
