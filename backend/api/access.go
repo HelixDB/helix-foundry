@@ -331,6 +331,7 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 	}
 	// Only what's new has to confine them: taking some away is always allowed,
 	// also from someone given raw access since.
+	var synced bool
 	held, err := s.deps.DB.ListFoundryAccessGrants(ctx, req.GetWorkspaceId(), []access.Principal{principal})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read grants: %v", err)
@@ -346,11 +347,34 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 		}
 		return !slices.Contains(heldTargets, t)
 	}) {
-		if err := s.checkGrantee(ctx, req.GetWorkspaceId(), principal); err != nil {
+		if synced, err = s.checkGrantee(ctx, req.GetWorkspaceId(), principal); err != nil {
 			return nil, err
 		}
 	}
-	switch err := s.deps.DB.SetFoundryAccessGrants(ctx, req.GetWorkspaceId(), principal, targets, byUser(ctx)); {
+	err = s.deps.DB.WithTx(ctx, func(tx foundrystore.Store) error {
+		if synced {
+			// Under the workspace's lock, which a sync takes too, so whom the
+			// team leaves out is read from the members its grants restrict.
+			if err := tx.LeaveOutFoundryTeamMembers(ctx, req.GetWorkspaceId(), principal.ID, nil); err != nil {
+				return err
+			}
+			teams, err := tx.ListFoundryTeams(ctx, req.GetWorkspaceId())
+			if err != nil {
+				return err
+			}
+			if i := slices.IndexFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == principal.ID }); i >= 0 {
+				leaveOut, err := s.unconfinable(ctx, req.GetWorkspaceId(), teams[i].MemberUserIDs)
+				if err != nil {
+					return err
+				}
+				if err := tx.LeaveOutFoundryTeamMembers(ctx, req.GetWorkspaceId(), principal.ID, leaveOut); err != nil {
+					return err
+				}
+			}
+		}
+		return tx.SetFoundryAccessGrants(ctx, req.GetWorkspaceId(), principal, targets, byUser(ctx))
+	})
+	switch {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "a connector or document set to grant is not in the workspace")
 	case err != nil:
@@ -370,26 +394,32 @@ func (s *Service) SetFoundryAccessGrants(ctx context.Context, req *foundryv1.Set
 // checkGrantee refuses grants for a user who isn't a member of the workspace or
 // a team it doesn't have, who would hold them on joining, or as a team by that
 // name. A service credential is the host's to tell: one of another workspace
-// holds nothing, its calls being refused there.
-func (s *Service) checkGrantee(ctx context.Context, workspaceID string, principal access.Principal) error {
+// holds nothing, its calls being refused there. A synced team's members are
+// its directory group's, which the workspace can't take off it, so instead of
+// refusing it, the team leaves out those its grants can't confine (synced:
+// the caller works out whom under the workspace's lock).
+func (s *Service) checkGrantee(ctx context.Context, workspaceID string, principal access.Principal) (synced bool, err error) {
 	switch principal.Kind {
 	case access.PrincipalUser:
 		if s.deps.People == nil {
-			return nil
+			return false, nil
 		}
-		return s.restrictable(ctx, workspaceID, principal.ID)
+		return false, s.restrictable(ctx, workspaceID, principal.ID)
 	case access.PrincipalTeam:
 		teams, err := s.deps.DB.ListFoundryTeams(ctx, workspaceID)
 		if err != nil {
-			return status.Errorf(codes.Internal, "read teams: %v", err)
+			return false, status.Errorf(codes.Internal, "read teams: %v", err)
 		}
 		i := slices.IndexFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == principal.ID })
 		if i < 0 {
-			return status.Error(codes.NotFound, "the workspace has no such team")
+			return false, status.Error(codes.NotFound, "the workspace has no such team")
 		}
-		return s.teamRestrictable(ctx, workspaceID, teams[i].MemberUserIDs)
+		if teams[i].Directory != nil {
+			return true, nil
+		}
+		return false, s.teamRestrictable(ctx, workspaceID, teams[i].MemberUserIDs)
 	}
-	return nil
+	return false, nil
 }
 
 // GetMyFoundryAccess says what the caller reads through grants: as a

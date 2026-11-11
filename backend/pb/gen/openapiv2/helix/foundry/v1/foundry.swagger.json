@@ -7313,9 +7313,36 @@
         "createdAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "directory": {
+          "$ref": "#/definitions/v1FoundryTeamDirectory",
+          "description": "Set on a team synced from a directory group (SCIM, through the host's\ndirectory sync): its name and members are the group's, changed in the\ndirectory, and only its grants are the workspace's to change."
         }
       },
       "description": "FoundryTeam is a team of the workspace's members: each holds the team's\ngrants."
+    },
+    "v1FoundryTeamDirectory": {
+      "type": "object",
+      "properties": {
+        "directoryId": {
+          "type": "string"
+        },
+        "groupId": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string",
+          "description": "The directory's provider as people know it, for example \"Okta\"."
+        },
+        "leftOutUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Members of the group the team leaves out while it holds grants: members\nwho can write a project or query its databases outside Foundry, whom\nits grants can't confine."
+        }
+      },
+      "description": "FoundryTeamDirectory is the directory group a synced team follows."
     },
     "v1FoundryTeamResponse": {
       "type": "object",

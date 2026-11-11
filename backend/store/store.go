@@ -309,6 +309,10 @@ type Store interface {
 	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
 	DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error
 	RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error
+	// The host's directory sync: teams that follow a directory's groups.
+	SyncFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID, provider string, groups []model.FoundryDirectoryTeam) (model.FoundryDirectorySync, error)
+	ReleaseFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID string) error
+	LeaveOutFoundryTeamMembers(ctx context.Context, workspaceID, teamID string, userIDs []string) error
 	CreateFoundryQuestion(ctx context.Context, q *model.FoundryQuestion, limits model.FoundryQuestionLimits) error
 	ClaimFoundryQuestion(ctx context.Context, workerID string, claim model.FoundryQuestionClaim) (*model.FoundryQuestion, error)
 	RenewFoundryQuestionLease(ctx context.Context, id, workerID string, lease time.Duration) error

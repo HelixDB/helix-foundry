@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type * as wfe from "@/shared/wfe";
 import {
+  addsSources,
   covered,
   grantKey,
   grantOf,
   granteeRedirect,
   grantsOf,
   heldGrants,
+  leftOutBy,
+  leftOutText,
   lossLines,
   missing,
   missingText,
@@ -18,9 +21,11 @@ import {
   readings,
   newlyRestricted,
   restrictable,
+  restrictedHoldingNothing,
   setOwners,
   sourceState,
   sourceTree,
+  syncedFrom,
   targetOf,
   targetsOf,
   toggle,
@@ -477,6 +482,122 @@ describe("restricting members", () => {
         ok: false,
         why: expect.stringMatching(/^Writes a project/),
       });
+  });
+});
+
+describe("teams synced from a directory", () => {
+  const RAW: wfe.ProjectAccess = { queryRead: { mode: "all" } };
+  const person = (
+    id: string,
+    role: wfe.WorkspaceRole,
+    projectAccess?: wfe.ProjectAccess,
+  ): wfe.WorkspaceMember => ({
+    workspaceId: "ws",
+    role,
+    user: { id, displayName: id },
+    projectAccess,
+  });
+  const people = [
+    person("eve", "WORKSPACE_ROLE_MEMBER"),
+    person("grace", "WORKSPACE_ROLE_MEMBER"),
+    person("alan", "WORKSPACE_ROLE_MEMBER", RAW),
+    person("ada", "WORKSPACE_ROLE_OWNER", RAW),
+    person("kat", "WORKSPACE_ROLE_ADMIN", RAW),
+  ];
+  const directory = { directoryId: "d", groupId: "g", provider: "Okta" };
+  const access: wfe.ListFoundryAccessResponse = {
+    restrictedUserIds: ["eve"],
+    teams: [
+      {
+        id: "synced",
+        memberUserIds: ["eve", "grace", "alan", "ada", "kat"],
+        directory,
+      },
+      { id: "manual", memberUserIds: ["grace", "alan"] },
+    ],
+  };
+  const team = (id: string) => ({ kind: "KIND_TEAM" as const, id });
+  const ids = (ms: readonly wfe.WorkspaceMember[]) => ms.map((m) => m.user?.id);
+
+  it("names its directory, else says your directory; a team made by hand has none", () => {
+    expect(syncedFrom({ directory })).toBe("Okta");
+    expect(syncedFrom({ directory: { groupId: "g" } })).toBe("your directory");
+    expect(syncedFrom({ name: "Finance" })).toBeUndefined();
+  });
+
+  it("leaves out its plain members with raw access instead of restricting them", () => {
+    expect(ids(leftOutBy(access, people, team("synced")))).toEqual(["alan"]);
+    // Owners and admins stay on it as they are; Eve is restricted already.
+    expect(ids(newlyRestricted(access, people, team("synced")))).toEqual([
+      "grace",
+    ]);
+    // A team made by hand leaves out no one: the WFE refuses its grants.
+    expect(leftOutBy(access, people, team("manual"))).toEqual([]);
+    expect(ids(newlyRestricted(access, people, team("manual")))).toEqual([
+      "grace",
+      "alan",
+    ]);
+    expect(
+      leftOutBy(access, people, { kind: "KIND_USER", id: "alan" }),
+    ).toEqual([]);
+    expect(leftOutBy(access, people, team("gone"))).toEqual([]);
+  });
+
+  it("says whom it left out", () => {
+    expect(leftOutText([])).toBe("");
+    expect(leftOutText(["Alan Turing"])).toBe(
+      "Left out: Alan Turing, who writes a project or queries its databases outside Foundry, so the team’s sources can’t confine them.",
+    );
+    expect(leftOutText(["Alan Turing", "Grace Hopper"])).toMatch(
+      /^Left out: Alan Turing, Grace Hopper, who write a project or query its/,
+    );
+  });
+
+  it("checks the grantee only for sources that are new", () => {
+    expect(addsSources([], [general])).toBe(true);
+    expect(addsSources([general, stripe], [general])).toBe(false);
+    expect(addsSources([general], [])).toBe(false);
+    // A table its saved connector covers is nothing new; another set is.
+    expect(addsSources([stripe], [invoices])).toBe(false);
+    expect(addsSources([invoices], [stripe])).toBe(true);
+    expect(addsSources([general], [general, notes])).toBe(true);
+  });
+});
+
+describe("restricted members holding nothing", () => {
+  const person = (
+    id: string,
+    role: wfe.WorkspaceRole = "WORKSPACE_ROLE_MEMBER",
+  ): wfe.WorkspaceMember => ({ workspaceId: "ws", role, user: { id } });
+  const people = [
+    person("eve"),
+    person("grace"),
+    person("alan"),
+    person("bea"),
+    person("ada", "WORKSPACE_ROLE_ADMIN"),
+  ];
+  const held = (principal: wfe.FoundryPrincipal): wfe.FoundryAccessGrant => ({
+    principal,
+    target: { kind: "KIND_DOCUMENT_SET", documentSetId: "set_general" },
+  });
+
+  it("lists restricted plain members with no sources of their own or a team's", () => {
+    const access: wfe.ListFoundryAccessResponse = {
+      // Ada was restricted as a member, and is an admin now.
+      restrictedUserIds: ["eve", "grace", "alan", "ada"],
+      grants: [
+        held({ kind: "KIND_USER", id: "eve" }),
+        held({ kind: "KIND_TEAM", id: "t" }),
+      ],
+      teams: [
+        { id: "t", memberUserIds: ["grace"] },
+        { id: "empty", memberUserIds: ["alan"] },
+      ],
+    };
+    expect(
+      restrictedHoldingNothing(access, people).map((m) => m.user?.id),
+    ).toEqual(["alan"]);
+    expect(restrictedHoldingNothing({}, people)).toEqual([]);
   });
 });
 

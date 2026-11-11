@@ -1,5 +1,5 @@
 import type { MockRoute } from "../http";
-import { accessRoutes, guarded } from "./access";
+import { accessRoutes, directoryRoutes, guarded } from "./access";
 import { aiRoutes } from "./ai";
 import { authRoutes } from "./auth";
 import { billingRoutes } from "./billing";
@@ -43,4 +43,5 @@ export const routes: MockRoute[] = [
   ...questionRoutes,
   ...databaseRoutes,
   ...accessRoutes,
+  ...directoryRoutes,
 ].map(guarded);

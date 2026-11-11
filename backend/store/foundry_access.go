@@ -63,8 +63,7 @@ FROM foundry_access_grants WHERE workspace_id=?`
 // away never gives anyone more.
 func (s *mysqlDB) SetFoundryAccessGrants(ctx context.Context, workspaceID string, principal access.Principal, targets []access.Target,
 	byUserID *string) error {
-	return s.WithTx(ctx, func(txDB Store) error {
-		tx := txDB.(*mysqlDB)
+	return s.inTx(ctx, func(tx *mysqlDB) error {
 		if err := tx.workspaces.Lock(ctx, tx.db, workspaceID); err != nil {
 			return err
 		}

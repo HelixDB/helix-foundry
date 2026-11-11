@@ -153,22 +153,30 @@ func (s *mysqlDB) setFoundryTeamMembers(ctx context.Context, workspaceID, teamID
 // DeleteFoundryTeam deletes the team, its members and its grants;
 // ErrNotFound means the workspace has no such team.
 func (s *mysqlDB) DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error {
-	return s.WithTx(ctx, func(txDB Store) error {
-		tx := txDB.(*mysqlDB)
+	return s.inTx(ctx, func(tx *mysqlDB) error {
 		if err := execOrNotFound(ctx, tx.db, `DELETE FROM foundry_teams WHERE id=? AND workspace_id=?`, teamID, workspaceID); err != nil {
 			return err
 		}
-		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_team_members WHERE team_id=?`, teamID); err != nil {
-			return err
-		}
-		return tx.DeleteFoundryAccessPrincipal(ctx, workspaceID, access.Principal{Kind: access.PrincipalTeam, ID: teamID})
+		return tx.dropFoundryTeamRows(ctx, workspaceID, teamID)
 	})
 }
 
+// dropFoundryTeamRows deletes a deleted team's members, whom it left out and
+// its grants.
+func (s *mysqlDB) dropFoundryTeamRows(ctx context.Context, workspaceID, teamID string) error {
+	for _, q := range []string{`DELETE FROM foundry_team_members WHERE team_id=?`, `DELETE FROM foundry_team_left_out WHERE team_id=?`} {
+		if _, err := s.db.ExecContext(ctx, q, teamID); err != nil {
+			return err
+		}
+	}
+	return s.DeleteFoundryAccessPrincipal(ctx, workspaceID, access.Principal{Kind: access.PrincipalTeam, ID: teamID})
+}
+
 // ListFoundryTeams returns the workspace's teams by name, each with its
-// members.
+// members, and a synced team with its directory group and whom it leaves out.
 func (s *mysqlDB) ListFoundryTeams(ctx context.Context, workspaceID string) ([]model.FoundryTeam, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.name, t.created_by_user_id, t.created_at, m.user_id FROM foundry_teams t
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.name, t.created_by_user_id, t.created_at, t.directory_id, t.directory_group_id,
+ t.directory_provider, m.user_id FROM foundry_teams t
 LEFT JOIN foundry_team_members m ON m.team_id = t.id
 WHERE t.workspace_id=? ORDER BY t.name, t.id, m.user_id`, workspaceID)
 	if err != nil {
@@ -178,14 +186,17 @@ WHERE t.workspace_id=? ORDER BY t.name, t.id, m.user_id`, workspaceID)
 	var out []model.FoundryTeam
 	for rows.Next() {
 		var t model.FoundryTeam
-		var by, member sql.NullString
-		if err := rows.Scan(&t.ID, &t.Name, &by, &t.CreatedAt, &member); err != nil {
+		var by, directory, group, provider, member sql.NullString
+		if err := rows.Scan(&t.ID, &t.Name, &by, &t.CreatedAt, &directory, &group, &provider, &member); err != nil {
 			return nil, err
 		}
 		if n := len(out); n == 0 || out[n-1].ID != t.ID {
 			t.WorkspaceID = workspaceID
 			if by.Valid {
 				t.CreatedByUserID = &by.String
+			}
+			if group.Valid {
+				t.Directory = &model.FoundryTeamDirectory{DirectoryID: directory.String, GroupID: group.String, Provider: provider.String}
 			}
 			out = append(out, t)
 		}
@@ -194,7 +205,28 @@ WHERE t.workspace_id=? ORDER BY t.name, t.id, m.user_id`, workspaceID)
 			last.MemberUserIDs = append(last.MemberUserIDs, member.String)
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	leftOut, err := s.db.QueryContext(ctx, `SELECT team_id, user_id FROM foundry_team_left_out WHERE workspace_id=? ORDER BY team_id, user_id`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer leftOut.Close()
+	byID := make(map[string]*model.FoundryTeam, len(out))
+	for i := range out {
+		byID[out[i].ID] = &out[i]
+	}
+	for leftOut.Next() {
+		var teamID, userID string
+		if err := leftOut.Scan(&teamID, &userID); err != nil {
+			return nil, err
+		}
+		if t := byID[teamID]; t != nil && t.Directory != nil {
+			t.Directory.LeftOutUserIDs = append(t.Directory.LeftOutUserIDs, userID)
+		}
+	}
+	return out, leftOut.Err()
 }
 
 // FoundryTeamsOf returns the teams the member belongs to.
@@ -211,8 +243,11 @@ func (s *mysqlDB) FoundryTeamsOf(ctx context.Context, workspaceID, userID string
 // one let back in is still restricted. The host calls it when it removes a
 // member, in its own transaction or not.
 func (s *mysqlDB) RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM foundry_team_members WHERE workspace_id=? AND user_id=?`, workspaceID, userID); err != nil {
-		return err
+	for _, q := range []string{`DELETE FROM foundry_team_members WHERE workspace_id=? AND user_id=?`,
+		`DELETE FROM foundry_team_left_out WHERE workspace_id=? AND user_id=?`} {
+		if _, err := s.db.ExecContext(ctx, q, workspaceID, userID); err != nil {
+			return err
+		}
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM foundry_access_grants WHERE workspace_id=? AND principal_kind='user' AND principal_id=?`,
 		workspaceID, userID)
