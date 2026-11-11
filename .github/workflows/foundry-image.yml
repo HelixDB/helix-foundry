@@ -65,6 +65,8 @@ jobs:
           context: backend
           platforms: ${{ matrix.platform }}
           tags: ${{ env.CI_IMAGE }}
+          # A release names itself by its version; any other build by its commit.
+          build-args: FOUNDRY_VERSION=${{ inputs.release_version || github.sha }}
           load: true
           push: false
           provenance: false
