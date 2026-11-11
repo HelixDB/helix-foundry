@@ -278,10 +278,13 @@ type Store interface {
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
 	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
 		resend *model.FoundryGraphJob) (queued bool, err error)
+	SettleFoundryValue(ctx context.Context, workspaceID, loadID string, decision *model.FoundryReviewDecision,
+		resend *model.FoundryGraphJob) (queued bool, err error)
 	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
 	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
+	FoundryLoadDecisionsOwed(ctx context.Context, loadID string) (*model.FoundryLoadResend, error)
 	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
-	DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error
+	DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error
 	UpdateFoundryDocumentSet(ctx context.Context, workspaceID, id string, update model.FoundryDocumentSetUpdate) error
 	DeleteFoundryDocumentSet(ctx context.Context, workspaceID, id string) error

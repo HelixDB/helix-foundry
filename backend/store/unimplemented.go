@@ -48,6 +48,10 @@ func (u Unimplemented) SettleFoundryReleases(context.Context, string, string, []
 	u.unimplemented("SettleFoundryReleases")
 	return false, nil
 }
+func (u Unimplemented) SettleFoundryValue(context.Context, string, string, *model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("SettleFoundryValue")
+	return false, nil
+}
 func (u Unimplemented) ListFoundryDecisionsApplied(context.Context, string, []string) (map[string]model.FoundryDecisionApplied, error) {
 	u.unimplemented("ListFoundryDecisionsApplied")
 	return nil, nil
@@ -56,11 +60,15 @@ func (u Unimplemented) ListFoundryLoadResends(context.Context, string) ([]*model
 	u.unimplemented("ListFoundryLoadResends")
 	return nil, nil
 }
+func (u Unimplemented) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
+	u.unimplemented("FoundryLoadDecisionsOwed")
+	return nil, nil
+}
 func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, model.FoundryResendEnd) error {
 	u.unimplemented("EndFoundryLoadResend")
 	return nil
 }
-func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, string) error {
+func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, string, string, *model.FoundryGraphJob) error {
 	u.unimplemented("DeleteFoundryReviewDecision")
 	return nil
 }

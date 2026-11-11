@@ -25,7 +25,9 @@ import {
   currentLoadId,
   currentLoadVersionId,
   forgetRelease,
+  forgetValue,
   owePendingRelease,
+  owePendingValue,
 } from "./loads";
 import { isScope, ontologyOf } from "./ontologies";
 import { ontologyVersion } from "./ontology";
@@ -37,10 +39,12 @@ import { isRecord } from "../../src/shared/json";
 // the choice against the loaded version's ontology.toml, and saves one
 // decision per identity with its value as the engine keeps it (trimmed
 // strings, UTC datetimes); the list pages 100 at a time by id; a removed
-// decision is gone for later loads only. Making a version current drops
+// name is gone for later loads only. Making a version current drops
 // the decisions it doesn't take (pruneDecisions). An approval of a held
-// claim applies to the current load at once (./loads.ts owePendingRelease):
-// its decision says what became of it there (`applied`).
+// claim applies to the current load at once (./loads.ts owePendingRelease),
+// and so does a chosen value, which a removal takes back at once
+// (owePendingValue, forgetValue): each decision says what became of it
+// there (`applied`). The mock sets no limit on how many values are decided.
 
 const BASE = "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}";
 const PAGE = 100;
@@ -300,13 +304,16 @@ export const reviewRoutes: MockRoute[] = [
           "FAILED_PRECONDITION",
           "the current load's version no longer has this review's type or property; reload the review and try again",
         );
-      return ok(
-        save(
-          s.o.id,
-          decision,
-          req.principal.user.id,
-        ) satisfies ReviewDecisionResponse,
+      const { decision: stored } = save(
+        s.o.id,
+        decision,
+        req.principal.user.id,
       );
+      if (stored.kind === "prop") owePendingValue(s.o.id, stored);
+      const applied = appliedOf(s.o.id, stored);
+      return ok({
+        decision: applied ? { ...stored, applied } : stored,
+      } satisfies ReviewDecisionResponse);
     },
   },
   {
@@ -343,8 +350,10 @@ export const reviewRoutes: MockRoute[] = [
       const own = decisions.get(s.o.id) || [];
       if (!own.some((d) => d.id === req.params.id))
         return fail("NOT_FOUND", "review decision not found");
-      // One the current load has not written is taken back from it too.
+      // One the current load has not written is taken back from it too, and
+      // a chosen value from every load that holds it.
       forgetRelease(s.o.id, req.params.id!);
+      forgetValue(s.o.id, req.params.id!);
       decisions.set(
         s.o.id,
         own.filter((d) => d.id !== req.params.id),

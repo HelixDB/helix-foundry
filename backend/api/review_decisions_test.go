@@ -32,8 +32,9 @@ type decisionStore struct {
 	saved    []*foundrymodel.FoundryReviewDecision
 	saveErr  error
 	deleted  string
-	// releasedTo is the load SettleFoundryReleases applied its decisions to,
-	// and resends the resend jobs it was handed; applied is what
+	// releasedTo is the load SettleFoundryReleases or SettleFoundryValue
+	// applied its decisions to, and resends the resend jobs they and
+	// DeleteFoundryReviewDecision were handed; applied is what
 	// ListFoundryDecisionsApplied answers.
 	releasedTo string
 	resends    []*foundrymodel.FoundryGraphJob
@@ -84,6 +85,19 @@ func (s *decisionStore) SettleFoundryReleases(_ context.Context, ws, load string
 	s.saved, s.releasedTo, s.resends = append(s.saved, ds...), load, append(s.resends, resend)
 	return true, nil
 }
+func (s *decisionStore) SettleFoundryValue(_ context.Context, ws, load string, d *foundrymodel.FoundryReviewDecision,
+	resend *foundrymodel.FoundryGraphJob) (bool, error) {
+	if ws != s.ontology.WorkspaceID {
+		return false, foundrystore.ErrNotFound
+	}
+	if s.saveErr != nil {
+		return false, s.saveErr
+	}
+	d.DecidedAt = time.Now()
+	d.Applied = &foundrymodel.FoundryDecisionApplied{Status: foundrymodel.FoundryReleasePending}
+	s.saved, s.releasedTo, s.resends = append(s.saved, d), load, append(s.resends, resend)
+	return true, nil
+}
 func (s *decisionStore) ListFoundryDecisionsApplied(_ context.Context, o string, ids []string) (map[string]foundrymodel.FoundryDecisionApplied, error) {
 	if o != s.ontology.ID {
 		panic("wrong ontology")
@@ -96,14 +110,14 @@ func (s *decisionStore) ListFoundryReviewDecisions(_ context.Context, o, after s
 	}
 	return s.rows, nil
 }
-func (s *decisionStore) DeleteFoundryReviewDecision(_ context.Context, o, id string) error {
-	if o != s.ontology.ID {
+func (s *decisionStore) DeleteFoundryReviewDecision(_ context.Context, ws, o, id string, resend *foundrymodel.FoundryGraphJob) error {
+	if ws != s.ontology.WorkspaceID || o != s.ontology.ID {
 		panic("wrong ontology")
 	}
 	if id == "missing" {
 		return foundrystore.ErrNotFound
 	}
-	s.deleted = id
+	s.deleted, s.resends = id, append(s.resends, resend)
 	return nil
 }
 
@@ -231,6 +245,16 @@ func TestSettleFoundryReview(t *testing.T) {
 		if db.saved[0].DocumentIDs != nil {
 			t.Fatalf("a review that quotes nothing records no documents: %v", db.saved[0].DocumentIDs)
 		}
+		// A value applies at once, as an approval does: to the load its
+		// review was read from, by a resend job the person asked for, and
+		// the answer says it waits.
+		if db.releasedTo != "load-1" || len(db.resends) != 1 || db.resends[0].ID == "" || db.resends[0].RequestedByUserID == nil ||
+			*db.resends[0].RequestedByUserID != reviewer.UserID {
+			t.Fatalf("applied to %q by %+v", db.releasedTo, db.resends)
+		}
+		if a := out.Decision.GetApplied(); a.GetStatus() != "pending" || a.GetReason() != "" || a.GetAt() != nil {
+			t.Fatalf("applied %+v", a)
+		}
 	}
 	// The documents its quotes come from are recorded with it, once each:
 	// a grantee covers the value only by covering them.
@@ -291,13 +315,32 @@ func TestSettleHeldClaimOnAnotherLoad(t *testing.T) {
 	}
 }
 
+// A value the current load can't be settled with: its load changed since the
+// review was read, or the ontology holds as many value decisions as a load
+// can be sent, which the answer says with what to do about it.
+func TestSettleValueRefused(t *testing.T) {
+	review := `{"items":[{"reason":"prop_conflict","type":"Customer","entity_key":"customer-1","prop":"name"}]}`
+	for saveErr, want := range map[error]string{
+		foundrystore.ErrConflict:               "reload the review",
+		foundrystore.FoundryValueDecisionsFull: "10000 value decisions, the most a load can be sent; remove one",
+	} {
+		s, db, _ := reviewService(t, review)
+		db.saveErr = saveErr
+		_, err := s.SettleFoundryReview(ports.WithActor(context.Background(), reviewer), settleRequest(propChoice(propText("Chosen"))))
+		if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), want) || len(db.saved) != 0 {
+			t.Fatalf("%v: %v", saveErr, err)
+		}
+	}
+}
+
 // A decision lists what became of it in the current load: nothing for one
 // the load's list doesn't hold, pending for one a resend owes (carried over
-// or settled there), and the engine's reason for one it refused.
+// or settled there), the engine's reason for one it refused, and applied for
+// a value the load was sent.
 func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 	s, db, _ := reviewService(t, `{}`)
 	at := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
-	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
 		db.rows = append(db.rows, &foundrymodel.FoundryReviewDecision{ID: id, Kind: foundrymodel.FoundryReviewResolve, Type: "Customer"})
 	}
 	db.applied = map[string]foundrymodel.FoundryDecisionApplied{
@@ -307,6 +350,7 @@ func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 		"e": {},
 		"f": {Status: foundrymodel.FoundryReleasePending, Reason: foundrymodel.FoundryReleaseJobFailed},
 		"g": {Status: foundrymodel.FoundryReleaseCarried, Reason: foundrymodel.FoundryReleaseJobFailed},
+		"h": {Status: foundrymodel.FoundryValueApplied, At: &at},
 	}
 	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"})
 	if err != nil {
@@ -319,14 +363,14 @@ func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 			continue
 		}
 		got[d.GetId()] = d.Applied.GetStatus() + "/" + d.Applied.GetReason()
-		if (d.Applied.GetAt() != nil) != (d.GetId() == "c" || d.GetId() == "d") {
+		if (d.Applied.GetAt() != nil) != (d.GetId() == "c" || d.GetId() == "d" || d.GetId() == "h") {
 			t.Fatalf("%s at %v", d.GetId(), d.Applied.GetAt())
 		}
 	}
 	// One whose job failed is neither pending nor refused: nothing is coming,
 	// and whether it was written isn't known.
 	want := map[string]string{"a": "unset", "b": "pending/", "c": "refused/unresolved", "d": "written/", "e": "/",
-		"f": "unconfirmed/job_failed", "g": "unconfirmed/job_failed"}
+		"f": "unconfirmed/job_failed", "g": "unconfirmed/job_failed", "h": "applied/"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("applied %v", got)
 	}
@@ -525,6 +569,16 @@ func TestListDeleteFoundryReviewDecisions(t *testing.T) {
 	_, err = s.DeleteFoundryReviewDecision(context.Background(), &foundryv1.DeleteFoundryReviewDecisionRequest{WorkspaceId: "workspace-a", OntologyId: "o", Id: "missing"})
 	if status.Code(err) != codes.NotFound {
 		t.Fatal(err)
+	}
+	// A removal hands the store the resend job that withdraws a value
+	// decision from the current load, asked for by who removed it.
+	_, err = s.DeleteFoundryReviewDecision(ports.WithActor(context.Background(), reviewer),
+		&foundryv1.DeleteFoundryReviewDecisionRequest{WorkspaceId: "workspace-a", OntologyId: "o", Id: "v"})
+	if err != nil || db.deleted != "v" {
+		t.Fatal(err)
+	}
+	if last := db.resends[len(db.resends)-1]; last.ID == "" || last.RequestedByUserID == nil || *last.RequestedByUserID != reviewer.UserID {
+		t.Fatalf("resend %+v", last)
 	}
 }
 

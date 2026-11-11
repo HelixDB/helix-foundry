@@ -1,9 +1,11 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/helixdb/helix-foundry/backend/store/model"
 	"slices"
@@ -12,14 +14,22 @@ import (
 
 const foundryReviewDecisionColumns = "id, ontology_id, kind, type, doc_id, norm_name, entity_key, prop, value, claim_key, claim_section, claim_start, claim_end, statement_hash, decided_by_user_id, decided_at"
 
+// FoundryValueDecisionsFull refuses a value decision of a property the
+// ontology has decided no value of: it holds
+// model.FoundryExtractDecisionsMax value decisions already, and every one
+// goes with every Extract of a load, which takes no more. Choosing again for
+// a property already decided replaces that decision and is not refused.
+var FoundryValueDecisionsFull = errors.New("the ontology holds as many value decisions as one extract takes")
+
 // SettleFoundryReviewDecision replaces the choice for this identity atomically.
 // It preserves the id of an existing choice. Under the ontology's lock it
 // checks d against the version of the ontology's current load, the load whose
 // review it settles: ErrConflict means that version doesn't take d (its type,
 // prop or key changed, as a new load of another version may have done since
 // the review was read), or the ontology has no current load. It applies from
-// the next load; a release is settled by SettleFoundryReleases, which applies
-// it to the current one.
+// the next load, as a resolve does; a release is settled by
+// SettleFoundryReleases and a value by SettleFoundryValue, which apply them
+// to the current one.
 func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID string, d *model.FoundryReviewDecision) error {
 	if err := d.Validate(); err != nil {
 		return err
@@ -33,26 +43,104 @@ func (s *mysqlDB) SettleFoundryReviewDecision(ctx context.Context, workspaceID s
 		if o.CurrentLoadID == nil {
 			return ErrConflict
 		}
-		var definition []byte
-		if err := tx.db.QueryRowContext(ctx, `SELECT v.definition FROM foundry_loads l
-JOIN foundry_ontology_versions v ON v.id = l.version_id WHERE l.id=?`, *o.CurrentLoadID).Scan(&definition); err != nil {
-			return err
-		}
-		var def struct {
-			OntologyTOML string `json:"ontology_toml"`
-		}
-		if err := json.Unmarshal(definition, &def); err != nil {
-			return err
-		}
-		types, err := model.FoundryDecisionTypes(def.OntologyTOML)
-		if err != nil {
-			return err
-		}
-		if !d.Fits(types) {
-			return ErrConflict
+		if takes, err := tx.foundryLoadTakes(ctx, *o.CurrentLoadID, d); err != nil || !takes {
+			return cmp.Or(err, ErrConflict)
 		}
 		return tx.saveFoundryReviewDecision(ctx, d)
 	})
+}
+
+// foundryLoadTakes reports whether the version load loadID was made from
+// takes d (model.FoundryReviewDecision.Fits).
+func (s *mysqlDB) foundryLoadTakes(ctx context.Context, loadID string, d *model.FoundryReviewDecision) (bool, error) {
+	var definition []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT v.definition FROM foundry_loads l
+JOIN foundry_ontology_versions v ON v.id = l.version_id WHERE l.id=?`, loadID).Scan(&definition); err != nil {
+		return false, err
+	}
+	var def struct {
+		OntologyTOML string `json:"ontology_toml"`
+	}
+	if err := json.Unmarshal(definition, &def); err != nil {
+		return false, err
+	}
+	types, err := model.FoundryDecisionTypes(def.OntologyTOML)
+	if err != nil {
+		return false, err
+	}
+	return d.Fits(types), nil
+}
+
+// SettleFoundryValue settles a value decision (kind prop), read from a
+// review of load loadID, and applies it to that load at once: under the
+// ontology's lock it is checked and saved as SettleFoundryReviewDecision
+// saves one, joins the load's own list as pending, in place of any decision
+// the list holds for its property (the engine refuses an Extract that decides
+// a property twice), and the load owes the engine its decisions again
+// (model.FoundryResendDecisions). Then resend is queued as SettleFoundryReleases
+// queues one (queueFoundryResendBehind): one Extract of no documents carries
+// the list, and the engine sets the value. queued reports a job queued here.
+// d comes back as stored, with what the load holds of it (Applied).
+// ErrConflict means loadID is no longer the ontology's current load, or its
+// version doesn't take d; ErrNotFound that the ontology is not live;
+// FoundryValueDecisionsFull that the ontology takes no value decision of
+// another property.
+func (s *mysqlDB) SettleFoundryValue(ctx context.Context, workspaceID, loadID string, d *model.FoundryReviewDecision,
+	resend *model.FoundryGraphJob) (queued bool, err error) {
+	if err := d.Validate(); err != nil {
+		return false, err
+	}
+	if d.Kind != model.FoundryReviewProp {
+		return false, fmt.Errorf("decision %s is not a value decision", d.ID)
+	}
+	err = s.WithTx(ctx, func(db Store) error {
+		tx := db.(*mysqlDB)
+		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, d.OntologyID)
+		if err != nil {
+			return err
+		}
+		if o.CurrentLoadID == nil || *o.CurrentLoadID != loadID {
+			return ErrConflict
+		}
+		if takes, err := tx.foundryLoadTakes(ctx, loadID, d); err != nil || !takes {
+			return cmp.Or(err, ErrConflict)
+		}
+		// The live job's row before any decision's, as SettleFoundryReleases
+		// takes them.
+		live, err := tx.liveFoundryGraphJob(ctx, d.OntologyID)
+		if err != nil {
+			return err
+		}
+		var decided bool
+		var held int
+		if err := tx.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(type=? AND entity_key=? AND prop=?), 0) > 0
+FROM foundry_review_decisions WHERE ontology_id=? AND kind='prop'`, d.Type, d.EntityKey, d.Prop, d.OntologyID).Scan(&held, &decided); err != nil {
+			return err
+		}
+		if !decided && held >= model.FoundryExtractDecisionsMax {
+			return FoundryValueDecisionsFull
+		}
+		if err := tx.saveFoundryReviewDecision(ctx, d); err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
+WHERE load_id=? AND kind='prop' AND type=? AND entity_key=? AND prop=? AND id<>?`, loadID, d.Type, d.EntityKey, d.Prop, d.ID); err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
+SELECT ?, `+foundryReviewDecisionColumns+`, 'pending' FROM foundry_review_decisions WHERE ontology_id=? AND id=?
+ON DUPLICATE KEY UPDATE value=VALUES(value), decided_by_user_id=VALUES(decided_by_user_id),
+ decided_at=VALUES(decided_at), applied_status='pending', applied_reason=NULL, applied_at=NULL`, loadID, d.OntologyID, d.ID); err != nil {
+			return err
+		}
+		d.Applied = &model.FoundryDecisionApplied{Status: model.FoundryReleasePending}
+		if err := tx.oweFoundryResends(ctx, loadID, model.FoundryResendDecisions, []string{""}); err != nil {
+			return err
+		}
+		queued, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
+		return err
+	})
+	return queued, err
 }
 
 // saveFoundryReviewDecision writes d, or replaces the choice of its identity,
@@ -105,15 +193,11 @@ func (s *mysqlDB) saveFoundryReviewDecision(ctx context.Context, d *model.Foundr
 // lock each is saved as SettleFoundryReviewDecision saves one, joins the
 // load's own list as pending (in place of any earlier decision the list holds
 // for its claim), and its document is owed a resend (oweFoundryResends).
-// Then, with no job live, resend is queued as a resend job of the load, due
-// after model.FoundryResendSettle; a queued resend of the load is put off by
-// as much instead, so approvals that come together go in one job; a live
-// delete gives way, as to a new load, and resumes after; any other live job's
-// end queues the resend (queueAfterFoundryGraphJob). queued reports a job
-// queued here. Each decision comes back as stored, with what the load holds
-// of it (Applied). ErrConflict means loadID is no longer the ontology's
-// current load, so its reviews are not the ones to settle; ErrNotFound that
-// the ontology is not live.
+// Then resend is queued, or left to the live job's end
+// (queueFoundryResendBehind). queued reports a job queued here. Each decision
+// comes back as stored, with what the load holds of it (Applied). ErrConflict
+// means loadID is no longer the ontology's current load, so its reviews are
+// not the ones to settle; ErrNotFound that the ontology is not live.
 func (s *mysqlDB) SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
 	resend *model.FoundryGraphJob) (queued bool, err error) {
 	if len(decisions) == 0 {
@@ -171,21 +255,7 @@ ON DUPLICATE KEY UPDATE statement_hash=VALUES(statement_hash), decided_by_user_i
 		if err := tx.oweFoundryResends(ctx, loadID, model.FoundryResendApproval, documents); err != nil {
 			return err
 		}
-		switch {
-		case live == nil:
-		case live.Kind == model.FoundryGraphJobDelete:
-			if err := tx.cancelLiveFoundryGraphJob(ctx, ontologyID, "an approval went first; the delete resumes after it"); err != nil {
-				return err
-			}
-		case live.Kind == model.FoundryGraphJobResend && live.LoadID == loadID && live.Status == model.FoundryGraphJobQueued:
-			_, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_jobs
-SET next_attempt_at=GREATEST(next_attempt_at, NOW(6) + INTERVAL ? MICROSECOND) WHERE id=? AND status='queued'`,
-				model.FoundryResendSettle.Microseconds(), live.ID)
-			return err
-		default:
-			return nil
-		}
-		queued, err = tx.queueFoundryResend(ctx, o, resend, model.FoundryResendSettle)
+		queued, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
 		return err
 	})
 	return queued, err
@@ -198,8 +268,11 @@ func (s *mysqlDB) ListFoundryReviewDecisions(ctx context.Context, ontologyID, af
 	return s.listFoundryDecisions(ctx, "foundry_review_decisions", "ontology_id", ontologyID, afterID, documentIDs, limit)
 }
 
-// ListFoundryLoadDecisions reads choices captured atomically at load creation.
-// Replacements, deletion and schema pruning affect only future loads.
+// ListFoundryLoadDecisions reads the decisions a load sends the engine: those
+// the ontology held when the load was created, the releases and value
+// decisions settled against it or carried to it since, and no value decision
+// removed since. A resolve replaced or removed, and schema pruning, affect
+// only future loads.
 func (s *mysqlDB) ListFoundryLoadDecisions(ctx context.Context, loadID, afterID string, documentIDs []string, limit int) ([]*model.FoundryReviewDecision, error) {
 	return s.listFoundryDecisions(ctx, "foundry_load_decisions", "load_id", loadID, afterID, documentIDs, limit)
 }
@@ -231,39 +304,100 @@ func (s *mysqlDB) listFoundryDecisions(ctx context.Context, table, key, ontology
 }
 
 // DeleteFoundryReviewDecision removes a decision from those later loads
-// copy. A load that copied it keeps its copy, and what it wrote. The current
-// load's copy of a release it has not written goes with it, whatever a job
-// said of it (waiting, refused, missed, or nothing yet): a resend sends every
-// release its load's list holds of a document, so a copy left there would be
-// written by the next approval of another claim of that document, after the
-// person took it back, with no decision left to show for it. One the load
-// wrote stays: the fact is in the load, and sent again it finds no review.
-// A copy in a load that is not current is not reached here: it goes when
-// that load is made current again, before any resend of it is queued
-// (carryFoundryReleases). It holds the ontology's lock, as every writer of a load's decisions does,
+// copy, and takes it back from the loads that hold it as far as each kind
+// can be. A resolve stays in the loads that copied it, with what it wrote.
+//
+// The current load's copy of a release it has not written goes with it,
+// whatever a job said of it (waiting, refused, missed, or nothing yet): a
+// resend sends every release its load's list holds of a document, so a copy
+// left there would be written by the next approval of another claim of that
+// document, after the person took it back, with no decision left to show
+// for it. One the load wrote stays: the fact is in the load, and sent again
+// it finds no review. A copy in a load that is not current is not reached
+// here: it goes when that load is made current again, before any resend of
+// it is queued (carryFoundryReleases).
+//
+// A value decision leaves the list of every load of the ontology that holds
+// it, and each of those owes the engine its decisions again
+// (model.FoundryResendDecisions): the engine withdraws a value decision it is
+// no longer sent, and the property goes back to what its other statements
+// give. The current load is sent its list at once, by resend, queued as a
+// settle queues one (queueFoundryResendBehind); a load being written sends
+// its list with what it has yet to send, and once more when its job ends
+// and it is current; any other is sent it if it is made current. So no load
+// goes on applying a decision that no longer exists.
+//
+// It holds the ontology's lock, as every writer of a load's decisions does,
 // so the current load is the same throughout. ErrNotFound means the ontology
-// has no such decision.
-func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error {
+// is not live or has no such decision.
+func (s *mysqlDB) DeleteFoundryReviewDecision(ctx context.Context, workspaceID, ontologyID, id string, resend *model.FoundryGraphJob) error {
 	return s.WithTx(ctx, func(db Store) error {
 		tx := db.(*mysqlDB)
-		var current sql.NullString
-		if err := tx.db.QueryRowContext(ctx, `SELECT current_load_id FROM foundry_ontologies WHERE id=? FOR UPDATE`, ontologyID).
-			Scan(&current); err != nil {
+		o, err := tx.lockLiveFoundryOntology(ctx, workspaceID, ontologyID)
+		if err != nil {
+			return err
+		}
+		// The live job's row before any decision's, as a settle takes them.
+		live, err := tx.liveFoundryGraphJob(ctx, ontologyID)
+		if err != nil {
+			return err
+		}
+		var kind string
+		if err := tx.db.QueryRowContext(ctx, `SELECT kind FROM foundry_review_decisions WHERE ontology_id=? AND id=? FOR UPDATE`, ontologyID, id).
+			Scan(&kind); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
 			return err
 		}
-		if err := execOrNotFound(ctx, tx.db, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, ontologyID, id); err != nil {
+		if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_review_decisions WHERE ontology_id=? AND id=?`, ontologyID, id); err != nil {
 			return err
 		}
-		if !current.Valid {
-			return nil
+		switch model.FoundryReviewDecisionKind(kind) {
+		case model.FoundryReviewRelease:
+			if o.CurrentLoadID == nil {
+				return nil
+			}
+			// <=> is NULL-safe: a copy no job has reported on has no status.
+			_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
+WHERE load_id=? AND id=? AND kind='release' AND NOT (applied_status <=> 'written')`, *o.CurrentLoadID, id)
+			return err
+		case model.FoundryReviewProp:
+			// Retention keeps an ontology's loads few.
+			rows, err := tx.db.QueryContext(ctx, `SELECT d.load_id FROM foundry_loads l
+JOIN foundry_load_decisions d ON d.load_id=l.id AND d.id=? AND d.kind='prop'
+WHERE l.ontology_id=? AND l.status<>'deleted' ORDER BY l.id`, id, ontologyID)
+			if err != nil {
+				return err
+			}
+			var loads []string
+			for rows.Next() {
+				var load string
+				if err := rows.Scan(&load); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				loads = append(loads, load)
+			}
+			_ = rows.Close()
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			for _, load := range loads {
+				if _, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions WHERE load_id=? AND id=? AND kind='prop'`, load, id); err != nil {
+					return err
+				}
+				if err := tx.oweFoundryResends(ctx, load, model.FoundryResendDecisions, []string{""}); err != nil {
+					return err
+				}
+			}
+			if o.CurrentLoadID == nil || !slices.Contains(loads, *o.CurrentLoadID) {
+				return nil
+			}
+			_, err = tx.queueFoundryResendBehind(ctx, o, live, resend)
+			return err
 		}
-		// <=> is NULL-safe: a copy no job has reported on has no status.
-		_, err := tx.db.ExecContext(ctx, `DELETE FROM foundry_load_decisions
-WHERE load_id=? AND id=? AND kind='release' AND NOT (applied_status <=> 'written')`, current.String, id)
-		return err
+		return nil
 	})
 }
 

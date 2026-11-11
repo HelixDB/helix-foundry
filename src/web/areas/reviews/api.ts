@@ -12,17 +12,19 @@ import { applyPollMs, waiting } from "./model";
 const enc = encodeURIComponent;
 const base = (ws: string, o: string) =>
   `/v1/workspaces/${enc(ws)}/foundry/ontologies/${enc(o)}`;
-// When this page first saw an approval of each ontology wait, since one last
-// began to: what the reads' back-off counts from. Gone once none waits.
+// When this page first saw a decision of each ontology wait for its job
+// (an approval or a chosen value), since one last began to: what the reads'
+// back-off counts from. Gone once none waits.
 const waitingSince = new Map<string, number>();
 export const reviewQueries = {
   // Every decision of the ontology, a page (100) at a time: the backend lists them
   // with no filter. Pages show what is saved; settling never waits for it.
-  // While an approval waits for the job that applies it to the current load
-  // they are read again, every two seconds at first and less often the longer
-  // one waits (applyPollMs), and once one has been applied every read of the
-  // ontology is: its claim is a fact now, or its card says why not, without
-  // the page being loaded again.
+  // While an approval or a chosen value waits for the job that applies it to
+  // the current load they are read again, every two seconds at first and
+  // less often the longer one waits (applyPollMs), and once one has been
+  // applied every read of the ontology is: its claim is a fact now, or its
+  // card says why not, or its value shows, without the page being loaded
+  // again.
   list: (ws: string, o: string) => ({
     queryKey: [ws, "ontology", o, "review-decisions"],
     staleTime: 30_000,

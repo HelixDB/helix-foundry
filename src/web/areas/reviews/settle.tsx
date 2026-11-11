@@ -11,13 +11,16 @@ import { Button, ButtonLink, Select } from "../../kit";
 import { paths } from "../../paths";
 import { ApiError } from "../../api";
 import { canManage, useWorkspace } from "../../ui";
+import { ontologyQueries } from "../ontology/queries";
 import { useOntology } from "../ontology/scope";
 import { valueText } from "../explore/model";
 import { deleteReviewDecision, reviewQueries, settleReview } from "./api";
 import type { Naming } from "../explore/naming";
 import {
   approvalOf,
+  decidedText,
   decisionFor,
+  holdsDecided,
   loadRead,
   matchesReview,
   propValueText,
@@ -118,11 +121,13 @@ function ClaimWritten({
 
 /**
  * Settles a review of the load the page shows (`load`); only the current one
- * settles. A name or a value is saved as an override for the next load. An
- * approval of a held claim is written to the current load at once, by a job
- * of its own: its card says it is being written, or what it waits behind
- * when another job is running, then the claim is a fact and the card goes,
- * or the card says why the load kept it held.
+ * settles. A name is saved as an override for the next load. An approval of
+ * a held claim is written to the current load at once, by a job of its own:
+ * its card says it is being written, or what it waits behind when another
+ * job is running, then the claim is a fact and the card goes, or the card
+ * says why the load kept it held. A chosen value goes the same way: the job
+ * sends the load its decisions, the card says so, and the value shows
+ * wherever the page reads it, with no reload.
  */
 export function SettleReview({
   review,
@@ -171,11 +176,22 @@ export function SettleReview({
     );
   const isProp = s.kind === "prop",
     isRelease = s.kind === "release";
+  // A value this load holds by a decision is no table's: its card offers
+  // another choice, and says nothing of a table.
+  const decided = query.data?.find((d) => matchesReview(d, s)),
+    holds =
+      isProp &&
+      editable &&
+      decided?.kind === "prop" &&
+      holdsDecided(decided.value, s.table);
+  const table = isProp && s.table !== undefined && !holds;
   const field = !isProp
     ? "Link this name to"
-    : s.table !== undefined
-      ? "Replace the table’s value with"
-      : "Keep value";
+    : holds
+      ? "Choose another value"
+      : table
+        ? "Replace the table’s value with"
+        : "Keep value";
   const decision =
     isRelease || choice === ""
       ? undefined
@@ -238,7 +254,7 @@ export function SettleReview({
           <span className="on-muted"> · for the name “{s.normName}”</span>
         </p>
       )}
-      {isProp && s.table !== undefined && (
+      {isProp && table && (
         <p>
           The table’s value, <strong>{valueText(s.table)}</strong>, is kept.
           Documents state another:
@@ -286,9 +302,15 @@ export function SettleReview({
                           : s.formed && single
                             ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
                             : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
-              : loadRead(saved, load?.createdAt)
-                ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
-                : "Decision saved. Reload to apply."}
+              : saved.kind === "prop"
+                ? decidedText(
+                    saved.applied,
+                    propValueText(saved.value),
+                    ontology.activeJob?.kind,
+                  )
+                : loadRead(saved, load?.createdAt)
+                  ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
+                  : "Decision saved. Reload to apply."}
         </p>
       )}
       {isRelease && !saved && earlier && (
@@ -366,10 +388,13 @@ export function SettleReview({
             />
           </label>
           <p className="on-muted">
-            {isProp && s.table !== undefined
-              ? "A chosen value replaces the table’s in every later load, even after the table changes. "
-              : ""}
-            Applies from the next load. Reload to apply.
+            {isProp
+              ? `${
+                  table
+                    ? "A chosen value replaces the table’s in this load and every later one, even after the table changes. "
+                    : ""
+                }It’s sent to this load at once, and later loads read it too. A document dated after your decision still wins.`
+              : "Applies from the next load. Reload to apply."}
           </p>
           {(error || query.error) && (
             <p role="alert" className="hf-form-error">
@@ -402,6 +427,26 @@ export function SettleReview({
     </div>
   );
 }
+
+/**
+ * A saved value's line: what the current load made of it, where it says
+ * (FoundryReviewDecision.applied). The load says only that it was sent it.
+ */
+const chosenLine = (
+  d: Extract<ReviewDecision, { kind: "prop" }> & FoundryReviewDecision,
+) => {
+  const line = `${d.type} · ${d.prop}: ${propValueText(d.value)}`;
+  switch (d.applied?.status) {
+    case "pending":
+      return `${line} · being sent to this load`;
+    case "applied":
+      return `${line} · sent to this load`;
+    case "unconfirmed":
+      return `${line} · not confirmed as sent to this load`;
+    default:
+      return line;
+  }
+};
 
 // A saved approval, as what became of it reads.
 const APPROVED: Record<ReleaseStatus, string> = {
@@ -490,11 +535,9 @@ export function SavedDecisions({
                 <p>
                   {d.kind === "release"
                     ? `${approvedLine(d, statusOf?.(d) ?? "unknown")}: “${quoteOf?.(d.claimSection, d.claimStart, d.claimEnd) ?? `section ${d.claimSection + 1}`}”`
-                    : `${d.type} · ${
-                        d.kind === "resolve"
-                          ? `${d.normName} → ${d.entityKey ?? "Not in data"}`
-                          : `${d.prop}: ${propValueText(d.value)}`
-                      }`}
+                    : d.kind === "resolve"
+                      ? `${d.type} · ${d.normName} → ${d.entityKey ?? "Not in data"}`
+                      : chosenLine(d)}
                 </p>
                 {canManage(role) && (
                   <Button
@@ -515,7 +558,22 @@ export function SavedDecisions({
                         await qc.invalidateQueries({
                           queryKey: reviewQueries.list(ws, o).queryKey,
                         });
-                        setNotice("Decision removed. Reload to apply.");
+                        // A value is taken back from the current load by a
+                        // job: the ontology's live job is read again, and
+                        // the page's reads follow when it ends.
+                        if (d.kind === "prop")
+                          await Promise.all(
+                            [ontologyQueries.ontology, ontologyQueries.loads]
+                              .map((q) => q(ws, o).queryKey)
+                              .map((queryKey) =>
+                                qc.invalidateQueries({ queryKey, exact: true }),
+                              ),
+                          );
+                        setNotice(
+                          d.kind === "prop"
+                            ? "Decision removed. This load is taking the value back now; later loads won’t read it."
+                            : "Decision removed. Reload to apply.",
+                        );
                       } catch (e) {
                         setError((e as Error).message);
                       } finally {
@@ -530,8 +588,9 @@ export function SavedDecisions({
             ))}
           </ul>
           <p className="on-muted">
-            An approval is written to the current load at once. Other decisions
-            apply to future loads.
+            An approval or a chosen value applies to the current load at once,
+            and removing a chosen value takes it back at once. A linked name
+            applies to future loads.
           </p>
           <ButtonLink to={paths.loads(o)} size="sm">
             Loads

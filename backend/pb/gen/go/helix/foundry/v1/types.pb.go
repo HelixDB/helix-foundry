@@ -7137,8 +7137,9 @@ type FoundryGraphJob struct {
 	CreatedAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	// load, extract, apply, delete or resend (a person's approvals applied to
-	// the load: their documents sent again from their saved extractions).
+	// load, extract, apply, delete or resend (a person's decisions applied to
+	// the load: approved claims' documents sent again from their saved
+	// extractions, and the load's value decisions).
 	Kind string `protobuf:"bytes,11,opt,name=kind,proto3" json:"kind,omitempty"`
 	// The load it writes or deletes.
 	LoadId string `protobuf:"bytes,12,opt,name=load_id,json=loadId,proto3" json:"load_id,omitempty"`
@@ -8666,6 +8667,12 @@ type FoundryReviewChoice_Resolve struct {
 }
 
 type FoundryReviewChoice_Prop struct {
+	// A value a person chose for a property documents state differently. It
+	// applies to the current load at once: a job sends the load its value
+	// decisions, at no model cost, and the engine holds the value as a
+	// statement of the property from when it was decided, which a document
+	// dated later still beats (FoundryReviewDecision.applied). Later loads
+	// read it too.
 	Prop *FoundryPropValue `protobuf:"bytes,3,opt,name=prop,proto3,oneof"`
 }
 
@@ -8940,7 +8947,7 @@ func (*FoundryResolveChoice_EntityKey) isFoundryResolveChoice_Target() {}
 
 func (*FoundryResolveChoice_NotInData) isFoundryResolveChoice_Target() {}
 
-// What became of a release decision in the ontology's current load.
+// What became of a release or a prop decision in the ontology's current load.
 type FoundryDecisionApplied struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -8949,15 +8956,19 @@ type FoundryDecisionApplied struct {
 	// pending (a job has yet to apply it), written (the claim is a fact),
 	// refused (it stays held: reason says why), missed (this load holds no
 	// review at the decision's key and place, so it has nothing to release),
+	// applied (a prop decision: the load was sent it, and the job that sent it
+	// succeeded; the engine reports nothing more of a value, so this doesn't
+	// say the property holds it: a document dated after the decision still
+	// beats it, and an entity the load doesn't hold takes none),
 	// unconfirmed (the job that applies it failed before the engine's word on
 	// it was recorded, reason job_failed: the claim may or may not have been
-	// written, and no job is coming. Approving it again finishes it while the
-	// load still holds the claim's review. If the engine wrote the claim
-	// before the job failed, that review is gone and there is nothing to
-	// approve: the fact is in the load, and the decision stays unconfirmed
-	// until another approval of the same document sends it again), or empty:
-	// the load read the decision when it was created, and no job has said
-	// what became of it.
+	// written, or the value sent, and no job is coming. Approving it again
+	// finishes it while the load still holds the claim's review, and choosing
+	// a value again finishes a value. If the engine wrote the claim before the
+	// job failed, that review is gone and there is nothing to approve: the
+	// fact is in the load, and the decision stays unconfirmed until another
+	// approval of the same document sends it again), or empty: the load read
+	// the decision when it was created, and no job has said what became of it.
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	// Why a refused claim stays held. The engine's reasons: unresolved (a name
 	// in it is matched to no one record: settle that name), legal_form (a name
@@ -9031,9 +9042,10 @@ func (x *FoundryDecisionApplied) GetAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// A durable ontology-wide override. A resolve or prop decision applies from
-// the next load; a release applies to the current load at once, and later
-// loads read it as they are made.
+// A durable ontology-wide override. A resolve decision applies from the next
+// load; a release or a prop decision applies to the current load at once,
+// and later loads read it as they are made. Removing a prop decision
+// withdraws it from the current load at once too.
 type FoundryReviewDecision struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -9059,10 +9071,10 @@ type FoundryReviewDecision struct {
 	ClaimStart    *uint32 `protobuf:"varint,14,opt,name=claim_start,json=claimStart,proto3,oneof" json:"claim_start,omitempty"`
 	ClaimEnd      *uint32 `protobuf:"varint,15,opt,name=claim_end,json=claimEnd,proto3,oneof" json:"claim_end,omitempty"`
 	StatementHash *string `protobuf:"bytes,16,opt,name=statement_hash,json=statementHash,proto3,oneof" json:"statement_hash,omitempty"`
-	// A release decision's state in the ontology's current load; unset for
-	// other kinds, and when that load's decisions don't hold it yet (one saved
-	// while another load was current joins them when a job of the ontology next
-	// ends).
+	// A release or prop decision's state in the ontology's current load; unset
+	// for a resolve, and when that load's decisions don't hold it yet (one
+	// saved while another load was current joins them when a job of the
+	// ontology next ends).
 	Applied *FoundryDecisionApplied `protobuf:"bytes,17,opt,name=applied,proto3" json:"applied,omitempty"`
 }
 

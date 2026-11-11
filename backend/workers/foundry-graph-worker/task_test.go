@@ -379,11 +379,19 @@ type memStore struct {
 	removed   []string
 	forgotten []string
 	// resends are the documents the job's load owes a resend
-	// (ListFoundryLoadResends), and ended the requests EndFoundryLoadResend
-	// ended, in order; endErr fails every end.
-	resends []*model.FoundryLoadResend
-	ended   []model.FoundryResendEnd
-	endErr  error
+	// (ListFoundryLoadResends), owedDecisions the request it owes its own
+	// decisions for (FoundryLoadDecisionsOwed), and ended the requests
+	// EndFoundryLoadResend ended, in order; endErr fails every end.
+	resends       []*model.FoundryLoadResend
+	owedDecisions *model.FoundryLoadResend
+	ended         []model.FoundryResendEnd
+	endErr        error
+}
+
+func (s *memStore) FoundryLoadDecisionsOwed(context.Context, string) (*model.FoundryLoadResend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owedDecisions, nil
 }
 
 func (s *memStore) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
