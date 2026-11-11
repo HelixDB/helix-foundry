@@ -42,10 +42,15 @@ ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6),
 // carryFoundryReleases brings the ontology's current load the release
 // decisions saved for claims its list has no word on: those settled while
 // another load was current, as during this one's writing, which its creation
-// could not copy. Each joins the list as carried, and its document, if the
-// load holds an extraction of it, is owed a resend. A claim the list already
-// has a decision for is left as it is, whatever its id. The caller holds the
-// ontology's lock.
+// could not copy. Each whose document the load holds an extraction of joins
+// the list as carried, and that document is owed a resend. One whose
+// document the load has not extracted (it is a duplicate there, out of the
+// load's scope, failed, deleted, or yet to be read) stays out of the list:
+// nothing could say what became of it, and a decision in the list that waits
+// is one a reader waits for. It is carried by the first job end that finds
+// its document extracted, as after the extract that reads it. A claim the
+// list already has a decision for is left as it is, whatever its id. The
+// caller holds the ontology's lock.
 func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOntology) error {
 	if o.CurrentLoadID == nil {
 		return nil
@@ -54,13 +59,14 @@ func (s *mysqlDB) carryFoundryReleases(ctx context.Context, o *model.FoundryOnto
 	columns := "r." + strings.ReplaceAll(foundryReviewDecisionColumns, ", ", ", r.")
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_decisions (load_id, `+foundryReviewDecisionColumns+`, applied_status)
 SELECT ?, `+columns+`, 'carried' FROM foundry_review_decisions r
+JOIN foundry_load_extractions e ON e.load_id=? AND e.document_id=r.doc_id AND e.status='extracted'
 LEFT JOIN foundry_load_decisions l ON l.load_id=? AND l.kind='release' AND l.doc_id=r.doc_id AND l.claim_key=r.claim_key
   AND l.claim_section=r.claim_section AND l.claim_start=r.claim_start AND l.claim_end=r.claim_end
-WHERE r.ontology_id=? AND r.kind='release' AND l.id IS NULL`, loadID, loadID, o.ID); err != nil {
+WHERE r.ontology_id=? AND r.kind='release' AND l.id IS NULL`, loadID, loadID, loadID, o.ID); err != nil {
 		return err
 	}
-	// A carried decision whose document the load hasn't extracted is said of
-	// by the commit that extracts it, so only a held document is owed.
+	// A document whose row left extracted since (a failure recorded over it)
+	// is owed nothing until it is extracted again.
 	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_resends (load_id, document_id, reason)
 SELECT DISTINCT l.load_id, l.doc_id, ? FROM foundry_load_decisions l
 JOIN foundry_load_extractions e ON e.load_id=l.load_id AND e.document_id=l.doc_id AND e.status='extracted'

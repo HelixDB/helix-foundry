@@ -584,6 +584,91 @@ func TestFoundryReleaseCarriedToTheNextLoad(t *testing.T) {
 	assert.Zero(t, left)
 }
 
+// An approval saved while a new load is written is carried to that load only
+// once it holds the claim's document as extracted. Where the document is a
+// duplicate there, out of scope, failed or deleted, nothing would ever say
+// what became of the decision: it stays out of the load's list, so no reader
+// waits for it, and no resend is owed for it. A document read later (a
+// failure retried) brings its approval in at that job's end.
+func TestFoundryReleaseNotCarriedWithoutItsDocument(t *testing.T) {
+	ctx := context.Background()
+	base := newFoundryFixture(t, "RNODOC")
+	var docs []string
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		docs = append(docs, base.uploaded(t, "RNODOC-"+n))
+	}
+	duplicate, outOfScope, failed, deleted, read := docs[0], docs[1], docs[2], docs[3], docs[4]
+	base.draftVersion(t, "RNODOC", customerTOML)
+	require.NoError(t, base.db.CreateFoundryLoad(ctx, loadJob(base.ontology, "RNODOC")))
+	base.loaded(t, "w-RNODOC", docs...)
+	f := resendFixture{foundryFixture: base, load: id26("FJ-RNODOC"), a: duplicate, b: outOfScope, worker: "w-RNODOC"}
+
+	// A new load starts, and a claim of each document is approved on the
+	// load that is still current.
+	f.draftVersion(t, "RNODOC2", customerTOML)
+	require.NoError(t, f.db.CreateFoundryLoad(ctx, loadJob(f.ontology, "RNODOC2")))
+	var approvals []*model.FoundryReviewDecision
+	for _, doc := range docs {
+		approvals = append(approvals, f.held(doc, 0, readA))
+	}
+	require.False(t, f.approve(t, "1", approvals...), "the load job goes on")
+	byDoc := map[string]*model.FoundryReviewDecision{}
+	for i, doc := range docs {
+		byDoc[doc] = approvals[i]
+	}
+
+	// The new load holds only one of the documents as extracted.
+	require.NoError(t, f.db.DeleteFoundryDocument(ctx, f.ontology.WorkspaceID, deleted))
+	job := f.claim(t)
+	require.Equal(t, id26("FJ-RNODOC2"), job.ID)
+	dup := extracted(duplicate)
+	dup.Status, dup.DuplicateOf = model.FoundryExtractionDuplicate, &read
+	scope := extracted(outOfScope)
+	scope.Status = model.FoundryExtractionOutOfScope
+	fail := extracted(failed)
+	fail.Status, fail.Error = model.FoundryExtractionFailed, &model.FoundryExtractionError{Code: model.FoundryExtractionModel, Retryable: true}
+	for _, e := range []*model.FoundryDocumentExtraction{dup, scope, fail, extracted(read)} {
+		require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, e, false))
+	}
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "nodoc", model.FoundryGraphJobSucceeded))
+	f.load = job.LoadID
+	require.Equal(t, f.load, *f.ontologyNow(t).CurrentLoadID)
+
+	// The deleted document is taken out of the load by an extract, which goes
+	// first; its end carries what the load can apply.
+	job = f.claim(t)
+	require.Equal(t, model.FoundryGraphJobExtract, job.Kind)
+	assert.Empty(t, f.applied(t, approvals...), "none is in the load's list yet, so none waits")
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "nodoc-removed", model.FoundryGraphJobSucceeded))
+
+	assert.Equal(t, map[string]string{byDoc[read].ID: "carried"}, f.applied(t, approvals...),
+		"only the approval whose document the load extracted joins its list")
+	assert.Equal(t, map[string]int{read: 1}, f.owed(t))
+	job = f.claim(t)
+	require.Equal(t, model.FoundryGraphJobResend, job.Kind)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 1, written(byDoc[read]))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "nodoc-sent", model.FoundryGraphJobSucceeded))
+	assert.Nil(t, f.liveJob(t), "nothing waits, and nothing is owed")
+	assert.Equal(t, map[string]string{byDoc[read].ID: "written"}, f.applied(t, approvals...))
+
+	// The failed document is read after all, by the extract an upload queues:
+	// its end finds the document extracted and carries the approval.
+	late := f.uploaded(t, "RNODOC-f")
+	job = f.claim(t)
+	require.Equal(t, model.FoundryGraphJobExtract, job.Kind)
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(failed), false))
+	require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(late), false))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "nodoc-read", model.FoundryGraphJobSucceeded))
+	assert.Equal(t, map[string]string{byDoc[read].ID: "written", byDoc[failed].ID: "carried"}, f.applied(t, approvals...))
+	assert.Equal(t, map[string]int{failed: 1}, f.owed(t))
+	resend := f.liveJob(t)
+	require.NotNil(t, resend)
+	assert.Equal(t, model.FoundryGraphJobResend, resend.Kind)
+}
+
 // An approval taken back before it is applied leaves the current load's list
 // with it, so the resend that was queued writes nothing of it; one already
 // written stays in the load that wrote it. A claim approved again after that
