@@ -11,7 +11,7 @@ It opens in your first workspace, **My workspace**, made as the install first st
 
 **Secrets.** The first start writes this install's secrets (the site's token, the store's secret, MySQL's password and the connector key) into the Compose volume `secrets`, and every start reads them from there; nothing is printed or written to the checkout. Keep that volume: the connector key seals every database password and API key you give Foundry, is never made again once written, and losing it makes them unreadable. `docker compose down -v` deletes it with the data. Back it up with the data: [Back up and restore](#back-up-and-restore).
 
-**Usage analytics.** The site tells Helix, anonymously, how Foundry is used, and sends nothing of what Foundry holds. To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env`: [Usage analytics](#usage-analytics) says what is sent.
+**Usage analytics.** The site and the bundled HelixDB tell Helix, anonymously, how Foundry is used, and send nothing of what Foundry holds. To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env`: [Usage analytics](#usage-analytics) says what is sent.
 
 **An install set up with `setup.sh`** (before 0.1.1) keeps its `local/.env`: its first start of this version copies the `FOUNDRY_*` secrets there into the volume, so MySQL's password and the key that sealed its credentials still match. Keep running it from `local/` if its `.env` sets `COMPOSE_PROFILES` or `COMPOSE_FILE` (Ollama in Docker, the GPU file): Compose reads those from the project's own `.env` only.
 
@@ -144,7 +144,9 @@ Every volume goes back under its own name before the stack first starts, so on a
 
 The site tells Helix, anonymously, how Foundry is used, so we know what to fix: which pages are opened (their paths, with every id taken out) and the steps people take, such as an ontology generated, a load ready, a question answered, or why one failed, as fixed words. It sends nothing of what Foundry holds: no data, documents, questions, answers, names or emails, and no recording of the screen. Your browser hands it to the site, which sends it on to Databuddy (databuddy.cc); no script of theirs runs in your browser.
 
-To turn it off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing either way.
+The bundled HelixDB tells Helix how its queries run: each query's shape with every value taken out, how long it took and whether it failed, marked as Foundry's. It sends no data, parameters or results.
+
+To turn both off, set `FOUNDRY_TELEMETRY=off` (or `DO_NOT_TRACK=1`) in `local/.env` and run `docker compose up -d`. A browser with Do Not Track or Global Privacy Control on sends nothing from the site either way.
 
 ## Connecting databases
 
