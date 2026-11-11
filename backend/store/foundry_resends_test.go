@@ -747,6 +747,98 @@ func TestFoundryReleaseCarriedWhenALoadIsMadeCurrent(t *testing.T) {
 	assert.Nil(t, f.liveJob(t))
 }
 
+// A purge of enriched profiles makes its clean load current, the third way
+// a load becomes current. That load copied its decisions when it was
+// created: an approval saved since is carried to it there and then, and its
+// resend goes before the delete of the load that applied the profiles, which
+// the resend's end queues.
+func TestFoundryReleaseCarriedWhenAPurgeMakesItsLoadCurrent(t *testing.T) {
+	ctx := context.Background()
+	base := newFoundryFixture(t, "RPURGE")
+	a, b := base.uploaded(t, "RPURGE-a"), base.uploaded(t, "RPURGE-b")
+	base.draftVersion(t, "RPURGE", customerTOML)
+	require.NoError(t, base.db.CreateFoundryLoad(ctx, loadJob(base.ontology, "RPURGE")))
+	f := resendFixture{foundryFixture: base, load: id26("FJ-RPURGE"), a: a, b: b, worker: "w-RPURGE"}
+	// loads claims the queued load job, has it apply profiles (or none),
+	// records both documents and ends it with status.
+	loads := func(prepared model.FoundryEnrichmentPrepared, status model.FoundryGraphJobStatus) *model.FoundryGraphJob {
+		job := f.claim(t)
+		require.Equal(t, model.FoundryGraphJobLoad, job.Kind)
+		_, err := f.db.StartFoundryLoadEnrichment(ctx, f.worker, job)
+		require.NoError(t, err)
+		require.NoError(t, f.db.EndPreparedFoundryLoadEnrichment(ctx, job.LoadID, f.worker, prepared))
+		for _, doc := range []string{a, b} {
+			require.NoError(t, f.db.RecordFoundryDocumentExtraction(ctx, job.ID, f.worker, extracted(doc), false))
+		}
+		outcome := model.FoundryGraphJobOutcome{Status: status, IngestDone: true, Next: next("RPURGE-" + string(status))}
+		if status == model.FoundryGraphJobBudgetExhausted {
+			outcome.Error = "budget"
+		}
+		_, err = f.db.FinishFoundryGraphJob(ctx, job.ID, f.worker, outcome)
+		require.NoError(t, err)
+		return job
+	}
+	dirty := loads(model.FoundryEnrichmentPrepared{
+		End: model.EndFoundryEnrichment(model.FoundryEnrichmentDone), CarriedKey: "c", ResultsKey: "r",
+		Applied: model.FoundryEnrichmentApplied{Key: "c", SHA256: "cc"},
+	}, model.FoundryGraphJobSucceeded)
+	require.Equal(t, f.load, dirty.LoadID)
+	require.Equal(t, f.load, *f.ontologyNow(t).CurrentLoadID)
+
+	// Consent is withdrawn, and the purge queues its clean load.
+	require.NoError(t, f.db.SetFoundryEnrichmentConsent(ctx, consent(f.ontology.WorkspaceID, "off", false, 0)))
+	step, err := f.db.AdvanceFoundryEnrichmentPurge(ctx, f.ontology.ID, &model.FoundryGraphJob{ID: id26("FJ-RPURGE-clean")}, id26("FN-RPURGE-1"),
+		24*time.Hour, 3)
+	require.NoError(t, err)
+	require.Equal(t, model.FoundryEnrichmentPurgeQueued, step)
+
+	// While it is written a claim is approved on the load still current. The
+	// clean load runs out of budget, so it ends partial and is not made
+	// current by its own end; the approval is written to the first load.
+	d := f.held(a, 0, readA)
+	require.False(t, f.approve(t, "1", d), "the load job goes on")
+	clean := loads(model.FoundryEnrichmentPrepared{End: model.EndFoundryEnrichment(model.FoundryEnrichmentOff), Applied: model.FoundryEnrichmentNone},
+		model.FoundryGraphJobBudgetExhausted)
+	require.Equal(t, model.FoundryLoadPartial, f.loadStatus(t, clean.LoadID))
+	require.Equal(t, dirty.LoadID, *f.ontologyNow(t).CurrentLoadID)
+	job := f.claim(t)
+	require.Equal(t, model.FoundryGraphJobResend, job.Kind)
+	owed, err := f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 1, written(d))
+	f.end(t, job, "dirty", model.FoundryGraphJobSucceeded)
+	require.Nil(t, f.liveJob(t))
+
+	// The purge makes the clean load current. It never read the approval.
+	step, err = f.db.AdvanceFoundryEnrichmentPurge(ctx, f.ontology.ID, &model.FoundryGraphJob{ID: id26("FJ-RPURGE-again")}, id26("FN-RPURGE-2"),
+		24*time.Hour, 3)
+	require.NoError(t, err)
+	require.Equal(t, model.FoundryEnrichmentPurgeDone, step)
+	require.Equal(t, clean.LoadID, *f.ontologyNow(t).CurrentLoadID)
+	f.load = clean.LoadID
+	assert.Equal(t, map[string]string{d.ID: "carried"}, f.applied(t, d), "carried as the load is made current")
+	assert.Equal(t, map[string]int{a: 1}, f.owed(t))
+	resend := f.liveJob(t)
+	require.NotNil(t, resend)
+	assert.Equal(t, id26("FN-RPURGE-2"), resend.ID)
+	assert.Equal(t, model.FoundryGraphJobResend, resend.Kind)
+	assert.Equal(t, clean.LoadID, resend.LoadID)
+	assert.Equal(t, model.FoundryLoadDeleting, f.loadStatus(t, dirty.LoadID), "the load that applied purged profiles goes")
+
+	job = f.claim(t)
+	owed, err = f.db.ListFoundryLoadResends(ctx, f.load)
+	require.NoError(t, err)
+	require.Len(t, owed, 1)
+	f.sent(t, job, owed[0], 1, written(d))
+	assert.Equal(t, map[string]string{d.ID: "written"}, f.applied(t, d))
+	assert.Equal(t, model.FoundryGraphJobEnded, f.end(t, job, "clean", model.FoundryGraphJobSucceeded))
+	deleting := f.liveJob(t)
+	require.NotNil(t, deleting, "the resend's end queues the delete")
+	assert.Equal(t, model.FoundryGraphJobDelete, deleting.Kind)
+	assert.Equal(t, dirty.LoadID, deleting.LoadID)
+}
+
 // An approval taken back before it is applied leaves the current load's list
 // with it, so the resend that was queued writes nothing of it; one already
 // written stays in the load that wrote it. A claim approved again after that

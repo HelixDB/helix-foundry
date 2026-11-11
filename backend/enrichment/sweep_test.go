@@ -42,9 +42,9 @@ func (d *sweepDB) ListFoundryEnrichmentPurges(_ context.Context, maxAttempts, _ 
 	return d.purges, nil
 }
 
-func (d *sweepDB) AdvanceFoundryEnrichmentPurge(_ context.Context, ontologyID string, load *model.FoundryGraphJob, deleteJobID string,
+func (d *sweepDB) AdvanceFoundryEnrichmentPurge(_ context.Context, ontologyID string, load *model.FoundryGraphJob, nextJobID string,
 	retryAfter time.Duration, maxAttempts int) (model.FoundryEnrichmentPurgeStep, error) {
-	if retryAfter != 24*time.Hour || maxAttempts != 3 || load.ID == "" || deleteJobID == "" || load.ID == deleteJobID {
+	if retryAfter != 24*time.Hour || maxAttempts != 3 || load.ID == "" || nextJobID == "" || load.ID == nextJobID {
 		return "", errBoom
 	}
 	step, ok := d.advance[ontologyID]

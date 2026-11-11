@@ -344,7 +344,7 @@ type Store interface {
 	StopFoundryLoadEnrichment(ctx context.Context, workspaceID, ontologyID, loadID, userID string) error
 	HaltFoundryEnrichmentProvider(ctx context.Context, provider string, until time.Time, code string) error
 	ClearFoundryEnrichmentFiles(ctx context.Context, sweep model.FoundryEnrichmentSweep) error
-	AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, deleteJobID string, retryAfter time.Duration, maxAttempts int) (model.FoundryEnrichmentPurgeStep, error)
+	AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, nextJobID string, retryAfter time.Duration, maxAttempts int) (model.FoundryEnrichmentPurgeStep, error)
 	CreateFoundryAIConfig(ctx context.Context, c *model.FoundryAIConfig, perHour int) error
 	ClaimFoundryAIProbe(ctx context.Context, owner string, lease time.Duration, maxAttempts int) (*model.FoundryAIConfig, error)
 	ReleaseFoundryAIProbe(ctx context.Context, configID, owner string, maxAttempts int) error

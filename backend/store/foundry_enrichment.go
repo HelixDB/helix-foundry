@@ -1016,7 +1016,11 @@ FROM foundry_enrichment_purges WHERE done_at IS NULL ORDER BY attempts >= ?, req
 //     withdrawn ones must not wait for the budget;
 //   - a current load that applied no purged profiles, or none, ends the
 //     purge (done), and the ontology's other loads that applied purged
-//     profiles are deleted (a delete job, deleteJobID, is queued);
+//     profiles are deleted. One job (nextJobID) is queued, as after a job's
+//     end (queueAfterFoundryGraphJob): a resend, when the current load owes
+//     one once the approvals it hasn't read are carried to it, as a load the
+//     purge just made current may (queueFoundryResend); else a delete, which
+//     the resend's end queues otherwise;
 //   - after maxAttempts clean loads it gives up (exhausted);
 //   - a clean load queued less than retryAfter ago waits;
 //   - otherwise it queues load (a load job of the current load's version,
@@ -1024,7 +1028,7 @@ FROM foundry_enrichment_purges WHERE done_at IS NULL ORDER BY attempts >= ?, req
 //     monthly spend check a user's load gets.
 //
 // ErrNotFound means the ontology has no purge pending.
-func (s *mysqlDB) AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, deleteJobID string,
+func (s *mysqlDB) AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, nextJobID string,
 	retryAfter time.Duration, maxAttempts int) (model.FoundryEnrichmentPurgeStep, error) {
 	var step model.FoundryEnrichmentPurgeStep
 	err := s.WithTx(ctx, func(txDB Store) error {
@@ -1105,7 +1109,14 @@ WHERE l.ontology_id=? AND l.status IN ('ready', 'partial', 'failed', 'delete_fai
   AND l.id <> ?`, ontologyID, current); err != nil {
 				return err
 			}
-			return tx.queueNextFoundryDelete(ctx, o, deleteJobID)
+			// Approvals go before deletes, as at a job's end: the load made
+			// current above copied its decisions when it was created, and
+			// would otherwise show those saved since as unread until some
+			// job happened to end.
+			if queued, err := tx.queueFoundryResend(ctx, o, &model.FoundryGraphJob{ID: nextJobID}, 0); err != nil || queued {
+				return err
+			}
+			return tx.queueNextFoundryDelete(ctx, o, nextJobID)
 		case p.Attempts >= maxAttempts:
 			step = model.FoundryEnrichmentPurgeExhausted
 			return nil
