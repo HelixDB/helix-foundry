@@ -176,6 +176,23 @@ export const mock = {
       body: JSON.stringify(config),
     }),
   /**
+   * Calls the WFE route `path` (/v1/...) as Ada's agent does through the
+   * Helix MCP, with no token: starting and finishing a workflow's runs, and
+   * reading and asking under one, which the site never does. Its answer's
+   * status and body.
+   */
+  agent: async (
+    method: "GET" | "POST",
+    path: string,
+    body?: object,
+  ): Promise<{ status: number; body: any }> => {
+    const res = await fetch(`${MOCK}/__mock/agent${path}`, {
+      method,
+      ...(body && { body: JSON.stringify(body) }),
+    });
+    return { status: res.status, body: await res.json() };
+  },
+  /**
    * Sends pieces to an API source as an agent does through the Helix MCP
    * (the site never sends any): stored whole, or refused whole with the
    * backend's message. Its answer's status and body.

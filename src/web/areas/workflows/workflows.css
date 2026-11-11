@@ -1,0 +1,62 @@
+/* Workflows area: built from the kit and the ontology area's stack and code
+   blocks (on-stack, on-code). */
+.wf-id {
+  display: inline-flex;
+  gap: var(--hf-space-05);
+  align-items: center;
+}
+.wf-prompt {
+  white-space: pre-wrap;
+}
+/* A request or answer as the agent sent it. */
+.wf-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wf-timeline {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-timeline > li + li {
+  border-top: 1px solid var(--hf-border);
+}
+.wf-access {
+  display: grid;
+  gap: var(--hf-space-05);
+  padding: var(--hf-space-15) var(--hf-space-2);
+}
+.wf-access > header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hf-space-1);
+  align-items: baseline;
+}
+.wf-access p {
+  margin: 0;
+}
+.wf-access time {
+  margin-left: auto;
+  font-size: var(--hf-text-sm);
+}
+.wf-access summary {
+  cursor: pointer;
+  color: var(--hf-muted);
+  font-size: var(--hf-text-sm);
+}
+/* Its place in the run. */
+.wf-seq {
+  min-width: 1.6em;
+  color: var(--hf-faint);
+  font-variant-numeric: tabular-nums;
+}
+.wf-entities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hf-space-05);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

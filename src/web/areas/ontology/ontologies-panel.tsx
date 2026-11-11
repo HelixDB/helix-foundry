@@ -81,8 +81,9 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
   // workspace's documents (the Connectors area's), counted once the ontology
   // is read, the list's page, with the documents as a file system under it;
   // then Suggestions, what audits of its current load found it lacks, where
-  // this Foundry audits loads. The Explorer and Ask, which read a load, are
-  // sections of their own.
+  // this Foundry audits loads; then Workflows, its agents' tasks and what
+  // their runs read and wrote, for anyone but a grantee. The Explorer and
+  // Ask, which read a load, are sections of their own.
   const overview: NavChild = {
     to: paths.ontology(open),
     label: "Overview",
@@ -96,7 +97,12 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
     // page, the document's row is).
     onDocuments = !!documents && open !== "",
     onDocumentsList = onDocuments && !documentId,
-    onSuggestions = open !== "" && pathname === paths.suggestions(open);
+    onSuggestions = open !== "" && pathname === paths.suggestions(open),
+    onWorkflows =
+      open !== "" &&
+      (pathname === paths.workflows(open) ||
+        pathname.startsWith(paths.workflows(open) + "/")),
+    onWorkflowsList = onWorkflows && pathname === paths.workflows(open);
   return (
     <div className="on-panel">
       <div className="on-panel-head">
@@ -216,6 +222,21 @@ export function OntologiesPanel({ onNavigate }: { onNavigate?: () => void }) {
                           aria-current={onSuggestions ? "page" : undefined}
                         >
                           <span>Suggestions</span>
+                        </Link>
+                      </li>
+                    )}
+                    {!grantee && (
+                      <li>
+                        <Link
+                          to={paths.workflows(open)}
+                          onClick={onNavigate}
+                          className={cx(
+                            "hf-subnav-link",
+                            onWorkflows && "is-active",
+                          )}
+                          aria-current={onWorkflowsList ? "page" : undefined}
+                        >
+                          <span>Workflows</span>
                         </Link>
                       </li>
                     )}

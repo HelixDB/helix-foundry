@@ -64,6 +64,7 @@ import { isRouted, scopeFor } from "../graph/scope";
 import { viewOf, type View } from "../graph/view";
 import { fail, id, now, ok, type MockReply, type MockRoute } from "../http";
 import { PROD_STAMP, config, onReset } from "../state";
+import { tracked } from "./workflows";
 import { aiModel } from "./ai";
 import { isFoundryPro } from "./billing";
 import { workspaceConnectors } from "./data";
@@ -2157,57 +2158,72 @@ export const loadRoutes: MockRoute[] = [
   {
     method: "POST",
     path: `${BASE}/{loadId}:read`,
-    handle: (req) => {
-      const s = ontologyOf(req);
-      if (!isScope(s)) return s;
-      // A grantee reads its granted load whatever the database's project.
-      if (knobs.ontologyDatabaseHidden && !req.grantee)
-        return fail("PERMISSION_DENIED", "permission denied");
-      if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
-        return fail("NOT_FOUND", "load not found");
-      const reads = readsOf(
-        (req.body as Partial<ReadFoundryGraphRequest> | undefined)?.readsJson,
-      );
-      if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
-      advanceLoads(s.o.id);
-      const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
-      if (!l) return fail("NOT_FOUND", "load not found");
-      if (l.status === "deleting" || l.status === "delete_failed")
-        return fail("FAILED_PRECONDITION", "the load is being deleted");
-      if (knobs.readsBusy) {
-        knobs.readsBusy -= 1;
-        return fail(
-          "RESOURCE_EXHAUSTED",
-          "the workspace already runs 4 graph reads; try again when one ends",
-        );
-      }
-      if (knobs.readsPaused)
-        return fail("FAILED_PRECONDITION", knobs.readsPaused);
-      // A database still starting reaches the WFE only as a failed read.
-      if (startingRefuses(l.tenantId))
-        return fail("UNAVAILABLE", "the graph reader failed; try again");
-      // Of a load it holds only some of, a grantee reads what its sources
-      // fill (../graph/view.ts).
-      const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
-        {}) as Definition;
-      const view = req.grantee?.load?.partial
-        ? viewOf(
-            req.grantee.visibility(s.o.id),
-            String(def.ontology_toml || ""),
-            String(def.mappings_toml || ""),
-          )
-        : undefined;
-      const model = rulesOf(l, view);
-      return ok({
-        resultJson: JSON.stringify({
-          as_of: now().slice(0, 10),
-          results: reads.map((r) =>
-            answer(model, r, { errors: knobs.readErrors, view }),
-          ),
-          stats: { instances: model.facts.size, wall_ms: 1 },
+    handle: (req) =>
+      tracked(
+        req,
+        req.params.ontologyId,
+        (): MockReply => {
+          const s = ontologyOf(req);
+          if (!isScope(s)) return s;
+          // A grantee reads its granted load whatever the database's project.
+          if (knobs.ontologyDatabaseHidden && !req.grantee)
+            return fail("PERMISSION_DENIED", "permission denied");
+          if (req.grantee && req.params.loadId !== req.grantee.load?.loadId)
+            return fail("NOT_FOUND", "load not found");
+          const reads = readsOf(
+            (req.body as Partial<ReadFoundryGraphRequest> | undefined)
+              ?.readsJson,
+          );
+          if (typeof reads === "string") return fail("INVALID_ARGUMENT", reads);
+          advanceLoads(s.o.id);
+          const l = loadsOf(s.o.id).find((x) => x.id === req.params.loadId);
+          if (!l) return fail("NOT_FOUND", "load not found");
+          if (l.status === "deleting" || l.status === "delete_failed")
+            return fail("FAILED_PRECONDITION", "the load is being deleted");
+          if (knobs.readsBusy) {
+            knobs.readsBusy -= 1;
+            return fail(
+              "RESOURCE_EXHAUSTED",
+              "the workspace already runs 4 graph reads; try again when one ends",
+            );
+          }
+          if (knobs.readsPaused)
+            return fail("FAILED_PRECONDITION", knobs.readsPaused);
+          // A database still starting reaches the WFE only as a failed read.
+          if (startingRefuses(l.tenantId))
+            return fail("UNAVAILABLE", "the graph reader failed; try again");
+          // Of a load it holds only some of, a grantee reads what its sources
+          // fill (../graph/view.ts).
+          const def = (ontologyVersion(l.ontologyId, l.versionId)?.definition ||
+            {}) as Definition;
+          const view = req.grantee?.load?.partial
+            ? viewOf(
+                req.grantee.visibility(s.o.id),
+                String(def.ontology_toml || ""),
+                String(def.mappings_toml || ""),
+              )
+            : undefined;
+          const model = rulesOf(l, view);
+          return ok({
+            resultJson: JSON.stringify({
+              as_of: now().slice(0, 10),
+              results: reads.map((r) =>
+                answer(model, r, { errors: knobs.readErrors, view }),
+              ),
+              stats: { instances: model.facts.size, wall_ms: 1 },
+            }),
+          } satisfies ReadFoundryGraphResponse);
+        },
+        (body) => ({
+          read: {
+            loadId: req.params.loadId!,
+            readsJson: String(
+              (req.body as Partial<ReadFoundryGraphRequest>).readsJson,
+            ),
+            resultJson: (body as ReadFoundryGraphResponse).resultJson || "",
+          },
         }),
-      } satisfies ReadFoundryGraphResponse);
-    },
+      ),
   },
   {
     method: "DELETE",

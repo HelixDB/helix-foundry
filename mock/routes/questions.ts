@@ -38,6 +38,7 @@ import {
   type MockRoute,
   type MockSeen,
 } from "../http";
+import { tracked } from "./workflows";
 import { PROD_STAMP, config, onReset } from "../state";
 import { tenantGraph } from "./databases";
 import { currentLoadId, ontologyLoad } from "./loads";
@@ -1388,121 +1389,135 @@ export const questionRoutes: MockRoute[] = [
   {
     method: "POST",
     path: BASE,
-    handle: (req) => {
-      const s = scope(req);
-      if (!isScope(s)) return s;
-      const unset = aiRefusal(s.m.workspaceId);
-      if (unset) return unset;
-      const body = (req.body || {}) as Partial<AskQuestionRequest>;
-      const clientToken = body.clientToken || "",
-        text = (body.question || "").trim();
-      if (!clientToken || clientToken.length > 64)
-        return fail(
-          "INVALID_ARGUMENT",
-          "client_token is required, at most 64 characters",
-        );
-      if (!text || [...text].length > 4000)
-        return fail(
-          "INVALID_ARGUMENT",
-          "question is required, at most 4000 characters",
-        );
-      if (
-        body.focusJson &&
-        new TextEncoder().encode(body.focusJson).length > 4096
-      )
-        return fail("INVALID_ARGUMENT", "focus_json is at most 4096 bytes");
-      const focusJson = body.focusJson ? focusOf(body.focusJson) : "";
-      if (focusJson === undefined)
-        return fail(
-          "INVALID_ARGUMENT",
-          'focus_json: a focus is {"type": ..., "id": ...}, both set',
-        );
-      advanceAll(s.m.workspaceId);
-      const again = state.questions.find(
-        (q) => q.ontologyId === s.o.id && q.clientToken === clientToken,
-      );
-      if (again)
-        return again.question === text && visible(req, again)
-          ? ok({ question: toQuestion(again) } satisfies QuestionResponse)
-          : fail(
+    handle: (req) =>
+      tracked(
+        req,
+        req.params.ontologyId,
+        (): MockReply => {
+          const s = scope(req);
+          if (!isScope(s)) return s;
+          const unset = aiRefusal(s.m.workspaceId);
+          if (unset) return unset;
+          const body = (req.body || {}) as Partial<AskQuestionRequest>;
+          const clientToken = body.clientToken || "",
+            text = (body.question || "").trim();
+          if (!clientToken || clientToken.length > 64)
+            return fail(
               "INVALID_ARGUMENT",
-              "client_token was already used for another question",
+              "client_token is required, at most 64 characters",
             );
-      // A grantee asks only the load its grants were checked against.
-      const granted = req.grantee?.load?.loadId;
-      if (granted && body.loadId && body.loadId !== granted)
-        return fail("NOT_FOUND", "load not found");
-      const loadId = granted || body.loadId || currentLoadId(s.o.id);
-      if (!loadId)
-        return fail(
-          "FAILED_PRECONDITION",
-          "the ontology has no load to ask yet; load a version first",
-        );
-      const load = ontologyLoad(s.o.id, loadId);
-      if (!load) return fail("NOT_FOUND", "load not found");
-      if (load.status !== "ready" && load.status !== "partial")
-        return fail(
-          "FAILED_PRECONDITION",
-          "only a ready or partial load can be asked",
-        );
-      // A thread is named by its first question.
-      if (
-        body.threadId &&
-        !state.questions.some(
-          (q) =>
-            q.ontologyId === s.o.id &&
-            q.id === body.threadId &&
-            q.threadId === q.id &&
-            visible(req, q),
-        )
-      )
-        return fail("NOT_FOUND", "thread not found");
-      const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
-      if (refusal) return refusal;
-      const qid = id("q");
-      // Of a load it holds only some of, the agent is told what it holds.
-      const def = (ontologyVersion(s.o.id, load.versionId)?.definition ||
-        {}) as { ontology_toml?: unknown; mappings_toml?: unknown };
-      const view = req.grantee?.load?.partial
-        ? viewOf(
-            req.grantee.visibility(s.o.id),
-            String(def.ontology_toml || ""),
-            String(def.mappings_toml || ""),
+          if (!text || [...text].length > 4000)
+            return fail(
+              "INVALID_ARGUMENT",
+              "question is required, at most 4000 characters",
+            );
+          if (
+            body.focusJson &&
+            new TextEncoder().encode(body.focusJson).length > 4096
           )
-        : undefined;
-      const q: StoredQuestion = {
-        id: qid,
-        workspaceId: s.m.workspaceId,
-        ontologyId: s.o.id,
-        threadId: body.threadId || qid,
-        loadId: load.id,
-        versionId: load.versionId,
-        question: text,
-        focusJson,
-        clientToken,
-        askedByUserId: req.principal.user.id,
-        ...(req.grantee ? { grantee: req.grantee.principal } : {}),
-        ...(view && req.grantee ? { seen: req.grantee.seen(s.o.id) } : {}),
-        createdAt: now(),
-        status: "queued",
-        attempts: 0,
-        claimedAt: 0,
-        heldAt: 0,
-        stepMs: knobs.askStepMs ?? STEP_MS,
-        script: view
-          ? partAnswer(s.o, load.id, view, knobs.askOutcome || "answered")
-          : answer(s.o, load.id, knobs.askOutcome || "answered", !!req.grantee),
-        events: [],
-        resultJson: "",
-        error: "",
-        usdMicros: 0,
-        reservedMicros: 0,
-        startedAt: null,
-        finishedAt: null,
-      };
-      state.questions.unshift(q);
-      return ok({ question: toQuestion(q) } satisfies QuestionResponse);
-    },
+            return fail("INVALID_ARGUMENT", "focus_json is at most 4096 bytes");
+          const focusJson = body.focusJson ? focusOf(body.focusJson) : "";
+          if (focusJson === undefined)
+            return fail(
+              "INVALID_ARGUMENT",
+              'focus_json: a focus is {"type": ..., "id": ...}, both set',
+            );
+          advanceAll(s.m.workspaceId);
+          const again = state.questions.find(
+            (q) => q.ontologyId === s.o.id && q.clientToken === clientToken,
+          );
+          if (again)
+            return again.question === text && visible(req, again)
+              ? ok({ question: toQuestion(again) } satisfies QuestionResponse)
+              : fail(
+                  "INVALID_ARGUMENT",
+                  "client_token was already used for another question",
+                );
+          // A grantee asks only the load its grants were checked against.
+          const granted = req.grantee?.load?.loadId;
+          if (granted && body.loadId && body.loadId !== granted)
+            return fail("NOT_FOUND", "load not found");
+          const loadId = granted || body.loadId || currentLoadId(s.o.id);
+          if (!loadId)
+            return fail(
+              "FAILED_PRECONDITION",
+              "the ontology has no load to ask yet; load a version first",
+            );
+          const load = ontologyLoad(s.o.id, loadId);
+          if (!load) return fail("NOT_FOUND", "load not found");
+          if (load.status !== "ready" && load.status !== "partial")
+            return fail(
+              "FAILED_PRECONDITION",
+              "only a ready or partial load can be asked",
+            );
+          // A thread is named by its first question.
+          if (
+            body.threadId &&
+            !state.questions.some(
+              (q) =>
+                q.ontologyId === s.o.id &&
+                q.id === body.threadId &&
+                q.threadId === q.id &&
+                visible(req, q),
+            )
+          )
+            return fail("NOT_FOUND", "thread not found");
+          const refusal = askRefusal(s.m.workspaceId, req.grantee?.principal);
+          if (refusal) return refusal;
+          const qid = id("q");
+          // Of a load it holds only some of, the agent is told what it holds.
+          const def = (ontologyVersion(s.o.id, load.versionId)?.definition ||
+            {}) as { ontology_toml?: unknown; mappings_toml?: unknown };
+          const view = req.grantee?.load?.partial
+            ? viewOf(
+                req.grantee.visibility(s.o.id),
+                String(def.ontology_toml || ""),
+                String(def.mappings_toml || ""),
+              )
+            : undefined;
+          const q: StoredQuestion = {
+            id: qid,
+            workspaceId: s.m.workspaceId,
+            ontologyId: s.o.id,
+            threadId: body.threadId || qid,
+            loadId: load.id,
+            versionId: load.versionId,
+            question: text,
+            focusJson,
+            clientToken,
+            askedByUserId: req.principal.user.id,
+            ...(req.grantee ? { grantee: req.grantee.principal } : {}),
+            ...(view && req.grantee ? { seen: req.grantee.seen(s.o.id) } : {}),
+            createdAt: now(),
+            status: "queued",
+            attempts: 0,
+            claimedAt: 0,
+            heldAt: 0,
+            stepMs: knobs.askStepMs ?? STEP_MS,
+            script: view
+              ? partAnswer(s.o, load.id, view, knobs.askOutcome || "answered")
+              : answer(
+                  s.o,
+                  load.id,
+                  knobs.askOutcome || "answered",
+                  !!req.grantee,
+                ),
+            events: [],
+            resultJson: "",
+            error: "",
+            usdMicros: 0,
+            reservedMicros: 0,
+            startedAt: null,
+            finishedAt: null,
+          };
+          state.questions.unshift(q);
+          return ok({ question: toQuestion(q) } satisfies QuestionResponse);
+        },
+        (body) => {
+          const q = (body as QuestionResponse).question;
+          return { question: { loadId: q.loadId || "", questionId: q.id } };
+        },
+      ),
   },
   {
     method: "GET",

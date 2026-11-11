@@ -2798,6 +2798,117 @@ export type ListHealFindingsResponse = {
 };
 export type HealFindingResponse = { finding: FoundryHealFinding };
 
+// ---------------------------------------------------------------- Ontology: workflows
+// .../ontologies/{ontologyId}/workflows: an agent's task over the ontology.
+// Each run of one (started by the agent's MCP or HTTP calls, never by the
+// site) records the agent's request (input), every read, question, send and
+// upload it makes with the run's id, and its answer (output). The site
+// creates, lists and deletes workflows and reads their runs.
+
+/** v1FoundryWorkflow. */
+export type FoundryWorkflow = {
+  id: string;
+  ontologyId?: string;
+  name: string;
+  description?: string;
+  createdByUserId?: string;
+  createdAt?: string;
+  // int64 as strings: its runs kept (the newest 1,000), and of those the
+  // finished ones.
+  runs?: string;
+  finishedRuns?: string;
+  // When its newest run started; absent before any.
+  lastRunAt?: string;
+};
+/** v1FoundryWorkflowRunCounts: what a run recorded, at most 1,000 calls. */
+export type FoundryWorkflowRunCounts = {
+  accesses?: number;
+  reads?: number;
+  questions?: number;
+  sends?: number;
+  uploads?: number;
+  // The pieces its sends carried.
+  pieces?: number;
+  // Reads stored without their result (over 256 KiB, or past the run's
+  // 4 MiB).
+  resultsOmitted?: number;
+};
+/** v1FoundryWorkflowRun. */
+export type FoundryWorkflowRun = {
+  id: string;
+  workflowId?: string;
+  // open (it records calls made with its id) or finished.
+  status: string;
+  // The request: empty until sent. The answer: empty while open.
+  input?: string;
+  output?: string;
+  startedByUserId?: string;
+  startedByServiceCredentialId?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  counts?: FoundryWorkflowRunCounts;
+};
+/** v1FoundryWorkflowRead: a read of a load and what it returned. */
+export type FoundryWorkflowRead = {
+  loadId?: string;
+  // The reads asked (read_request.json `reads` items), as sent.
+  readsJson?: string;
+  // The result returned (read_result.json); empty when left out.
+  resultJson?: string;
+  resultOmitted?: boolean;
+};
+/** v1FoundryWorkflowQuestion: its answer and steps are the question's. */
+export type FoundryWorkflowQuestion = { loadId?: string; questionId?: string };
+/** v1FoundryWorkflowSend: a send to an API source. */
+export type FoundryWorkflowSend = {
+  connectorId?: string;
+  // int64 as a string: the send's number in its source.
+  seq?: string;
+  pieceIds?: string[];
+};
+/** v1FoundryWorkflowUpload: a document whose upload completed. */
+export type FoundryWorkflowUpload = { documentId?: string; setId?: string };
+/**
+ * v1FoundryWorkflowAccess: one call a run recorded, by its place in the run;
+ * exactly one of read, question, send and upload (the proto's oneof).
+ */
+export type FoundryWorkflowAccess = {
+  seq: number;
+  at?: string;
+  read?: FoundryWorkflowRead;
+  question?: FoundryWorkflowQuestion;
+  send?: FoundryWorkflowSend;
+  upload?: FoundryWorkflowUpload;
+};
+export type CreateFoundryWorkflowRequest = {
+  name: string;
+  description?: string;
+  clientToken?: string;
+};
+export type FoundryWorkflowResponse = { workflow: FoundryWorkflow };
+export type ListFoundryWorkflowsResponse = {
+  workflows?: FoundryWorkflow[];
+  nextPageToken?: string;
+};
+export type StartFoundryWorkflowRunRequest = {
+  input?: string;
+  clientToken?: string;
+};
+export type FinishFoundryWorkflowRunRequest = {
+  input?: string;
+  output: string;
+};
+export type FoundryWorkflowRunResponse = { run: FoundryWorkflowRun };
+export type ListFoundryWorkflowRunsResponse = {
+  runs?: FoundryWorkflowRun[];
+  nextPageToken?: string;
+};
+export type ListFoundryWorkflowRunAccessesResponse = {
+  accesses?: FoundryWorkflowAccess[];
+  // Whether accesses follow the last one returned (after_seq pages them).
+  more?: boolean;
+};
+
 // ---------------------------------------------------------------- People enrichment
 // GET and PATCH /v1/workspaces/{workspaceId}/foundry/enrichment and POST
 // .../ontologies/{ontologyId}/loads/{id}:stop-enrichment. An owner allows
