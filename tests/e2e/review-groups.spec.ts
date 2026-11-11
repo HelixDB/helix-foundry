@@ -201,6 +201,93 @@ test("approves every held claim of a group at once, and says which couldn't be",
   await expect(saved).toHaveCount(3);
 });
 
+test("leaves claims held for a name out of Approve all, on the page of their other end too", async ({
+  page,
+}) => {
+  // Each customer is linked by part of its name: that link's review
+  // concerns the customer alone, so the contract's page reads it apart.
+  await mock.configure({ documentHeld: "part_name" });
+  const doc = await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+  );
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(2);
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+  await page.goto(entity("Contract", "n:hedged deal"));
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(rows).toHaveCount(2);
+  const globex = rows.filter({ hasText: "Globex Corporation (Customer)" });
+  await expect(globex).toContainText(
+    "“Globex Corporation” is linked only by part of a row’s name. Settle that name too, or this stays held.",
+  );
+  await expect(globex).toContainText(
+    "the first load after that name is settled writes it",
+  );
+  await expect(globex).not.toContainText("written to this load at once");
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+  // Its way to the name's review leads to the document, at the name.
+  await globex.getByRole("link", { name: "Review that name" }).click();
+  await expect(page).toHaveURL(new RegExp(`${doc}\\?tab=review.*#s\\d+-\\d+$`));
+  await expect(
+    reviews(page).getByRole("list", { name: "Linked by part of a name" }),
+  ).toContainText("Linked to:");
+});
+
+test("keeps an entity's page up when the names holding its claims can't be read, and lists the claims once they are", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "part_name" });
+  await reviewed(
+    page,
+    "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
+  );
+  // Only the read of the names' reviews fails: a read's query is base64.
+  const names = "**/databases:query-read";
+  await page.route(names, async (route) => {
+    const { queryJson } = route.request().postDataJSON() as {
+      queryJson?: string;
+    };
+    if (
+      Buffer.from(queryJson ?? "", "base64")
+        .toString("utf8")
+        .includes('"foundry_name_links"')
+    )
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 14, message: "unavailable" }),
+      });
+    await route.continue();
+  });
+  await page.goto(entity("Contract", "n:hedged deal"));
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await expect(
+    page.getByRole("tabpanel", { name: "Needs review" }).getByRole("alert"),
+  ).toContainText("Couldn’t read which names hold its held claims");
+  // No held claim is offered while what holds it isn't known.
+  await expect(group(page, HELD).rows).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+  // The rest of the page stands: the entity, and where documents name it.
+  await expect(page.getByRole("tab", { name: /^Mentions/ })).toBeVisible();
+  await expect(page.getByText("Couldn’t read this entity")).toHaveCount(0);
+  await page.unroute(names);
+  await page.getByRole("tab", { name: /^Needs review/ }).click();
+  await page.getByRole("button", { name: "Retry" }).click();
+  const { head, rows } = group(page, HELD);
+  await expect(rows).toHaveCount(2);
+  await expect(
+    rows.filter({ hasText: "Globex Corporation (Customer)" }),
+  ).toContainText("Settle that name too, or this stays held.");
+  await expect(head.getByRole("button", { name: /^Approve all/ })).toHaveCount(
+    0,
+  );
+});
+
 test("rejects a held claim: its card and its count go, Approve all leaves it out, and removing the decision lists it again", async ({
   page,
 }) => {

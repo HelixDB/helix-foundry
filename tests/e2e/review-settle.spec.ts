@@ -653,7 +653,7 @@ test("names the name a legal form linked when it holds a one-valued claim", asyn
   await expect(held).toContainText("Settle that name too");
   await approve(held);
   await expect(held.getByRole("status")).toContainText(
-    "this load kept it held. “globex corporation” is linked only by its legal form",
+    "this load kept it held. “Globex Corporation” is linked only by its legal form",
   );
   await expect(held.getByRole("status")).toContainText(
     "Settle that name, and the next load writes this.",
@@ -885,34 +885,126 @@ test("keeps a link by part of a name, and the next load holds it as a person's",
   await expect(page.getByText("Nothing needs review.")).toBeVisible();
 });
 
-test("sends an approval held for a name linked by part of a name to that name's review", async ({
+// The engine holds an approval at such a name until a person settles it,
+// which only a later load reads: the card says so before and after, and
+// leads to the name's own review, at the name.
+for (const [linked, how, title] of [
+  [
+    "part_name",
+    "linked only by part of a row’s name",
+    "Linked by part of a name",
+  ],
+  [
+    "own_name",
+    "linked only by a code the document calls it by",
+    "Linked by an identifier used as its name",
+  ],
+] as const)
+  test(`sends an approval held for a name linked by ${linked} to that name's review`, async ({
+    page,
+  }) => {
+    // On a link that holds many: unlike a legal form's, this holds any
+    // claim. The name isn't where its sentence starts, so the claim's place
+    // and the name's are told apart.
+    await mock.configure({ documentHeld: linked });
+    const { held } = await hedged(
+      page,
+      "Reportedly, Globex Corporation may have signed.",
+    );
+    // Named as the document writes it.
+    await expect(held).toContainText(
+      `“Globex Corporation” is ${how}. Settle that name too, or this stays held.`,
+    );
+    // No approval writes it to this load, and the card promises none.
+    await expect(held).toContainText(
+      "This load keeps it held: the first load after that name is settled writes it.",
+    );
+    await expect(held).not.toContainText("written to this load at once");
+    await approve(held);
+    await expect(held.getByRole("status")).toContainText(
+      `Approved, and this load kept it held. “Globex Corporation” is ${how}, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.`,
+    );
+    await expect(held.getByRole("status")).not.toContainText("holds one value");
+    // Saved, it offers no approval this load would refuse again.
+    await expect(
+      held.getByRole("button", { name: "Approve", exact: true }),
+    ).toHaveCount(0);
+    // The card leads to the name's own review, at the name: not at the
+    // claim's sentence, where the held claim's review is.
+    const toName = held
+      .getByRole("status")
+      .getByRole("link", { name: "Review that name" });
+    const href = (await toName.getAttribute("href")) ?? "";
+    expect(href).toMatch(/tab=review.*#s\d+-\d+$/);
+    const anchor = href.slice(href.lastIndexOf("#") + 1);
+    await toName.click();
+    await expect(page).toHaveURL(new RegExp(`#${anchor}$`));
+    await expect(
+      page.getByLabel("Document text").locator(`[id="${anchor}"]`),
+    ).toHaveText("Globex Corporation");
+    const name = reviews(page).getByRole("list", { name: title });
+    await expect(name).toContainText("Linked to:");
+    await choose(name.getByLabel("Link this name to"), "Globex Corporation");
+    await name.getByRole("button", { name: "Settle review" }).click();
+    await expect(name).toContainText("Decision saved. Reload to apply.");
+  });
+
+test("promises no write in this load, and offers no approval it would refuse, for a claim a name holds", async ({
   page,
 }) => {
-  // On a link that holds many: unlike a legal form's, this holds any claim.
   await mock.configure({ documentHeld: "part_name" });
-  const { held } = await hedged(page);
-  await expect(held).toContainText(
-    "“globex corporation” is linked only by part of a row’s name. Settle that name too, or this stays held.",
+  const { held } = await hedged(
+    page,
+    "Reportedly, Globex Corporation may have signed.",
   );
   await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  // What the load made of the saved approval, as the decisions say it.
+  const decisions = /\/review-decisions(\?|$)/;
+  const reads = async (applied?: { status: string; reason?: string }) => {
+    await page.unroute(decisions);
+    await page.route(decisions, async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as ListReviewDecisionsResponse;
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          decisions: body.decisions?.map(({ applied: _, ...d }) =>
+            applied ? { ...d, applied } : d,
+          ),
+        },
+      });
+    });
+    await page.reload();
+  };
+  // Its job yet to run: the card doesn't say it is being written.
+  await reads({ status: "pending" });
   await expect(held.getByRole("status")).toContainText(
-    "Approved, and this load kept it held. “globex corporation” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    "Approved. This load keeps it held: the first load after that name is settled writes it.",
   );
-  await expect(held.getByRole("status")).not.toContainText("holds one value");
-  // The card leads to the name's own review, where the link is settled.
-  const toName = held
-    .getByRole("status")
-    .getByRole("link", { name: "Review that name" });
-  await expect(toName).toHaveAttribute("href", /tab=review.*#s\d+-\d+$/);
-  await toName.click();
-  await expect(page).toHaveURL(/#s\d+-\d+$/);
-  const name = reviews(page).getByRole("list", {
-    name: "Linked by part of a name",
-  });
-  await expect(name).toContainText("Linked to:");
-  await choose(name.getByLabel("Link this name to"), "Globex Corporation");
-  await name.getByRole("button", { name: "Settle review" }).click();
-  await expect(name).toContainText("Decision saved. Reload to apply.");
+  await expect(held.getByRole("status")).not.toContainText(
+    "Writing it to this load",
+  );
+  // Saved while another load was current, its job failed before saying,
+  // or it found no claim: approving again here would only be refused.
+  for (const applied of [
+    undefined,
+    { status: "unconfirmed", reason: "job_failed" },
+    { status: "missed" },
+  ]) {
+    await reads(applied);
+    await expect(held.getByRole("status")).toContainText(
+      "An approval of this is saved, and the claim stays held. “Globex Corporation” is linked only by part of a row’s name, and an approval doesn’t stand on such a link. Settle that name, and the next load writes this.",
+    );
+    await expect(
+      held.getByRole("button", { name: "Approve", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      held.getByRole("status").getByRole("link", { name: "Review that name" }),
+    ).toBeVisible();
+  }
+  await page.unroute(decisions);
 });
 
 test("members can read candidate reviews but cannot settle or remove decisions", async ({

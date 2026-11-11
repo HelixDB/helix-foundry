@@ -712,6 +712,9 @@ describe("document states", () => {
     expect(offer.text).toContain("not firmly enough");
     expect(offer.text).toContain("if it’s the one meant");
     expect(offer.text).not.toContain("was linked");
+    // In a person's words, not the engine's.
+    expect(offer.text).not.toContain("less than");
+    expect(offer.text).toContain("match it only loosely");
   });
 
   it("says why a 4.9.0 identity review was held, not that a model couldn't confirm it", () => {

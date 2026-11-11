@@ -1301,13 +1301,16 @@ export function extractDocument(
           g.addEdge(E.CONCERNS, other, e.id);
           counts.reviews += 1;
         }
+        // At the name's first mention, as the engine writes a link's
+        // review: not at the claim's sentence.
         if (weak) {
           const key = String(g.node(e.id)!.props.entity_key);
           const linked = g.addNode(N.Review, {
             review_key: sha256(`${doc.id}\u001f${claimKey}\u001fform`),
             doc_id: doc.id,
             section: first.s.ordinal,
-            ...place,
+            ...span(first.s.text, first.i, first.i + first.surface.length),
+            quote: first.surface,
             reason: weak,
             type: "Customer",
             norm_name: normName(e.name || first.surface),

@@ -1518,10 +1518,11 @@ const reviews: Record<ReviewReason, { title: string; text: string }> = {
 // An ambiguous review offering one row: a link too weak to make, or for this
 // fact, not a name several entities share. The engine offers the row where
 // the name is only part of its name, or the link is one a fact that holds
-// one value doesn't stand on.
+// one value doesn't stand on (by a legal form, part of a name, a code the
+// text calls it by, or a short name), said in a person's words.
 const oneCandidate = {
   title: "May be this entity",
-  text: "The name points at one entity, but not firmly enough to store what the document says of it here: it may be only part of that entity’s name, or linked on less than its name. Link the name to that entity if it’s the one meant, and the next load stores it.",
+  text: "The name points at one entity, but not firmly enough to store what the document says of it here: it may be only part of that entity’s name, or match it only loosely, such as by a short name, another legal form or a code the document calls it by. Link the name to that entity if it’s the one meant, and the next load stores it.",
 };
 // A reason a newer engine gives: nothing is known of it but that it waits.
 const newReason = {

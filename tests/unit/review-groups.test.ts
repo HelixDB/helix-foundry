@@ -186,7 +186,7 @@ describe("what Approve all approves", () => {
       },
     ]);
     expect(claim!.settle).toMatchObject({
-      unsettled: { name: "initech llc", by: "legal_form" },
+      unsettled: [{ name: "Initech LLC", by: "legal_form" }],
     });
     expect(model.approvable([claim!], [], () => true)).toEqual([]);
     // A link that holds many writes it anyway: the card offers it too.
