@@ -107,11 +107,9 @@ func New(d Deps) (*Task, error) {
 	case d.Mail == nil:
 		return nil, errors.New("foundry-notify-worker: the host sends no mail (ports.Mail)")
 	}
+	// Config.Validate checks foundry.reminders wherever Foundry runs.
 	cfg := d.Cfg.Foundry.Notify
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("foundry-notify-worker: %w", err)
-	}
-	if err := d.Cfg.Foundry.Reminders.Validate(); err != nil {
 		return nil, fmt.Errorf("foundry-notify-worker: %w", err)
 	}
 	return &Task{deps: d, cfg: cfg, reminders: d.Cfg.Foundry.Reminders, box: d.DB, mail: d.Mail, site: site(cfg.SiteURL), now: time.Now}, nil
@@ -193,20 +191,10 @@ func (t *Task) sendReminders(ctx context.Context) {
 // deliverReminder sends one claimed reminder, then records how that went,
 // as deliver does an email.
 func (t *Task) deliverReminder(ctx context.Context, r *model.FoundryReminder) {
-	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendWait)
-	defer cancel()
-	outcome, label := t.sendReminder(sendCtx, r)
-	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), finishWait)
-	defer cancelFinish()
-	switch err := t.box.FinishFoundryReminder(finishCtx, r.ID, *r.ClaimToken, outcome); {
-	case errors.Is(err, store.ErrNotFound):
-		log.From(ctx).Warn("a reminder's claim lapsed, or its schedule stopped, before it was recorded", "reminder", r.ID, "outcome", label)
-		label = "lost"
-	case err != nil:
-		log.From(ctx).Warn("record a reminder failed; its claim lapses and it is tried again", "reminder", r.ID, "outcome", label, "err", err)
-		label = "unrecorded"
-	}
-	notifications.WithLabelValues(reminderKind, label).Inc()
+	t.claimed(ctx, reminderKind, func(ctx context.Context) (func(context.Context) error, string) {
+		outcome, label := t.sendReminder(ctx, r)
+		return func(ctx context.Context) error { return t.box.FinishFoundryReminder(ctx, r.ID, *r.ClaimToken, outcome) }, label
+	}, "reminder", r.ID)
 }
 
 // reminderKind labels the reminders in the emails' metric.
@@ -223,14 +211,14 @@ const reminderKind = "reminder"
 func (t *Task) sendReminder(ctx context.Context, r *model.FoundryReminder) (model.FoundryReminderOutcome, string) {
 	retry := func(err error) (model.FoundryReminderOutcome, string) {
 		log.From(ctx).Warn("send a reminder failed", "reminder", r.ID, "attempt", r.Attempts, "err", err)
-		if r.Attempts >= t.cfg.MaxAttempts {
-			return model.FoundryReminderGiveUp{Error: fmt.Sprintf("%v (gave up after %d attempts)", err, r.Attempts)}, "failed"
+		at, giveUp := t.retry(r.Attempts, err)
+		if giveUp != "" {
+			return model.FoundryReminderGiveUp{Error: giveUp}, "failed"
 		}
-		wait := min(time.Minute<<min(max(r.Attempts-1, 0), 10), maxRetryBackoff)
-		return model.FoundryReminderRetry{At: t.now().Add(wait), Error: err.Error()}, "retried"
+		return model.FoundryReminderRetry{At: at, Error: err.Error()}, "retried"
 	}
-	if r.Attempts > t.cfg.MaxAttempts {
-		return model.FoundryReminderGiveUp{Error: fmt.Sprintf("claimed %d times, past max_attempts, without an end recorded", r.Attempts)}, "failed"
+	if why := t.pastAttempts(r.Attempts); why != "" {
+		return model.FoundryReminderGiveUp{Error: why}, "failed"
 	}
 	n, gaps := r.Sent+1, t.reminders.GapDays
 	last := n > len(gaps)
@@ -253,21 +241,56 @@ func (t *Task) sendReminder(ctx context.Context, r *model.FoundryReminder) (mode
 // stopping lets the email it is sending finish, within sendWait, rather
 // than cut a send the host may have made short and send it again later.
 func (t *Task) deliver(ctx context.Context, n *model.FoundryNotification) {
+	t.claimed(ctx, string(n.Kind), func(ctx context.Context) (func(context.Context) error, string) {
+		outcome, label := t.send(ctx, n)
+		return func(ctx context.Context) error {
+			return t.box.FinishFoundryNotification(ctx, n.ID, *n.ClaimToken, outcome)
+		}, label
+	}, "notification", n.ID, "kind", n.Kind)
+}
+
+// claimed sends one claimed email or reminder with send, within sendWait,
+// then ends its claim with the finish send returns, within finishWait, and
+// counts it under kind with send's label: lost when the claim was (it
+// lapsed, or its row moved on meanwhile), unrecorded when the store failed,
+// which the claim's lapse then retries. A worker stopping lets the send
+// finish rather than cut one the host may have made short. attrs name it
+// in the logs.
+func (t *Task) claimed(ctx context.Context, kind string, send func(context.Context) (func(context.Context) error, string), attrs ...any) {
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendWait)
 	defer cancel()
-	outcome, label := t.send(sendCtx, n)
+	finish, label := send(sendCtx)
 	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), finishWait)
 	defer cancelFinish()
-	switch err := t.box.FinishFoundryNotification(finishCtx, n.ID, *n.ClaimToken, outcome); {
+	switch err := finish(finishCtx); {
 	case errors.Is(err, store.ErrNotFound):
-		log.From(ctx).Warn("an email's claim lapsed before it was recorded", "notification", n.ID, "kind", n.Kind, "outcome", label)
+		log.From(ctx).Warn("a claim lapsed, or its row moved on, before its send was recorded", append(attrs, "outcome", label)...)
 		label = "lost"
 	case err != nil:
-		log.From(ctx).Warn("record an email failed; its claim lapses and it is tried again", "notification", n.ID, "kind", n.Kind,
-			"outcome", label, "err", err)
+		log.From(ctx).Warn("record a send failed; its claim lapses and it is tried again", append(attrs, "outcome", label, "err", err)...)
 		label = "unrecorded"
 	}
-	notifications.WithLabelValues(string(n.Kind), label).Inc()
+	notifications.WithLabelValues(kind, label).Inc()
+}
+
+// retry is when a send that failed with err on its claim's attempts-th try
+// is due again: after a wait that doubles from a minute, up to
+// maxRetryBackoff. Once max_attempts claims have tried it, it is given up
+// instead, with giveUp saying why.
+func (t *Task) retry(attempts int, err error) (at time.Time, giveUp string) {
+	if attempts >= t.cfg.MaxAttempts {
+		return time.Time{}, fmt.Sprintf("%v (gave up after %d attempts)", err, attempts)
+	}
+	return t.now().Add(min(time.Minute<<min(max(attempts-1, 0), 10), maxRetryBackoff)), ""
+}
+
+// pastAttempts says why a claim past max_attempts fails unsent (its workers
+// stopped while sending it), or "" for one within them.
+func (t *Task) pastAttempts(attempts int) string {
+	if attempts > t.cfg.MaxAttempts {
+		return fmt.Sprintf("claimed %d times, past max_attempts, without an end recorded", attempts)
+	}
+	return ""
 }
 
 // send writes and sends n, and says how it ended, with its metric's label.
@@ -279,14 +302,14 @@ func (t *Task) deliver(ctx context.Context, n *model.FoundryNotification) {
 func (t *Task) send(ctx context.Context, n *model.FoundryNotification) (model.FoundryNotificationOutcome, string) {
 	retry := func(err error) (model.FoundryNotificationOutcome, string) {
 		log.From(ctx).Warn("send an email failed", "notification", n.ID, "kind", n.Kind, "attempt", n.Attempts, "err", err)
-		if n.Attempts >= t.cfg.MaxAttempts {
-			return model.FoundryNotificationGiveUp{Error: fmt.Sprintf("%v (gave up after %d attempts)", err, n.Attempts)}, "failed"
+		at, giveUp := t.retry(n.Attempts, err)
+		if giveUp != "" {
+			return model.FoundryNotificationGiveUp{Error: giveUp}, "failed"
 		}
-		wait := min(time.Minute<<min(max(n.Attempts-1, 0), 10), maxRetryBackoff)
-		return model.FoundryNotificationRetry{At: t.now().Add(wait), Error: err.Error()}, "retried"
+		return model.FoundryNotificationRetry{At: at, Error: err.Error()}, "retried"
 	}
-	if n.Attempts > t.cfg.MaxAttempts {
-		return model.FoundryNotificationGiveUp{Error: fmt.Sprintf("claimed %d times, past max_attempts, without an end recorded", n.Attempts)}, "failed"
+	if why := t.pastAttempts(n.Attempts); why != "" {
+		return model.FoundryNotificationGiveUp{Error: why}, "failed"
 	}
 	m, skip, err := t.compose(ctx, n)
 	switch {

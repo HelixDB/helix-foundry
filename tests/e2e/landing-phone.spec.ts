@@ -89,6 +89,11 @@ test.describe("on a phone", () => {
     await expect(page.locator("#schema-root .so-stage")).toBeVisible();
     await expect(page.locator("html")).toHaveClass(/has-field/);
     await expect(page.getByRole("form", { name: FORM })).toHaveCount(0);
+    // Turned back, the field stops and its canvas goes.
+    await page.setViewportSize(PHONE);
+    await expect(page.locator("html")).not.toHaveClass(/has-field/);
+    await expect(page.locator("[data-field-canvas]")).toBeHidden();
+    await expect(page.getByRole("form", { name: FORM })).toHaveCount(2);
   });
 
   test("reminds an address, once", async ({ page }) => {
@@ -146,7 +151,7 @@ test.describe("on a phone", () => {
     await mock.configure({ remindersPerHour: 0 });
     await form.getByRole("button", { name: "Remind me" }).click();
     await expect(form.getByRole("status")).toHaveText(
-      "Too many reminders asked for just now. Try again in a minute.",
+      "Too many reminders asked for just now. Try again in 15 minutes.",
     );
     expect(await mock.reminders()).toEqual([]);
   });

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,8 @@ func TestCreateFoundryReminder(t *testing.T) {
 		assert.Equal(t, "Europe/London", got.TimeZone)
 		assert.Equal(t, reminder.Consent, got.Consent)
 		assert.Equal(t, 300, got.MaxNewPerHour)
+		assert.Equal(t, 5, got.MaxNewPerClientPerHour)
+		assert.Empty(t, got.Client, "no client: the hour's cap alone")
 		assert.Len(t, got.ID, 26)
 		london, _ := reminder.Zone("Europe/London")
 		first := got.Schedule(nil)
@@ -91,6 +94,14 @@ func TestCreateFoundryReminder(t *testing.T) {
 		resp, err := remindersService(db).CreateFoundryReminder(door(), request("ada@example.com", "Europe/London"))
 		require.NoError(t, err)
 		assert.True(t, resp.GetAgain())
+	})
+	t.Run("counts its client", func(t *testing.T) {
+		db := &reminderStore{answer: model.FoundryReminderAnswer{NextSendAt: next}}
+		req := request("ada@example.com", "UTC")
+		req.Client = "q3ZyY1J8b0m2Xw-LkB_TnA"
+		_, err := remindersService(db).CreateFoundryReminder(door(), req)
+		require.NoError(t, err)
+		assert.Equal(t, "q3ZyY1J8b0m2Xw-LkB_TnA", db.requests[0].Client)
 	})
 	t.Run("keeps a zone it doesn't know as UTC", func(t *testing.T) {
 		db := &reminderStore{answer: model.FoundryReminderAnswer{NextSendAt: next}}
@@ -106,6 +117,9 @@ func TestCreateFoundryReminder(t *testing.T) {
 			"no consent":       {SecretSha256: secretHash(siteSecret), Email: "ada@example.com", TimeZone: "UTC"},
 			"another wording":  {SecretSha256: secretHash(siteSecret), Email: "ada@example.com", TimeZone: "UTC", Consent: "remind-v0"},
 			"a stuffed answer": request("ada@example.com\nBcc: grace@example.com", "UTC"),
+			"a long client": {SecretSha256: secretHash(siteSecret), Email: "ada@example.com", Consent: reminder.Consent,
+				Client: strings.Repeat("a", maxReminderClient+1)},
+			"a client with a space": {SecretSha256: secretHash(siteSecret), Email: "ada@example.com", Consent: reminder.Consent, Client: "a b"},
 		} {
 			db := &reminderStore{}
 			_, err := remindersService(db).CreateFoundryReminder(door(), req)
@@ -114,18 +128,20 @@ func TestCreateFoundryReminder(t *testing.T) {
 			assert.Empty(t, db.requests, name)
 		}
 	})
-	t.Run("refuses past the hour's cap, saying when to ask again", func(t *testing.T) {
-		db := &reminderStore{err: foundrystore.ErrFoundryReminderLimit}
-		_, err := remindersService(db).CreateFoundryReminder(door(), request("ada@example.com", "UTC"))
-		require.Equal(t, codes.ResourceExhausted, status.Code(err))
-		var retry *errdetails.RetryInfo
-		for _, d := range status.Convert(err).Details() {
-			if info, ok := d.(*errdetails.RetryInfo); ok {
-				retry = info
+	t.Run("refuses past the hour's cap or its client's, saying when to ask again", func(t *testing.T) {
+		for _, limit := range []error{foundrystore.ErrFoundryReminderLimit, foundrystore.ErrFoundryReminderClientLimit} {
+			db := &reminderStore{err: limit}
+			_, err := remindersService(db).CreateFoundryReminder(door(), request("ada@example.com", "UTC"))
+			require.Equal(t, codes.ResourceExhausted, status.Code(err), limit)
+			var retry *errdetails.RetryInfo
+			for _, d := range status.Convert(err).Details() {
+				if info, ok := d.(*errdetails.RetryInfo); ok {
+					retry = info
+				}
 			}
+			require.NotNil(t, retry, limit)
+			assert.Equal(t, reminderLimitRetry, retry.GetRetryDelay().AsDuration(), limit)
 		}
-		require.NotNil(t, retry)
-		assert.Equal(t, reminderLimitRetry, retry.GetRetryDelay().AsDuration())
 	})
 	t.Run("is unavailable when the store fails, saying nothing of it", func(t *testing.T) {
 		db := &reminderStore{err: errors.New("Error 1205: Lock wait timeout exceeded for ada@example.com")}

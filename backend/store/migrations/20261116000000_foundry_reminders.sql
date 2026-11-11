@@ -14,7 +14,12 @@
 -- outlives each schedule. time_zone is the IANA zone the schedule keeps to,
 -- and consent the words the person agreed to (remind-v1). claim_token holds
 -- a scheduled row while a reminder is sent, until claimed_until; attempts
--- counts the claims of the reminder due.
+-- counts the claims of the reminder due; a schedule stopped while one is
+-- sent keeps its claim until the worker records the send. client_key is the
+-- site's key for the visitor who asked, which the site derives from their
+-- network address with its secret, so nothing here links to the address: at
+-- most foundry.reminders.max_new_per_client_per_hour schedules start an hour
+-- for one key.
 CREATE TABLE foundry_reminders (
   id            CHAR(26)     NOT NULL PRIMARY KEY,
   email         VARCHAR(254) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
@@ -32,9 +37,11 @@ CREATE TABLE foundry_reminders (
   last_sent_at  DATETIME(6)  NULL,
   stopped_at    DATETIME(6)  NULL,
   stop_reason   VARCHAR(16)  NULL,
+  client_key    VARCHAR(64)  CHARACTER SET ascii COLLATE ascii_bin NULL,
   UNIQUE KEY foundry_reminders_email_uq (email),
   INDEX foundry_reminders_claim_idx (status, next_send_at),
   INDEX foundry_reminders_requested_idx (requested_at),
+  INDEX foundry_reminders_client_idx (client_key, requested_at),
   CONSTRAINT foundry_reminders_status_chk CHECK (status IN ('scheduled', 'done', 'stopped', 'failed')),
   CONSTRAINT foundry_reminders_next_chk CHECK ((status = 'scheduled') = (next_send_at IS NOT NULL)),
   CONSTRAINT foundry_reminders_stopped_chk CHECK ((status = 'stopped') = (stopped_at IS NOT NULL) AND
@@ -42,7 +49,7 @@ CREATE TABLE foundry_reminders (
   CONSTRAINT foundry_reminders_why_chk CHECK (status <> 'failed' OR last_error IS NOT NULL),
   CONSTRAINT foundry_reminders_sent_chk CHECK (sent >= 0 AND attempts >= 0 AND (sent = 0 OR last_sent_at IS NOT NULL)),
   CONSTRAINT foundry_reminders_claim_chk CHECK ((claim_token IS NULL) = (claimed_until IS NULL) AND
-    (status = 'scheduled' OR claim_token IS NULL))
+    (status IN ('scheduled', 'stopped') OR claim_token IS NULL))
 );
 
 -- +goose Down

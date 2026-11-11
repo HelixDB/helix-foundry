@@ -41,6 +41,7 @@ export const mock = {
   configure: (config: {
     // New reminders the door takes an hour (300).
     remindersPerHour?: number;
+    remindersPerClientPerHour?: number;
     accessTokenTtlSeconds?: number;
     allowedRegions?: string[];
     checkoutCardOnFile?: boolean;

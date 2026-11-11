@@ -1,3 +1,4 @@
+import { withBotId } from "botid/next/config";
 import type { NextConfig } from "next";
 
 // dev | prod; anything else (local, mock) behaves like dev.
@@ -33,6 +34,12 @@ const databuddy =
 const origin = URL.parse(
   process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ?? "",
 )?.origin;
+
+// Vercel BotID on the landing page's reminder form (src/app/remind,
+// src/instrumentation-client.ts): only in a stamp's own build on Vercel,
+// where Databuddy's stamp site loads, since anywhere else its checks can't
+// pass. A local build has no landing page.
+const botid = mode !== "local" && !!databuddy && databuddy.origin === origin;
 
 const nextConfig: NextConfig = {
   // e2e builds into its own directory so it never clobbers `pnpm dev`.
@@ -93,12 +100,7 @@ const nextConfig: NextConfig = {
         : databuddy && databuddy.origin === origin
           ? databuddy.clientId
           : "",
-    // Vercel BotID on the landing page's reminder form (src/app/remind,
-    // src/instrumentation-client.ts): only in a stamp's own build on Vercel,
-    // where Databuddy's stamp site loads, since anywhere else its checks
-    // can't pass. A local build has no landing page.
-    NEXT_PUBLIC_BOTID:
-      mode !== "local" && databuddy && databuddy.origin === origin ? "1" : "",
+    NEXT_PUBLIC_BOTID: botid ? "1" : "",
   },
   async headers() {
     return [
@@ -115,4 +117,9 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// BotID's client loads its challenge from, and reports to, paths of this
+// origin, which withBotId rewrites to Vercel's bot protection (before the
+// app's routes, whose catch-all would answer them) and lets Vercel's frame
+// load. Without them checkBotId takes every visitor for a bot. Other builds
+// get none of it.
+export default botid ? withBotId(nextConfig) : nextConfig;

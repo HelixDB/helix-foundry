@@ -273,12 +273,9 @@ func TestNew(t *testing.T) {
 			t.Fatalf("site_url %q: %v", bad, err)
 		}
 	}
+	// foundry.reminders is Config.Validate's, wherever Foundry runs
+	// (config's TestFoundryRemindersValidate).
 	cfg.Foundry.Notify.SiteURL = siteURL
-	cfg.Foundry.Reminders.GapDays = []int{0}
-	if _, err := New(Deps{Cfg: &cfg, DB: store.Unimplemented{}, Mail: ada()}); err == nil || !strings.Contains(err.Error(), "gap_days") {
-		t.Fatalf("a gap of no days: %v", err)
-	}
-	cfg.Foundry.Reminders = config.Defaults().Foundry.Reminders
 	task, err := New(Deps{Cfg: &cfg, DB: store.Unimplemented{}, Mail: ada()})
 	if err != nil {
 		t.Fatal(err)

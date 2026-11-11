@@ -52,7 +52,9 @@ var ErrEmail = errors.New("email must be one address, such as name@company.com, 
 // of an address however it was typed; no provider Foundry's people use
 // tells addresses apart by case.
 func Normalize(email string) (string, error) {
-	email = strings.TrimSpace(email)
+	// Lowercased before its length is checked: lowercasing may lengthen it
+	// (Ⱥ, 2 bytes, is ⱥ, 3), and it is kept lowercased.
+	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || len(email) > MaxEmail || strings.ContainsAny(email, "\"(),:;<>[\\] ") ||
 		strings.IndexFunc(email, unicode.IsControl) >= 0 || strings.Count(email, "@") != 1 {
 		return "", ErrEmail
@@ -66,7 +68,7 @@ func Normalize(email string) (string, error) {
 		strings.Contains(domain, "..") {
 		return "", ErrEmail
 	}
-	return strings.ToLower(email), nil
+	return email, nil
 }
 
 // Zone is the time zone a reminder is scheduled in, and its name as kept:

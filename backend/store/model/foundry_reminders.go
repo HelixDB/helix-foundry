@@ -43,7 +43,8 @@ type FoundryReminder struct {
 	// included: each one sent starts the next from 0.
 	Attempts int
 	// ClaimToken holds a scheduled reminder while a worker sends it, until
-	// ClaimedUntil; both are nil otherwise.
+	// ClaimedUntil; both are nil otherwise. A schedule stopped while one is
+	// sent keeps the claim, so the worker still records the send.
 	ClaimToken   *string
 	ClaimedUntil *time.Time
 	LastError    *string
@@ -66,6 +67,11 @@ type FoundryReminderRequest struct {
 	ID string
 	// Email is reminder.Normalize's; TimeZone and Consent are kept as given.
 	Email, TimeZone, Consent string
+	// Client is the site's key for the visitor who asked, empty for none;
+	// MaxNewPerClientPerHour (foundry.reminders.max_new_per_client_per_hour)
+	// bounds the schedules one client starts an hour.
+	Client                 string
+	MaxNewPerClientPerHour int
 	// MaxNewPerHour is foundry.reminders.max_new_per_hour.
 	MaxNewPerHour int
 	// Schedule is when a new schedule's first reminder goes, given when the

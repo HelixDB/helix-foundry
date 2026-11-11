@@ -22,8 +22,9 @@ const VIA = new Set(["email", "github"]);
 // Starts the field behind the page and the page's small behaviours, and
 // stops them when the page goes. Writes the prompt Set up with your agent
 // copies first: the app's, for someone without a workspace yet, on this
-// stamp's Helix MCP (next.config.ts). A phone (./phone.ts) gets no field,
-// unless it turns wide enough to show the figures the field draws for.
+// stamp's Helix MCP (next.config.ts). A phone (./phone.ts) gets no field:
+// it starts when a phone turns wide enough to show the figures the field
+// draws for, and stops when it turns back.
 export function Behaviours() {
   useEffect(() => {
     document.getElementById("agent-prompt")!.textContent = onboardingPrompt({
@@ -58,16 +59,22 @@ export function Behaviours() {
         document.querySelector<HTMLCanvasElement>("[data-field-canvas]")!,
       );
     };
+    const end = () => {
+      stop?.();
+      stop = undefined;
+      document.documentElement.classList.remove("has-field");
+    };
+    const turned = () => (phone.matches ? end() : begin());
     document.fonts.ready.then(() => {
       fonts = true;
       begin();
     });
-    phone.addEventListener("change", begin);
+    phone.addEventListener("change", turned);
     const undo = page();
     return () => {
       gone = true;
-      phone.removeEventListener("change", begin);
-      stop?.();
+      phone.removeEventListener("change", turned);
+      end();
       undo();
       ANCHORS.forEach(([name]) => attach(name, null));
     };

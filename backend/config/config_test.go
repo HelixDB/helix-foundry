@@ -619,7 +619,7 @@ func TestFoundryNotifyValidate(t *testing.T) {
 // reads them. Off (no secret) is valid.
 func TestFoundryRemindersValidate(t *testing.T) {
 	d := Defaults().Foundry.Reminders
-	if d.SecretSHA256 != "" || d.MaxNewPerHour != 300 || !slices.Equal(d.GapDays, []int{7, 14, 28}) || d.MinGapDays != 7 {
+	if d.SecretSHA256 != "" || d.MaxNewPerHour != 300 || d.MaxNewPerClientPerHour != 5 || !slices.Equal(d.GapDays, []int{7, 14, 28}) || d.MinGapDays != 7 {
 		t.Fatalf("defaults = %+v", d)
 	}
 	on := func() Config {
@@ -644,6 +644,8 @@ func TestFoundryRemindersValidate(t *testing.T) {
 		"a secret, not its hash": {func(r *RemindersConfig) { r.SecretSHA256 = "hunter2" }, "secret_sha256"},
 		"an upper-case hash":     {func(r *RemindersConfig) { r.SecretSHA256 = strings.Repeat("A", 64) }, "secret_sha256"},
 		"no new reminders":       {func(r *RemindersConfig) { r.MaxNewPerHour = 0 }, "max_new_per_hour"},
+		"no client's reminders":  {func(r *RemindersConfig) { r.MaxNewPerClientPerHour = 0 }, "max_new_per_client_per_hour"},
+		"a client past the hour": {func(r *RemindersConfig) { r.MaxNewPerClientPerHour = r.MaxNewPerHour + 1 }, "max_new_per_client_per_hour"},
 		"no least gap":           {func(r *RemindersConfig) { r.MinGapDays = 0 }, "min_gap_days"},
 		"a gap of no days":       {func(r *RemindersConfig) { r.GapDays = []int{7, 0} }, "gap_days"},
 		"a gap past a year":      {func(r *RemindersConfig) { r.GapDays = []int{400} }, "gap_days"},

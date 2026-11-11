@@ -62,7 +62,7 @@ func (b *fakeBackend) reminderCount() int {
 const (
 	remindPath = "/v1/reminders"
 	stopPath   = "/v1/reminders/stop"
-	siteSecret = "site-reminders-secret-5f1c0e9a7b3d2846c1e0f9a8b7d6c5e4"
+	siteSecret = "5f1c0e9a7b3d2846c1e0f9a8b7d6c5e45f1c0e9a7b3d2846c1e0f9a8b7d6c5e4"
 	remindBody = `{"email":"ada@example.com","time_zone":"Europe/London","consent":"remind-v1"}`
 )
 
@@ -91,6 +91,12 @@ func TestReminders(t *testing.T) {
 		}, got), "%v", got)
 		assert.Equal(t, ports.Actor{Source: ports.SourceEventSource}, d.backend.reminderActors[0], "the door's, of no one")
 		assert.Zero(t, d.backend.lookups.Load()+d.backend.sends.Load(), "no send token is looked up")
+	})
+	t.Run("passes the site's client on", func(t *testing.T) {
+		d := newDoor(t, nil)
+		rec := d.do(remind(remindPath, `{"email":"ada@example.com","time_zone":"UTC","consent":"remind-v1","client":"q3ZyY1J8b0m2Xw"}`))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Equal(t, "q3ZyY1J8b0m2Xw", d.backend.reminderCalls[0].(*foundryv1.CreateFoundryReminderRequest).GetClient())
 	})
 	t.Run("answers a schedule running", func(t *testing.T) {
 		d := newDoor(t, nil)
@@ -135,6 +141,16 @@ func TestReminderRefusals(t *testing.T) {
 		"another scheme": {func() *http.Request {
 			r := remind(remindPath, remindBody)
 			r.Header.Set("Authorization", "Basic "+siteSecret)
+			return r
+		}, http.StatusUnauthorized, codeUnauthorized},
+		"a bearer not of the secret's form": {func() *http.Request {
+			r := remind(remindPath, remindBody)
+			r.Header.Set("Authorization", "Bearer hunter2")
+			return r
+		}, http.StatusUnauthorized, codeUnauthorized},
+		"a send token": {func() *http.Request {
+			r := remind(remindPath, remindBody)
+			r.Header.Set("Authorization", "Bearer "+liveToken)
 			return r
 		}, http.StatusUnauthorized, codeUnauthorized},
 		"not JSON": {func() *http.Request {
@@ -212,17 +228,89 @@ func TestReminderBackendAnswers(t *testing.T) {
 	}
 }
 
-// The reminders share an address's bucket with the sends: one address can't
-// flood either.
+// guess is a bearer of the secret's form that isn't the site's.
+const guess = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// guessing is a request of the site's to path, bearing guess.
+func guessing(path, body string) *http.Request {
+	r := remind(path, body)
+	r.Header.Set("Authorization", "Bearer "+guess)
+	return r
+}
+
+// Until the backend has taken the site's secret, the reminders share an
+// address's bucket with the sends, so one address can't flood either. Once
+// it has, the site's requests skip it: the site calls from a cloud's
+// shared addresses, which anyone's requests may hold.
 func TestReminderAddressBucket(t *testing.T) {
 	d := newDoor(t, func(c *config.EventsConfig) { c.Endpoint.AddressBurstRequests = 2 })
 	require.Equal(t, http.StatusOK, d.do(remind(remindPath, remindBody)).Code)
 	require.Equal(t, http.StatusOK, d.do(post(validBody)).Code)
-	rec := d.do(remind(remindPath, remindBody))
-	requireRefused(t, rec, http.StatusTooManyRequests, codeRateLimited)
+	requireRefused(t, d.do(guessing(remindPath, remindBody)), http.StatusTooManyRequests, codeRateLimited)
+	requireRefused(t, d.do(post(validBody)), http.StatusTooManyRequests, codeRateLimited)
 	assert.Equal(t, 1, d.backend.reminderCount())
-	d.clock.advance(time.Second)
-	require.Equal(t, http.StatusOK, d.do(remind(stopPath, `{"email":"ada@example.com"}`)).Code)
+	for range 3 {
+		require.Equal(t, http.StatusOK, d.do(remind(remindPath, remindBody)).Code, "the site's secret, taken, skips the bucket")
+	}
+}
+
+// Bearers that aren't the site's secret spend the address's failures,
+// sendtoken.FailuresPerMinute a minute: those of another form before the
+// pod's room or the backend, those the backend refuses after it. With none
+// left, the address's requests are refused before either, the site's
+// secret too until the pod has seen it taken.
+func TestReminderFailedBearers(t *testing.T) {
+	t.Run("of another form", func(t *testing.T) {
+		d := newDoor(t, nil)
+		for range sendtoken.FailuresPerMinute {
+			r := remind(remindPath, remindBody)
+			r.Header.Set("Authorization", "Bearer hunter2")
+			requireRefused(t, d.do(r), http.StatusUnauthorized, codeUnauthorized)
+		}
+		requireRefused(t, d.do(guessing(remindPath, remindBody)), http.StatusTooManyRequests, codeRateLimited)
+		requireRefused(t, d.do(remind(remindPath, remindBody)), http.StatusTooManyRequests, codeRateLimited)
+		assert.Zero(t, d.backend.reminderCount())
+		d.clock.advance(6 * time.Second)
+		require.Equal(t, http.StatusOK, d.do(remind(remindPath, remindBody)).Code, "a failure comes back every 6 s")
+	})
+	t.Run("the backend refused", func(t *testing.T) {
+		d := newDoor(t, nil)
+		d.backend.reminderErr = status.Error(codes.Unauthenticated, "the bearer is not the site's reminders secret")
+		for range sendtoken.FailuresPerMinute {
+			requireRefused(t, d.do(guessing(remindPath, remindBody)), http.StatusUnauthorized, codeUnauthorized)
+		}
+		requireRefused(t, d.do(guessing(remindPath, remindBody)), http.StatusTooManyRequests, codeRateLimited)
+		assert.Equal(t, sendtoken.FailuresPerMinute, d.backend.reminderCount(), "the last never reached it")
+		other := guessing(remindPath, remindBody)
+		other.Header.Set("X-Forwarded-For", elsewhere)
+		requireRefused(t, d.do(other), http.StatusUnauthorized, codeUnauthorized)
+	})
+	// The pod forgets a secret the backend no longer takes, so its requests
+	// are the address's again: here its bucket of one, spent by the first.
+	t.Run("a secret taken, then changed", func(t *testing.T) {
+		d := newDoor(t, func(c *config.EventsConfig) { c.Endpoint.AddressBurstRequests = 1 })
+		require.Equal(t, http.StatusOK, d.do(remind(remindPath, remindBody)).Code)
+		d.backend.reminderErr = status.Error(codes.Unauthenticated, "the bearer is not the site's reminders secret")
+		requireRefused(t, d.do(remind(remindPath, remindBody)), http.StatusUnauthorized, codeUnauthorized)
+		requireRefused(t, d.do(remind(remindPath, remindBody)), http.StatusTooManyRequests, codeRateLimited)
+	})
+}
+
+// Until its secret is taken, one address holds at most
+// address_max_in_flight of the pod's places, as its sends do, however
+// slowly its bodies arrive; the site's secret, taken, holds only the pod's.
+func TestReminderAddressPlaces(t *testing.T) {
+	d := newDoor(t, func(c *config.EventsConfig) { c.Endpoint.AddressMaxInFlight = 1 })
+	leave, ok := d.h.gate.addressPlace(address)
+	require.True(t, ok)
+	requireRefused(t, d.do(remind(remindPath, remindBody)), http.StatusTooManyRequests, codeRateLimited)
+	assert.Zero(t, d.backend.reminderCount())
+	leave()
+	require.Equal(t, http.StatusOK, d.do(remind(remindPath, remindBody)).Code)
+	leave, ok = d.h.gate.addressPlace(address)
+	require.True(t, ok)
+	defer leave()
+	require.Equal(t, http.StatusOK, d.do(remind(remindPath, remindBody)).Code, "the site's secret, taken")
 }
 
 // A request's log line names its route, status and code, never the address,

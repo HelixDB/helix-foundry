@@ -209,13 +209,18 @@ code {
 }
 
 /* A phone's page and a computer's (src/landing/phone.ts holds the same
-   width): what only one of them shows. */
+   width): what only one of them shows. The second query is the first's
+   negation, so a width between 760 and 761px (zoom, a fractional pixel
+   ratio) is one or the other, as matchMedia(PHONE) says. A phone draws no
+   field, and hides its canvas, so no frame of it stays when a phone that
+   was turned wide turns back. */
 @media (max-width: 760px) {
-  .desktop-only {
+  .desktop-only,
+  .field {
     display: none !important;
   }
 }
-@media (min-width: 761px) {
+@media not all and (max-width: 760px) {
   .phone-only {
     display: none !important;
   }

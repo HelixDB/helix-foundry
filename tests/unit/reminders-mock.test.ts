@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { beforeEach, describe, expect, it } from "vitest";
+import { MOCK_REMINDERS_SECRET } from "../../mock/env";
 import { after, first } from "../../mock/reminder-schedule";
+import {
+  handleReminders,
+  mockReminders,
+  normalize,
+} from "../../mock/reminders";
+import { resetState } from "../../mock/state";
 
 // The mock's schedule of the landing page's reminders, held to the backend's
 // (backend/reminder): its golden table, copied into __fixtures__, and a few
@@ -38,6 +46,27 @@ describe("the backend's golden schedule", () => {
   );
   it.each(goldens.after.map((g) => [g.name, g] as const))("after: %s", (_, g) =>
     expect(iso(after(new Date(g.last), g.days, g.zone))).toBe(same(g.want)),
+  );
+});
+
+// The addresses backend/reminder's Normalize keeps and refuses, copied from
+// its testdata/addresses.json.
+const ADDRESSES = new URL(
+  "./__fixtures__/reminder-addresses.json",
+  import.meta.url,
+);
+const addresses: {
+  kept: { in: string; want: string }[];
+  refused: string[];
+} = JSON.parse(readFileSync(ADDRESSES, "utf8"));
+
+describe("the backend's addresses", () => {
+  it.each(addresses.kept.map((a) => [a.in, a.want] as const))(
+    "keeps %j as %j",
+    (address, want) => expect(normalize(address)).toBe(want),
+  );
+  it.each(addresses.refused.map((a) => [a] as const))("refuses %j", (address) =>
+    expect(normalize(address)).toBeNull(),
   );
 });
 
@@ -107,4 +136,57 @@ describe("the next reminder", () => {
   ])("%s", (_, last, days, zone, want) =>
     expect(iso(after(new Date(last), days, zone))).toBe(want),
   );
+});
+
+// The mock's door, as the backend's: what a create may leave out, and the
+// caps of the hour.
+describe("the mock's door", () => {
+  const ask = (body: Record<string, unknown>, path = "/v1/reminders") => {
+    const req = {
+      method: "POST",
+      headers: { authorization: `Bearer ${MOCK_REMINDERS_SECRET}` },
+    } as unknown as IncomingMessage;
+    let status = 0;
+    let text = "";
+    const res = {
+      writeHead: (code: number) => {
+        status = code;
+      },
+      end: (out: string) => {
+        text = out;
+      },
+    } as unknown as ServerResponse;
+    handleReminders(
+      req,
+      res,
+      new URL(`http://mock${path}`),
+      JSON.stringify(body),
+    );
+    return { status, body: JSON.parse(text) };
+  };
+  const remind = (email: string, extra: Record<string, unknown> = {}) =>
+    ask({ email, consent: "remind-v1", ...extra });
+
+  beforeEach(() => resetState());
+
+  it("takes a create without a zone, in UTC, as the door does", () => {
+    expect(remind("ada@example.com").status).toBe(200);
+    expect(mockReminders()[0]).toMatchObject({ timeZone: "UTC", client: "" });
+  });
+
+  it("refuses an address the backend refuses", () =>
+    expect(remind('a"b@example.com').status).toBe(400));
+
+  it("starts at most 5 schedules an hour for one visitor", () => {
+    for (let i = 0; i < 5; i++)
+      expect(remind(`p${i}@example.com`, { client: "visitor-1" }).status).toBe(
+        200,
+      );
+    expect(remind("p5@example.com", { client: "visitor-1" }).status).toBe(429);
+    expect(remind("p5@example.com", { client: "visitor-2" }).status).toBe(200);
+    expect(remind("p0@example.com", { client: "visitor-1" }).body).toEqual(
+      expect.objectContaining({ again: true }),
+    );
+    expect(remind("p6@example.com", { client: "a b" }).status).toBe(400);
+  });
 });

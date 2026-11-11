@@ -12,6 +12,7 @@ docs-media
 # The backend's render goldens, byte for byte
 tests/unit/__fixtures__/event-render
 # The backend's reminder schedule goldens, byte for byte
+tests/unit/__fixtures__/reminder-addresses.json
 tests/unit/__fixtures__/reminder-schedule.json
 # The Go module: gofmt formats it, and its testdata is byte for byte
 backend

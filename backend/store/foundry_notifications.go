@@ -221,43 +221,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, n.ID, string(n.Kind), n.SubjectID, n.Workspace
 // worker stopped while sending it). Each claim counts an attempt and holds
 // the email under token, a new one per claim, which only its holder can
 // end it with (FinishFoundryNotification). nil means none is due.
-func (s *mysqlDB) ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (_ *model.FoundryNotification, err error) {
-	if s.root == nil {
-		return nil, fmt.Errorf("foundry notification claim requires a root database connection")
-	}
-	tx, err := s.root.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin foundry notification claim: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+func (s *mysqlDB) ClaimFoundryNotification(ctx context.Context, token string, lease time.Duration) (*model.FoundryNotification, error) {
 	// A claimed email keeps the next_attempt_at it was due at, so lapsed
 	// claims fall in the index's range too.
-	n, err := scanFoundryNotification(tx.QueryRowContext(ctx, "SELECT "+foundryNotificationColumns+` FROM foundry_notifications
-WHERE status='pending' AND next_attempt_at <= NOW(6) AND (claimed_until IS NULL OR claimed_until < NOW(6))
-ORDER BY next_attempt_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`))
-	if errors.Is(err, ErrNotFound) {
-		_ = tx.Rollback()
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("select foundry notification claim: %w", err)
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE foundry_notifications
-SET attempts=attempts+1, claim_token=?, claimed_until=NOW(6) + INTERVAL ? MICROSECOND WHERE id=?`, token, lease.Microseconds(), n.ID); err != nil {
-		return nil, fmt.Errorf("claim foundry notification: %w", err)
-	}
-	if n, err = scanFoundryNotification(tx.QueryRowContext(ctx, "SELECT "+foundryNotificationColumns+` FROM foundry_notifications
-WHERE id=?`, n.ID)); err != nil {
-		return nil, fmt.Errorf("read claimed foundry notification: %w", err)
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit foundry notification claim: %w", err)
-	}
-	return n, nil
+	return claimDue(ctx, s.root, outbox[model.FoundryNotification]{
+		what: "foundry notification", table: "foundry_notifications", columns: foundryNotificationColumns,
+		due: `WHERE status='pending' AND next_attempt_at <= NOW(6) AND (claimed_until IS NULL OR claimed_until < NOW(6))
+ORDER BY next_attempt_at, id`,
+		scan: scanFoundryNotification, id: func(n *model.FoundryNotification) string { return n.ID },
+	}, token, lease)
 }
 
 // FinishFoundryNotification ends token's claim of email id with outcome:

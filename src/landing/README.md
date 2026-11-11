@@ -18,7 +18,7 @@ The figures are the local app's own components as they were at `00d7927`, before
 At most 760px wide (`phone.ts`, mirrored by `.phone-only` and `.desktop-only` in `styles/base.css`), a screen gets a shorter page. Most phone visits come from social posts, and nothing on the full page can be done on a phone:
 
 - **The hero** keeps its heading and line, then offers the hand-off in place of the calls to action that need a computer:
-  - **Try it on your computer** (`remind.tsx`): an email, and Foundry reminds the visitor to try it on a computer. The first reminder goes at the next weekday 9am in the browser's time zone. The consent (`CONSENT_TEXT`, `src/shared/reminders.ts`) shows once something is typed. The form posts to `/remind` (`src/app/remind`, `src/server/reminders.ts`), which forwards to Foundry's door.
+  - **Try it on your computer** (`remind.tsx`): an email, and Foundry reminds the visitor to try it on a computer. The first reminder goes at the next weekday 9am in the browser's time zone. The consent (`CONSENT_TEXT`, `src/shared/reminders.ts`) shows once something is typed. The form posts to `/remind` (`src/app/remind`, `src/server/reminders.ts`), which forwards to Foundry's door with a key of the visitor's address, so the backend can cap what one visitor asks for (5 an hour). A rate limit says how long to wait.
   - **Star on GitHub to find it later**.
   - **Or start on Helix Cloud now**.
   - Without `FOUNDRY_REMINDERS_SECRET` (`remind` is false) the form gives way to a line saying to open the page on a computer.
@@ -29,7 +29,7 @@ At most 760px wide (`phone.ts`, mirrored by `.phone-only` and `.desktop-only` in
   - the setup scene;
   - the self-hosted box.
 
-  `figures.tsx` mounts those figures only on a wider screen (`useWide`), so their chunks never load on a phone. A phone turned wide enough mounts them and starts the field.
+  `figures.tsx` mounts those figures only on a wider screen (`useWide`), so their chunks never load on a phone. A phone turned wide enough mounts them and starts the field, and turned back stops it and hides its canvas.
 
 ## Coming back
 

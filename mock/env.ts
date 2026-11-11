@@ -3,9 +3,12 @@
 // works anywhere but against the mock. WorkOS calls (JWKS, refresh, users,
 // logout) go to the mock too, through AuthKit's WORKOS_API_* settings.
 
-/** The landing page's reminders' secret, shared by the site and the mock's door. */
-export const MOCK_REMINDERS_SECRET =
-  "mock-only-reminders-secret-0123456789abcdef";
+/**
+ * The landing page's reminders' secret, shared by the site and the mock's
+ * door: 64 lowercase hex digits, the form the site takes (`openssl rand -hex
+ * 32`), here "mock" over and over.
+ */
+export const MOCK_REMINDERS_SECRET = "6d6f636b".repeat(8);
 
 export type MockPorts = { mock: number; app: number };
 

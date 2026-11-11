@@ -107,7 +107,7 @@ func newHandler(backend backendAPI, cfg config.EventsConfig, logger *slog.Logger
 func (h *handler) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/sources/{source}/pieces", h)
-	rm := &reminders{backend: h.backend, gate: h.gate, logger: h.logger, now: h.now}
+	rm := &reminders{backend: h.backend, gate: h.gate, secret: newSecretAdmission(), logger: h.logger, now: h.now}
 	mux.Handle("POST /v1/reminders", rm.route(routeCreate))
 	mux.Handle("POST /v1/reminders/stop", rm.route(routeStop))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

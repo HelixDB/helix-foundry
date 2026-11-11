@@ -2,8 +2,6 @@ package foundryevents
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,17 +9,22 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/time/rate"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	foundryapi "github.com/helixdb/helix-foundry/backend/api"
+	"github.com/helixdb/helix-foundry/backend/internal/iplimit"
 	foundryv1 "github.com/helixdb/helix-foundry/backend/pb/gen/go/helix/foundry/v1"
 	"github.com/helixdb/helix-foundry/backend/ports"
+	"github.com/helixdb/helix-foundry/backend/sendtoken"
 )
 
 const (
@@ -34,7 +37,17 @@ const (
 	// reminderLimitedFor is the Retry-After of a request past the backend's
 	// hourly cap when its refusal says no wait of its own.
 	reminderLimitedFor = time.Minute
+	// secretTrustedFor is how long a pod takes the bearer the backend last
+	// accepted for the site's, admitting it without the address's bucket,
+	// place or failures: the site calls from a cloud's shared addresses,
+	// which others' requests may hold.
+	secretTrustedFor = 10 * time.Minute
 )
+
+// siteSecretForm is the form of the site's reminders secret: 32 random bytes in
+// lowercase hex (openssl rand -hex 32). A bearer of any other form is no
+// guess at it, and is refused before the pod's room or the backend.
+var siteSecretForm = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // reminderRoute is one of the reminders' two routes, by its metric label.
 type reminderRoute string
@@ -44,11 +57,13 @@ const (
 	routeStop   reminderRoute = "stop"
 )
 
-// reminderBody is a request for reminders as the site sends it.
+// reminderBody is a request for reminders as the site sends it. Client is
+// the site's key for the visitor, which the backend caps the schedules of.
 type reminderBody struct {
 	Email    string `json:"email"`
 	TimeZone string `json:"time_zone"`
 	Consent  string `json:"consent"`
+	Client   string `json:"client"`
 }
 
 // stopBody is a request to stop an address's reminders.
@@ -67,32 +82,89 @@ type reminderAnswer struct {
 // reminders serves the site's two routes of the reminders people ask for on
 // the landing page, from a phone, to try Foundry on a computer:
 //
-//	POST /v1/reminders       {"email", "time_zone", "consent"} → {"next_send_at", "again"}
-//	POST /v1/reminders/stop  {"email"}                         → {}
+//	POST /v1/reminders       {"email", "time_zone", "consent", "client"} → {"next_send_at", "again"}
+//	POST /v1/reminders/stop  {"email"}                                   → {}
 //
 // each with Authorization: Bearer and the site's secret. The door holds no
 // secret: it passes the bearer's SHA-256 on, and the backend compares it with
-// foundry.reminders.secret_sha256. A request is checked in this order,
-// cheapest first, and answered at the first check it fails:
-//  1. The client address's bucket, shared with the sends: 429 rate_limited.
+// foundry.reminders.secret_sha256. The bearer the backend last accepted is
+// the site's, for secretTrustedFor (trusted): its requests skip the
+// address's checks, since the site calls from addresses a cloud shares. A
+// request is checked in this order, cheapest first, and answered at the
+// first check it fails:
+//  1. Unless trusted, the client address's bucket, shared with the sends:
+//     429 rate_limited.
 //  2. The headers: a Content-Length past maxReminderBody is 413
 //     payload_too_large, a body not declared JSON 415
-//     unsupported_media_type, and no Authorization: Bearer 401
-//     unauthorized.
-//  3. The pod's room, as a send takes it: 429 rate_limited.
+//     unsupported_media_type, and no Authorization: Bearer, or one not of
+//     the secret's form (siteSecretForm), 401 unauthorized, spending one of the
+//     address's failures; with none left, it is 429 rate_limited, as is
+//     any untrusted bearer then. None of these takes the pod's room.
+//  3. The room, held until the request is answered: unless trusted, one of
+//     the address's places in flight, as a send takes it, then the pod's:
+//     429 rate_limited.
 //  4. The body, one JSON object with no other field, within maxReminderBody
 //     and readFor: 413, 408 request_timeout or 400 invalid_arguments; an
 //     address or consent missing is 400 too.
 //  5. The backend, as the door (ports.SourceEventSource with no token),
-//     within reminderFor: its refusals by reminderFailure.
+//     within reminderFor: its refusals by reminderFailure. One saying the
+//     bearer is not the secret spends one of the address's failures.
 //
 // Each request logs one line, as a send does, but never the address, the
-// zone or the bearer.
+// zone, the client or the bearer.
 type reminders struct {
 	backend backendAPI
 	gate    *gate
+	secret  *secretAdmission
 	logger  *slog.Logger
 	now     func() time.Time
+}
+
+// secretAdmission is a pod's view of the bearers of the reminders' routes:
+// how many each client address failed with lately (sendtoken's
+// FailuresPerMinute a minute), and the bearer the backend last accepted, by
+// its hash, which is the site's.
+type secretAdmission struct {
+	failures *iplimit.Limiters
+	mu       sync.Mutex
+	accepted string
+	at       time.Time
+}
+
+func newSecretAdmission() *secretAdmission {
+	return &secretAdmission{failures: iplimit.New(rate.Limit(float64(sendtoken.FailuresPerMinute)/60), sendtoken.FailuresPerMinute, addressEntries)}
+}
+
+// trusted reports whether hash is the bearer's the backend accepted within
+// secretTrustedFor of now.
+func (a *secretAdmission) trusted(hash string, now time.Time) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.accepted != "" && a.accepted == hash && now.Sub(a.at) < secretTrustedFor
+}
+
+// accept notes that the backend took hash for the site's secret at now.
+func (a *secretAdmission) accept(hash string, now time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.accepted, a.at = hash, now
+}
+
+// fail spends one of address's failures on a bearer that isn't the site's
+// secret, forgetting hash if it was trusted (the secret changed). It
+// returns how long until address has a failure left, 0 when it had one.
+func (a *secretAdmission) fail(address, hash string, now time.Time) time.Duration {
+	a.mu.Lock()
+	if a.accepted == hash {
+		a.accepted = ""
+	}
+	a.mu.Unlock()
+	reservation := a.failures.Reserve(address, now)
+	wait := reservation.DelayFrom(now)
+	if wait > 0 {
+		reservation.CancelAt(now)
+	}
+	return wait
 }
 
 // route is the handler of one of the two routes.
@@ -134,8 +206,13 @@ func (rm *reminders) serve(w http.ResponseWriter, r *http.Request, which reminde
 	deadline := http.NewResponseController(w)
 	now := rm.now()
 	address := clientAddress(r)
-	if wait := rm.gate.address(address, now); wait > 0 {
-		return nil, limited(wait, "this address sends too many requests; send again after Retry-After")
+	secret, given := bearer(r.Header)
+	hash := sendtoken.Hash(secret)
+	trusted := given && rm.secret.trusted(hash, now)
+	if !trusted {
+		if wait := rm.gate.address(address, now); wait > 0 {
+			return nil, limited(wait, "this address sends too many requests; send again after Retry-After")
+		}
 	}
 	if r.ContentLength > maxReminderBody {
 		return nil, reminderTooLarge()
@@ -144,10 +221,22 @@ func (rm *reminders) serve(w http.ResponseWriter, r *http.Request, which reminde
 		return nil, &failure{status: http.StatusUnsupportedMediaType, code: codeUnsupportedMediaType,
 			message: "send the body as Content-Type: application/json, in UTF-8, with no Content-Encoding"}
 	}
-	secret, given := bearer(r.Header)
-	if !given {
+	if !given || !siteSecretForm.MatchString(secret) {
+		if wait := rm.secret.fail(address, hash, now); wait > 0 {
+			return nil, limited(wait, "this address sent too many requests without the site's secret; send again after Retry-After")
+		}
 		return nil, &failure{status: http.StatusUnauthorized, code: codeUnauthorized, challenge: "Bearer",
 			message: "send one Authorization: Bearer header with the site's reminders secret"}
+	}
+	if !trusted {
+		if wait := rm.secret.failures.Delay(address, now); wait > 0 {
+			return nil, limited(wait, "this address sent too many requests without the site's secret; send again after Retry-After")
+		}
+		leave, ok := rm.gate.addressPlace(address)
+		if !ok {
+			return nil, limited(time.Second, "this address has too many requests in flight; send again after Retry-After")
+		}
+		defer leave()
 	}
 	release, ok := rm.gate.enter(r.ContentLength, now)
 	if !ok {
@@ -171,32 +260,40 @@ func (rm *reminders) serve(w http.ResponseWriter, r *http.Request, which reminde
 	}
 	_ = deadline.SetReadDeadline(time.Time{})
 
-	sum := sha256.Sum256([]byte(secret))
-	hash := hex.EncodeToString(sum[:])
 	ctx, cancel := context.WithTimeout(foundryapi.AttachActor(r.Context(), ports.Actor{Source: ports.SourceEventSource}), reminderFor)
 	defer cancel()
+	var answer any
+	var err error
 	if which == routeStop {
 		if strings.TrimSpace(stop.Email) == "" {
 			return nil, invalid("email is required: the address of the person who signed in")
 		}
-		if _, err := rm.backend.StopFoundryReminders(ctx, &foundryv1.StopFoundryRemindersRequest{SecretSha256: hash, Email: stop.Email}); err != nil {
-			return nil, reminderFailure(err)
+		_, err = rm.backend.StopFoundryReminders(ctx, &foundryv1.StopFoundryRemindersRequest{SecretSha256: hash, Email: stop.Email})
+		answer = struct{}{}
+	} else {
+		switch {
+		case strings.TrimSpace(create.Email) == "":
+			return nil, invalid("email is required: the address to remind")
+		case create.Consent == "":
+			return nil, invalid("consent is required: the version of the words the person agreed to, such as remind-v1")
 		}
-		return struct{}{}, nil
+		var resp *foundryv1.CreateFoundryReminderResponse
+		resp, err = rm.backend.CreateFoundryReminder(ctx, &foundryv1.CreateFoundryReminderRequest{
+			SecretSha256: hash, Email: create.Email, TimeZone: create.TimeZone, Consent: create.Consent, Client: create.Client,
+		})
+		answer = reminderAnswer{NextSendAt: resp.GetNextSendAt().AsTime().UTC().Format(time.RFC3339), Again: resp.GetAgain()}
 	}
-	switch {
-	case strings.TrimSpace(create.Email) == "":
-		return nil, invalid("email is required: the address to remind")
-	case create.Consent == "":
-		return nil, invalid("consent is required: the version of the words the person agreed to, such as remind-v1")
+	switch code := status.Code(err); code {
+	case codes.OK, codes.InvalidArgument, codes.ResourceExhausted:
+		// The backend checks the secret first: any of these took it.
+		rm.secret.accept(hash, rm.now())
+	case codes.Unauthenticated, codes.PermissionDenied:
+		rm.secret.fail(address, hash, rm.now())
 	}
-	resp, err := rm.backend.CreateFoundryReminder(ctx, &foundryv1.CreateFoundryReminderRequest{
-		SecretSha256: hash, Email: create.Email, TimeZone: create.TimeZone, Consent: create.Consent,
-	})
 	if err != nil {
 		return nil, reminderFailure(err)
 	}
-	return reminderAnswer{NextSendAt: resp.GetNextSendAt().AsTime().UTC().Format(time.RFC3339), Again: resp.GetAgain()}, nil
+	return answer, nil
 }
 
 // reminderFailure answers the backend's refusal of a reminder request by its

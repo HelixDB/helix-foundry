@@ -89,23 +89,30 @@ func TestZone(t *testing.T) {
 	assert.Equal(t, "Asia/Kolkata", loc.String())
 }
 
+// addresses is testdata/addresses.json, which the site's mock also follows
+// (copied to tests/unit/__fixtures__/reminder-addresses.json): copy it
+// again when it changes.
+type addresses struct {
+	Kept []struct {
+		In   string `json:"in"`
+		Want string `json:"want"`
+	} `json:"kept"`
+	Refused []string `json:"refused"`
+}
+
 func TestNormalize(t *testing.T) {
-	for in, want := range map[string]string{
-		"ada@example.com":                "ada@example.com",
-		"  Ada.Lovelace@Example.COM\n":   "ada.lovelace@example.com",
-		"grace+foundry@mail.example.org": "grace+foundry@mail.example.org",
-		"o'brien@example.ie":             "o'brien@example.ie",
-	} {
-		got, err := reminder.Normalize(in)
-		require.NoError(t, err, "%q", in)
-		assert.Equal(t, want, got, "%q", in)
+	raw, err := os.ReadFile("testdata/addresses.json")
+	require.NoError(t, err)
+	var cases addresses
+	require.NoError(t, json.Unmarshal(raw, &cases))
+	require.NotEmpty(t, cases.Kept)
+	require.NotEmpty(t, cases.Refused)
+	for _, c := range cases.Kept {
+		got, err := reminder.Normalize(c.In)
+		require.NoError(t, err, "%q", c.In)
+		assert.Equal(t, c.Want, got, "%q", c.In)
 	}
-	for _, in := range []string{
-		"", "ada", "ada@", "@example.com", "ada@example", "ada@.example.com", "ada@example.com.", "ada@example..com",
-		"ada@@example.com", "a@b@example.com", "Ada <ada@example.com>", "ada@example.com (Ada)", `"ada lovelace"@example.com`,
-		"ada lovelace@example.com", "ada@exa\x00mple.com", "ada,grace@example.com", "ada@example.com;grace@example.com",
-		strings.Repeat("a", 250) + "@example.com",
-	} {
+	for _, in := range cases.Refused {
 		_, err := reminder.Normalize(in)
 		assert.ErrorIs(t, err, reminder.ErrEmail, "%q", in)
 	}

@@ -6,9 +6,28 @@ export type RemindFailure = "invalid" | "rate_limit" | "error";
 
 export const FAILURE_TEXT: Record<RemindFailure, string> = {
   invalid: "That doesn’t look like an email address. Check it and try again.",
-  rate_limit: "Too many reminders asked for just now. Try again in a minute.",
+  rate_limit: "Too many reminders asked for just now. Try again later.",
   error: "We couldn’t set up your reminder. Try again in a moment.",
 };
+
+/**
+ * Why the reminder wasn't set up, in words: a rate limit says how long the
+ * route's Retry-After asked to wait (the backend's caps ask 15 minutes).
+ *
+ * @example
+ * failureText("rate_limit", "900"); // "… Try again in 15 minutes."
+ */
+export function failureText(
+  reason: RemindFailure,
+  retryAfter: string | null,
+): string {
+  const seconds = Number(retryAfter);
+  if (reason !== "rate_limit" || !retryAfter || !(seconds > 0))
+    return FAILURE_TEXT[reason];
+  const minutes = Math.ceil(seconds / 60);
+  const wait = minutes <= 1 ? "a minute" : `${minutes} minutes`;
+  return `Too many reminders asked for just now. Try again in ${wait}.`;
+}
 
 /** The time zone the browser reports, or UTC when it can't say. */
 export function browserTimeZone(): string {

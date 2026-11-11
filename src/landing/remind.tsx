@@ -5,7 +5,7 @@ import { CONSENT, CONSENT_TEXT, REMIND_PATH } from "@/shared/reminders";
 import { trackEvent } from "@/web/analytics";
 import {
   browserTimeZone,
-  FAILURE_TEXT,
+  failureText,
   whenText,
   type RemindFailure,
 } from "./remind-text";
@@ -14,7 +14,7 @@ type State =
   | { kind: "idle" }
   | { kind: "sending" }
   | { kind: "sent"; text: string }
-  | { kind: "failed"; reason: RemindFailure };
+  | { kind: "failed"; reason: RemindFailure; text: string };
 
 // The hero's hand-off on a phone: an email, and Foundry's backend reminds
 // them to try it on a computer, the first at the next weekday 9am in the
@@ -35,6 +35,7 @@ export function Remind() {
     const timeZone = browserTimeZone();
     setState({ kind: "sending" });
     let reason: RemindFailure = "error";
+    let retryAfter: string | null = null;
     try {
       const res = await fetch(REMIND_PATH, {
         method: "POST",
@@ -61,11 +62,12 @@ export function Remind() {
       }
       if (answer.error === "invalid" || answer.error === "rate_limit")
         reason = answer.error;
+      retryAfter = res.headers.get("Retry-After");
     } catch {
       // The network failed: say so as any other failure.
     }
     trackEvent("reminder_refused", { reason });
-    setState({ kind: "failed", reason });
+    setState({ kind: "failed", reason, text: failureText(reason, retryAfter) });
   };
 
   return (
@@ -133,11 +135,7 @@ export function Remind() {
         role="status"
         data-failed={state.kind === "failed" || undefined}
       >
-        {state.kind === "sent"
-          ? state.text
-          : state.kind === "failed"
-            ? FAILURE_TEXT[state.reason]
-            : ""}
+        {state.kind === "sent" || state.kind === "failed" ? state.text : ""}
       </p>
       {state.kind === "sent" && (
         <button

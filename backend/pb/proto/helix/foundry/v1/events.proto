@@ -39,6 +39,12 @@ message CreateFoundryReminderRequest {
   // sending, you're agreeing for us to use your email to remind you about
   // Foundry".
   string consent = 4;
+  // Who asked, as the site tells its visitors apart: a key it derives from
+  // the visitor's network address with its secret, at most 64 printable
+  // ASCII characters, which no one else can link to the address. At most
+  // foundry.reminders.max_new_per_client_per_hour schedules start an hour
+  // for one client; empty counts toward the hour's cap alone.
+  string client = 5;
 }
 message CreateFoundryReminderResponse {
   // When the address's next reminder goes.

@@ -42,7 +42,7 @@ func readReminder(t *testing.T, email string) storedReminder {
 // last reminder each schedule was asked with.
 func reminderRequest(email, zone string, first time.Time, cap int, asked *[]*time.Time) model.FoundryReminderRequest {
 	return model.FoundryReminderRequest{
-		ID: id26("RMD-" + email), Email: email, TimeZone: zone, Consent: reminder.Consent, MaxNewPerHour: cap,
+		ID: id26("RMD-" + email), Email: email, TimeZone: zone, Consent: reminder.Consent, MaxNewPerHour: cap, MaxNewPerClientPerHour: 5,
 		Schedule: func(last *time.Time) time.Time {
 			if asked != nil {
 				*asked = append(*asked, last)
@@ -97,6 +97,28 @@ func TestRequestFoundryReminder(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.RequestFoundryReminder(ctx, reminderRequest("alan@example.com", "UTC", first, 2, nil))
 		require.NoError(t, err, "an hour on, the schedule asked for then no longer counts")
+	})
+	t.Run("caps the schedules one client starts in an hour", func(t *testing.T) {
+		db := newTestStore(t)
+		ask := func(email, client string) error {
+			req := reminderRequest(email, "UTC", first, 300, nil)
+			req.Client, req.MaxNewPerClientPerHour = client, 2
+			_, err := db.RequestFoundryReminder(ctx, req)
+			return err
+		}
+		require.NoError(t, ask("ada@example.com", "client-1"))
+		require.NoError(t, ask("grace@example.com", "client-1"))
+		require.ErrorIs(t, ask("alan@example.com", "client-1"), store.ErrFoundryReminderClientLimit)
+		require.NoError(t, ask("alan@example.com", "client-2"), "another client has its own")
+		require.NoError(t, ask("katherine@example.com", ""), "no client: the hour's cap alone")
+		require.NoError(t, ask("ada@example.com", "client-1"), "asking again counts nothing")
+		var client string
+		require.NoError(t, testDB.QueryRow(`SELECT client_key FROM foundry_reminders WHERE email='alan@example.com'`).Scan(&client))
+		assert.Equal(t, "client-2", client)
+
+		_, err := testDB.Exec(`UPDATE foundry_reminders SET requested_at=NOW(6) - INTERVAL 61 MINUTE WHERE email='ada@example.com'`)
+		require.NoError(t, err)
+		require.NoError(t, ask("edsger@example.com", "client-1"), "an hour on, the schedule asked for then no longer counts")
 	})
 	t.Run("starts a schedule that ended again, no sooner than its last reminder allows", func(t *testing.T) {
 		db := newTestStore(t)
@@ -320,9 +342,10 @@ func TestFoundryReminderClaims(t *testing.T) {
 		require.Error(t, db.FinishFoundryReminder(ctx, r.ID, "t2", model.FoundryReminderRetry{At: later}), "a retry needs its failure")
 		require.Error(t, db.FinishFoundryReminder(ctx, r.ID, "t2", model.FoundryReminderGiveUp{}), "a failure needs its error")
 	})
-	// A person signing in while their reminder is sent stops the schedule:
-	// the claim then records nothing.
-	t.Run("loses a claim of a schedule stopped meanwhile", func(t *testing.T) {
+	// A person signing in while their reminder is sent stops the schedule,
+	// which still counts the reminder that went, so a new schedule keeps its
+	// gap from it.
+	t.Run("counts a reminder sent as its schedule stopped", func(t *testing.T) {
 		db := newTestStore(t)
 		dueReminder(t, db, "ada@example.com")
 		r := claim(t, db, "t1", time.Minute)
@@ -330,11 +353,54 @@ func TestFoundryReminderClaims(t *testing.T) {
 		stopped, err := db.StopFoundryReminder(ctx, "ada@example.com", model.FoundryReminderStoppedSignedIn)
 		require.NoError(t, err)
 		require.True(t, stopped)
+		assert.True(t, readReminder(t, "ada@example.com").Hold.Valid, "the stop leaves the send its claim")
 		next := time.Now().Add(7 * 24 * time.Hour)
-		assert.ErrorIs(t, db.FinishFoundryReminder(ctx, r.ID, "t1", model.FoundryReminderSent{Next: &next}), store.ErrNotFound)
+		require.NoError(t, db.FinishFoundryReminder(ctx, r.ID, "t1", model.FoundryReminderSent{Next: &next}))
 		got := readReminder(t, "ada@example.com")
 		assert.Equal(t, "stopped", got.Status)
+		assert.Equal(t, 1, got.Sent)
+		assert.True(t, got.LastSent.Valid)
+		assert.WithinDuration(t, time.Now(), got.LastSent.Time, time.Minute)
+		assert.False(t, got.Next.Valid, "a stopped schedule sends no next")
 		assert.False(t, got.Hold.Valid)
+		assert.ErrorIs(t, db.FinishFoundryReminder(ctx, r.ID, "t1", model.FoundryReminderSent{}), store.ErrNotFound, "a claim ends once")
+	})
+	t.Run("only lets a claim go when a stopped schedule's send failed", func(t *testing.T) {
+		db := newTestStore(t)
+		dueReminder(t, db, "ada@example.com")
+		r := claim(t, db, "t1", time.Minute)
+		require.NotNil(t, r)
+		_, err := db.StopFoundryReminder(ctx, "ada@example.com", model.FoundryReminderStoppedSignedIn)
+		require.NoError(t, err)
+		require.NoError(t, db.FinishFoundryReminder(ctx, r.ID, "t1", model.FoundryReminderRetry{At: time.Now().Add(time.Hour), Error: "throttled"}))
+		got := readReminder(t, "ada@example.com")
+		assert.Equal(t, "stopped", got.Status)
+		assert.Equal(t, 0, got.Sent)
+		assert.False(t, got.Next.Valid || got.LastSent.Valid || got.Hold.Valid || got.LastError.Valid)
+	})
+	// Asked for again while the stopped schedule's reminder is still being
+	// sent, the address waits its gap from the claim's end, when it went at
+	// the latest; the claim ends, so its send records nothing in the new
+	// schedule.
+	t.Run("keeps the gap from a reminder still being sent when a stopped schedule starts again", func(t *testing.T) {
+		db := newTestStore(t)
+		dueReminder(t, db, "ada@example.com")
+		r := claim(t, db, "t1", time.Minute)
+		require.NotNil(t, r)
+		_, err := db.StopFoundryReminder(ctx, "ada@example.com", model.FoundryReminderStoppedSignedIn)
+		require.NoError(t, err)
+		var asked []*time.Time
+		answer, err := db.RequestFoundryReminder(ctx, reminderRequest("ada@example.com", "UTC", time.Now(), 300, &asked))
+		require.NoError(t, err)
+		assert.False(t, answer.Again)
+		require.Len(t, asked, 1)
+		require.NotNil(t, asked[0], "the reminder being sent counts as the last")
+		assert.WithinDuration(t, time.Now().Add(time.Minute), *asked[0], 10*time.Second, "its claim's end")
+		got := readReminder(t, "ada@example.com")
+		assert.Equal(t, "scheduled", got.Status)
+		assert.False(t, got.Hold.Valid)
+		assert.ErrorIs(t, db.FinishFoundryReminder(ctx, r.ID, "t1", model.FoundryReminderSent{}), store.ErrNotFound)
+		assert.Equal(t, 0, readReminder(t, "ada@example.com").Sent)
 	})
 }
 

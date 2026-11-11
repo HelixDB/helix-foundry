@@ -203,6 +203,12 @@ type RemindersConfig struct {
 	// RESOURCE_EXHAUSTED. It bounds what a flood past the site's bot check
 	// could send. Asking again while a schedule runs counts nothing.
 	MaxNewPerHour int `koanf:"max_new_per_hour"`
+	// MaxNewPerClientPerHour is how many schedules one client (the site's
+	// key for a visitor's network address) may start in an hour: past it
+	// its request is refused RESOURCE_EXHAUSTED, so one visitor can't spend
+	// the hour's cap. It counts the addresses that client started or
+	// started again within the hour.
+	MaxNewPerClientPerHour int `koanf:"max_new_per_client_per_hour"`
 	// GapDays are the days from each reminder to the next: the schedule
 	// sends len(GapDays)+1 reminders in all, the first at the next weekday
 	// 09:00 in the person's zone, each later one at the first weekday 09:00
@@ -227,6 +233,8 @@ func (r RemindersConfig) Validate() error {
 	switch {
 	case r.MaxNewPerHour < 1:
 		return fmt.Errorf("foundry.reminders.max_new_per_hour must be positive")
+	case r.MaxNewPerClientPerHour < 1 || r.MaxNewPerClientPerHour > r.MaxNewPerHour:
+		return fmt.Errorf("foundry.reminders.max_new_per_client_per_hour must be 1 to max_new_per_hour")
 	case r.MinGapDays < 1 || r.MinGapDays > maxReminderGapDays:
 		return fmt.Errorf("foundry.reminders.min_gap_days must be 1 to %d", maxReminderGapDays)
 	case len(r.GapDays) > 10:
@@ -1784,9 +1792,10 @@ func Defaults() Config {
 		FollowUpWindow: 72 * time.Hour,
 		MaxAttempts:    5,
 	}, Reminders: RemindersConfig{
-		MaxNewPerHour: 300,
-		GapDays:       []int{7, 14, 28},
-		MinGapDays:    7,
+		MaxNewPerHour:          300,
+		MaxNewPerClientPerHour: 5,
+		GapDays:                []int{7, 14, 28},
+		MinGapDays:             7,
 	}, Heal: HealConfig{
 		PollInterval: time.Minute,
 		Every:        24 * time.Hour,

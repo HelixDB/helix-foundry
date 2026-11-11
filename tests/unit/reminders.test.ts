@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { whenText } from "@/landing/remind-text";
+import { failureText, whenText } from "@/landing/remind-text";
 import {
+  clientKey,
   handleRemind,
   parseRemindForm,
+  readCapped,
   remindersConfig,
   stopReminders,
   type RemindersConfig,
@@ -12,19 +14,24 @@ import {
 // says, and POST /remind on the server, which checks the form and asks
 // Foundry's door to remind the address.
 
-const SECRET = "s".repeat(40);
+const SECRET = "0a1b2c3d".repeat(8);
 const CONFIG: RemindersConfig = {
   ingestOrigin: "https://ingest.example.test",
   secret: SECRET,
 };
 const SITE = "https://foundry.example.test";
 
-const form = (body: unknown, origin: string | null = SITE) =>
+const form = (
+  body: unknown,
+  origin: string | null = SITE,
+  headers: Record<string, string> = {},
+) =>
   new Request(`${SITE}/remind`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(origin ? { Origin: origin } : {}),
+      ...headers,
     },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
@@ -87,12 +94,39 @@ describe("whenText", () => {
   );
 });
 
+describe("failureText", () => {
+  it.each([
+    ["900", "Too many reminders asked for just now. Try again in 15 minutes."],
+    ["60", "Too many reminders asked for just now. Try again in a minute."],
+    ["5", "Too many reminders asked for just now. Try again in a minute."],
+    [null, "Too many reminders asked for just now. Try again later."],
+    ["soon", "Too many reminders asked for just now. Try again later."],
+  ])("says a rate limit's Retry-After %s", (wait, text) =>
+    expect(failureText("rate_limit", wait)).toBe(text),
+  );
+  it("says the rest as they are", () =>
+    expect(failureText("invalid", "900")).toMatch(/^That doesn’t look/));
+});
+
 describe("parseRemindForm", () => {
   it("keeps the trimmed address and the zone", () =>
     expect(parseRemindForm(JSON.stringify(GOOD))).toEqual({
       email: "Ada@Example.com",
       timeZone: "Europe/London",
     }));
+
+  // The backend keeps a zone it doesn't know as UTC: this server's ICU may
+  // be older than the browser's, and a zone is never why an address fails.
+  it.each([
+    ["a zone this server doesn't know", "Mars/Olympus", "Mars/Olympus"],
+    ["no zone", "", ""],
+    ["a zone past 64 characters", "Z".repeat(65), ""],
+  ])("passes on %s", (_, timeZone, want) =>
+    expect(parseRemindForm(JSON.stringify({ ...GOOD, timeZone }))).toEqual({
+      email: "Ada@Example.com",
+      timeZone: want,
+    }),
+  );
 
   it.each([
     ["not JSON", "{"],
@@ -103,8 +137,7 @@ describe("parseRemindForm", () => {
     ["no @", JSON.stringify({ ...GOOD, email: "ada.example.com" })],
     ["a space", JSON.stringify({ ...GOOD, email: "ada lovelace@example.com" })],
     ["too long", JSON.stringify({ ...GOOD, email: `${"a".repeat(250)}@b.co` })],
-    ["an unknown zone", JSON.stringify({ ...GOOD, timeZone: "Mars/Olympus" })],
-    ["no zone", JSON.stringify({ ...GOOD, timeZone: "" })],
+    ["a zone not a string", JSON.stringify({ ...GOOD, timeZone: 1 })],
     ["a body over 2 KiB", JSON.stringify({ ...GOOD, pad: "x".repeat(3000) })],
   ])("refuses %s", (_, raw) => expect(parseRemindForm(raw)).toBeNull());
 });
@@ -130,7 +163,25 @@ describe("remindersConfig", () => {
 
   it.each([
     ["no secret", {}, events, false],
-    ["a short secret", { FOUNDRY_REMINDERS_SECRET: "short" }, events, false],
+    [
+      "a short secret",
+      { FOUNDRY_REMINDERS_SECRET: "0a".repeat(16) },
+      events,
+      false,
+    ],
+    [
+      // Its SHA-256 is in git: a passphrase could be guessed from it.
+      "a passphrase",
+      { FOUNDRY_REMINDERS_SECRET: "correct horse battery staple ".repeat(3) },
+      events,
+      false,
+    ],
+    [
+      "upper-case hex",
+      { FOUNDRY_REMINDERS_SECRET: SECRET.toUpperCase() },
+      events,
+      false,
+    ],
     ["no door", { FOUNDRY_REMINDERS_SECRET: SECRET }, "", false],
     [
       "plain http off loopback",
@@ -177,7 +228,28 @@ describe("POST /remind", () => {
       email: "Ada@Example.com",
       time_zone: "Europe/London",
       consent: "remind-v1",
+      client: "",
     });
+  });
+
+  it("names the visitor by a key of their address, for the backend's cap", async () => {
+    const fetch = door(200, { next_send_at: "2026-11-11T09:00:00Z" });
+    await handleRemind(form(GOOD, SITE, { "x-real-ip": "203.0.113.9" }), {
+      config: CONFIG,
+    });
+    const [, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
+    const { client } = JSON.parse(String(init.body));
+    expect(client).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(client).toBe(
+      clientKey(form(GOOD, SITE, { "x-real-ip": "203.0.113.9" }), SECRET),
+    );
+  });
+
+  it("refuses a body past 2 KiB without reading it", async () => {
+    const fetch = door(200, {});
+    const big = form({ ...GOOD, pad: "x".repeat(4000) });
+    expect((await handleRemind(big, { config: CONFIG })).status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("passes on that the address already had them", async () => {
@@ -241,6 +313,22 @@ describe("POST /remind", () => {
     if (status === 429) expect(res.headers.get("Retry-After")).toBe("60");
   });
 
+  it.each([400, 429])("lets the door's %i body go unread", async (status) => {
+    const cancel = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(new ReadableStream({ cancel }), {
+            status,
+            headers: { "Retry-After": "900" },
+          }),
+      ),
+    );
+    await handleRemind(form(GOOD), { config: CONFIG });
+    expect(cancel).toHaveBeenCalled();
+  });
+
   it("fails when the door can't be reached", async () => {
     vi.stubGlobal(
       "fetch",
@@ -251,6 +339,52 @@ describe("POST /remind", () => {
     const res = await handleRemind(form(GOOD), { config: CONFIG });
     expect(res.status).toBe(502);
   });
+});
+
+describe("clientKey", () => {
+  const visitor = (headers: Record<string, string>) =>
+    new Request(`${SITE}/remind`, { method: "POST", headers });
+
+  it("is one key per address and secret, which doesn't hold the address", () => {
+    const key = clientKey(visitor({ "x-real-ip": "203.0.113.9" }), SECRET);
+    expect(key).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(key).not.toContain("203");
+    expect(
+      clientKey(
+        visitor({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }),
+        SECRET,
+      ),
+    ).toBe(key);
+    expect(
+      clientKey(visitor({ "x-real-ip": "203.0.113.10" }), SECRET),
+    ).not.toBe(key);
+    expect(
+      clientKey(visitor({ "x-real-ip": "203.0.113.9" }), "f".repeat(64)),
+    ).not.toBe(key);
+  });
+
+  it("is none for a request that names no address", () =>
+    expect(clientKey(visitor({}), SECRET)).toBe(""));
+});
+
+describe("readCapped", () => {
+  const stream = (chunks: string[]) =>
+    new Request(`${SITE}/remind`, {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks)
+            controller.enqueue(new TextEncoder().encode(chunk));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+
+  it("reads a body within the cap", async () =>
+    expect(await readCapped(stream(["ab", "cd"]), 4)).toBe("abcd"));
+  it("stops at the cap, with no Content-Length to say so", async () =>
+    expect(await readCapped(stream(["ab", "cde"]), 4)).toBeNull());
 });
 
 describe("stopReminders", () => {
@@ -273,8 +407,39 @@ describe("stopReminders", () => {
     await stopReminders(null, "ada@example.com");
     await stopReminders(CONFIG, "");
     expect(fetch).not.toHaveBeenCalled();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(
-      stopReminders(CONFIG, "ada@example.com"),
+      stopReminders(CONFIG, "ada@example.com", async () => {}),
     ).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).not.toContain("ada");
+    warn.mockRestore();
+  });
+
+  it("asks again while the door is away or busy, as long as it asks", async () => {
+    const answers = [
+      new Response(null, { status: 503 }),
+      new Response(null, { status: 429, headers: { "Retry-After": "3" } }),
+      Response.json({}),
+    ];
+    const fetch = vi.fn(async () => answers.shift()!);
+    vi.stubGlobal("fetch", fetch);
+    const waits: number[] = [];
+    await stopReminders(CONFIG, "ada@example.com", async (ms) => {
+      waits.push(ms);
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([1000, 3000]);
+  });
+
+  it("doesn't ask again what the door refused", async () => {
+    const fetch = vi.fn(async () => new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetch);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await stopReminders(CONFIG, "ada@example.com", async () => {});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

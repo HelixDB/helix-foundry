@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"strings"
 	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -22,9 +23,13 @@ import (
 	"github.com/helixdb/helix-foundry/backend/store/model"
 )
 
-// reminderLimitRetry is how long a request refused for the hour's cap is
-// told to wait: about when enough of the hour's schedules have aged out.
+// reminderLimitRetry is how long a request refused for the hour's cap, or
+// its client's, is told to wait: about when enough of the hour's schedules
+// have aged out.
 const reminderLimitRetry = 15 * time.Minute
+
+// maxReminderClient is the longest client key taken, in bytes.
+const maxReminderClient = 64
 
 // CreateFoundryReminder starts the reminders a person asked for on the
 // landing page, from a phone, to try Foundry on a computer, or answers the
@@ -35,9 +40,10 @@ const reminderLimitRetry = 15 * time.Minute
 //
 // Only the door calls it, for the site, with the SHA-256 of the site's
 // secret (reminderCaller). It refuses INVALID_ARGUMENT an address that isn't
-// one, or a consent other than reminder.Consent, and RESOURCE_EXHAUSTED one
-// past foundry.reminders.max_new_per_hour. No answer, log or error quotes the
-// address.
+// one, a consent other than reminder.Consent or a client key past 64
+// printable ASCII characters, and RESOURCE_EXHAUSTED one past
+// foundry.reminders.max_new_per_hour, or past max_new_per_client_per_hour
+// for its client. No answer, log or error quotes the address or the client.
 func (s *Service) CreateFoundryReminder(ctx context.Context, req *foundryv1.CreateFoundryReminderRequest) (
 	*foundryv1.CreateFoundryReminderResponse, error) {
 	cfg := s.deps.Cfg.Foundry.Reminders
@@ -51,22 +57,35 @@ func (s *Service) CreateFoundryReminder(ctx context.Context, req *foundryv1.Crea
 	if req.GetConsent() != reminder.Consent {
 		return nil, status.Errorf(codes.InvalidArgument, "consent must be %q, the words the site showed", reminder.Consent)
 	}
+	client := req.GetClient()
+	if len(client) > maxReminderClient || strings.IndexFunc(client, func(c rune) bool { return c < '!' || c > '~' }) >= 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "client must be at most %d printable ASCII characters, with no space", maxReminderClient)
+	}
 	loc, zone := reminder.Zone(req.GetTimeZone())
 	answer, err := s.deps.DB.RequestFoundryReminder(ctx, model.FoundryReminderRequest{
-		ID: id.New(), Email: email, TimeZone: zone, Consent: reminder.Consent, MaxNewPerHour: cfg.MaxNewPerHour,
+		ID: id.New(), Email: email, TimeZone: zone, Consent: reminder.Consent, Client: client,
+		MaxNewPerHour: cfg.MaxNewPerHour, MaxNewPerClientPerHour: cfg.MaxNewPerClientPerHour,
 		Schedule: reminderSchedule(time.Now(), loc, cfg.MinGapDays),
 	})
 	switch {
 	case errors.Is(err, foundrystore.ErrFoundryReminderLimit):
-		st, _ := status.New(codes.ResourceExhausted, "Foundry is taking too many reminders just now; ask again later").
-			WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(reminderLimitRetry)})
-		return nil, st.Err()
+		return nil, reminderLimited("Foundry is taking too many reminders just now; ask again later")
+	case errors.Is(err, foundrystore.ErrFoundryReminderClientLimit):
+		return nil, reminderLimited("you asked for too many reminders just now; ask again later")
 	case err != nil:
 		log.From(ctx).Error("take a reminder failed", "err", err)
 		return nil, status.Error(codes.Unavailable, "Foundry couldn't take the reminder just now; ask again")
 	}
 	log.From(ctx).Info("foundry reminder requested", "again", answer.Again, "zone", zone)
 	return &foundryv1.CreateFoundryReminderResponse{NextSendAt: timestamppb.New(answer.NextSendAt), Again: answer.Again}, nil
+}
+
+// reminderLimited is a RESOURCE_EXHAUSTED refusal of a request past a cap,
+// telling it to wait reminderLimitRetry.
+func reminderLimited(message string) error {
+	st, _ := status.New(codes.ResourceExhausted, message).
+		WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(reminderLimitRetry)})
+	return st.Err()
 }
 
 // StopFoundryReminders stops an address's reminders once its person has

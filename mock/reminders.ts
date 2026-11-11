@@ -11,8 +11,9 @@ import { config, onReset } from "./state";
 // per address, the first at the next weekday 9am in its zone, and asking
 // again while it runs changes nothing; one that ended starts again, never
 // within a week of its last email; at most 300 new an hour
-// (`{"remindersPerHour": n}`). It sends nothing: GET /__mock/reminders lists
-// what it holds.
+// (`{"remindersPerHour": n}`), and 5 from one visitor (the site's `client`
+// key, `{"remindersPerClientPerHour": n}`). It sends nothing: GET
+// /__mock/reminders lists what it holds.
 
 const CONSENT = "remind-v1";
 const MIN_GAP_DAYS = 7;
@@ -25,19 +26,22 @@ export type MockReminder = {
   status: "scheduled" | "done" | "stopped";
   sent: number;
   nextSendAt: string | null;
-  // When the schedule started (or started again), for the hourly cap.
+  // When the schedule started (or started again), and the site's key for
+  // who asked ("" for none), for the hourly caps.
   startedAt: string;
+  client: string;
   lastSentAt: string | null;
   stopReason: "signed_in" | null;
 };
 
-type Knobs = { remindersPerHour?: number };
+type Knobs = { remindersPerHour?: number; remindersPerClientPerHour?: number };
 const knobs = config as typeof config & Knobs;
 
 const reminders = new Map<string, MockReminder>();
 onReset(() => {
   reminders.clear();
   delete knobs.remindersPerHour;
+  delete knobs.remindersPerClientPerHour;
 });
 
 /** Every address the mock holds, for GET /__mock/reminders. */
@@ -62,7 +66,8 @@ const refuse = (
   headers?: Record<string, string>,
 ) => reply(res, status, { error: { code, message } }, headers);
 
-// The body's fields, exactly `keys`, all strings; else null.
+// The body's fields, as the door decodes it: one object of strings, with
+// no field but `keys`, any of which may be missing (""). Else null.
 function fields(raw: string, keys: string[]): Record<string, string> | null {
   let body: unknown;
   try {
@@ -72,19 +77,39 @@ function fields(raw: string, keys: string[]): Record<string, string> | null {
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const record = body as Record<string, unknown>;
-  const names = Object.keys(record);
   if (
-    names.length !== keys.length ||
-    !keys.every((k) => typeof record[k] === "string")
+    !Object.keys(record).every((k) => keys.includes(k)) ||
+    !Object.values(record).every((v) => typeof v === "string")
   )
     return null;
-  return record as Record<string, string>;
+  return Object.fromEntries(keys.map((k) => [k, (record[k] as string) ?? ""]));
 }
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-function normalize(email: string) {
+/**
+ * The address as backend/reminder's Normalize keeps it, else null: trimmed
+ * and lowercased, then one plain address of at most 254 bytes, its local
+ * part a dot-atom and its domain with a dot, and no name, comment, quoted
+ * part or control character.
+ */
+export function normalize(email: string): string | null {
   const address = email.trim().toLowerCase();
-  return address.length <= 254 && EMAIL.test(address) ? address : null;
+  if (
+    !address ||
+    Buffer.byteLength(address, "utf8") > 254 ||
+    /["(),:;<>[\\\] ]/.test(address) ||
+    /\p{Cc}/u.test(address) ||
+    address.split("@").length !== 2
+  )
+    return null;
+  const [local, domain] = address.split("@");
+  const dotAtom = (part: string) =>
+    part !== "" &&
+    !part.startsWith(".") &&
+    !part.endsWith(".") &&
+    !part.includes("..");
+  return dotAtom(local) && dotAtom(domain) && domain.includes(".")
+    ? address
+    : null;
 }
 
 /** The door's reminder routes; false for any other request. */
@@ -101,10 +126,15 @@ export function handleReminders(
     return refuse(res, 401, "unauthorized", "a reminder needs the site's key");
   const body = fields(
     raw,
-    stop ? ["email"] : ["email", "time_zone", "consent"],
+    stop ? ["email"] : ["email", "time_zone", "consent", "client"],
   );
   const email = body && normalize(body.email);
-  if (!body || !email || (!stop && body.consent !== CONSENT))
+  if (
+    !body ||
+    !email ||
+    (!stop && body.consent !== CONSENT) ||
+    (!stop && !/^[!-~]{0,64}$/.test(body.client))
+  )
     return refuse(res, 400, "invalid_arguments", "not an email address");
 
   const kept = reminders.get(email);
@@ -121,10 +151,15 @@ export function handleReminders(
     return reply(res, 200, { next_send_at: kept.nextSendAt, again: true });
 
   const now = new Date();
-  const started = [...reminders.values()].filter(
+  const lately = [...reminders.values()].filter(
     (r) => now.getTime() - Date.parse(r.startedAt) < HOUR_MS,
-  ).length;
-  if (started >= (knobs.remindersPerHour ?? 300))
+  );
+  if (
+    lately.length >= (knobs.remindersPerHour ?? 300) ||
+    (body.client &&
+      lately.filter((r) => r.client === body.client).length >=
+        (knobs.remindersPerClientPerHour ?? 5))
+  )
     return refuse(res, 429, "rate_limited", "too many reminders this hour", {
       "Retry-After": "900",
     });
@@ -142,6 +177,7 @@ export function handleReminders(
     sent: 0,
     nextSendAt: next.toISOString(),
     startedAt: now.toISOString(),
+    client: body.client,
     lastSentAt: kept?.lastSentAt ?? null,
     stopReason: null,
   });
