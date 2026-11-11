@@ -24,7 +24,7 @@ func discoveryPage(input pageInput) (*directoryv1.Page, error) {
 }
 
 func addLocalDiscovery(service *integration.Service, server *mcp.Server, identity *integration.Identity, client directoryv1.DirectoryServiceClient) {
-	integration.AddReadTool(service, server, identity, "helix_list_workspaces", "List the local owner's active Foundry workspaces.",
+	integration.AddReadTool(service, server, identity, "helix_list_workspaces", "List workspaces", "List the local owner's active Foundry workspaces.",
 		func(ctx context.Context, _ *integration.Identity, _ *integration.Call, input listWorkspacesInput) (listWorkspacesOutput, int, error) {
 			page, err := discoveryPage(input.pageInput)
 			if err != nil {
@@ -40,7 +40,7 @@ func addLocalDiscovery(service *integration.Service, server *mcp.Server, identit
 			}
 			return out, len(out.Workspaces), nil
 		})
-	integration.AddReadTool(service, server, identity, "helix_list_projects", "List projects in a local Foundry workspace.",
+	integration.AddReadTool(service, server, identity, "helix_list_projects", "List projects", "List projects in a local Foundry workspace.",
 		func(ctx context.Context, _ *integration.Identity, call *integration.Call, input listProjectsInput) (listProjectsOutput, int, error) {
 			call.ResourceKind, call.ResourceID = "workspace", input.WorkspaceID
 			page, err := discoveryPage(input.pageInput)
@@ -57,7 +57,7 @@ func addLocalDiscovery(service *integration.Service, server *mcp.Server, identit
 			}
 			return out, len(out.Projects), nil
 		})
-	integration.AddReadTool(service, server, identity, "helix_list_databases", "List local databases in a Foundry project.",
+	integration.AddReadTool(service, server, identity, "helix_list_databases", "List databases", "List local databases in a Foundry project.",
 		func(ctx context.Context, _ *integration.Identity, call *integration.Call, input listDatabasesInput) (listDatabasesOutput, int, error) {
 			call.ResourceKind, call.ResourceID = "project", input.ProjectID
 			page, err := discoveryPage(input.pageInput)
