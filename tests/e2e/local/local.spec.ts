@@ -116,6 +116,26 @@ test("opens straight into the workspace's main page, Ask", async ({ page }) => {
   await expect(page).toHaveURL(/\/ask\/ont_acme_contracts$/);
 });
 
+test("serves agents and crawlers nothing", async ({ page }) => {
+  for (const path of [
+    "/llms.txt",
+    "/llms-full.txt",
+    "/index.md",
+    "/.well-known/mcp.json",
+    "/.well-known/ai-catalog.json",
+  ])
+    expect((await page.request.get(path)).status(), path).toBe(404);
+  const robots = await page.request.get("/robots.txt");
+  expect((await robots.text()).trim()).toBe("User-Agent: *\nDisallow: /");
+  // Markdown asked of / is still the app.
+  const home = await page.request.get("/", {
+    headers: { accept: "text/markdown" },
+    maxRedirects: 0,
+  });
+  expect(home.status()).toBe(307);
+  expect(home.headers().location).toBe("/ask");
+});
+
 test("opens a new install in its workspace's onboarding, never the workspace picker", async ({
   page,
   context,

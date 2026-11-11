@@ -319,6 +319,7 @@ export async function Landing() {
             <nav>
               <a href={SOURCE}>GitHub</a>
               <a href={DOCS}>Docs</a>
+              <a href="/llms.txt">For agents</a>
               <a href="https://docs.helix-db.com">HelixDB</a>
             </nav>
           </div>

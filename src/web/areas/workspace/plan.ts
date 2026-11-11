@@ -39,6 +39,22 @@ export const PLAN_PRICE: Record<Tier, string> = {
   max: "$500",
 };
 
+/**
+ * What each plan includes, as Plan & billing and the site's agent pages
+ * (src/server/agent-context.ts) list it. Every plan has every connector;
+ * paid plans sync more often (the WFE's plan rules: Free daily, Pro hourly
+ * reading only what changed, Max every 15 minutes).
+ */
+export const PLAN_FEATURES: Record<Tier, readonly string[]> = {
+  free: [
+    "Every connector, PostgreSQL, MySQL, S3 and API sources included",
+    "Daily syncs and synced tables",
+    "Ontology generation and versions",
+  ],
+  pro: ["Everything in Free", "Hourly syncs that read only what changed"],
+  max: ["Everything in Free", "Syncs every 15 minutes"],
+};
+
 const WFE_TIER: Record<PaidTier, FoundryPaidTier> = {
   pro: "FOUNDRY_TIER_PRO",
   max: "FOUNDRY_TIER_MAX",

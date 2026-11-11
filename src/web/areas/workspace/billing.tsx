@@ -17,6 +17,7 @@ import { canManage, useWorkspace } from "../../ui";
 import { connectorKindsQuery } from "../data/data-api";
 import {
   PAID_TIERS,
+  PLAN_FEATURES,
   PLAN_PRICE,
   TIER_NAME,
   billingPortalUrl,
@@ -45,18 +46,6 @@ import {
 // How long the page keeps reading the plan after a checkout.
 const CONFIRM_MS = 60_000;
 
-// Every plan has every connector; paid plans sync more often (the WFE's
-// plan rules: Free daily, Pro hourly reading only what changed, Max every 15
-// minutes).
-const features: Record<Tier, string[]> = {
-  free: [
-    "Every connector, PostgreSQL, MySQL, S3 and API sources included",
-    "Daily syncs and synced tables",
-    "Ontology generation and versions",
-  ],
-  pro: ["Everything in Free", "Hourly syncs that read only what changed"],
-  max: ["Everything in Free", "Syncs every 15 minutes"],
-};
 const MAX_NOTE = "Max adds more soon.";
 const tierIcon = { pro: Sparkles, max: Gem };
 
@@ -208,7 +197,7 @@ function UpgradeDialog({
           </div>
         </fieldset>
         <ul className="wk-plan-features">
-          {features[tier].slice(1).map((f) => (
+          {PLAN_FEATURES[tier].slice(1).map((f) => (
             <li key={f}>
               <Check size={14} aria-hidden />
               {f}
@@ -310,7 +299,7 @@ function PlanCard({
         <span>per month</span>
       </p>
       <ul className="wk-plan-features">
-        {features[tier].map((f) => (
+        {PLAN_FEATURES[tier].map((f) => (
           <li key={f}>
             <Check size={14} aria-hidden />
             {f}
