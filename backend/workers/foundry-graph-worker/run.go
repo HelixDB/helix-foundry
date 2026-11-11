@@ -943,17 +943,18 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 // resend sends the documents the job's load owes a resend
 // (ListFoundryLoadResends) to Extract, each with every artifact saved for
 // it and the load's decisions of it, with nothing to spend: the load holds
-// them, so the engine commits none again and takes none out. They go in one
-// Extract where one takes them. A mass of approvals, as the first carry
-// after a deploy or a large Approve all, may be past what one request takes
-// in decisions or bytes (failure.TooLarge): its documents then go in halves,
-// in the load's order, each split again while it is too large, so no
-// approval fails for the company it keeps. A single document too large for
-// an Extract fails the job, as it would a load. It replays each
+// them, so the engine commits none again and takes none out. It replays each
 // one's model work from its artifacts and writes what the decisions release,
-// and each document's event says what became of every one (recordResent). So
-// a person's approval of a held claim is a fact of the load within one job,
-// at no model cost, and the document is never out of the load.
+// and each document's event says what became of every one (recordDocument).
+// So a person's approval of a held claim is a fact of the load within one
+// job, at no model cost, and the document is never out of the load.
+//
+// They go in one Extract where one takes them. A mass of approvals, as the
+// first carry after a deploy or a large Approve all brings, may be past what
+// one request takes in decisions or bytes (failure.TooLarge): its documents
+// then go in halves, in the load's order, each split again while it is too
+// large, so no approval fails for the company it keeps. A single document
+// too large for an Extract fails the job, as it would a load.
 //
 // A document whose saved extraction doesn't replay (it is gone, or the
 // models or the engine's prompts changed since) would need a model call the
@@ -962,12 +963,12 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 // not_replayed, as a new load is what applies them. One the load can no
 // longer send refuses them as document_gone (deleted, out of the load, or
 // its text gone) or as document_unread (the load holds it, but no extraction
-// of it to replay), one the engine failed as document_failed. Each ends its request, so a job never
-// sends a document twice for one request, and one owed again while the job
-// ran stays owed for the job that follows (EndFoundryLoadResend). A run that
-// stops ends nothing it hadn't heard of, and the retry sends those again:
-// the engine writes a release once, and a decision sent again finds no
-// review (model.FoundryReleaseStatus.After).
+// of it to replay), one the engine failed as document_failed. Each ends its
+// request, so a job never sends a document twice for one request, and one
+// owed again while the job ran stays owed for the job that follows
+// (EndFoundryLoadResend). A run that stops ends nothing it hadn't heard of,
+// and the retry sends those again: the engine writes a release once, and a
+// decision sent again finds no review (model.FoundryReleaseStatus.After).
 //
 // Every reason so far spends nothing (model.FoundryResendApproval). A reason
 // that may spend, as a backfill of documents whose model calls a new version
