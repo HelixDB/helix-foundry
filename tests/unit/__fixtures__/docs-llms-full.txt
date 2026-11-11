@@ -1,0 +1,45 @@
+# Helix Cloud gateway errors
+
+Page type: Reference
+
+Helix Cloud query failures use one JSON envelope:
+
+```json
+{
+
+# What is Helix Foundry?
+
+Page type: Concept
+
+Helix Foundry turns the tools your company runs on into one connected graph. Connect
+sources such as Stripe or your PostgreSQL database, send it your app's or agent's own
+data, upload the documents your tables don't cover, let Foundry's agent draft an
+ontology across them, then load it into a Helix database, ask it questions, and
+explore it as a graph or as records. Connectors keep syncing on a schedule, and
+ontologies refresh when their data changes.
+
+Foundry runs at [foundry.helix-db.com](https://foundry.helix-db.com), and your agents
+
+# Helix Foundry quickstart
+
+Page type: Tutorial
+
+This tutorial takes a new workspace from sign-in to a first answer and an explored
+graph. You need a Helix account and some data: a source to read, such as a Stripe
+
+# Use Foundry from your agent
+
+Page type: Guide
+
+Foundry's tools are on the Helix MCP, at `https://mcp.helix-db.com/mcp`. Connect your
+agent to it, sign in once, and the agent works in Foundry as you: it reads your
+ontologies, their versions, loads and graph, asks them questions, and makes the changes
+you ask for, each after a confirmation. It can't add a connector's credentials, delete
+anything or change billing; those stay on the website.
+
+# Getting started with HelixDB CLI
+
+Page type: Tutorial
+
+The `helix` CLI scaffolds projects, runs local HelixDB instances, sends queries, and
+manages Helix Cloud resources. Local commands need only Docker or Podman; Cloud

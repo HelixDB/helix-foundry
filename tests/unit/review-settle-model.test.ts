@@ -599,6 +599,91 @@ describe("whether a load read a decision", () => {
   });
 });
 
+describe("an approval the current load has yet to apply", () => {
+  it("is one whose job hasn't said what became of it", () => {
+    const decisions = [
+      { id: "a", applied: { status: "pending" as const } },
+      { id: "b", applied: { status: "written" as const } },
+      { id: "c", applied: { status: "refused" as const, reason: "changed" } },
+      { id: "d", applied: { status: "" as const } },
+      { id: "e", applied: null },
+      { id: "f" },
+    ];
+    expect(model.waiting(decisions).map((d) => d.id)).toEqual(["a"]);
+    expect(model.waiting([])).toEqual([]);
+  });
+});
+
+describe("why a load kept an approved claim held", () => {
+  it("says what a person can do about each reason the engine gives", () => {
+    const said = (reason: string) => model.refusalText(reason);
+    expect(said("unresolved")).toContain("isn’t matched to one record");
+    expect(said("unresolved")).toContain("Settle that name and load again");
+    expect(said("changed")).toContain("reads differently now");
+    expect(said("differs")).toContain("read more than one way");
+    expect(said("conflict")).toContain("conflicts with what the graph holds");
+    expect(said("blocked")).toContain("break a rule");
+    expect(said("no_statement")).toContain("keeps nothing to write");
+    expect(said("not_stated")).toContain("no longer states it");
+    expect(said("too_large")).toContain("more held claims");
+  });
+  it("names the name a legal form linked, when the card knows it", () => {
+    expect(model.refusalText("legal_form", "globex corporation")).toBe(
+      "“globex corporation” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.",
+    );
+    expect(model.refusalText("legal_form")).toMatch(/^A name in it is linked/);
+  });
+  it("says what the backend found when the engine was never asked", () => {
+    expect(model.refusalText("not_replayed")).toContain(
+      "would cost a model call. Load again",
+    );
+    expect(model.refusalText("document_gone")).toBe(
+      "Its document was deleted, or is no longer part of this load.",
+    );
+    // A document the load holds, whose reading there didn't finish, is not gone.
+    expect(model.refusalText("document_unread")).toBe(
+      "This load holds its document, but has no finished reading of it to write from. Load again to apply it.",
+    );
+    expect(model.refusalText("document_unread")).not.toContain("no longer");
+    expect(model.refusalText("document_failed")).toContain(
+      "couldn’t read its document again",
+    );
+  });
+  it("says what an approval waits behind when another job is running", () => {
+    const writing = "Approved. Writing it to this load…";
+    expect(model.waitingText()).toBe(writing);
+    expect(model.waitingText(null)).toBe(writing);
+    expect(model.waitingText("resend")).toBe(writing);
+    // A load, an extract or an apply holds the database: the approval's own
+    // job follows it.
+    expect(model.waitingText("extract")).toBe(
+      "Approved. Another job is running, so this waits: it’s written to this load when that ends.",
+    );
+    expect(model.waitingText("apply")).toBe(model.waitingText("extract"));
+    // A new load may become current, and takes the approval with it.
+    expect(model.waitingText("load")).toBe(
+      "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.",
+    );
+  });
+  it("reads the decisions less often the longer an approval has waited", () => {
+    expect(model.applyPollMs(0)).toBe(2000);
+    expect(model.applyPollMs(29_999)).toBe(2000);
+    expect(model.applyPollMs(30_000)).toBe(10_000);
+    expect(model.applyPollMs(5 * 60_000 - 1)).toBe(10_000);
+    expect(model.applyPollMs(5 * 60_000)).toBe(60_000);
+    expect(model.applyPollMs(24 * 60 * 60_000)).toBe(60_000);
+    // A clock set back reads as no wait at all.
+    expect(model.applyPollMs(-5_000)).toBe(2000);
+  });
+  it("shows a reason it doesn't know as it came, and says so with none", () => {
+    expect(model.refusalText("a_later_reason")).toBe(
+      "The load kept it held (a_later_reason).",
+    );
+    expect(model.refusalText(undefined)).toBe("The load kept it held.");
+    expect(model.refusalText("")).toBe("The load kept it held.");
+  });
+});
+
 describe("stored property review quotes", () => {
   const raw = {
     value: 24,

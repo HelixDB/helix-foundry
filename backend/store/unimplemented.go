@@ -44,6 +44,22 @@ func (u Unimplemented) SettleFoundryReviewDecision(context.Context, string, *mod
 	u.unimplemented("SettleFoundryReviewDecision")
 	return nil
 }
+func (u Unimplemented) SettleFoundryReleases(context.Context, string, string, []*model.FoundryReviewDecision, *model.FoundryGraphJob) (bool, error) {
+	u.unimplemented("SettleFoundryReleases")
+	return false, nil
+}
+func (u Unimplemented) ListFoundryDecisionsApplied(context.Context, string, []string) (map[string]model.FoundryDecisionApplied, error) {
+	u.unimplemented("ListFoundryDecisionsApplied")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryLoadResends(context.Context, string) ([]*model.FoundryLoadResend, error) {
+	u.unimplemented("ListFoundryLoadResends")
+	return nil, nil
+}
+func (u Unimplemented) EndFoundryLoadResend(context.Context, string, string, model.FoundryResendEnd) error {
+	u.unimplemented("EndFoundryLoadResend")
+	return nil
+}
 func (u Unimplemented) DeleteFoundryReviewDecision(context.Context, string, string) error {
 	u.unimplemented("DeleteFoundryReviewDecision")
 	return nil
@@ -605,7 +621,8 @@ func (u Unimplemented) CreateFoundryLoad(context.Context, *model.FoundryGraphJob
 	u.unimplemented("CreateFoundryLoad")
 	return nil
 }
-func (u Unimplemented) SetCurrentFoundryLoad(context.Context, string, string, string, *model.FoundryGraphJob, model.FoundryGraphBudget) (bool, error) {
+func (u Unimplemented) SetCurrentFoundryLoad(context.Context, string, string, string, *model.FoundryGraphJob, *model.FoundryGraphJob,
+	model.FoundryGraphBudget) (bool, error) {
 	u.unimplemented("SetCurrentFoundryLoad")
 	return false, nil
 }
@@ -720,6 +737,10 @@ func (u Unimplemented) ListFoundryLoadEnrichments(context.Context, []string) (ma
 }
 func (u Unimplemented) ListFoundryLoadSources(context.Context, []string) (map[string][]model.FoundryLoadSource, error) {
 	u.unimplemented("ListFoundryLoadSources")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryLoadDocumentSets(context.Context, string) ([]model.FoundryLoadDocumentSet, error) {
+	u.unimplemented("ListFoundryLoadDocumentSets")
 	return nil, nil
 }
 func (u Unimplemented) GetLatestFoundryEnrichmentResults(context.Context, string) (*model.FoundryLoadEnrichment, error) {
@@ -970,6 +991,18 @@ func (u Unimplemented) DeleteFoundryTeam(context.Context, string, string) error 
 
 func (u Unimplemented) RemoveFoundryAccessMember(context.Context, string, string) error {
 	u.unimplemented("RemoveFoundryAccessMember")
+	return nil
+}
+func (u Unimplemented) SyncFoundryDirectoryTeams(context.Context, string, string, string, []model.FoundryDirectoryTeam) (model.FoundryDirectorySync, error) {
+	u.unimplemented("SyncFoundryDirectoryTeams")
+	return model.FoundryDirectorySync{}, nil
+}
+func (u Unimplemented) ReleaseFoundryDirectoryTeams(context.Context, string, string) error {
+	u.unimplemented("ReleaseFoundryDirectoryTeams")
+	return nil
+}
+func (u Unimplemented) LeaveOutFoundryTeamMembers(context.Context, string, string, []string) error {
+	u.unimplemented("LeaveOutFoundryTeamMembers")
 	return nil
 }
 func (u Unimplemented) ListFoundryHealFindings(context.Context, string) ([]*model.FoundryHealFinding, error) {

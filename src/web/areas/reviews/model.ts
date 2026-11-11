@@ -139,8 +139,8 @@ export type Statement = {
  *   differently. `table` is the value stored for it, if any: only a table
  *   row's value survives a conflict, so it is the table's, and a
  *   chosen document value replaces it in every later load;
- * - `release`: approve one review of a claim code holds back, so the next
- *   load writes what it states as a fact. `statement` is what that is, and
+ * - `release`: approve one review of a claim code holds back, so the current
+ *   load writes what it states as a fact, at once. `statement` is what that is, and
  *   `stored` it as the review keeps it, which its hash reads. `named` is
  *   whether the review names both its ends: if not, an end isn't in the graph
  *   yet. `differs` is whether another review at its place states something
@@ -710,6 +710,110 @@ export function approvalOf<D extends ReviewDecision>(
   };
 }
 
+/**
+ * The approvals a job has yet to apply to the current load: while there are
+ * any, the page reads the decisions again.
+ *
+ * @example
+ * waiting([{ applied: { status: "pending" } }, { applied: { status: "written" } }]).length; // 1
+ */
+export function waiting<D extends Pick<FoundryReviewDecision, "applied">>(
+  decisions: readonly D[],
+): D[] {
+  return decisions.filter((d) => d.applied?.status === "pending");
+}
+
+/**
+ * Why an approved claim stays held, for its card, from the reason the load's
+ * job gave a refusal (FoundryDecisionApplied.reason): what a person can do
+ * about it where there is something. `formed` is the name a legal form
+ * linked, if the card knows it. A reason this site doesn't know reads as it
+ * came.
+ *
+ * @example
+ * refusalText("unresolved"); // "A name in it isn’t matched to one record in your data. …"
+ * refusalText("a_new_reason"); // "The load kept it held (a_new_reason)."
+ */
+export function refusalText(reason: string | undefined, formed?: string) {
+  switch (reason) {
+    case "unresolved":
+      return "A name in it isn’t matched to one record in your data. Settle that name and load again; if it’s still held then, approve it there.";
+    case "legal_form":
+      return `${formed ? `“${formed}”` : "A name in it"} is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`;
+    case "changed":
+      return "It reads differently now from what was approved. Read it again and approve what it says.";
+    case "differs":
+      return "Its sentence is read more than one way, and no approval can say which.";
+    case "conflict":
+      return "It conflicts with what the graph holds for this link: another statement of the same date, or one that can’t be compared with it.";
+    case "blocked":
+      return "Writing it would break a rule the ontology enforces, or checking that took more reading than a load allows.";
+    case "no_statement":
+      return "Its review keeps nothing to write. Load again to read it afresh.";
+    case "not_stated":
+      return "The document’s saved reading no longer states it at this place. Load again to read it afresh.";
+    case "too_large":
+      return "Its document holds more held claims than one approval can be matched among.";
+    case "not_replayed":
+      return "This document’s saved reading couldn’t be reused, as the models or the reading changed since, so writing it now would cost a model call. Load again to apply it.";
+    case "document_gone":
+      return "Its document was deleted, or is no longer part of this load.";
+    case "document_unread":
+      return "This load holds its document, but has no finished reading of it to write from. Load again to apply it.";
+    case "document_failed":
+      return "The load couldn’t read its document again. Load again to apply it.";
+    default:
+      return `The load kept it held${reason ? ` (${reason})` : ""}.`;
+  }
+}
+
+/**
+ * What a card says while an approval waits for its job. One job at a time
+ * writes an ontology's database, so with another job live (`live`, the kind
+ * of the ontology's active job) the approval waits for that job's end rather
+ * than being written now; behind a new load it is written to whichever load
+ * is current when that one ends.
+ *
+ * @example
+ * waitingText(); // "Approved. Writing it to this load…"
+ * waitingText("extract"); // "Approved. Another job is running, so this waits: …"
+ */
+export function waitingText(live?: string | null) {
+  switch (live || "resend") {
+    case "resend":
+      return "Approved. Writing it to this load…";
+    case "load":
+      return "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.";
+    default:
+      return "Approved. Another job is running, so this waits: it’s written to this load when that ends.";
+  }
+}
+
+/** How often the decisions are read while an approval has just begun to wait. */
+export const APPLY_POLL_MS = 2000;
+
+/**
+ * How long until the decisions are read again while an approval waits, by how
+ * long the page has seen one wait (`waitedMs`). An approval is written within
+ * seconds, so the first half minute reads every two seconds; one that waits
+ * longer is behind another job, which may run for hours, so reads slow to
+ * every ten seconds, then to once a minute after five minutes. Each read
+ * lists every decision of the ontology, so the slow rate is what an open
+ * page costs while a long job runs.
+ *
+ * @example
+ * applyPollMs(0); // 2000
+ * applyPollMs(60_000); // 10000
+ * applyPollMs(600_000); // 60000
+ */
+export function applyPollMs(waitedMs: number) {
+  return waitedMs < 30_000
+    ? APPLY_POLL_MS
+    : waitedMs < 5 * 60_000
+      ? 10_000
+      : 60_000;
+}
+
 /** What became of a release decision, as far as a page's reads say. */
 export type ReleaseStatus = "written" | "no_link" | "held" | "unknown";
 
@@ -741,10 +845,11 @@ export function releaseStatus(
 }
 
 /**
- * Whether a load read a decision. A load reads the decisions saved when it
- * starts (the backend snapshots them), and replacing one saves it anew, so one saved
- * before the load started is in it, and one saved after waits for the next
- * load. A load whose start isn't known read none.
+ * Whether a load read a resolve or prop decision. A load reads the decisions
+ * saved when it starts (the backend snapshots them), and replacing one saves
+ * it anew, so one saved before the load started is in it, and one saved after
+ * waits for the next load. A load whose start isn't known read none. (A
+ * release says what its load made of it: FoundryReviewDecision.applied.)
  *
  * @example
  * loadRead({ decidedAt: "2026-10-20T10:00:00Z" }, "2026-10-20T11:00:00Z"); // true

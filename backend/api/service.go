@@ -29,6 +29,9 @@ type Service struct {
 	deps *runtimeDeps
 	// foundryRead is the connection to foundry-read, closed by Close; nil without one.
 	foundryRead *grpc.ClientConn
+	// loadDocuments keeps what a busy load made of its documents a few
+	// seconds, for the callers that poll it.
+	loadDocuments loadDocumentSets
 }
 
 var (

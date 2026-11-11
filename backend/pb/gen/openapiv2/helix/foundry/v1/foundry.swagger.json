@@ -4207,7 +4207,7 @@
           "$ref": "#/definitions/v1FoundryReviewChoice"
         }
       },
-      "description": "Reads the current load's review. Stores a decision for the next load only."
+      "description": "Reads the current load's review and stores a decision. A resolve or prop\ndecision applies from the next load; a release applies to the current load\nat once (FoundryReviewChoice.release)."
     },
     "FoundryServiceStartConnectorSignInBody": {
       "type": "object",
@@ -5657,6 +5657,25 @@
       },
       "description": "FoundryDataLayoutResponse is how the workspace's Data tree is arranged."
     },
+    "v1FoundryDecisionApplied": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "pending (a job has yet to apply it), written (the claim is a fact),\nrefused (it stays held: reason says why), missed (this load holds no\nreview at the decision's key and place, so it has nothing to release),\nunconfirmed (the job that applies it failed before the engine's word on\nit was recorded, reason job_failed: the claim may or may not have been\nwritten, and no job is coming. Approving it again finishes it while the\nload still holds the claim's review. If the engine wrote the claim\nbefore the job failed, that review is gone and there is nothing to\napprove: the fact is in the load, and the decision stays unconfirmed\nuntil another approval of the same document sends it again), or empty:\nthe load read the decision when it was created, and no job has said\nwhat became of it."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why a refused claim stays held. The engine's reasons: unresolved (a name\nin it is matched to no one record: settle that name), legal_form (a name\nis linked only by its legal form, on a link that holds one value: settle\nthat name), changed (the claim reads differently now from what was\napproved), differs (its sentence is read more than one way), conflict (it\nconflicts with what the load holds of its link), blocked (it would break\na blocking rule, or checking that took more reading than a load allows),\nno_statement (its review keeps nothing to write), not_stated (the\ndocument, read again, no longer states it there), too_large,\nnot_allowed. The backend's: not_replayed (the document's saved\nextraction didn't replay, so applying it would have cost a model call: a\nnew load applies it), document_gone, document_unread (the load holds\nthe document but no extraction of it to replay), document_failed,\ntoo_large (the document with its decisions is more than one request to\nthe engine takes), unanswered. With unconfirmed it is job_failed. A\nreader shows a reason it doesn't know as it is."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a job said so; unset while pending."
+        }
+      },
+      "description": "What became of a release decision in the ontology's current load."
+    },
     "v1FoundryDocument": {
       "type": "object",
       "properties": {
@@ -6304,7 +6323,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "load, extract, apply or delete."
+          "description": "load, extract, apply, delete or resend (a person's approvals applied to\nthe load: their documents sent again from their saved extractions)."
         },
         "loadId": {
           "type": "string",
@@ -6494,6 +6513,14 @@
             "$ref": "#/definitions/v1FoundryLoadSource"
           },
           "description": "The snapshot of each table it holds; empty for a load written before\nHelix recorded them, or still writing its tables."
+        },
+        "documentSets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryLoadDocumentSet"
+          },
+          "description": "What it made of its documents, by document set: one entry per set it\nholds documents of, by set id. Only GetFoundryLoad fills it: a load in a\nlist has none, nor has the load another call answers with. Empty too\nfor a load that holds no documents, for one made before Foundry\nrecorded which documents a load holds, and for a grantee, who may not\nsee every set. While a job of the load runs, the counts may be a few\nseconds old."
         }
       },
       "description": "FoundryLoad is one write of an approved version into an ontology's\ndatabase. Its id is the id of the load job that creates it, and every node\nand edge it writes carries that id as foundry_load, so loads of different\nversions sit side by side. Foundry keeps the current load and the newest\nothers, five in all, and deletes the rest in the background."
@@ -6525,6 +6552,64 @@
         }
       },
       "description": "FoundryLoadAccessInputs is what a load holds, as far as grants go: a\ngrantee reads it only when its grants cover all of it."
+    },
+    "v1FoundryLoadDocumentSet": {
+      "type": "object",
+      "properties": {
+        "setId": {
+          "type": "string"
+        },
+        "routed": {
+          "type": "boolean",
+          "description": "Whether an extraction route of the load's version reads the set. When\nfalse, the load stores the set's documents with their text, which stays\nsearchable, and no model reads them: they add no entities or facts to the\ngraph (not_read). It says what the version's mappings route, not what\ncame of it: read says that. For a version whose mappings can't be read,\nit is whether the load read a document of the set."
+        },
+        "documents": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The set's documents the load holds:\nread + duplicate + failed + not_read + waiting."
+        },
+        "read": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Those a model read for the names and facts they hold (extracted)."
+        },
+        "duplicate": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Those whose text repeats another document's (duplicate)."
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Those whose extraction failed (failed)."
+        },
+        "notRead": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Those no route of the load's version reads (out_of_scope)."
+        },
+        "waiting": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Those the load has not extracted yet."
+        },
+        "facts": {
+          "type": "string",
+          "format": "int64",
+          "description": "Fact writes by its documents: each document counts the facts it created\nand the stored facts it added its evidence to, so a fact two documents\nstate counts twice. It is not the number of distinct facts in the graph."
+        },
+        "reviews": {
+          "type": "string",
+          "format": "int64",
+          "description": "The reviews its documents left when the load last wrote each, of every\nkind: statements held back instead of written as facts (scored under the\nbar, unverified, conflicting, breaking a rule), names matched to no one\nrecord, property values held back or in conflict, statements that fit no\nlink, and links it did write that a person can undo. It is not the\nnumber of open reviews: a review a person settles stays counted until\nthe load writes the decision, which moves a released statement to facts."
+        },
+        "unresolved": {
+          "type": "string",
+          "format": "int64",
+          "description": "The names in its documents the load matched to no one record: none\nmatched, several did, or its identifiers disagree. A statement about one\nis held, not written. Nearly every such name also left a review, counted\nin reviews: the two overlap."
+        }
+      },
+      "description": "FoundryLoadDocumentSet is what a load made of the documents of one document\nset: the uploaded text documents and PDFs of the set that joined the load,\ncounted from what writing each into the load last recorded\n(FoundryDocumentExtraction). A document counts under the set it joined\nthe load with, wherever it was moved since."
     },
     "v1FoundryLoadEnrichment": {
       "type": "object",
@@ -7123,7 +7208,7 @@
         },
         "release": {
           "$ref": "#/definitions/v1FoundryReleaseChoice",
-          "description": "A person's word that what the review holds back holds: the next load\nwrites what it states as a fact."
+          "description": "A person's word that what the review holds back holds. It applies to the\ncurrent load at once: a job replays the claim's document from its saved\nextraction, at no model cost, and writes what the review states as a\nfact, or keeps it held and says why (FoundryReviewDecision.applied).\nLater loads read it too, and each says what it made of it."
         }
       },
       "description": "A user choice. Review identity is always derived by the backend."
@@ -7181,9 +7266,13 @@
         },
         "statementHash": {
           "type": "string"
+        },
+        "applied": {
+          "$ref": "#/definitions/v1FoundryDecisionApplied",
+          "description": "A release decision's state in the ontology's current load; unset for\nother kinds, and when that load's decisions don't hold it yet (one saved\nwhile another load was current joins them when a job of the ontology next\nends)."
         }
       },
-      "description": "A durable ontology-wide override; applies from the next load."
+      "description": "A durable ontology-wide override. A resolve or prop decision applies from\nthe next load; a release applies to the current load at once, and later\nloads read it as they are made."
     },
     "v1FoundryReviewDecisionResponse": {
       "type": "object",
@@ -7247,9 +7336,36 @@
         "createdAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "directory": {
+          "$ref": "#/definitions/v1FoundryTeamDirectory",
+          "description": "Set on a team synced from a directory group (SCIM, through the host's\ndirectory sync): its name and members are the group's, changed in the\ndirectory, and only its grants are the workspace's to change."
         }
       },
       "description": "FoundryTeam is a team of the workspace's members: each holds the team's\ngrants."
+    },
+    "v1FoundryTeamDirectory": {
+      "type": "object",
+      "properties": {
+        "directoryId": {
+          "type": "string"
+        },
+        "groupId": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string",
+          "description": "The directory's provider as people know it, for example \"Okta\"."
+        },
+        "leftOutUserIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Members of the group the team leaves out while it holds grants: members\nwho can write a project or query its databases outside Foundry, whom\nits grants can't confine."
+        }
+      },
+      "description": "FoundryTeamDirectory is the directory group a synced team follows."
     },
     "v1FoundryTeamResponse": {
       "type": "object",

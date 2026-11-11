@@ -618,3 +618,101 @@ func TestFoundryTeamsAndRestrictedMembers(t *testing.T) {
 	require.NoError(t, f.db.SetFoundryMemberRestricted(ctx, ws, ada, false, nil))
 	assert.False(t, restricted())
 }
+
+// A directory's groups become its teams: named as the group (clear of other
+// teams), of its members, gone with the group and released as teams made by
+// hand with the directory; a team holding grants leaves out who they can't
+// confine and restricts the rest.
+func TestSyncFoundryDirectoryTeams(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "DIR")
+	ws := f.ontology.WorkspaceID
+	ada, grace, querying := id26("U-DIR-ADA"), id26("U-DIR-GRACE"), id26("U-DIR-QUERY")
+	connector := id26("CONN-DIR")
+	connectorRow(t, f.db, ws, connector)
+	require.NoError(t, f.db.CreateFoundryTeam(ctx, &model.FoundryTeam{ID: id26("TEAM-DIR-HAND"), WorkspaceID: ws, Name: "Finance"}))
+	member := func(id string, unconfinable bool) model.FoundryDirectoryTeamMember {
+		return model.FoundryDirectoryTeamMember{UserID: id, Unconfinable: unconfinable}
+	}
+	byGroup := func() map[string]model.FoundryTeam {
+		teams, err := f.db.ListFoundryTeams(ctx, ws)
+		require.NoError(t, err)
+		out := map[string]model.FoundryTeam{}
+		for _, team := range teams {
+			if team.Directory != nil {
+				out[team.Directory.GroupID] = team
+			} else {
+				out["hand:"+team.Name] = team
+			}
+		}
+		return out
+	}
+
+	synced, err := f.db.SyncFoundryDirectoryTeams(ctx, ws, "directory_1", "Okta", []model.FoundryDirectoryTeam{
+		{GroupID: "group_finance", Name: " Finance ", Members: []model.FoundryDirectoryTeamMember{member(ada, false), member(querying, true), member(ada, false)}},
+		{GroupID: "group_eng", Name: "Engineering", Members: []model.FoundryDirectoryTeamMember{member(grace, false)}},
+	})
+	require.NoError(t, err)
+	assert.Len(t, synced.TeamIDs, 2)
+	assert.Empty(t, synced.LeftOut, "a team holding nothing has its whole group")
+	teams := byGroup()
+	assert.Equal(t, "Finance (Okta)", teams["group_finance"].Name, "clear of the team made by hand")
+	assert.ElementsMatch(t, []string{ada, querying}, teams["group_finance"].MemberUserIDs)
+	assert.Equal(t, &model.FoundryTeamDirectory{DirectoryID: "directory_1", GroupID: "group_finance", Provider: "Okta"}, teams["group_finance"].Directory)
+	assert.Nil(t, teams["group_finance"].CreatedByUserID)
+
+	finance := access.Principal{Kind: access.PrincipalTeam, ID: synced.TeamIDs["group_finance"]}
+	require.NoError(t, f.db.LeaveOutFoundryTeamMembers(ctx, ws, finance.ID, []string{querying}))
+	require.NoError(t, f.db.SetFoundryAccessGrants(ctx, ws, finance, []access.Target{access.ConnectorTarget(connector)}, nil))
+	teams = byGroup()
+	assert.Equal(t, []string{ada}, teams["group_finance"].MemberUserIDs)
+	assert.Equal(t, []string{querying}, teams["group_finance"].Directory.LeftOutUserIDs)
+	restricted, err := f.db.IsFoundryMemberRestricted(ctx, ws, ada)
+	require.NoError(t, err)
+	assert.True(t, restricted)
+
+	// The next sync: Finance holds grants, so the unconfinable stay out and
+	// whoever joins is restricted; a rename takes the name back; Engineering
+	// is gone with its group.
+	synced, err = f.db.SyncFoundryDirectoryTeams(ctx, ws, "directory_1", "Okta", []model.FoundryDirectoryTeam{
+		{GroupID: "group_finance", Name: "Money", Members: []model.FoundryDirectoryTeamMember{member(ada, false), member(querying, true), member(grace, false)}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, synced.Deleted)
+	assert.Equal(t, map[string][]string{"group_finance": {querying}}, synced.LeftOut)
+	teams = byGroup()
+	assert.NotContains(t, teams, "group_eng")
+	assert.Equal(t, "Money", teams["group_finance"].Name)
+	assert.ElementsMatch(t, []string{ada, grace}, teams["group_finance"].MemberUserIDs)
+	restricted, err = f.db.IsFoundryMemberRestricted(ctx, ws, grace)
+	require.NoError(t, err)
+	assert.True(t, restricted, "joining a synced team that holds grants restricts")
+	restricted, err = f.db.IsFoundryMemberRestricted(ctx, ws, querying)
+	require.NoError(t, err)
+	assert.False(t, restricted, "left out, so not restricted")
+
+	// Two groups swapping names in one sync.
+	_, err = f.db.SyncFoundryDirectoryTeams(ctx, ws, "directory_1", "Okta", []model.FoundryDirectoryTeam{
+		{GroupID: "group_finance", Name: "Money"}, {GroupID: "group_ops", Name: "Ops"},
+	})
+	require.NoError(t, err)
+	_, err = f.db.SyncFoundryDirectoryTeams(ctx, ws, "directory_1", "Okta", []model.FoundryDirectoryTeam{
+		{GroupID: "group_finance", Name: "Ops"}, {GroupID: "group_ops", Name: "Money"},
+	})
+	require.NoError(t, err)
+	teams = byGroup()
+	assert.Equal(t, "Ops", teams["group_finance"].Name)
+	assert.Equal(t, "Money", teams["group_ops"].Name)
+
+	// Another directory's sync leaves this one's teams alone.
+	_, err = f.db.SyncFoundryDirectoryTeams(ctx, ws, "directory_2", "Entra ID", nil)
+	require.NoError(t, err)
+	assert.Contains(t, byGroup(), "group_ops")
+
+	// Released, the teams stay with their grants, as teams made by hand.
+	require.NoError(t, f.db.ReleaseFoundryDirectoryTeams(ctx, ws, "directory_1"))
+	teams = byGroup()
+	assert.Contains(t, teams, "hand:Ops")
+	assert.Contains(t, teams, "hand:Money")
+	assert.Equal(t, []access.Target{access.ConnectorTarget(connector)}, targetsOf(t, f.db, ws, finance))
+}

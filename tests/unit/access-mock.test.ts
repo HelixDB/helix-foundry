@@ -1112,6 +1112,82 @@ describe("mock source grants", () => {
     ).toBe(200);
   });
 
+  it("keeps a synced team's name and members its group's, and leaves out whom grants can't confine", async () => {
+    Object.assign(config, { directoryTeams: true });
+    const teams = async () =>
+      ((await call("GET", A)).body as wfe.ListFoundryAccessResponse).teams!;
+    expect(await teams()).toMatchObject([
+      {
+        name: "Engineering",
+        memberUserIds: ["usr_ada", "usr_alan"],
+        directory: { provider: "Okta", leftOutUserIds: [] },
+      },
+      {
+        name: "Finance",
+        memberUserIds: ["usr_alan", "usr_eve"],
+        directory: { provider: "Okta", leftOutUserIds: [] },
+      },
+    ]);
+    const finance = (await teams()).find((t) => t.name === "Finance")!;
+    const synced =
+      "this team is synced from Okta: change its name and members there";
+    expect(
+      refusal(
+        await call("PUT", `${A}/teams/${finance.id}`, {
+          name: "Money",
+          memberUserIds: ["usr_eve"],
+        }),
+      ),
+    ).toEqual([400, synced]);
+    expect(refusal(await call("DELETE", `${A}/teams/${finance.id}`))).toEqual([
+      400,
+      synced,
+    ]);
+    // A name a synced team has is taken; synced teams don't count toward the cap.
+    expect(
+      (await call("POST", `${A}/teams`, { name: "finance", memberUserIds: [] }))
+        .status,
+    ).toBe(409);
+    for (let i = 0; i < 100; i++)
+      expect(
+        (
+          await call("POST", `${A}/teams`, {
+            name: `Team ${i}`,
+            memberUserIds: [],
+          })
+        ).status,
+      ).toBe(200);
+    expect(
+      refusal(
+        await call("POST", `${A}/teams`, {
+          name: "One more",
+          memberUserIds: [],
+        }),
+      ),
+    ).toEqual([400, "a workspace has at most 100 teams"]);
+
+    // Alan queries databases: Finance leaves him out rather than refusing.
+    const principal: wfe.FoundryPrincipal = {
+      kind: "KIND_TEAM",
+      id: finance.id!,
+    };
+    expect((await grant(principal, [stripe])).status).toBe(200);
+    const after = (await teams()).find((t) => t.id === finance.id)!;
+    expect(after).toMatchObject({
+      memberUserIds: ["usr_eve"],
+      directory: { leftOutUserIds: ["usr_alan"] },
+    });
+    const access = (await call("GET", A)).body as wfe.ListFoundryAccessResponse;
+    expect(access.restrictedUserIds).toContain("usr_eve");
+    expect(access.restrictedUserIds).not.toContain("usr_alan");
+    // Taking sources away keeps him out until the next sync.
+    await grant(principal, []);
+    expect(
+      (await teams()).find((t) => t.id === finance.id)!.directory!
+        .leftOutUserIds,
+    ).toEqual(["usr_alan"]);
+  });
+
   it("restricts plain members without query access only", async () => {
     const restrict = (userId: string, restricted = true) =>
       call("PUT", `${A}/members/${userId}`, { restricted });

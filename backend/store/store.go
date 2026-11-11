@@ -169,6 +169,7 @@ type ReadStore interface {
 	GetFoundryLoadEnrichment(ctx context.Context, loadID string) (*model.FoundryLoadEnrichment, error)
 	ListFoundryLoadEnrichments(ctx context.Context, loadIDs []string) (map[string]*model.FoundryLoadEnrichment, error)
 	ListFoundryLoadSources(ctx context.Context, loadIDs []string) (map[string][]model.FoundryLoadSource, error)
+	ListFoundryLoadDocumentSets(ctx context.Context, loadID string) ([]model.FoundryLoadDocumentSet, error)
 	GetLatestFoundryEnrichmentResults(ctx context.Context, ontologyID string) (*model.FoundryLoadEnrichment, error)
 	GetLatestFoundryEnrichmentApplied(ctx context.Context, ontologyID string) (*model.FoundryLoadEnrichment, error)
 	GetFoundryEnrichmentLedger(ctx context.Context, workspaceID string, since time.Time) (model.FoundryEnrichmentLedger, error)
@@ -275,6 +276,11 @@ type Store interface {
 	RenewOntologyGenerationLease(ctx context.Context, id, workerID string, lease time.Duration) error
 	FinishOntologyGeneration(ctx context.Context, id, workerID string, outcome model.OntologyGenerationOutcome) error
 	SettleFoundryReviewDecision(ctx context.Context, workspaceID string, decision *model.FoundryReviewDecision) error
+	SettleFoundryReleases(ctx context.Context, workspaceID, loadID string, decisions []*model.FoundryReviewDecision,
+		resend *model.FoundryGraphJob) (queued bool, err error)
+	ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error)
+	ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error)
+	EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error
 	DeleteFoundryReviewDecision(ctx context.Context, ontologyID, id string) error
 	CreateFoundryDocumentSet(ctx context.Context, set *model.FoundryDocumentSet, max int) error
 	UpdateFoundryDocumentSet(ctx context.Context, workspaceID, id string, update model.FoundryDocumentSetUpdate) error
@@ -293,7 +299,8 @@ type Store interface {
 	OweFoundryRefreshes(ctx context.Context, workspaceID, connectorID string, tables []string, refreshEvery time.Duration) error
 	SetFoundryOntologyAutoRefresh(ctx context.Context, workspaceID, id string, on bool) error
 	SetFoundryGraphJobSources(ctx context.Context, id, workerID string, sources []model.FoundryLoadSource) error
-	SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract *model.FoundryGraphJob, budget model.FoundryGraphBudget) (bool, error)
+	SetCurrentFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID string, extract, resend *model.FoundryGraphJob,
+		budget model.FoundryGraphBudget) (bool, error)
 	DeleteFoundryLoad(ctx context.Context, workspaceID, ontologyID, loadID, deleteJobID string) error
 	ClaimFoundryGraphJob(ctx context.Context, workerID string, lease time.Duration) (*model.FoundryGraphJob, error)
 	RenewFoundryGraphJobLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -308,6 +315,10 @@ type Store interface {
 	UpdateFoundryTeam(ctx context.Context, workspaceID, teamID, name string, memberUserIDs []string) error
 	DeleteFoundryTeam(ctx context.Context, workspaceID, teamID string) error
 	RemoveFoundryAccessMember(ctx context.Context, workspaceID, userID string) error
+	// The host's directory sync: teams that follow a directory's groups.
+	SyncFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID, provider string, groups []model.FoundryDirectoryTeam) (model.FoundryDirectorySync, error)
+	ReleaseFoundryDirectoryTeams(ctx context.Context, workspaceID, directoryID string) error
+	LeaveOutFoundryTeamMembers(ctx context.Context, workspaceID, teamID string, userIDs []string) error
 	CreateFoundryQuestion(ctx context.Context, q *model.FoundryQuestion, limits model.FoundryQuestionLimits) error
 	ClaimFoundryQuestion(ctx context.Context, workerID string, claim model.FoundryQuestionClaim) (*model.FoundryQuestion, error)
 	RenewFoundryQuestionLease(ctx context.Context, id, workerID string, lease time.Duration) error
@@ -333,7 +344,7 @@ type Store interface {
 	StopFoundryLoadEnrichment(ctx context.Context, workspaceID, ontologyID, loadID, userID string) error
 	HaltFoundryEnrichmentProvider(ctx context.Context, provider string, until time.Time, code string) error
 	ClearFoundryEnrichmentFiles(ctx context.Context, sweep model.FoundryEnrichmentSweep) error
-	AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, deleteJobID string, retryAfter time.Duration, maxAttempts int) (model.FoundryEnrichmentPurgeStep, error)
+	AdvanceFoundryEnrichmentPurge(ctx context.Context, ontologyID string, load *model.FoundryGraphJob, nextJobID string, retryAfter time.Duration, maxAttempts int) (model.FoundryEnrichmentPurgeStep, error)
 	CreateFoundryAIConfig(ctx context.Context, c *model.FoundryAIConfig, perHour int) error
 	ClaimFoundryAIProbe(ctx context.Context, owner string, lease time.Duration, maxAttempts int) (*model.FoundryAIConfig, error)
 	ReleaseFoundryAIProbe(ctx context.Context, configID, owner string, maxAttempts int) error

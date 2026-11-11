@@ -26,13 +26,13 @@ var durationBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 720
 
 var jobSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "helix_foundry_graph_job_seconds",
-	Help:    "How long a graph job attempt took, by kind (load, extract, apply, delete), the origin of the load it works on (user or refresh) and outcome.",
+	Help:    "How long a graph job attempt took, by kind (load, extract, apply, resend, delete), the origin of the load it works on (user or refresh) and outcome.",
 	Buckets: durationBuckets,
 }, []string{"kind", "origin", "outcome"})
 
 var stepSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "helix_foundry_graph_step_seconds",
-	Help:    "How long a step of a graph job attempt took: tables (pinning and downloading snapshots), ingest, extract, compare or delete.",
+	Help:    "How long a step of a graph job attempt took: tables (pinning and downloading snapshots), ingest, extract, resend, compare or delete.",
 	Buckets: durationBuckets,
 }, []string{"step"})
 
@@ -81,3 +81,16 @@ var applyDrift = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_apply_drift_total",
 	Help: "Labels that differ between an applied load and the rebuild that replaced it, by kind: entity, fact, evidence, violation or held.",
 }, []string{"kind"})
+
+var releases = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_releases_total",
+	Help: "Release decisions (a person's approvals of held claims) the ontology agent reported on, by outcome (written, refused, missed, " +
+		"not_held: sent again and already written, or never held by the load) and, for a refusal, the agent's reason.",
+}, []string{"outcome", "reason"})
+
+var resendsRefused = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "helix_foundry_graph_resends_refused_total",
+	Help: "Documents a resend job could not send again or the agent could not replay, whose waiting approvals were refused, by reason: " +
+		"not_replayed (the saved extraction didn't replay at no cost), document_gone, document_unread, document_failed or " +
+		"too_large (the document with its decisions is more than one Extract takes).",
+}, []string{"reason"})

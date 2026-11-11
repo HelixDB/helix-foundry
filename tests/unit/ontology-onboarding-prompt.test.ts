@@ -583,12 +583,32 @@ describe("onboardingPrompt's review, load and failures", () => {
       "and the goal it was drafted from with `helix_foundry_get_generation` (its `generation_id`).",
     );
     expect(text).toContain(
-      "If I want changes, ask me what, write the new goal with me, and generate again",
+      "or want other changes, write the new goal with me, my answers in it in plain words, and generate again",
     );
     expect(text).toContain(
       "ask me whether to make it current and load it: a load spends from the workspace’s monthly budget.",
     );
     expect(text).toContain("It spends on models: say so");
+  });
+
+  // A caller told only "it loaded" can't see what wasn't read: the prompt has
+  // the agent read the draft's questions and what it left out before a
+  // load, and report the load's own counts after.
+  it("reports a draft's open questions and unread sets, and a load's document counts", () => {
+    for (const line of [
+      "a question’s `default` is the agent’s suggestion, not something I decided, so don’t report it as done.",
+      "what it left out and why, the definition’s `left_out`.",
+      "the document sets it was given but doesn’t read, `document_reads.unread_set_ids`",
+      "write the new goal with me, my answers in it in plain words, and generate again",
+      "how many it read of how many (`read` of `total`), how many its version doesn’t read (`not_read_by_version`",
+      "one about a synced table also has the table’s `connector_id` and `table`, so name the table, not the id;",
+      "its fact writes (`facts_written`: a fact counts once for each document that states it, so it is not the number of facts in the graph)",
+      "the reviews the documents left (`left_for_review`: counted as the load wrote each document, so it is not the number still open)",
+      "the names it matched to no one record (`names_unresolved`: they are among those reviews, so don’t add the two)",
+      "If `documents` is absent though the version was given document sets, say the counts aren’t available, not that nothing was left unread.",
+      "A job’s `progress` counts a document as done whether or not it was read",
+    ])
+      expect(text).toContain(line);
   });
 
   it("prepares one operation at a time, and says what every code means", () => {

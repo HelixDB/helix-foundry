@@ -30,6 +30,7 @@ import { enrichmentQuery } from "../workspace/enrichment-api";
 import {
   cluesText,
   fieldText,
+  leftOutSetText,
   linkWords,
   mappingSource,
   sourceMatrix,
@@ -799,7 +800,8 @@ function Question({ q }: { q: AgentQuestion }) {
         </ul>
       )}
       {!q.options?.length && q.default && (
-        <p className="on-muted">Until answered: {q.default}.</p>
+        // The agent's suggestion, which no one has decided on.
+        <p className="on-muted">Suggested answer: {q.default}</p>
       )}
       {(q.items?.length || 0) > 0 && (
         <p className="on-muted">About {q.items!.map(itemText).join(", ")}</p>
@@ -815,12 +817,22 @@ export function AgentQuestions({
   bundle: AgentBundle;
   sources: Sources;
 }) {
+  const { id } = useWorkspace();
+  // The sets' names, for a left-out entry about one: read only when the
+  // draft left something out. A grantee's has no such list, and a grantee
+  // may not list the sets.
+  const sets = useQuery({
+    ...documentSetQueries.list(id),
+    enabled: bundle.leftOut.length > 0,
+  });
   const leftOut = bundle.leftOut.map((l) => {
     const { sourceId, rest } = splitSourceText(l.what);
     const info = sourceId ? sources.byAgentId(sourceId) : undefined;
     return {
       connector: info?.connector,
-      what: info ? `${info.table}${rest ? `.${rest}` : ""}` : l.what,
+      what: info
+        ? `${info.table}${rest ? `.${rest}` : ""}`
+        : leftOutSetText(l.what, sets.data || []),
       reason: l.reason,
     };
   });
@@ -829,7 +841,9 @@ export function AgentQuestions({
       <section className="on-group">
         <h2>Questions from the agent</h2>
         <p className="on-muted">
-          To act on an answer, generate again with it in the goal.
+          {bundle.questions.length
+            ? "These are open: a suggested answer is the agent’s proposal, not a decision. To act on an answer, generate again with it in the goal."
+            : "To act on an answer, generate again with it in the goal."}
         </p>
         {bundle.questions.length ? (
           <ol className="on-questions">

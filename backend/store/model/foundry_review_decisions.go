@@ -27,7 +27,9 @@ const (
 )
 
 // FoundryReviewDecision is an ontology-wide override, applied from the next
-// load. Resolve identifies a document name; a nil EntityKey means not in data.
+// load; a release also joins the current load's list as it is settled, and a
+// resend job applies it there (SettleFoundryReleases). Resolve identifies a
+// document name; a nil EntityKey means not in data.
 // Prop identifies an entity property and carries a JSON scalar (including null).
 // Release identifies one review of a document holding a claim back, by its
 // ClaimKey and ClaimSpan: a person's word that what it states holds, bound by
@@ -53,6 +55,10 @@ type FoundryReviewDecision struct {
 	// decision's value came from; settling records them, and nothing reads
 	// them back into the decision.
 	DocumentIDs []string
+	// Applied is what became of the decision in the ontology's current load,
+	// which ListFoundryReviewDecisions and SettleFoundryReleases read: nil
+	// when that load's list doesn't hold it, or no job has reported on it.
+	Applied *FoundryDecisionApplied
 }
 
 func (d FoundryReviewDecision) Validate() error {

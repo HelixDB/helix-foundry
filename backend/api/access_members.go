@@ -101,7 +101,7 @@ func (s *Service) CreateFoundryTeam(ctx context.Context, req *foundryv1.CreateFo
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "read teams: %v", err)
 	}
-	if len(teams) >= maxFoundryTeams {
+	if manual := slices.DeleteFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.Directory != nil }); len(manual) >= maxFoundryTeams {
 		return nil, status.Errorf(codes.FailedPrecondition, "a workspace has at most %d teams", maxFoundryTeams)
 	}
 	team := &foundrymodel.FoundryTeam{ID: id.New(), WorkspaceID: req.GetWorkspaceId(), Name: name, MemberUserIDs: members, CreatedByUserID: byUser(ctx)}
@@ -121,6 +121,9 @@ func (s *Service) CreateFoundryTeam(ctx context.Context, req *foundryv1.CreateFo
 func (s *Service) UpdateFoundryTeam(ctx context.Context, req *foundryv1.UpdateFoundryTeamRequest) (*foundryv1.FoundryTeamResponse, error) {
 	name, members, err := s.foundryTeam(ctx, req.GetWorkspaceId(), req.GetName(), req.GetMemberUserIds())
 	if err != nil {
+		return nil, err
+	}
+	if err := s.notSynced(ctx, req.GetWorkspaceId(), req.GetTeamId()); err != nil {
 		return nil, err
 	}
 	held, err := s.deps.DB.ListFoundryAccessGrants(ctx, req.GetWorkspaceId(), []access.Principal{{Kind: access.PrincipalTeam, ID: req.GetTeamId()}})
@@ -159,6 +162,9 @@ func (s *Service) DeleteFoundryTeam(ctx context.Context, req *foundryv1.DeleteFo
 	if req.GetWorkspaceId() == "" || req.GetTeamId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id and team_id are required")
 	}
+	if err := s.notSynced(ctx, req.GetWorkspaceId(), req.GetTeamId()); err != nil {
+		return nil, err
+	}
 	switch err := s.deps.DB.DeleteFoundryTeam(ctx, req.GetWorkspaceId(), req.GetTeamId()); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "team not found")
@@ -166,6 +172,48 @@ func (s *Service) DeleteFoundryTeam(ctx context.Context, req *foundryv1.DeleteFo
 		return nil, status.Errorf(codes.Internal, "delete team: %v", err)
 	}
 	return &emptypb.Empty{}, nil
+}
+
+// notSynced refuses a change to a synced team's name or members, or its
+// deletion: those are its directory group's, and the next sync would undo
+// them. A team the workspace lacks is the store's to refuse.
+func (s *Service) notSynced(ctx context.Context, workspaceID, teamID string) error {
+	teams, err := s.deps.DB.ListFoundryTeams(ctx, workspaceID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "read teams: %v", err)
+	}
+	i := slices.IndexFunc(teams, func(t foundrymodel.FoundryTeam) bool { return t.ID == teamID })
+	if i < 0 || teams[i].Directory == nil {
+		return nil
+	}
+	return status.Errorf(codes.FailedPrecondition, "this team is synced from %s: change its name and members there", directoryName(teams[i].Directory))
+}
+
+// directoryName is a synced team's directory as the words about it say it.
+func directoryName(d *foundrymodel.FoundryTeamDirectory) string {
+	if d.Provider != "" {
+		return d.Provider
+	}
+	return "your directory"
+}
+
+// unconfinable lists the team's plain members with raw access, whom its
+// grants can't confine.
+func (s *Service) unconfinable(ctx context.Context, workspaceID string, userIDs []string) ([]string, error) {
+	if s.deps.People == nil {
+		return nil, nil
+	}
+	var out []string
+	for _, userID := range userIDs {
+		m, err := s.deps.People.Member(ctx, workspaceID, userID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "read the member: %v", err)
+		}
+		if m.Role == ports.RoleMember && m.RawAccess {
+			out = append(out, userID)
+		}
+	}
+	return out, nil
 }
 
 // foundryTeam checks a team's name and members: a trimmed name of 1 to 120
@@ -217,6 +265,9 @@ func teamToProto(t foundrymodel.FoundryTeam) *foundryv1.FoundryTeam {
 	out := &foundryv1.FoundryTeam{Id: t.ID, Name: t.Name, MemberUserIds: t.MemberUserIDs, CreatedAt: timestamppb.New(t.CreatedAt)}
 	if t.CreatedByUserID != nil {
 		out.CreatedByUserId = *t.CreatedByUserID
+	}
+	if d := t.Directory; d != nil {
+		out.Directory = &foundryv1.FoundryTeamDirectory{DirectoryId: d.DirectoryID, GroupId: d.GroupID, Provider: d.Provider, LeftOutUserIds: d.LeftOutUserIDs}
 	}
 	return out
 }
