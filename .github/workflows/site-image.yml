@@ -84,7 +84,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=Apache-2.0
           cache-from: type=gha,scope=foundry-site-${{ matrix.architecture }}
-          cache-to: type=gha,mode=max,scope=foundry-site-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=foundry-site-${{ matrix.architecture }},compression=zstd
       # The image's own health check fetches /, which the site serves without
       # its API.
       - name: Start it

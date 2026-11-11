@@ -89,7 +89,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=Apache-2.0
           cache-from: type=gha,scope=foundry-${{ matrix.architecture }}
-          cache-to: type=gha,mode=max,scope=foundry-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=foundry-${{ matrix.architecture }},compression=zstd
       # The image's own health check fetches /readyz, which answers once
       # foundry has migrated its database, made its bucket and started every
       # part. So it starts as local/compose.yaml runs it, with nothing set
