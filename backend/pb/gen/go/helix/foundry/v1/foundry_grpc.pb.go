@@ -93,6 +93,7 @@ const (
 	FoundryService_ListFoundryWorkflowRuns_FullMethodName               = "/helix.foundry.v1.FoundryService/ListFoundryWorkflowRuns"
 	FoundryService_GetFoundryWorkflowRun_FullMethodName                 = "/helix.foundry.v1.FoundryService/GetFoundryWorkflowRun"
 	FoundryService_FinishFoundryWorkflowRun_FullMethodName              = "/helix.foundry.v1.FoundryService/FinishFoundryWorkflowRun"
+	FoundryService_AssessFoundryWorkflowRun_FullMethodName              = "/helix.foundry.v1.FoundryService/AssessFoundryWorkflowRun"
 	FoundryService_ListFoundryWorkflowRunAccesses_FullMethodName        = "/helix.foundry.v1.FoundryService/ListFoundryWorkflowRunAccesses"
 	FoundryService_ListFoundryOntologyDocuments_FullMethodName          = "/helix.foundry.v1.FoundryService/ListFoundryOntologyDocuments"
 	FoundryService_GetFoundryOntologyDocument_FullMethodName            = "/helix.foundry.v1.FoundryService/GetFoundryOntologyDocument"
@@ -233,6 +234,8 @@ type FoundryServiceClient interface {
 	ListFoundryWorkflowRuns(ctx context.Context, in *ListFoundryWorkflowRunsRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowRunsResponse, error)
 	GetFoundryWorkflowRun(ctx context.Context, in *GetFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error)
 	FinishFoundryWorkflowRun(ctx context.Context, in *FinishFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error)
+	// Queues a finished run's assessment again (owners and admins).
+	AssessFoundryWorkflowRun(ctx context.Context, in *AssessFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error)
 	ListFoundryWorkflowRunAccesses(ctx context.Context, in *ListFoundryWorkflowRunAccessesRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowRunAccessesResponse, error)
 	// An ontology's documents, read only: what its current load holds and
 	// what its reading version's scope holds, each with its extraction there.
@@ -1050,6 +1053,16 @@ func (c *foundryServiceClient) FinishFoundryWorkflowRun(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *foundryServiceClient) AssessFoundryWorkflowRun(ctx context.Context, in *AssessFoundryWorkflowRunRequest, opts ...grpc.CallOption) (*FoundryWorkflowRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FoundryWorkflowRunResponse)
+	err := c.cc.Invoke(ctx, FoundryService_AssessFoundryWorkflowRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *foundryServiceClient) ListFoundryWorkflowRunAccesses(ctx context.Context, in *ListFoundryWorkflowRunAccessesRequest, opts ...grpc.CallOption) (*ListFoundryWorkflowRunAccessesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFoundryWorkflowRunAccessesResponse)
@@ -1458,6 +1471,8 @@ type FoundryServiceServer interface {
 	ListFoundryWorkflowRuns(context.Context, *ListFoundryWorkflowRunsRequest) (*ListFoundryWorkflowRunsResponse, error)
 	GetFoundryWorkflowRun(context.Context, *GetFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error)
 	FinishFoundryWorkflowRun(context.Context, *FinishFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error)
+	// Queues a finished run's assessment again (owners and admins).
+	AssessFoundryWorkflowRun(context.Context, *AssessFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error)
 	ListFoundryWorkflowRunAccesses(context.Context, *ListFoundryWorkflowRunAccessesRequest) (*ListFoundryWorkflowRunAccessesResponse, error)
 	// An ontology's documents, read only: what its current load holds and
 	// what its reading version's scope holds, each with its extraction there.
@@ -1762,6 +1777,9 @@ func (UnimplementedFoundryServiceServer) GetFoundryWorkflowRun(context.Context, 
 }
 func (UnimplementedFoundryServiceServer) FinishFoundryWorkflowRun(context.Context, *FinishFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FinishFoundryWorkflowRun not implemented")
+}
+func (UnimplementedFoundryServiceServer) AssessFoundryWorkflowRun(context.Context, *AssessFoundryWorkflowRunRequest) (*FoundryWorkflowRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssessFoundryWorkflowRun not implemented")
 }
 func (UnimplementedFoundryServiceServer) ListFoundryWorkflowRunAccesses(context.Context, *ListFoundryWorkflowRunAccessesRequest) (*ListFoundryWorkflowRunAccessesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListFoundryWorkflowRunAccesses not implemented")
@@ -3187,6 +3205,24 @@ func _FoundryService_FinishFoundryWorkflowRun_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FoundryService_AssessFoundryWorkflowRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssessFoundryWorkflowRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FoundryServiceServer).AssessFoundryWorkflowRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FoundryService_AssessFoundryWorkflowRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FoundryServiceServer).AssessFoundryWorkflowRun(ctx, req.(*AssessFoundryWorkflowRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FoundryService_ListFoundryWorkflowRunAccesses_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFoundryWorkflowRunAccessesRequest)
 	if err := dec(in); err != nil {
@@ -4025,6 +4061,10 @@ var FoundryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FinishFoundryWorkflowRun",
 			Handler:    _FoundryService_FinishFoundryWorkflowRun_Handler,
+		},
+		{
+			MethodName: "AssessFoundryWorkflowRun",
+			Handler:    _FoundryService_AssessFoundryWorkflowRun_Handler,
 		},
 		{
 			MethodName: "ListFoundryWorkflowRunAccesses",

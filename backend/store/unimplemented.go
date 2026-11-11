@@ -1126,11 +1126,43 @@ func (u Unimplemented) StartFoundryWorkflowRun(context.Context, *model.FoundryWo
 	u.unimplemented("StartFoundryWorkflowRun")
 	return nil
 }
-func (u Unimplemented) FinishFoundryWorkflowRun(context.Context, string, *string, string) error {
+func (u Unimplemented) FinishFoundryWorkflowRun(context.Context, string, *string, string, bool) error {
 	u.unimplemented("FinishFoundryWorkflowRun")
 	return nil
 }
 func (u Unimplemented) RecordFoundryWorkflowAccess(context.Context, string, model.FoundryWorkflowCall) (*model.FoundryWorkflowAccess, error) {
 	u.unimplemented("RecordFoundryWorkflowAccess")
 	return nil, nil
+}
+func (u Unimplemented) GetFoundryWorkflowRunAssessment(context.Context, string) (*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("GetFoundryWorkflowRunAssessment")
+	return nil, nil
+}
+func (u Unimplemented) ListFoundryWorkflowRunAssessments(context.Context, []string) (map[string]*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("ListFoundryWorkflowRunAssessments")
+	return nil, nil
+}
+func (u Unimplemented) CountFoundryWorkflowVerdicts(context.Context, []string) (map[string]map[string]int64, error) {
+	u.unimplemented("CountFoundryWorkflowVerdicts")
+	return nil, nil
+}
+func (u Unimplemented) SumFoundryWorkflowAssessmentSpend(context.Context, string, time.Time) (int64, error) {
+	u.unimplemented("SumFoundryWorkflowAssessmentSpend")
+	return 0, nil
+}
+func (u Unimplemented) QueueFoundryWorkflowRunAssessment(context.Context, string) error {
+	u.unimplemented("QueueFoundryWorkflowRunAssessment")
+	return nil
+}
+func (u Unimplemented) ClaimFoundryWorkflowRunAssessment(context.Context, string, time.Duration) (*model.FoundryWorkflowAssessment, error) {
+	u.unimplemented("ClaimFoundryWorkflowRunAssessment")
+	return nil, nil
+}
+func (u Unimplemented) RenewFoundryWorkflowRunAssessment(context.Context, string, string, time.Duration) error {
+	u.unimplemented("RenewFoundryWorkflowRunAssessment")
+	return nil
+}
+func (u Unimplemented) FinishFoundryWorkflowRunAssessment(context.Context, string, string, model.FoundryWorkflowAssessmentOutcome) error {
+	u.unimplemented("FinishFoundryWorkflowRunAssessment")
+	return nil
 }

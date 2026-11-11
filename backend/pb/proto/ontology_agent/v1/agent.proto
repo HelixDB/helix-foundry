@@ -58,6 +58,14 @@ service Agent {
   // no titles. RESOURCE_EXHAUSTED: the server writes as many titles as it allows at once.
   // UNAVAILABLE: the server is shutting down.
   rpc Title(TitleRequest) returns (TitleResponse);
+  // Assesses a workflow run: how much what an agent read of an ontology made its answer to
+  // one request, the answer's claims and the calls that bear on them, what the ontology
+  // lacked and what would close it. One structured call of the request's model, whose failure
+  // is a result, not a gRPC error. The errors are Title's: INVALID_ARGUMENT for a request_json
+  // that is not an AssessRequest or fails its checks (an empty request id or output, more than
+  // 1000 calls, or two calls with one seq), RESOURCE_EXHAUSTED for as many assessments as the
+  // server runs at once.
+  rpc Assess(AssessRequest) returns (AssessResponse);
   // Checks whether an endpoint's models can do what each role needs, with the roles' real
   // tools and schemas: a model the price table lacks fails its check `unpriced` with no call,
   // and each check's failure is a result, not a gRPC error. The errors are Title's, a
@@ -432,6 +440,16 @@ message TitleRequest {
 
 message TitleResponse {
   // The TitleResult as JSON (`schema/title_result.json`).
+  string result_json = 1;
+}
+
+message AssessRequest {
+  // The AssessRequest as JSON (`schema/assess_request.json`).
+  string request_json = 1;
+}
+
+message AssessResponse {
+  // The AssessResult as JSON (`schema/assess_result.json`).
   string result_json = 1;
 }
 

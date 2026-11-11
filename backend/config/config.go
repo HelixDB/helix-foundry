@@ -103,6 +103,57 @@ type Foundry struct {
 	Notify     NotifyConfig     `koanf:"notify"`
 	Reminders  RemindersConfig  `koanf:"reminders"`
 	Heal       HealConfig       `koanf:"heal"`
+	Workflows  WorkflowsConfig  `koanf:"workflows"`
+}
+
+// WorkflowsConfig drives workflows' runs: an agent's request, every call it
+// made with the run's id, and its answer (api/workflows.go).
+type WorkflowsConfig struct {
+	Assess WorkflowAssessConfig `koanf:"assess"`
+}
+
+// WorkflowAssessConfig drives runs' assessments: finishing a run queues one
+// while Enabled, and the foundry-ask-worker runs it beside its questions,
+// with the ontology agent's Assess on the workspace's question model.
+type WorkflowAssessConfig struct {
+	// Enabled queues a finished run's assessment; off, none is queued and
+	// none can be asked for.
+	Enabled bool `koanf:"enabled"`
+	// MonthlyUSD is a workspace's monthly budget for assessments, apart
+	// from its questions' and loads'. An assessment is skipped once what
+	// the month's charged plus MaxUSD would pass it; several workers may
+	// each start one at that edge, so it can pass by MaxUSD a worker.
+	MonthlyUSD float64 `koanf:"monthly_usd"`
+	// MaxUSD is what one attempt is expected to spend at most: the agent
+	// fits the run to the model's context, about 100,000 tokens at most.
+	MaxUSD float64 `koanf:"max_usd"`
+	// PollInterval is how often the worker looks for one due; Lease how
+	// long a claimed one stays owned without a renewal.
+	PollInterval time.Duration `koanf:"poll_interval"`
+	Lease        time.Duration `koanf:"lease"`
+	// MaxAttempts caps the attempts at a failure a retry may fix, each
+	// RetryBackoff after the last.
+	MaxAttempts  int           `koanf:"max_attempts"`
+	RetryBackoff time.Duration `koanf:"retry_backoff"`
+}
+
+// MonthlyMicros is MonthlyUSD in millionths of a US dollar.
+func (w WorkflowAssessConfig) MonthlyMicros() int64 { return int64(math.Round(w.MonthlyUSD * 1e6)) }
+
+// MaxMicros is MaxUSD in millionths of a US dollar.
+func (w WorkflowAssessConfig) MaxMicros() int64 { return int64(math.Round(w.MaxUSD * 1e6)) }
+
+func (w WorkflowAssessConfig) validate() error {
+	switch {
+	case w.MonthlyUSD < 0 || w.MaxUSD <= 0:
+		return fmt.Errorf("foundry.workflows.assess.monthly_usd must not be negative and max_usd must be positive")
+	case w.PollInterval <= 0 || w.RetryBackoff <= 0 || w.MaxAttempts < 1:
+		return fmt.Errorf("foundry.workflows.assess poll_interval, retry_backoff and max_attempts must be positive")
+	case w.Lease < 30*time.Second:
+		// Renewed every third of it; shorter would lapse on a slow renewal.
+		return fmt.Errorf("foundry.workflows.assess.lease must be at least 30s")
+	}
+	return nil
 }
 
 // HealConfig drives the foundry-heal-worker, which audits each ontology's
@@ -1602,6 +1653,9 @@ func (c *Config) validateRoles(roles Roles) error {
 		if err := f.Ask.validate(); err != nil {
 			return err
 		}
+		if err := f.Workflows.Assess.validate(); err != nil {
+			return err
+		}
 	}
 	// The API reads and saves the setting; the workers and foundry-read
 	// make the model calls.
@@ -1801,7 +1855,15 @@ func Defaults() Config {
 		Every:        24 * time.Hour,
 		RetryAfter:   15 * time.Minute,
 		Lease:        2 * time.Minute,
-	}},
+	}, Workflows: WorkflowsConfig{Assess: WorkflowAssessConfig{
+		Enabled:      true,
+		MonthlyUSD:   20,
+		MaxUSD:       1,
+		PollInterval: 5 * time.Second,
+		Lease:        2 * time.Minute,
+		MaxAttempts:  3,
+		RetryBackoff: time.Minute,
+	}}},
 		Billing: Billing{Plans: DefaultPlans()},
 	}
 }

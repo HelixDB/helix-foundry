@@ -278,6 +278,13 @@ service FoundryService {
       body: "*"
     };
   }
+  // Queues a finished run's assessment again (owners and admins).
+  rpc AssessFoundryWorkflowRun(AssessFoundryWorkflowRunRequest) returns (FoundryWorkflowRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{workflow_id}/runs/{id}:assess"
+      body: "*"
+    };
+  }
   rpc ListFoundryWorkflowRunAccesses(ListFoundryWorkflowRunAccessesRequest) returns (ListFoundryWorkflowRunAccessesResponse) {
     option (google.api.http) = {
       get: "/v1/workspaces/{workspace_id}/foundry/ontologies/{ontology_id}/workflows/{workflow_id}/runs/{id}/accesses"
@@ -1509,4 +1516,13 @@ message ListFoundryWorkflowRunAccessesResponse {
   repeated FoundryWorkflowAccess accesses = 1;
   // Whether accesses follow the last one returned.
   bool more = 2;
+}
+// AssessFoundryWorkflowRunRequest queues a finished run's assessment again,
+// keeping what earlier ones spent. FAILED_PRECONDITION where assessments are
+// off, for an open run, or while its assessment is queued or running.
+message AssessFoundryWorkflowRunRequest {
+  string workspace_id = 1;
+  string ontology_id  = 2;
+  string workflow_id  = 3;
+  string id           = 4;
 }

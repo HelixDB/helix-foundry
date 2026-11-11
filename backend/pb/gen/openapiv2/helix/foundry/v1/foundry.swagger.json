@@ -3875,6 +3875,63 @@
         ]
       }
     },
+    "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:assess": {
+      "post": {
+        "summary": "Queues a finished run's assessment again (owners and admins).",
+        "operationId": "FoundryService_AssessFoundryWorkflowRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FoundryWorkflowRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ontologyId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/FoundryServiceAssessFoundryWorkflowRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "FoundryService"
+        ]
+      }
+    },
     "/v1/workspaces/{workspaceId}/foundry/ontologies/{ontologyId}/workflows/{workflowId}/runs/{id}:finish": {
       "post": {
         "operationId": "FoundryService_FinishFoundryWorkflowRun",
@@ -4291,6 +4348,10 @@
         }
       },
       "description": "AskFoundryQuestionRequest queues a question of a ready or partial load\n(FAILED_PRECONDITION otherwise, or when the workspace has spent this\nmonth's questions budget; RESOURCE_EXHAUSTED past its questions an hour).\nThe same client_token returns the question it queued."
+    },
+    "FoundryServiceAssessFoundryWorkflowRunBody": {
+      "type": "object",
+      "description": "AssessFoundryWorkflowRunRequest queues a finished run's assessment again,\nkeeping what earlier ones spent. FAILED_PRECONDITION where assessments are\noff, for an open run, or while its assessment is queued or running."
     },
     "FoundryServiceAuthorizeConnectorSignInBody": {
       "type": "object",
@@ -7951,10 +8012,11 @@
         "FOUNDRY_USAGE_TASK_UNSPECIFIED",
         "FOUNDRY_USAGE_TASK_LOADS",
         "FOUNDRY_USAGE_TASK_API_SOURCES",
-        "FOUNDRY_USAGE_TASK_QUESTIONS"
+        "FOUNDRY_USAGE_TASK_QUESTIONS",
+        "FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS"
       ],
       "default": "FOUNDRY_USAGE_TASK_UNSPECIFIED",
-      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd."
+      "description": "FoundryUsageTask is a kind of model work a workspace's month of AI spend\nis broken down by (FoundryUsage). Ontology drafts (generations and\nrevisions) are not among them: they record tokens, not dollars; nor are\ngeneration titles, which record no spend at all.\n\n - FOUNDRY_USAGE_TASK_LOADS: Loads and extracts of the workspace's ontologies, created this month:\nreading documents into their graphs, which is all of a load's model\nspend (tables load at no model cost). Capped by foundry.graph.monthly_usd\n(config.FoundryGraphConfig.MonthBudget), the budget the graph worker\nchecks.\n - FOUNDRY_USAGE_TASK_API_SOURCES: What work no person started (refreshes, and extracts no one asked for)\nspent extracting the workspace's API sources' pieces this month, its\ndeleted sources' included. Capped by\nfoundry.events.max_system_usd_per_workspace_month. Part of LOADS' spend,\nso FoundryUsage.total_usd_micros counts it once, there.\n - FOUNDRY_USAGE_TASK_QUESTIONS: Questions charged this month (claimed in it, whenever asked), as the\nquestions budget counts them (FoundryQuestionBudget). Capped by\nfoundry.ask.monthly_usd.\n - FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS: Workflow runs' assessments charged this month (the ontology agent's\nAssess, on the questions model), capped by\nfoundry.workflows.assess.monthly_usd, apart from questions'."
     },
     "v1FoundryWorkflow": {
       "type": "object",
@@ -7991,6 +8053,14 @@
           "type": "string",
           "format": "date-time",
           "description": "When its newest run started; absent before any."
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1FoundryWorkflowVerdictCount"
+          },
+          "description": "Its runs' assessments that are done, by verdict, in the verdicts'\norder; a verdict no run has is absent."
         }
       },
       "description": "FoundryWorkflow is an agent's task over one ontology. Each of its runs\nrecords the agent's request, what the agent read of the ontology's loads\nand wrote to Foundry while answering it, and its answer, so the runs show\nwhat the ontology gave the agent."
@@ -8021,6 +8091,49 @@
         }
       },
       "description": "FoundryWorkflowAccess is one call a run recorded: exactly one of read,\nquestion, send and upload."
+    },
+    "v1FoundryWorkflowAssessment": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "queued, running, done, failed or skipped (the workspace's month of\nassessments was spent)."
+        },
+        "verdict": {
+          "type": "string",
+          "description": "Once done: essential, helpful, marginal, unused or misleading."
+        },
+        "assessmentJson": {
+          "type": "string",
+          "description": "Once done: the engine's Assessment (assess_result.json\n$defs/Assessment), as JSON."
+        },
+        "leftOut": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "description": "Once done: the calls whose results were left out to fit the model."
+        },
+        "error": {
+          "type": "string",
+          "description": "Failed or skipped, or queued for a retry: why, for a person."
+        },
+        "usdMicros": {
+          "type": "string",
+          "format": "int64",
+          "description": "What its attempts spent, in millionths of a US dollar."
+        },
+        "queuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "FoundryWorkflowAssessment is a finished run's assessment by the ontology\nagent's Assess (contract 4.12.0), on the workspace's questions model: how\nmuch what the agent read made its answer, the answer's claims and the\ncalls that bear on them, what the ontology lacked and what would close it."
     },
     "v1FoundryWorkflowQuestion": {
       "type": "object",
@@ -8101,6 +8214,10 @@
         },
         "counts": {
           "$ref": "#/definitions/v1FoundryWorkflowRunCounts"
+        },
+        "assessment": {
+          "$ref": "#/definitions/v1FoundryWorkflowAssessment",
+          "description": "Its assessment, once it finished: absent where assessments are off, or\nfor a run finished before."
         }
       },
       "description": "FoundryWorkflowRun is one run of a workflow: open while it records the\ncalls made with its id, finished once its answer is in, after which it\nrecords nothing more."
@@ -8180,6 +8297,19 @@
         }
       },
       "description": "FoundryWorkflowUpload is a document whose upload completed\n(CompleteFoundryOntologyDocumentUpload)."
+    },
+    "v1FoundryWorkflowVerdictCount": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "FoundryWorkflowVerdictCount is how many of a workflow's runs an\nassessment gave a verdict."
     },
     "v1GetFoundryDocumentBytesResponse": {
       "type": "object",

@@ -71,7 +71,8 @@ type questionQueue interface {
 }
 
 // Task runs up to foundry.ask.concurrency questions at once and, beside
-// them, one probe of saved AI settings at a time (probe.go).
+// them, one probe of saved AI settings at a time (probe.go) and one workflow
+// run's assessment at a time (assess.go).
 
 type Task struct {
 	deps  Deps
@@ -83,10 +84,13 @@ type Task struct {
 	prober *prober
 	// probeEvery is how often a probe is claimed (foundry.ai.probe.poll_interval).
 	probeEvery time.Duration
-	closeFn    func() error
-	workerID   string
-	now        func() time.Time
-	worker     tasks.Worker
+	// assessor runs workflow runs' assessments (assess.go), every
+	// foundry.workflows.assess.poll_interval.
+	assessor *assessor
+	closeFn  func() error
+	workerID string
+	now      func() time.Time
+	worker   tasks.Worker
 	// slots holds one token per running question.
 	slots   chan struct{}
 	running sync.WaitGroup
@@ -132,14 +136,20 @@ func New(d Deps) (*Task, error) {
 			queue: d.DB, agent: agent, keys: resolver.Keyring, deployment: resolver.Deployment, cfg: probe, owner: workerID,
 		},
 		probeEvery: probe.PollInterval,
+		assessor: &assessor{
+			db: d.DB, agent: agent, ai: resolver, cfg: d.Cfg.Foundry.Workflows.Assess, owner: workerID, now: time.Now,
+			month: func(now time.Time) time.Time { return d.Cfg.Foundry.Graph.MonthBudget(now).Since },
+		},
 	}, nil
 }
 
 func (t *Task) Name() string { return Name }
 
 // Start claims questions every PollInterval while it has a free slot and,
-// beside them, sweeps lapsed boosts every boost.SweepEvery and probes saved
-// AI settings, one at a time, every foundry.ai.probe.poll_interval.
+// beside them, sweeps lapsed boosts every boost.SweepEvery, probes saved AI
+// settings, one at a time, every foundry.ai.probe.poll_interval, and
+// assesses finished workflow runs, one at a time, every
+// foundry.workflows.assess.poll_interval.
 func (t *Task) Start(ctx context.Context) error {
 	return t.worker.Run(ctx, Name, t.cfg.HTTP.Listen, t.deps.Health, t.deps.Logger, func(ctx context.Context) error {
 		var beside sync.WaitGroup
@@ -154,6 +164,11 @@ func (t *Task) Start(ctx context.Context) error {
 		go func() {
 			defer beside.Done()
 			tasks.Tick(ctx, t.probeEvery, t.prober.tick)
+		}()
+		beside.Add(1)
+		go func() {
+			defer beside.Done()
+			tasks.Tick(ctx, t.assessor.cfg.PollInterval, t.assessor.tick)
 		}()
 		tasks.Tick(ctx, t.cfg.PollInterval, t.drain)
 		beside.Wait()

@@ -89,9 +89,17 @@ func (s *Service) ListFoundryWorkflows(ctx context.Context, req *foundryv1.ListF
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "list workflows: %v", err)
 	}
+	ids := make([]string, len(workflows))
+	for i, w := range workflows {
+		ids[i] = w.ID
+	}
+	verdicts, err := s.deps.DB.CountFoundryWorkflowVerdicts(ctx, ids)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count verdicts: %v", err)
+	}
 	out := &foundryv1.ListFoundryWorkflowsResponse{NextPageToken: next}
 	for _, w := range workflows {
-		out.Workflows = append(out.Workflows, foundryWorkflowToProto(w))
+		out.Workflows = append(out.Workflows, foundryWorkflowToProto(w, verdicts[w.ID]))
 	}
 	return out, nil
 }
@@ -186,9 +194,17 @@ func (s *Service) ListFoundryWorkflowRuns(ctx context.Context, req *foundryv1.Li
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "list workflow runs: %v", err)
 	}
+	ids := make([]string, len(runs))
+	for i, r := range runs {
+		ids[i] = r.ID
+	}
+	assessments, err := s.deps.DB.ListFoundryWorkflowRunAssessments(ctx, ids)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list assessments: %v", err)
+	}
 	out := &foundryv1.ListFoundryWorkflowRunsResponse{NextPageToken: next}
 	for _, r := range runs {
-		out.Runs = append(out.Runs, foundryWorkflowRunToProto(r))
+		out.Runs = append(out.Runs, foundryWorkflowRunToProto(r, assessments[r.ID]))
 	}
 	return out, nil
 }
@@ -224,7 +240,7 @@ func (s *Service) FinishFoundryWorkflowRun(ctx context.Context, req *foundryv1.F
 	}
 	switch {
 	case r.Finished != nil && r.Finished.Output == output && (input == nil || sameText(r.Input, input)):
-		return &foundryv1.FoundryWorkflowRunResponse{Run: foundryWorkflowRunToProto(r)}, nil
+		return s.foundryWorkflowRunResponse(ctx, o.ID, r.WorkflowID, r.ID)
 	case r.Finished != nil:
 		return nil, status.Error(codes.FailedPrecondition, "the run already finished with another answer")
 	case r.Input == nil && input == nil:
@@ -232,7 +248,7 @@ func (s *Service) FinishFoundryWorkflowRun(ctx context.Context, req *foundryv1.F
 	case r.Input != nil && input != nil && *r.Input != *input:
 		return nil, status.Error(codes.InvalidArgument, "input differs from the one the run was started with")
 	}
-	switch err := s.deps.DB.FinishFoundryWorkflowRun(ctx, r.ID, input, output); {
+	switch err := s.deps.DB.FinishFoundryWorkflowRun(ctx, r.ID, input, output, s.deps.Cfg.Foundry.Workflows.Assess.Enabled); {
 	case errors.Is(err, foundrystore.ErrNotFound):
 		// Finished, or deleted, meanwhile: answer as a retry would be. The run
 		// is no longer open, so the retry ends before it gets here.
@@ -336,7 +352,11 @@ func (s *Service) foundryWorkflowResponse(ctx context.Context, ontologyID, workf
 	if err != nil {
 		return nil, err
 	}
-	return &foundryv1.FoundryWorkflowResponse{Workflow: foundryWorkflowToProto(w)}, nil
+	verdicts, err := s.deps.DB.CountFoundryWorkflowVerdicts(ctx, []string{w.ID})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count verdicts: %v", err)
+	}
+	return &foundryv1.FoundryWorkflowResponse{Workflow: foundryWorkflowToProto(w, verdicts[w.ID])}, nil
 }
 
 // foundryWorkflowRun reads a run of the ontology's workflow workflowID: a
@@ -357,7 +377,39 @@ func (s *Service) foundryWorkflowRunResponse(ctx context.Context, ontologyID, wo
 	if err != nil {
 		return nil, err
 	}
-	return &foundryv1.FoundryWorkflowRunResponse{Run: foundryWorkflowRunToProto(r)}, nil
+	a, err := s.deps.DB.GetFoundryWorkflowRunAssessment(ctx, r.ID)
+	switch {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		a = nil
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "get assessment: %v", err)
+	}
+	return &foundryv1.FoundryWorkflowRunResponse{Run: foundryWorkflowRunToProto(r, a)}, nil
+}
+
+// AssessFoundryWorkflowRun queues a finished run's assessment again, where
+// assessments are on.
+func (s *Service) AssessFoundryWorkflowRun(ctx context.Context, req *foundryv1.AssessFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
+	if !s.deps.Cfg.Foundry.Workflows.Assess.Enabled {
+		return nil, status.Error(codes.FailedPrecondition, "run assessments are off here")
+	}
+	o, err := s.liveFoundryOntology(ctx, req.GetWorkspaceId(), req.GetOntologyId())
+	if err != nil {
+		return nil, err
+	}
+	r, err := s.foundryWorkflowRun(ctx, o.ID, req.GetWorkflowId(), req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	switch err := s.deps.DB.QueueFoundryWorkflowRunAssessment(ctx, r.ID); {
+	case errors.Is(err, foundrystore.ErrNotFound):
+		return nil, status.Error(codes.FailedPrecondition, "the run is still open: it is assessed once it finishes")
+	case errors.Is(err, foundrystore.ErrConflict):
+		return nil, status.Error(codes.FailedPrecondition, "the run is being assessed already")
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "queue assessment: %v", err)
+	}
+	return s.foundryWorkflowRunResponse(ctx, o.ID, r.WorkflowID, r.ID)
 }
 
 // workflowRunInput checks a run's input as sent: nil when empty.
@@ -376,7 +428,7 @@ func sameText(a, b *string) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
-func foundryWorkflowToProto(w *foundrymodel.FoundryWorkflow) *foundryv1.FoundryWorkflow {
+func foundryWorkflowToProto(w *foundrymodel.FoundryWorkflow, verdicts map[string]int64) *foundryv1.FoundryWorkflow {
 	out := &foundryv1.FoundryWorkflow{
 		Id: w.ID, OntologyId: w.OntologyID, Name: w.Name, Description: w.Description, CreatedByUserId: w.CreatedByUserID,
 		CreatedAt: timestamppb.New(w.CreatedAt), Runs: w.Runs, FinishedRuns: w.FinishedRuns,
@@ -384,10 +436,15 @@ func foundryWorkflowToProto(w *foundrymodel.FoundryWorkflow) *foundryv1.FoundryW
 	if w.LastRunAt != nil {
 		out.LastRunAt = timestamppb.New(*w.LastRunAt)
 	}
+	for _, v := range foundrymodel.FoundryWorkflowVerdicts {
+		if n := verdicts[v]; n > 0 {
+			out.Verdicts = append(out.Verdicts, &foundryv1.FoundryWorkflowVerdictCount{Verdict: v, Runs: n})
+		}
+	}
 	return out
 }
 
-func foundryWorkflowRunToProto(r *foundrymodel.FoundryWorkflowRun) *foundryv1.FoundryWorkflowRun {
+func foundryWorkflowRunToProto(r *foundrymodel.FoundryWorkflowRun, a *foundrymodel.FoundryWorkflowAssessment) *foundryv1.FoundryWorkflowRun {
 	c := r.Counts
 	out := &foundryv1.FoundryWorkflowRun{
 		Id: r.ID, WorkflowId: r.WorkflowID, Status: string(r.Status()), StartedAt: timestamppb.New(r.StartedAt),
@@ -407,6 +464,15 @@ func foundryWorkflowRunToProto(r *foundrymodel.FoundryWorkflowRun) *foundryv1.Fo
 		out.StartedByUserId = r.StartedBy.ID
 	case access.PrincipalServiceCredential:
 		out.StartedByServiceCredentialId = r.StartedBy.ID
+	}
+	if a != nil {
+		out.Assessment = &foundryv1.FoundryWorkflowAssessment{
+			Status: string(a.Status), Verdict: a.Verdict, AssessmentJson: string(a.Assessment), LeftOut: a.LeftOut,
+			Error: a.Error, UsdMicros: a.USDMicros, QueuedAt: timestamppb.New(a.QueuedAt),
+		}
+		if a.FinishedAt != nil {
+			out.Assessment.FinishedAt = timestamppb.New(*a.FinishedAt)
+		}
 	}
 	return out
 }

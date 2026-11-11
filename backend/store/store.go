@@ -214,6 +214,10 @@ type ReadStore interface {
 	GetFoundryWorkflowRunByClientToken(ctx context.Context, workflowID, clientToken string) (*model.FoundryWorkflowRun, error)
 	ListFoundryWorkflowRuns(ctx context.Context, workflowID, pageToken string, limit int) ([]*model.FoundryWorkflowRun, string, error)
 	ListFoundryWorkflowRunAccesses(ctx context.Context, runID string, afterSeq int32, limit int) ([]*model.FoundryWorkflowAccess, bool, error)
+	GetFoundryWorkflowRunAssessment(ctx context.Context, runID string) (*model.FoundryWorkflowAssessment, error)
+	ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error)
+	CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error)
+	SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error)
 }
 
 // Store is ReadStore plus every write.
@@ -395,8 +399,12 @@ type Store interface {
 	CreateFoundryWorkflow(ctx context.Context, w *model.FoundryWorkflow) error
 	DeleteFoundryWorkflow(ctx context.Context, ontologyID, id string) error
 	StartFoundryWorkflowRun(ctx context.Context, r *model.FoundryWorkflowRun) error
-	FinishFoundryWorkflowRun(ctx context.Context, id string, input *string, output string) error
+	FinishFoundryWorkflowRun(ctx context.Context, id string, input *string, output string, assess bool) error
 	RecordFoundryWorkflowAccess(ctx context.Context, runID string, call model.FoundryWorkflowCall) (*model.FoundryWorkflowAccess, error)
+	QueueFoundryWorkflowRunAssessment(ctx context.Context, runID string) error
+	ClaimFoundryWorkflowRunAssessment(ctx context.Context, owner string, lease time.Duration) (*model.FoundryWorkflowAssessment, error)
+	RenewFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, lease time.Duration) error
+	FinishFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, o model.FoundryWorkflowAssessmentOutcome) error
 }
 
 // mysqlDB is the MySQL Store. db is the pool, or the transaction inside

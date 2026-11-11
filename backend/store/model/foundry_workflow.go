@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/helixdb/helix-foundry/backend/access"
@@ -190,4 +191,86 @@ func ParseFoundryWorkflowCall(kind string, detail, result []byte) (FoundryWorkfl
 		return nil, fmt.Errorf("workflow access %s: %w", kind, err)
 	}
 	return call, nil
+}
+
+// FoundryWorkflowAssessmentStatus is where a run's assessment stands.
+type FoundryWorkflowAssessmentStatus string
+
+const (
+	// FoundryWorkflowAssessmentQueued waits for a worker, from NextAttemptAt.
+	FoundryWorkflowAssessmentQueued FoundryWorkflowAssessmentStatus = "queued"
+	// FoundryWorkflowAssessmentRunning is leased to a worker.
+	FoundryWorkflowAssessmentRunning FoundryWorkflowAssessmentStatus = "running"
+	// FoundryWorkflowAssessmentDone holds the engine's assessment.
+	FoundryWorkflowAssessmentDone FoundryWorkflowAssessmentStatus = "done"
+	// FoundryWorkflowAssessmentFailed ended without one, saying why.
+	FoundryWorkflowAssessmentFailed FoundryWorkflowAssessmentStatus = "failed"
+	// FoundryWorkflowAssessmentSkipped wasn't run: the workspace's month of
+	// assessments was spent.
+	FoundryWorkflowAssessmentSkipped FoundryWorkflowAssessmentStatus = "skipped"
+)
+
+// Live is whether the assessment may still change without being queued
+// again.
+//
+//	FoundryWorkflowAssessmentRunning.Live() // true
+func (s FoundryWorkflowAssessmentStatus) Live() bool {
+	return s == FoundryWorkflowAssessmentQueued || s == FoundryWorkflowAssessmentRunning
+}
+
+// FoundryWorkflowVerdicts are the engine's verdicts (assess_result.json
+// Verdict), in the order the site lists them.
+var FoundryWorkflowVerdicts = []string{"essential", "helpful", "marginal", "unused", "misleading"}
+
+// FoundryWorkflowAssessment is one row of foundry_workflow_run_assessments.
+type FoundryWorkflowAssessment struct {
+	RunID, WorkspaceID, OntologyID, WorkflowID string
+	Status                                     FoundryWorkflowAssessmentStatus
+	Attempts                                   int
+	// Verdict and Assessment are the engine's, once done; LeftOut the calls
+	// whose results didn't fit the model.
+	Verdict    string
+	Assessment json.RawMessage
+	LeftOut    []int32
+	// Failure is the engine's ModelFailure of a failed one; Error why it
+	// failed or was skipped, for a person.
+	Failure, Error string
+	USDMicros      int64
+	QueuedAt       time.Time
+	FinishedAt     *time.Time
+}
+
+// FoundryWorkflowAssessmentOutcome is how an attempt of an assessment
+// ended: Done with the engine's assessment, Failed for good, Retry at
+// RetryAt, or Skipped, the month's budget spent. USDMicros is what the
+// attempt spent, whatever it came to.
+type FoundryWorkflowAssessmentOutcome struct {
+	Status     FoundryWorkflowAssessmentStatus
+	Verdict    string
+	Assessment json.RawMessage
+	LeftOut    []int32
+	Failure    string
+	Error      string
+	USDMicros  int64
+	// RetryAt is when a queued (retried) one is tried again.
+	RetryAt time.Time
+}
+
+// Check holds the outcome to the shapes the table takes.
+//
+//	FoundryWorkflowAssessmentOutcome{Status: FoundryWorkflowAssessmentRunning}.Check() // an error
+func (o FoundryWorkflowAssessmentOutcome) Check() error {
+	switch {
+	case o.USDMicros < 0:
+		return fmt.Errorf("an assessment spends no less than nothing")
+	case o.Status == FoundryWorkflowAssessmentDone && (len(o.Assessment) == 0 || !slices.Contains(FoundryWorkflowVerdicts, o.Verdict)):
+		return fmt.Errorf("a done assessment has an assessment and a verdict, not %q", o.Verdict)
+	case o.Status == FoundryWorkflowAssessmentFailed || o.Status == FoundryWorkflowAssessmentSkipped || o.Status == FoundryWorkflowAssessmentQueued:
+		if o.Error == "" {
+			return fmt.Errorf("a %s assessment says why", o.Status)
+		}
+	case o.Status != FoundryWorkflowAssessmentDone:
+		return fmt.Errorf("an attempt ends done, failed, skipped or queued again, not %s", o.Status)
+	}
+	return nil
 }

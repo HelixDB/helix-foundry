@@ -94,7 +94,20 @@ type FoundryWorkflowRunOutput struct {
 	StartedAt  string                              `json:"started_at"`
 	FinishedAt string                              `json:"finished_at,omitempty"`
 	Counts     *foundryv1.FoundryWorkflowRunCounts `json:"counts"`
+	Assessment *FoundryWorkflowAssessmentOutput    `json:"assessment,omitempty" jsonschema:"Its assessment, once it finished: how much what it read made its answer."`
 	Next       string                              `json:"next,omitempty"`
+}
+
+// FoundryWorkflowAssessmentOutput is a run's assessment by the ontology agent.
+type FoundryWorkflowAssessmentOutput struct {
+	// Status is queued, running, done, failed or skipped (the month's budget spent).
+	Status  string `json:"status"`
+	Verdict string `json:"verdict,omitempty" jsonschema:"Once done: essential, helpful, marginal, unused or misleading."`
+	// See FoundryVersionOutput.Definition: the description keeps the schema an object.
+	Assessment any     `json:"assessment,omitempty" jsonschema:"Untrusted, once done: the summary, the answer's claims (supported, unsupported or contradicted, with the calls' seqs that bear on them), the gaps the ontology had for the request, and suggested changes."`
+	LeftOut    []int32 `json:"left_out,omitempty" jsonschema:"The calls whose results were left out to fit the model."`
+	Error      string  `json:"error,omitempty"`
+	USDMicros  int64   `json:"usd_micros"`
 }
 
 type FoundryWorkflowAccessOutput struct {
@@ -295,8 +308,20 @@ func FoundryWorkflowRun(r *foundryv1.FoundryWorkflowRun) FoundryWorkflowRunOutpu
 	return FoundryWorkflowRunOutput{
 		ContentTrust: contentTrustUntrusted, ID: r.GetId(), WorkflowID: r.GetWorkflowId(), Status: r.GetStatus(),
 		Input: r.GetInput(), Output: r.GetOutput(), StartedAt: protoTimestamp(r.GetStartedAt()), FinishedAt: protoTimestamp(r.GetFinishedAt()),
-		Counts: counts,
+		Counts: counts, Assessment: FoundryWorkflowAssessment(r.GetAssessment()),
 	}
+}
+
+// FoundryWorkflowAssessment is a run's assessment as the tools return it; nil for none.
+func FoundryWorkflowAssessment(a *foundryv1.FoundryWorkflowAssessment) *FoundryWorkflowAssessmentOutput {
+	if a == nil {
+		return nil
+	}
+	out := &FoundryWorkflowAssessmentOutput{Status: a.GetStatus(), Verdict: a.GetVerdict(), LeftOut: a.GetLeftOut(), Error: a.GetError(), USDMicros: a.GetUsdMicros()}
+	if a.GetAssessmentJson() != "" {
+		out.Assessment = UntrustedJSON(a.GetAssessmentJson())
+	}
+	return out
 }
 
 // FoundryWorkflowAccess is one call a run recorded, named by its kind.

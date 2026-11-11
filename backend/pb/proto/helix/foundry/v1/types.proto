@@ -1376,6 +1376,10 @@ enum FoundryUsageTask {
   // questions budget counts them (FoundryQuestionBudget). Capped by
   // foundry.ask.monthly_usd.
   FOUNDRY_USAGE_TASK_QUESTIONS = 3;
+  // Workflow runs' assessments charged this month (the ontology agent's
+  // Assess, on the questions model), capped by
+  // foundry.workflows.assess.monthly_usd, apart from questions'.
+  FOUNDRY_USAGE_TASK_WORKFLOW_ASSESSMENTS = 4;
 }
 
 // FoundryUsageEntry is one task's month.
@@ -1999,6 +2003,9 @@ message FoundryWorkflow {
   int64 finished_runs = 8;
   // When its newest run started; absent before any.
   google.protobuf.Timestamp last_run_at = 9;
+  // Its runs' assessments that are done, by verdict, in the verdicts'
+  // order; a verdict no run has is absent.
+  repeated FoundryWorkflowVerdictCount verdicts = 10;
 }
 
 // FoundryWorkflowRun is one run of a workflow: open while it records the
@@ -2019,6 +2026,39 @@ message FoundryWorkflowRun {
   google.protobuf.Timestamp started_at  = 8;
   google.protobuf.Timestamp finished_at = 9;
   FoundryWorkflowRunCounts counts = 10;
+  // Its assessment, once it finished: absent where assessments are off, or
+  // for a run finished before.
+  FoundryWorkflowAssessment assessment = 11;
+}
+
+// FoundryWorkflowAssessment is a finished run's assessment by the ontology
+// agent's Assess (contract 4.12.0), on the workspace's questions model: how
+// much what the agent read made its answer, the answer's claims and the
+// calls that bear on them, what the ontology lacked and what would close it.
+message FoundryWorkflowAssessment {
+  // queued, running, done, failed or skipped (the workspace's month of
+  // assessments was spent).
+  string status = 1;
+  // Once done: essential, helpful, marginal, unused or misleading.
+  string verdict = 2;
+  // Once done: the engine's Assessment (assess_result.json
+  // $defs/Assessment), as JSON.
+  string assessment_json = 3;
+  // Once done: the calls whose results were left out to fit the model.
+  repeated int32 left_out = 4;
+  // Failed or skipped, or queued for a retry: why, for a person.
+  string error = 5;
+  // What its attempts spent, in millionths of a US dollar.
+  int64 usd_micros = 6;
+  google.protobuf.Timestamp queued_at   = 7;
+  google.protobuf.Timestamp finished_at = 8;
+}
+
+// FoundryWorkflowVerdictCount is how many of a workflow's runs an
+// assessment gave a verdict.
+message FoundryWorkflowVerdictCount {
+  string verdict = 1;
+  int64  runs    = 2;
 }
 
 // FoundryWorkflowRunCounts counts what a run recorded, at most 1,000 calls.

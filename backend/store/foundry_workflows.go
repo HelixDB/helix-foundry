@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/helixdb/helix-foundry/backend/access"
 	"github.com/helixdb/helix-foundry/backend/store/model"
@@ -147,6 +148,7 @@ func (s *mysqlDB) deleteFoundryWorkflowRows(ctx context.Context, column, id stri
 		}
 	}
 	for _, q := range []string{
+		`DELETE a FROM foundry_workflow_run_assessments a JOIN foundry_workflow_runs r ON r.id = a.run_id WHERE r.` + column + `=?`,
 		`DELETE a FROM foundry_workflow_run_accesses a JOIN foundry_workflow_runs r ON r.id = a.run_id WHERE r.` + column + `=?`,
 		`DELETE FROM foundry_workflow_runs WHERE ` + column + `=?`,
 		`DELETE FROM foundry_workflows WHERE ` + workflowsBy + `=?`,
@@ -247,6 +249,7 @@ ORDER BY started_at DESC, id DESC LIMIT 18446744073709551615 OFFSET ? FOR UPDATE
 			return err
 		}
 		for _, q := range []string{
+			`DELETE FROM foundry_workflow_run_assessments WHERE run_id IN (` + idPlaceholders(len(old)) + `)`,
 			`DELETE FROM foundry_workflow_run_accesses WHERE run_id IN (` + idPlaceholders(len(old)) + `)`,
 			`DELETE FROM foundry_workflow_runs WHERE id IN (` + idPlaceholders(len(old)) + `)`,
 		} {
@@ -303,16 +306,24 @@ func (s *mysqlDB) ListFoundryWorkflowRuns(ctx context.Context, workflowID, pageT
 }
 
 // FinishFoundryWorkflowRun finishes an open run with output, and input when
-// the run has none: one it was started with stays. ErrNotFound when no open
+// the run has none: one it was started with stays. With assess, its
+// assessment is queued in the same transaction. ErrNotFound when no open
 // run has id: it finished, or is gone.
-func (s *mysqlDB) FinishFoundryWorkflowRun(ctx context.Context, id string, input *string, output string) error {
+func (s *mysqlDB) FinishFoundryWorkflowRun(ctx context.Context, id string, input *string, output string, assess bool) error {
 	var in any
 	if input != nil {
 		in = *input
 	}
-	return execOrNotFound(ctx, s.db, `UPDATE foundry_workflow_runs
+	return s.inTx(ctx, func(tx *mysqlDB) error {
+		if err := execOrNotFound(ctx, tx.db, `UPDATE foundry_workflow_runs
 SET status='finished', finished_at=NOW(6), output=?, input=COALESCE(input, ?)
-WHERE id=? AND status='open'`, output, in, id)
+WHERE id=? AND status='open'`, output, in, id); err != nil || !assess {
+			return err
+		}
+		_, err := tx.db.ExecContext(ctx, `INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status)
+SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id=?`, id)
+		return err
+	})
 }
 
 // RecordFoundryWorkflowAccess records call as the run's next access under
@@ -431,4 +442,200 @@ FROM foundry_workflow_run_accesses WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?
 		return out, false, err
 	}
 	return out[:limit], true, nil
+}
+
+const foundryWorkflowAssessmentColumns = `run_id, workspace_id, ontology_id, workflow_id, status, attempts, verdict, assessment,
+  left_out, failure, error, usd_micros, queued_at, finished_at`
+
+func scanFoundryWorkflowAssessment(row rowScanner) (*model.FoundryWorkflowAssessment, error) {
+	var a model.FoundryWorkflowAssessment
+	var status string
+	var verdict, failure, why sql.NullString
+	var assessment, leftOut []byte
+	var finished sql.NullTime
+	err := row.Scan(&a.RunID, &a.WorkspaceID, &a.OntologyID, &a.WorkflowID, &status, &a.Attempts, &verdict, &assessment,
+		&leftOut, &failure, &why, &a.USDMicros, &a.QueuedAt, &finished)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	a.Status, a.Verdict, a.Failure, a.Error = model.FoundryWorkflowAssessmentStatus(status), verdict.String, failure.String, why.String
+	a.FinishedAt = timePtr(finished)
+	if len(assessment) > 0 {
+		a.Assessment = json.RawMessage(assessment)
+	}
+	if len(leftOut) > 0 {
+		if err := json.Unmarshal(leftOut, &a.LeftOut); err != nil {
+			return nil, fmt.Errorf("assessment of %s: left_out: %w", a.RunID, err)
+		}
+	}
+	return &a, nil
+}
+
+// QueueFoundryWorkflowRunAssessment queues a finished run's assessment, again
+// if it had one, keeping what earlier attempts spent. ErrNotFound when the
+// run is gone or still open, ErrConflict while its assessment is queued or
+// running.
+func (s *mysqlDB) QueueFoundryWorkflowRunAssessment(ctx context.Context, runID string) error {
+	return s.inTx(ctx, func(tx *mysqlDB) error {
+		var status string
+		err := tx.db.QueryRowContext(ctx, `SELECT status FROM foundry_workflow_runs WHERE id=? FOR UPDATE`, runID).Scan(&status)
+		switch {
+		case errors.Is(err, sql.ErrNoRows) || err == nil && status != string(model.FoundryWorkflowRunFinished):
+			return ErrNotFound
+		case err != nil:
+			return err
+		}
+		var was string
+		switch err := tx.db.QueryRowContext(ctx, `SELECT status FROM foundry_workflow_run_assessments WHERE run_id=? FOR UPDATE`, runID).Scan(&was); {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return err
+		case model.FoundryWorkflowAssessmentStatus(was).Live():
+			return ErrConflict
+		}
+		_, err = tx.db.ExecContext(ctx, `INSERT INTO foundry_workflow_run_assessments (run_id, workspace_id, ontology_id, workflow_id, status)
+SELECT id, workspace_id, ontology_id, workflow_id, 'queued' FROM foundry_workflow_runs WHERE id=?
+ON DUPLICATE KEY UPDATE status='queued', attempts=0, lease_owner=NULL, lease_until=NULL, next_attempt_at=NOW(6), verdict=NULL,
+  assessment=NULL, left_out=NULL, failure=NULL, error=NULL, queued_at=NOW(6), finished_at=NULL`, runID)
+		return err
+	})
+}
+
+// ClaimFoundryWorkflowRunAssessment leases the next due assessment to owner
+// for lease: a queued one whose time has come, or a running one whose lease
+// lapsed, each attempt counted. ErrNotFound when none is due.
+func (s *mysqlDB) ClaimFoundryWorkflowRunAssessment(ctx context.Context, owner string, lease time.Duration) (*model.FoundryWorkflowAssessment, error) {
+	if owner == "" || lease <= 0 {
+		return nil, fmt.Errorf("a claim needs an owner and a lease")
+	}
+	var out *model.FoundryWorkflowAssessment
+	err := s.inTx(ctx, func(tx *mysqlDB) error {
+		var runID string
+		err := tx.db.QueryRowContext(ctx, `SELECT run_id FROM foundry_workflow_run_assessments
+WHERE (status='queued' AND next_attempt_at <= NOW(6)) OR (status='running' AND lease_until < NOW(6))
+ORDER BY next_attempt_at, run_id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&runID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_workflow_run_assessments
+SET status='running', attempts=attempts+1, lease_owner=?, lease_until=NOW(6) + INTERVAL ? MICROSECOND WHERE run_id=?`,
+			owner, lease.Microseconds(), runID); err != nil {
+			return err
+		}
+		out, err = scanFoundryWorkflowAssessment(tx.db.QueryRowContext(ctx, `SELECT `+foundryWorkflowAssessmentColumns+`
+FROM foundry_workflow_run_assessments WHERE run_id=?`, runID))
+		return err
+	})
+	return out, err
+}
+
+// RenewFoundryWorkflowRunAssessment extends owner's lease. ErrNotFound when
+// owner no longer holds it.
+func (s *mysqlDB) RenewFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, lease time.Duration) error {
+	return execOrNotFound(ctx, s.db, `UPDATE foundry_workflow_run_assessments SET lease_until=NOW(6) + INTERVAL ? MICROSECOND
+WHERE run_id=? AND status='running' AND lease_owner=?`, lease.Microseconds(), runID, owner)
+}
+
+// FinishFoundryWorkflowRunAssessment ends owner's attempt as o says, adding
+// what it spent to the assessment's spend, charged now. ErrNotFound when
+// owner no longer holds it: what it spent is then not counted, as a lost
+// attempt's isn't.
+func (s *mysqlDB) FinishFoundryWorkflowRunAssessment(ctx context.Context, runID, owner string, o model.FoundryWorkflowAssessmentOutcome) error {
+	if err := o.Check(); err != nil {
+		return err
+	}
+	var leftOut, assessment, verdict, failure, why, finished any
+	if o.Status == model.FoundryWorkflowAssessmentDone {
+		raw, err := json.Marshal(o.LeftOut)
+		if err != nil {
+			return err
+		}
+		leftOut, assessment, verdict = string(raw), string(o.Assessment), o.Verdict
+	}
+	if o.Status != model.FoundryWorkflowAssessmentDone {
+		why = o.Error
+	}
+	if o.Failure != "" {
+		failure = o.Failure
+	}
+	next := time.Now().UTC()
+	if o.Status == model.FoundryWorkflowAssessmentQueued {
+		next = o.RetryAt.UTC()
+	} else {
+		finished = next
+	}
+	return execOrNotFound(ctx, s.db, `UPDATE foundry_workflow_run_assessments
+SET status=?, lease_owner=NULL, lease_until=NULL, verdict=?, assessment=?, left_out=?, failure=?, error=?,
+  usd_micros=usd_micros+?, charged_at=IF(? > 0, NOW(6), charged_at), finished_at=?, next_attempt_at=?
+WHERE run_id=? AND status='running' AND lease_owner=?`,
+		string(o.Status), verdict, assessment, leftOut, failure, why, o.USDMicros, o.USDMicros, finished, next, runID, owner)
+}
+
+// GetFoundryWorkflowRunAssessment reads a run's assessment: ErrNotFound when
+// it has none.
+func (s *mysqlDB) GetFoundryWorkflowRunAssessment(ctx context.Context, runID string) (*model.FoundryWorkflowAssessment, error) {
+	return scanFoundryWorkflowAssessment(s.db.QueryRowContext(ctx, `SELECT `+foundryWorkflowAssessmentColumns+`
+FROM foundry_workflow_run_assessments WHERE run_id=?`, runID))
+}
+
+// ListFoundryWorkflowRunAssessments reads the assessments of the runs named,
+// by run id; a run without one is absent.
+func (s *mysqlDB) ListFoundryWorkflowRunAssessments(ctx context.Context, runIDs []string) (map[string]*model.FoundryWorkflowAssessment, error) {
+	out := map[string]*model.FoundryWorkflowAssessment{}
+	if len(runIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+foundryWorkflowAssessmentColumns+`
+FROM foundry_workflow_run_assessments WHERE run_id IN (`+idPlaceholders(len(runIDs))+`)`, toAnySlice(runIDs)...)
+	if err != nil {
+		return nil, err
+	}
+	all, err := scanAll(rows, scanFoundryWorkflowAssessment)
+	for _, a := range all {
+		out[a.RunID] = a
+	}
+	return out, err
+}
+
+// CountFoundryWorkflowVerdicts counts the done assessments of each workflow
+// named, by verdict.
+func (s *mysqlDB) CountFoundryWorkflowVerdicts(ctx context.Context, workflowIDs []string) (map[string]map[string]int64, error) {
+	out := map[string]map[string]int64{}
+	if len(workflowIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT workflow_id, verdict, COUNT(*) FROM foundry_workflow_run_assessments
+WHERE status='done' AND workflow_id IN (`+idPlaceholders(len(workflowIDs))+`) GROUP BY workflow_id, verdict`, toAnySlice(workflowIDs)...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var workflow, verdict string
+		var n int64
+		if err := rows.Scan(&workflow, &verdict, &n); err != nil {
+			return nil, err
+		}
+		if out[workflow] == nil {
+			out[workflow] = map[string]int64{}
+		}
+		out[workflow][verdict] = n
+	}
+	return out, rows.Err()
+}
+
+// SumFoundryWorkflowAssessmentSpend is what a workspace's assessments
+// charged since since. An assessment queued again keeps its earlier spend,
+// counted in the month of its latest charge.
+func (s *mysqlDB) SumFoundryWorkflowAssessmentSpend(ctx context.Context, workspaceID string, since time.Time) (int64, error) {
+	var spent int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(usd_micros), 0) FROM foundry_workflow_run_assessments
+WHERE workspace_id=? AND charged_at >= ?`, workspaceID, since.UTC()).Scan(&spent)
+	return spent, err
 }

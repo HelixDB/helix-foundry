@@ -48,7 +48,8 @@ func (b *workflowBackend) FinishFoundryWorkflowRun(_ context.Context, r *foundry
 }
 
 func (b *workflowBackend) GetFoundryWorkflowRun(_ context.Context, r *foundryv1.GetFoundryWorkflowRunRequest, _ ...grpc.CallOption) (*foundryv1.FoundryWorkflowRunResponse, error) {
-	return &foundryv1.FoundryWorkflowRunResponse{Run: &foundryv1.FoundryWorkflowRun{Id: r.GetId(), Status: "open"}}, nil
+	return &foundryv1.FoundryWorkflowRunResponse{Run: &foundryv1.FoundryWorkflowRun{Id: r.GetId(), Status: "finished",
+		Assessment: &foundryv1.FoundryWorkflowAssessment{Status: "done", Verdict: "helpful", AssessmentJson: `{"verdict":"helpful","summary":"s"}`, UsdMicros: 7}}}, nil
 }
 
 func (b *workflowBackend) ListFoundryWorkflowRunAccesses(_ context.Context, r *foundryv1.ListFoundryWorkflowRunAccessesRequest, _ ...grpc.CallOption) (*foundryv1.ListFoundryWorkflowRunAccessesResponse, error) {
@@ -150,6 +151,9 @@ func TestWorkflowRunTools(t *testing.T) {
 
 	got := callTool(t, session, toolFoundryGetWorkflowRun, `{`+workflowIDs+`,"workflow_id":"wf-1","run_id":"run-1","after_seq":0}`)
 	assert.EqualValues(t, 5, got["next_after_seq"])
+	assessment := got["run"].(map[string]any)["assessment"].(map[string]any)
+	assert.Equal(t, "helpful", assessment["verdict"])
+	assert.Equal(t, "s", assessment["assessment"].(map[string]any)["summary"])
 	accesses := got["accesses"].([]any)
 	require.Len(t, accesses, 5)
 	kinds := make([]string, len(accesses))

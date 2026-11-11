@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -191,26 +192,26 @@ func TestFoundryWorkflowRuns(t *testing.T) {
 
 	t.Run("finish keeps the input it started with", func(t *testing.T) {
 		other := "something else"
-		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, &other, "Acme and Globex."))
+		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, &other, "Acme and Globex.", false))
 		got, err := f.db.GetFoundryWorkflowRun(ctx, f.ontology.ID, r.ID)
 		require.NoError(t, err)
 		assert.Equal(t, model.FoundryWorkflowRunFinished, got.Status())
 		assert.Equal(t, input, *got.Input)
 		assert.Equal(t, "Acme and Globex.", got.Finished.Output)
 		assert.False(t, got.Finished.At.Before(got.StartedAt))
-		assert.ErrorIs(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, nil, "again"), store.ErrNotFound)
+		assert.ErrorIs(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, nil, "again", false), store.ErrNotFound)
 	})
 	t.Run("finish sets the input it started without", func(t *testing.T) {
 		later := f.run(t, w, "LATER", nil)
 		in := "later input"
-		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, later.ID, &in, "out"))
+		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, later.ID, &in, "out", false))
 		got, err := f.db.GetFoundryWorkflowRun(ctx, f.ontology.ID, later.ID)
 		require.NoError(t, err)
 		assert.Equal(t, in, *got.Input)
 	})
 	t.Run("the schema refuses a finished run without its input", func(t *testing.T) {
 		bare := f.run(t, w, "BARE", nil)
-		assert.Error(t, f.db.FinishFoundryWorkflowRun(ctx, bare.ID, nil, "out"))
+		assert.Error(t, f.db.FinishFoundryWorkflowRun(ctx, bare.ID, nil, "out", false))
 	})
 
 	workflow, err := f.db.GetFoundryWorkflow(ctx, f.ontology.ID, w.ID)
@@ -327,7 +328,7 @@ func TestFoundryWorkflowAccesses(t *testing.T) {
 	})
 	t.Run("a finished run records nothing more", func(t *testing.T) {
 		in := "q"
-		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, &in, "a"))
+		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, &in, "a", false))
 		_, err := f.db.RecordFoundryWorkflowAccess(ctx, r.ID, read(load, small))
 		assert.ErrorIs(t, err, store.ErrWorkflowRunFinished)
 		// Not even a retry of a call it recorded.
@@ -435,7 +436,7 @@ func TestFoundryWorkflowConcurrency(t *testing.T) {
 		var mu sync.Mutex
 		recorded := 0
 		in := "q"
-		wg.Go(func() { assert.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, &in, "a")) })
+		wg.Go(func() { assert.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, &in, "a", false)) })
 		for i := range 20 {
 			wg.Go(func() {
 				_, err := f.db.RecordFoundryWorkflowAccess(ctx, r.ID, read(id26("L"), fmt.Sprintf(`{"n":%d}`, i)))
@@ -485,5 +486,144 @@ func TestFoundryWorkflowConcurrency(t *testing.T) {
 			assert.Zero(t, countRows(t, "foundry_workflow_runs", "workflow_id=?", g.ID))
 			assert.Zero(t, countRows(t, "foundry_workflow_run_accesses", "run_id=?", r.ID))
 		}
+	})
+}
+
+func TestFoundryWorkflowRunAssessments(t *testing.T) {
+	ctx := context.Background()
+	f := newFoundryFixture(t, "WFAS")
+	w := f.workflow(t, "A")
+	in := "Who renews?"
+	finished := func(tag string) *model.FoundryWorkflowRun {
+		r := f.run(t, w, tag, &in)
+		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, r.ID, nil, "Acme.", true))
+		return r
+	}
+	r := finished("A")
+	queued, err := f.db.GetFoundryWorkflowRunAssessment(ctx, r.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.FoundryWorkflowAssessmentQueued, queued.Status)
+	assert.Equal(t, w.ID, queued.WorkflowID)
+
+	t.Run("a run finished without one has none, and an open run can't be queued", func(t *testing.T) {
+		plain := f.run(t, w, "PLAIN", &in)
+		assert.ErrorIs(t, f.db.QueueFoundryWorkflowRunAssessment(ctx, plain.ID), store.ErrNotFound)
+		require.NoError(t, f.db.FinishFoundryWorkflowRun(ctx, plain.ID, nil, "a", false))
+		_, err := f.db.GetFoundryWorkflowRunAssessment(ctx, plain.ID)
+		assert.ErrorIs(t, err, store.ErrNotFound)
+		require.NoError(t, f.db.QueueFoundryWorkflowRunAssessment(ctx, plain.ID))
+		got, err := f.db.GetFoundryWorkflowRunAssessment(ctx, plain.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryWorkflowAssessmentQueued, got.Status)
+		// Queued, it can't be queued again.
+		assert.ErrorIs(t, f.db.QueueFoundryWorkflowRunAssessment(ctx, plain.ID), store.ErrConflict)
+		_, err = testDB.Exec(`DELETE FROM foundry_workflow_run_assessments WHERE run_id=?`, plain.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("a claim leases it, counts the attempt and finishes it once", func(t *testing.T) {
+		_, err := f.db.ClaimFoundryWorkflowRunAssessment(ctx, "", time.Minute)
+		assert.Error(t, err)
+		claimed, err := f.db.ClaimFoundryWorkflowRunAssessment(ctx, "w1", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, r.ID, claimed.RunID)
+		assert.Equal(t, model.FoundryWorkflowAssessmentRunning, claimed.Status)
+		assert.Equal(t, 1, claimed.Attempts)
+		_, err = f.db.ClaimFoundryWorkflowRunAssessment(ctx, "w2", time.Minute)
+		assert.ErrorIs(t, err, store.ErrNotFound, "a leased one isn't claimed again")
+		require.NoError(t, f.db.RenewFoundryWorkflowRunAssessment(ctx, r.ID, "w1", time.Minute))
+		assert.ErrorIs(t, f.db.RenewFoundryWorkflowRunAssessment(ctx, r.ID, "w2", time.Minute), store.ErrNotFound)
+		assert.ErrorIs(t, f.db.QueueFoundryWorkflowRunAssessment(ctx, r.ID), store.ErrConflict)
+
+		// A retry waits its time, and keeps what it spent.
+		require.NoError(t, f.db.FinishFoundryWorkflowRunAssessment(ctx, r.ID, "w1", model.FoundryWorkflowAssessmentOutcome{
+			Status: model.FoundryWorkflowAssessmentQueued, Error: "unavailable", USDMicros: 100, RetryAt: time.Now().Add(time.Hour),
+		}))
+		_, err = f.db.ClaimFoundryWorkflowRunAssessment(ctx, "w1", time.Minute)
+		assert.ErrorIs(t, err, store.ErrNotFound, "not before its retry")
+		_, err = testDB.Exec(`UPDATE foundry_workflow_run_assessments SET next_attempt_at=NOW(6) WHERE run_id=?`, r.ID)
+		require.NoError(t, err)
+		claimed, err = f.db.ClaimFoundryWorkflowRunAssessment(ctx, "w1", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, 2, claimed.Attempts)
+
+		done := model.FoundryWorkflowAssessmentOutcome{Status: model.FoundryWorkflowAssessmentDone, Verdict: "helpful",
+			Assessment: json.RawMessage(`{"verdict":"helpful"}`), LeftOut: []int32{3}, USDMicros: 250}
+		assert.ErrorIs(t, f.db.FinishFoundryWorkflowRunAssessment(ctx, r.ID, "w2", done), store.ErrNotFound)
+		require.NoError(t, f.db.FinishFoundryWorkflowRunAssessment(ctx, r.ID, "w1", done))
+		assert.ErrorIs(t, f.db.FinishFoundryWorkflowRunAssessment(ctx, r.ID, "w1", done), store.ErrNotFound)
+		got, err := f.db.GetFoundryWorkflowRunAssessment(ctx, r.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryWorkflowAssessmentDone, got.Status)
+		assert.Equal(t, "helpful", got.Verdict)
+		assert.JSONEq(t, `{"verdict":"helpful"}`, string(got.Assessment))
+		assert.Equal(t, []int32{3}, got.LeftOut)
+		assert.EqualValues(t, 350, got.USDMicros)
+		require.NotNil(t, got.FinishedAt)
+
+		spent, err := f.db.SumFoundryWorkflowAssessmentSpend(ctx, f.ontology.WorkspaceID, time.Now().Add(-time.Hour))
+		require.NoError(t, err)
+		assert.EqualValues(t, 350, spent)
+		spent, err = f.db.SumFoundryWorkflowAssessmentSpend(ctx, f.ontology.WorkspaceID, time.Now().Add(time.Hour))
+		require.NoError(t, err)
+		assert.Zero(t, spent)
+	})
+
+	t.Run("a lapsed lease is claimed again", func(t *testing.T) {
+		lapsed := finished("LAPSED")
+		claimed, err := f.db.ClaimFoundryWorkflowRunAssessment(ctx, "w1", time.Millisecond)
+		require.NoError(t, err)
+		require.Equal(t, lapsed.ID, claimed.RunID)
+		time.Sleep(5 * time.Millisecond)
+		again, err := f.db.ClaimFoundryWorkflowRunAssessment(ctx, "w2", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, lapsed.ID, again.RunID)
+		assert.Equal(t, 2, again.Attempts)
+		assert.ErrorIs(t, f.db.RenewFoundryWorkflowRunAssessment(ctx, lapsed.ID, "w1", time.Minute), store.ErrNotFound)
+		require.NoError(t, f.db.FinishFoundryWorkflowRunAssessment(ctx, lapsed.ID, "w2", model.FoundryWorkflowAssessmentOutcome{
+			Status: model.FoundryWorkflowAssessmentSkipped, Error: "the month's assessments are spent",
+		}))
+		got, err := f.db.GetFoundryWorkflowRunAssessment(ctx, lapsed.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryWorkflowAssessmentSkipped, got.Status)
+		assert.Equal(t, "the month's assessments are spent", got.Error)
+		// Skipped, it can be queued again, as new.
+		require.NoError(t, f.db.QueueFoundryWorkflowRunAssessment(ctx, lapsed.ID))
+		got, err = f.db.GetFoundryWorkflowRunAssessment(ctx, lapsed.ID)
+		require.NoError(t, err)
+		assert.Equal(t, model.FoundryWorkflowAssessmentQueued, got.Status)
+		assert.Zero(t, got.Attempts)
+		assert.Empty(t, got.Error)
+		assert.Nil(t, got.FinishedAt)
+	})
+
+	t.Run("outcomes the table can't hold are refused", func(t *testing.T) {
+		for _, o := range []model.FoundryWorkflowAssessmentOutcome{
+			{Status: model.FoundryWorkflowAssessmentRunning},
+			{Status: model.FoundryWorkflowAssessmentDone, Verdict: "great", Assessment: json.RawMessage(`{}`)},
+			{Status: model.FoundryWorkflowAssessmentDone, Verdict: "helpful"},
+			{Status: model.FoundryWorkflowAssessmentFailed},
+			{Status: model.FoundryWorkflowAssessmentFailed, Error: "x", USDMicros: -1},
+		} {
+			assert.Error(t, f.db.FinishFoundryWorkflowRunAssessment(ctx, r.ID, "w1", o), "%+v", o)
+		}
+	})
+
+	t.Run("verdicts count by workflow, and assessments go with their runs", func(t *testing.T) {
+		counts, err := f.db.CountFoundryWorkflowVerdicts(ctx, []string{w.ID, id26("FW-NONE")})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]map[string]int64{w.ID: {"helpful": 1}}, counts)
+		empty, err := f.db.CountFoundryWorkflowVerdicts(ctx, nil)
+		require.NoError(t, err)
+		assert.Empty(t, empty)
+		listed, err := f.db.ListFoundryWorkflowRunAssessments(ctx, []string{r.ID, id26("FR-NONE")})
+		require.NoError(t, err)
+		assert.Len(t, listed, 1)
+		none, err := f.db.ListFoundryWorkflowRunAssessments(ctx, nil)
+		require.NoError(t, err)
+		assert.Empty(t, none)
+
+		require.NoError(t, f.db.DeleteFoundryWorkflow(ctx, f.ontology.ID, w.ID))
+		assert.Zero(t, countRows(t, "foundry_workflow_run_assessments", "workflow_id=?", w.ID))
 	})
 }

@@ -286,6 +286,11 @@ func (r *routeRecorder) ListFoundryWorkflowRunAccesses(_ context.Context, req *f
 	return &foundryv1.ListFoundryWorkflowRunAccessesResponse{}, nil
 }
 
+func (r *routeRecorder) AssessFoundryWorkflowRun(_ context.Context, req *foundryv1.AssessFoundryWorkflowRunRequest) (*foundryv1.FoundryWorkflowRunResponse, error) {
+	r.hit("AssessFoundryWorkflowRun", req, req.GetWorkflowId()+"/"+req.GetId())
+	return &foundryv1.FoundryWorkflowRunResponse{}, nil
+}
+
 func (r *routeRecorder) CreateFoundryLoad(_ context.Context, req *foundryv1.CreateFoundryLoadRequest) (*foundryv1.FoundryLoadResponse, error) {
 	r.hit("CreateFoundryLoad", req, req.GetVersionId())
 	return &foundryv1.FoundryLoadResponse{}, nil
@@ -463,6 +468,7 @@ func TestFoundryRoutes(t *testing.T) {
 		{http.MethodPost, o + "/ont-1/workflows/wf-1/runs/r-1:finish", `{"input":"q","output":"a"}`,
 			"FinishFoundryWorkflowRun ws-1 ont-1 wf-1/r-1/q/a"},
 		{http.MethodGet, o + "/ont-1/workflows/wf-1/runs/r-1/accesses?afterSeq=3", "", "ListFoundryWorkflowRunAccesses ws-1 ont-1 wf-1/r-1/3"},
+		{http.MethodPost, o + "/ont-1/workflows/wf-1/runs/r-1:assess", "{}", "AssessFoundryWorkflowRun ws-1 ont-1 wf-1/r-1"},
 		{http.MethodPost, w + "/documents", `{"name":"a.md","setId":"s-1"}`, "CreateFoundryDocument ws-1 - a.md in s-1"},
 		{http.MethodGet, w + "/documents?setId=s-1&pageToken=p", "", "ListFoundryDocuments ws-1 - s-1/p/"},
 		{http.MethodGet, w + "/documents?ids=d-2&ids=d-1", "", "ListFoundryDocuments ws-1 - //d-2,d-1"},
