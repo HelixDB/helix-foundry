@@ -32,7 +32,7 @@ test("tells agents what Foundry is for and how to connect", async ({
   const full = await (await request.get("/llms-full.txt")).text();
   expect(full.startsWith(text.slice(0, text.indexOf("## Plans")))).toBe(true);
   expect(full).toContain("## Setup prompt for an agent");
-  expect(full).toContain(`${MCP.replace("/mcp", "")}/auth.md`);
+  expect(full).toContain(new URL("/auth.md", MCP).href);
 
   // The same files where some scanners look for them.
   expect(await (await request.get("/.well-known/llms.txt")).text()).toBe(text);
