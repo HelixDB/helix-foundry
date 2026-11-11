@@ -66,11 +66,12 @@ WHERE r.ontology_id=? AND r.kind='release' AND l.id IS NULL`, loadID, loadID, lo
 		return err
 	}
 	// A document whose row left extracted since (a failure recorded over it)
-	// is owed nothing until it is extracted again.
+	// is owed nothing until it is extracted again, and a decision whose job
+	// failed (applied_reason) is not sent again unasked.
 	_, err := s.db.ExecContext(ctx, `INSERT INTO foundry_load_resends (load_id, document_id, reason)
 SELECT DISTINCT l.load_id, l.doc_id, ? FROM foundry_load_decisions l
 JOIN foundry_load_extractions e ON e.load_id=l.load_id AND e.document_id=l.doc_id AND e.status='extracted'
-WHERE l.load_id=? AND l.kind='release' AND l.applied_status='carried'
+WHERE l.load_id=? AND l.kind='release' AND l.applied_status='carried' AND l.applied_reason IS NULL
   AND NOT EXISTS (SELECT 1 FROM foundry_load_resends w WHERE w.load_id=l.load_id AND w.document_id=l.doc_id AND w.reason=? AND w.status='owed')
 ON DUPLICATE KEY UPDATE status='owed', requests=requests+1, requested_at=NOW(6), ended_at=NULL, job_id=NULL`,
 		string(model.FoundryResendApproval), loadID, string(model.FoundryResendApproval))
@@ -119,7 +120,8 @@ func (s *mysqlDB) queueFoundryResend(ctx context.Context, o *model.FoundryOntolo
 // ListFoundryLoadResends returns the documents a load owes a resend, in the
 // order a load sends its documents (ListPendingFoundryDocuments), so a
 // resend's releases go in the order a fresh load's would; those that can't be
-// sent (FoundryLoadResend.Document is nil) come last.
+// sent (FoundryLoadResend.Document is nil) come last, each saying whether the
+// load still holds its document (FoundryLoadResend.Unsendable).
 func (s *mysqlDB) ListFoundryLoadResends(ctx context.Context, loadID string) ([]*model.FoundryLoadResend, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT document_id, reason, requests FROM foundry_load_resends
 WHERE load_id=? AND status='owed' ORDER BY document_id, reason`, loadID)
@@ -169,6 +171,40 @@ WHERE load_id=? AND status='owed' ORDER BY document_id, reason`, loadID)
 	for _, rs := range owed {
 		unsendable = append(unsendable, rs...)
 	}
+	if len(unsendable) == 0 {
+		return out, nil
+	}
+	// Of those, the load still holds the uploaded ones of its membership:
+	// what they lack is an extraction to replay.
+	ids := make([]any, 0, len(owed))
+	for id := range owed {
+		ids = append(ids, id)
+	}
+	heldRows, err := s.db.QueryContext(ctx, `SELECT d.id FROM foundry_documents d
+JOIN foundry_load_documents m ON m.document_id=d.id AND m.load_id=?
+WHERE d.status='uploaded' AND d.id IN (`+idPlaceholders(len(ids))+`)`, append([]any{loadID}, ids...)...)
+	if err != nil {
+		return nil, err
+	}
+	held := map[string]bool{}
+	for heldRows.Next() {
+		var id string
+		if err := heldRows.Scan(&id); err != nil {
+			_ = heldRows.Close()
+			return nil, err
+		}
+		held[id] = true
+	}
+	_ = heldRows.Close()
+	if err := heldRows.Err(); err != nil {
+		return nil, err
+	}
+	for _, r := range unsendable {
+		r.Unsendable = model.FoundryReleaseDocumentGone
+		if held[r.DocumentID] {
+			r.Unsendable = model.FoundryReleaseDocumentUnread
+		}
+	}
 	// Map order is random: by document, so two attempts end them alike.
 	slices.SortFunc(unsendable, func(a, b *model.FoundryLoadResend) int {
 		return cmp.Or(cmp.Compare(a.DocumentID, b.DocumentID), cmp.Compare(a.Reason, b.Reason))
@@ -178,10 +214,14 @@ WHERE load_id=? AND status='owed' ORDER BY document_id, reason`, loadID)
 
 // EndFoundryLoadResend ends a document's resend into the job's load, while
 // workerID holds the job's lease; ErrNotFound means it lost it, and nothing
-// was written. With end.Refused, the document's release decisions that still
-// wait are refused for that reason: the engine said nothing of them. The row
-// ends only if it is still the request the job read (end.Requests): one owed
-// again meanwhile stays owed, and the job's end queues another resend.
+// was written. The row ends only if it is still the request the job read
+// (end.Requests): one owed again meanwhile stays owed, and the job's end
+// queues another resend. With end.Refused, the document's release decisions
+// that wait for the request are refused for that reason, as the engine said
+// nothing of them; a request owed again since is not this job's to answer,
+// so its decisions go on waiting for the job that sends them all. One left
+// unconfirmed by a job that failed stays so: it may be written, which this
+// refusal knows nothing of.
 func (s *mysqlDB) EndFoundryLoadResend(ctx context.Context, jobID, workerID string, end model.FoundryResendEnd) error {
 	return s.WithTx(ctx, func(txDB Store) error {
 		tx := txDB.(*mysqlDB)
@@ -193,25 +233,34 @@ func (s *mysqlDB) EndFoundryLoadResend(ctx context.Context, jobID, workerID stri
 			}
 			return err
 		}
-		if end.Refused != "" {
-			if _, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status='refused', applied_reason=?, applied_at=NOW(6)
-WHERE load_id=? AND kind='release' AND doc_id=? AND applied_status IN ('pending', 'carried')`, end.Refused, loadID, end.DocumentID); err != nil {
-				return err
-			}
-		}
-		_, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends SET status='done', ended_at=NOW(6), job_id=?
+		ended, err := tx.db.ExecContext(ctx, `UPDATE foundry_load_resends SET status='done', ended_at=NOW(6), job_id=?
 WHERE load_id=? AND document_id=? AND reason=? AND requests=? AND status='owed'`, jobID, loadID, end.DocumentID, string(end.Reason), end.Requests)
+		if err != nil {
+			return err
+		}
+		if n, err := ended.RowsAffected(); err != nil || n == 0 || end.Refused == "" {
+			return err
+		}
+		_, err = tx.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status='refused', applied_reason=?, applied_at=NOW(6)
+WHERE load_id=? AND kind='release' AND doc_id=? AND applied_status IN ('pending', 'carried') AND applied_reason IS NULL`,
+			end.Refused, loadID, end.DocumentID)
 		return err
 	})
 }
 
 // failFoundryResends ends what a resend job that ended without succeeding
-// left owed of its load: the approvals that still wait are refused, saying
-// the job failed, so their cards say so rather than wait for a job that
-// won't come, and the rows end, so the job's end queues no other. Approving
-// again owes the document anew. The caller holds the ontology's lock.
+// left owed of its load. The approvals that still wait are marked
+// unconfirmed (model.FoundryDecisionApplied.Unconfirmed): the job may have
+// failed after the engine wrote one and before its event was recorded, so
+// nothing here says a claim stays held. They keep their status, so the next
+// resend of their document records the engine's word as for any that waits
+// (a pending one the engine no longer holds a review for was written), and
+// their reason says the job failed, so their cards say so rather than wait
+// for a job that won't come. The rows end, so the job's end queues no other.
+// Approving again owes the document anew. The caller holds the ontology's
+// lock.
 func (s *mysqlDB) failFoundryResends(ctx context.Context, job *model.FoundryGraphJob) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_status='refused', applied_reason=?, applied_at=NOW(6)
+	if _, err := s.db.ExecContext(ctx, `UPDATE foundry_load_decisions SET applied_reason=?
 WHERE load_id=? AND kind='release' AND applied_status IN ('pending', 'carried')
   AND doc_id IN (SELECT document_id FROM foundry_load_resends WHERE load_id=? AND reason=? AND status='owed')`,
 		model.FoundryReleaseJobFailed, job.LoadID, job.LoadID, string(model.FoundryResendApproval)); err != nil {
@@ -256,7 +305,8 @@ WHERE load_id=? AND id=?`, string(status), why, loadID, o.DecisionID); err != ni
 // ListFoundryDecisionsApplied returns what became of the given release
 // decisions in the ontology's current load, by decision id; a decision that
 // load's list doesn't hold is absent, as is one of another kind, and one it
-// holds that no job has reported on has the empty status.
+// holds that no job has reported on has the empty status. One that waits
+// with a reason is unconfirmed (model.FoundryDecisionApplied.Unconfirmed).
 func (s *mysqlDB) ListFoundryDecisionsApplied(ctx context.Context, ontologyID string, ids []string) (map[string]model.FoundryDecisionApplied, error) {
 	out := map[string]model.FoundryDecisionApplied{}
 	if len(ids) == 0 {

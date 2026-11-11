@@ -297,7 +297,7 @@ func TestSettleHeldClaimOnAnotherLoad(t *testing.T) {
 func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 	s, db, _ := reviewService(t, `{}`)
 	at := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
-	for _, id := range []string{"a", "b", "c", "d", "e"} {
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g"} {
 		db.rows = append(db.rows, &foundrymodel.FoundryReviewDecision{ID: id, Kind: foundrymodel.FoundryReviewResolve, Type: "Customer"})
 	}
 	db.applied = map[string]foundrymodel.FoundryDecisionApplied{
@@ -305,6 +305,8 @@ func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 		"c": {Status: foundrymodel.FoundryReleaseRefused, Reason: "unresolved", At: &at},
 		"d": {Status: foundrymodel.FoundryReleaseWritten, At: &at},
 		"e": {},
+		"f": {Status: foundrymodel.FoundryReleasePending, Reason: foundrymodel.FoundryReleaseJobFailed},
+		"g": {Status: foundrymodel.FoundryReleaseCarried, Reason: foundrymodel.FoundryReleaseJobFailed},
 	}
 	out, err := s.ListFoundryReviewDecisions(context.Background(), &foundryv1.ListFoundryReviewDecisionsRequest{WorkspaceId: "workspace-a", OntologyId: "o"})
 	if err != nil {
@@ -321,7 +323,10 @@ func TestListFoundryReviewDecisionsApplied(t *testing.T) {
 			t.Fatalf("%s at %v", d.GetId(), d.Applied.GetAt())
 		}
 	}
-	want := map[string]string{"a": "unset", "b": "pending/", "c": "refused/unresolved", "d": "written/", "e": "/"}
+	// One whose job failed is neither pending nor refused: nothing is coming,
+	// and whether it was written isn't known.
+	want := map[string]string{"a": "unset", "b": "pending/", "c": "refused/unresolved", "d": "written/", "e": "/",
+		"f": "unconfirmed/job_failed", "g": "unconfirmed/job_failed"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("applied %v", got)
 	}

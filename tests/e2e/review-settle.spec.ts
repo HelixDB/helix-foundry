@@ -416,6 +416,86 @@ test("offers to write an approval the current load hasn't read", async ({
   await expect(held.getByRole("status")).toContainText("kept it held");
 });
 
+test("says an approval's job failed before saying what became of it, and finishes it", async ({
+  page,
+}) => {
+  await mock.configure({ documentHeld: "refused" });
+  const { held } = await hedged(page);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+  // The job that applies it failed for good before the load said anything:
+  // the claim may or may not be written, and no job is coming.
+  const decisions = /\/review-decisions(\?|$)/;
+  await page.route(decisions, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as ListReviewDecisionsResponse;
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        decisions: body.decisions?.map((d) => ({
+          ...d,
+          applied: { status: "unconfirmed", reason: "job_failed" },
+        })),
+      },
+    });
+  });
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "Approved, but the job that writes it failed before it said whether this was written. Approve it again to finish.",
+  );
+  // Nothing says the load kept it held: no one knows that.
+  await expect(held.getByRole("status")).not.toContainText("kept it held");
+  await page.unroute(decisions);
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText("kept it held");
+});
+
+test("says what an approval waits behind while another job is running", async ({
+  page,
+}) => {
+  const { held } = await hedged(page);
+  // Another job holds the database, so the approval's own job has yet to run.
+  await mock.configure({ loadStepMs: 60_000 });
+  let kind = "extract";
+  await page.route(
+    /\/foundry\/ontologies\/ont_acme_contracts(\?|$)/,
+    async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          ontology: {
+            ...body.ontology,
+            activeJob: {
+              kind,
+              loadId: body.ontology.currentLoad?.id,
+              phase: "documents",
+            },
+          },
+        },
+      });
+    },
+  );
+  await page.reload();
+  await expect(held).toContainText(
+    "It’s written to this load at once. Later loads read the approval too",
+  );
+  await approve(held);
+  await expect(held.getByRole("status")).toContainText(
+    "Approved. Another job is running, so this waits: it’s written to this load when that ends.",
+  );
+  // Behind a new load, it goes to whichever load is current when that ends.
+  kind = "load";
+  await page.reload();
+  await expect(held.getByRole("status")).toContainText(
+    "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.",
+  );
+});
+
 test("names the name a legal form linked when it holds a one-valued claim", async ({
   page,
 }) => {

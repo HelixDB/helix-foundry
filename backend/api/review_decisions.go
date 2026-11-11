@@ -335,12 +335,16 @@ func foundryReviewDecisionProto(d *foundrymodel.FoundryReviewDecision) *foundryv
 		out.ClaimSection, out.ClaimStart, out.ClaimEnd = &span.Section, &span.Start, &span.End
 	}
 	if a := d.Applied; a != nil {
-		// Carried or settled here, a decision a resend owes is pending to a reader.
-		status := a.Status
-		if status.Waits() {
-			status = foundrymodel.FoundryReleasePending
+		// Carried or settled here, a decision a resend owes is pending to a
+		// reader; one whose job failed is unconfirmed, and nothing is coming.
+		status := string(a.Status)
+		switch {
+		case a.Unconfirmed():
+			status = foundrymodel.FoundryReleaseUnconfirmed
+		case a.Status.Waits():
+			status = string(foundrymodel.FoundryReleasePending)
 		}
-		out.Applied = &foundryv1.FoundryDecisionApplied{Status: string(status), Reason: a.Reason}
+		out.Applied = &foundryv1.FoundryDecisionApplied{Status: status, Reason: a.Reason}
 		if a.At != nil {
 			out.Applied.At = timestamppb.New(*a.At)
 		}

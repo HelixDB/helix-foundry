@@ -23,6 +23,7 @@ import {
   propValueText,
   refusalText,
   statementHash,
+  waitingText,
   type Candidate,
   type ReleaseStatus,
   type Settle,
@@ -119,8 +120,9 @@ function ClaimWritten({
  * Settles a review of the load the page shows (`load`); only the current one
  * settles. A name or a value is saved as an override for the next load. An
  * approval of a held claim is written to the current load at once, by a job
- * of its own: its card says it is being written, then the claim is a fact and
- * the card goes, or the card says why the load kept it held.
+ * of its own: its card says it is being written, or what it waits behind
+ * when another job is running, then the claim is a fact and the card goes,
+ * or the card says why the load kept it held.
  */
 export function SettleReview({
   review,
@@ -135,7 +137,7 @@ export function SettleReview({
   naming: Naming;
 }) {
   const { id: ws, role } = useWorkspace();
-  const { id: o } = useOntology();
+  const { id: o, ontology } = useOntology();
   const qc = useQueryClient();
   const query = useQuery(reviewQueries.list(ws, o));
   const [choice, setChoice] = useState("");
@@ -196,11 +198,12 @@ export function SettleReview({
   // What the current load made of a saved approval: nothing yet when its
   // list doesn't hold it (saved while another load was current), and
   // nothing to write when it found no claim at the approval's place. Either
-  // way approving this card binds it to this load's review, at once.
+  // way approving this card binds it to this load's review, at once. So
+  // does approving one whose job failed before saying what became of it.
   const applied = isRelease && editable ? saved?.applied : undefined,
     unread = isRelease && editable && !!saved && !applied,
     missed = applied?.status === "missed",
-    retry = applied?.status === "refused" && applied.reason === "job_failed";
+    retry = applied?.status === "unconfirmed";
   const save = async (choice: FoundryReviewChoice) => {
     if (pending) return;
     setPending(true);
@@ -269,18 +272,20 @@ export function SettleReview({
             ? "A decision is saved for this review."
             : isRelease
               ? applied?.status === "pending"
-                ? "Approved. Writing it to this load…"
+                ? waitingText(ontology.activeJob?.kind)
                 : applied?.status === "written"
                   ? "Approved, and written to this load."
                   : applied?.status === "refused"
                     ? `Approved, and this load kept it held. ${refusalText(applied.reason, s.formed)}`
-                    : unread
-                      ? "An approval of this is saved, and this load hasn’t read it. Approve it to write it now."
-                      : missed
-                        ? "An approval of this is saved, and it found no claim at its place in this load. Approve it to write it now."
-                        : s.formed && single
-                          ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
-                          : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
+                    : retry
+                      ? "Approved, but the job that writes it failed before it said whether this was written. Approve it again to finish."
+                      : unread
+                        ? "An approval of this is saved, and this load hasn’t read it. Approve it to write it now."
+                        : missed
+                          ? "An approval of this is saved, and it found no claim at its place in this load. Approve it to write it now."
+                          : s.formed && single
+                            ? `This load read the approval, and the claim stays held: “${s.formed}” is linked only by its legal form, which doesn’t write a link that holds one value. Settle that name, and the next load writes this.`
+                            : "This load read the approval, and the claim stays held: a name in it isn’t in your data or is linked only by its legal form, the sentence is read more than one way, it conflicts with what the graph holds, it would break a rule, or checking that took more reading than a load allows. If it no longer stands, remove the decision on the document’s page."
               : loadRead(saved, load?.createdAt)
                 ? "This load read the saved decision, and the review is still open: what it chose isn’t in this load. Choose again or remove the decision."
                 : "Decision saved. Reload to apply."}
@@ -300,7 +305,8 @@ export function SettleReview({
           <div className="on-stack">
             <p className="on-muted">
               On your word, from this sentence alone. It’s written to this load
-              at once, and to every load after it.
+              at once. Later loads read the approval too, and each says what it
+              made of it.
             </p>
             {(error || query.error) && (
               <p role="alert" className="hf-form-error">
@@ -408,7 +414,9 @@ const APPROVED: Record<ReleaseStatus, string> = {
 /**
  * A saved approval's line: being written while its job has yet to run, else
  * what the page's reads say became of it, which tell a statement kept as
- * evidence alone from one that made a link.
+ * evidence alone from one that made a link. Where the reads don't say, the
+ * load's word does: held when it refused it, and not confirmed when its job
+ * failed before saying, which is no claim that it stays held.
  */
 const approvedLine = (
   d: Extract<ReviewDecision, { kind: "release" }> & FoundryReviewDecision,
@@ -416,9 +424,13 @@ const approvedLine = (
 ) =>
   d.applied?.status === "pending"
     ? "Approved, being written"
-    : read === "unknown" && d.applied?.status === "refused"
-      ? APPROVED.held
-      : APPROVED[read];
+    : read !== "unknown"
+      ? APPROVED[read]
+      : d.applied?.status === "refused"
+        ? APPROVED.held
+        : d.applied?.status === "unconfirmed"
+          ? "Approved, not confirmed as written"
+          : APPROVED.unknown;
 
 /** Saved overrides stay available to remove after their review disappears. */
 export function SavedDecisions({

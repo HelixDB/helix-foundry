@@ -27,9 +27,13 @@ type FoundryLoadResend struct {
 	// the request a job read, so one that came during the job's run stays owed.
 	Requests int
 	// Document is the document to send, with the set it joined the load with:
-	// nil when it can't be sent, as it is no longer uploaded, never joined the
-	// load, or the load holds no extraction of it.
+	// nil when it can't be sent, and Unsendable says why.
 	Document *FoundryDocument
+	// Unsendable is why a document can't be sent, empty when it can:
+	// FoundryReleaseDocumentGone (it is no longer uploaded, or never joined
+	// the load) or FoundryReleaseDocumentUnread (the load holds it, but no
+	// extraction of it to replay).
+	Unsendable string
 }
 
 // FoundryResendEnd ends a document's resend, as the job that sent it found.
@@ -48,12 +52,15 @@ type FoundryResendEnd struct {
 type FoundryReleaseStatus string
 
 const (
-	// FoundryReleasePending was settled against a review of this load, and a
-	// resend of its document is owed.
+	// FoundryReleasePending was settled against a review of this load, and
+	// the engine has yet to say what became of it: a resend of its document
+	// is owed, unless the job that sent it failed
+	// (FoundryDecisionApplied.Unconfirmed).
 	FoundryReleasePending FoundryReleaseStatus = "pending"
 	// FoundryReleaseCarried was saved while another load was current, and
-	// joined this load's list when it became current: a resend of its
-	// document is owed, and no review of this load was read for it.
+	// joined this load's list when it became current: no review of this load
+	// was read for it, and the engine has yet to say what became of it, as
+	// with a pending one.
 	FoundryReleaseCarried FoundryReleaseStatus = "carried"
 	// FoundryReleaseWritten is a claim the engine wrote as a fact.
 	FoundryReleaseWritten FoundryReleaseStatus = "written"
@@ -64,7 +71,7 @@ const (
 	FoundryReleaseMissed FoundryReleaseStatus = "missed"
 )
 
-// Waits reports a decision a resend still owes.
+// Waits reports a decision the engine has yet to say anything of.
 func (s FoundryReleaseStatus) Waits() bool {
 	return s == FoundryReleasePending || s == FoundryReleaseCarried
 }
@@ -77,9 +84,17 @@ const (
 	FoundryReleaseNotReplayed = "not_replayed"
 	// FoundryReleaseDocumentGone: the document left the load or was deleted.
 	FoundryReleaseDocumentGone = "document_gone"
+	// FoundryReleaseDocumentUnread: the load holds the document, but its row
+	// no longer says it is extracted, as when a failure was recorded over the
+	// row its commit wrote: there is no saved extraction to replay it from.
+	FoundryReleaseDocumentUnread = "document_unread"
 	// FoundryReleaseDocumentFailed: the engine failed the document.
 	FoundryReleaseDocumentFailed = "document_failed"
-	// FoundryReleaseJobFailed: the resend job ended failed.
+	// FoundryReleaseJobFailed: the resend job that sent the decision ended
+	// failed before the engine's word on it was recorded. It refuses nothing:
+	// the engine may have written the claim, so the decision keeps its
+	// status, still waiting, with this as its reason
+	// (FoundryDecisionApplied.Unconfirmed).
 	FoundryReleaseJobFailed = "job_failed"
 	// FoundryReleaseUnanswered: the engine ended the document a resend sent
 	// and said nothing of this decision, which the contract has it do.
@@ -147,8 +162,25 @@ func (s FoundryReleaseStatus) After(o FoundryReleaseOutcome) (status FoundryRele
 // current load.
 type FoundryDecisionApplied struct {
 	Status FoundryReleaseStatus
-	// Reason is why a refused one stays held.
+	// Reason is why a refused one stays held, or FoundryReleaseJobFailed on
+	// one that still waits (Unconfirmed).
 	Reason string
 	// At is when a job reported it; nil while it waits.
 	At *time.Time
+}
+
+// FoundryReleaseUnconfirmed is how a reader is told of an unconfirmed
+// decision (FoundryDecisionApplied.Unconfirmed). No load stores it: the
+// decision keeps the status it waits in.
+const FoundryReleaseUnconfirmed = "unconfirmed"
+
+// Unconfirmed reports a decision that still waits for the engine's word
+// after the resend job that sent its document failed for good: whether its
+// claim was written is not known. The engine may have written it before the
+// job failed, and the event that said so was never recorded. No job is
+// queued for it, so no reader waits; the next resend of its document, as
+// approving it again queues, says what became of it
+// (FoundryReleaseStatus.After).
+func (a FoundryDecisionApplied) Unconfirmed() bool {
+	return a.Status.Waits() && a.Reason == FoundryReleaseJobFailed
 }

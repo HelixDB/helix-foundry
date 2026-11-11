@@ -637,13 +637,43 @@ describe("why a load kept an approved claim held", () => {
     expect(model.refusalText("not_replayed")).toContain(
       "would cost a model call. Load again",
     );
-    expect(model.refusalText("document_gone")).toContain("no longer in this");
+    expect(model.refusalText("document_gone")).toBe(
+      "Its document was deleted, or is no longer part of this load.",
+    );
+    // A document the load holds, whose reading there didn't finish, is not gone.
+    expect(model.refusalText("document_unread")).toBe(
+      "This load holds its document, but has no finished reading of it to write from. Load again to apply it.",
+    );
+    expect(model.refusalText("document_unread")).not.toContain("no longer");
     expect(model.refusalText("document_failed")).toContain(
       "couldn’t read its document again",
     );
-    expect(model.refusalText("job_failed")).toContain(
-      "Approve it again to retry",
+  });
+  it("says what an approval waits behind when another job is running", () => {
+    const writing = "Approved. Writing it to this load…";
+    expect(model.waitingText()).toBe(writing);
+    expect(model.waitingText(null)).toBe(writing);
+    expect(model.waitingText("resend")).toBe(writing);
+    // A load, an extract or an apply holds the database: the approval's own
+    // job follows it.
+    expect(model.waitingText("extract")).toBe(
+      "Approved. Another job is running, so this waits: it’s written to this load when that ends.",
     );
+    expect(model.waitingText("apply")).toBe(model.waitingText("extract"));
+    // A new load may become current, and takes the approval with it.
+    expect(model.waitingText("load")).toBe(
+      "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.",
+    );
+  });
+  it("reads the decisions less often the longer an approval has waited", () => {
+    expect(model.applyPollMs(0)).toBe(2000);
+    expect(model.applyPollMs(29_999)).toBe(2000);
+    expect(model.applyPollMs(30_000)).toBe(10_000);
+    expect(model.applyPollMs(5 * 60_000 - 1)).toBe(10_000);
+    expect(model.applyPollMs(5 * 60_000)).toBe(60_000);
+    expect(model.applyPollMs(24 * 60 * 60_000)).toBe(60_000);
+    // A clock set back reads as no wait at all.
+    expect(model.applyPollMs(-5_000)).toBe(2000);
   });
   it("shows a reason it doesn't know as it came, and says so with none", () => {
     expect(model.refusalText("a_later_reason")).toBe(

@@ -725,8 +725,8 @@ export function waiting<D extends Pick<FoundryReviewDecision, "applied">>(
 
 /**
  * Why an approved claim stays held, for its card, from the reason the load's
- * job gave (FoundryDecisionApplied.reason): what a person can do about it
- * where there is something. `formed` is the name a legal form linked, if the
+ * job gave a refusal (FoundryDecisionApplied.reason): what a person can do
+ * about it where there is something. `formed` is the name a legal form linked, if the
  * card knows it. A reason this site doesn't know reads as it came.
  *
  * @example
@@ -756,14 +756,61 @@ export function refusalText(reason: string | undefined, formed?: string) {
     case "not_replayed":
       return "This document’s saved reading couldn’t be reused, as the models or the reading changed since, so writing it now would cost a model call. Load again to apply it.";
     case "document_gone":
-      return "Its document is no longer in this load.";
+      return "Its document was deleted, or is no longer part of this load.";
+    case "document_unread":
+      return "This load holds its document, but has no finished reading of it to write from. Load again to apply it.";
     case "document_failed":
       return "The load couldn’t read its document again. Load again to apply it.";
-    case "job_failed":
-      return "The job that applies approvals failed. Approve it again to retry.";
     default:
       return `The load kept it held${reason ? ` (${reason})` : ""}.`;
   }
+}
+
+/**
+ * What a card says while an approval waits for its job. One job at a time
+ * writes an ontology's database, so with another job live (`live`, the kind
+ * of the ontology's active job) the approval waits for that job's end rather
+ * than being written now; behind a new load it is written to whichever load
+ * is current when that one ends.
+ *
+ * @example
+ * waitingText(); // "Approved. Writing it to this load…"
+ * waitingText("extract"); // "Approved. Another job is running, so this waits: …"
+ */
+export function waitingText(live?: string | null) {
+  switch (live || "resend") {
+    case "resend":
+      return "Approved. Writing it to this load…";
+    case "load":
+      return "Approved. A load is running, so this waits: it’s written when that ends, to the load that is current then.";
+    default:
+      return "Approved. Another job is running, so this waits: it’s written to this load when that ends.";
+  }
+}
+
+/** How often the decisions are read while an approval has just begun to wait. */
+export const APPLY_POLL_MS = 2000;
+
+/**
+ * How long until the decisions are read again while an approval waits, by how
+ * long the page has seen one wait (`waitedMs`). An approval is written within
+ * seconds, so the first half minute reads every two seconds; one that waits
+ * longer is behind another job, which may run for hours, so reads slow to
+ * every ten seconds, then to once a minute after five minutes. Each read
+ * lists every decision of the ontology, so the slow rate is what an open
+ * page costs while a long job runs.
+ *
+ * @example
+ * applyPollMs(0); // 2000
+ * applyPollMs(60_000); // 10000
+ * applyPollMs(600_000); // 60000
+ */
+export function applyPollMs(waitedMs: number) {
+  return waitedMs < 30_000
+    ? APPLY_POLL_MS
+    : waitedMs < 5 * 60_000
+      ? 10_000
+      : 60_000;
 }
 
 /** What became of a release decision, as far as a page's reads say. */

@@ -8948,7 +8948,10 @@ type FoundryDecisionApplied struct {
 
 	// pending (a job has yet to apply it), written (the claim is a fact),
 	// refused (it stays held: reason says why), missed (this load holds no
-	// review at the decision's key and place, so it has nothing to release), or
+	// review at the decision's key and place, so it has nothing to release),
+	// unconfirmed (the job that applies it failed before the engine's word on
+	// it was recorded, reason job_failed: the claim may or may not have been
+	// written, no job is coming, and approving it again finishes it), or
 	// empty: the load read the decision when it was created, and no job has
 	// said what became of it.
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -8963,8 +8966,11 @@ type FoundryDecisionApplied struct {
 	// document, read again, no longer states it there), too_large,
 	// not_allowed. The backend's: not_replayed (the document's saved
 	// extraction didn't replay, so applying it would have cost a model call: a
-	// new load applies it), document_gone, document_failed, job_failed,
-	// unanswered. A reader shows a reason it doesn't know as it is.
+	// new load applies it), document_gone, document_unread (the load holds
+	// the document but no extraction of it to replay), document_failed,
+	// unanswered. With
+	// unconfirmed it is job_failed. A reader shows a reason it doesn't know as
+	// it is.
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	// When a job said so; unset while pending.
 	At *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=at,proto3" json:"at,omitempty"`

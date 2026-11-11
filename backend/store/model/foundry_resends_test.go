@@ -42,3 +42,26 @@ func TestFoundryReleaseStatusAfter(t *testing.T) {
 		t.Fatal("only a pending or carried decision waits")
 	}
 }
+
+// A decision is unconfirmed while it still waits and its job failed: one a
+// job reported on is what that job said, whatever reason it carries.
+func TestFoundryDecisionAppliedUnconfirmed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		applied FoundryDecisionApplied
+		want    bool
+	}{
+		"settled here, its job failed": {FoundryDecisionApplied{Status: FoundryReleasePending, Reason: FoundryReleaseJobFailed}, true},
+		"carried, its job failed":      {FoundryDecisionApplied{Status: FoundryReleaseCarried, Reason: FoundryReleaseJobFailed}, true},
+		"waiting for its job":          {FoundryDecisionApplied{Status: FoundryReleasePending}, false},
+		"refused by the engine":        {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: "unresolved"}, false},
+		"refused, the reason reused":   {FoundryDecisionApplied{Status: FoundryReleaseRefused, Reason: FoundryReleaseJobFailed}, false},
+		"written":                      {FoundryDecisionApplied{Status: FoundryReleaseWritten}, false},
+		"never reported":               {FoundryDecisionApplied{}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.applied.Unconfirmed(); got != tc.want {
+				t.Fatalf("Unconfirmed() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
