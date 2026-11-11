@@ -49,7 +49,7 @@ func resent(doc string, released int, releases string) string {
 	return `{"event":"document","doc_id":"` + doc + `","outcome":{"kind":"already_ingested"},"text_bytes":120,"sections":2,` +
 		`"counts":{"entities":0,"mentions":0,"facts":0,"reviews":0,"unresolved":0,"rejected":0,"attributes":0,"attribute_reviews":0,` +
 		`"prop_conflicts":0,"created":0,"identifiers_unverified":0,"attributes_over_entries":0,"released":` + strconv.Itoa(released) +
-		`,"release_refused":0,"release_missed":0,"resolved":{"user":0,"adjudicated":0,"identifier":0,"name":0,"alias":0,"legal_form":0,"created":0}},` +
+		`,"release_refused":0,"release_missed":0,"resolved":{"user":0,"adjudicated":0,"identifier":0,"name":0,"alias":0,"legal_form":0,"part_name":0,"own_name":0,"created":0}},` +
 		noUsage + `,"releases":` + releases + `}`
 }
 
