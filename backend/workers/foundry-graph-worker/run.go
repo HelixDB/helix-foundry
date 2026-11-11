@@ -2,6 +2,7 @@ package foundrygraphworker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,7 +109,10 @@ type failure struct {
 	Internal  bool
 	// Unsupported is an apply the agent can't do in place (unsupported).
 	Unsupported bool
-	Err         error
+	// TooLarge is an Extract that was never sent, as it is past what one
+	// request takes (tooLarge): a resend sends its documents in smaller ones.
+	TooLarge bool
+	Err      error
 }
 
 func (f *failure) Error() string {
@@ -132,6 +137,13 @@ func retry(message string, err error) error { return &failure{Message: message, 
 
 func permanent(message string, err error) error {
 	return &failure{Message: message, Permanent: true, Err: err}
+}
+
+// tooLarge fails for good an Extract past what one request takes, in
+// decisions (maxExtractDecisions) or in bytes (runner.maxRequestBytes),
+// before it is sent: no retry of the same documents sends less.
+func tooLarge(message string, err error) error {
+	return &failure{Message: message, Permanent: true, TooLarge: true, Err: err}
 }
 
 // unsupported ends an apply the agent can't bring up to date in place; the
@@ -929,9 +941,15 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 }
 
 // resend sends the documents the job's load owes a resend
-// (ListFoundryLoadResends) to one Extract, each with every artifact saved for
+// (ListFoundryLoadResends) to Extract, each with every artifact saved for
 // it and the load's decisions of it, with nothing to spend: the load holds
-// them, so the engine commits none again and takes none out. It replays each
+// them, so the engine commits none again and takes none out. They go in one
+// Extract where one takes them. A mass of approvals, as the first carry
+// after a deploy or a large Approve all, may be past what one request takes
+// in decisions or bytes (failure.TooLarge): its documents then go in halves,
+// in the load's order, each split again while it is too large, so no
+// approval fails for the company it keeps. A single document too large for
+// an Extract fails the job, as it would a load. It replays each
 // one's model work from its artifacts and writes what the decisions release,
 // and each document's event says what became of every one (recordResent). So
 // a person's approval of a held claim is a fact of the load within one job,
@@ -942,8 +960,9 @@ func (r *runner) extract(ctx context.Context, job *model.FoundryGraphJob, def on
 // run has no money for: the engine sends no event for it and ends
 // budget_exhausted, and the approvals that waited for it are refused as
 // not_replayed, as a new load is what applies them. One the load can no
-// longer send (deleted, or its text gone) refuses them as document_gone, one
-// the engine failed as document_failed. Each ends its request, so a job never
+// longer send refuses them as document_gone (deleted, out of the load, or
+// its text gone) or as document_unread (the load holds it, but no extraction
+// of it to replay), one the engine failed as document_failed. Each ends its request, so a job never
 // sends a document twice for one request, and one owed again while the job
 // ran stays owed for the job that follows (EndFoundryLoadResend). A run that
 // stops ends nothing it hadn't heard of, and the retry sends those again:
@@ -982,7 +1001,7 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 	var docs []*model.FoundryDocument
 	for _, o := range owed {
 		if o.Document == nil {
-			if err := end(o, model.FoundryReleaseDocumentGone); err != nil {
+			if err := end(o, cmp.Or(o.Unsendable, model.FoundryReleaseDocumentGone)); err != nil {
 				return err
 			}
 			continue
@@ -1016,12 +1035,34 @@ func (r *runner) resend(ctx context.Context, job *model.FoundryGraphJob, def ont
 		}
 		delete(a.resends, doc.ID)
 	}
+	// sent counts the Extracts sent: each has its own request id and call.
+	sent := 0
+	var sendAll func(batch []ontologyagent.ExtractDocument) error
+	sendAll = func(batch []ontologyagent.ExtractDocument) error {
+		requestID, call := job.ID, "resend"
+		if sent > 0 {
+			n := strconv.Itoa(sent + 1)
+			requestID, call = job.ID+":"+n, "resend:"+n
+		}
+		_, err := r.send(ctx, job, def, binding, target, ontologyVersion, requestID, call, batch, nil, 0, providers, a)
+		var f *failure
+		if errors.As(err, &f) && f.TooLarge && len(batch) > 1 {
+			if err := sendAll(batch[:len(batch)/2]); err != nil {
+				return err
+			}
+			return sendAll(batch[len(batch)/2:])
+		}
+		if err == nil {
+			sent++
+		}
+		return err
+	}
 	if len(documents) > 0 {
-		if _, err := r.send(ctx, job, def, binding, target, ontologyVersion, job.ID, "resend", documents, nil, 0, providers, a); err != nil {
+		if err := sendAll(documents); err != nil {
 			return err
 		}
 	}
-	// The run reached its end: what it sent no event for needed a model call.
+	// Each run reached its end: what it sent no event for needed a model call.
 	for _, d := range documents {
 		o, waiting := a.resends[d.DocID]
 		if !waiting {
@@ -1142,14 +1183,12 @@ func allowanceSpent(spend model.FoundryDocumentSetSpend, a model.FoundrySetAllow
 // release decision sent with it. Exhausted means the run
 // ended budget_exhausted, what it did not finish waiting; a done run must
 // have ended every document it was sent. Any other end is the attempt's
-// failure, and a request past the agent's message limit fails for good.
+// failure, and a request past the agent's message limit, or with more
+// decisions than an Extract takes, fails for good before it is sent
+// (failure.TooLarge).
 func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontologyagent.Definition, binding graphproxy.Binding,
 	target ontologyagent.HelixTarget, ontologyVersion, requestID, call string, documents []ontologyagent.ExtractDocument, remove []string,
 	maxUSD float64, providers []string, a *attempt) (exhausted bool, err error) {
-	a.progress.DocumentsTotal += len(documents)
-	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
-		return false, err
-	}
 	decisions, err := r.decisions(ctx, job, def.OntologyTOML, documents)
 	if err != nil {
 		return false, err
@@ -1174,8 +1213,14 @@ func (r *runner) send(ctx context.Context, job *model.FoundryGraphJob, def ontol
 	}
 	if len(body) > r.maxRequestBytes {
 		// gRPC would refuse it as a full agent, and every retry would too.
-		return false, permanent("this version reads more documents than one load can send",
+		return false, tooLarge("this version reads more documents than one load can send",
 			fmt.Errorf("the extract request is %d bytes; the agent takes %d", len(body), r.maxRequestBytes))
+	}
+	// The job's total counts the documents of the Extracts it sends: one too
+	// large to send, which a resend splits, counts none.
+	a.progress.DocumentsTotal += len(documents)
+	if err := r.update(ctx, job, model.FoundryGraphJobDocuments, a); err != nil {
+		return false, err
 	}
 	sent := map[string]bool{}
 	for _, d := range documents {

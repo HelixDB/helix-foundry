@@ -17,8 +17,8 @@ const maxExtractDecisions = 10000
 // prop decision's key or value no longer fits) is left out, before the cap.
 // A resolve whose chosen entity the type's changed key no longer reads goes:
 // the engine counts it stale and reviews its name again, where left out the
-// name would be matched another way. Past the cap the job fails rather than
-// drop a choice. Choices made after a load started wait for the next load,
+// name would be matched another way. Past the cap the Extract fails, too
+// large to send, rather than drop a choice. Choices made after a load started wait for the next load,
 // including during a catch-up extract or retry. Each goes with its id and
 // when it was settled (foundry_load_decisions.decided_at), so the load tells
 // when a value was decided; one without that time fails the job rather than
@@ -68,7 +68,7 @@ func (r *runner) decisions(ctx context.Context, job *model.FoundryGraphJob, onto
 			}
 			out = append(out, decision)
 			if len(out) > maxExtractDecisions {
-				return nil, permanent(fmt.Sprintf("this extract needs more than %d review decisions; reduce its documents or decisions", maxExtractDecisions), nil)
+				return nil, tooLarge(fmt.Sprintf("this extract needs more than %d review decisions; reduce its documents or decisions", maxExtractDecisions), nil)
 			}
 		}
 		if len(page) < 1000 {

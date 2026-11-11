@@ -2,6 +2,7 @@ package foundrygraphworker
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -161,12 +162,14 @@ func TestResend(t *testing.T) {
 		}
 	})
 
-	// A document deleted since, or one whose text is gone, is never sent:
-	// its approvals are refused, and with nothing left to send no Extract runs.
+	// A document deleted since, one whose text is gone, or one the load holds
+	// with no extraction to replay is never sent: its approvals are refused,
+	// each for its reason, and with nothing left to send no Extract runs.
 	t.Run("a document the load can't send refuses its approvals", func(t *testing.T) {
 		h := newHarness(t)
-		owes(h, "doc-a", "doc-b")
+		owes(h, "doc-a", "doc-b", "doc-c")
 		h.store.resends[0].Document = nil
+		h.store.resends[2].Document, h.store.resends[2].Unsendable = nil, model.FoundryReleaseDocumentUnread
 		h.bucket.mu.Lock()
 		delete(h.bucket.objects, document.Key("ws-1", "doc-b"))
 		h.bucket.mu.Unlock()
@@ -179,6 +182,7 @@ func TestResend(t *testing.T) {
 		}
 		want := []model.FoundryResendEnd{
 			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1, Refused: model.FoundryReleaseDocumentGone},
+			{DocumentID: "doc-c", Reason: model.FoundryResendApproval, Requests: 3, Refused: model.FoundryReleaseDocumentUnread},
 			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2, Refused: model.FoundryReleaseDocumentGone},
 		}
 		if !reflect.DeepEqual(h.store.ended, want) {
@@ -329,6 +333,152 @@ func TestResend(t *testing.T) {
 		h.store.endErr = errors.New("database is down")
 		if outcome := h.run(t, resendJob()); outcome.RetryAt == nil {
 			t.Fatalf("%+v", outcome)
+		}
+	})
+}
+
+// massApproved gives each of docs n approvals in load-0's list, each of a
+// claim of its own, with ids in the list's order.
+func massApproved(h *harness, n int, docs ...string) {
+	for i, doc := range docs {
+		for j := range n {
+			d := approval(fmt.Sprintf("%02d-%05d", i, j), doc, hashA)
+			d.ClaimSpan = &model.FoundryClaimSpan{Section: uint32(j), Start: 2, End: 9}
+			h.store.decisions = append(h.store.decisions, d)
+		}
+	}
+}
+
+// writesAll answers a resend's Extract as an engine that writes every release
+// it was sent: an event per document, saying so of each of its decisions.
+func writesAll(t *testing.T) func(string, agentv1.Agent_ExtractServer) error {
+	return func(raw string, stream agentv1.Agent_ExtractServer) error {
+		req := decodeExtract(t, raw)
+		events := []string{extracted[0]}
+		for _, doc := range req.Documents {
+			var releases []string
+			for _, d := range req.Decisions {
+				if d.DocID == doc.DocID {
+					releases = append(releases, `{"decision_id":"`+d.DecisionID+`","outcome":{"kind":"written"}}`)
+				}
+			}
+			events = append(events, resent(doc.DocID, len(releases), "["+strings.Join(releases, ",")+"]"))
+		}
+		return extractEvents(stream, append(events, `{"event":"extract_finished"}`), `{"status":"done","totals":`+totals+`}`)
+	}
+}
+
+// A mass of approvals, as the first carry after a deploy or a large Approve
+// all brings, is past what one Extract takes in decisions. The resend sends
+// its documents in as few Extracts as take them, in the load's order, rather
+// than fail and leave every approval unconfirmed.
+func TestResendSplitsWhatOneExtractCannotTake(t *testing.T) {
+	t.Run("more decisions than one Extract takes go in two", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a", "doc-b", "doc-c")
+		massApproved(h, 3400, "doc-a", "doc-b", "doc-c")
+		h.agent.extract = writesAll(t)
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobSucceeded || outcome.Error != "" {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 2 {
+			t.Fatalf("%d extracts, want two", len(calls))
+		}
+		first, second := decodeExtract(t, calls[0]), decodeExtract(t, calls[1])
+		if first.RequestID != "job-4" || second.RequestID != "job-4:2" {
+			t.Fatalf("request ids %q and %q", first.RequestID, second.RequestID)
+		}
+		if got := [][]string{docIDs(first), docIDs(second)}; !reflect.DeepEqual(got, [][]string{{"doc-a"}, {"doc-b", "doc-c"}}) {
+			t.Fatalf("sent %v", got)
+		}
+		// Each Extract carries the decisions of its own documents only.
+		if len(first.Decisions) != 3400 || len(second.Decisions) != 6800 {
+			t.Fatalf("%d and %d decisions", len(first.Decisions), len(second.Decisions))
+		}
+		if first.Limits.MaxUSD != 0 || second.Limits.MaxUSD != 0 {
+			t.Fatalf("max_usd %v and %v", first.Limits.MaxUSD, second.Limits.MaxUSD)
+		}
+		want := []model.FoundryResendEnd{
+			{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1},
+			{DocumentID: "doc-b", Reason: model.FoundryResendApproval, Requests: 2},
+			{DocumentID: "doc-c", Reason: model.FoundryResendApproval, Requests: 3},
+		}
+		if !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+		for _, doc := range []string{"doc-a", "doc-b", "doc-c"} {
+			if got := h.store.extractions[doc]; got == nil || len(got.Releases) != 3400 {
+				t.Fatalf("%s recorded %+v", doc, got)
+			}
+		}
+		// An Extract too large to send counts no document.
+		if last := h.store.lastUpdate(); last.Progress.DocumentsDone != 3 || last.Progress.DocumentsTotal != 3 {
+			t.Fatalf("last update %+v", last)
+		}
+		for _, call := range []string{"resend", "resend:2"} {
+			if gjson(t, string(outcome.Report), call) == "" {
+				t.Fatalf("the report lacks %s: %s", call, outcome.Report)
+			}
+		}
+	})
+
+	t.Run("a request past the agent's message limit goes in halves", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a", "doc-b", "doc-c", "doc-d")
+		massApproved(h, 40, "doc-a", "doc-b", "doc-c", "doc-d")
+		// What all four documents' Extract weighs, less a byte: two halves fit.
+		h.agent.extract = writesAll(t)
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		_, whole := h.agent.calls()
+		if len(whole) != 1 {
+			t.Fatalf("%d extracts, want one", len(whole))
+		}
+
+		h = newHarness(t)
+		owes(h, "doc-a", "doc-b", "doc-c", "doc-d")
+		massApproved(h, 40, "doc-a", "doc-b", "doc-c", "doc-d")
+		h.agent.extract = writesAll(t)
+		h.task.runner.maxRequestBytes = len(whole[0]) - 1
+		if outcome := h.run(t, resendJob()); outcome.Status != model.FoundryGraphJobSucceeded {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 2 {
+			t.Fatalf("%d extracts, want two", len(calls))
+		}
+		if got := [][]string{docIDs(decodeExtract(t, calls[0])), docIDs(decodeExtract(t, calls[1]))}; !reflect.DeepEqual(got, [][]string{{"doc-a", "doc-b"}, {"doc-c", "doc-d"}}) {
+			t.Fatalf("sent %v", got)
+		}
+		if len(h.store.ended) != 4 {
+			t.Fatalf("ended %+v", h.store.ended)
+		}
+	})
+
+	// One document whose own decisions are past the cap can't be split: the
+	// job fails for good, as a load of it would, having sent what it could.
+	t.Run("a single document too large fails the job after the rest is sent", func(t *testing.T) {
+		h := newHarness(t)
+		owes(h, "doc-a", "doc-b")
+		massApproved(h, 10, "doc-a")
+		massApproved(h, maxExtractDecisions+1, "doc-b")
+		for _, d := range h.store.decisions[10:] {
+			d.ID = "1" + d.ID[1:]
+		}
+		h.agent.extract = writesAll(t)
+		outcome := h.run(t, resendJob())
+		if outcome.Status != model.FoundryGraphJobFailed || outcome.RetryAt != nil || !strings.Contains(outcome.Error, "review decisions") {
+			t.Fatalf("%+v", outcome)
+		}
+		_, calls := h.agent.calls()
+		if len(calls) != 1 || !reflect.DeepEqual(docIDs(decodeExtract(t, calls[0])), []string{"doc-a"}) {
+			t.Fatalf("%d extracts", len(calls))
+		}
+		if want := []model.FoundryResendEnd{{DocumentID: "doc-a", Reason: model.FoundryResendApproval, Requests: 1}}; !reflect.DeepEqual(h.store.ended, want) {
+			t.Fatalf("ended %+v", h.store.ended)
 		}
 	})
 }

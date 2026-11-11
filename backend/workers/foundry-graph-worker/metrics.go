@@ -91,5 +91,5 @@ var releases = promauto.NewCounterVec(prometheus.CounterOpts{
 var resendsRefused = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "helix_foundry_graph_resends_refused_total",
 	Help: "Documents a resend job could not send again or the agent could not replay, whose waiting approvals were refused, by reason: " +
-		"not_replayed (the saved extraction didn't replay at no cost), document_gone or document_failed.",
+		"not_replayed (the saved extraction didn't replay at no cost), document_gone, document_unread or document_failed.",
 }, []string{"reason"})
