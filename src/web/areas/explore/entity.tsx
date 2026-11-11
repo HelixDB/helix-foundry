@@ -35,7 +35,7 @@ import { useDocumentNames } from "../documents/documents-api";
 import { spanAnchor } from "../documents/model";
 import { reviewQueries } from "../reviews/api";
 import { ReviewGroups } from "../reviews/groups";
-import { isUndoableLink, unrejected } from "../reviews/model";
+import { isUndoableLink, markDiffering, unrejected } from "../reviews/model";
 import { SavedDecisions, SettleReview } from "../reviews/settle";
 import { AskDrawer } from "../ontology/ask";
 import { ENRICHMENT_SOURCE } from "../ontology/enrichment-fields";
@@ -339,6 +339,20 @@ function Entity({
     ...evidenceRead,
     enabled: !!selection.scope && !!page?.facts.some((f) => f.factKey),
   });
+  // What holds its held claims: the names their documents linked on less
+  // than a name, whose reviews this page doesn't list.
+  const nameLinksRead = readQueries.nameLinks(
+    id,
+    o,
+    reader,
+    scope,
+    identity,
+    page?.reviews,
+  );
+  const nameLinks = useQuery({
+    ...nameLinksRead,
+    enabled: !!selection.scope && nameLinksRead.enabled,
+  });
   // What the load's rules derive about it: only for a version with rules.
   const version = useQuery({
     ...ontologyQueries.version(id, o, selection.versionId),
@@ -467,7 +481,13 @@ function Entity({
     );
   const facts = page.facts,
     mentions = page.mentions,
-    reviews = unrejected(page.reviews, decisions.data ?? []);
+    reviews = unrejected(
+      markDiffering(page.reviews, nameLinks.data ?? []),
+      decisions.data ?? [],
+    ),
+    // Until the names that hold its held claims are read, no card or Approve
+    // all can say which an approval writes now.
+    holdsKnown = !nameLinksRead.enabled || nameLinks.isSuccess;
   const props = propertyViews(e.props, page.rows, page.propEvidence);
   // The tables (by the rows that state it) and documents (by where they
   // name it) it comes from, each once.
@@ -949,6 +969,21 @@ function Entity({
             it breaks show here.
           </p>
         )}
+        {nameLinks.error && (
+          <div role="alert" className="on-stack">
+            <p className="on-error-text">
+              Couldn’t read which names hold these claims:{" "}
+              {nameLinks.error.message}
+            </p>
+            <p className="on-muted">
+              A card may not say that a name holds its claim, and Approve all is
+              off until they’re read.{" "}
+              <Button size="sm" onClick={() => void nameLinks.refetch()}>
+                Retry
+              </Button>
+            </p>
+          </div>
+        )}
         {liveFailed && (
           <p className="on-muted">
             The rules it breaks now couldn’t be worked out:{" "}
@@ -964,6 +999,7 @@ function Entity({
               <ReviewGroups
                 reviews={reviews}
                 naming={naming}
+                approveAll={holdsKnown}
                 load={
                   selection.choice.kind === "load"
                     ? selection.choice.load

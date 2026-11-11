@@ -27,7 +27,7 @@ import {
   type Fact,
 } from "./model";
 import { NO_NAMING, namingKeys, readable, type Naming } from "./naming";
-import { markDiffering } from "../reviews/model";
+import type { Settleable } from "../reviews/model";
 import { entityNamesRequest, parseEntityNames, refKey } from "./rule-breaks";
 import {
   entityPlan,
@@ -115,40 +115,6 @@ export async function runRead(
   const result = await read(request, { signal });
   if (!result.ok) throw new ReadFailed(result);
   return result.body;
-}
-
-/**
- * An entity's page from the database: its read, then, where it lists held
- * claims, the reviews of names linked on less than a name in their
- * documents (nameLinksRequest), with which its reviews are marked
- * (markDiffering): a held claim's other end has its review there, so its
- * card and Approve all know what holds it. A page with no held claim has
- * nothing to mark.
- */
-async function databaseEntity(
-  read: QueryExecutor,
-  scope: Scope,
-  identity: EntityIdentity,
-  naming: Naming,
-  signal?: AbortSignal,
-): Promise<EntityGraph> {
-  const page = parseEntity(
-    await runRead(
-      read,
-      entityRequest(scope, identity, namingKeys(naming)),
-      signal,
-    ),
-  );
-  const names = nameLinksRequest(scope, page.reviews);
-  return names
-    ? {
-        ...page,
-        reviews: markDiffering(
-          page.reviews,
-          parseNameLinks(await runRead(read, names, signal)),
-        ),
-      }
-    : page;
 }
 
 // An entity of a type the version knows takes its readable name; any other
@@ -261,7 +227,13 @@ export const readQueries = {
               signal,
               createdAt: reader.createdAt,
             })
-          : await databaseEntity(reader.read, scope, identity, naming, signal);
+          : parseEntity(
+              await runRead(
+                reader.read,
+                entityRequest(scope, identity, namingKeys(naming)),
+                signal,
+              ),
+            );
       return {
         ...page,
         entity: page.entity && named(naming, page.entity),
@@ -278,6 +250,43 @@ export const readQueries = {
     },
     ...readOptions,
   }),
+  // The reviews of names linked on less than a name in the documents of its
+  // held claims (nameLinksRequest), which its page marks them with: a held
+  // claim's other end has its review there. Its own query, so a page that
+  // shows no reviews never reads it, and a failure leaves the page up.
+  // Reviews aren't shared through grants.
+  nameLinks: (
+    ws: string,
+    o: string,
+    reader: GraphReader,
+    scope: Scope,
+    identity: EntityIdentity,
+    reviews: readonly Settleable[] | undefined,
+  ) => {
+    const req =
+      reader.kind === "database" && reviews
+        ? nameLinksRequest(scope, reviews)
+        : null;
+    return {
+      queryKey: [
+        ws,
+        "ontology",
+        o,
+        "read",
+        scope.id,
+        "entity",
+        identity,
+        "name-links",
+        req?.parameters,
+      ],
+      enabled: !!req,
+      queryFn: async ({ signal }: { signal?: AbortSignal }) =>
+        reader.kind === "database" && req
+          ? parseNameLinks(await runRead(reader.read, req, signal))
+          : [],
+      ...readOptions,
+    };
+  },
   // What states its facts, by fact key: through grants, those of the first
   // TYPED_LIMITS.evidenceFacts facts.
   evidence: (
