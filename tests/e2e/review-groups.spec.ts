@@ -246,13 +246,17 @@ test("keeps an entity's page up when the names holding its claims can't be read,
     page,
     "# Hedged deal\n\nGlobex Corporation and Initech may have signed.\n",
   );
-  // Only the read of the names' reviews fails.
+  // Only the read of the names' reviews fails: a read's query is base64.
   const names = "**/databases:query-read";
   await page.route(names, async (route) => {
     const { queryJson } = route.request().postDataJSON() as {
       queryJson?: string;
     };
-    if (queryJson?.includes("foundry_name_links"))
+    if (
+      Buffer.from(queryJson ?? "", "base64")
+        .toString("utf8")
+        .includes('"foundry_name_links"')
+    )
       return route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -262,9 +266,9 @@ test("keeps an entity's page up when the names holding its claims can't be read,
   });
   await page.goto(entity("Contract", "n:hedged deal"));
   await page.getByRole("tab", { name: /^Needs review/ }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Couldn’t read which names hold its held claims",
-  );
+  await expect(
+    page.getByRole("tabpanel", { name: "Needs review" }).getByRole("alert"),
+  ).toContainText("Couldn’t read which names hold its held claims");
   // No held claim is offered while what holds it isn't known.
   await expect(group(page, HELD).rows).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
